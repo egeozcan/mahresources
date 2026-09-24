@@ -246,6 +246,87 @@ func TestJobDetailReturnsVersionBoundCommandsAndSafeOutputLinks(t *testing.T) {
 	}
 }
 
+func TestJobDetailExposesOnlyStrictEntityDestinationsForPluginActionResultSummaries(t *testing.T) {
+	tests := []struct {
+		name         string
+		redirect     string
+		jobKind      string
+		outputKey    string
+		outputType   string
+		availability jobs.OutputAvailability
+		want         string
+	}{
+		{name: "resource", redirect: "/resource?id=1", want: "/resource?id=1"},
+		{name: "note", redirect: "/note?id=27", want: "/note?id=27"},
+		{name: "group", redirect: "/group?id=8", want: "/group?id=8"},
+		{name: "unavailable result", redirect: "/resource?id=1", availability: jobs.OutputRemoved},
+		{name: "zero id", redirect: "/resource?id=0"},
+		{name: "negative id", redirect: "/resource?id=-1"},
+		{name: "nonnumeric id", redirect: "/resource?id=one"},
+		{name: "extra parameter", redirect: "/resource?id=1&mode=edit"},
+		{name: "duplicate id", redirect: "/resource?id=1&id=2"},
+		{name: "escaped id", redirect: "/resource?id=%31"},
+		{name: "fragment", redirect: "/resource?id=1#details"},
+		{name: "empty fragment", redirect: "/resource?id=1#"},
+		{name: "scheme", redirect: "https://example.test/resource?id=1"},
+		{name: "host", redirect: "//example.test/resource?id=1"},
+		{name: "other entity route", redirect: "/reduction?id=1"},
+		{name: "other job kind", redirect: "/resource?id=1", jobKind: "group-export"},
+		{name: "other output key", redirect: "/resource?id=1", outputKey: "summary"},
+		{name: "typed entity output", redirect: "/resource?id=1", outputType: jobs.OutputTypeEntity},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			availability := tt.availability
+			if availability == "" {
+				availability = jobs.OutputAvailable
+			}
+			outputType := tt.outputType
+			if outputType == "" {
+				outputType = jobs.OutputTypeSummary
+			}
+			jobKind := tt.jobKind
+			if jobKind == "" {
+				jobKind = "plugin-action"
+			}
+			outputKey := tt.outputKey
+			if outputKey == "" {
+				outputKey = "result"
+			}
+			ctx := &jobDetailContextStub{
+				snapshot: jobs.Snapshot{ID: "job-legacy", Kind: jobKind, State: jobs.StateSucceeded, Version: 1},
+				outputs: []jobs.Output{{
+					JobID: "job-legacy", Key: outputKey, Type: outputType,
+					Availability: availability,
+					Reference:    json.RawMessage(`{"message":"Created resource #1","redirect":"` + tt.redirect + `"}`),
+				}},
+				lineage: jobs.Lineage{Job: jobs.Snapshot{ID: "job-legacy", Version: 1}},
+			}
+			recorder := httptest.NewRecorder()
+			request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-legacy", nil), map[string]string{"id": "job-legacy"})
+
+			GetJobDetailHandler(ctx)(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			var response struct {
+				Outputs []map[string]any `json:"outputs"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(response.Outputs) != 1 {
+				t.Fatalf("outputs = %#v, want one advertised result", response.Outputs)
+			}
+			got, _ := response.Outputs[0]["destinationUrl"].(string)
+			if got != tt.want {
+				t.Fatalf("destinationUrl = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestJobDetailAdvertisesOnlyCurrentPrincipalOpenableOutputs(t *testing.T) {
 	ctx := &jobDetailContextStub{
 		snapshot: jobs.Snapshot{ID: "job-123", Kind: "group-export", KindVersion: 1, State: jobs.StateSucceeded, Version: 7},

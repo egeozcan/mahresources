@@ -860,6 +860,50 @@ func (s *pluginActionSink) sanitizedResult(result map[string]any) map[string]any
 	return sanitized
 }
 
+// pluginActionEntityOutput recognizes only the canonical local detail-page routes
+// supported by resolveJobEntityOutput. The value passed here must come from the
+// sanitized result: a parameter echoed as a redirect has already been redacted and
+// cannot become a navigable output.
+func pluginActionEntityOutput(redirectValue any) (jobs.OutputInput, bool) {
+	redirect, ok := redirectValue.(string)
+	if !ok {
+		return jobs.OutputInput{}, false
+	}
+
+	targets := []struct {
+		path         string
+		referenceKey string
+		label        string
+	}{
+		{path: "/resource", referenceKey: "resourceId", label: "Resource"},
+		{path: "/group", referenceKey: "groupId", label: "Group"},
+		{path: "/note", referenceKey: "noteId", label: "Note"},
+	}
+	for _, target := range targets {
+		prefix := target.path + "?id="
+		if !strings.HasPrefix(redirect, prefix) {
+			continue
+		}
+		idText := strings.TrimPrefix(redirect, prefix)
+		id, err := strconv.ParseUint(idText, 10, strconv.IntSize)
+		if err != nil || id == 0 || strconv.FormatUint(id, 10) != idText {
+			return jobs.OutputInput{}, false
+		}
+
+		reference, err := json.Marshal(map[string]uint{target.referenceKey: uint(id)})
+		if err != nil {
+			return jobs.OutputInput{}, false
+		}
+		return jobs.OutputInput{
+			Key:       "entity",
+			Type:      jobs.OutputTypeEntity,
+			Label:     target.label,
+			Reference: reference,
+		}, true
+	}
+	return jobs.OutputInput{}, false
+}
+
 // sanitizedValue is sanitizedResult for one value of any shape.
 func (s *pluginActionSink) sanitizedValue(value any) any {
 	switch typed := value.(type) {
@@ -1090,6 +1134,12 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 			// optional document, and its absence must not turn the work that
 			// produced it into a failed Job.
 			s.warn("result-too-large", "the action's result is too large to store")
+		}
+		if entityOutput, ok := pluginActionEntityOutput(sanitized["redirect"]); ok {
+			if _, err := s.execution.Output(entityOutput); err != nil && !mirrorRefusalIsSilent(err) {
+				log.Printf("warning: could not publish the entity result of job %s: %v", s.execution.JobID, err)
+				publication = errors.Join(publication, err)
+			}
 		}
 	}
 	outcome := pluginActionOutcome{succeeded: true, message: s.safeText(message, jobs.MaxProgressMessageBytes)}

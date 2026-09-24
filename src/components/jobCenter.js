@@ -152,6 +152,47 @@ export function outputEndpoint(output) {
     return output?.url || output?.endpoint || output?.href || '';
 }
 
+function hasEntityCompanion(output, outputs) {
+    return Array.isArray(outputs) && outputs.some(candidate =>
+        candidate !== output && candidate?.key === 'entity' && candidate?.type === 'entity' && candidate?.availability === 'available',
+    );
+}
+
+export function outputLinkURL(output, outputs = []) {
+    if (output?.type === 'summary' && output.destinationUrl && !hasEntityCompanion(output, outputs)) {
+        return output.destinationUrl;
+    }
+    return outputEndpoint(output);
+}
+
+export function outputJSONLinkURL(output, outputs = []) {
+    if (output?.type === 'summary' && output.destinationUrl && !hasEntityCompanion(output, outputs)) {
+        return outputEndpoint(output);
+    }
+    return '';
+}
+
+export function outputLinkLabel(output, outputs = []) {
+    if (output?.type === 'entity') {
+        const label = String(output.label || '').trim().toLowerCase();
+        return `View ${label || 'entity'}`;
+    }
+    if (output?.type === 'summary') {
+        if (hasEntityCompanion(output, outputs)) return 'View JSON result';
+        if (output.destinationUrl) return 'View result';
+    }
+    if (output?.type === 'log') return 'Open log';
+    return 'Open output';
+}
+
+export function outputLinkAccessibleLabel(output, outputs = []) {
+    const visibleLabel = outputLinkLabel(output, outputs);
+    if (output?.type === 'entity' || (output?.type === 'summary' && (output.destinationUrl || hasEntityCompanion(output, outputs)))) return visibleLabel;
+    const name = String(output?.label || output?.key || '').trim();
+    if (!name) return visibleLabel;
+    return output?.type === 'log' ? `Open log ${name}` : `Open ${name}`;
+}
+
 export function stateOf(job) {
     return String(job?.state || 'unknown').toLowerCase();
 }
@@ -928,6 +969,10 @@ export function jobCenter(options = {}) {
         advertisedOutputs(job) { return advertisedOutputs(job); },
         warningEvents() { return warningEvents(this.timeline); },
         outputEndpoint(output) { return outputEndpoint(output); },
+        outputLinkURL(output, outputs) { return outputLinkURL(output, outputs); },
+        outputJSONLinkURL(output, outputs) { return outputJSONLinkURL(output, outputs); },
+        outputLinkLabel(output, outputs) { return outputLinkLabel(output, outputs); },
+        outputLinkAccessibleLabel(output, outputs) { return outputLinkAccessibleLabel(output, outputs); },
         get bulkBusy() { return this._bulkBusy || false; },
         set bulkBusy(value) { this._bulkBusy = value; },
 

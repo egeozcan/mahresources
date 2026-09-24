@@ -133,6 +133,12 @@ includes them.
 | `GET` | `/v1/jobs/summary` | Visible aggregate with a window up to 90 days |
 | `POST` | `/v1/jobs/summary/export` | Queue a CSV or JSON export for an explicit range over 90 days |
 
+Plugin actions that return a local Resource, Note, or Group redirect publish an
+entity output. Opening that output rechecks access before navigating to the
+entity. Job detail also shows a direct “View result” link for older plugin-action
+summary outputs that stored the same safe redirect before entity outputs were
+published.
+
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
 version. Bulk requests accept at most 200 Job IDs; each result commits

@@ -14,6 +14,10 @@ import {
     jobCenter,
     jobCommands,
     outputEndpoint,
+    outputLinkAccessibleLabel,
+    outputLinkLabel,
+    outputJSONLinkURL,
+    outputLinkURL,
     parseJobCenterURL,
     progressAccessibleText,
     progressText,
@@ -760,9 +764,41 @@ describe('Job Center templates', () => {
         expect(detailTemplate).toContain('x-for="command in commandsFor(detail)"');
         expect(detailTemplate).toContain('role="group" aria-label="Advertised job commands"');
         expect(detailTemplate).toContain('x-for="output in advertisedOutputs(detail)"');
-        expect(detailTemplate).toContain(':href="outputEndpoint(output)"');
+        expect(detailTemplate).toContain(':href="outputLinkURL(output, advertisedOutputs(detail))"');
         expect(detailTemplate).not.toMatch(/detail\.(?:kind|source)\s*===/);
         expect(detailTemplate).not.toMatch(/command\.(?:kind|source)\s*===/);
+    });
+
+    test('opens historical entity redirects directly and labels typed entity outputs clearly', () => {
+        const historical = {
+            key: 'result', type: 'summary', destinationUrl: '/resource?id=1',
+            url: '/v1/jobs/old-job/outputs?key=result', availability: 'available',
+        };
+        const entity = {
+            key: 'entity', type: 'entity', label: 'Resource',
+            url: '/v1/jobs/new-job/outputs?key=entity', availability: 'available',
+        };
+        const summaryURL = '/v1/jobs/old-job/outputs?key=result';
+        expect(outputLinkURL(historical, [historical])).toBe('/resource?id=1');
+        expect(outputJSONLinkURL(historical, [historical])).toBe(summaryURL);
+        expect(outputLinkLabel(historical, [historical])).toBe('View result');
+        expect(outputLinkAccessibleLabel(historical, [historical])).toBe('View result');
+        expect(outputLinkURL(entity)).toBe('/v1/jobs/new-job/outputs?key=entity');
+        expect(outputLinkLabel(entity)).toBe('View resource');
+        expect(outputLinkAccessibleLabel(entity)).toBe('View resource');
+
+        const both = [historical, entity];
+        expect(outputLinkURL(historical, both)).toBe(summaryURL);
+        expect(outputJSONLinkURL(historical, both)).toBe('');
+        expect(outputLinkLabel(historical, both)).toBe('View JSON result');
+        expect(outputLinkAccessibleLabel(historical, both)).toBe('View JSON result');
+        expect(outputLinkURL(historical, [historical, { ...entity, key: 'another', label: 'Group' }])).toBe('/resource?id=1');
+        expect(outputLinkURL(historical, [historical, { ...entity, availability: 'removed' }])).toBe('/resource?id=1');
+        expect(detailTemplate).toContain(':href="outputLinkURL(output, advertisedOutputs(detail))"');
+        expect(detailTemplate).toContain('outputLinkURL(output, advertisedOutputs(detail))');
+        expect(detailTemplate).toContain('outputJSONLinkURL(output, advertisedOutputs(detail))');
+        expect(detailTemplate).toContain('outputLinkAccessibleLabel(output, advertisedOutputs(detail))');
+        expect(detailTemplate).toContain('x-text="outputLinkLabel(output, advertisedOutputs(detail))"');
     });
 
     test('shows a visible, viewer-specific pin marker in list and detail views', () => {
@@ -779,7 +815,9 @@ describe('Job Center templates', () => {
         expect(detailTemplate).toContain('detail.summary');
         expect(detailTemplate).toContain('warningEvents()');
         expect(detailTemplate).toContain('output.expiresAt');
-        expect(detailTemplate).toContain("output.type === 'log' ? 'Open log' : 'Open output'");
+        expect(detailTemplate).toContain('x-text="outputLinkLabel(output, advertisedOutputs(detail))"');
+        expect(outputLinkLabel({ type: 'log' })).toBe('Open log');
+        expect(outputLinkAccessibleLabel({ type: 'log', label: 'stderr' })).toBe('Open log stderr');
         expect(detailTemplate).not.toMatch(/diagnosticRef|resultPath|rawPath/);
     });
 

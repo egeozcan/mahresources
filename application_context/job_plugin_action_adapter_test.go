@@ -45,7 +45,18 @@ function async_work(ctx)
     bump("ran")
     mah.job_progress(ctx.job_id, 50, "halfway")
     mah.job_complete(ctx.job_id, { message = "all done", entity = ctx.entity_id,
-                                  note = ctx.params.note or "" })
+                                  note = ctx.params.note or "",
+                                  redirect = "/resource?id=" .. tostring(ctx.entity_id) })
+end
+
+function unsafe_redirect_work(ctx)
+    local redirect = "https://outside.example/resource?id=7"
+    if ctx.entity_id == 8 then redirect = "/v1/resource/8" end
+    mah.job_complete(ctx.job_id, { message = "done", redirect = redirect })
+end
+
+function parameter_redirect_work(ctx)
+    mah.job_complete(ctx.job_id, { message = "done", redirect = ctx.params.redirect })
 end
 
 function failing_work(ctx)
@@ -139,6 +150,11 @@ function init()
     mah.action({ id = "async-work", label = "Async Work", entity = "resource", async = true,
                  params = { {name = "note", type = "text", label = "Note"} },
                  handler = async_work })
+    mah.action({ id = "unsafe-redirect-work", label = "Unsafe Redirect Work", entity = "resource", async = true,
+                 handler = unsafe_redirect_work })
+    mah.action({ id = "parameter-redirect-work", label = "Parameter Redirect Work", entity = "resource", async = true,
+                 params = { {name = "redirect", type = "text", label = "Redirect"} },
+                 handler = parameter_redirect_work })
     mah.action({ id = "failing-work", label = "Failing Work", entity = "resource", async = true,
                  handler = failing_work })
     mah.action({ id = "lingering-work", label = "Lingering Work", entity = "resource", async = true,
@@ -279,6 +295,29 @@ func TestAnAsyncPluginActionAcceptsADurableJobBeforeItRuns(t *testing.T) {
 		job.Progress.Unit != "percent" || job.Progress.Message != "all done" {
 		t.Fatalf("successful action progress = %+v, want 100/100 percent with completion message", job.Progress)
 	}
+	outputs, err := ctx.GetJobOutputs(job.ID)
+	if err != nil {
+		t.Fatalf("read the completed action outputs: %v", err)
+	}
+	var gotSummary, gotEntity bool
+	for _, output := range outputs {
+		switch output.Key {
+		case "result":
+			gotSummary = output.Type == jobs.OutputTypeSummary
+		case "entity":
+			gotEntity = true
+			var reference map[string]uint
+			if err := json.Unmarshal(output.Reference, &reference); err != nil {
+				t.Fatalf("decode entity output reference %s: %v", output.Reference, err)
+			}
+			if output.Type != jobs.OutputTypeEntity || output.Label != "Resource" || reference["resourceId"] != 7 || len(reference) != 1 {
+				t.Fatalf("entity output = %+v with reference %s, want resource 7", output, output.Reference)
+			}
+		}
+	}
+	if !gotSummary || !gotEntity {
+		t.Fatalf("completed action outputs include summary=%t entity=%t, want both", gotSummary, gotEntity)
+	}
 	if got := pluginKVForTest(t, ctx, "ran"); got != "1" {
 		t.Fatalf("the handler ran %q times, want once", got)
 	}
@@ -305,6 +344,97 @@ func TestAnAsyncPluginActionAcceptsADurableJobBeforeItRuns(t *testing.T) {
 	}
 	if legacy.Status != "completed" {
 		t.Fatalf("the projection says %q, want completed", legacy.Status)
+	}
+}
+
+func TestAPluginActionDoesNotPublishAnEntityForExternalOrArbitraryRedirects(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	for _, entityID := range []uint{7, 8} {
+		_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "unsafe-redirect-work", entityID, nil, "")
+		if err != nil {
+			t.Fatalf("run the action for entity %d: %v", entityID, err)
+		}
+		finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if finished.State != jobs.StateSucceeded {
+			t.Fatalf("the action ended %s (%+v)", finished.State, finished.Failure)
+		}
+		outputs, err := ctx.GetJobOutputs(jobID)
+		if err != nil {
+			t.Fatalf("read the completed action outputs: %v", err)
+		}
+		var gotSummary bool
+		for _, output := range outputs {
+			if output.Key == "result" && output.Type == jobs.OutputTypeSummary {
+				gotSummary = true
+			}
+			if output.Key == "entity" || output.Type == jobs.OutputTypeEntity {
+				t.Fatalf("unsafe redirect for entity %d published an entity output: %+v", entityID, output)
+			}
+		}
+		if !gotSummary {
+			t.Fatalf("unsafe redirect result summary was not preserved: %+v", outputs)
+		}
+	}
+}
+
+func TestAPluginActionDoesNotPublishAParameterRedirectAfterRedaction(t *testing.T) {
+	const redirect = "/resource?id=7"
+	ctx := newPluginActionJobContext(t)
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "parameter-redirect-work", 7,
+		map[string]any{"redirect": redirect}, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, redirect)
+	outputs, err := ctx.GetJobOutputs(jobID)
+	if err != nil {
+		t.Fatalf("read the completed action outputs: %v", err)
+	}
+	for _, output := range outputs {
+		if output.Key == "entity" || output.Type == jobs.OutputTypeEntity {
+			t.Fatalf("redacted parameter redirect published an entity output: %+v", output)
+		}
+	}
+}
+
+func TestPluginActionEntityOutputAcceptsOnlyCanonicalLocalRedirects(t *testing.T) {
+	tests := []struct {
+		name       string
+		redirect   any
+		label      string
+		reference  string
+		wantOutput bool
+	}{
+		{name: "resource", redirect: "/resource?id=17", label: "Resource", reference: `{"resourceId":17}`, wantOutput: true},
+		{name: "group", redirect: "/group?id=18", label: "Group", reference: `{"groupId":18}`, wantOutput: true},
+		{name: "note", redirect: "/note?id=19", label: "Note", reference: `{"noteId":19}`, wantOutput: true},
+		{name: "zero id", redirect: "/resource?id=0"},
+		{name: "leading zero", redirect: "/resource?id=07"},
+		{name: "extra query", redirect: "/resource?id=17&next=/note?id=19"},
+		{name: "absolute URL", redirect: "https://outside.example/resource?id=17"},
+		{name: "non string", redirect: 17},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, ok := pluginActionEntityOutput(test.redirect)
+			if ok != test.wantOutput {
+				t.Fatalf("pluginActionEntityOutput(%v) accepted=%t, want %t", test.redirect, ok, test.wantOutput)
+			}
+			if !ok {
+				return
+			}
+			if output.Key != "entity" || output.Type != jobs.OutputTypeEntity || output.Label != test.label || string(output.Reference) != test.reference {
+				t.Fatalf("entity output = %+v, want label %q and reference %s", output, test.label, test.reference)
+			}
+		})
 	}
 }
 

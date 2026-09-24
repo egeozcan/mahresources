@@ -80,8 +80,11 @@
                                 <p class="mt-0.5 text-xs text-stone-500"><span x-text="output.type"></span><span> · </span><span x-text="output.availability"></span></p>
                                 <time x-show="output.expiresAt" class="mt-0.5 block text-xs text-stone-500" :datetime="output.expiresAt" x-text="output.expiresAt ? 'Expires ' + new Date(output.expiresAt).toLocaleString() : ''"></time>
                             </div>
-                            <template x-if="outputEndpoint(output) && output.availability === 'available'">
-                                <a :href="outputEndpoint(output)" :aria-label="(output.type === 'log' ? 'Open log ' : 'Open ') + (output.label || output.key)" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900" x-text="output.type === 'log' ? 'Open log' : 'Open output'"></a>
+                            <template x-if="outputLinkURL(output, advertisedOutputs(detail)) && output.availability === 'available'">
+                                <a :href="outputLinkURL(output, advertisedOutputs(detail))" :aria-label="outputLinkAccessibleLabel(output, advertisedOutputs(detail))" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900" x-text="outputLinkLabel(output, advertisedOutputs(detail))"></a>
+                            </template>
+                            <template x-if="outputJSONLinkURL(output, advertisedOutputs(detail)) && output.availability === 'available'">
+                                <a :href="outputJSONLinkURL(output, advertisedOutputs(detail))" aria-label="View JSON result" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900">View JSON result</a>
                             </template>
                             <span x-show="output.availability !== 'available'" class="text-xs text-stone-600" x-text="output.availability === 'expired' ? 'Expired' : 'Unavailable'"></span>
                         </li>

@@ -64,15 +64,16 @@ type JobCommandResponse struct {
 }
 
 type JobOutputResponse struct {
-	ID           string                  `json:"id"`
-	Key          string                  `json:"key"`
-	Type         string                  `json:"type"`
-	Label        string                  `json:"label,omitempty"`
-	Required     bool                    `json:"required"`
-	Availability jobs.OutputAvailability `json:"availability"`
-	Version      uint64                  `json:"version"`
-	ExpiresAt    *time.Time              `json:"expiresAt,omitempty"`
-	URL          string                  `json:"url"`
+	ID             string                  `json:"id"`
+	Key            string                  `json:"key"`
+	Type           string                  `json:"type"`
+	Label          string                  `json:"label,omitempty"`
+	DestinationURL string                  `json:"destinationUrl,omitempty"`
+	Required       bool                    `json:"required"`
+	Availability   jobs.OutputAvailability `json:"availability"`
+	Version        uint64                  `json:"version"`
+	ExpiresAt      *time.Time              `json:"expiresAt,omitempty"`
+	URL            string                  `json:"url"`
 }
 
 type JobLineageResponse struct {
@@ -171,19 +172,70 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 			})
 		}
 		for _, output := range outputs {
-			response.Outputs = append(response.Outputs, jobOutputResponse(jobID, output))
+			response.Outputs = append(response.Outputs, jobOutputResponse(jobID, snap.Kind, output))
 		}
 		writeJobJSON(w, http.StatusOK, response)
 	}
 }
 
-func jobOutputResponse(jobID string, output jobs.Output) JobOutputResponse {
+func jobOutputResponse(jobID, jobKind string, output jobs.Output) JobOutputResponse {
 	return JobOutputResponse{
 		ID: output.ID, Key: output.Key, Type: output.Type, Label: output.Label,
-		Required: output.Required, Availability: output.Availability, Version: output.Version,
+		DestinationURL: summaryEntityDestinationURL(jobKind, output),
+		Required:       output.Required, Availability: output.Availability, Version: output.Version,
 		ExpiresAt: output.ExpiresAt,
 		URL:       "/v1/jobs/" + url.PathEscape(jobID) + "/outputs?key=" + url.QueryEscape(output.Key),
 	}
+}
+
+// summaryEntityDestinationURL restores the direct entity navigation that
+// historical plugin-action summaries recorded as a result.redirect value.
+// The target route performs normal authorization when opened; this API only
+// advertises a tightly constrained same-origin destination.
+func summaryEntityDestinationURL(jobKind string, output jobs.Output) string {
+	if jobKind != application_context.JobKindPluginAction || output.Key != "result" ||
+		output.Type != jobs.OutputTypeSummary || output.Availability != jobs.OutputAvailable || !json.Valid(output.Reference) {
+		return ""
+	}
+	var reference map[string]json.RawMessage
+	if err := json.Unmarshal(output.Reference, &reference); err != nil || reference == nil {
+		return ""
+	}
+	var redirect string
+	if err := json.Unmarshal(reference["redirect"], &redirect); err != nil {
+		return ""
+	}
+	return safeEntityDestinationURL(redirect)
+}
+
+func safeEntityDestinationURL(raw string) string {
+	if raw == "" || strings.ContainsAny(raw, "\\\r\n") || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.Fragment != "" || parsed.RawFragment != "" || parsed.RawPath != "" {
+		return ""
+	}
+	if parsed.Path != "/resource" && parsed.Path != "/note" && parsed.Path != "/group" {
+		return ""
+	}
+	if raw != parsed.Path+"?"+parsed.RawQuery {
+		return ""
+	}
+	values, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil || len(values) != 1 {
+		return ""
+	}
+	ids, ok := values["id"]
+	if !ok || len(ids) != 1 {
+		return ""
+	}
+	id, err := strconv.ParseUint(ids[0], 10, 64)
+	if err != nil || id == 0 || parsed.RawQuery != "id="+strconv.FormatUint(id, 10) {
+		return ""
+	}
+	return parsed.Path + "?id=" + strconv.FormatUint(id, 10)
 }
 
 func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {

@@ -13795,3 +13795,18 @@ Validation: tagged focused Go tests for `jobs` and `application_context`, 36 Job
 The API now projects `pinned` for the requesting viewer on detail, paged list, lineage, and command-result snapshots. The list projection uses one preference query per page. Pin and Unpin remain bulk-capable and idempotent; single-Job controls and homogeneous bulk selections show the relevant action. The visible “Pinned by you” marker appears in list rows, detail, and panel.
 
 Focused Go tests and the broader `jobs` and API handler packages passed. The Job Center UI suite passed 62 tests, and a new browser regression passed against a fresh ephemeral server after the final build. On the local demo, the reported fal.ai Job now shows “Pinned by you” and Unpin in detail, and the pinned list shows the marker. The demo remains available at `http://127.0.0.1:8182`. Sol backend and UI reviews found edge cases in conflict snapshots and bulk selection state; both were fixed and re-reviewed with no remaining findings. The requested final Astra review found no actionable issues. `git diff --check` passed.
+
+## Plugin result Resource navigation — 2026-09-24
+
+- [x] Reproduce the missing link on the reported historical fal.ai Job and inspect its stored output.
+- [x] Publish a typed entity output for new plugin-action results with a safe local entity redirect.
+- [x] Restore a direct Job detail link from existing result summaries with a validated entity redirect.
+- [x] Verify the historical Job in the local demo, run focused regressions, and request Sol and Astra reviews.
+
+### Review
+
+The old cockpit rendered the plugin result's `redirect` field. The plugin still returns `/resource?id=1` for the reported Job, and the Resource page responds successfully. The canonical Job stores the redirect inside a `summary` output, but Job detail currently renders only a generic link to the JSON output. The fix belongs in the host's output publication and Job Center presentation.
+
+The plugin-action adapter now publishes an optional typed entity output from a sanitized, canonical local Resource, Note, or Group redirect. For historical plugin-action `result` summaries, Job detail receives a strictly validated same-origin `destinationUrl`. It shows both “View result” and “View JSON result”, preserving the raw summary. New Jobs show the entity link and still let the summary open as JSON. Other Job Kinds and other summary keys do not gain navigation from a `redirect` field.
+
+The focused plugin-action completion tests, API handler tests, and 41 Job Center UI tests passed. A rebuilt local demo showed both historical links on the reported fal.ai Job; clicking “View result” opened `/resource?id=1`. Sol reviews found and verified fixes for JSON access and cross-Kind projection; the plugin output review found no actionable issues. The requested final Astra review found no actionable issues. `git diff --check` passed.
