@@ -1,5 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { captureTrigger, focusedElement, focusFirstIn, restoreFocus } from '../utils/focus.js';
+import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
 import {
     advertisedCommands,
@@ -19,6 +19,8 @@ import {
 
 const PANEL_LIMIT = 5;
 const PANEL_REFRESH_MAX_WAIT_MS = 500;
+// One list page is one bulk dismiss: the server's MaxPageSize and MaxBulkCommandJobs are both 200.
+const FINISHED_PAGE_LIMIT = 200;
 const PANEL_STATE_FILTERS = [
     ['blocked', 'failed', 'interrupted'],
     ['scheduled', 'queued', 'running', 'paused'],
@@ -68,7 +70,6 @@ export function jobPanel() {
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
-        outcomes: [],
         _pendingLiveJobUpdates: new Map(),
         _resourceRefreshNotified: new Set(),
         busy: false,
@@ -99,6 +100,10 @@ export function jobPanel() {
                     restoreFocus(this._lastTrigger, this._trigger);
                     this._lastTrigger = null;
                 }
+            });
+            // The expression is the Dismiss finished button's own x-show.
+            this.$watch?.('finishedCount > 0 || busy', shown => {
+                if (!shown) this.$nextTick?.(() => this.keepFocusWhenDismissHides());
             });
             this.connect();
             this.refresh();
@@ -363,7 +368,11 @@ export function jobPanel() {
             }
         },
 
-        applyStreamSnapshot(job, announce = false, allowInsert = true) {
+        // Every caller is a command or preference answer about a row the panel
+        // already had. A row gone by the time the answer lands was removed on
+        // purpose — dismissed, or refreshed out — so the answer updates rows
+        // and never resurrects one.
+        applyStreamSnapshot(job, announce = false, allowInsert = false) {
             const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert });
             if (!result.changed) return;
             this.jobs = boundedPanelJobs(result.jobs);
@@ -450,44 +459,89 @@ export function jobPanel() {
             }
         },
 
+        // Dismisses every finished job this viewer has not dismissed, not only the
+        // few the panel shows. The list is walked by keyset cursor, so rows leaving
+        // the undismissed filter while we page do not shift it, and each page fits
+        // one bulk request. The server answers per job, so it alone decides which
+        // jobs may be dismissed. Only counts are kept: a backlog can be far larger
+        // than anything worth holding in the page.
         async dismissFinished() {
-            const finished = this.jobs.filter(job => classifyJobState(job) === 'finished');
-            const eligible = finished.map(job => ({ job, command: this.commandsFor(job).find(command => command.key === 'dismiss') }))
-                .filter(item => item.command);
-            if (!eligible.length || this.busy) return [];
-            const unavailable = finished.filter(job => !eligible.some(item => item.job.id === job.id))
-                .map(job => ({ jobId: job.id, key: 'dismiss', status: 'failed', code: 'not-advertised', message: 'Dismiss is not available for this job.' }));
-            const bulk = eligible.every(item => item.command.bulk);
+            if (this.busy || this.finishedCount === 0) return { dismissed: 0, total: 0 };
             this.busy = true;
-            this.outcomes = [];
+            let dismissed = 0;
+            let total = 0;
+            let refusal = '';
             try {
-                if (bulk) {
-                    const key = commandKey();
-                    const payload = await this.requestJSON(`/v1/jobs/commands/${encodeURIComponent(eligible[0].command.key)}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-                        body: JSON.stringify({ jobIds: eligible.map(item => item.job.id), idempotencyKey: key }),
-                    });
-                    this.outcomes = [...(payload.results || []), ...unavailable];
-                } else {
-                    for (const item of eligible) {
-                        const outcome = await this.runCommand(item.job, item.command);
-                        this.outcomes.push({ jobId: item.job.id, ...(outcome || { status: 'failed', message: this.notice }) });
+                let cursor = '';
+                do {
+                    const page = await this.requestJSON(buildFinishedPageURL(cursor));
+                    const jobIds = (page.jobs || []).map(job => job.id);
+                    if (jobIds.length) {
+                        const key = commandKey();
+                        const payload = await this.requestJSON('/v1/jobs/commands/dismiss', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+                            body: JSON.stringify({ jobIds, idempotencyKey: key }),
+                        });
+                        // A refresh issued before this dismissal committed
+                        // would put its rows back; the generation fence
+                        // discards it. One issued from here on already sees
+                        // the dismissal.
+                        this._refreshGeneration += 1;
+                        const confirmed = new Set();
+                        for (const result of payload.results || []) {
+                            total += 1;
+                            if (result.status === 'succeeded' || result.code === 'applied') {
+                                dismissed += 1;
+                                confirmed.add(result.jobId);
+                            } else if (!refusal) {
+                                refusal = result.message || result.code || 'refused';
+                            }
+                        }
+                        // Rows the server confirmed dismissed leave the panel
+                        // now rather than waiting on a final refresh that may
+                        // fail. Only this page's ids are held.
+                        if (confirmed.size) this.jobs = this.jobs.filter(job => !confirmed.has(job.id));
                     }
-                    this.outcomes.push(...unavailable);
-                }
-                const done = this.outcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;
-                this.notice = `${done} of ${finished.length} finished job${finished.length === 1 ? '' : 's'} dismissed.`;
+                    cursor = page.nextCursor || '';
+                } while (cursor);
+                const plural = total === 1 ? '' : 's';
+                this.notice = dismissed === total
+                    ? `${dismissed} finished job${plural} dismissed.`
+                    : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
                 this.announce(this.notice);
-                await this.refresh();
-                return this.outcomes;
             } catch (error) {
-                this.notice = error.message || 'Could not dismiss finished jobs.';
+                const reason = error.message || 'Could not dismiss finished jobs.';
+                this.notice = dismissed > 0
+                    ? `${dismissed} finished job${dismissed === 1 ? '' : 's'} dismissed before an error: ${reason}`
+                    : reason;
+                if (refusal) this.notice = `${this.notice.replace(/\.$/, '')}. Not dismissed: ${refusal}`;
                 this.announce(this.notice);
-                return this.outcomes;
+            }
+            // Busy lasts through the refresh, which brings in whatever the
+            // cleared rows made room for.
+            try {
+                await this.refresh();
             } finally {
                 this.busy = false;
             }
+            return { dismissed, total };
+        },
+
+        // "Dismiss finished" hides once nothing finished is shown, and it is
+        // usually the control holding focus. Whichever refresh hides it — this
+        // one, or a stream-driven one that lands later — hand focus to the
+        // footer's next control rather than letting it fall behind the dialog.
+        // Focus the reader already moved elsewhere is left alone. The decision
+        // reads the state x-show reads rather than the button's visibility,
+        // because x-show applies a hide a frame later than the state changes.
+        keepFocusWhenDismissHides() {
+            if (typeof document === 'undefined' || this.finishedCount > 0 || this.busy) return;
+            const button = document.querySelector('#job-center-panel [data-job-panel-dismiss-finished]');
+            if (!button) return;
+            const active = document.activeElement;
+            if (active && active !== button && active !== document.body) return;
+            focusOn(document.querySelector('#job-center-panel [data-job-panel-all-jobs]'));
         },
 
         stateLabel(job) { return stateLabel(job); },
@@ -500,6 +554,15 @@ function buildPanelListURL(states) {
     states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
     params.set('limit', String(PANEL_LIMIT));
+    return `/v1/jobs?${params}`;
+}
+
+function buildFinishedPageURL(cursor) {
+    const params = new URLSearchParams();
+    PANEL_STATE_FILTERS[2].forEach(state => params.append('state', state));
+    params.set('dismissed', 'false');
+    params.set('limit', String(FINISHED_PAGE_LIMIT));
+    if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
 }
 

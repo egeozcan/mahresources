@@ -169,27 +169,199 @@ describe('Job Center panel', () => {
         expect(dispatchEvent.mock.calls[0][0]).toMatchObject({ type: 'download-completed', detail: { jobId: 'download-1' } });
     });
 
-    test('opens only advertised panel commands and sends per-job outcomes', async () => {
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            json: async () => ({ results: [{ jobId: 'job-1', key: 'dismiss', status: 'succeeded', code: 'applied', message: 'Dismissed' }] }),
-        }));
-        vi.stubGlobal('fetch', fetchMock);
+    function dismissAllHarness(pages: Array<{ ids: string[]; nextCursor?: string }>, failIds: string[] = []) {
         const panel = jobPanel();
         panel.jobs = [{
-            id: 'job-1', state: 'succeeded', version: 7,
-            commands: [{ key: 'dismiss', label: 'Dismiss finished', endpoint: '/v1/jobs/job-1/commands/dismiss', jobVersion: 7, bulk: true }],
-        }, { id: 'job-2', state: 'cancelled', version: 3, commands: [] }];
+            id: 'shown-1', state: 'succeeded', version: 7,
+            commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 7, bulk: true }],
+        }];
+        panel.details['shown-1'] = panel.jobs[0];
+        const listURLs: URL[] = [];
+        const posts: Array<{ url: string; init: any; body: any }> = [];
+        const busyDuringRefresh: boolean[] = [];
+        panel.requestJSON = vi.fn(async (raw: string, init: any = {}) => {
+            const url = String(raw);
+            if (init.method === 'POST') {
+                const body = JSON.parse(init.body);
+                posts.push({ url, init, body });
+                return {
+                    results: body.jobIds.map((jobId: string) => failIds.includes(jobId)
+                        ? { jobId, key: 'dismiss', status: 'failed', code: 'conflict', message: 'the job changed; try again' }
+                        : { jobId, key: 'dismiss', status: 'succeeded', code: 'applied' }),
+                };
+            }
+            const parsed = new URL(url, 'http://localhost');
+            if (parsed.searchParams.get('limit') === '5') busyDuringRefresh.push(panel.busy);
+            if (parsed.searchParams.get('limit') === '200') {
+                listURLs.push(parsed);
+                const page = pages[listURLs.length - 1] || { ids: [] };
+                return { jobs: page.ids.map(id => ({ id, state: 'succeeded', version: 1 })), nextCursor: page.nextCursor };
+            }
+            return { jobs: [] };
+        });
+        return { panel, listURLs, posts, busyDuringRefresh };
+    }
 
-        const outcomes = await panel.dismissFinished();
+    test('dismisses every finished job, not only the ones the panel shows', async () => {
+        const first = Array.from({ length: 200 }, (_, index) => `job-${index}`);
+        const second = ['job-200', 'job-201', 'job-202'];
+        const { panel, listURLs, posts, busyDuringRefresh } = dismissAllHarness([{ ids: first, nextCursor: 'c1' }, { ids: second }]);
 
-        expect(fetchMock.mock.calls[0][0]).toBe('/v1/jobs/commands/dismiss');
-        expect(outcomes).toMatchObject([
-            { jobId: 'job-1', code: 'applied' },
-            { jobId: 'job-2', code: 'not-advertised', status: 'failed' },
-        ]);
-        expect(panel.notice).toMatch(/1 of 2 finished jobs dismissed/i);
-        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('dismissed=false'))).toBe(true);
+        const outcome = await panel.dismissFinished();
+
+        expect(listURLs).toHaveLength(2);
+        for (const url of listURLs) {
+            expect(url.pathname).toBe('/v1/jobs');
+            expect(url.searchParams.getAll('state')).toEqual(['succeeded', 'cancelled']);
+            expect(url.searchParams.get('dismissed')).toBe('false');
+        }
+        expect(listURLs[0].searchParams.has('cursor')).toBe(false);
+        expect(listURLs[1].searchParams.get('cursor')).toBe('c1');
+        expect(posts.map(post => post.url)).toEqual(['/v1/jobs/commands/dismiss', '/v1/jobs/commands/dismiss']);
+        expect(posts.flatMap(post => post.body.jobIds)).toEqual([...first, ...second]);
+        const keys = posts.map(post => post.init.headers['Idempotency-Key']);
+        expect(new Set(keys).size).toBe(2);
+        expect(outcome).toEqual({ dismissed: 203, total: 203 });
+        expect(panel.notice).toBe('203 finished jobs dismissed.');
+        // The refresh that replaces the stale rows runs while the run still owns
+        // the button, so a second click cannot start over the finished one.
+        expect(busyDuringRefresh.length).toBeGreaterThan(0);
+        expect(busyDuringRefresh.every(Boolean)).toBe(true);
+        expect(panel.busy).toBe(false);
+        await expect(panel.dismissFinished()).resolves.toEqual({ dismissed: 0, total: 0 });
+    });
+
+    test('reports a partial dismissal as a count, not a list of ids', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['a', 'b', 'c'] }], ['b']);
+
+        await panel.dismissFinished();
+
+        expect(panel.notice).toBe('2 of 3 finished jobs dismissed. Not dismissed: the job changed; try again');
+        expect('outcomes' in panel).toBe(false);
+    });
+
+    test('removes the shown rows it dismissed even when the refresh fails', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['shown-1', 'b'] }]);
+        const answer = panel.requestJSON;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            if (!init.method && new URL(url, 'http://localhost').searchParams.get('limit') === '5') {
+                throw new Error('Request failed (503)');
+            }
+            return answer(url, init);
+        });
+
+        await panel.dismissFinished();
+
+        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        expect(panel.jobs.map(job => job.id)).not.toContain('shown-1');
+        expect(panel.finishedCount).toBe(0);
+        expect(panel.busy).toBe(false);
+    });
+
+    test('removes a row a mid-run refresh brought in once its page is dismissed', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['shown-1'], nextCursor: 'c1' }, { ids: ['older-1'] }]);
+        const answer = panel.requestJSON;
+        let lists = 0;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            const limit = !init.method && new URL(url, 'http://localhost').searchParams.get('limit');
+            if (limit === '5') throw new Error('Request failed (503)');
+            // A stream-driven refresh lands between the pages and shows an older
+            // finished row the run has not reached yet.
+            if (limit === '200' && ++lists === 2) {
+                panel.jobs = [{ id: 'older-1', state: 'succeeded', version: 1, commands: [{ key: 'dismiss', bulk: true }] }];
+            }
+            return answer(url, init);
+        });
+
+        await panel.dismissFinished();
+
+        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        expect(panel.jobs).toEqual([]);
+        expect(panel.finishedCount).toBe(0);
+    });
+
+    test('discards a refresh issued before a page was dismissed', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['shown-1'], nextCursor: 'c1' }, { ids: ['b'] }]);
+        const answer = panel.requestJSON;
+        const shownRow = panel.jobs[0];
+        let releaseStale: () => void = () => {};
+        const staleHeld = new Promise<void>(resolve => { releaseStale = resolve; });
+        let staleRefresh: Promise<unknown> | null = null;
+        let lists = 0;
+        let refreshes = 0;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            const limit = !init.method && new URL(url, 'http://localhost').searchParams.get('limit');
+            if (limit === '5') {
+                // The first refresh is a stream-driven one whose answer predates
+                // the dismissal; the final refresh fails.
+                if (++refreshes <= 3) {
+                    await staleHeld;
+                    return { jobs: new URL(url, 'http://localhost').searchParams.getAll('state').includes('succeeded') ? [shownRow] : [] };
+                }
+                throw new Error('Request failed (503)');
+            }
+            if (init.method === 'POST' && !staleRefresh) staleRefresh = panel.refresh();
+            // The stale answer lands while the next page is being read.
+            if (limit === '200' && ++lists === 2) releaseStale();
+            return answer(url, init);
+        });
+
+        await panel.dismissFinished();
+        await staleRefresh;
+
+        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        expect(panel.jobs).toEqual([]);
+    });
+
+    test('keeps an earlier refusal when a later page fails', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['a', 'b'], nextCursor: 'c1' }], ['b']);
+        const answer = panel.requestJSON;
+        let lists = 0;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            if (!init.method && new URL(url, 'http://localhost').searchParams.get('limit') === '200' && ++lists === 2) {
+                throw new Error('Request failed (500)');
+            }
+            return answer(url, init);
+        });
+
+        await panel.dismissFinished();
+
+        expect(panel.notice).toBe('1 finished job dismissed before an error: Request failed (500). Not dismissed: the job changed; try again');
+    });
+
+    test('a command answer arriving after its row was dismissed does not bring it back', async () => {
+        const panel = jobPanel();
+        panel.jobs = [];
+        panel.applyStreamSnapshot({ id: 'gone', state: 'succeeded', version: 9, pinned: false });
+        expect(panel.jobs).toEqual([]);
+    });
+
+    test('keeps a shown row the server refused to dismiss', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['shown-1'] }], ['shown-1']);
+        panel.refresh = vi.fn(async () => {});
+
+        await panel.dismissFinished();
+
+        expect(panel.notice).toBe('0 of 1 finished job dismissed. Not dismissed: the job changed; try again');
+        expect(panel.jobs.map(job => job.id)).toEqual(['shown-1']);
+    });
+
+    test('says how many were dismissed when a later page fails', async () => {
+        const { panel } = dismissAllHarness([{ ids: ['a', 'b'], nextCursor: 'c1' }]);
+        const answer = panel.requestJSON;
+        let lists = 0;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            if (!init.method && new URL(url, 'http://localhost').searchParams.get('limit') === '200' && ++lists === 2) {
+                throw new Error('Request failed (500)');
+            }
+            return answer(url, init);
+        });
+
+        const outcome = await panel.dismissFinished();
+
+        expect(outcome).toEqual({ dismissed: 2, total: 2 });
+        expect(panel.notice).toBe('2 finished jobs dismissed before an error: Request failed (500)');
+        expect(panel.busy).toBe(false);
     });
 
     test('refreshes viewer pin state after pinning from the panel', async () => {
@@ -771,6 +943,14 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).toContain('aria-hidden="true" @click="close()"');
         expect(template).toContain('fixed inset-x-0 bottom-0');
         expect(template).toContain('Dismiss finished');
+        expect(template).not.toContain('Dismiss outcomes');
+        expect(template).not.toContain('outcome in outcomes');
+        // The button stays while a long dismissal runs, and stays focusable: a
+        // disabled focused button drops focus to the page behind the dialog.
+        expect(template).toContain('x-show="finishedCount > 0 || busy"');
+        expect(template).toContain(':aria-disabled="busy.toString()"');
+        expect(template).not.toContain(':disabled="busy"');
+        expect(template).toContain('data-job-panel-all-jobs');
         expect(template).toContain('All jobs');
         expect(template).toContain('x-for="command in commandsFor(job)"');
         expect(template).toContain('x-if="resultOutput(job)"');

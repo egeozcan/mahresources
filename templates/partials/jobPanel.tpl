@@ -68,15 +68,10 @@
                 </div>
 
                 <footer class="flex flex-wrap items-center justify-between gap-2 border-t border-stone-200 bg-stone-50 p-3">
-                    <button type="button" x-show="finishedCount > 0" @click="dismissFinished()" :disabled="busy" class="rounded border border-stone-400 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-100 disabled:opacity-50">Dismiss finished</button>
-                    <a href="/jobs" class="ml-auto rounded bg-stone-800 px-3 py-2 text-sm font-medium text-white hover:bg-stone-900">All jobs</a>
+                    <button type="button" data-job-panel-dismiss-finished x-show="finishedCount > 0 || busy" @click="dismissFinished()" :aria-disabled="busy.toString()" x-text="busy ? 'Dismissing…' : 'Dismiss finished'" class="rounded border border-stone-400 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-100 aria-disabled:cursor-not-allowed aria-disabled:opacity-50">Dismiss finished</button>
+                    <a href="/jobs" data-job-panel-all-jobs class="ml-auto rounded bg-stone-800 px-3 py-2 text-sm font-medium text-white hover:bg-stone-900">All jobs</a>
                 </footer>
 
-                <ul x-show="outcomes.length" x-cloak class="max-h-32 overflow-y-auto border-t border-stone-200 bg-white px-3 py-2 text-xs" aria-label="Dismiss outcomes">
-                    <template x-for="outcome in outcomes" :key="outcome.jobId">
-                        <li class="flex flex-wrap gap-x-2 py-1"><span class="font-mono text-stone-600" x-text="outcome.jobId"></span><span x-text="outcome.message || outcome.code || outcome.status"></span></li>
-                    </template>
-                </ul>
                 </section>
             </div>
         </template>

@@ -398,6 +398,48 @@ test.describe('Job Center', () => {
     await expect(page.getByTestId('job-center')).toBeVisible();
   });
 
+  test('Dismiss finished in the panel dismisses every finished job, not only the rows shown', async ({ page, request, baseURL }) => {
+    // Each worker owns its server, so dismissing everything finished here only
+    // touches jobs earlier tests in this worker already finished with.
+    const groupId = await createGroup(request, `job-center-dismiss-all-${Date.now()}`);
+    // More finished jobs than the panel's five-per-bucket page, from distinct
+    // files so no two collide on content hash.
+    const icons = ['android-icon-36x36', 'android-icon-48x48', 'android-icon-72x72', 'android-icon-96x96',
+      'apple-icon-57x57', 'apple-icon-60x60', 'apple-icon-76x76'];
+    const submitted: string[] = [];
+    for (const icon of icons) {
+      const response = await request.post('/v1/download/submit', {
+        data: { URL: `${baseURL}/public/favicon/${icon}.png`, OwnerId: groupId, FileName: `${icon}.png` },
+      });
+      expect(response.status(), await response.text()).toBe(202);
+      const canonicalId = (await response.json()).jobs?.[0]?.canonicalJobId;
+      expect(canonicalId).toEqual(expect.any(String));
+      submitted.push(canonicalId);
+    }
+    // This test's own backlog, not whatever earlier tests left behind.
+    for (const id of submitted) await waitForJobState(request, id, 'succeeded');
+    const undismissedFinished = async () => {
+      const response = await request.get('/v1/jobs?state=succeeded&state=cancelled&dismissed=false&limit=200');
+      expect(response.ok()).toBe(true);
+      return ((await response.json()).jobs as Job[]).map(job => job.id);
+    };
+    expect(await undismissedFinished()).toEqual(expect.arrayContaining(submitted));
+
+    await page.goto('/dashboard');
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    await panel.getByRole('button', { name: 'Dismiss finished' }).click();
+
+    await expect(panel.getByText(/^\d+ finished jobs dismissed\.$/)).toBeVisible({ timeout: 10_000 });
+    expect(await undismissedFinished()).toEqual([]);
+    await expect(panel.getByRole('button', { name: 'Dismiss finished' })).toBeHidden();
+    // The focused button went away, so focus moves to the next footer control
+    // instead of falling to the page behind the dialog.
+    await expect(panel.getByRole('link', { name: 'All jobs', exact: true })).toBeFocused();
+    // Jobs leaving the list is the feedback; no per-job id list is rendered.
+    await expect(panel.getByRole('list', { name: 'Dismiss outcomes' })).toHaveCount(0);
+  });
+
   test('the panel shows older actionable jobs and labels counts as shown rows', async ({ page }) => {
     const olderJob = {
       id: 'panel-older-active-job',

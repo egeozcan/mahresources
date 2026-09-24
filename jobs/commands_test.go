@@ -1158,6 +1158,77 @@ func TestForgetThroughTheCommandPurgesInputAndKeepsHistory(t *testing.T) {
 	}
 }
 
+// TestBulkDismissOfEachPageWhileWalkingFinishedJobsReachesEveryJob is the walk
+// the Jobs panel's "Dismiss finished" makes: list a page of the viewer's
+// undismissed succeeded or cancelled Jobs, bulk-dismiss that page, continue from
+// its cursor. Every row the walk has served leaves the filter before the next
+// page is read, so an offset would skip a page's worth; the keyset cursor must
+// not, including across Jobs that share an acceptance time.
+func TestBulkDismissOfEachPageWhileWalkingFinishedJobsReachesEveryJob(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+
+	want := map[string]bool{}
+	var previous Snapshot
+	ties := 0
+	for i := 0; i < 7; i++ {
+		// Every second Job is accepted at the previous one's instant (the harness
+		// clock advances a second before each write), so the id tie-break is part
+		// of the walk.
+		if i%2 == 1 {
+			h.clock = previous.AcceptedAt.Add(-time.Second)
+		}
+		job := h.acceptReplayable(&owner)
+		if i%2 == 1 && job.AcceptedAt.Equal(previous.AcceptedAt) {
+			ties++
+		}
+		h.succeed(job.ID)
+		want[job.ID] = true
+		previous = job
+	}
+	if ties != 3 {
+		t.Fatalf("seeded %d acceptance-time ties, want 3", ties)
+	}
+
+	finished := Filter{States: []string{string(StateSucceeded), string(StateCancelled)}, Dismissed: boolPtr(false)}
+	seen := map[string]bool{}
+	cursor := Cursor{}
+	for pages := 0; ; pages++ {
+		if pages > len(want) {
+			t.Fatal("the walk did not terminate")
+		}
+		page := listFor(t, h.svc, h.deps, viewer, finished, cursor, 2)
+		ids := pageIDs(page)
+		for _, id := range ids {
+			if seen[id] {
+				t.Fatalf("job %s was served twice", id)
+			}
+			seen[id] = true
+		}
+		if len(ids) > 0 {
+			results := h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+				JobIDs: ids, Key: CommandDismiss, IdempotencyKey: fmt.Sprintf("dismiss-page-%d", pages),
+				Actor: viewer, Origin: "api",
+			})
+			for _, result := range results {
+				requireResult(t, "a page's bulk dismissal", result, CommandStatusSucceeded, CommandCodeApplied)
+			}
+		}
+		if page.Next == nil {
+			break
+		}
+		cursor = *page.Next
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("the walk reached %d of %d jobs", len(seen), len(want))
+	}
+	requireIDs(t, "undismissed finished jobs after the walk",
+		pageIDs(listFor(t, h.svc, h.deps, viewer, finished, Cursor{}, 0)))
+}
+
 // TestBulkCommandRecordsAnIndependentOutcomePerJob is §4's bulk contract: the
 // command has to be offered in bulk for the Job it is about, every Job is
 // resolved and refused on its own, and one Job's refusal never becomes the
