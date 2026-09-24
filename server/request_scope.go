@@ -145,16 +145,16 @@ func rawReplayKeyPublicationTempPath(target, fileSavePath string) bool {
 		return false
 	}
 	root := canonicalRawPath(fileSavePath)
-	if root == "" || !rawPathIsWithin(target, root) {
+	if root == "" {
 		return false
 	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == "." {
+	rel, ok := rawRelativePathWithin(target, root)
+	if !ok || rel == "." {
 		return false
 	}
 	tempPrefix := "." + jobs.JobReplayKeyFileName + "-"
 	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if strings.HasPrefix(component, tempPrefix) {
+		if rawPathHasPrefixFold(component, tempPrefix) {
 			return true
 		}
 	}
@@ -210,11 +210,48 @@ func canonicalRawPath(value string) string {
 }
 
 func rawPathIsWithin(target, root string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
+	_, ok := rawRelativePathWithin(target, root)
+	return ok
+}
+
+// rawRelativePathWithin compares path components without case sensitivity.
+// macOS filesystems commonly resolve case variants to the same file, while
+// filepath.Rel compares spelling on some platforms and could miss that alias.
+func rawRelativePathWithin(target, root string) (string, bool) {
+	target = filepath.Clean(target)
+	root = filepath.Clean(root)
+	targetVolume := filepath.VolumeName(target)
+	rootVolume := filepath.VolumeName(root)
+	if !strings.EqualFold(targetVolume, rootVolume) {
+		return "", false
+	}
+	targetComponents := rawPathComponents(strings.TrimPrefix(target, targetVolume))
+	rootComponents := rawPathComponents(strings.TrimPrefix(root, rootVolume))
+	if len(targetComponents) < len(rootComponents) {
+		return "", false
+	}
+	for i, component := range rootComponents {
+		if !strings.EqualFold(targetComponents[i], component) {
+			return "", false
+		}
+	}
+	if len(targetComponents) == len(rootComponents) {
+		return ".", true
+	}
+	return filepath.Join(targetComponents[len(rootComponents):]...), true
+}
+
+func rawPathComponents(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool { return r == '/' || r == '\\' })
+}
+
+func rawPathHasPrefixFold(value, prefix string) bool {
+	valueRunes := []rune(value)
+	prefixRunes := []rune(prefix)
+	if len(valueRunes) < len(prefixRunes) {
 		return false
 	}
-	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return strings.EqualFold(string(valueRunes[:len(prefixRunes)]), prefix)
 }
 
 // scopedCtx returns the application context bound to the current request's

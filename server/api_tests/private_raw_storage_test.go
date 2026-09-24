@@ -26,7 +26,8 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 	editorCookie, _ := loginSummaryExportSession(t, tc, editor.Username, "password1")
 
 	fileRoot := t.TempDir()
-	stagingRoot := t.TempDir()
+	stagingRoot := filepath.Join(fileRoot, "custom-staging")
+	stagingAliasRoot := filepath.Join(fileRoot, "CUSTOM-STAGING")
 	dataRoot := t.TempDir()
 	exportsRoot := filepath.Join(fileRoot, "_exports")
 	write := func(root, name string) {
@@ -41,13 +42,19 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 	}
 	write(fileRoot, jobs.JobReplayKeyFileName)
 	write(fileRoot, "."+jobs.JobReplayKeyFileName+"-synthetic")
+	write(fileRoot, "_JOB_REPLAY_KEY")
+	write(fileRoot, "._JOB_REPLAY_KEY-SYNTHETIC")
 	write(fileRoot, "_exports/.part")
 	write(fileRoot, "_exports/alternate.tar")
+	write(fileRoot, "_exports/ALTERNATE.TAR")
+	write(fileRoot, "_EXPORTS/ALTERNATE.TAR")
 	write(fileRoot, "_imports/.part")
 	write(fileRoot, "_plugin_commands/run.json")
+	write(fileRoot, "custom-staging/run.json")
+	write(fileRoot, "CUSTOM-STAGING/RUN.JSON")
 	write(fileRoot, ".part-summary.json")
 	write(fileRoot, "public.txt")
-	write(stagingRoot, "run.json")
+	write(stagingAliasRoot, "RUN.JSON")
 	write(dataRoot, jobs.JobReplayKeyFileName)
 	write(dataRoot, "public.txt")
 
@@ -57,6 +64,7 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 	diskFS := afero.NewBasePathFs(afero.NewOsFs(), fileRoot)
 	tc.Router = server.CreateServer(tc.AppCtx, diskFS, map[string]string{
 		"commands":         stagingRoot,
+		"staging-alias":    stagingAliasRoot,
 		"default-commands": defaultStagingRoot,
 		"data":             dataRoot,
 		"exports":          exportsRoot,
@@ -76,7 +84,13 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 		"/data/_job_replay_key",
 		"/exports/alternate.tar",
 		"/parent/" + filepath.Base(fileRoot) + "/" + jobs.JobReplayKeyFileName,
+		"/parent/" + filepath.Base(fileRoot) + "/_JOB_REPLAY_KEY",
 		"/parent/" + filepath.Base(fileRoot) + "/." + jobs.JobReplayKeyFileName + "-synthetic",
+		"/parent/" + filepath.Base(fileRoot) + "/._JOB_REPLAY_KEY-SYNTHETIC",
+		"/parent/" + filepath.Base(fileRoot) + "/_EXPORTS/ALTERNATE.TAR",
+		"/files/CUSTOM-STAGING/RUN.JSON",
+		"/staging-alias/RUN.JSON",
+		"/exports/ALTERNATE.TAR",
 	}
 	for _, principal := range []struct {
 		name   string
