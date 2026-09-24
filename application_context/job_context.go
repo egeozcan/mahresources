@@ -128,6 +128,48 @@ func (ctx *MahresourcesContext) ListJobs(filter jobs.Filter, cursor jobs.Cursor,
 	return service.List(ctx.jobDeps(), ctx.jobAccess(), filter, cursor, limit)
 }
 
+// ListJobsBefore returns the page immediately newer than a cursor: the page a
+// reader goes back to with Previous.
+func (ctx *MahresourcesContext) ListJobsBefore(filter jobs.Filter, before jobs.Cursor, limit int) (jobs.Page, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return jobs.Page{}, err
+	}
+	return service.ListBefore(ctx.jobDeps(), ctx.jobAccess(), filter, before, limit)
+}
+
+// CountJobsByState counts the visible Jobs matching a filter, by state, with no
+// summary window.
+func (ctx *MahresourcesContext) CountJobsByState(filter jobs.Filter) (map[string]int64, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	return service.CountByState(ctx.jobDeps(), ctx.jobAccess(), filter)
+}
+
+// VisibleJobKinds names the registered Kinds whose Jobs this principal can see,
+// sorted: every Kind for an administrator, and only owner-visible Kinds for
+// everybody else, since an admin-class Job is never listed to them.
+func (ctx *MahresourcesContext) VisibleJobKinds() []string {
+	service := ctx.JobService()
+	if service == nil {
+		return nil
+	}
+	admin := ctx.jobAccess().Administrator
+	seen := map[string]bool{}
+	var kinds []string
+	for _, registration := range service.Registrations() {
+		definition := registration.Definition
+		if seen[definition.Kind] || (!admin && definition.Visibility == jobs.VisibilityAdmin) {
+			continue
+		}
+		seen[definition.Kind] = true
+		kinds = append(kinds, definition.Kind)
+	}
+	return kinds
+}
+
 // GetJob returns one Job this context's principal may see, or ErrNotFound — the
 // same answer for a Job that does not exist and one they may not see.
 func (ctx *MahresourcesContext) GetJob(jobID string) (jobs.Snapshot, error) {

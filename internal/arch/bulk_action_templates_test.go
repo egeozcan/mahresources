@@ -8,7 +8,7 @@ import (
 )
 
 func TestBulkActionComponentsExist(t *testing.T) {
-	for _, entity := range []string{"resource", "note", "group", "tag", "download"} {
+	for _, entity := range []string{"resource", "note", "group", "tag", "download", "job"} {
 		for _, action := range listviews.BulkActions(entity) {
 			if action.Component == "" {
 				continue

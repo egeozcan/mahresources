@@ -97,3 +97,18 @@ func GeneratePagination(baseUrl string, numResults int64, pageSize int, currentP
 
 	return res, nil
 }
+
+// KeysetPagination is the Previous/Next navigation of a listing paged by keyset
+// rather than offset, drawn by the same partial as the numbered one. It has no
+// page numbers because a keyset listing has no stable page N: the Job list pages
+// this way so its rows do not drift between pages while Jobs keep arriving. An
+// empty link leaves that side inert; with neither, there is no navigation.
+func KeysetPagination(prevLink, nextLink string) *paginationResult {
+	if prevLink == "" && nextLink == "" {
+		return nil
+	}
+	return &paginationResult{
+		PrevLink: &paginationEntry{Display: "Previous", Selected: prevLink != "", Link: prevLink},
+		NextLink: &paginationEntry{Display: "Next", Selected: nextLink != "", Link: nextLink},
+	}
+}

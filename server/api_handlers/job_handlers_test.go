@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
 	"mahresources/jobs"
+	"mahresources/server/jobview"
 )
 
 type jobListContextStub struct {
@@ -158,7 +159,7 @@ func TestJobListMapsServiceValidationToBadRequest(t *testing.T) {
 func TestJobListForwardsFiltersAndOpaqueCursor(t *testing.T) {
 	acceptedAt := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	cursor := jobs.Cursor{AcceptedAt: acceptedAt, ID: "job-older"}
-	encoded, err := encodeJobListCursor(cursor)
+	encoded, err := jobview.EncodeCursor(cursor)
 	if err != nil {
 		t.Fatalf("encode cursor: %v", err)
 	}

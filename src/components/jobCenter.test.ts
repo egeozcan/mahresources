@@ -4,13 +4,8 @@ import { fileURLToPath } from 'node:url';
 import {
     advertisedCommands,
     advertisedOutputs,
-    buildJobListURL,
-    buildJobSummaryURL,
     classifyJobState,
     commandEndpoint,
-    dateTimeLocalValue,
-    dateTimeQueryValue,
-    JOB_COMMAND_FILTER_ENABLED,
     jobCenter,
     jobCommands,
     outputEndpoint,
@@ -18,7 +13,6 @@ import {
     outputLinkLabel,
     outputJSONLinkURL,
     outputLinkURL,
-    parseJobCenterURL,
     progressAccessibleText,
     progressIndeterminate,
     progressText,
@@ -28,7 +22,6 @@ import {
     resultOutput,
     resultURL,
     selectedBulkCommands,
-    serializeJobCenterURL,
     warningEvents,
 } from './jobCenter.js';
 
@@ -97,88 +90,6 @@ describe('Job Center API declarations', () => {
         expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ expectedVersion: 4 });
     });
 
-    test('posts the intersected bulk command and preserves each server outcome', async () => {
-        const results = [
-            { jobId: 'job-unknown-kind', key: 'inspect', status: 'succeeded', code: 'applied' },
-            { jobId: 'job-second', key: 'inspect', status: 'failed', code: 'stale', message: 'Changed' },
-        ];
-        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results }) }));
-        vi.stubGlobal('fetch', fetchMock);
-        const center = jobCenter();
-        center.jobs = [unfamiliarJob, {
-            ...unfamiliarJob,
-            id: 'job-second',
-            commands: [{ key: 'inspect', label: 'Inspect', endpoint: '/v1/jobs/job-second/commands/inspect', bulk: true }],
-        }];
-        center.selectedIds = new Set(['job-unknown-kind', 'job-second']);
-        center.refreshCurrentView = vi.fn();
-
-        const [command] = center.bulkCommands();
-        await center.runBulkCommand(command);
-
-        expect(fetchMock.mock.calls[0][0]).toBe('/v1/jobs/commands/inspect');
-        expect(JSON.parse(fetchMock.mock.calls[0][1].body).jobIds).toEqual(['job-unknown-kind', 'job-second']);
-        expect(center.bulkOutcomes).toEqual(results);
-    });
-
-    test('keeps expanded and selected row state across the list refresh after a bulk command', async () => {
-        const command = { key: 'inspect', label: 'Inspect', bulk: true };
-        const current = {
-            ...unfamiliarJob,
-            id: 'visible-job',
-            state: 'running',
-            version: 4,
-            uiExpanded: true,
-            uiSelected: true,
-        };
-        const refreshed = { ...current, state: 'paused', version: 5, uiExpanded: undefined, uiSelected: undefined };
-        const center = jobCenter();
-        center.jobs = [current];
-        center.selectedIds = new Set([current.id]);
-        center.fetchJSON = vi.fn(async input => {
-            const url = new URL(String(input), 'http://localhost');
-            if (url.pathname === '/v1/jobs/commands/inspect') {
-                return { results: [{ jobId: current.id, key: 'inspect', status: 'succeeded', code: 'applied' }] };
-            }
-            if (url.pathname === '/v1/jobs/summary') return { byState: { paused: 1 } };
-            return { jobs: url.searchParams.getAll('state').includes('paused') ? [refreshed] : [] };
-        });
-
-        await center.runBulkCommand(command);
-
-        expect(center.jobs).toHaveLength(1);
-        expect(center.jobs[0]).toMatchObject({ id: current.id, state: 'paused', uiExpanded: true, uiSelected: true });
-        expect(center.selectedIds.has(current.id)).toBe(true);
-    });
-
-    test('recomputes bulk pin controls from refreshed rows when selected detail cache is stale', async () => {
-        const job = { id: 'bulk-pin-job', state: 'succeeded', version: 4, pinned: false };
-        const commands = [
-            { key: 'pin', label: 'Pin', jobVersion: 4, bulk: true },
-            { key: 'unpin', label: 'Unpin', jobVersion: 4, bulk: true },
-            { key: 'inspect', label: 'Inspect', jobVersion: 4, bulk: true },
-        ];
-        const center = jobCenter();
-        center.view = 'all';
-        center.jobs = [job];
-        center.details[job.id] = { ...job, commands };
-        center.selectedIds = new Set([job.id]);
-        vi.stubGlobal('Alpine', { store: () => ({ ask: vi.fn(async () => true) }) });
-        center.fetchJSON = vi.fn(async (url: string) => {
-            if (url.startsWith('/v1/jobs/commands/pin')) {
-                return { results: [{ jobId: job.id, key: 'pin', status: 'succeeded', code: 'applied' }] } as any;
-            }
-            if (url.startsWith('/v1/jobs/summary')) return { byState: { succeeded: 1 } } as any;
-            return { jobs: [{ ...job, pinned: true }] } as any;
-        });
-
-        await center.runBulkCommand(center.bulkCommands().find(command => command.key === 'pin')!);
-
-        expect(center.details[job.id].pinned).toBe(false);
-        expect(center.selectedJobs()[0]).toMatchObject({ id: job.id, pinned: true });
-        expect(center.bulkCommands().map(command => command.key)).toEqual(['unpin', 'inspect']);
-    });
-
     test('bulk actions are the intersection of selected advertised bulk commands', () => {
         const second = {
             ...unfamiliarJob,
@@ -216,207 +127,6 @@ describe('Job Center API declarations', () => {
         expect(classifyJobState(unfamiliarJob)).toBe('active');
         expect(classifyJobState({ ...unfamiliarJob, state: 'blocked' })).toBe('attention');
         expect(classifyJobState({ ...unfamiliarJob, state: 'succeeded' })).toBe('finished');
-    });
-});
-
-describe('Job Center URL state', () => {
-    test('opens filtered legacy and shared links in the paginated all view', () => {
-        const filtered = parseJobCenterURL('?kind=remote-download&state=failed');
-        expect(filtered.view).toBe('all');
-        expect(filtered.filters.kinds).toEqual(['remote-download']);
-        expect(filtered.filters.states).toEqual(['failed']);
-        expect(parseJobCenterURL('?pinned=false').view).toBe('all');
-        expect(parseJobCenterURL('').view).toBe('home');
-    });
-
-    test('round-trips each filter, multi-value dimension, view and keyset cursor', () => {
-        const state = {
-            view: 'all',
-            filters: {
-                search: 'staged archive',
-                command: 'retry',
-                kinds: ['remote-download', 'plugin-command-run'],
-                states: ['failed', 'blocked'],
-                origins: ['user', 'schedule'],
-                ownerId: '12',
-                actorId: '13',
-                acceptedAfter: '2026-09-01T00:00:00.000Z',
-                acceptedBefore: '2026-09-20T00:00:00.000Z',
-                relationship: 'retry-of',
-                pinned: true,
-                dismissed: false,
-            },
-            cursor: 'list-v1-cursor-token',
-        };
-
-        expect(parseJobCenterURL(serializeJobCenterURL(state))).toEqual(state);
-    });
-
-    test('builds canonical list requests with repeated filter values and cursor fields', () => {
-        const url = new URL(buildJobListURL({
-            filters: { kinds: ['a', 'b'], states: ['running', 'paused'], search: 'report', acceptedAfter: '2026-09-23T12:30' },
-            cursor: 'list-v1-next-page',
-            limit: 50,
-        }), 'http://localhost');
-
-        expect(url.pathname).toBe('/v1/jobs');
-        expect(url.searchParams.getAll('kind')).toEqual(['a', 'b']);
-        expect(url.searchParams.getAll('state')).toEqual(['running', 'paused']);
-        expect(url.searchParams.get('search')).toBe('report');
-        expect(url.searchParams.get('cursor')).toBe('list-v1-next-page');
-        expect(url.searchParams.get('acceptedAfter')).toBe(new Date('2026-09-23T12:30').toISOString());
-        expect(url.searchParams.has('command')).toBe(false);
-    });
-
-    test('builds summary requests from the same filters as the visible list without list pagination', () => {
-        const filters = {
-            search: 'staged archive',
-            command: 'retry',
-            kinds: ['remote-download', 'plugin-command-run'],
-            states: ['failed', 'blocked'],
-            origins: ['user', 'schedule'],
-            ownerId: '12',
-            actorId: '13',
-            acceptedAfter: '2026-09-01T00:00:00.000Z',
-            acceptedBefore: '2026-09-20T00:00:00.000Z',
-            relationship: 'retry-of',
-            pinned: true,
-            dismissed: false,
-        };
-        const summary = new URL(buildJobSummaryURL({ filters }), 'http://localhost');
-
-        expect(summary.pathname).toBe('/v1/jobs/summary');
-        expect(summary.searchParams.get('search')).toBe('staged archive');
-        expect(summary.searchParams.get('command')).toBe('retry');
-        expect(summary.searchParams.getAll('kind')).toEqual(['remote-download', 'plugin-command-run']);
-        expect(summary.searchParams.getAll('state')).toEqual(['failed', 'blocked']);
-        expect(summary.searchParams.getAll('origin')).toEqual(['user', 'schedule']);
-        expect(summary.searchParams.get('ownerId')).toBe('12');
-        expect(summary.searchParams.get('actorId')).toBe('13');
-        expect(summary.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00.000Z');
-        expect(summary.searchParams.get('acceptedBefore')).toBe('2026-09-20T00:00:00.000Z');
-        expect(summary.searchParams.get('relationship')).toBe('retry-of');
-        expect(summary.searchParams.get('pinned')).toBe('true');
-        expect(summary.searchParams.get('dismissed')).toBe('false');
-        expect(summary.searchParams.has('cursor')).toBe(false);
-        expect(summary.searchParams.has('limit')).toBe(false);
-        const list = new URL(buildJobListURL({ filters, cursor: 'list-v1-page-two', limit: 50 }), 'http://localhost');
-        expect(list.searchParams.get('cursor')).toBe('list-v1-page-two');
-        expect(list.searchParams.get('limit')).toBe('50');
-        expect(new URL(buildJobSummaryURL({ filters: { search: 'download' } }), 'http://localhost')
-            .searchParams.has('dismissed')).toBe(false);
-    });
-
-    test('loads the next opaque keyset cursor and retains newest-first order', async () => {
-        const pages = [
-            { jobs: [
-                { id: 'older', acceptedAt: '2026-09-20T10:00:00Z' },
-                { id: 'newer', acceptedAt: '2026-09-22T10:00:00Z' },
-            ], nextCursor: 'list-v1.next-page' },
-            { jobs: [{ id: 'oldest', acceptedAt: '2026-09-18T10:00:00Z' }] },
-        ];
-        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => pages.shift() }));
-        vi.stubGlobal('fetch', fetchMock);
-        const replaceState = vi.fn();
-        vi.stubGlobal('location', { pathname: '/jobs', search: '' });
-        vi.stubGlobal('history', { replaceState });
-        const center = jobCenter();
-        center.view = 'all';
-
-        await center.loadAll();
-        await center.loadMore();
-
-        expect(new URL(fetchMock.mock.calls[0][0], 'http://localhost').searchParams.get('cursor')).toBeNull();
-        expect(new URL(fetchMock.mock.calls[1][0], 'http://localhost').searchParams.get('cursor')).toBe('list-v1.next-page');
-        expect(center.jobs.map(job => job.id)).toEqual(['newer', 'older', 'oldest']);
-        expect(center.nextCursor).toBeNull();
-        expect(replaceState.mock.calls.at(-1)[2]).toContain('cursor=list-v1.next-page');
-    });
-
-    test('does not refresh the current keyset page for an off-screen streamed Job', async () => {
-        const visible = { ...unfamiliarJob, id: 'visible-job' };
-        const center = jobCenter();
-        center.view = 'all';
-        center.filters = { ...center.filters, states: ['failed'] };
-        center.jobs = [visible];
-        center.nextCursor = 'opaque-page-two-cursor';
-        center.fetchJSON = vi.fn(async () => ({ id: 'off-screen-job', state: 'failed', version: 3 }));
-        center.refreshCurrentView = vi.fn();
-
-        await center.handleStreamMessage({
-            data: JSON.stringify({
-                id: 'event-21', jobId: 'off-screen-job', sequence: 21, jobVersion: 3,
-                type: 'failed', deliverySequence: 21, createdAt: '2026-09-23T12:00:00Z',
-            }),
-            lastEventId: 'v2:21',
-        });
-        await Promise.resolve();
-
-        expect(center.jobs).toEqual([visible]);
-        expect(center.nextCursor).toBe('opaque-page-two-cursor');
-        expect(center.fetchJSON).not.toHaveBeenCalled();
-        expect(center.refreshCurrentView).not.toHaveBeenCalled();
-    });
-
-    test('refreshes filtered All membership and its loaded window after streamed state changes', async () => {
-        vi.useFakeTimers();
-        const leaving = { ...unfamiliarJob, id: 'running-leaves', state: 'running', version: 1, acceptedAt: '2026-09-23T10:03:00Z' };
-        const staying = { ...unfamiliarJob, id: 'running-stays', state: 'running', version: 1, acceptedAt: '2026-09-23T10:02:00Z', uiExpanded: true, uiSelected: true };
-        const initialTail = { ...unfamiliarJob, id: 'old-page-two', state: 'running', version: 1, acceptedAt: '2026-09-23T10:01:00Z' };
-        const newlyMatching = { ...unfamiliarJob, id: 'running-enters', state: 'running', version: 2, acceptedAt: '2026-09-23T10:04:00Z' };
-        const refreshedTail = { ...unfamiliarJob, id: 'new-page-two', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
-        const center = jobCenter();
-        center.view = 'all';
-        center.filters = { ...center.filters, states: ['running'] };
-        center.jobs = [leaving, staying];
-        center.selectedIds = new Set([staying.id]);
-        let serverChanged = false;
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') return { byState: { running: 2, succeeded: 0 } };
-            const cursor = url.searchParams.get('cursor');
-            if (!serverChanged) {
-                return cursor === 'initial-page-two'
-                    ? { jobs: [initialTail] }
-                    : { jobs: [leaving, staying], nextCursor: 'initial-page-two' };
-            }
-            return cursor === 'refreshed-page-two'
-                ? { jobs: [refreshedTail] }
-                : { jobs: [newlyMatching, staying], nextCursor: 'refreshed-page-two' };
-        });
-
-        await center.loadAll();
-        await center.loadMore();
-        expect(center.jobs.map(job => job.id)).toEqual([leaving.id, staying.id, initialTail.id]);
-
-        serverChanged = true;
-        center.streamCaughtUp = true;
-        await center.handleStreamMessage({
-            data: JSON.stringify({ id: leaving.id, state: 'succeeded', version: 2, deliverySequence: 1 }),
-            lastEventId: 'v2:1',
-        });
-        await vi.advanceTimersByTimeAsync(150);
-        await center._streamRefreshPromise;
-
-        expect(center.jobs.map(job => job.id)).toEqual([newlyMatching.id, staying.id, refreshedTail.id]);
-        expect(center.jobs.find(job => job.id === staying.id)).toMatchObject({ uiExpanded: true, uiSelected: true });
-        expect(center.selectedIds.has(staying.id)).toBe(true);
-        expect(center.nextCursor).toBeNull();
-        const refreshedRequests = center.fetchJSON.mock.calls
-            .map(([url]) => new URL(String(url), 'http://localhost'))
-            .filter(url => url.pathname === '/v1/jobs' && url.searchParams.getAll('state').includes('running'));
-        expect(refreshedRequests.slice(-2).map(url => url.searchParams.get('cursor')))
-            .toEqual([null, 'refreshed-page-two']);
-        center.destroy();
-        vi.useRealTimers();
-    });
-
-    test('converts RFC3339 URL timestamps for local controls and datetime-local values for the API', () => {
-        const timestamp = '2026-09-23T12:30:00.000Z';
-        const local = dateTimeLocalValue(timestamp);
-
-        expect(new Date(local).toISOString()).toBe(timestamp);
-        expect(dateTimeQueryValue(local)).toBe(timestamp);
     });
 });
 
@@ -556,10 +266,8 @@ describe('Job Center event stream catch-up boundary', () => {
         }
         vi.stubGlobal('EventSource', FakeEventSource);
         const center = jobCenter();
-        center.view = 'all';
         center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
         center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        center.scheduleStreamRefresh = vi.fn();
         center.connect();
         const stream = center.eventSource as unknown as FakeEventSource;
         const sendJob = (state: string, version: number, sequence: number) => stream.listeners.get('job')?.({
@@ -589,7 +297,6 @@ describe('Job Center event stream catch-up boundary', () => {
         const center = jobCenter();
         center.jobs = [{ id: 'live-job', title: 'Index rebuild', state: 'queued', version: 1 }];
         center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        center.scheduleStreamRefresh = vi.fn();
         center.fetchJSON = vi.fn(() => detailRequest);
 
         center.handleStreamMessage({
@@ -605,275 +312,8 @@ describe('Job Center event stream catch-up boundary', () => {
     });
 });
 
-describe('Job Center live summary', () => {
-    test('submitting Dismissed Any includes dismissed Jobs in the list and summary', async () => {
-        vi.stubGlobal('FormData', class {
-            get(key: string) { return key === 'dismissed' ? '' : null; }
-        });
-        const center = jobCenter();
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') return { byState: { failed: 1 } };
-            return { jobs: [{ id: 'dismissed-download', kind: 'remote-download', state: 'failed' }] };
-        });
-
-        await center.submitFilters({} as HTMLFormElement);
-
-        const urls = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
-        expect(urls.map(url => url.pathname)).toEqual(['/v1/jobs/summary', '/v1/jobs']);
-        expect(urls.every(url => !url.searchParams.has('dismissed'))).toBe(true);
-        expect(center.jobs.map(job => job.id)).toEqual(['dismissed-download']);
-        expect(center.summary?.byState?.failed).toBe(1);
-    });
-
-    test('switching from Overview to All jobs reloads the summary without the dismissal filter', async () => {
-        const center = jobCenter();
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') {
-                return { byState: { failed: url.searchParams.has('dismissed') ? 0 : 1 } };
-            }
-            return { jobs: [{ id: 'dismissed-download', kind: 'remote-download', state: 'failed' }] };
-        });
-
-        await center.loadSummary();
-        expect(new URL(center.fetchJSON.mock.calls[0][0], 'http://localhost').searchParams.get('dismissed')).toBe('false');
-        await center.setView('all');
-
-        const urls = center.fetchJSON.mock.calls.slice(1).map(([raw]) => new URL(String(raw), 'http://localhost'));
-        expect(urls.map(url => url.pathname)).toEqual(['/v1/jobs/summary', '/v1/jobs']);
-        expect(urls.every(url => !url.searchParams.has('dismissed'))).toBe(true);
-        expect(center.summary?.byState?.failed).toBe(1);
-    });
-
-    test('returning to Overview clears All jobs filters for its list, summary, and live refresh', async () => {
-        const center = jobCenter();
-        center.view = 'all';
-        center.filters = { ...center.filters, search: 'download', dismissed: null };
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') return { byState: { failed: 0 } };
-            return { jobs: [] };
-        });
-
-        await center.setView('home');
-        expect(center.filters.search).toBe('');
-        expect(center.filters.dismissed).toBeNull();
-        const initialURLs = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
-        expect(initialURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
-        expect(initialURLs.every(url => !url.searchParams.has('search'))).toBe(true);
-
-        center.fetchJSON.mockClear();
-        await center.refreshStreamState(center._streamRefreshGeneration);
-        const refreshedURLs = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
-        expect(refreshedURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
-        expect(refreshedURLs.every(url => !url.searchParams.has('search'))).toBe(true);
-    });
-
-    test('refreshes summaries with submitted filters and ignores results from an older filter generation', async () => {
-        let resolveFirstSummary: (value: unknown) => void = () => {};
-        const firstSummary = new Promise(resolve => { resolveFirstSummary = resolve; });
-        vi.stubGlobal('FormData', class {
-            private values: Record<string, string>;
-            constructor(form: { search: string }) { this.values = { search: form.search }; }
-            get(key: string) { return this.values[key] || null; }
-        });
-        const center = jobCenter();
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') {
-                if (url.searchParams.get('search') === 'older filter') return firstSummary;
-                return { byState: { queued: 1 } };
-            }
-            if (url.pathname === '/v1/jobs') {
-                return { jobs: [{ id: url.searchParams.get('search'), state: 'queued' }] };
-            }
-            return {};
-        });
-        const submit = (search: string) => {
-            return center.submitFilters({ search } as HTMLFormElement);
-        };
-
-        let olderSubmissionSettled = false;
-        const olderSubmission = submit('older filter').then(() => { olderSubmissionSettled = true; });
-        const newerSubmission = submit('newer filter');
-        await newerSubmission;
-
-        expect(center.jobs.map(job => job.id)).toEqual(['newer filter']);
-        expect(center.summary).toEqual({ byState: { queued: 1 } });
-        expect(olderSubmissionSettled).toBe(false);
-        expect(center.fetchJSON.mock.calls.map(([raw]) => String(raw))).toEqual([
-            '/v1/jobs/summary?search=older+filter',
-            '/v1/jobs?search=older+filter&limit=50',
-            '/v1/jobs/summary?search=newer+filter',
-            '/v1/jobs?search=newer+filter&limit=50',
-        ]);
-
-        resolveFirstSummary({ byState: { failed: 1 } });
-        await olderSubmission;
-        expect(center.summary).toEqual({ byState: { queued: 1 } });
-    });
-
-    test('clears foreground loading when a stream refresh invalidates the submitted list request', async () => {
-        vi.useFakeTimers();
-        let resolveList: (value: unknown) => void = () => {};
-        const pendingList = new Promise(resolve => { resolveList = resolve; });
-        vi.stubGlobal('FormData', class {
-            private values: Record<string, string>;
-            constructor(form: { search: string }) { this.values = { search: form.search }; }
-            get(key: string) { return this.values[key] || null; }
-        });
-        const center = jobCenter();
-        center.fetchJSON = vi.fn(raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') return Promise.resolve({ byState: {} });
-            return pendingList;
-        });
-
-        const submission = center.submitFilters({ search: 'current filter' } as HTMLFormElement);
-        expect(center.loading).toBe(true);
-        center.scheduleStreamRefresh();
-        resolveList({ jobs: [{ id: 'current filter', state: 'queued' }] });
-        await submission;
-
-        expect(center.loading).toBe(false);
-        center.destroy();
-        vi.useRealTimers();
-    });
-
-    test('uses current filters for initial and live summary refreshes', async () => {
-        vi.useFakeTimers();
-        const center = jobCenter();
-        center.view = 'all';
-        center.filters = {
-            ...center.filters,
-            search: 'Index rebuild',
-            command: 'retry',
-            kinds: ['remote-download'],
-            origins: ['api'],
-            ownerId: '12',
-            actorId: '13',
-            acceptedAfter: '2026-09-01T00:00:00.000Z',
-            acceptedBefore: '2026-09-20T00:00:00.000Z',
-            relationship: 'retry-of',
-            pinned: true,
-            dismissed: null,
-        };
-        center.streamCaughtUp = true;
-        center.jobs = [{ id: 'live-job', title: 'Index rebuild', state: 'running', version: 1 }];
-        center.summary = { byState: { running: 1, failed: 0 } };
-        const summaryURLs: URL[] = [];
-        let currentState = 'running';
-        center.fetchJSON = vi.fn(async raw => {
-            const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') {
-                summaryURLs.push(url);
-                return { byState: { running: 0, failed: 1 } };
-            }
-            if (url.pathname === '/v1/jobs') return { jobs: [{ id: 'live-job', title: 'Index rebuild', state: currentState, version: 2 }] };
-            return {};
-        });
-
-        await center.load();
-        currentState = 'failed';
-        const initialSummaryURL = summaryURLs[0];
-        expect(initialSummaryURL).toBeDefined();
-        expect(initialSummaryURL.searchParams.get('search')).toBe('Index rebuild');
-        expect(initialSummaryURL.searchParams.has('dismissed')).toBe(false);
-
-        center.handleStreamMessage({
-            data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2, deliverySequence: 1 }),
-            lastEventId: 'v2:1',
-        });
-        await vi.advanceTimersByTimeAsync(250);
-
-        expect(center.sections.attention.map(job => job.id)).toEqual(['live-job']);
-        expect(center.summary.byState).toEqual({ running: 0, failed: 1 });
-        expect(summaryURLs).toHaveLength(2);
-        expect(summaryURLs[1].search).toBe(initialSummaryURL.search);
-        expect(center.fetchJSON.mock.calls
-            .filter(([raw]) => new URL(String(raw), 'http://localhost').pathname === '/v1/jobs')
-            .every(([raw]) => !new URL(String(raw), 'http://localhost').searchParams.has('dismissed'))).toBe(true);
-        vi.useRealTimers();
-    });
-
-    test('coalesces off-screen home events into one ordered refresh', async () => {
-        vi.useFakeTimers();
-        const center = jobCenter();
-        center.view = 'home';
-        center.fetchJSON = vi.fn(async url => {
-            if (new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary') return { byState: {} };
-            if (String(url).startsWith('/v1/jobs/')) return { id: 'off-screen', state: 'queued', version: 1 };
-            return { jobs: [] };
-        });
-        const sendEvent = (sequence: number, id: string) => center.handleStreamMessage({
-            data: JSON.stringify({
-                id: `event-${sequence}`, jobId: id, sequence, jobVersion: 1,
-                type: 'queued', deliverySequence: sequence, createdAt: '2026-09-23T12:00:00Z',
-            }),
-            lastEventId: `v2:${sequence}`,
-        });
-
-        sendEvent(1, 'first-new-job');
-        sendEvent(2, 'second-new-job');
-        await Promise.resolve();
-        expect(center.fetchJSON.mock.calls.filter(([url]) => new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary')).toHaveLength(0);
-
-        await vi.advanceTimersByTimeAsync(250);
-        expect(center.fetchJSON.mock.calls.filter(([url]) => new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary')).toHaveLength(1);
-        expect(center.fetchJSON.mock.calls.filter(([url]) => String(url).startsWith('/v1/jobs?'))).toHaveLength(3);
-        vi.useRealTimers();
-    });
-
-    test('discards an in-flight summary that predates a later stream event', async () => {
-        vi.useFakeTimers();
-        let resolveFirstSummary: (value: unknown) => void = () => {};
-        const firstSummary = new Promise(resolve => { resolveFirstSummary = resolve; });
-        let summaryCalls = 0;
-        let activeRequests = 0;
-        let maximumConcurrentRequests = 0;
-        const center = jobCenter();
-        center.view = 'all';
-        center.streamCaughtUp = true;
-        center.jobs = [{ id: 'live-job', state: 'running', version: 1 }];
-        center.summary = { byState: { running: 1 } };
-        center.fetchJSON = vi.fn(async url => {
-            if (new URL(String(url), 'http://localhost').pathname !== '/v1/jobs/summary') return {};
-            summaryCalls += 1;
-            activeRequests += 1;
-            maximumConcurrentRequests = Math.max(maximumConcurrentRequests, activeRequests);
-            if (summaryCalls === 1) {
-                return firstSummary.finally(() => { activeRequests -= 1; });
-            }
-            activeRequests -= 1;
-            return { byState: { succeeded: 1 } };
-        });
-        const sendState = (state: string, version: number, sequence: number) => center.handleStreamMessage({
-            data: JSON.stringify({ id: 'live-job', state, version, deliverySequence: sequence }),
-            lastEventId: `v2:${sequence}`,
-        });
-
-        sendState('failed', 2, 1);
-        await vi.advanceTimersByTimeAsync(150);
-        sendState('succeeded', 3, 2);
-        expect(summaryCalls).toBe(1);
-        resolveFirstSummary({ byState: { failed: 1 } });
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(center.summary).toEqual({ byState: { running: 1 } });
-
-        await vi.advanceTimersByTimeAsync(150);
-        await Promise.resolve();
-        expect(summaryCalls).toBe(2);
-        expect(maximumConcurrentRequests).toBe(1);
-        expect(center.summary).toEqual({ byState: { succeeded: 1 } });
-        vi.useRealTimers();
-    });
-});
-
 describe('Job Center templates', () => {
     const detailTemplate = readFileSync(fileURLToPath(new URL('../../templates/displayJob.tpl', import.meta.url)), 'utf8');
-    const listTemplate = readFileSync(fileURLToPath(new URL('../../templates/listJobs.tpl', import.meta.url)), 'utf8');
 
     test('renders commands and outputs only from the advertised detail arrays', () => {
         expect(detailTemplate).toContain('x-for="command in commandsFor(detail)"');
@@ -916,9 +356,7 @@ describe('Job Center templates', () => {
         expect(detailTemplate).toContain('x-text="outputLinkLabel(output, advertisedOutputs(detail))"');
     });
 
-    test('shows a visible, viewer-specific pin marker in list and detail views', () => {
-        expect(listTemplate).toContain('x-show="job.pinned"');
-        expect(listTemplate).toContain('Pinned by you');
+    test('shows a visible, viewer-specific pin marker in the detail view', () => {
         expect(detailTemplate).toContain('x-show="detail.pinned"');
         expect(detailTemplate).toContain('Pinned by you');
     });
@@ -944,73 +382,6 @@ describe('Job Center templates', () => {
             warning,
             truncated,
         ])).toEqual([warning, truncated]);
-    });
-
-    test('sends the advertised-command filter to the canonical list API', () => {
-        expect(JOB_COMMAND_FILTER_ENABLED).toBe(true);
-        expect(jobCenter().commandFilterEnabled).toBe(true);
-        expect(listTemplate).toContain('name="command"');
-        expect(listTemplate).toContain(':disabled="!commandFilterEnabled"');
-        expect(buildJobListURL({ filters: { command: 'retry' } })).toContain('command=retry');
-    });
-
-    test('findings 41 and 113: paused and indeterminate progress stay visible and named', () => {
-        expect(listTemplate).toContain('x-text="stateLabel(job)"');
-        expect(listTemplate).toContain('<template x-if="job.progress">');
-        expect(listTemplate).toContain('role="progressbar"');
-        expect(listTemplate).toContain(':aria-valuetext="progressAccessibleText(job)"');
-        expect(listTemplate).toContain("(job.title || job.kind || 'Job') + ' progress: '");
-        expect(listTemplate).toContain(':aria-valuenow="progressValue(job)"');
-        // Only work that is still going may pulse or read "In progress".
-        expect(listTemplate).toContain("progressIndeterminate(job) ? 'w-full animate-pulse' : ''");
-        expect(listTemplate).not.toContain("progressValue(job) === null ? 'w-full animate-pulse'");
-        expect(listTemplate).not.toContain("progressValue(job) === null ? 'In progress'");
-    });
-
-    test('the list links a succeeded job to the entity it created', () => {
-        expect(listTemplate).toContain('x-if="resultURL(job)"');
-        expect(listTemplate).toContain(':href="resultURL(job)"');
-        expect(listTemplate).toContain(':aria-label="resultAccessibleLabel(job)"');
-    });
-
-    test('the list reads each succeeded job\'s outputs once, and only those', async () => {
-        const center = jobCenter();
-        const requests = [];
-        vi.stubGlobal('fetch', vi.fn(async url => {
-            requests.push(url);
-            const id = decodeURIComponent(String(url).split('/').pop());
-            return { ok: true, json: async () => ({
-                id, kind: 'remote-download', state: 'succeeded', title: 'Download from example.com',
-                outputs: [{ key: 'resource', type: 'entity', label: 'Created resource', availability: 'available', url: `/v1/jobs/${id}/outputs?key=resource` }],
-            }) };
-        }));
-        const done = { id: 'done', kind: 'remote-download', state: 'succeeded', title: 'Download from example.com' };
-        const running = { id: 'busy', kind: 'remote-download', state: 'running' };
-        center.jobs = [done, running];
-
-        await center.loadResultOutputs(center.jobs);
-        await center.loadResultOutputs(center.jobs);
-
-        expect(requests).toEqual(['/v1/jobs/done']);
-        expect(center.resultURL(done)).toBe('/v1/jobs/done/outputs?key=resource');
-        expect(center.resultAccessibleLabel(done)).toBe('View created resource for Download from example.com');
-        expect(center.resultURL(running)).toBe('');
-    });
-
-    test('provides the required default sections and newest-first paginated All jobs view', () => {
-        const center = jobCenter();
-        center.sections = { attention: [], active: [], finished: [], other: [] };
-        expect(center.displaySections.map(section => section.title)).toEqual([
-            'Needs attention', 'Active and scheduled', 'Recent finished',
-        ]);
-        center.view = 'all';
-        expect(center.displaySections.map(section => section.title)).toEqual(['All jobs']);
-        expect(listTemplate).toContain('x-for="section in displaySections"');
-        expect(listTemplate).toContain('Load more jobs');
-    });
-
-    test('keeps job row DOM keyed by identity so focused controls survive membership refreshes', () => {
-        expect(listTemplate).toContain('<template x-for="job in section.jobs" :key="job.id">');
     });
 
     test('does not put replayed timeline events in a live announcement region', () => {

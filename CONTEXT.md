@@ -48,6 +48,14 @@ _Avoid_: Source, job type
 A Job's normalized lifecycle classification: scheduled, queued, running, paused, blocked, succeeded, failed, cancelled, or interrupted. A kind-specific Phase may describe finer progress without redefining the Job State.
 _Avoid_: Phase, status detail
 
+**Active Job**:
+A Job that is scheduled, queued, running, or paused: work that is still expected to proceed without anyone intervening. A blocked Job is not active; it Needs Attention.
+_Avoid_: Pending job, in-flight job
+
+**Finished Job**:
+A Job in a terminal Job State: succeeded, failed, cancelled, or interrupted. Finishing says nothing about success, so a failed or interrupted Finished Job can also Need Attention.
+_Avoid_: Completed job, done job
+
 **Job Retry**:
 A request to rerun an unsuccessful finished Job's unchanged input under current authorization and policy. It creates a new Job owned by the requester and linked to the finished Job; it never changes or replaces the original Job's outcome.
 _Avoid_: Attempt, restart

@@ -17,6 +17,9 @@ import (
 
 const pluginCommandImportRetryKey = "retry-import"
 
+// pluginCommandInspectKey opens a plugin command run's history.
+const pluginCommandInspectKey = "inspect"
+
 type pluginCommandImportFileProbe interface {
 	HasRegularFile(pluginName, runID, name string) bool
 }

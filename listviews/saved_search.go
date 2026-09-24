@@ -36,6 +36,7 @@ var views = []View{
 	{"/templatePartials", "templatePartials", "List"},
 	{"/downloads", "downloads", "List"},
 	{"/logs", "logs", "List"},
+	{"/jobs", "jobs", "List"},
 	{"/reductions", "reductions", "List"},
 }
 
@@ -58,7 +59,7 @@ func ValidFamily(family string) bool {
 }
 
 // NormalizeSavedURL keeps the applied search, including ordered repeated values,
-// but drops pagination and request-only state. Error is a real Downloads filter.
+// but drops pagination (numbered or keyset) and request-only state. Error is a real Downloads filter.
 func NormalizeSavedURL(raw string) (string, *View, error) {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") ||
@@ -75,7 +76,7 @@ func NormalizeSavedURL(raw string) (string, *View, error) {
 	}
 	for key := range q {
 		switch strings.ToLower(key) {
-		case "page", "redirect", "csrf", "csrf_token":
+		case "page", "cursor", "before", "redirect", "csrf", "csrf_token":
 			q.Del(key)
 		case "error":
 			if view.Family != "downloads" {

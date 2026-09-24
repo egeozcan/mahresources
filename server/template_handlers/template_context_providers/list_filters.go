@@ -27,8 +27,13 @@ import (
 // a new filter field that nobody adds here still produces the honest
 // "match these filters" wording rather than the wrong "nothing here yet".
 var nonFilterParams = map[string]bool{
-	"page":                true,
-	"Page":                true,
+	"page": true,
+	"Page": true,
+	// The Job list's keyset position, and the Overview/All switch its old
+	// client-rendered page kept in the URL.
+	"cursor":              true,
+	"before":              true,
+	"view":                true,
 	"sortBy":              true,
 	"SortBy":              true,
 	"Error":               true,

@@ -827,6 +827,9 @@ type FailureClassCount struct {
 type Page struct {
 	Jobs []Snapshot
 	Next *Cursor
+	// Prev is set when the page does not start at the top of the listing: the
+	// cursor ListBefore walks back from.
+	Prev *Cursor
 }
 
 // Event is the bounded public view of one Job Event: the sanitized fact and

@@ -57,3 +57,16 @@ func TestSavedSearchRejectsInvalidURLs(t *testing.T) {
 		}
 	}
 }
+
+// TestSavedSearchDropsTheJobListKeysetPosition keeps a saved Job search a search:
+// its Previous/Next position is pagination, like `page` on the other lists.
+func TestSavedSearchDropsTheJobListKeysetPosition(t *testing.T) {
+	got, view, err := NormalizeSavedURL("/jobs?state=failed&state=blocked&cursor=list-v1.abc&before=list-v1.def")
+	if err != nil || view == nil || view.Family != "jobs" {
+		t.Fatalf("NormalizeSavedURL = %q, %+v, %v", got, view, err)
+	}
+	u, _ := url.Parse(got)
+	if u.Query().Has("cursor") || u.Query().Has("before") || !reflect.DeepEqual(u.Query()["state"], []string{"failed", "blocked"}) {
+		t.Fatalf("saved job search = %s", got)
+	}
+}

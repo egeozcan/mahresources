@@ -32,6 +32,7 @@ the code wins. For how the system is actually put together see
 - [2026-08-30-plugin-download-domain-policy-and-deferral.md](2026-08-30-plugin-download-domain-policy-and-deferral.md)
 - [2026-09-08-mrql-generic-list-view-design.md](2026-09-08-mrql-generic-list-view-design.md)
 - [2026-09-10-version-thumbnails-and-viewer-version-panel.md](2026-09-10-version-thumbnails-and-viewer-version-panel.md)
+- [2026-09-24-job-center-standard-list.md](2026-09-24-job-center-standard-list.md)
 
 ## Archive
 

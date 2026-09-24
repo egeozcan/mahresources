@@ -52,6 +52,10 @@ var bulkActionCatalog = []BulkAction{
 	{ID: "export", Label: "Export selected", Entities: []string{"group"}, Component: "exportGroups", Min: 1},
 	{ID: "retry", Label: "Retry selected", Entities: []string{"download"}, Component: "retryDownloads", Min: 1},
 	{ID: "delete", Label: "Delete selected", Entities: []string{"download"}, Component: "deleteDownloads", Min: 1, Danger: true},
+	// A Job's commands are its own: the component offers the ones every selected
+	// Job currently advertises, so there is one declaration rather than one per
+	// command key.
+	{ID: "job-commands", Label: "Job commands", Entities: []string{"job"}, Component: "jobCommands", Min: 1},
 }
 
 func BulkActions(entity string) []BulkAction {

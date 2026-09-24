@@ -132,7 +132,6 @@ func TestNoMultiLinePongoComment(t *testing.T) {
 // an empty chart is the correct rendering of no data. Their only `{% for %}` is
 // the popular-tags list in the sidebar, which the sweep already excludes.
 var listTemplatesWithoutAServerSideLoop = map[string]string{
-	"templates/listJobs.tpl":               "Job Center list is rendered client-side from the canonical Job API",
 	"templates/listCategoriesTimeline.tpl": "chart rendered client-side from /v1/categories/timeline",
 	"templates/listGroupsTimeline.tpl":     "chart rendered client-side from /v1/groups/timeline",
 	"templates/listNotesTimeline.tpl":      "chart rendered client-side from /v1/notes/timeline",

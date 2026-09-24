@@ -101,3 +101,28 @@ test.describe('Job Center panel accessibility', () => {
       .toHaveAttribute('aria-hidden', 'true');
   });
 });
+
+test.describe('Job Center list accessibility', () => {
+  test('axe finds no serious or critical violations on /jobs with a job and a selection', async ({ page, request, checkA11y }) => {
+    const stamp = Date.now();
+    const group = await request.post('/v1/group', { data: { Name: `job-list-a11y-${stamp}` } });
+    const groupId = (await group.json()).ID;
+    const name = `job-list-a11y-${stamp}.bin`;
+    const submitted = await request.post('/v1/download/submit', {
+      data: { URL: `http://127.0.0.1:9/${name}`, OwnerId: groupId, FileName: name },
+    });
+    const jobId = (await submitted.json()).jobs[0].canonicalJobId as string;
+    await expect.poll(async () => (await (await request.get(`/v1/jobs/${jobId}`)).json()).state, { timeout: 20_000 })
+      .toBe('failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    const row = page.locator(`[data-job-id="${jobId}"]`);
+    await expect(row).toBeVisible();
+    await checkA11y();
+
+    await row.getByRole('checkbox').check();
+    await expect(page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Dismiss' })).toBeVisible();
+    await row.locator('summary').click();
+    await checkA11y();
+  });
+});

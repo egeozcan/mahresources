@@ -264,7 +264,7 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 // probes the exchange filesystem once per Job during list or summary reads.
 func (a *pluginCommandJobAdapter) SelectCommandJobs(_ context.Context, request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
 	switch request.Key {
-	case jobs.CommandCancel, "inspect":
+	case jobs.CommandCancel, pluginCommandInspectKey:
 		return request.Jobs.Select("jobs.id"), true, nil
 	case pluginCommandImportRetryKey:
 		if a.kind == JobKindPluginCommandImport {
@@ -282,6 +282,18 @@ func (a *pluginCommandJobAdapter) SelectCommandJobs(_ context.Context, request j
 		}
 	}
 	return nil, false, nil
+}
+
+// JobCommandFilterKeys is the command vocabulary the Job list's "Available
+// command" filter offers: the host's own keys and every key a Kind's selector
+// above answers. The selectors are switches, so this list is kept beside them;
+// a key a selector gains belongs here too, or the filter cannot offer it.
+func JobCommandFilterKeys() []string {
+	return []string{
+		jobs.CommandCancel, jobs.CommandPause, jobs.CommandResume, jobs.CommandRetry, jobs.CommandRepeat,
+		pluginCommandInspectKey, pluginCommandImportRetryKey,
+		jobs.CommandDismiss, jobs.CommandPin, jobs.CommandUnpin, jobs.CommandPinLineage, jobs.CommandForget,
+	}
 }
 
 func unsuccessfulJobStates() []jobs.State {

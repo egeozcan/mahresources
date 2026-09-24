@@ -366,17 +366,29 @@ Uploading a custom thumbnail does not create a new version -- it only changes th
 
 Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
 `/jobs` for the full Job Center. The panel shows active work and work needing
-attention. The Job Center also shows recent finished Jobs and includes downloads,
-exports, imports, Resource Reduction, maintenance, and plugin work.
+attention. The Job Center lists every Job you can see: downloads, exports,
+imports, Resource Reduction, maintenance, and plugin work.
 
-Filter Jobs by state, Kind, origin, time, owner, actor, and currently available
-command. Open a Job to see its progress, timeline, outputs, and related Jobs.
-The **Overview** shows work that has not been dismissed. In **All jobs**, choose
-**Any** under **Dismissed** to include dismissed Jobs, or choose **Dismissed**
-to see only those Jobs. Dismissal does not delete Job history.
-Use only the controls displayed on that Job; available commands are checked
-again when submitted. Selecting several Jobs offers only commands they all
-advertise for bulk use, with a separate result for each Job.
+The Job Center is a list page like Notes or Resources. It shows the Jobs you
+have not dismissed, newest first, 50 per page, with **Previous** and **Next**
+at the bottom. Its pages have no numbers, so a page does not shift while new
+Jobs arrive. The list updates in place as Jobs change, without a reload.
+
+The **Show** links in the sidebar select **Needs attention** (blocked, failed,
+or interrupted), **Active** (scheduled, queued, running, or paused),
+**Finished** (succeeded, failed, cancelled, or interrupted), and **Pinned by
+me**. Each count is how many Jobs the list shows with that link selected,
+under your other filters. Select an active link again to clear it. The **Filter** form narrows
+the list by text, state, Kind, currently available command, origin, owner,
+actor, and acceptance time. Times are in your browser's time zone, and an
+**Accepted before** time includes the whole minute it names. Under **Dismissed**, choose **Any** to include
+dismissed Jobs, or **Dismissed** to see only those Jobs. Dismissal does not
+delete Job history. **Saved searches** keep a filter for reuse.
+
+Open a Job to see its progress, timeline, outputs, and related Jobs. Use only
+the controls displayed on that Job; available commands are checked again when
+submitted. Selecting several Jobs offers only commands they all advertise for
+bulk use, with a separate result for each Job.
 
 A succeeded Job always shows complete progress, including a download whose
 size the remote server never reported. When a Job created a Resource, Note, or

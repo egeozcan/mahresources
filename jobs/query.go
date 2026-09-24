@@ -72,25 +72,9 @@ func requireVisibleJob(db *gorm.DB, access Access, jobID string) error {
 // accepted_at is not unique: a page boundary drawn on the instant alone would
 // either repeat or skip every Job accepted in the same tick.
 func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, limit int) (Page, error) {
-	if err := validateFilter(filter); err != nil {
-		return Page{}, err
-	}
-	size, err := pageSize(limit)
+	query, size, err := s.listQuery(deps, access, filter, cursor, limit)
 	if err != nil {
 		return Page{}, err
-	}
-	if err := validateCursor(cursor); err != nil {
-		return Page{}, err
-	}
-	query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
-	if err != nil {
-		return Page{}, err
-	}
-	if filter.Command != "" {
-		query, err = s.applyCommandFilter(query, deps, access, filter.Command)
-		if err != nil {
-			return Page{}, err
-		}
 	}
 	query = continueAfter(query, cursor)
 
@@ -102,17 +86,126 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 		return Page{}, fmt.Errorf("jobs: list: %w", err)
 	}
 
-	page := Page{Jobs: make([]Snapshot, 0, min(len(rows), size))}
-	for i, row := range rows {
-		if i == size {
-			break
-		}
+	hasNext := len(rows) > size
+	if hasNext {
+		rows = rows[:size]
+	}
+	page := Page{Jobs: make([]Snapshot, 0, len(rows))}
+	for _, row := range rows {
 		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
 	}
-	if len(rows) > size {
-		last := rows[size-1]
-		page.Next = &Cursor{AcceptedAt: last.AcceptedAt, ID: last.ID}
+	if hasNext {
+		page.Next = cursorOf(rows[len(rows)-1])
 	}
+	// A page that did not start at the top has one before it. Its first row is
+	// where ListBefore walks back from; if everything newer has since gone,
+	// ListBefore answers the first page rather than an empty one. A page that
+	// came back empty — its rows dismissed, or moved out of the filter — walks
+	// back from its own cursor, so the reader is never stranded without a way to
+	// the rows that remain before it.
+	if cursor.ID != "" {
+		if len(rows) > 0 {
+			page.Prev = cursorOf(rows[0])
+		} else {
+			prev := cursor
+			page.Prev = &prev
+		}
+	}
+	return s.finishPage(deps, access, page)
+}
+
+// ListBefore returns the page immediately newer than a cursor, still ordered
+// newest first: the page a reader goes back to with Previous.
+//
+// When the rows newer than the cursor no longer fill a page — the reader walked
+// forward with a smaller page size, or Jobs were removed — the answer is the
+// listing's first page rather than a short slice of the top, so the page a
+// reader lands on is always one the forward walk would also have shown.
+func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cursor, limit int) (Page, error) {
+	if before.ID == "" {
+		return s.List(deps, access, filter, Cursor{}, limit)
+	}
+	query, size, err := s.listQuery(deps, access, filter, before, limit)
+	if err != nil {
+		return Page{}, err
+	}
+
+	// Two statements branch from this query, so each takes its own session: a
+	// chained GORM handle shares its statement, and the probe below would
+	// otherwise inherit this read's condition and find nothing.
+	var rows []models.Job
+	if err := continueBefore(query.Session(&gorm.Session{}), before).
+		Order("jobs.accepted_at ASC, jobs.id ASC").Limit(size + 1).Find(&rows).Error; err != nil {
+		return Page{}, fmt.Errorf("jobs: list before: %w", err)
+	}
+	if len(rows) <= size {
+		return s.List(deps, access, filter, Cursor{}, limit)
+	}
+	rows = rows[:size]
+	slices.Reverse(rows)
+
+	page := Page{Jobs: make([]Snapshot, 0, len(rows))}
+	for _, row := range rows {
+		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
+	}
+	page.Prev = cursorOf(rows[0])
+
+	// Whether anything is older than this page is asked rather than assumed: the
+	// cursor's own row may be gone, and a Next that opens an empty page is the
+	// answer List promises never to give.
+	var older int64
+	last := *cursorOf(rows[len(rows)-1])
+	if err := continueAfter(query.Session(&gorm.Session{}), last).Limit(1).Count(&older).Error; err != nil {
+		return Page{}, fmt.Errorf("jobs: list before: %w", err)
+	}
+	if older > 0 {
+		page.Next = &last
+	}
+	return s.finishPage(deps, access, page)
+}
+
+// CountByState counts the visible Jobs matching a filter, grouped by state, with
+// no summary window. It answers the same question List does, so a count shown
+// beside a link is the number of rows the link opens; Summary's window would make
+// an old failure that still needs attention disappear from the count while
+// remaining in the list.
+func (s *Service) CountByState(deps Deps, access Access, filter Filter) (map[string]int64, error) {
+	query, _, err := s.listQuery(deps, access, filter, Cursor{}, 0)
+	if err != nil {
+		return nil, err
+	}
+	return countByColumn(query, "state")
+}
+
+// listQuery validates one listing question and builds its filtered, visible,
+// unordered query. List, ListBefore and CountByState share it so that none of
+// them can answer a different set than the others.
+func (s *Service) listQuery(deps Deps, access Access, filter Filter, cursor Cursor, limit int) (*gorm.DB, int, error) {
+	if err := validateFilter(filter); err != nil {
+		return nil, 0, err
+	}
+	size, err := pageSize(limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := validateCursor(cursor); err != nil {
+		return nil, 0, err
+	}
+	query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	if filter.Command != "" {
+		query, err = s.applyCommandFilter(query, deps, access, filter.Command)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return query, size, nil
+}
+
+// finishPage fills the per-viewer projections a page carries.
+func (s *Service) finishPage(deps Deps, access Access, page Page) (Page, error) {
 	if err := s.fillReplayAvailability(deps, page.Jobs); err != nil {
 		return Page{}, err
 	}
@@ -120,6 +213,10 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 		return Page{}, err
 	}
 	return page, nil
+}
+
+func cursorOf(row models.Job) *Cursor {
+	return &Cursor{AcceptedAt: row.AcceptedAt, ID: row.ID}
 }
 
 // fillViewerPinState projects one viewer's pin preference onto a bounded set of
@@ -361,6 +458,13 @@ func continueAfter(db *gorm.DB, cursor Cursor) *gorm.DB {
 		return db
 	}
 	return db.Where("(jobs.accepted_at < ? OR (jobs.accepted_at = ? AND jobs.id < ?))",
+		cursor.AcceptedAt.UTC(), cursor.AcceptedAt.UTC(), cursor.ID)
+}
+
+// continueBefore applies a keyset position in the other direction: the rows
+// newer than the cursor, which ListBefore reads oldest first.
+func continueBefore(db *gorm.DB, cursor Cursor) *gorm.DB {
+	return db.Where("(jobs.accepted_at > ? OR (jobs.accepted_at = ? AND jobs.id > ?))",
 		cursor.AcceptedAt.UTC(), cursor.AcceptedAt.UTC(), cursor.ID)
 }
 

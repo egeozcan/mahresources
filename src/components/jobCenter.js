@@ -4,119 +4,8 @@ export const JOB_STATES = Object.freeze([
     'scheduled', 'queued', 'running', 'paused', 'blocked',
     'succeeded', 'failed', 'cancelled', 'interrupted',
 ]);
-export const JOB_COMMAND_FILTER_ENABLED = true;
-
 const ACTIVE_STATES = ['scheduled', 'queued', 'running', 'paused'];
 const ATTENTION_STATES = ['blocked', 'failed', 'interrupted'];
-const FINISHED_STATES = ['succeeded', 'cancelled'];
-const FILTER_LIST_KEYS = Object.freeze({ kinds: 'kind', states: 'state', origins: 'origin' });
-const FILTER_QUERY_KEYS = Object.freeze([
-    'search', 'command', 'kind', 'state', 'origin', 'ownerId', 'actorId',
-    'acceptedAfter', 'acceptedBefore', 'relationship', 'pinned', 'dismissed',
-]);
-
-function readBoolean(params, key) {
-    const value = params.get(key);
-    if (value === null || value === '') return null;
-    if (value === 'true' || value === '1') return true;
-    if (value === 'false' || value === '0') return false;
-    return null;
-}
-
-function readDate(params, key) {
-    return params.get(key) || '';
-}
-
-export function dateTimeQueryValue(value) {
-    if (!value) return '';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
-}
-
-export function dateTimeLocalValue(value) {
-    if (!value) return '';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return '';
-    const localDate = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
-    return localDate.toISOString().slice(0, 16);
-}
-
-export function parseJobCenterURL(input = globalThis.location?.search || '') {
-    const params = input instanceof URLSearchParams
-        ? input
-        : new URLSearchParams(String(input).startsWith('?') ? String(input).slice(1) : String(input));
-    return {
-        view: params.get('view') === 'all' || params.has('cursor') || FILTER_QUERY_KEYS.some(key => params.has(key)) ? 'all' : 'home',
-        filters: {
-            search: params.get('search') || '',
-            command: params.get('command') || '',
-            kinds: params.getAll('kind'),
-            states: params.getAll('state'),
-            origins: params.getAll('origin'),
-            ownerId: params.get('ownerId') || '',
-            actorId: params.get('actorId') || '',
-            acceptedAfter: readDate(params, 'acceptedAfter'),
-            acceptedBefore: readDate(params, 'acceptedBefore'),
-            relationship: params.get('relationship') || '',
-            pinned: readBoolean(params, 'pinned'),
-            dismissed: readBoolean(params, 'dismissed'),
-        },
-        cursor: params.get('cursor') || null,
-    };
-}
-
-export function serializeJobCenterURL(state) {
-    const params = new URLSearchParams();
-    if (state.view === 'all') params.set('view', 'all');
-    const filters = state.filters || {};
-    if (filters.search) params.set('search', filters.search);
-    if (filters.command) params.set('command', filters.command);
-    for (const [key, parameter] of Object.entries(FILTER_LIST_KEYS)) {
-        for (const value of filters[key] || []) {
-            if (value !== '') params.append(parameter, value);
-        }
-    }
-    for (const key of ['ownerId', 'actorId', 'acceptedAfter', 'acceptedBefore', 'relationship']) {
-        if (filters[key]) params.set(key, key.startsWith('accepted') ? dateTimeQueryValue(filters[key]) : filters[key]);
-    }
-    for (const key of ['pinned', 'dismissed']) {
-        if (filters[key] !== null && filters[key] !== undefined) params.set(key, String(filters[key]));
-    }
-    if (state.cursor) params.set('cursor', cursorToken(state.cursor));
-    return params.toString();
-}
-
-function appendJobFilters(params, filters, states = null) {
-    for (const [key, parameter] of Object.entries(FILTER_LIST_KEYS)) {
-        const values = key === 'states' && states ? states : filters[key] || [];
-        for (const value of values) {
-            if (value !== '') params.append(parameter, value);
-        }
-    }
-    if (filters.search) params.set('search', filters.search);
-    if (JOB_COMMAND_FILTER_ENABLED && filters.command) params.set('command', filters.command);
-    for (const key of ['ownerId', 'actorId', 'acceptedAfter', 'acceptedBefore', 'relationship']) {
-        if (filters[key]) params.set(key, key.startsWith('accepted') ? dateTimeQueryValue(filters[key]) : filters[key]);
-    }
-    for (const key of ['pinned', 'dismissed']) {
-        if (filters[key] !== null && filters[key] !== undefined) params.set(key, String(filters[key]));
-    }
-}
-
-export function buildJobListURL({ filters = {}, states = null, cursor = null, limit = 50 } = {}) {
-    const params = new URLSearchParams();
-    appendJobFilters(params, filters, states);
-    if (cursor) params.set('cursor', cursorToken(cursor));
-    params.set('limit', String(limit));
-    return `/v1/jobs?${params.toString()}`;
-}
-
-export function buildJobSummaryURL({ filters = {}, window = null } = {}) {
-    const params = new URLSearchParams();
-    appendJobFilters(params, filters);
-    if (window) params.set('window', window);
-    return `/v1/jobs/summary${params.size ? `?${params.toString()}` : ''}`;
-}
 
 export function advertisedCommands(job) {
     return Array.isArray(job?.commands) ? job.commands : [];
@@ -366,21 +255,6 @@ export function reduceJobSnapshot(jobs, incoming, replay = false, lastSequence =
     };
 }
 
-export function splitJobSections(jobs) {
-    const sections = { attention: [], active: [], finished: [], other: [] };
-    for (const job of jobs || []) sections[classifyJobState(job)].push(job);
-    return sections;
-}
-
-function cursorToken(cursor) {
-    if (typeof cursor === 'string') return cursor;
-    if (cursor && typeof cursor === 'object') {
-        if (typeof cursor.token === 'string') return cursor.token;
-        if (typeof cursor.cursor === 'string') return cursor.cursor;
-    }
-    return String(cursor || '');
-}
-
 function streamSequence(value) {
     const raw = String(value || '').replace(/^v2:/, '');
     const parsed = Number(raw);
@@ -455,30 +329,20 @@ function idempotencyKey() {
     return `job-command-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/**
+ * The /job detail page. The /jobs list is server-rendered (listJobs.tpl) and has
+ * its own small component in jobList.js; this one reads one Job, its timeline,
+ * commands and outputs, and follows it on the canonical stream.
+ */
 export function jobCenter(options = {}) {
     return {
         detailId: options.detailId || '',
-        view: 'home',
-        filters: {},
-        commandFilterEnabled: JOB_COMMAND_FILTER_ENABLED,
         jobs: [],
-        sections: { attention: [], active: [], finished: [], other: [] },
-        summary: null,
         details: {},
-        resultOutputs: {},
-        _resultOutputsPending: new Set(),
-        selectedIds: new Set(),
-        nextCursor: null,
-        _allPageCursors: [],
-        _listGeneration: 0,
-        _summaryGeneration: 0,
-        _filterSubmitGeneration: 0,
-        bulkOutcomes: [],
         timeline: [],
         timelineError: '',
         detail: null,
         loading: true,
-        loadingMore: false,
         error: '',
         notice: '',
         connectionStatus: 'disconnected',
@@ -486,32 +350,17 @@ export function jobCenter(options = {}) {
         lastSequence: 0,
         streamCaughtUp: false,
         _liveRegion: null,
-        _refreshTimer: null,
-        _streamRefreshGeneration: 0,
-        _streamRefreshRequested: false,
-        _streamRefreshPromise: null,
 
         init() {
-            const state = parseJobCenterURL(globalThis.location?.search || '');
-            this.view = state.view;
-            this.filters = state.filters;
-            this.nextCursor = state.cursor;
-            if (!this.detailId && /^\/job(?:\.body)?$/.test(globalThis.location?.pathname || '')) {
-                this.detailId = new URLSearchParams(globalThis.location.search).get('id') || '';
+            if (!this.detailId) {
+                this.detailId = new URLSearchParams(globalThis.location?.search || '').get('id') || '';
             }
             this._liveRegion = createLiveRegion();
-            this.$watch?.('jobs', jobs => { this.loadResultOutputs(jobs); });
             this.connect();
             this.load();
         },
 
         destroy() {
-            if (this._refreshTimer) clearTimeout(this._refreshTimer);
-            this._streamRefreshGeneration += 1;
-            this._listGeneration += 1;
-            this._summaryGeneration += 1;
-            this._filterSubmitGeneration += 1;
-            this._streamRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
         },
@@ -535,177 +384,11 @@ export function jobCenter(options = {}) {
             this.loading = true;
             this.error = '';
             try {
-                if (this.detailId) await this.loadDetail(this.detailId);
-                else {
-                    await Promise.all([this.loadSummary(), this.view === 'all' || this.hasFilters() ? this.loadAll(this.nextCursor) : this.loadHome()]);
-                }
+                await this.loadDetail(this.detailId);
             } catch (error) {
-                this.error = error.message || 'Could not load jobs.';
+                this.error = error.message || 'Could not load this job.';
             } finally {
                 this.loading = false;
-            }
-        },
-
-        async loadSummary(generation = ++this._summaryGeneration) {
-            const summaryURL = buildJobSummaryURL({ filters: this.summaryFilters() });
-            const summary = await this.fetchJSON(summaryURL);
-            if (generation !== this._summaryGeneration || summaryURL !== buildJobSummaryURL({ filters: this.summaryFilters() })) return false;
-            this.summary = summary;
-            return true;
-        },
-
-        summaryFilters() {
-            return this.view === 'home'
-                ? { ...this.filters, dismissed: this.filters.dismissed ?? false }
-                : this.filters;
-        },
-
-        scheduleStreamRefresh() {
-            this._streamRefreshGeneration += 1;
-            // Invalidate a list request started before this delivery. Its rows
-            // may describe a different server-side filter window.
-            this._listGeneration += 1;
-            this._streamRefreshRequested = true;
-            if (this._streamRefreshPromise) return;
-            if (this._refreshTimer) clearTimeout(this._refreshTimer);
-            const generation = this._streamRefreshGeneration;
-            this._refreshTimer = setTimeout(() => {
-                this._refreshTimer = null;
-                this._streamRefreshRequested = false;
-                this._streamRefreshPromise = this.refreshStreamState(generation)
-                    .catch(() => {})
-                    .finally(() => {
-                        this._streamRefreshPromise = null;
-                        if (this._streamRefreshRequested) this.scheduleStreamRefresh();
-                    });
-            }, 150);
-        },
-
-        async refreshStreamState(generation) {
-            if (this.detailId) return;
-            const stateKey = JSON.stringify({ view: this.view, filters: this.filters });
-            const listGeneration = this._listGeneration;
-            const summaryGeneration = ++this._summaryGeneration;
-            const refreshHome = this.view === 'home' && !this.hasFilters();
-            const requests = [this.fetchJSON(buildJobSummaryURL({ filters: this.summaryFilters() }))];
-            if (refreshHome) {
-                const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
-                requests.push(Promise.all([
-                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: ATTENTION_STATES, limit: 6 })),
-                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: ACTIVE_STATES, limit: 6 })),
-                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: FINISHED_STATES, limit: 6 })),
-                ]));
-            }
-            const [summary, homePages] = await Promise.all(requests);
-            let allWindow = null;
-            if (!refreshHome) {
-                allWindow = await this.fetchLoadedAllWindow(generation, listGeneration, stateKey);
-                if (!allWindow) return;
-            }
-            if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || summaryGeneration !== this._summaryGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
-            this.summary = summary;
-            if (refreshHome && homePages) {
-                this.sections = {
-                    attention: preserveJobUIState(this.jobs, pageJobs(homePages[0])),
-                    active: preserveJobUIState(this.jobs, pageJobs(homePages[1])),
-                    finished: preserveJobUIState(this.jobs, pageJobs(homePages[2])),
-                    other: [],
-                };
-                this.jobs = uniqueJobs(Object.values(this.sections).flat());
-                this.nextCursor = null;
-                this._allPageCursors = [];
-            } else if (allWindow) {
-                this.jobs = preserveJobUIState(this.jobs, uniqueJobs(allWindow.jobs));
-                this.sections = splitJobSections(this.jobs);
-                this._allPageCursors = allWindow.cursors;
-                this.nextCursor = allWindow.nextCursor;
-                if (this.view === 'all') this.replaceURL(allWindow.cursors.at(-1) ?? null);
-            }
-        },
-
-        async fetchLoadedAllWindow(generation, listGeneration, stateKey) {
-            const starts = this._allPageCursors.length ? [...this._allPageCursors] : [null];
-            const jobs = [];
-            const cursors = [];
-            let cursor = starts[0];
-            let nextCursor = null;
-            for (let page = 0; page < starts.length; page++) {
-                if (page > 0 && !cursor) break;
-                const pageCursor = cursor;
-                const payload = await this.fetchJSON(buildJobListURL({ filters: this.filters, cursor: pageCursor, limit: 50 }));
-                if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return null;
-                jobs.push(...pageJobs(payload));
-                cursors.push(pageCursor);
-                nextCursor = payload.nextCursor || null;
-                cursor = nextCursor;
-            }
-            return { jobs, cursors, nextCursor };
-        },
-
-        hasFilters() {
-            return !!(
-                this.filters.search || this.filters.kinds?.length || this.filters.states?.length || this.filters.origins?.length ||
-                this.filters.command ||
-                this.filters.ownerId || this.filters.actorId || this.filters.acceptedAfter || this.filters.acceptedBefore ||
-                this.filters.relationship ||
-                (this.filters.pinned !== null && this.filters.pinned !== undefined) ||
-                (this.filters.dismissed !== null && this.filters.dismissed !== undefined)
-            );
-        },
-
-        async loadHome() {
-            const listGeneration = ++this._listGeneration;
-            if (this._streamRefreshPromise) this._streamRefreshRequested = true;
-            const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
-            const [attention, active, finished] = await Promise.all([
-                this.fetchJSON(buildJobListURL({ filters: filterBase, states: ATTENTION_STATES, limit: 6 })),
-                this.fetchJSON(buildJobListURL({ filters: filterBase, states: ACTIVE_STATES, limit: 6 })),
-                this.fetchJSON(buildJobListURL({ filters: filterBase, states: FINISHED_STATES, limit: 6 })),
-            ]);
-            if (listGeneration !== this._listGeneration) return;
-            const sections = {
-                attention: preserveJobUIState(this.jobs, pageJobs(attention)),
-                active: preserveJobUIState(this.jobs, pageJobs(active)),
-                finished: preserveJobUIState(this.jobs, pageJobs(finished)),
-                other: [],
-            };
-            this.sections = sections;
-            this.jobs = uniqueJobs(Object.values(sections).flat());
-            this.nextCursor = null;
-            this._allPageCursors = [];
-        },
-
-        async loadAll(cursor = null, append = false) {
-            const listGeneration = ++this._listGeneration;
-            if (this._streamRefreshPromise) this._streamRefreshRequested = true;
-            if (!append) this._allPageCursors = [cursor];
-            const payload = await this.fetchJSON(buildJobListURL({
-                filters: this.filters,
-                cursor,
-                limit: 50,
-            }));
-            if (listGeneration !== this._listGeneration) return false;
-            const rows = preserveJobUIState(this.jobs, pageJobs(payload));
-            this.jobs = append ? uniqueJobs([...this.jobs, ...rows]) : rows;
-            this._allPageCursors = append
-                ? [...this._allPageCursors, cursor]
-                : [cursor];
-            this.nextCursor = payload.nextCursor || null;
-            this.sections = splitJobSections(this.jobs);
-            return true;
-        },
-
-        async loadMore() {
-            if (this.loadingMore || !this.nextCursor) return;
-            const previous = this.nextCursor;
-            this.loadingMore = true;
-            this.error = '';
-            try {
-                if (await this.loadAll(previous, true)) this.replaceURL(previous);
-            } catch (error) {
-                this.error = error.message || 'Could not load the next page.';
-            } finally {
-                this.loadingMore = false;
             }
         },
 
@@ -733,163 +416,6 @@ export function jobCenter(options = {}) {
             const freshJob = payload.job || payload;
             if (freshJob?.id) this.updateJob(freshJob);
             return freshJob;
-        },
-
-        // List rows carry no outputs, so a succeeded row's result link needs its
-        // detail. Each is read once per page: a finished job's outputs do not come
-        // back, and the stream refreshes that rebuild these rows would otherwise
-        // re-read every one of them.
-        async loadResultOutputs(jobs) {
-            const wanted = (jobs || []).filter(job => job?.id && job.state === 'succeeded' &&
-                !advertisedOutputs(job).length && !(job.id in this.resultOutputs) &&
-                !this._resultOutputsPending.has(job.id));
-            await Promise.all(wanted.map(async job => {
-                this._resultOutputsPending.add(job.id);
-                try {
-                    const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
-                    const detail = payload.job || payload;
-                    this.resultOutputs = { ...this.resultOutputs, [job.id]: advertisedOutputs(detail) };
-                } catch {
-                    // No link rather than an error: the row and its Open link still work.
-                } finally {
-                    this._resultOutputsPending.delete(job.id);
-                }
-            }));
-        },
-
-        resultSource(job) {
-            const outputs = advertisedOutputs(job).length ? advertisedOutputs(job) : this.resultOutputs[job?.id] || [];
-            return { ...job, outputs };
-        },
-
-        resultURL(job) { return resultURL(this.resultSource(job)); },
-        resultLinkLabel(job) { return resultLinkLabel(this.resultSource(job)); },
-        resultAccessibleLabel(job) { return resultAccessibleLabel(this.resultSource(job)); },
-
-        async detailFor(job) {
-            if (advertisedCommands(job).length || advertisedOutputs(job).length || this.details[job.id]) {
-                return this.details[job.id] || job;
-            }
-            const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
-            const detail = payload.job || payload;
-            this.details[job.id] = detail;
-            this.updateJob(detail);
-            return detail;
-        },
-
-        async toggleSelection(job, checked) {
-            const selected = new Set(this.selectedIds);
-            if (checked) selected.add(job.id);
-            else selected.delete(job.id);
-            this.selectedIds = selected;
-            if (checked) {
-                try { await this.detailFor(job); }
-                catch (error) {
-                    this.notice = error.message || 'Could not read the selected job commands.';
-                    this._liveRegion?.announce(this.notice);
-                }
-            }
-        },
-
-        selectedJobs() {
-            const selected = new Map();
-            for (const detail of Object.values(this.details)) {
-                if (this.selectedIds.has(detail.id)) selected.set(detail.id, detail);
-            }
-            for (const job of this.jobs) {
-                if (this.selectedIds.has(job.id)) {
-                    // List snapshots are refreshed after bulk commands and carry
-                    // current viewer preferences; preserve detail-only fields
-                    // such as advertised commands when they are absent in list rows.
-                    selected.set(job.id, { ...(this.details[job.id] || {}), ...job });
-                }
-            }
-            return [...selected.values()];
-        },
-
-        bulkCommands() {
-            return selectedBulkCommands(this.selectedJobs(), this.selectedIds);
-        },
-
-        replaceURL(cursor = this.view === 'all' ? this.nextCursor : null) {
-            const serialized = serializeJobCenterURL({ view: this.view, filters: this.filters, cursor });
-            const nextURL = `${globalThis.location?.pathname || '/jobs'}${serialized ? `?${serialized}` : ''}`;
-            globalThis.history?.replaceState({}, '', nextURL);
-        },
-
-        submitFilters(form) {
-            const data = new FormData(form);
-            const csv = key => String(data.get(key) || '').split(',').map(value => value.trim()).filter(Boolean);
-            this.filters = {
-                search: String(data.get('search') || '').trim(),
-                command: String(data.get('command') || '').trim(),
-                kinds: csv('kind'),
-                states: csv('state'),
-                origins: csv('origin'),
-                ownerId: String(data.get('ownerId') || '').trim(),
-                actorId: String(data.get('actorId') || '').trim(),
-                acceptedAfter: String(data.get('acceptedAfter') || '').trim(),
-                acceptedBefore: String(data.get('acceptedBefore') || '').trim(),
-                relationship: String(data.get('relationship') || '').trim(),
-                pinned: parseSelectBoolean(data.get('pinned')),
-                dismissed: parseSelectBoolean(data.get('dismissed')),
-            };
-            this.view = 'all';
-            this.nextCursor = null;
-            this._allPageCursors = [];
-            this.selectedIds = new Set();
-            this.replaceURL(null);
-            this.loading = true;
-            this.error = '';
-            const submitGeneration = ++this._filterSubmitGeneration;
-            const summaryGeneration = ++this._summaryGeneration;
-            const summaryRequest = this.loadSummary(summaryGeneration);
-            const listRequest = this.loadAll();
-            return Promise.allSettled([summaryRequest, listRequest]).then(results => {
-                if (submitGeneration !== this._filterSubmitGeneration) return;
-                const [summaryResult, listResult] = results;
-                if (listResult.status === 'rejected') throw listResult.reason;
-                if (summaryGeneration === this._summaryGeneration && summaryResult.status === 'rejected') throw summaryResult.reason;
-            }).catch(error => {
-                if (submitGeneration === this._filterSubmitGeneration) this.error = error.message || 'Could not apply these filters.';
-            }).finally(() => {
-                if (submitGeneration === this._filterSubmitGeneration) this.loading = false;
-            });
-        },
-
-        clearFilters() {
-            this._filterSubmitGeneration += 1;
-            this.filters = emptyFilters();
-            this.view = 'home';
-            this.nextCursor = null;
-            this._allPageCursors = [];
-            this.selectedIds = new Set();
-            globalThis.history?.replaceState({}, '', '/jobs');
-            return this.load();
-        },
-
-        async setView(view) {
-            this._filterSubmitGeneration += 1;
-            this.view = view === 'all' ? 'all' : 'home';
-            if (this.view === 'home') this.filters = emptyFilters();
-            this.nextCursor = null;
-            this._allPageCursors = [];
-            this.selectedIds = new Set();
-            this.replaceURL(null);
-            this.loading = true;
-            this.error = '';
-            try {
-                const [, jobs] = await Promise.all([
-                    this.loadSummary(),
-                    this.view === 'all' ? this.loadAll() : this.loadHome(),
-                ]);
-                return jobs;
-            } catch (error) {
-                this.error = error.message || 'Could not change job views.';
-                return null;
-            } finally {
-                this.loading = false;
-            }
         },
 
         detailURL(job) {
@@ -942,49 +468,6 @@ export function jobCenter(options = {}) {
             }
         },
 
-        async runBulkCommand(command) {
-            const jobs = this.selectedJobs();
-            if (!jobs.length || this.bulkBusy) return [];
-            const confirmation = commandConfirmation(command);
-            if (confirmation) {
-                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(
-                    `${confirmation} This applies to ${jobs.length} selected jobs.`,
-                    { title: commandLabel(command), confirmLabel: commandLabel(command) },
-                );
-                if (!accepted) return [];
-            }
-            const key = idempotencyKey();
-            this.bulkBusy = true;
-            this.bulkOutcomes = [];
-            try {
-                const payload = await this.fetchJSON(`/v1/jobs/commands/${encodeURIComponent(command.key)}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-                    body: JSON.stringify({ jobIds: jobs.map(job => job.id), idempotencyKey: key }),
-                });
-                this.bulkOutcomes = payload.results || payload.outcomes || [];
-                const succeeded = this.bulkOutcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;
-                this.notice = `${succeeded} of ${jobs.length} jobs ${commandLabel(command).toLowerCase()}.`;
-                this._liveRegion?.announce(this.notice);
-                await this.refreshCurrentView();
-                return this.bulkOutcomes;
-            } catch (error) {
-                this.bulkOutcomes = error.payload?.results || error.payload?.outcomes || [];
-                this.notice = error.message || 'The bulk command could not be completed.';
-                this._liveRegion?.announce(this.notice);
-                return this.bulkOutcomes;
-            } finally {
-                this.bulkBusy = false;
-            }
-        },
-
-        async refreshCurrentView() {
-            return Promise.all([
-                this.loadSummary().catch(() => {}),
-                this.view === 'all' || this.hasFilters() ? this.loadAll() : this.loadHome(),
-            ]);
-        },
-
         connect() {
             if (this.eventSource || typeof EventSource === 'undefined') return;
             this.connectionStatus = 'connecting';
@@ -1017,10 +500,8 @@ export function jobCenter(options = {}) {
             if (!message.deliverySequence && event.lastEventId) message.lastEventId = event.lastEventId;
             message.replay = message.replay === true || !this.streamCaughtUp;
             const announceSnapshot = !message.replay;
-            const previousSequence = this.lastSequence;
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence);
             this.lastSequence = result.lastSequence;
-            if (this.lastSequence > previousSequence) this.scheduleStreamRefresh();
             if (!result.changed) {
                 return;
             }
@@ -1035,11 +516,6 @@ export function jobCenter(options = {}) {
                 return;
             }
             this.jobs = result.jobs;
-            if (this.view === 'home' && !this.hasFilters()) {
-                this.sections = splitJobSections(this.jobs);
-            } else if (this.view === 'all') {
-                this.sections = splitJobSections(this.jobs);
-            }
             if (result.announcement) this._liveRegion?.announce(result.announcement);
         },
 
@@ -1051,24 +527,16 @@ export function jobCenter(options = {}) {
         applyStreamSnapshot(job, previousResult = null, announce = false) {
             if (!job?.id) return;
             const result = previousResult || reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
-            if (result.changed) {
-                this.jobs = result.jobs;
-                this.sections = splitJobSections(this.jobs);
-            }
+            if (result.changed) this.jobs = result.jobs;
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
             if (this.detail?.id === job.id) this.detail = { ...this.detail, ...job };
             if (announce && result.announcement) this._liveRegion?.announce(result.announcement);
-        },
-
-        toggleExpanded(job) {
-            job.uiExpanded = !job.uiExpanded;
         },
 
         progressText(job) { return progressText(job); },
         progressValue(job) { return progressValue(job); },
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },
-        dateTimeLocalValue(value) { return dateTimeLocalValue(value); },
         stateLabel(job) { return stateLabel(job); },
         stateClass(job) { return classifyJobState(job); },
         commandLabel(command) { return commandLabel(command); },
@@ -1081,60 +549,10 @@ export function jobCenter(options = {}) {
         outputJSONLinkURL(output, outputs) { return outputJSONLinkURL(output, outputs); },
         outputLinkLabel(output, outputs) { return outputLinkLabel(output, outputs); },
         outputLinkAccessibleLabel(output, outputs) { return outputLinkAccessibleLabel(output, outputs); },
-        get bulkBusy() { return this._bulkBusy || false; },
-        set bulkBusy(value) { this._bulkBusy = value; },
-
-        get isAllView() { return this.view === 'all'; },
-        get selectedCount() { return this.selectedIds.size; },
-        get displaySections() {
-            if (this.view === 'all' || this.hasFilters()) return [{ key: 'all', title: 'All jobs', jobs: this.jobs }];
-            return [
-                { key: 'attention', title: 'Needs attention', jobs: this.sections.attention },
-                { key: 'active', title: 'Active and scheduled', jobs: this.sections.active },
-                { key: 'finished', title: 'Recent finished', jobs: this.sections.finished },
-            ];
-        },
     };
 }
 
-
-function emptyFilters() {
-    return { search: '', command: '', kinds: [], states: [], origins: [], ownerId: '', actorId: '', acceptedAfter: '', acceptedBefore: '', relationship: '', pinned: null, dismissed: null };
-}
-
-function parseSelectBoolean(value) {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return null;
-}
-
-function pageJobs(payload) {
-    if (Array.isArray(payload)) return payload;
-    return Array.isArray(payload?.jobs) ? payload.jobs : [];
-}
-
-function uniqueJobs(jobs) {
-    const seen = new Map();
-    for (const job of jobs) {
-        if (!seen.has(job.id)) seen.set(job.id, job);
-    }
-    return [...seen.values()].sort((left, right) => String(right.acceptedAt || '').localeCompare(String(left.acceptedAt || '')) || String(right.id).localeCompare(String(left.id)));
-}
-
-function preserveJobUIState(previousJobs, incomingJobs) {
-    const previousById = new Map((previousJobs || []).map(job => [job.id, job]));
-    return (incomingJobs || []).map(job => {
-        const previous = previousById.get(job.id);
-        if (!previous) return job;
-        return {
-            ...job,
-            uiExpanded: previous.uiExpanded ?? job.uiExpanded ?? false,
-            uiSelected: previous.uiSelected ?? job.uiSelected ?? false,
-        };
-    });
-}
-
-function commandConfirmation(command) {
+export function commandConfirmation(command) {
     if (command?.key === 'pin') {
         return "Pin this job's metadata and event history against ordinary retention. Linked jobs and artifacts keep their own retention.";
     }

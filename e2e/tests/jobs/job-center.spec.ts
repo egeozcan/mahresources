@@ -25,7 +25,8 @@ async function submitFailingDownload(
   name: string,
 ) {
   const response = await request.post('/v1/download/submit', {
-    data: { URL: `${DEAD_URL}${name}`, OwnerId: groupId, Name: name },
+    // FileName becomes the Job's title, which is what a test searches the list by.
+    data: { URL: `${DEAD_URL}${name}`, OwnerId: groupId, Name: name, FileName: name },
   });
   expect(response.status(), await response.text()).toBe(202);
   const body = await response.json();
@@ -53,99 +54,196 @@ async function waitForJobState(
 }
 
 test.describe('Job Center', () => {
-  test('requests a filtered summary with the current list filters and Any dismissal scope', async ({ page }) => {
-    let summaryRequestURL = '';
-    await page.route('**/v1/jobs/summary**', async route => {
-      summaryRequestURL = route.request().url();
-      await route.fulfill({ json: { byState: {} } });
-    });
-    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs: [], nextCursor: null } }));
+  test('renders the list on the server, readable without JavaScript', async ({ browser, request, baseURL }) => {
+    const stamp = Date.now();
+    const name = `job-center-nojs-${stamp}.bin`;
+    const groupId = await createGroup(request, `job-center-nojs-${stamp}`);
+    const { canonicalId } = await submitFailingDownload(request, groupId, name);
+    await waitForJobState(request, canonicalId, 'failed');
 
-    await page.goto('/jobs?view=all&search=archive&command=retry&kind=remote-download&state=failed&origin=api&ownerId=12&actorId=13&acceptedAfter=2026-09-01T00%3A00%3A00Z&acceptedBefore=2026-09-20T00%3A00%3A00Z&relationship=retry-of&pinned=true');
-
-    await expect(page.getByTestId('job-center')).toBeVisible();
-    await expect.poll(() => summaryRequestURL).not.toBe('');
-    const summary = new URL(summaryRequestURL).searchParams;
-    expect(summary.get('search')).toBe('archive');
-    expect(summary.get('command')).toBe('retry');
-    expect(summary.get('kind')).toBe('remote-download');
-    expect(summary.get('state')).toBe('failed');
-    expect(summary.get('origin')).toBe('api');
-    expect(summary.get('ownerId')).toBe('12');
-    expect(summary.get('actorId')).toBe('13');
-    expect(summary.get('acceptedAfter')).toBe('2026-09-01T00:00:00.000Z');
-    expect(summary.get('acceptedBefore')).toBe('2026-09-20T00:00:00.000Z');
-    expect(summary.get('relationship')).toBe('retry-of');
-    expect(summary.get('pinned')).toBe('true');
-    expect(summary.has('dismissed')).toBe(false);
-    expect(summary.has('cursor')).toBe(false);
-    expect(summary.has('limit')).toBe(false);
+    const context = await browser.newContext({ baseURL, javaScriptEnabled: false });
+    try {
+      const page = await context.newPage();
+      await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+      const row = page.locator(`[data-job-id="${canonicalId}"]`);
+      await expect(row).toBeVisible();
+      await expect(row.getByRole('link', { name, exact: true })).toHaveAttribute('href', `/job?id=${canonicalId}`);
+      await expect(row.getByTestId('job-state')).toHaveText('Failed');
+      // The filters are an ordinary GET form in the standard sidebar.
+      await expect(page.getByRole('form', { name: 'Filter jobs' })).toBeVisible();
+      await expect(page.getByRole('searchbox', { name: 'Search' })).toHaveValue(name);
+    } finally {
+      await context.close();
+    }
   });
 
-  test('Dismissed Any shows previously dismissed jobs in All jobs', async ({ page }) => {
-    const dismissedJob = {
-      id: 'dismissed-download', kind: 'remote-download', state: 'failed', version: 1,
-      title: 'Dismissed download', dismissed: true, acceptedAt: new Date().toISOString(),
-    };
-    const listURLs: URL[] = [];
-    await page.route('**/v1/jobs/summary**', route => {
-      const hidden = new URL(route.request().url()).searchParams.get('dismissed') === 'false';
-      return route.fulfill({ json: { byState: { failed: hidden ? 0 : 1 } } });
-    });
-    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
-      const url = new URL(route.request().url());
-      listURLs.push(url);
-      return route.fulfill({ json: { jobs: url.searchParams.get('dismissed') === 'false' ? [] : [dismissedJob] } });
-    });
+  test('the sidebar form round-trips the canonical filter parameters', async ({ page }) => {
+    await page.goto('/jobs?search=archive&command=retry&kind=remote-download&state=failed&state=blocked&origin=api&origin=plugin&ownerId=12&actorId=13&acceptedAfter=2026-09-01T14%3A30&acceptedBefore=2026-09-20&relationship=retry-of&pinned=true&dismissed=any');
 
-    await page.goto('/jobs?view=all&dismissed=false');
-    await expect(page.locator('[data-job-id="dismissed-download"]')).toHaveCount(0);
-    await page.getByText('Filter jobs', { exact: true }).click();
-    await page.getByRole('searchbox', { name: 'Search' }).fill('download');
-    await page.getByRole('combobox', { name: 'Dismissed' }).selectOption('');
-    await page.getByRole('button', { name: 'Apply filters' }).click();
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(form.getByRole('searchbox', { name: 'Search' })).toHaveValue('archive');
+    await expect(form.getByRole('combobox', { name: 'Available command' })).toHaveValue('retry');
+    await expect(form.getByRole('checkbox', { name: 'remote-download' })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'blocked' })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'queued' })).not.toBeChecked();
+    await expect(form.getByRole('searchbox', { name: 'Origin' })).toHaveValue('api, plugin');
+    await expect(form.getByLabel('Accepted after')).toHaveValue('2026-09-01T14:30');
+    await expect(form.getByLabel('Accepted before')).toHaveValue('2026-09-20T23:59');
+    await expect(form.getByRole('combobox', { name: 'Relationship' })).toHaveValue('retry-of');
+    await expect(form.getByRole('combobox', { name: 'Pinned' })).toHaveValue('true');
+    await expect(form.getByRole('combobox', { name: 'Dismissed' })).toHaveValue('any');
 
-    await expect(page.locator('[data-job-id="dismissed-download"]')).toBeVisible();
-    expect(listURLs.some(url => !url.searchParams.has('dismissed'))).toBe(true);
-    await page.getByRole('button', { name: 'Overview' }).click();
-    await expect(page.locator('[data-job-id="dismissed-download"]')).toHaveCount(0);
-    expect(new URL(page.url()).searchParams.has('search')).toBe(false);
+    await form.getByRole('checkbox', { name: 'blocked' }).uncheck();
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/\/jobs\?/);
+    const url = new URL(page.url());
+    expect(url.searchParams.getAll('state')).toEqual(['failed']);
+    expect(url.searchParams.get('kind')).toBe('remote-download');
+    expect(url.searchParams.get('command')).toBe('retry');
+    expect(url.searchParams.get('dismissed')).toBe('any');
+    expect(url.searchParams.get('origin')).toBe('api, plugin');
+    // With JavaScript the bounds travel as instants: an untouched one exactly as
+    // it arrived, so neither the time of day nor the end of the range moves.
+    const [after, before] = await page.evaluate(() => [
+      new Date('2026-09-01T14:30').getTime(),
+      new Date('2026-09-21T00:00').getTime() - 1,
+    ]);
+    expect(new Date(url.searchParams.get('acceptedAfter')!).getTime()).toBe(after);
+    expect(new Date(url.searchParams.get('acceptedBefore')!).getTime()).toBe(before);
+    await expect(form.getByLabel('Accepted after')).toHaveValue('2026-09-01T14:30');
+    await expect(form.getByLabel('Accepted before')).toHaveValue('2026-09-20T23:59');
+    await expect(page.getByRole('alert')).toHaveCount(0);
   });
 
-  test('findings 41 and 113: paused progress stays visible and unknown totals keep a named indeterminate bar', async ({ page }) => {
-    const acceptedAt = new Date().toISOString();
-    const jobs = [
-      { id: 'progress-paused', kind: 'remote-download', state: 'paused', version: 2,
-        title: 'Paused transfer', acceptedAt, progress: { completed: 20, total: 50, unit: 'MB' } },
-      { id: 'progress-unknown', kind: 'remote-download', state: 'running', version: 2,
-        title: 'Unknown size transfer', acceptedAt, progress: { completed: 7, total: null, unit: 'bytes' } },
-      // A transfer that never learned its size and then finished keeps that last
-      // row: it must read as done, not pulse "In progress" forever.
-      { id: 'progress-finished-unknown', kind: 'remote-download', state: 'succeeded', version: 3,
-        title: 'Finished unknown size transfer', acceptedAt, progress: {} },
-    ];
-    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs, nextCursor: null } }));
-    await page.route('**/v1/jobs/summary', route => route.fulfill({ json: { byState: { paused: 1, running: 1 } } }));
+  test('Dismissed Any shows a job the viewer dismissed, which the default list hides', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-dismissed-${stamp}.bin`;
+    const groupId = await createGroup(request, `job-center-dismissed-${stamp}`);
+    const { canonicalId } = await submitFailingDownload(request, groupId, name);
+    await waitForJobState(request, canonicalId, 'failed');
+    const job = await readJob(request, canonicalId);
+    const dismiss = job?.commands?.find(command => command.key === 'dismiss');
+    expect(dismiss).toBeTruthy();
+    const key = `job-center-dismiss-${stamp}`;
+    const response = await request.post(dismiss!.endpoint, {
+      headers: { 'Idempotency-Key': key },
+      data: { expectedVersion: dismiss!.jobVersion, idempotencyKey: key },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
 
-    await page.goto('/jobs?view=all');
-    const paused = page.locator('[data-job-id="progress-paused"]');
-    await expect(paused).toContainText('Paused');
-    await expect(paused.getByRole('progressbar', { name: /Paused transfer progress/ })).toHaveAttribute('aria-valuenow', '40');
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await expect(page.locator(`[data-job-id="${canonicalId}"]`)).toHaveCount(0);
+    await expect(page.getByText('No jobs match these filters.')).toBeVisible();
 
-    const unknown = page.locator('[data-job-id="progress-unknown"]');
-    const bar = unknown.getByRole('progressbar', { name: /Unknown size transfer progress/ });
-    await expect(bar).toBeVisible();
-    await expect(bar).not.toHaveAttribute('aria-valuenow', /.+/);
-    await expect(bar).toHaveAttribute('aria-valuetext', /7 bytes processed; total unknown/);
-    await expect(unknown.locator('.animate-pulse')).toHaveCount(1);
-    await expect(unknown).toContainText('In progress');
+    await page.getByRole('combobox', { name: 'Dismissed' }).selectOption('any');
+    await page.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page.locator(`[data-job-id="${canonicalId}"]`)).toBeVisible();
+    expect(new URL(page.url()).searchParams.get('dismissed')).toBe('any');
+  });
 
-    const finished = page.locator('[data-job-id="progress-finished-unknown"]');
-    const finishedBar = finished.getByRole('progressbar', { name: /Finished unknown size transfer progress/ });
-    await expect(finishedBar).toHaveAttribute('aria-valuenow', '100');
-    await expect(finishedBar).toHaveAttribute('aria-valuetext', 'Completed');
-    await expect(finished.locator('.animate-pulse')).toHaveCount(0);
-    await expect(finished).not.toContainText('In progress');
+  test('quick filters count the rows they open and toggle their State filter', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-quick-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const first = await submitFailingDownload(request, groupId, `${name}-a.bin`);
+    const second = await submitFailingDownload(request, groupId, `${name}-b.bin`);
+    await waitForJobState(request, first.canonicalId, 'failed');
+    await waitForJobState(request, second.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    const attention = page.locator('[data-job-quick-filter="attention"]');
+    await expect(attention).toContainText('Needs attention (2)');
+    await expect(page.locator('[data-job-quick-filter="active"]')).toContainText('Active (0)');
+    await expect(page.locator('[data-job-quick-filter="finished"]')).toContainText('Finished (2)');
+
+    await attention.click();
+    const url = new URL(page.url());
+    expect(url.searchParams.get('search')).toBe(name);
+    expect(url.searchParams.getAll('state').sort()).toEqual(['blocked', 'failed', 'interrupted']);
+    await expect(page.locator('[data-job-quick-filter="attention"]')).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('[data-job-id]')).toHaveCount(2);
+
+    await page.locator('[data-job-quick-filter="attention"]').click();
+    expect(new URL(page.url()).searchParams.getAll('state')).toEqual([]);
+    await expect(page.locator('[data-job-quick-filter="attention"]')).not.toHaveAttribute('aria-current', /.+/);
+  });
+
+  test('pages with Previous and Next through the standard pagination bar', async ({ page, request }) => {
+    test.slow();
+    const stamp = Date.now();
+    const name = `job-center-pages-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const ids: string[] = [];
+    for (let i = 0; i < 51; i++) {
+      ids.push((await submitFailingDownload(request, groupId, `${name}-${String(i).padStart(2, '0')}.bin`)).canonicalId);
+    }
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await expect(page.locator('[data-job-id]')).toHaveCount(50);
+    const nav = page.getByRole('navigation', { name: 'Pagination' });
+    await expect(nav.getByRole('link', { name: 'Previous page' })).toHaveCount(0);
+    await nav.getByRole('link', { name: 'Next page' }).click();
+
+    await expect(page.locator('[data-job-id]')).toHaveCount(1);
+    // Newest first, so the one row left is the first submitted.
+    await expect(page.locator(`[data-job-id="${ids[0]}"]`)).toBeVisible();
+    expect(new URL(page.url()).searchParams.get('search')).toBe(name);
+    await expect(nav.getByRole('link', { name: 'Next page' })).toHaveCount(0);
+
+    await nav.getByRole('link', { name: 'Previous page' }).click();
+    await expect(page.locator('[data-job-id]')).toHaveCount(50);
+    await expect(page.locator(`[data-job-id="${ids[50]}"]`)).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Previous page' })).toHaveCount(0);
+  });
+
+  test('a job accepted while the list is open appears without a reload', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-live-${stamp}`;
+    const groupId = await createGroup(request, name);
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await expect(page.getByTestId('job-live-status')).toHaveText('Live updates connected');
+    await expect(page.locator('[data-job-id]')).toHaveCount(0);
+    const attention = page.locator('[data-job-quick-filter="attention"]');
+    await expect(attention).toContainText('Needs attention (0)');
+
+    const { canonicalId } = await submitFailingDownload(request, groupId, `${name}.bin`);
+    const row = page.locator(`[data-job-id="${canonicalId}"]`);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByTestId('job-state')).toHaveText('Failed', { timeout: 20_000 });
+    await expect(attention).toContainText('Needs attention (1)');
+  });
+
+  test('bulk commands offer what every selected job advertises and report per-job outcomes', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-bulk-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const first = await submitFailingDownload(request, groupId, `${name}-a.bin`);
+    const second = await submitFailingDownload(request, groupId, `${name}-b.bin`);
+    await waitForJobState(request, first.canonicalId, 'failed');
+    await waitForJobState(request, second.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await page.locator(`[data-job-id="${first.canonicalId}"]`).getByRole('checkbox').check();
+    await page.locator(`[data-job-id="${second.canonicalId}"]`).getByRole('checkbox').check();
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('2 jobs selected');
+
+    const commands = page.getByRole('group', { name: 'Commands for the selected jobs' });
+    const dismiss = commands.getByRole('button', { name: 'Dismiss', exact: true });
+    await expect(dismiss).toBeVisible();
+    await dismiss.click();
+    const outcomes = page.getByRole('list', { name: 'Bulk command outcomes' });
+    await expect(outcomes.getByRole('listitem')).toHaveCount(2);
+
+    // The default list hides what the viewer dismissed; the live refresh removes both,
+    // and with them the bar, so the summary stays visible on the page itself.
+    await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.getByTestId('job-list-notice')).toHaveText('2 of 2 jobs: dismiss.');
+    await expect.poll(async () => {
+      const response = await request.get(`/v1/jobs?search=${encodeURIComponent(name)}&dismissed=true`);
+      return ((await response.json()).jobs as Job[]).length;
+    }).toBe(2);
   });
 
   test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {
@@ -187,7 +285,6 @@ test.describe('Job Center', () => {
   });
 
   test('the legacy Downloads page redirects to the canonical list with compatible filters', async ({ page }) => {
-    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs: [], nextCursor: 'next-download-page' } }));
     const response = await page.goto('/downloads?URL=legacy-search&Status=failed&CreatedAfter=2026-09-01');
 
     expect(response?.status()).toBe(200);
@@ -198,7 +295,9 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('search')).toBe('legacy-search');
     expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00Z');
     await expect(page.getByTestId('job-center')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Load more jobs' })).toBeVisible();
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
+    await expect(form.getByRole('searchbox', { name: 'Search' })).toHaveValue('legacy-search');
   });
 
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {
@@ -208,14 +307,13 @@ test.describe('Job Center', () => {
     const { canonicalId } = await submitFailingDownload(request, groupId, name);
     await waitForJobState(request, canonicalId, 'failed');
 
-    await page.goto('/jobs?view=all');
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
     const row = page.locator(`[data-job-id="${canonicalId}"]`);
     await expect(row).toBeVisible();
     await expect(row).toContainText('Failed');
     const original = await readJob(request, canonicalId);
     expect(original?.title).toBeTruthy();
-    await expect(row).toContainText(original!.title!);
-    await row.getByRole('link', { name: new RegExp(`^Open job ${original!.title}$`) }).first().click();
+    await row.getByRole('link', { name: original!.title!, exact: true }).click();
 
     await expect(page).toHaveURL(new RegExp(`/job\\?id=${canonicalId}$`));
     const detail = page.getByTestId('job-detail');
@@ -255,9 +353,10 @@ test.describe('Job Center', () => {
     expect(pinResponse.ok(), await pinResponse.text()).toBe(true);
     await expect.poll(async () => (await readJob(request, canonicalId))?.pinned).toBe(true);
 
-    await page.goto('/jobs?view=all');
+    await page.goto(`/jobs?search=${encodeURIComponent(`job-center-pin-${stamp}`)}`);
     const row = page.locator(`[data-job-id="${canonicalId}"]`);
     await expect(row.getByText('Pinned by you', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-job-quick-filter="pinned"]')).toContainText('Pinned by me (1)');
 
     await page.goto(`/job?id=${canonicalId}`);
     const detail = page.getByTestId('job-detail');

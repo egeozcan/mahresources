@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"mahresources/server/template_handlers/loaders"
 	"mahresources/server/template_handlers/template_context_providers"
+	"mahresources/server/template_handlers/template_entities"
 )
 
 func TestJobCenterRoutesAreOptIn(t *testing.T) {
@@ -81,5 +82,29 @@ func TestJobCenterTemplatesRender(t *testing.T) {
 				t.Errorf("%s did not preserve the legacy download panel before cutover", testCase.template)
 			}
 		}
+	}
+}
+
+// TestAnEmptiedJobPageDoesNotClaimThereAreNoJobs renders the case a keyset page
+// meets when its rows are dismissed or leave the filter: the page is empty but
+// Previous still leads to Jobs. The shared empty state reads a page position as
+// no filter at all and would say "No jobs yet".
+func TestAnEmptiedJobPageDoesNotClaimThereAreNoJobs(t *testing.T) {
+	set := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("../templates", nil))
+	page, err := set.FromFile("listJobs.tpl")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	context := template_context_providers.JobCenterListContextProvider(nil)(httptest.NewRequest(http.MethodGet, "/jobs?before=list-v1.x", nil))
+	context["pagination"] = template_entities.KeysetPagination("/jobs?before=list-v1.x", "")
+	rendered, err := page.Execute(context)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(rendered, "No jobs yet") {
+		t.Fatal("an emptied later page said there are no jobs, though Previous leads to some")
+	}
+	if !strings.Contains(rendered, "No jobs on this page") {
+		t.Fatal("an emptied later page did not point back to the earlier ones")
 	}
 }

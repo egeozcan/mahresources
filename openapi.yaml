@@ -5939,12 +5939,12 @@ paths:
                   name: actorId
                   schema:
                     type: integer
-                - description: Inclusive RFC3339 lower bound.
+                - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
                   schema:
                     type: string
-                - description: Inclusive RFC3339 upper bound.
+                - description: 'Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second.'
                   in: query
                   name: acceptedBefore
                   schema:
@@ -7623,12 +7623,12 @@ paths:
                   name: actorId
                   schema:
                     type: integer
-                - description: Inclusive RFC3339 lower bound.
+                - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
                   schema:
                     type: string
-                - description: Inclusive RFC3339 upper bound.
+                - description: 'Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second.'
                   in: query
                   name: acceptedBefore
                   schema:
@@ -7748,12 +7748,12 @@ paths:
                   name: actorId
                   schema:
                     type: integer
-                - description: Inclusive RFC3339 lower bound.
+                - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
                   schema:
                     type: string
-                - description: Inclusive RFC3339 upper bound.
+                - description: 'Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second.'
                   in: query
                   name: acceptedBefore
                   schema:

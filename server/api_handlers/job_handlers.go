@@ -2,7 +2,6 @@ package api_handlers
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
 	"mahresources/jobs"
+	"mahresources/server/jobview"
 )
 
 // JobListContext is the application facade required by the canonical Job list.
@@ -181,61 +181,11 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 func jobOutputResponse(jobID, jobKind string, output jobs.Output) JobOutputResponse {
 	return JobOutputResponse{
 		ID: output.ID, Key: output.Key, Type: output.Type, Label: output.Label,
-		DestinationURL: summaryEntityDestinationURL(jobKind, output),
+		DestinationURL: jobview.SummaryDestinationURL(jobKind, output),
 		Required:       output.Required, Availability: output.Availability, Version: output.Version,
 		ExpiresAt: output.ExpiresAt,
-		URL:       "/v1/jobs/" + url.PathEscape(jobID) + "/outputs?key=" + url.QueryEscape(output.Key),
+		URL:       jobview.OutputURL(jobID, output.Key),
 	}
-}
-
-// summaryEntityDestinationURL restores the direct entity navigation that
-// historical plugin-action summaries recorded as a result.redirect value.
-// The target route performs normal authorization when opened; this API only
-// advertises a tightly constrained same-origin destination.
-func summaryEntityDestinationURL(jobKind string, output jobs.Output) string {
-	if jobKind != application_context.JobKindPluginAction || output.Key != "result" ||
-		output.Type != jobs.OutputTypeSummary || output.Availability != jobs.OutputAvailable || !json.Valid(output.Reference) {
-		return ""
-	}
-	var reference map[string]json.RawMessage
-	if err := json.Unmarshal(output.Reference, &reference); err != nil || reference == nil {
-		return ""
-	}
-	var redirect string
-	if err := json.Unmarshal(reference["redirect"], &redirect); err != nil {
-		return ""
-	}
-	return safeEntityDestinationURL(redirect)
-}
-
-func safeEntityDestinationURL(raw string) string {
-	if raw == "" || strings.ContainsAny(raw, "\\\r\n") || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
-		return ""
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" ||
-		parsed.Fragment != "" || parsed.RawFragment != "" || parsed.RawPath != "" {
-		return ""
-	}
-	if parsed.Path != "/resource" && parsed.Path != "/note" && parsed.Path != "/group" {
-		return ""
-	}
-	if raw != parsed.Path+"?"+parsed.RawQuery {
-		return ""
-	}
-	values, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil || len(values) != 1 {
-		return ""
-	}
-	ids, ok := values["id"]
-	if !ok || len(ids) != 1 {
-		return ""
-	}
-	id, err := strconv.ParseUint(ids[0], 10, 64)
-	if err != nil || id == 0 || parsed.RawQuery != "id="+strconv.FormatUint(id, 10) {
-		return ""
-	}
-	return parsed.Path + "?id=" + strconv.FormatUint(id, 10)
 }
 
 func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {
@@ -262,7 +212,7 @@ type JobListResponse struct {
 // GetJobListHandler handles GET /v1/jobs.
 func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		filter, err := parseJobFilter(r.URL.Query())
+		filter, err := jobview.ParseFilter(r.URL.Query())
 		if err != nil {
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
@@ -272,7 +222,7 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		cursor, err := decodeJobListCursor(r.URL.Query().Get("cursor"))
+		cursor, err := jobview.DecodeCursor(r.URL.Query().Get("cursor"))
 		if err != nil {
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
@@ -288,7 +238,7 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 			response.Jobs = append(response.Jobs, jobSnapshotResponse(snap))
 		}
 		if page.Next != nil {
-			response.NextCursor, err = encodeJobListCursor(*page.Next)
+			response.NextCursor, err = jobview.EncodeCursor(*page.Next)
 			if err != nil {
 				writeJobError(w, http.StatusInternalServerError, "could not encode the next Job cursor")
 				return
@@ -327,7 +277,7 @@ type JobSummaryResponse struct {
 // GetJobSummaryHandler handles GET /v1/jobs/summary.
 func GetJobSummaryHandler(ctx JobSummaryContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		filter, err := parseJobFilter(r.URL.Query())
+		filter, err := jobview.ParseFilter(r.URL.Query())
 		if err != nil {
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
@@ -350,7 +300,7 @@ func GetJobSummaryHandler(ctx JobSummaryContext) func(http.ResponseWriter, *http
 // whose explicit date range exceeds the interactive 90-day ceiling.
 func GetJobSummaryExportHandler(ctx JobSummaryExportSubmitter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		filter, err := parseJobFilter(r.URL.Query())
+		filter, err := jobview.ParseFilter(r.URL.Query())
 		if err != nil {
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
@@ -524,128 +474,6 @@ func parseJobLimit(values url.Values) (int, error) {
 		return 0, fmt.Errorf("limit must be between 1 and %d", jobs.MaxPageSize)
 	}
 	return limit, nil
-}
-
-func parseJobFilter(values url.Values) (jobs.Filter, error) {
-	var filter jobs.Filter
-	filter.States = queryTokens(values, "states", "state")
-	filter.Kinds = queryTokens(values, "kinds", "kind")
-	filter.Origins = queryTokens(values, "origins", "origin")
-	filter.Search = values.Get("search")
-	filter.Relationship = values.Get("relationship")
-	var err error
-	if filter.OwnerID, err = queryUint(values, "ownerId"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if filter.ActorID, err = queryUint(values, "actorId"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if filter.AcceptedAfter, err = queryTime(values, "acceptedAfter"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if filter.AcceptedBefore, err = queryTime(values, "acceptedBefore"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if filter.Pinned, err = queryBool(values, "pinned"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if filter.Dismissed, err = queryBool(values, "dismissed"); err != nil {
-		return jobs.Filter{}, err
-	}
-	if commandValues, present := values["command"]; present {
-		if len(commandValues) != 1 {
-			return jobs.Filter{}, fmt.Errorf("command must be supplied once")
-		}
-		filter.Command = commandValues[0]
-		if strings.TrimSpace(filter.Command) == "" {
-			return jobs.Filter{}, fmt.Errorf("command must be a non-empty command key")
-		}
-		if len(filter.Command) > jobs.MaxCommandKeyBytes {
-			return jobs.Filter{}, fmt.Errorf("command key must not exceed %d bytes", jobs.MaxCommandKeyBytes)
-		}
-	}
-	return filter, nil
-}
-
-func queryTokens(values url.Values, names ...string) []string {
-	var out []string
-	for _, name := range names {
-		for _, value := range values[name] {
-			for _, token := range strings.Split(value, ",") {
-				out = append(out, strings.TrimSpace(token))
-			}
-		}
-	}
-	return out
-}
-
-func queryUint(values url.Values, name string) (*uint, error) {
-	raw := values.Get(name)
-	if raw == "" {
-		return nil, nil
-	}
-	parsed, err := strconv.ParseUint(raw, 10, strconv.IntSize)
-	if err != nil || parsed == 0 {
-		return nil, fmt.Errorf("%s must be a positive integer", name)
-	}
-	value := uint(parsed)
-	return &value, nil
-}
-
-func queryTime(values url.Values, name string) (*time.Time, error) {
-	raw := values.Get(name)
-	if raw == "" {
-		return nil, nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", name)
-	}
-	parsed = parsed.UTC()
-	return &parsed, nil
-}
-
-func queryBool(values url.Values, name string) (*bool, error) {
-	raw := values.Get(name)
-	if raw == "" {
-		return nil, nil
-	}
-	parsed, err := strconv.ParseBool(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be true or false", name)
-	}
-	return &parsed, nil
-}
-
-type encodedJobCursor struct {
-	AcceptedAt time.Time `json:"acceptedAt"`
-	ID         string    `json:"id"`
-}
-
-func encodeJobListCursor(cursor jobs.Cursor) (string, error) {
-	encoded, err := json.Marshal(encodedJobCursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID})
-	if err != nil {
-		return "", err
-	}
-	return "list-v1." + base64.RawURLEncoding.EncodeToString(encoded), nil
-}
-
-func decodeJobListCursor(value string) (jobs.Cursor, error) {
-	if value == "" {
-		return jobs.Cursor{}, nil
-	}
-	if len(value) > 2048 || !strings.HasPrefix(value, "list-v1.") {
-		return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, "list-v1."))
-	if err != nil {
-		return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
-	}
-	var cursor encodedJobCursor
-	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.ID == "" || cursor.AcceptedAt.IsZero() {
-		return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
-	}
-	return jobs.Cursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID}, nil
 }
 
 func writeJobServiceError(w http.ResponseWriter, err error) {
