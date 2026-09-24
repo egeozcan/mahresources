@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -223,22 +224,46 @@ func rawRelativePathWithin(target, root string) (string, bool) {
 	targetVolume := filepath.VolumeName(target)
 	rootVolume := filepath.VolumeName(root)
 	if !strings.EqualFold(targetVolume, rootVolume) {
-		return "", false
+		return rawRelativePathByIdentity(target, root)
 	}
 	targetComponents := rawPathComponents(strings.TrimPrefix(target, targetVolume))
 	rootComponents := rawPathComponents(strings.TrimPrefix(root, rootVolume))
 	if len(targetComponents) < len(rootComponents) {
-		return "", false
+		return rawRelativePathByIdentity(target, root)
 	}
 	for i, component := range rootComponents {
 		if !strings.EqualFold(targetComponents[i], component) {
-			return "", false
+			return rawRelativePathByIdentity(target, root)
 		}
 	}
 	if len(targetComponents) == len(rootComponents) {
 		return ".", true
 	}
 	return filepath.Join(targetComponents[len(rootComponents):]...), true
+}
+
+func rawRelativePathByIdentity(target, root string) (string, bool) {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return "", false
+	}
+	var suffix []string
+	for current := target; ; current = filepath.Dir(current) {
+		if currentInfo, statErr := os.Stat(current); statErr == nil && os.SameFile(currentInfo, rootInfo) {
+			if len(suffix) == 0 {
+				return ".", true
+			}
+			for left, right := 0, len(suffix)-1; left < right; left, right = left+1, right-1 {
+				suffix[left], suffix[right] = suffix[right], suffix[left]
+			}
+			return filepath.Join(suffix...), true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		suffix = append(suffix, filepath.Base(current))
+	}
 }
 
 func rawPathComponents(value string) []string {

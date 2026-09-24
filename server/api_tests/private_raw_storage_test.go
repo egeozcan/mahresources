@@ -25,7 +25,9 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 	}
 	editorCookie, _ := loginSummaryExportSession(t, tc, editor.Username, "password1")
 
-	fileRoot := t.TempDir()
+	fileSaveBase := t.TempDir()
+	fileRoot := filepath.Join(fileSaveBase, "private-café")
+	fileRootNormalizationAlias := filepath.Join(fileSaveBase, "private-cafe\u0301")
 	stagingRoot := filepath.Join(fileRoot, "custom-staging")
 	stagingAliasRoot := filepath.Join(fileRoot, "CUSTOM-STAGING")
 	dataRoot := t.TempDir()
@@ -54,6 +56,13 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 	write(fileRoot, "CUSTOM-STAGING/RUN.JSON")
 	write(fileRoot, ".part-summary.json")
 	write(fileRoot, "public.txt")
+	if _, err := os.Stat(fileRootNormalizationAlias); os.IsNotExist(err) {
+		if err := os.Symlink(fileRoot, fileRootNormalizationAlias); err != nil {
+			t.Fatalf("create normalization alias for private file root: %v", err)
+		}
+	}
+	write(fileRootNormalizationAlias, jobs.JobReplayKeyFileName)
+	write(fileRootNormalizationAlias, "."+jobs.JobReplayKeyFileName+"-synthetic")
 	write(stagingAliasRoot, "RUN.JSON")
 	write(dataRoot, jobs.JobReplayKeyFileName)
 	write(dataRoot, "public.txt")
@@ -88,6 +97,8 @@ func TestRawFileMountsHidePrivateStorageFromAdminsAndEditors(t *testing.T) {
 		"/parent/" + filepath.Base(fileRoot) + "/." + jobs.JobReplayKeyFileName + "-synthetic",
 		"/parent/" + filepath.Base(fileRoot) + "/._JOB_REPLAY_KEY-SYNTHETIC",
 		"/parent/" + filepath.Base(fileRoot) + "/_EXPORTS/ALTERNATE.TAR",
+		"/parent/" + filepath.Base(fileRootNormalizationAlias) + "/" + jobs.JobReplayKeyFileName,
+		"/parent/" + filepath.Base(fileRootNormalizationAlias) + "/." + jobs.JobReplayKeyFileName + "-synthetic",
 		"/files/CUSTOM-STAGING/RUN.JSON",
 		"/staging-alias/RUN.JSON",
 		"/exports/ALTERNATE.TAR",
