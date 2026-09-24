@@ -1,5 +1,24 @@
 # Job Center Task 18 — release review (2026-09-23)
 
+## Final integration follow-up (2026-09-24)
+
+The Astra final review of the completed integration branch is clear at
+`a8af3620`: 0 Standards findings, 0 Spec findings, and merge allowed. The
+follow-up avoids opening a SQLite writer transaction for an idle canonical
+event publisher and keeps the capacity-admission fixtures from starting their
+dispatch loop before the setup state is committed.
+
+Additional release evidence:
+
+- `go test --tags 'json1 fts5' ./... -count=1` passed end to end.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./mrql/... ./server/api_tests/... -count=1` passed.
+- `go vet --tags 'json1 fts5' ./...`, formatting, and `git diff --check` passed.
+- `npm run test:unit -- --run` passed 91 files and 1,410 tests; `npm run build`
+  and `./scripts/css-scan-test.sh` passed.
+- The focused raw-mount, canonical SSE, retention, export, and Job Center
+  race regressions passed. Astra's independent primary/direct/ancestor,
+  case-alias, and Unicode-alias raw probes all passed on the final HEAD.
+
 The 18-task Job Center cutover is implemented on `codex/job-center-integration`.
 Task 17's complete-Kind inventory and external cutover are enforced by the
 registered-Kind tests and browser/CLI flows. Task 18 exercised the fault,
