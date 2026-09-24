@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"mahresources/application_context"
@@ -84,10 +85,10 @@ func denyScopedPrincipal(next http.HandlerFunc) http.HandlerFunc {
 // then ensures group-limited principals can only fetch files belonging to
 // resources inside their subtree. Dedicated download handlers apply the
 // artifact-specific authorization for private job files.
-func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix string, next http.Handler) http.Handler {
+func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, mountRoot string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rel := strings.TrimPrefix(r.URL.Path, prefix)
-		if privateRawStoragePath(rel) {
+		if privateRawStoragePath(rel) || privateRawPhysicalStoragePath(appCtx, mountRoot, rel) {
 			http.NotFound(w, r)
 			return
 		}
@@ -105,17 +106,115 @@ func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix s
 	})
 }
 
-// privateRawStoragePath identifies application-managed files whose authorization
-// depends on their owning job or import. They are available only through
-// dedicated handlers, which enforce ownership and any output-specific checks.
-// Normalize URL separators and dot segments before checking so encoded
-// separators and traversal cannot turn a private path into a public one.
+// privateRawStoragePath reserves hidden root names for application-managed
+// private storage. Dedicated handlers enforce ownership and output-specific
+// checks for these paths. URL.Path is decoded by net/http; normalize separators
+// and dot segments before checking because FileServer applies the same semantics.
 func privateRawStoragePath(rel string) bool {
-	normalized := strings.ReplaceAll(rel, `\`, "/")
-	normalized = path.Clean("/" + strings.TrimLeft(normalized, "/"))
+	normalized := normalizedRawStoragePath(rel)
 	root := strings.TrimPrefix(normalized, "/")
 	root, _, _ = strings.Cut(root, "/")
-	return strings.EqualFold(root, "_exports") || strings.EqualFold(root, "_imports")
+	return strings.HasPrefix(root, "_") || strings.HasPrefix(root, ".")
+}
+
+func privateRawPhysicalStoragePath(appCtx *application_context.MahresourcesContext, mountRoot, rel string) bool {
+	target := rawMountedPath(mountRoot, rel)
+	if target == "" || appCtx == nil || appCtx.Config == nil {
+		return false
+	}
+	fileSavePath := appCtx.Config.FileSavePath
+	privateRoots := []string{appCtx.Config.PluginCommandStagingPath}
+	if strings.TrimSpace(fileSavePath) != "" {
+		privateRoots = append(privateRoots,
+			filepath.Join(fileSavePath, "_exports"),
+			filepath.Join(fileSavePath, "_imports"),
+			filepath.Join(fileSavePath, jobs.JobReplayKeyFileName),
+			filepath.Join(fileSavePath, "_plugin_commands"),
+		)
+	}
+	for _, root := range privateRoots {
+		if root != "" && rawPathIsWithin(target, canonicalRawPath(root)) {
+			return true
+		}
+	}
+	return rawReplayKeyPublicationTempPath(target, fileSavePath)
+}
+
+func rawReplayKeyPublicationTempPath(target, fileSavePath string) bool {
+	if strings.TrimSpace(fileSavePath) == "" {
+		return false
+	}
+	root := canonicalRawPath(fileSavePath)
+	if root == "" || !rawPathIsWithin(target, root) {
+		return false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == "." {
+		return false
+	}
+	tempPrefix := "." + jobs.JobReplayKeyFileName + "-"
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.HasPrefix(component, tempPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedRawStoragePath(rel string) string {
+	rel = strings.ReplaceAll(rel, `\`, "/")
+	return path.Clean("/" + strings.TrimLeft(rel, "/"))
+}
+
+func rawMountedPath(mountRoot, rel string) string {
+	if strings.TrimSpace(mountRoot) == "" {
+		return ""
+	}
+	root := canonicalRawPath(mountRoot)
+	if root == "" {
+		return ""
+	}
+	cleanRel := strings.TrimPrefix(normalizedRawStoragePath(rel), "/")
+	return canonicalRawPath(filepath.Join(root, filepath.FromSlash(cleanRel)))
+}
+
+// canonicalRawPath resolves existing symlinks and preserves any missing suffix.
+// Resolving the longest existing prefix also handles directory requests below a
+// symlink without granting a raw alias to a configured private root.
+func canonicalRawPath(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(filepath.Clean(value))
+	if err != nil {
+		return filepath.Clean(value)
+	}
+	abs = filepath.Clean(abs)
+	current := abs
+	var suffix []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
+func rawPathIsWithin(target, root string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // scopedCtx returns the application context bound to the current request's
