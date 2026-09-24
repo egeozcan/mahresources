@@ -45,6 +45,61 @@ describe('Job Center panel', () => {
         expect(panelCommandConfirmation({ key: 'forget', label: 'Forget' })).toMatch(/artifacts are not affected/i);
     });
 
+    test('links completed plugin actions to cached typed entities or historical summary destinations', () => {
+        const panel = jobPanel();
+        const entityJob = { id: 'fal-new', title: 'Create image', kind: 'plugin-action', state: 'succeeded' };
+        const summary = {
+            key: 'result', type: 'summary', availability: 'available', destinationUrl: '/resource?id=42',
+            url: '/v1/jobs/fal-new/outputs?key=result',
+        };
+        const entity = {
+            key: 'entity', type: 'entity', label: 'Resource', availability: 'available',
+            url: '/v1/jobs/fal-new/outputs?key=entity',
+        };
+        panel.jobs = [entityJob];
+        panel.details[entityJob.id] = { ...entityJob, outputs: [summary, entity] };
+
+        expect(panel.resultOutput(entityJob)).toBe(entity);
+        expect(panel.resultURL(entityJob)).toBe(entity.url);
+        expect(panel.resultLinkLabel(entityJob)).toBe('View resource');
+        expect(panel.resultAccessibleLabel(entityJob)).toBe('View resource for Create image');
+
+        const historicalJob = { id: 'fal-old', title: 'Old action', kind: 'plugin-action', state: 'succeeded' };
+        const historicalSummary = {
+            key: 'result', type: 'summary', availability: 'available', destinationUrl: '/group?id=18',
+            url: '/v1/jobs/fal-old/outputs?key=result',
+        };
+        panel.details[historicalJob.id] = { ...historicalJob, outputs: [historicalSummary] };
+
+        expect(panel.resultOutput(historicalJob)).toBe(historicalSummary);
+        expect(panel.resultURL(historicalJob)).toBe('/group?id=18');
+        expect(panel.resultLinkLabel(historicalJob)).toBe('View result');
+        expect(panel.resultAccessibleLabel(historicalJob)).toBe('View result for Old action');
+    });
+
+    test('only offers available safe result destinations for succeeded plugin actions', () => {
+        const panel = jobPanel();
+        const job = { id: 'fal-job', title: 'Create image', kind: 'plugin-action', state: 'succeeded' };
+        panel.details[job.id] = { ...job, outputs: [{
+            key: 'result', type: 'summary', availability: 'available',
+            destinationUrl: 'javascript:alert(1)', url: '/v1/jobs/fal-job/outputs?key=result',
+        }] };
+
+        expect(panel.resultOutput(job)).toBeNull();
+        expect(panel.resultURL(job)).toBe('');
+        expect(panel.resultAccessibleLabel(job)).toBe('');
+
+        panel.details[job.id].outputs[0].destinationUrl = '//example.com/result';
+        expect(panel.resultOutput(job)).toBeNull();
+
+        panel.details[job.id].outputs[0].destinationUrl = '/resource?id=42';
+        panel.details[job.id].outputs[0].availability = 'expired';
+        expect(panel.resultOutput(job)).toBeNull();
+
+        expect(panel.resultOutput({ ...job, state: 'running' })).toBeNull();
+        expect(panel.resultOutput({ ...job, kind: 'remote-download' })).toBeNull();
+    });
+
     test('keeps the existing Cmd/Ctrl+Shift+D shortcut and toggles the dialog', () => {
         vi.stubGlobal('document', {
             activeElement: null,
@@ -701,6 +756,10 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).toContain('Dismiss finished');
         expect(template).toContain('All jobs');
         expect(template).toContain('x-for="command in commandsFor(job)"');
+        expect(template).toContain('x-if="resultOutput(job)"');
+        expect(template).toContain(':href="resultURL(job)"');
+        expect(template).toContain(':aria-label="resultAccessibleLabel(job)"');
+        expect(template).toContain('x-text="resultLinkLabel(job)"');
         expect(template).toContain('x-show="job.pinned"');
         expect(template).toContain('Pinned by you');
         expect(template).toContain('Active and scheduled jobs shown');

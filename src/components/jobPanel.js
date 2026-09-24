@@ -7,6 +7,10 @@ import {
     commandEndpoint,
     commandLabel,
     jobCommands,
+    advertisedOutputs,
+    outputLinkURL,
+    outputLinkLabel,
+    outputLinkAccessibleLabel,
     reduceJobStreamEvent,
     stateLabel,
     streamCursorSequence,
@@ -50,6 +54,19 @@ export function panelCommandConfirmation(command) {
 function commandKey() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
     return `job-panel-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function safeResultURL(value) {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') ||
+        /[\\\u0000-\u001f\u007f]/.test(value)) return '';
+    const origin = globalThis.location?.origin || 'http://localhost';
+    try {
+        const parsed = new URL(value, origin);
+        if (parsed.origin !== origin || parsed.username || parsed.password || parsed.hash) return '';
+        return value;
+    } catch {
+        return '';
+    }
 }
 
 export function jobPanel() {
@@ -374,6 +391,48 @@ export function jobPanel() {
 
         detailURL(job) {
             return `/job?id=${encodeURIComponent(job?.id || '')}`;
+        },
+
+        outputsFor(job) {
+            return advertisedOutputs(this.details[job?.id] || job);
+        },
+
+        resultOutput(job) {
+            const detail = this.details[job?.id] || job;
+            if ((job?.kind || detail?.kind) !== 'plugin-action' ||
+                (job?.state || detail?.state) !== 'succeeded') return null;
+
+            const outputs = advertisedOutputs(detail);
+            const entity = outputs.find(output => output?.type === 'entity' &&
+                output.availability === 'available' &&
+                safeResultURL(outputLinkURL(output, outputs)));
+            if (entity) return entity;
+
+            return outputs.find(output => {
+                if (output?.type !== 'summary' || output.availability !== 'available' || !output.destinationUrl) return false;
+                const url = outputLinkURL(output, outputs);
+                return url === output.destinationUrl && Boolean(safeResultURL(url));
+            }) || null;
+        },
+
+        resultURL(job) {
+            const output = this.resultOutput(job);
+            return output ? safeResultURL(outputLinkURL(output, this.outputsFor(job))) : '';
+        },
+
+        resultLinkLabel(job) {
+            const output = this.resultOutput(job);
+            return output ? outputLinkLabel(output, this.outputsFor(job)) : '';
+        },
+
+        resultAccessibleLabel(job) {
+            const output = this.resultOutput(job);
+            if (!output) return '';
+            const outputs = this.outputsFor(job);
+            const label = outputLinkAccessibleLabel(output, outputs);
+            const detail = this.details[job?.id] || job;
+            const context = String(job?.title || detail?.title || job?.kind || job?.id || '').trim();
+            return context ? `${label} for ${context}` : label;
         },
 
         commandsFor(job) {

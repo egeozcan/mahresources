@@ -13821,3 +13821,16 @@ The focused plugin-action completion tests, API handler tests, and 41 Job Center
 ### Review
 
 The earlier commits updated `docs/todo.md`, `docs/lessons.md`, and the Job System feature page. This audit fills the missing user-guide and plugin-author instructions and clarifies progress and JSON-result behavior on the feature page. `npm run build` in `docs-site` passed, and `git diff --check` found no whitespace errors. Sol and the requested final Astra review found no actionable issues.
+
+## Jobs popup result navigation — 2026-09-24
+
+- [x] Reproduce the missing result link in the popup for the historical fal.ai Job.
+- [x] Render a direct result link from the popup's existing authorized Job detail outputs, covering historical summaries and new typed entity outputs.
+- [x] Update user and feature documentation for popup access and capture the lesson from the missed surface.
+- [x] Run focused UI and live-demo checks, request Sol review and a final Astra review, and commit the change.
+
+### Review
+
+The popup had the authorized Job detail outputs in memory for advertised controls but rendered only the Job detail link. It now shows a direct result link for a successful plugin action: an available typed entity output takes priority, while an older summary uses its validated local destination. The link's accessible name includes the Job title. The change adds no network requests to the popup.
+
+The focused Job panel tests passed 24/24, and Sol's combined Job panel and Job Center run passed 65/65. The JS bundle and docs site built, and `git diff --check` passed. In the restarted local demo, the historical fal.ai Job showed **View result** in the popup, and clicking it opened `/resource?id=1`. Sol and the requested final Astra reviews found no actionable issues; Astra also independently rebuilt the JS bundle and matched the checked-in asset byte for byte.

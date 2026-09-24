@@ -375,9 +375,10 @@ again when submitted. Selecting several Jobs offers only commands they all
 advertise for bulk use, with a separate result for each Job.
 
 A successful plugin action shows complete progress. When its result points to a
-Resource, Note, or Group, use the entity output link to open it. Older plugin
-Jobs with only a result summary show **View result** for the entity and **View
-JSON result** for the stored summary.
+Resource, Note, or Group, open it from the **Jobs** panel or the Job detail
+page. New Jobs show a typed entity link such as **View resource**. Older plugin
+Jobs with only a result summary show **View result** for the entity; their Job
+detail page also shows **View JSON result** for the stored summary.
 
 A Retry creates a linked successor. Dismiss hides a finished Job from your
 view; Forget removes its stored replay input and cannot be undone. A pin keeps

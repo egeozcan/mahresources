@@ -139,9 +139,10 @@ includes them.
 
 Plugin actions that return a local Resource, Note, or Group redirect publish an
 entity output. Opening that output rechecks access before navigating to the
-entity. Job detail also shows a direct “View result” link for older plugin-action
-summary outputs that stored the same safe redirect before entity outputs were
-published. “View JSON result” still opens the stored summary.
+entity. The Jobs panel and Job detail page show this link. Both also show a
+direct “View result” link for older plugin-action summary outputs that stored
+the same safe redirect before entity outputs were published. Job detail still
+offers “View JSON result” for the stored summary.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
