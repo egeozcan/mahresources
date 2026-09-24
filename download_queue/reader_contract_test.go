@@ -330,3 +330,45 @@ func TestReaderContract_APromptRemoteIsNotTimedOut(t *testing.T) {
 		t.Errorf("read %q, want the whole stream", got)
 	}
 }
+
+// A zero idle timeout is one nobody configured, not one that has already expired.
+// Every embedder and every test that builds a bare settings provider has it, and
+// read literally it failed any transfer whose next read came after the watcher's
+// first tick: "idle timeout after 0s", on a remote that had done nothing wrong.
+// hls.idleGuard and the overall deadline already read zero this way.
+func TestReaderContract_ZeroIdleTimeoutIsNoBound(t *testing.T) {
+	src := &lateReader{delay: 250 * time.Millisecond}
+	tr := NewTimeoutReaderWithContext(src, 0, context.Background())
+	defer tr.Close()
+
+	got, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatalf("a remote that answered after %v failed under an unconfigured idle timeout: %v", src.delay, err)
+	}
+	if string(got) != "TOOLATE" {
+		t.Fatalf("read %q, want %q", got, "TOOLATE")
+	}
+}
+
+// The watcher still honours cancellation when there is no idle bound to enforce.
+func TestReaderContract_ZeroIdleTimeoutStillCancels(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	src := &abandonedReader{
+		entered: make(chan struct{}),
+		release: gate,
+		wrote:   make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := NewTimeoutReaderWithContext(src, 0, ctx)
+	defer tr.Close()
+
+	go func() {
+		<-src.entered
+		cancel()
+	}()
+	n, err := tr.Read(make([]byte, 32))
+	if n != 0 || err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("a cancelled read returned %d bytes and err=%v, want the cancellation", n, err)
+	}
+}

@@ -153,8 +153,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	// table — so the request's own final read races the job it just started.
 	// SQLITE_LOCKED is a shared-cache table lock that does not go through
 	// busy_timeout; in the WAL configuration the app runs under a reader never
-	// blocks on a writer, so this only fires in the test fixture's `cache=shared`
-	// DSN. The request has already landed by the time this read runs — the CAS
+	// blocks on a writer, so this only fires under a shared-cache test DSN. The request has already landed by the time this read runs — the CAS
 	// wrote `computing` and the job is in the queue — so a lock lost here must not
 	// report the request as failed to the caller. Retried exactly like the claim
 	// write's own loop above; anything that is not contention still fails

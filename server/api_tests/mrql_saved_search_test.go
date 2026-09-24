@@ -12,8 +12,8 @@ import (
 // searchable via /v1/search and links to /mrql?saved=<id> (package 5c).
 func TestSavedMRQLQuery_FoundInGlobalSearch(t *testing.T) {
 	tc := SetupTestEnv(t)
-	// GlobalSearch fans out one goroutine per entity type. The harness DSN is
-	// `cache=shared` now, so the extra connections see the same database and this
+	// GlobalSearch fans out one goroutine per entity type. The harness is a WAL
+	// file now, so the extra connections see the same database and this
 	// pin is no longer what makes the test correct. It stays because unpinning the
 	// seventeen tests that carry it is its own change; see setupAuthEnv.
 	if sqlDB, err := tc.DB.DB(); err == nil {

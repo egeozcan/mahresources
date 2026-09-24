@@ -142,7 +142,7 @@ func TestCancelPausedJob_IsAccepted(t *testing.T) {
 }
 
 func TestCancelBlockedJobRetriesSharedCacheTableLock(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupTestEnvOn(t, openSharedCacheTestDatabase(t), nil)
 	deps := jobs.Deps{DB: tc.DB}
 	service := tc.AppCtx.JobService()
 	accepted, err := service.Accept(deps, jobs.Acceptance{
@@ -177,8 +177,8 @@ func TestCancelBlockedJobRetriesSharedCacheTableLock(t *testing.T) {
 		t.Fatalf("blocked download Job has %d claim rows, want none", claims)
 	}
 
-	// SetupTestEnv uses shared-cache in-memory SQLite, whose SQLITE_LOCKED table
-	// errors bypass busy_timeout. Hold a read transaction on the Job table until
+	// Shared-cache in-memory SQLite raises SQLITE_LOCKED table errors that
+	// bypass busy_timeout. Hold a read transaction on the Job table until
 	// the public cancel route reaches its first locked UPDATE, then release it so
 	// the command's outer transaction can retry from a fresh snapshot.
 	reader := tc.DB.Begin()

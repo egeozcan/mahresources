@@ -9,6 +9,7 @@ import (
 	"mahresources/constants"
 	"mahresources/jobs"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -26,12 +27,61 @@ import (
 	"gorm.io/gorm"
 )
 
-// testDBSeq makes every database name in this package distinct, whatever the test
-// name is. See the DSN comment in setupTestEnvWithConfig for why that matters under
-// a shared cache; it also covers the five tests that call the setup helper twice.
-var testDBSeq atomic.Uint64
+// openTestDatabase opens a fresh SQLite database for one test: a WAL file in the
+// test's own temporary directory, which is the shape production's -memory-db mode
+// uses too.
+//
+// Not a shared-cache in-memory database, which is what this was. Shared cache
+// takes table-level locks, and a connection that meets one gets SQLITE_LOCKED
+// ("database table is locked") immediately: busy_timeout never waits on it, and
+// only the sqlite_unlock_notify build tag would. Background Job work (a claim
+// scan, an event append, an import parse publishing its plan) runs on its own
+// connection beside the request that started it, so tests of that work failed
+// a few runs in fifteen on a lock production cannot raise. A WAL file has the
+// production semantics: readers never block the writer, and writers wait out
+// busy_timeout.
+//
+// It is also not a private-cache in-memory database, where every pooled
+// connection is a separate empty database and any handler that fans out over
+// goroutines queries an unmigrated schema. A file is one database whichever
+// connection reaches it.
+//
+// synchronous=OFF because nothing here needs to survive a crash. The pool is
+// closed at cleanup, before the directory is removed, so a package of a
+// thousand tests does not hold a thousand databases open.
+func openTestDatabase(t *testing.T) *gorm.DB {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test.db")
+	db, err := gorm.Open(sqlite.Open(path+"?_journal_mode=WAL&_busy_timeout=10000&_synchronous=OFF"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to open test database: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("Failed to reach the test database's pool: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return db
+}
 
-func nextTestDBSeq() uint64 { return testDBSeq.Add(1) }
+// sharedCacheDBSeq keeps every shared-cache database name distinct. Under a
+// shared cache the name is a lookup key, and t.Name() repeats on every iteration
+// of -count=N, so without it iteration 2 would attach to iteration 1's rows.
+var sharedCacheDBSeq atomic.Uint64
+
+// openSharedCacheTestDatabase opens the database openTestDatabase deliberately
+// avoids: shared-cache in-memory SQLite, whose table locks raise SQLITE_LOCKED
+// without waiting. Only a test that pins code handling that lock uses it; other
+// fixtures in the tree still run on shared cache, so that handling stays live.
+func openSharedCacheTestDatabase(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), sharedCacheDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to open shared-cache test database: %v", err)
+	}
+	return db
+}
 
 // TestContext holds the application context and the router for testing
 type TestContext struct {
@@ -53,46 +103,13 @@ func SetupTestEnv(t *testing.T) *TestContext {
 // mutate callback adjusts the MahresourcesConfig before the context is built,
 // letting tests enable auth or tweak other settings without duplicating setup.
 func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.MahresourcesConfig)) *TestContext {
-	// One in-memory SQLite database per test, keyed on the test name so tests never
-	// see each other's rows.
-	//
-	// `cache=shared` and not `cache=private`, which is what this was and which was
-	// quietly wrong. Under a private cache the name is decoration: *every pooled
-	// connection gets its own brand-new empty database*. A handler that runs on one
-	// connection sees the migrated, seeded DB; anything that fans out over
-	// goroutines has the rest of them opening fresh connections into empty
-	// databases and logging `no such table: …`.
-	//
-	// Three fan-out sites are affected. The dashboard provider runs five goroutines
-	// (dashboard_template_context.go), GetDataStats fifteen, and global search one
-	// per entity type. Measured effect before the change:
-	// TestDashboardTimeAttributeIsARealInstant took the "rendered no <time datetime>
-	// elements" branch and t.Skip'd in **12 of 20** separate runs — and a skip
-	// scores green, so a guard in the one suite CI runs was silently not running,
-	// most of the time.
-	//
-	// Nothing holds a connection open deliberately, and nothing needs to: Go keeps
-	// up to MaxIdleConns (default 2) connections alive with no idle timeout, and
-	// gorm.Open pings, so a connection exists from open until the pool is closed —
-	// which nothing in this package does. Deliberately NOT an explicit
-	// sqlDB.Conn() keepalive: seventeen tests pin the pool with
-	// SetMaxOpenConns(1), and checking out the single permitted connection would
-	// deadlock every one of them on a context.Background() wait.
-	//
-	// The sequence number is what `cache=private` used to give for free. Under a
-	// shared cache the name is a real lookup key, and `t.Name()` is identical on
-	// every iteration of `go test -count=N` — so iterations 2..N would attach to
-	// iteration 1's database, still holding its rows. That is not hypothetical: with
-	// the name alone, `-count=3` over four of this package's tests failed, and the
-	// same four passed under `cache=private`. Measured before shipping the change.
-	dbName := fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), nextTestDBSeq())
-	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("Failed to open test database: %v", err)
-	}
+	return setupTestEnvOn(t, openTestDatabase(t), mutate)
+}
 
+// setupTestEnvOn migrates, seeds and serves the database it is given.
+func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.MahresourcesConfig)) *TestContext {
 	// AutoMigrate all models (same as main.go)
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.Query{},
 		&models.Series{},
 		&models.Resource{},

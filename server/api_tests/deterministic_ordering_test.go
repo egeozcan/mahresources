@@ -56,11 +56,10 @@ func TestParameterlessGETsAreByteStable(t *testing.T) {
 	// `cache=private`, where every new pool connection is a separate empty
 	// database, so those endpoints answered 500 "no such table" a random number of
 	// times out of twenty and this guard failed on the harness rather than on the
-	// product. The DSN is `cache=shared` now, so that is no longer what the pin is
-	// for. It stays because unpinning seventeen tests at once is its own change and
-	// deserves its own measurement (shared-cache SQLite has a locking hazard
-	// setupAuthEnv spells out), and because twenty byte-identical responses are
-	// easier to reason about on one connection anyway.
+	// product. The harness is a WAL file now (see openTestDatabase), so that is no
+	// longer what the pin is for. It stays because unpinning seventeen tests at once
+	// is its own change and deserves its own measurement, and because twenty
+	// byte-identical responses are easier to reason about on one connection anyway.
 	if sqlDB, err := tc.DB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}

@@ -425,6 +425,7 @@ func TestClaimRetry_ClearsThePreviousAttemptsReport(t *testing.T) {
 	job.SetResultPath("_exports/j.tar")
 	job.SetPhaseProgress(7, 12)
 	job.SetError("boom")
+	holdRetryWorker(t, dm, job)
 
 	if err := dm.Retry("j"); err != nil {
 		t.Fatalf("retrying a failed job failed: %v", err)
@@ -740,6 +741,7 @@ func TestClaimRetry_RestoresTheInitialPhase(t *testing.T) {
 	if got := job.Snapshot().Phase; got != "parsing" {
 		t.Fatalf("precondition: the failed job reports phase %q, want \"parsing\"", got)
 	}
+	holdRetryWorker(t, dm, job)
 
 	if err := dm.Retry(job.ID); err != nil {
 		t.Fatalf("retrying failed: %v", err)

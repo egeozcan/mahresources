@@ -67,6 +67,33 @@ func (ctx *MahresourcesContext) OverrideReductionCluster(override *query_models.
 		return nil, errors.New("no Resource Reduction given")
 	}
 
+	// The transaction reads the row before it writes it, so on SQLite in WAL mode
+	// any commit landing between the two (the compute Job's own bookkeeping, a
+	// hash or thumbnail worker) fails the write with "database is locked" at once:
+	// promoting a stale read snapshot never goes through busy_timeout. That is
+	// contention, not a verdict on the decision, and a rolled-back attempt left
+	// nothing behind, so the whole transaction is re-run from a fresh read, as the
+	// rest of this module's compare-and-set writers do. The version check inside
+	// still refuses a decision made against a plan that has since changed.
+	var updated *models.ResourceReduction
+	var err error
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		if attempt > 0 {
+			waitOutContention(attempt - 1)
+		}
+		updated, err = ctx.overrideReductionClusterOnce(override, ownerUserID, ownerRestricted)
+		if err == nil || !isLockContentionError(err) {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// overrideReductionClusterOnce is one attempt of OverrideReductionCluster.
+func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_models.ReductionOverride, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
 	var updated *models.ResourceReduction
 	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
 		reduction, err := txCtx.loadReductionForUpdate(override.ID, ownerUserID, ownerRestricted)

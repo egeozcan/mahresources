@@ -187,6 +187,35 @@ every submitted URL, for a browser without JavaScript.
   once each during a whole-repo run under heavy concurrent load; 5/5 and 10/10
   in isolation.
 
+**Resolved in a follow-up change:**
+
+- The `api_tests` harness opens a WAL file in `t.TempDir()` with `busy_timeout`
+  (`openTestDatabase`), which is how production's `-memory-db` runs, and closes
+  the pool at cleanup. `TestCancelBlockedJobRetriesSharedCacheTableLock` still
+  asks for a shared-cache database by name, because it pins the retry in
+  `jobs/commands.go` that other shared-cache fixtures still need. Before: 7/60
+  failures on the two import-bridge tests; after: 0/120.
+- The WAL fixture exposed one real race the shared-cache fixture had hidden:
+  `OverrideReductionCluster` reads the Reduction and then writes it in one
+  deferred transaction, so a commit landing in between (the compute Job's own
+  bookkeeping, a hash or thumbnail worker) failed the reviewer's decision with
+  "database is locked" (SQLITE_BUSY_SNAPSHOT, which busy_timeout does not cover).
+  About 3% of override test runs. It now re-runs the transaction on lock
+  contention, as the module's other compare-and-set writers do: 15/500 before,
+  0/500 after. Three full-package runs found no other race of this kind.
+- `TestAQueueBackedSubmissionsClaimKeepsEveryOtherProcessOut` failed with "the
+  download did not complete". Its harness leaves `RemoteResourceIdleTimeout` at
+  zero, and the queue's idle watchdog read zero literally, so any gap of more than
+  one 100ms tick between the sniff and the next read failed the transfer.
+  `TimeoutReaderWithContext` now treats zero as "no idle bound", as
+  `hls.idleGuard` and the overall deadline already did. Production never sees
+  zero (boot defaults it to 60s; the runtime setting's minimum is 1s). A 150ms
+  delay injected after the sniff failed the test 3/3 before and 0/3 after.
+- `TestClaimRetry_ClearsThePreviousAttemptsReport` and
+  `TestClaimRetry_RestoresTheInitialPhase` raced the worker `Retry` starts
+  before it returns. Both now park it with `holdRetryWorker`. Before: 58 failures
+  in 120,000 runs at `-cpu 1,4,8`; after: 0.
+
 ### pi review, round 11 (gpt-6-sol)
 
 No findings. With round 10 (one finding, declined), two consecutive clean

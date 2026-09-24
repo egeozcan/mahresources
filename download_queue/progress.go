@@ -115,16 +115,24 @@ func NewTimeoutReaderWithContext(r io.Reader, idleTimeout time.Duration, ctx con
 }
 
 func (tr *TimeoutReaderWithContext) watchTimeout() {
-	checkInterval := tr.idleTimeout / 10
-	if checkInterval < 100*time.Millisecond {
-		checkInterval = 100 * time.Millisecond
-	}
-	if checkInterval > time.Second {
-		checkInterval = time.Second
+	// Zero means nobody configured an idle bound, as it does for the overall
+	// deadline and for hls.idleGuard. Read literally it is a bound every transfer
+	// has already exceeded by the first tick, so the watcher then only waits for
+	// cancellation: a nil channel never fires.
+	var tick <-chan time.Time
+	if tr.idleTimeout > 0 {
+		checkInterval := tr.idleTimeout / 10
+		if checkInterval < 100*time.Millisecond {
+			checkInterval = 100 * time.Millisecond
+		}
+		if checkInterval > time.Second {
+			checkInterval = time.Second
+		}
+		ticker := time.NewTicker(checkInterval)
+		defer ticker.Stop()
+		tick = ticker.C
 	}
 
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-tr.done:
@@ -135,7 +143,7 @@ func (tr *TimeoutReaderWithContext) watchTimeout() {
 			tr.mu.Unlock()
 			close(tr.failed)
 			return
-		case <-ticker.C:
+		case <-tick:
 			tr.mu.Lock()
 			elapsed := time.Since(tr.lastRead)
 			if elapsed > tr.idleTimeout {

@@ -26,7 +26,7 @@ import (
 // pool open. Under the harness's old `cache=private` DSN every new connection was a
 // separate empty database, so up to nine of the ten saw an empty schema, every
 // search returned {"total":0,"results":[]}, and any assertion of the form "the
-// out-of-scope item is absent" passed for free. The DSN is `cache=shared` now, so
+// out-of-scope item is absent" passed for free. The harness is a WAL file now, so
 // that specific trap is closed; the pin stays because unpinning the seventeen tests
 // that carry it is its own change. See setupAuthEnv.
 func setupSearchEnv(t *testing.T) *TestContext {

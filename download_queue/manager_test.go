@@ -730,27 +730,29 @@ func TestPauseResume(t *testing.T) {
 	})
 }
 
+// holdRetryWorker keeps the worker a Retry starts from running. Retry starts it
+// before it returns, so without this an assertion about the reset state races the
+// new attempt, which can claim the job, re-report its phase or even finish first.
+// Occupying every slot parks the worker before it claims anything; cancelling it
+// during cleanup prevents a legacy test URL from starting a transfer.
+func holdRetryWorker(t *testing.T, dm *DownloadManager, job *DownloadJob) {
+	t.Helper()
+	for i := 0; i < cap(dm.semaphore); i++ {
+		dm.semaphore <- struct{}{}
+	}
+	t.Cleanup(func() {
+		if status := job.GetStatus(); status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing {
+			_ = dm.Cancel(job.ID)
+		}
+		dm.workers.Wait()
+		for i := 0; i < cap(dm.semaphore); i++ {
+			<-dm.semaphore
+		}
+	})
+}
+
 // TestRetry tests retry functionality
 func TestRetry(t *testing.T) {
-	holdRetryWorker := func(t *testing.T, dm *DownloadManager, job *DownloadJob) {
-		t.Helper()
-		// Retry starts a worker before it returns. Occupying every slot keeps the
-		// retry in pending for assertions about its reset state, and cancelling it
-		// during cleanup prevents the legacy test URL from starting a transfer.
-		for i := 0; i < cap(dm.semaphore); i++ {
-			dm.semaphore <- struct{}{}
-		}
-		t.Cleanup(func() {
-			if status := job.GetStatus(); status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing {
-				_ = dm.Cancel(job.ID)
-			}
-			dm.workers.Wait()
-			for i := 0; i < cap(dm.semaphore); i++ {
-				<-dm.semaphore
-			}
-		})
-	}
-
 	t.Run("retry failed job", func(t *testing.T) {
 		dm := createTestManager()
 		eventCh := make(chan JobEvent, 10)
