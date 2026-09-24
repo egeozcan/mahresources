@@ -84,7 +84,7 @@ Terminal state and identity are immutable. Output availability, dismissal, pinni
 
 Jobs can have typed durable links:
 
-- `retry-of` — recovery from an unsuccessful terminal Job;
+- `retry-of` — the next Job in a linear chain: recovery from an unsuccessful terminal Job (Retry), or carrying on a successful Job whose Kind declared the work unfinished (Continue);
 - `repeat-of` — another execution of successful work;
 - parent/child — independently scheduled or controlled stages of a workflow.
 

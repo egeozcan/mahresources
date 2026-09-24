@@ -59,7 +59,7 @@ func TestRegisteredKindCommandSelectorsMatchCommandsPostgres(t *testing.T) {
 	}
 	admin := jobs.Access{Administrator: true}
 	ownerAccess := jobs.Access{UserID: owner.ID}
-	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandRepeat, "selector-unknown"} {
+	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandContinue, jobs.CommandRepeat, "selector-unknown"} {
 		assertAdapterSelectorMatchesCommands(t, ctx, admin, key)
 		assertAdapterSelectorMatchesCommands(t, ctx, ownerAccess, key)
 		assertCommandListSummaryMatchDetails(t, ctx, admin, key)

@@ -339,6 +339,39 @@ A job already marked failed or cancelled keeps that outcome. A handler that
 calls `mah.job_fail` and then returns a diagnostic table is not overruled by
 that table: it is ignored, and the failure stands.
 
+### Leaving work to continue: `continue = true`
+
+A handler that cannot finish in one run can say so with the reserved key
+`continue = true` in its result table, whether it passes that table to
+`mah.job_complete` or returns it:
+
+```lua
+mah.job_complete(ctx.job_id, {
+    message = "Partial: 120 of 500 items. Run it again to continue.",
+    continue = true,
+})
+```
+
+The Job still succeeds, because nothing failed, but its phase becomes `partial`.
+The `continue` key itself is not stored in the Job's result output. When the
+action also declares `retry = true`, the Jobs panel and the Job Center offer
+**Continue** on that Job: a new Job that reruns the same handler with the same
+input, linked like a Retry, so at most one continuation of a Job exists. This is
+the mechanism for long work that one run cannot finish. It is distinct from
+**Repeat** (an independent rerun that may branch) and from **Retry** (for
+unsuccessful work). A successful action without `continue = true` offers no
+Continue. Without `retry = true` the phase is still recorded as `partial`, but
+nothing is offered, because a continuation reruns the handler.
+
+The key is read from the final result. A handler that calls `mah.job_complete`
+and then returns a table has its returned table replace the earlier one,
+message and `continue` included, so put `continue = true` in the returned table
+too, or return nothing.
+
+A handler that uses this usually resumes from durable state of its own, such as
+its `mah.kv` queue, so the continuation does not redo what the previous run
+finished.
+
 ### Abort
 
 Call `mah.abort(reason)` from any handler to abort the action:

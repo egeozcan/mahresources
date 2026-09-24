@@ -603,6 +603,13 @@ func (s *Service) applyCommandHostNarrowing(query *gorm.DB, deps Deps, key strin
 		query = query.Where("jobs.state IN ?", []State{StateFailed, StateCancelled, StateInterrupted}).
 			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
 		return s.applyReplayAvailableFilter(query, deps)
+	case CommandContinue:
+		// Continue moves the same linear chain Retry does, so the successor
+		// predicate is the Retry one; only the starting state differs. The Kind
+		// narrows further (its adapter selects only Jobs it declared unfinished).
+		query = query.Where("jobs.state = ?", StateSucceeded).
+			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
+		return s.applyReplayAvailableFilter(query, deps)
 	case CommandRepeat:
 		query = query.Where("jobs.state = ?", StateSucceeded)
 		return s.applyReplayAvailableFilter(query, deps)

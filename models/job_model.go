@@ -200,8 +200,10 @@ const JobEventSequenceRowID = 1
 // Typed lineage link kinds. A Job keeps its own identity and outcome inside a
 // lineage; the link only records how two Jobs relate.
 const (
-	// JobLinkRetryOf relates a successor to the unsuccessful Job it recovers
-	// from: FromJobID is the successor, ToJobID the ancestor.
+	// JobLinkRetryOf relates a successor to the Job whose linear chain it
+	// extends: an unsuccessful Job it recovers from (Retry), or a successful one
+	// its Kind declared unfinished (Continue). FromJobID is the successor,
+	// ToJobID the ancestor.
 	JobLinkRetryOf = "retry-of"
 	// JobLinkRepeatOf relates a successor to the successful Job it re-runs:
 	// FromJobID is the successor, ToJobID the ancestor.

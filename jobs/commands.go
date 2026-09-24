@@ -44,7 +44,7 @@ import (
 // only the control plane can do: a viewer's own preferences, a Job's sealed
 // input, and the lineage a re-run creates.
 var hostCommandKeys = []string{
-	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat,
+	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat, CommandContinue,
 }
 
 // hostOnlyCommandKeys lists the host-executed keys whose *advertisement* the host
@@ -53,7 +53,7 @@ var hostCommandKeys = []string{
 // pinning or forgetting can be honored, and a Kind has no authority over a
 // viewer's preferences or another Job's sealed input.
 //
-// Retry and Repeat are deliberately not here. Whether a Kind's work may be re-run
+// Retry, Continue and Repeat are deliberately not here. Whether a Kind's work may be re-run
 // at all is the Kind's policy and its adapter answers it; whether the lineage and
 // the sealed input allow it right now is the host's, which narrows that answer.
 var hostOnlyCommandKeys = []string{
@@ -236,6 +236,13 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 		return !unresolved, nil
 	case CommandRetry:
 		return s.retryableLeaf(deps, job)
+	case CommandContinue:
+		// A continuation branches the same linear chain a Retry does — it is the
+		// same work carried on — but starts from a Job that succeeded while its
+		// Kind declared it unfinished. The Kind is what says "unfinished" (the
+		// adapter advertises Continue only for such a Job); the host owns the two
+		// durable facts: the chain must be free and the input still open.
+		return s.continuableLeaf(deps, job)
 	case CommandRepeat:
 		return state == StateSucceeded && s.commandReplayAvailable(deps, job), nil
 	default:
@@ -282,6 +289,26 @@ func (s *Service) retryableLeaf(deps Deps, job models.Job) (bool, error) {
 	default:
 		return false, nil
 	}
+	return s.lineageLeaf(deps, job)
+}
+
+// continuableLeaf reports whether this Job is the quiescent leaf a Continue may
+// branch from: successful, with input this process can still open, and with no
+// successor already recorded. It is retryableLeaf's counterpart for work a Kind
+// declared unfinished despite succeeding, and it moves the same linear chain, so
+// at most one continuation can be active.
+func (s *Service) continuableLeaf(deps Deps, job models.Job) (bool, error) {
+	if State(job.State) != StateSucceeded {
+		return false, nil
+	}
+	return s.lineageLeaf(deps, job)
+}
+
+// lineageLeaf is the part retryableLeaf and continuableLeaf share: input still
+// open, and no successor already recorded. The successor check is what makes
+// "the current leaf" mean one thing, and it is why Retry and Continue can share
+// one chain without forking it.
+func (s *Service) lineageLeaf(deps Deps, job models.Job) (bool, error) {
 	if !s.commandReplayAvailable(deps, job) {
 		return false, nil
 	}
@@ -343,7 +370,7 @@ func (s *Service) hostCommands(deps Deps, access Access, job models.Job) []Comma
 	}
 	if terminal && s.commandReplayAvailable(deps, job) {
 		commands = append(commands, hostCommand(job, CommandForget, "Forget replay input", true, false,
-			"Forget this job's replay input? Retry and Repeat will no longer be possible."))
+			"Forget this job's replay input? Retry, Continue and Repeat will no longer be possible."))
 	}
 	return commands
 }
@@ -478,7 +505,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 	// own goes to the Kind's adapter, and a key it owns never does. A Job's lineage
 	// is the control plane's bookkeeping, so a re-run is this service's work.
 	if isHostCommandKey(request.Key) {
-		if request.Key == CommandRetry || request.Key == CommandRepeat {
+		if request.Key == CommandRetry || request.Key == CommandRepeat || request.Key == CommandContinue {
 			return s.executeLineageCommand(ctx, deps, request)
 		}
 		return s.executeHostCommand(ctx, deps, request)
@@ -1605,8 +1632,10 @@ func lineageRelatives(lineage Lineage) []Snapshot {
 // stored update.
 func boolPointer(v bool) *bool { return &v }
 
-// executeLineageCommand runs one Retry or Repeat: a new Job from unchanged sealed
-// input, linked to the Job it continues, with the ancestor untouched.
+// executeLineageCommand runs one Retry, Continue or Repeat: a new Job from
+// unchanged sealed input, linked to the Job it follows, with the ancestor
+// untouched. Continue links like Retry (retry-of), because both extend the one
+// linear chain; only Repeat branches.
 //
 // Everything is one transaction — the claim, the successor, its link and the
 // recorded outcome — because a successor without its link would be a Job with no
@@ -1650,8 +1679,8 @@ func (s *Service) executeLineageCommand(ctx context.Context, deps Deps, request 
 	return s.finishSettledResult(deps, request, *settled)
 }
 
-// createSuccessor accepts the linked Job one Retry or Repeat asks for, inside the
-// transaction that claimed the command.
+// createSuccessor accepts the linked Job one Retry, Continue or Repeat asks for,
+// inside the transaction that claimed the command.
 func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest, linkType LinkType, claimID string, now time.Time, settled **CommandResult) error {
 	job, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
 	if err != nil {
@@ -1704,7 +1733,7 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 		return err
 	}
 
-	// A Retry successor moves the ancestor's compatibility handles onto itself,
+	// A Retry or Continue successor moves the ancestor's compatibility handles onto itself,
 	// in the same transaction as its acceptance, its link and the command's
 	// outcome: a legacy client polling its unchanged id must not be left on an
 	// ancestor the successor has already replaced, and a movement recorded

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,6 +91,23 @@ const (
 	pluginActionSubtypeScheduled  = "scheduled-occurrence"
 	pluginActionSubtypeClosure    = "closure-start-job"
 )
+
+// pluginActionPhasePartial is the Job phase a plugin action's successful
+// completion records when its handler's result carries `continue = true`: the
+// handler did its budgeted share and left the rest for another run. It is what
+// the continuation advertisement reads — a Job is offered Continue only when its
+// Kind (this adapter) says the work was left unfinished, never from state alone,
+// because a succeeded plugin action is the normal outcome and only the plugin
+// knows whether it exhausted its work.
+const pluginActionPhasePartial = "partial"
+
+// pluginActionResultContinueKey is the reserved result-table key a handler sets
+// to true to have its successful completion recorded as partial. It is read from
+// the raw result before redaction (a boolean could otherwise collide with a
+// boolean parameter value) and is not itself a substitute for the declaration:
+// the action must still declare retry = true, since a continuation re-runs the
+// same handler with the same input.
+const pluginActionResultContinueKey = "continue"
 
 // Bounds on what a plugin's own reports may write. Progress and failure text
 // arrive from Lua, so they are truncated here rather than refused: refusing would
@@ -705,15 +723,21 @@ func (a *pluginActionAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifac
 
 // Commands reports what one plugin-action Job offers.
 //
-// A Retry only, and only where a replay would mean something: an unsuccessful
-// registered action or scheduled occurrence whose registration *declares* that
-// re-running the handler with the same input is safe. Nothing here happens by
-// state alone. The host cannot know whether arbitrary Lua is idempotent — the
-// adapter's own contract says it is not — so Retry is an opt-in an author
-// writes (ActionRegistration.Retryable / ScheduleRegistration.Retryable) and the
-// host enforces by advertising nothing without it. A closure-backed Job offers
-// nothing either way: its Lua function died with its process and no input can
-// bring it back. No Cancel, for the reason the file comment gives.
+// Two keys, each where a replay would mean something. **Retry** is for an
+// unsuccessful registered action or scheduled occurrence whose registration
+// *declares* that re-running the handler with the same input is safe. **Continue**
+// is for a successful registered action whose handler declared the work stopped
+// short of finished (its completion recorded the partial phase) — the same
+// declaration is required, because both re-run the same handler with the same
+// input, and Continue moves the same single linear chain Retry does rather than
+// branching like Repeat.
+//
+// Nothing here happens by state alone. The host cannot know whether arbitrary Lua
+// is idempotent — the adapter's own contract says it is not — so both are an
+// opt-in an author writes (`retry = true`) and the host enforces by advertising
+// nothing without it. A closure-backed Job offers nothing either way: its Lua
+// function died with its process and no input can bring it back. No Cancel and no
+// Pause, for the reason the file comment gives.
 //
 // Reading the registration is also what makes this a *current* answer rather
 // than a recorded one: a disabled plugin, a replaced generation and an action
@@ -727,9 +751,18 @@ func (a *pluginActionAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifac
 func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	switch commandContext.Snapshot.State {
 	case jobs.StateFailed, jobs.StateCancelled, jobs.StateInterrupted:
+		return a.unsuccessfulCommands(commandContext)
+	case jobs.StateSucceeded:
+		return a.continuationCommands(commandContext)
 	default:
 		return nil, nil
 	}
+}
+
+// unsuccessfulCommands is the Retry advertisement: an unsuccessful registered
+// action or scheduled occurrence whose registration declares that re-running the
+// handler with the same input is safe. Nothing here happens by state alone.
+func (a *pluginActionAdapter) unsuccessfulCommands(commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	// The subtype comes from the sanitized summary rather than from the sealed
 	// input: an advertisement is a read, and a read path that opened every Job's
 	// replay envelope to answer "does this offer Retry?" would decrypt history on
@@ -739,8 +772,8 @@ func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.Co
 		return nil, nil
 	}
 	// §8: ownership grants visibility, not permanent control. A principal demoted below
-	// "may write" — or one whose access to the plugin has since been revoked — keeps
-	// the sanitized history and loses the Retry that would run the plugin's Lua again on
+	// "may write" — or one whose access to the plugin has since been revoked — keeps the
+	// sanitized history and loses the Retry that would run the plugin's Lua again on
 	// its behalf.
 	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, summary.Plugin) != "" {
 		return nil, nil
@@ -764,6 +797,39 @@ func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.Co
 		return nil, nil
 	}
 	return []jobs.Command{{Key: jobs.CommandRetry, Label: "Retry"}}, nil
+}
+
+// continuationCommands is the Continue advertisement: a *successful* registered
+// action whose handler recorded that it stopped short of finished (the partial
+// phase the sink writes from `continue = true`) and whose registration declares
+// that re-running is safe.
+//
+// It is deliberately narrower than Repeat. A Repeat is an independent re-run of
+// successful work and may branch; a Continue carries on the same logical work, so
+// it moves the single linear chain Retry does — at most one active successor —
+// which is why the host's own leaf predicate narrows this advertisement as well.
+// A closure-backed Job can never be continued (its Lua function died with its
+// process), and a scheduled occurrence has a next tick instead.
+func (a *pluginActionAdapter) continuationCommands(commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	if commandContext.Snapshot.Phase != pluginActionPhasePartial {
+		return nil, nil
+	}
+	summary, ok := pluginActionSummaryDecoded(commandContext.Snapshot.Summary)
+	if !ok || a.ctx == nil || summary.Subtype != pluginActionSubtypeRegistered {
+		return nil, nil
+	}
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, summary.Plugin) != "" {
+		return nil, nil
+	}
+	pm := a.ctx.PluginManager()
+	if pm == nil {
+		return nil, nil
+	}
+	action, _, err := pm.FindAction(summary.Plugin, summary.Action)
+	if err != nil || !action.Retryable {
+		return nil, nil
+	}
+	return []jobs.Command{{Key: jobs.CommandContinue, Label: "Continue"}}, nil
 }
 
 // ExecuteCommand runs one control the host decided this Kind owns. Nothing here
@@ -1116,6 +1182,23 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 	if s.settled() {
 		return nil
 	}
+	// The continuation marker is read from the raw result, before redaction: a
+	// redaction rule about parameter *values* must not decide whether work
+	// continues, and a boolean parameter would share its value. It is left out of
+	// the published output because the Job's phase is the durable signal.
+	//
+	// It is dropped from a copy. The caller's map is the in-memory ActionJob's
+	// Result, which is write-once and which its snapshot iterates under the job's
+	// own lock; this sink holds no such lock, so deleting from it would be a
+	// concurrent map write as well as a change to the plugin's own result.
+	phase := ""
+	if continuable, _ := result[pluginActionResultContinueKey].(bool); continuable {
+		phase = pluginActionPhasePartial
+	}
+	if _, marked := result[pluginActionResultContinueKey]; marked {
+		result = maps.Clone(result)
+		delete(result, pluginActionResultContinueKey)
+	}
 	var publication error
 	if len(result) > 0 {
 		sanitized := s.sanitizedResult(result)
@@ -1142,7 +1225,7 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 			}
 		}
 	}
-	outcome := pluginActionOutcome{succeeded: true, message: s.safeText(message, jobs.MaxProgressMessageBytes)}
+	outcome := pluginActionOutcome{succeeded: true, message: s.safeText(message, jobs.MaxProgressMessageBytes), phase: phase}
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
 	}
@@ -1341,6 +1424,10 @@ func (s *pluginActionSink) retrySettlement() {
 type pluginActionOutcome struct {
 	succeeded bool
 	message   string
+	// phase is the Job phase a successful completion records, or empty for the
+	// ordinary complete outcome. It is how "succeeded with work left" reaches the
+	// Job row without a second state.
+	phase string
 }
 
 // publishOutcome records one terminal outcome through the sink's own finish path,
@@ -1354,6 +1441,7 @@ func (s *pluginActionSink) publishOutcome(outcome pluginActionOutcome) (jobs.Sna
 			Total:     &total,
 			Unit:      "percent",
 			Message:   outcome.message,
+			Phase:     outcome.phase,
 		}
 		return s.finish(jobs.StateSucceeded, nil, outcome.message, &progress)
 	}

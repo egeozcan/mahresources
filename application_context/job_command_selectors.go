@@ -207,7 +207,9 @@ func maintenanceCommandStates(key string) ([]jobs.State, bool) {
 }
 
 func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
-	if request.Key != jobs.CommandRetry {
+	switch request.Key {
+	case jobs.CommandRetry, jobs.CommandContinue:
+	default:
 		return nil, false, nil
 	}
 	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
@@ -223,10 +225,14 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 			}
 		}
 	}
+	// Only Retry covers scheduled occurrences: a schedule has a next tick rather
+	// than a continuation, so a succeeded occurrence never advertises one.
 	var schedulePairs [][2]string
-	for _, schedule := range pm.AllDeclaredSchedules() {
-		if schedule.Retryable {
-			schedulePairs = append(schedulePairs, [2]string{schedule.PluginName, schedule.ScheduleID})
+	if request.Key == jobs.CommandRetry {
+		for _, schedule := range pm.AllDeclaredSchedules() {
+			if schedule.Retryable {
+				schedulePairs = append(schedulePairs, [2]string{schedule.PluginName, schedule.ScheduleID})
+			}
 		}
 	}
 	if len(actionPairs)+len(schedulePairs) == 0 {
@@ -237,7 +243,16 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 	action := jobSummaryTextExpr(request.Deps.DB, "action")
 	schedule := jobSummaryTextExpr(request.Deps.DB, "scheduleId")
 	subtype := jobSummaryTextExpr(request.Deps.DB, "subtype")
-	query := request.Jobs.Where("jobs.state IN ?", unsuccessfulJobStates())
+	query := request.Jobs
+	if request.Key == jobs.CommandContinue {
+		// A continuation starts from a Job that succeeded while its Kind declared
+		// it unfinished — the partial phase is that statement — and only a
+		// registered action can carry one.
+		query = query.Where("jobs.state = ?", jobs.StateSucceeded).
+			Where("jobs.phase = ?", pluginActionPhasePartial)
+	} else {
+		query = query.Where("jobs.state IN ?", unsuccessfulJobStates())
+	}
 	var clauses []string
 	var args []any
 	appendPairs := func(subtypeValue, field string, pairs [][2]string) {
@@ -290,7 +305,7 @@ func (a *pluginCommandJobAdapter) SelectCommandJobs(_ context.Context, request j
 // a key a selector gains belongs here too, or the filter cannot offer it.
 func JobCommandFilterKeys() []string {
 	return []string{
-		jobs.CommandCancel, jobs.CommandPause, jobs.CommandResume, jobs.CommandRetry, jobs.CommandRepeat,
+		jobs.CommandCancel, jobs.CommandPause, jobs.CommandResume, jobs.CommandRetry, jobs.CommandContinue, jobs.CommandRepeat,
 		pluginCommandInspectKey, pluginCommandImportRetryKey,
 		jobs.CommandDismiss, jobs.CommandPin, jobs.CommandUnpin, jobs.CommandPinLineage, jobs.CommandForget,
 	}

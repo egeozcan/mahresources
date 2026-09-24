@@ -99,7 +99,7 @@
             <label for="job-filter-relationship" class="block text-xs font-mono font-medium text-stone-600 mt-2">Relationship</label>
             <select name="relationship" id="job-filter-relationship" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
                 <option value="">Any relationship</option>
-                <option value="retry-of"{% if jobFilter.Relationship == "retry-of" %} selected{% endif %}>Retry successor</option>
+                <option value="retry-of"{% if jobFilter.Relationship == "retry-of" %} selected{% endif %}>Retry or continuation successor</option>
                 <option value="repeat-of"{% if jobFilter.Relationship == "repeat-of" %} selected{% endif %}>Repeat successor</option>
                 <option value="parent-child"{% if jobFilter.Relationship == "parent-child" %} selected{% endif %}>Parent stage</option>
             </select>

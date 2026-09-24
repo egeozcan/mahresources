@@ -63,6 +63,23 @@ function failing_work(ctx)
     mah.job_fail(ctx.job_id, "the action refused")
 end
 
+-- A handler that declares work left undone: the completion carries the reserved
+-- continue = true result key, which the host records as the Job's partial phase
+-- and offers back as a Continue (a linear successor), never a Repeat.
+function partial_work(ctx)
+    bump("partial")
+    mah.job_progress(ctx.job_id, 50, "half way")
+    mah.job_complete(ctx.job_id, { message = "partial done", continue = true,
+                                   redirect = "/resource?id=" .. tostring(ctx.entity_id) })
+end
+
+-- Requests a continuation and then returns a table of its own. The returned
+-- table is the final result and replaces the earlier one whole, marker included.
+function partial_then_return_work(ctx)
+    mah.job_complete(ctx.job_id, { message = "partial done", continue = true })
+    return { message = "returned instead" }
+end
+
 -- Reports failure and keeps executing. The plugin's report is a *request*: the
 -- handler can still be writing when it makes it, and the durable Job must not be
 -- ended — with its capacity and its claim handed back — while that is true.
@@ -163,6 +180,12 @@ function init()
                  handler = holding_work })
     mah.action({ id = "retryable-work", label = "Retryable Work", entity = "resource", async = true,
                  retry = true, handler = failing_work })
+    mah.action({ id = "partial-work", label = "Partial Work", entity = "resource", async = true,
+                 retry = true, handler = partial_work })
+    mah.action({ id = "partial-then-return-work", label = "Partial Then Return Work", entity = "resource",
+                 async = true, retry = true, handler = partial_then_return_work })
+    mah.action({ id = "unretryable-partial-work", label = "Unretryable Partial Work", entity = "resource",
+                 async = true, handler = partial_work })
     mah.action({ id = "parent-work", label = "Parent Work", entity = "resource", async = true,
                  handler = parent_work })
     mah.action({ id = "burst-work", label = "Burst Work", entity = "resource", async = true,
@@ -670,6 +693,128 @@ func TestAFailedPluginActionOffersARetryAndTheRetryIsANewJob(t *testing.T) {
 	}
 	if ancestor.State != jobs.StateFailed {
 		t.Fatalf("the ancestor is now %s: a retry never changes its outcome", ancestor.State)
+	}
+}
+
+// TestAPartialPluginActionOffersAContinuationNotARepeat pins the contract a
+// plugin with long-running work relies on: a *successful* action whose handler
+// recorded that it stopped short advertises Continue — the linear successor that
+// carries the same work on — and not Repeat, which is an independent re-run, nor
+// Retry, which is for unsuccessful work.
+func TestAPartialPluginActionOffersAContinuationNotARepeat(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+
+	legacyID, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "partial-work", 4, nil, "")
+	if err != nil {
+		t.Fatalf("run the partial action: %v", err)
+	}
+	job := waitForJobState(t, ctx, canonical, "the partial action to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the partial action ended %s, want succeeded", job.State)
+	}
+	if job.Phase != pluginActionPhasePartial {
+		t.Fatalf("the partial action's phase is %q, want %q", job.Phase, pluginActionPhasePartial)
+	}
+	// The sink reads the marker; it must not consume it out of the plugin's own
+	// table. That map is the in-memory ActionJob's write-once Result, which its
+	// snapshot iterates under the job's lock, so a write from the sink (which holds
+	// no such lock) is a concurrent map write as well as a changed result.
+	legacy := ctx.PluginManager().GetActionJob(legacyID)
+	if legacy == nil {
+		t.Fatalf("the in-memory action job %q is gone", legacyID)
+	}
+	if continuable, _ := legacy.Result[pluginActionResultContinueKey].(bool); !continuable {
+		t.Fatalf("the sink removed the marker from the plugin's own result: %+v", legacy.Result)
+	}
+
+	commands := advertisedForTest(t, ctx, job.ID)
+	if !offersCommand(commands, jobs.CommandContinue) {
+		t.Fatalf("a partial succeeded action offered no Continue: %+v", commands)
+	}
+	if offersCommand(commands, jobs.CommandRepeat) {
+		t.Fatalf("a partial succeeded action offered a Repeat: %+v", commands)
+	}
+	if offersCommand(commands, jobs.CommandRetry) {
+		t.Fatalf("a succeeded action offered a Retry: %+v", commands)
+	}
+
+	result, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: job.ID, Key: jobs.CommandContinue, IdempotencyKey: "continue-once",
+		ExpectedVersion: job.Version, Actor: jobs.Access{Administrator: true},
+	})
+	if err != nil {
+		t.Fatalf("continue the action: %v", err)
+	}
+	if result.SuccessorID == "" || result.SuccessorID == job.ID {
+		t.Fatalf("the continuation answered successor %q for ancestor %q", result.SuccessorID, job.ID)
+	}
+	// Linear, like Retry: the ancestor now has its one successor, so it no longer
+	// offers a second continuation.
+	if commands := advertisedForTest(t, ctx, job.ID); offersCommand(commands, jobs.CommandContinue) {
+		t.Fatalf("a continued job still offered a second continuation: %+v", commands)
+	}
+	// A finished action that never declared itself unfinished offers nothing.
+	_, doneCanonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 6, nil, "")
+	if err != nil {
+		t.Fatalf("run the completing action: %v", err)
+	}
+	done := waitForJobState(t, ctx, doneCanonical, "the action to complete", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if done.Phase == pluginActionPhasePartial {
+		t.Fatalf("a completing action recorded the partial phase")
+	}
+	if commands := advertisedForTest(t, ctx, done.ID); offersCommand(commands, jobs.CommandContinue) {
+		t.Fatalf("a completing action offered a Continue: %+v", commands)
+	}
+}
+
+// TestAContinuationNeedsTheDeclaration pins that the partial phase alone is not
+// enough: a handler that reports partial without `retry = true` never offers
+// Continue, because a continuation re-runs the same handler with the same input.
+func TestAContinuationNeedsTheDeclaration(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "unretryable-partial-work", 5, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, canonical, "the action to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.Phase != pluginActionPhasePartial {
+		t.Fatalf("the phase is %q, want %q", job.Phase, pluginActionPhasePartial)
+	}
+	if commands := advertisedForTest(t, ctx, job.ID); offersCommand(commands, jobs.CommandContinue) {
+		t.Fatalf("an undeclared action offered a Continue: %+v", commands)
+	}
+}
+
+// TestAReturnedTableReplacesAnEarlierContinuation pins the rule the docs state:
+// the marker is read from the final result, and a table the handler returns
+// after mah.job_complete replaces the earlier table whole, as it already did for
+// the message. A continuation is not sticky across that replacement.
+func TestAReturnedTableReplacesAnEarlierContinuation(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "partial-then-return-work", 7, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, canonical, "the action to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the action ended %s, want succeeded", job.State)
+	}
+	if job.Phase == pluginActionPhasePartial {
+		t.Fatalf("the returned table did not replace the earlier continuation")
+	}
+	if job.Progress.Message != "returned instead" {
+		t.Fatalf("the message is %q, want the returned table's", job.Progress.Message)
+	}
+	if commands := advertisedForTest(t, ctx, job.ID); offersCommand(commands, jobs.CommandContinue) {
+		t.Fatalf("a replaced continuation still offered Continue: %+v", commands)
 	}
 }
 

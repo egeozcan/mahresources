@@ -560,7 +560,7 @@ export function commandConfirmation(command) {
         return 'Pin this job and each related job you can see against ordinary retention. Artifacts keep their own retention.';
     }
     if (command?.key === 'forget') {
-        return 'Forget this job’s saved replay input. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
+        return 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
     }
     if (command?.confirmation) return command.confirmation;
     if (command?.destructive) return `Run ${commandLabel(command)}?`;

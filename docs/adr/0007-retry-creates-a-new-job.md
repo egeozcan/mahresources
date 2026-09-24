@@ -1,6 +1,6 @@
 # A retry creates a new immutable Job
 
-A terminal Job keeps the success, failure, cancellation, or interruption it actually reached. Retry creates a new Job with unchanged replayable input, current authorization and policy validation, a new owner equal to the requester, and a typed `retry-of` link to the finished Job. Repeat does the same for safe reruns of successful work through `repeat-of`; neither operation rewrites its source.
+A terminal Job keeps the success, failure, cancellation, or interruption it actually reached. Retry creates a new Job with unchanged replayable input, current authorization and policy validation, a new owner equal to the requester, and a typed `retry-of` link to the finished Job. Repeat does the same for safe reruns of successful work through `repeat-of`; neither operation rewrites its source. Continue, for a successful Job whose Kind declared the work unfinished, links through `retry-of` rather than `repeat-of`, because it carries on the same work and must stay in the one linear chain rather than branch.
 
 ## Considered options
 

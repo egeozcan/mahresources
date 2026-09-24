@@ -46,7 +46,7 @@ available commands. Current adapters include:
 | `group-import-apply@1` | Apply a reviewed plan | Replayable only when import evidence proves it safe; owner-visible |
 | `resource-reduction-compute@1` | Compute clusters for a Resource Reduction | Replayable; owner-visible |
 | `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |
-| `plugin-action@1` | Run an asynchronous plugin action or `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart |
+| `plugin-action@1` | Run an asynchronous plugin action, a scheduled occurrence, or a `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart; an unsuccessful declared action offers Retry, and a successful one whose handler reported `continue = true` offers Continue |
 | `job-summary-export@1` | Export a filtered Job summary as CSV or JSON | Replayable; owner-visible; artifact expires by export retention |
 | `plugin-command@1` | Run a plugin command | Non-restorable; administrator-visible; protected by the command runtime fence |
 | `plugin-command-import@1` | Import an admitted plugin command output | Non-restorable; administrator-visible; retry requires current importer and file proof |

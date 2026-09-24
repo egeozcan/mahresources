@@ -46,7 +46,7 @@ func TestRegisteredKindCommandSelectorsMatchCommands(t *testing.T) {
 
 	admin := jobs.Access{Administrator: true}
 	ownerAccess := jobs.Access{UserID: owner.ID}
-	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandRepeat, "selector-unknown"} {
+	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandContinue, jobs.CommandRepeat, "selector-unknown"} {
 		assertAdapterSelectorMatchesCommands(t, ctx, admin, key)
 		assertAdapterSelectorMatchesCommands(t, ctx, ownerAccess, key)
 		assertCommandListSummaryMatchDetails(t, ctx, admin, key)
@@ -59,7 +59,7 @@ func TestRegisteredKindCommandSelectorsMatchCommands(t *testing.T) {
 	if err := ctx.db.Model(&models.User{}).Where("id = ?", owner.ID).Update("role", models.RoleGuest).Error; err != nil {
 		t.Fatalf("demote owner: %v", err)
 	}
-	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandRepeat} {
+	for _, key := range []string{jobs.CommandCancel, jobs.CommandResume, jobs.CommandRetry, jobs.CommandContinue, jobs.CommandRepeat} {
 		assertAdapterSelectorMatchesCommands(t, ctx, ownerAccess, key)
 		assertCommandListSummaryMatchDetails(t, ctx, ownerAccess, key)
 	}
@@ -225,6 +225,14 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 	seedPlugin(pluginActionSubtypeScheduled, "", "retryable-tick", ownerID, true)
 	seedPlugin(pluginActionSubtypeScheduled, "", "tick", ownerID, true)
 	seedPlugin(pluginActionSubtypeClosure, "", "", ownerID, false)
+	// A succeeded action that declared itself unfinished: the one Job that can
+	// actually match Continue, so the selector-vs-Commands check has a positive
+	// case rather than only absent ones.
+	partial := seedPlugin(pluginActionSubtypeRegistered, "partial-work", "", ownerID, true)
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", partial.ID).
+		Updates(map[string]any{"state": jobs.StateSucceeded, "phase": pluginActionPhasePartial}).Error; err != nil {
+		t.Fatalf("set the plugin action partial: %v", err)
+	}
 }
 
 func assertAdapterSelectorMatchesCommands(t *testing.T, ctx *MahresourcesContext, access jobs.Access, key string) {

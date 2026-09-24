@@ -64,6 +64,10 @@ _Avoid_: Attempt, restart
 A safe rerun of a successful Job's unchanged input. It creates an independent linked Job and may branch from earlier repeats, subject to the Job Kind's duplicate and concurrency policy.
 _Avoid_: Retry, restart
 
+**Job Continue**:
+A request to carry on a successful Job whose Kind recorded that it stopped short of finished (for a plugin action, the handler completed with `continue = true`). It creates a new Job from the unchanged input and moves the same single lineage chain Job Retry does, so at most one continuation is active; unlike Job Repeat it never branches, because it is the same logical work rather than an independent rerun.
+_Avoid_: Repeat, retry
+
 **Job Lineage**:
 The durable links between related Jobs, including retries, repeats, and parent-child work. Every Job keeps its own identity and outcome within the lineage.
 _Avoid_: Attempt history, merged job

@@ -208,8 +208,10 @@ type Output struct {
 type LinkType string
 
 const (
-	// LinkRetryOf relates a successor to the unsuccessful Job it recovers from:
-	// FromJobID is the successor, ToJobID the ancestor.
+	// LinkRetryOf relates a successor to the Job whose linear chain it extends:
+	// an unsuccessful Job it recovers from (Retry), or a successful one its Kind
+	// declared unfinished (Continue). FromJobID is the successor, ToJobID the
+	// ancestor.
 	LinkRetryOf LinkType = models.JobLinkRetryOf
 	// LinkRepeatOf relates a successor to the successful Job it re-runs:
 	// FromJobID is the successor, ToJobID the ancestor.
@@ -1730,6 +1732,13 @@ const (
 	// CommandRepeat creates a new Job from a successful Job's sealed input. Unlike
 	// Retry it may branch: each repeat is an independent execution.
 	CommandRepeat = "repeat"
+	// CommandContinue creates a new Job from a *successful* Job's sealed input when
+	// that Job's Kind declares the work stopped short of finished. It is the linear
+	// counterpart to Repeat's branching re-run: a continuation is the same logical
+	// work carried on, so it moves the same chain Retry does and at most one active
+	// continuation exists. A Kind that never declares a Job continuable never
+	// advertises it.
+	CommandContinue = "continue"
 	// CommandDismiss hides a Job from one viewer's default list.
 	CommandDismiss = "dismiss"
 	// CommandPin exempts a Job's metadata and events from ordinary retention for

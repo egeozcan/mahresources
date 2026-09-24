@@ -2113,6 +2113,33 @@ Available in async action handlers and `mah.start_job` callbacks. See [Plugin Ac
 | `mah.job_complete(job_id, result_table)` | Mark job completed. Sets progress to 100. |
 | `mah.job_fail(job_id, error_message)` | Mark job failed. |
 
+### When the work is not finished: `continue = true`
+
+The result table an async action handler passes to `mah.job_complete` (or
+returns) may carry the reserved key `continue = true` to say the handler did its
+share and left the rest undone:
+
+```lua
+mah.job_complete(ctx.job_id, {
+    message = "Partial: 120 of 500 items. Run it again to continue.",
+    continue = true,
+})
+```
+
+The Job still **succeeds**, because nothing failed, but its phase becomes
+`partial`, and the `continue` key is not stored in the Job's result output. When
+the action also declares `retry = true`, the Jobs panel and the Job Center offer
+**Continue** on that Job: a new Job that reruns the same handler with the same
+input, linked like a Retry, so at most one continuation of a Job exists. It is
+not a **Repeat** (an independent rerun that may branch) and not a **Retry** (for
+unsuccessful work). Without `continue = true` a successful action offers no
+Continue. Without `retry = true` the phase is still `partial`, but nothing is
+offered.
+
+Use it when one run cannot finish the work and the handler can resume, for
+example a drain that keeps its own queue in `mah.kv`. A handler that always
+finishes should omit it.
+
 ## Complete Example
 
 A plugin that uses database CRUD, KV storage, logging, and HTTP:
