@@ -884,7 +884,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestContext := scopedCtx(appContext, r)
 		if r.URL.Query().Get("version") == "2" {
-			api_handlers.GetJobsEventsHandler(requestContext, requestContext, canonicalJobAPICutoverComplete)(w, r)
+			canonicalContext := currentCanonicalJobEventsContext{appCtx: appContext, request: r}
+			api_handlers.GetJobsEventsHandler(requestContext, canonicalContext, canonicalJobAPICutoverComplete)(w, r)
 			return
 		}
 		// Keep the legacy wire format, while binding its initial and live queue

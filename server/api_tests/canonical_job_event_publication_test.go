@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"mahresources/application_context"
+	"mahresources/models"
 )
 
 // TestCanonicalJobSSEPublishesHTTPSubmission drives the deployed route and the
@@ -67,6 +70,78 @@ func TestCanonicalJobSSEPublishesHTTPSubmission(t *testing.T) {
 	}
 	if frame.SSEID != "v2:"+strconv.FormatUint(frame.DeliverySequence, 10) {
 		t.Fatalf("SSE id = %q, want cursor v2:%d", frame.SSEID, frame.DeliverySequence)
+	}
+}
+
+func TestCanonicalJobSSERevalidatesAdminAfterDemotion(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+
+	admin, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "sse-demoted-admin", Password: "password1", Role: models.RoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create streaming administrator: %v", err)
+	}
+	adminCookie, _ := loginSummaryExportSession(t, tc, admin.Username, "password1")
+	rootCookie, rootCSRF := loginSummaryExportSession(t, tc, "admin", "adminpw1")
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	response := newCanonicalSSEWriter()
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(streamCtx)
+	request.AddCookie(adminCookie)
+	finished := make(chan struct{})
+	go func() {
+		tc.Router.ServeHTTP(response, request)
+		close(finished)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("canonical Job SSE did not stop after the client disconnected")
+		}
+	}()
+	if !response.waitForText("event: job-caught-up", 2*time.Second) {
+		t.Fatal("authenticated canonical Job SSE did not finish its initial replay")
+	}
+
+	demotionBody, err := json.Marshal(map[string]any{"id": admin.ID, "role": models.RoleEditor})
+	if err != nil {
+		t.Fatalf("encode administrator demotion: %v", err)
+	}
+	demotion := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept": "application/json", "Content-Type": "application/json", "X-CSRF-Token": rootCSRF,
+	}, []*http.Cookie{rootCookie}, bytes.NewReader(demotionBody))
+	if demotion.Code != http.StatusOK {
+		t.Fatalf("demote stream administrator: status=%d body=%s", demotion.Code, demotion.Body.String())
+	}
+
+	from := time.Now().UTC().Add(-181 * 24 * time.Hour)
+	to := time.Now().UTC()
+	exportBody, err := json.Marshal(map[string]any{"from": from, "to": to, "format": "json"})
+	if err != nil {
+		t.Fatalf("encode root summary export: %v", err)
+	}
+	submitted := doReq(tc, http.MethodPost, "/v1/jobs/summary/export", map[string]string{
+		"Accept": "application/json", "Content-Type": "application/json", "X-CSRF-Token": rootCSRF,
+	}, []*http.Cookie{rootCookie}, bytes.NewReader(exportBody))
+	if submitted.Code != http.StatusAccepted {
+		t.Fatalf("root summary export answered %d: %s", submitted.Code, submitted.Body.String())
+	}
+	var accepted struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &accepted); err != nil || accepted.Job.ID == "" {
+		t.Fatalf("decode root export acceptance %s: %v", submitted.Body.String(), err)
+	}
+
+	if frame, leaked := response.waitForAcceptedEvent(t, accepted.Job.ID, 3*time.Second); leaked {
+		t.Fatalf("demoted administrator's live stream received root-owned accepted event: %+v", frame)
 	}
 }
 

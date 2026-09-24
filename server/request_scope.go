@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"path"
 	"strings"
@@ -8,8 +9,29 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/contracts"
+	"mahresources/jobs"
 	"mahresources/server/api_handlers"
 )
+
+// currentCanonicalJobEventsContext revalidates the stream's original credential
+// before every durable-event poll. SSE connections outlive ordinary request auth
+// middleware, so a context bound only when the connection opens would preserve
+// stale roles and scopes indefinitely.
+type currentCanonicalJobEventsContext struct {
+	appCtx  *application_context.MahresourcesContext
+	request *http.Request
+}
+
+func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+	principal := auth.PrincipalFromContext(ctx.request.Context())
+	if ctx.appCtx.AuthEnabled() {
+		principal, _, _ = resolvePrincipal(ctx.appCtx, ctx.request)
+		if principal == nil {
+			return nil, errors.New("Job event stream authentication is no longer valid")
+		}
+	}
+	return ctx.appCtx.WithPrincipal(principal).GetPublishedJobEvents(afterDelivery, limit)
+}
 
 // scopedEditName / scopedEditDescription / scopedEditMeta build the per-entity
 // edit handlers against a request-scoped EntityWriter, so a group-limited
