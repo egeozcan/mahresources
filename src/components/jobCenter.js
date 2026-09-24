@@ -122,6 +122,14 @@ export function advertisedCommands(job) {
     return Array.isArray(job?.commands) ? job.commands : [];
 }
 
+export function jobCommands(job) {
+    return advertisedCommands(job).filter(command => {
+        if (command?.key === 'pin') return job?.pinned !== true;
+        if (command?.key === 'unpin') return job?.pinned === true;
+        return true;
+    });
+}
+
 export function advertisedOutputs(job) {
     return Array.isArray(job?.outputs) ? job.outputs : [];
 }
@@ -169,8 +177,15 @@ export function selectedBulkCommands(jobs, selectedIds) {
     const commandMaps = chosenJobs.map(job => new Map(
         advertisedCommands(job).filter(command => command.bulk).map(command => [command.key, command]),
     ));
+    const hasPinned = chosenJobs.some(job => job.pinned === true);
+    const hasUnpinned = chosenJobs.some(job => job.pinned !== true);
     return advertisedCommands(chosenJobs[0])
-        .filter(command => command.bulk && commandMaps.every(commands => commands.has(command.key)));
+        .filter(command => command.bulk && commandMaps.every(commands => commands.has(command.key)))
+        .filter(command => {
+            if (command.key === 'pin' && hasPinned && !hasUnpinned) return false;
+            if (command.key === 'unpin' && hasUnpinned && !hasPinned) return false;
+            return true;
+        });
 }
 
 function announcementFor(job, previous, replay) {
@@ -286,7 +301,19 @@ export function streamCursorSequence(value) {
     return Number.isFinite(sequence) ? sequence : null;
 }
 
+function hasStalePluginActionProgress(job) {
+    const progress = job?.progress || {};
+    return job?.kind === 'plugin-action'
+        && job?.state === 'succeeded'
+        && progress.unit === 'percent'
+        && Number.isFinite(progress.completed)
+        && Number.isFinite(progress.total)
+        && progress.total > 0
+        && progress.completed < progress.total;
+}
+
 export function progressText(job) {
+    if (hasStalePluginActionProgress(job)) return 'Completed';
     const progress = job?.progress || {};
     if (progress.message) return progress.message;
     const completed = progress.completed;
@@ -298,6 +325,7 @@ export function progressText(job) {
 }
 
 export function progressValue(job) {
+    if (hasStalePluginActionProgress(job)) return 100;
     const progress = job?.progress || {};
     if (progress.completed === null || progress.completed === undefined || !(progress.total > 0)) return null;
     return Math.max(0, Math.min(100, Math.round((progress.completed / progress.total) * 100)));
@@ -589,6 +617,13 @@ export function jobCenter(options = {}) {
             return this.detail;
         },
 
+        async refreshJobPreference(id) {
+            const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
+            const freshJob = payload.job || payload;
+            if (freshJob?.id) this.updateJob(freshJob);
+            return freshJob;
+        },
+
         async detailFor(job) {
             if (advertisedCommands(job).length || advertisedOutputs(job).length || this.details[job.id]) {
                 return this.details[job.id] || job;
@@ -615,9 +650,19 @@ export function jobCenter(options = {}) {
         },
 
         selectedJobs() {
-            return [...Object.values(this.details), ...this.jobs].filter((job, index, rows) =>
-                this.selectedIds.has(job.id) && rows.findIndex(candidate => candidate.id === job.id) === index,
-            );
+            const selected = new Map();
+            for (const detail of Object.values(this.details)) {
+                if (this.selectedIds.has(detail.id)) selected.set(detail.id, detail);
+            }
+            for (const job of this.jobs) {
+                if (this.selectedIds.has(job.id)) {
+                    // List snapshots are refreshed after bulk commands and carry
+                    // current viewer preferences; preserve detail-only fields
+                    // such as advertised commands when they are absent in list rows.
+                    selected.set(job.id, { ...(this.details[job.id] || {}), ...job });
+                }
+            }
+            return [...selected.values()];
         },
 
         bulkCommands() {
@@ -723,9 +768,19 @@ export function jobCenter(options = {}) {
                 const outcome = payload.result || payload;
                 const freshJob = outcome.job || payload.job;
                 if (freshJob?.id) this.updateJob(freshJob);
+                let preferenceRefreshFailed = false;
+                if (command?.key === 'pin' || command?.key === 'unpin') {
+                    try {
+                        await this.refreshJobPreference(job.id);
+                    } catch {
+                        preferenceRefreshFailed = true;
+                    }
+                }
                 const successorId = outcome.successorId || outcome.successorID || payload.successorId || payload.successorID;
                 if (successorId) globalThis.location?.assign?.(`/job?id=${encodeURIComponent(successorId)}`);
-                this.notice = outcome.message || payload.message || `${commandLabel(command)} requested.`;
+                this.notice = preferenceRefreshFailed
+                    ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
+                    : outcome.message || payload.message || `${commandLabel(command)} requested.`;
                 this._liveRegion?.announce(this.notice);
                 return outcome;
             } catch (error) {
@@ -869,6 +924,7 @@ export function jobCenter(options = {}) {
         stateClass(job) { return classifyJobState(job); },
         commandLabel(command) { return commandLabel(command); },
         advertisedCommands(job) { return advertisedCommands(this.details[job.id] || job); },
+        commandsFor(job) { return jobCommands(this.details[job.id] || job); },
         advertisedOutputs(job) { return advertisedOutputs(job); },
         warningEvents() { return warningEvents(this.timeline); },
         outputEndpoint(output) { return outputEndpoint(output); },

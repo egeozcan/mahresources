@@ -12,6 +12,7 @@ import {
     dateTimeQueryValue,
     JOB_COMMAND_FILTER_ENABLED,
     jobCenter,
+    jobCommands,
     outputEndpoint,
     parseJobCenterURL,
     progressAccessibleText,
@@ -42,6 +43,32 @@ const unfamiliarJob = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Job Center API declarations', () => {
+    test('individual pin controls follow viewer pin state and refresh after changing it', async () => {
+        const pin = { key: 'pin', label: 'Pin job', jobVersion: 4, bulk: true };
+        const unpin = { key: 'unpin', label: 'Unpin job', jobVersion: 4, bulk: false };
+        const inspect = { key: 'inspect', label: 'Inspect', jobVersion: 4 };
+        expect(jobCommands({ pinned: false, commands: [pin, unpin, inspect] }).map(command => command.key))
+            .toEqual(['pin', 'inspect']);
+        expect(jobCommands({ pinned: true, commands: [pin, unpin, inspect] }).map(command => command.key))
+            .toEqual(['unpin', 'inspect']);
+
+        const center = jobCenter();
+        center.detail = { id: 'job-1', state: 'succeeded', version: 4, pinned: false, commands: [pin, unpin] } as any;
+        center.jobs = [center.detail];
+        vi.stubGlobal('Alpine', { store: () => ({ ask: vi.fn(async () => true) }) });
+        center.fetchJSON = vi.fn(async (url: string, init: any = {}) => {
+            if (init?.method === 'POST') return { result: { message: 'Pinned' } } as any;
+            return { job: { id: 'job-1', state: 'succeeded', version: 4, pinned: true, commands: [pin, unpin] } } as any;
+        });
+
+        await center.runCommand(center.detail, pin);
+
+        expect(center.fetchJSON).toHaveBeenCalledTimes(2);
+        expect(center.fetchJSON.mock.calls[1][0]).toBe('/v1/jobs/job-1');
+        expect(center.detail?.pinned).toBe(true);
+        expect(center.commandsFor(center.detail).map(command => command.key)).toEqual(['unpin']);
+    });
+
     test('uses advertised commands and outputs for an unfamiliar Kind', () => {
         expect(advertisedCommands(unfamiliarJob).map(command => command.key)).toEqual(['inspect', 'archive']);
         expect(advertisedOutputs(unfamiliarJob).map(output => output.key)).toEqual(['summary']);
@@ -117,6 +144,34 @@ describe('Job Center API declarations', () => {
         expect(center.selectedIds.has(current.id)).toBe(true);
     });
 
+    test('recomputes bulk pin controls from refreshed rows when selected detail cache is stale', async () => {
+        const job = { id: 'bulk-pin-job', state: 'succeeded', version: 4, pinned: false };
+        const commands = [
+            { key: 'pin', label: 'Pin', jobVersion: 4, bulk: true },
+            { key: 'unpin', label: 'Unpin', jobVersion: 4, bulk: true },
+            { key: 'inspect', label: 'Inspect', jobVersion: 4, bulk: true },
+        ];
+        const center = jobCenter();
+        center.view = 'all';
+        center.jobs = [job];
+        center.details[job.id] = { ...job, commands };
+        center.selectedIds = new Set([job.id]);
+        vi.stubGlobal('Alpine', { store: () => ({ ask: vi.fn(async () => true) }) });
+        center.fetchJSON = vi.fn(async (url: string) => {
+            if (url.startsWith('/v1/jobs/commands/pin')) {
+                return { results: [{ jobId: job.id, key: 'pin', status: 'succeeded', code: 'applied' }] } as any;
+            }
+            if (url.startsWith('/v1/jobs/summary')) return { byState: { succeeded: 1 } } as any;
+            return { jobs: [{ ...job, pinned: true }] } as any;
+        });
+
+        await center.runBulkCommand(center.bulkCommands().find(command => command.key === 'pin')!);
+
+        expect(center.details[job.id].pinned).toBe(false);
+        expect(center.selectedJobs()[0]).toMatchObject({ id: job.id, pinned: true });
+        expect(center.bulkCommands().map(command => command.key)).toEqual(['unpin', 'inspect']);
+    });
+
     test('bulk actions are the intersection of selected advertised bulk commands', () => {
         const second = {
             ...unfamiliarJob,
@@ -129,6 +184,25 @@ describe('Job Center API declarations', () => {
         expect(selectedBulkCommands([unfamiliarJob, second], ['job-unknown-kind']).map(command => command.key))
             .toEqual(['inspect']);
         expect(selectedBulkCommands([unfamiliarJob], ['job-unknown-kind', 'job-not-loaded'])).toEqual([]);
+    });
+
+    test('bulk pin actions match the selected jobs while preserving common commands', () => {
+        const pinCommands = [
+            { key: 'pin', label: 'Pin', bulk: true },
+            { key: 'unpin', label: 'Unpin', bulk: true },
+            { key: 'inspect', label: 'Inspect', bulk: true },
+        ];
+        const first = { id: 'job-first', pinned: false, commands: [...pinCommands, { key: 'first-only', bulk: true }] };
+        const second = { id: 'job-second', pinned: false, commands: pinCommands };
+        const pinnedFirst = { ...first, pinned: true };
+        const pinnedSecond = { ...second, pinned: true };
+
+        expect(selectedBulkCommands([first, second], [first.id, second.id]).map(command => command.key))
+            .toEqual(['pin', 'inspect']);
+        expect(selectedBulkCommands([pinnedFirst, pinnedSecond], [first.id, second.id]).map(command => command.key))
+            .toEqual(['unpin', 'inspect']);
+        expect(selectedBulkCommands([first, pinnedSecond], [first.id, second.id]).map(command => command.key))
+            .toEqual(['pin', 'unpin', 'inspect']);
     });
 
     test('the state text classifies a job without using its Kind or source', () => {
@@ -397,6 +471,27 @@ describe('canonical event reducer', () => {
         expect(progressAccessibleText(job)).toBe('Scanning; 0 processed; total unknown');
         expect(progressValue({ progress: { completed: 1, total: 4 } })).toBe(25);
     });
+
+    test('shows stale percent progress as complete only for successful plugin-action jobs', () => {
+        const staleSuccess = {
+            kind: 'plugin-action',
+            state: 'succeeded',
+            progress: { completed: 70, total: 100, unit: 'percent', message: 'Fetching result...' },
+        };
+        expect(progressText(staleSuccess)).toBe('Completed');
+        expect(progressValue(staleSuccess)).toBe(100);
+        expect(progressAccessibleText(staleSuccess)).toBe('Completed');
+
+        for (const state of ['running', 'failed']) {
+            const job = { ...staleSuccess, state };
+            expect(progressText(job)).toBe('Fetching result...');
+            expect(progressValue(job)).toBe(70);
+        }
+
+        const otherKind = { ...staleSuccess, kind: 'deferred-download' };
+        expect(progressText(otherKind)).toBe('Fetching result...');
+        expect(progressValue(otherKind)).toBe(70);
+    });
 });
 
 describe('Job Center event stream catch-up boundary', () => {
@@ -662,12 +757,19 @@ describe('Job Center templates', () => {
     const listTemplate = readFileSync(fileURLToPath(new URL('../../templates/listJobs.tpl', import.meta.url)), 'utf8');
 
     test('renders commands and outputs only from the advertised detail arrays', () => {
-        expect(detailTemplate).toContain('x-for="command in advertisedCommands(detail)"');
+        expect(detailTemplate).toContain('x-for="command in commandsFor(detail)"');
         expect(detailTemplate).toContain('role="group" aria-label="Advertised job commands"');
         expect(detailTemplate).toContain('x-for="output in advertisedOutputs(detail)"');
         expect(detailTemplate).toContain(':href="outputEndpoint(output)"');
         expect(detailTemplate).not.toMatch(/detail\.(?:kind|source)\s*===/);
         expect(detailTemplate).not.toMatch(/command\.(?:kind|source)\s*===/);
+    });
+
+    test('shows a visible, viewer-specific pin marker in list and detail views', () => {
+        expect(listTemplate).toContain('x-show="job.pinned"');
+        expect(listTemplate).toContain('Pinned by you');
+        expect(detailTemplate).toContain('x-show="detail.pinned"');
+        expect(detailTemplate).toContain('Pinned by you');
     });
 
     test('shows safe ownership, origin, warnings, output expiry, and log links from detail DTOs', () => {

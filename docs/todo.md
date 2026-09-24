@@ -13766,3 +13766,32 @@ Residual risks and handoffs carried forward:
   focused race selections for epoch error handling, Reduction publication,
   unmapped source purge and missing-schema rollback; the architecture retirement
   gate; tagged `go vet`; and `git diff --check`.
+
+## Fal.ai completed Job progress — 2026-09-24
+
+- [x] Reproduce the reported Job's mismatch from its canonical API snapshot.
+- [x] Trace fal.ai progress, the plugin runtime, the durable Job sink, and Job Center rendering.
+- [x] Make plugin-action success store final progress atomically with terminal state; add a regression at the real plugin-action seam.
+- [x] Show completion for older successful plugin-action records with stale progress; add a focused UI regression.
+- [x] Rebuild the local demo, verify the linked Job, run focused tests and independent reviews.
+
+### Review
+
+The original browser detail showed Succeeded beside “Fetching result...”. After the rebuilt demo restarted, the same detail showed Succeeded beside “Completed”. A new paid fal.ai generation was unnecessary: the real plugin-action and closure-backed completion tests exercise the durable boundary without external cost.
+
+The new `FinishRequest.FinalProgress` joins progress to the guarded terminal write. Invalid progress, stale execution tokens, cancellation intent, and unavailable required output leave the prior state and progress unchanged. The plugin-action adapter supplies final 100/100 only on success; a UI compatibility rule presents older succeeded plugin-action percent snapshots as complete.
+
+Validation: tagged focused Go tests for `jobs` and `application_context`, 36 Job Center Vitest tests, a rebuilt JS bundle and Go demo binary, HTTP 200 for Job detail and Plugin Manager, and a Playwright snapshot of the linked Job. gpt-6-sol UI and backend reviews and the requested final gpt-6-astra review found no actionable issues.
+
+## Visible Job pin state — 2026-09-24
+
+- [x] Expose the current viewer's pin preference in Job list and detail snapshots, without leaking another viewer's preference.
+- [x] Add idempotent Pin and Unpin commands for the viewer, preserving mixed bulk selections.
+- [x] Show an accessible pinned marker in Job Center rows, the detail page, and the Job panel; refresh after a pin change.
+- [x] Run focused tests, rebuild and verify the local demo, and request independent reviews.
+
+### Review
+
+The API now projects `pinned` for the requesting viewer on detail, paged list, lineage, and command-result snapshots. The list projection uses one preference query per page. Pin and Unpin remain bulk-capable and idempotent; single-Job controls and homogeneous bulk selections show the relevant action. The visible “Pinned by you” marker appears in list rows, detail, and panel.
+
+Focused Go tests and the broader `jobs` and API handler packages passed. The Job Center UI suite passed 62 tests, and a new browser regression passed against a fresh ephemeral server after the final build. On the local demo, the reported fal.ai Job now shows “Pinned by you” and Unpin in detail, and the pinned list shows the marker. The demo remains available at `http://127.0.0.1:8182`. Sol backend and UI reviews found edge cases in conflict snapshots and bulk selection state; both were fixed and re-reviewed with no remaining findings. The requested final Astra review found no actionable issues. `git diff --check` passed.

@@ -244,6 +244,10 @@ type FinishRequest struct {
 	ExpectedVersion uint64
 	// Outcome is the terminal state to enter.
 	Outcome State
+	// FinalProgress, when supplied, replaces the progress snapshot in the same
+	// transaction as the terminal transition. A refused finish therefore leaves
+	// both the outcome and its final progress unpublished.
+	FinalProgress *Progress
 	// Event may name a more specific terminal event; an empty Type derives it
 	// from Outcome.
 	Event   EventInput
@@ -1034,21 +1038,25 @@ type Snapshot struct {
 	// by an executor-side transition, which reports the Job's own new state and
 	// has no viewer to answer for.
 	ReplayAvailability ReplayAvailability
-	Version            uint64
-	ControlIntent      string
-	Failure            *Failure
-	Progress           Progress
-	AcceptedAt         time.Time
-	ScheduledFor       *time.Time
-	QueuedAt           *time.Time
-	StartedAt          *time.Time
-	LastResumedAt      *time.Time
-	FinishedAt         *time.Time
-	RunningDuration    time.Duration
-	PausedDuration     time.Duration
-	BlockedDuration    time.Duration
-	QueueDuration      time.Duration
-	ExpiresAt          *time.Time
+	// Pinned reports whether the viewer who requested this snapshot pinned the
+	// Job. It is a viewer preference, so executor-side transition snapshots leave
+	// it false until a reader projects the preference for a specific viewer.
+	Pinned          bool
+	Version         uint64
+	ControlIntent   string
+	Failure         *Failure
+	Progress        Progress
+	AcceptedAt      time.Time
+	ScheduledFor    *time.Time
+	QueuedAt        *time.Time
+	StartedAt       *time.Time
+	LastResumedAt   *time.Time
+	FinishedAt      *time.Time
+	RunningDuration time.Duration
+	PausedDuration  time.Duration
+	BlockedDuration time.Duration
+	QueueDuration   time.Duration
+	ExpiresAt       *time.Time
 }
 
 // Terminal reports whether the snapshot's Job reached an end state.
@@ -1724,6 +1732,9 @@ const (
 	// CommandPin exempts a Job's metadata and events from ordinary retention for
 	// as long as any viewer keeps it pinned.
 	CommandPin = "pin"
+	// CommandUnpin removes this viewer's pin, allowing the Job to become eligible
+	// for ordinary retention once no other viewer keeps it pinned.
+	CommandUnpin = "unpin"
 	// CommandPinLineage pins this Job and every relative of its lineage the asker
 	// may see. Pinning one Job never pins a relative by itself.
 	CommandPinLineage = "pin-lineage"

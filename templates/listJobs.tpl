@@ -123,6 +123,7 @@
                                     </div>
                                     <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500">
                                         <span x-text="job.kind"></span>
+                                        <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 py-0.5 font-medium text-amber-900">Pinned by you</span>
                                         <span x-show="job.phase" x-text="job.phase"></span>
                                         <time x-show="job.acceptedAt" :datetime="job.acceptedAt" x-text="job.acceptedAt ? new Date(job.acceptedAt).toLocaleString() : ''"></time>
                                     </div>

@@ -73,6 +73,7 @@ end
 
 function closure_work(job_id)
     mah.kv.set("closure", "ran")
+    mah.job_progress(job_id, 35, "closure work")
     mah.job_complete(job_id, { message = "closure done" })
 end
 
@@ -273,6 +274,11 @@ func TestAnAsyncPluginActionAcceptsADurableJobBeforeItRuns(t *testing.T) {
 	if job.State != jobs.StateSucceeded {
 		t.Fatalf("the action ended %s (%+v)", job.State, job.Failure)
 	}
+	if job.Progress.Completed == nil || *job.Progress.Completed != 100 ||
+		job.Progress.Total == nil || *job.Progress.Total != 100 ||
+		job.Progress.Unit != "percent" || job.Progress.Message != "all done" {
+		t.Fatalf("successful action progress = %+v, want 100/100 percent with completion message", job.Progress)
+	}
 	if got := pluginKVForTest(t, ctx, "ran"); got != "1" {
 		t.Fatalf("the handler ran %q times, want once", got)
 	}
@@ -457,6 +463,11 @@ func TestAStartJobFromAnActionIsANonReplayableChildJob(t *testing.T) {
 	})
 	if child.ReplayClass != jobs.ReplayClassNonReplayable {
 		t.Fatalf("the closure job is %q, want non-replayable", child.ReplayClass)
+	}
+	if child.Progress.Completed == nil || *child.Progress.Completed != 100 ||
+		child.Progress.Total == nil || *child.Progress.Total != 100 ||
+		child.Progress.Unit != "percent" || child.Progress.Message != "closure done" {
+		t.Fatalf("successful closure progress = %+v, want 100/100 percent with completion message", child.Progress)
 	}
 	if got := pluginKVForTest(t, ctx, "closure"); got != "ran" {
 		t.Fatalf("the closure ran %q, want once", got)

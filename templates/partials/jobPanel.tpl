@@ -48,7 +48,7 @@
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
                                     <a :href="detailURL(job)" class="block truncate text-sm font-medium text-amber-900 underline decoration-amber-300 underline-offset-2" x-text="job.title || job.kind || job.id"></a>
-                                    <p class="mt-1 flex flex-wrap gap-x-2 text-xs text-stone-600"><span x-text="stateLabel(job)"></span><span aria-hidden="true">·</span><span x-text="job.kind"></span></p>
+                                    <p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-stone-600"><span x-text="stateLabel(job)"></span><span aria-hidden="true">·</span><span x-text="job.kind"></span><span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 py-0.5 font-medium text-amber-900">Pinned by you</span></p>
                                 </div>
                                 <a :href="detailURL(job)" :aria-label="'Details for ' + (job.title || job.kind || job.id)" class="shrink-0 text-xs font-medium text-stone-700 underline">Details</a>
                             </div>

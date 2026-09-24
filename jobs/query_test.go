@@ -753,7 +753,7 @@ func testCommandHostSelectorsMatchAdvertisedCommands(t *testing.T, deps Deps) {
 	access := Access{UserID: owner}
 	for _, key := range []string{
 		CommandCancel, CommandPause, CommandResume, CommandRetry, CommandRepeat,
-		CommandDismiss, CommandForget, CommandPin, CommandPinLineage,
+		CommandDismiss, CommandForget, CommandPin, CommandUnpin, CommandPinLineage,
 	} {
 		want := make(map[string]bool)
 		for _, snapshot := range jobsByName {

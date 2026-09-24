@@ -7,6 +7,8 @@ type Job = {
   state: string;
   title?: string;
   version: number;
+  pinned?: boolean;
+  commands?: Array<{ key: string; endpoint: string; jobVersion: number }>;
   lineage?: { ancestors?: Array<{ id: string }> };
 };
 
@@ -152,6 +154,49 @@ test.describe('Job Center', () => {
     const successor = await readJob(request, successorId!);
     expect(successor?.lineage?.ancestors?.some(job => job.id === canonicalId)).toBe(true);
     await expect(page.getByTestId('job-detail').getByRole('heading', { name: original!.title!, exact: true })).toBeVisible();
+  });
+
+  test('shows the viewer pin in the list, detail, and panel and lets them unpin', async ({ page, request }) => {
+    const stamp = Date.now();
+    const groupId = await createGroup(request, `job-center-pin-${stamp}`);
+    const { canonicalId } = await submitFailingDownload(request, groupId, `job-center-pin-${stamp}.bin`);
+    await waitForJobState(request, canonicalId, 'failed');
+
+    const original = await readJob(request, canonicalId);
+    expect(original?.pinned).toBe(false);
+    const pin = original?.commands?.find(command => command.key === 'pin');
+    expect(pin).toBeTruthy();
+    const idempotencyKey = `job-center-pin-${stamp}`;
+    const pinResponse = await request.post(pin!.endpoint, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      data: { expectedVersion: pin!.jobVersion, idempotencyKey },
+    });
+    expect(pinResponse.ok(), await pinResponse.text()).toBe(true);
+    await expect.poll(async () => (await readJob(request, canonicalId))?.pinned).toBe(true);
+
+    await page.goto('/jobs?view=all');
+    const row = page.locator(`[data-job-id="${canonicalId}"]`);
+    await expect(row.getByText('Pinned by you', { exact: true })).toBeVisible();
+
+    await page.goto(`/job?id=${canonicalId}`);
+    const detail = page.getByTestId('job-detail');
+    await expect(detail.getByText('Pinned by you', { exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Unpin', exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Pin', exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(detail.getByText('Pinned by you', { exact: true })).toBeVisible();
+
+    await page.goto('/dashboard');
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    const card = panel.locator('article').filter({ has: page.locator(`a[href="/job?id=${canonicalId}"]`) });
+    await expect(card.getByText('Pinned by you', { exact: true })).toBeVisible();
+
+    await page.goto(`/job?id=${canonicalId}`);
+    await detail.getByRole('button', { name: 'Unpin', exact: true }).click();
+    await expect(detail.getByText('Pinned by you', { exact: true })).toBeHidden();
+    await expect(detail.getByRole('button', { name: 'Pin', exact: true })).toBeVisible();
+    await expect.poll(async () => (await readJob(request, canonicalId))?.pinned).toBe(false);
   });
 
   test('the shared panel lists recent work and links to detail and All jobs', async ({ page, request }) => {

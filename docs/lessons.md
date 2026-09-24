@@ -2090,3 +2090,9 @@ where the review's own record lives.
 - Validate shared toolbars on ordinary and MRQL lists after refresh. Wrapper elements change flex behavior, and child transitions can delay a parent’s visibility update.
 - SQL page boundaries need a unique tie-break, including inside bucket continuations. Verify identical sort values on PostgreSQL and compare page membership with ordinary execution.
 - Preserve the shared mixed-query comparator when optimizing hydration. Database collation can differ from Go's Unicode comparison; a smaller projection preserves query-wide action targets without loading full entity payloads.
+
+## Local demo setup — 2026-09-24
+
+- Check the intended navigation and feature pages after starting a demo. Disabling plugins removes the Plugin Manager and its menu entry, even when the demo's main purpose is the Job Center.
+- Verify terminal Job state and progress together through the canonical API. A plugin's in-memory Job can show 100% while its durable Job keeps the last throttled progress snapshot unless completion publishes the final progress.
+- For a per-viewer preference such as a Job pin, verify that the viewer-specific state reaches every UI projection and remains visible after the action notice disappears. Test list, detail, and panel with the preference set, including a different viewer who must not see it.

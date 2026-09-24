@@ -44,7 +44,7 @@ import (
 // only the control plane can do: a viewer's own preferences, a Job's sealed
 // input, and the lineage a re-run creates.
 var hostCommandKeys = []string{
-	CommandDismiss, CommandPin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat,
+	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat,
 }
 
 // hostOnlyCommandKeys lists the host-executed keys whose *advertisement* the host
@@ -57,7 +57,7 @@ var hostCommandKeys = []string{
 // at all is the Kind's policy and its adapter answers it; whether the lineage and
 // the sealed input allow it right now is the host's, which narrows that answer.
 var hostOnlyCommandKeys = []string{
-	CommandDismiss, CommandPin, CommandPinLineage, CommandForget,
+	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget,
 }
 
 // isHostCommandKey reports whether the host implements one key.
@@ -333,10 +333,13 @@ func (s *Service) hostCommands(deps Deps, access Access, job models.Job) []Comma
 		if terminal {
 			commands = append(commands, hostCommand(job, CommandDismiss, "Dismiss", false, true, ""))
 		}
-		commands = append(commands,
-			hostCommand(job, CommandPin, "Pin", false, true, ""),
-			hostCommand(job, CommandPinLineage, "Pin visible lineage", false, false, ""),
-		)
+		// Pin remains a bulk operation for mixed selections and is idempotent for a
+		// viewer who already pinned this Job. Unpin is an idempotent bulk operation
+		// too, so mixed selections can clear every selected viewer preference.
+		// The detail UI uses the snapshot's Pinned bit to choose the relevant control.
+		commands = append(commands, hostCommand(job, CommandPin, "Pin", false, true, ""))
+		commands = append(commands, hostCommand(job, CommandUnpin, "Unpin", false, true, ""))
+		commands = append(commands, hostCommand(job, CommandPinLineage, "Pin visible lineage", false, false, ""))
 	}
 	if terminal && s.commandReplayAvailable(deps, job) {
 		commands = append(commands, hostCommand(job, CommandForget, "Forget replay input", true, false,
@@ -442,7 +445,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 		if request.requireBulk {
 			message = "the job does not offer that command in bulk"
 		}
-		return refusedResult(job, request, CommandCodeNotAdvertised, message,
+		return refusedResult(deps.DB, job, request, CommandCodeNotAdvertised, message,
 			fmt.Errorf("%w: job %s does not offer %s", ErrCommandNotAdvertised, job.ID, request.Key))
 	}
 	// The version the caller decided from is the whole of the staleness check: every
@@ -450,7 +453,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 	// so a request that names the version it read is refused the moment anything it
 	// may have decided from has changed.
 	if request.ExpectedVersion != job.Version {
-		return refusedResult(job, request, CommandCodeConflict, "the job changed since this command was prepared",
+		return refusedResult(deps.DB, job, request, CommandCodeConflict, "the job changed since this command was prepared",
 			fmt.Errorf("%w: job %s is at version %d, the request expected %d",
 				ErrVersionConflict, job.ID, job.Version, request.ExpectedVersion))
 	}
@@ -465,7 +468,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 				return CommandResult{}, fmt.Errorf("jobs: revalidate %s command: %w", request.Key, err)
 			}
 			if !valid {
-				return refusedResult(job, request, CommandCodeNotAdvertised, "the job no longer offers that command",
+				return refusedResult(deps.DB, job, request, CommandCodeNotAdvertised, "the job no longer offers that command",
 					fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, job.ID, request.Key))
 			}
 		}
@@ -566,12 +569,13 @@ func commandOffered(commands []Command, request CommandRequest) bool {
 
 // refusedResult is one command's refusal, carrying the Job as the asker may see
 // it so a caller that lost a race is shown what it lost to.
-func refusedResult(job models.Job, request CommandRequest, code, message string, err error) (CommandResult, error) {
+func refusedResult(db *gorm.DB, job models.Job, request CommandRequest, code, message string, err error) (CommandResult, error) {
+	snapshot, snapshotErr := viewerSnapshotWithPin(db, request.Actor, job)
 	return CommandResult{
 		JobID: job.ID, Key: request.Key,
 		Status: CommandStatusFailed, Code: code, Message: message,
-		Job: viewerSnapshot(job, request.Actor),
-	}, err
+		Job: snapshot,
+	}, errors.Join(err, snapshotErr)
 }
 
 // validateCommandRequest checks a command request before anything is read.
@@ -794,7 +798,7 @@ func (s *Service) replayCommandResult(deps Deps, request CommandRequest, row mod
 		if err != nil {
 			return CommandResult{}, err
 		}
-		return refusedResult(job, request, CommandCodeNotAdvertised,
+		return refusedResult(deps.DB, job, request, CommandCodeNotAdvertised,
 			"the job did not offer that command in bulk when it was run",
 			fmt.Errorf("%w: job %s was not bulk eligible", ErrCommandNotAdvertised, row.JobID))
 	}
@@ -815,8 +819,12 @@ func (s *Service) replayCommandResult(deps Deps, request CommandRequest, row mod
 		Status: row.Status, Code: row.Code, Message: row.Message,
 		Detail:      json.RawMessage(row.Detail),
 		SuccessorID: row.SuccessorJobID,
-		Job:         viewerSnapshot(job, request.Actor),
 	}
+	snapshots := []Snapshot{viewerSnapshot(job, request.Actor)}
+	if err := fillViewerPinState(deps.DB, request.Actor, snapshots); err != nil {
+		return CommandResult{}, err
+	}
+	result.Job = snapshots[0]
 	if row.Status == models.JobCommandStatusFailed {
 		return result, fmt.Errorf("%w: job %s %s", ErrCommandFailed, row.JobID, row.CommandKey)
 	}
@@ -831,7 +839,11 @@ func (s *Service) finishSettledResult(deps Deps, request CommandRequest, result 
 	if err != nil {
 		return CommandResult{}, err
 	}
-	result.Job = viewerSnapshot(job, request.Actor)
+	snapshots := []Snapshot{viewerSnapshot(job, request.Actor)}
+	if err := fillViewerPinState(deps.DB, request.Actor, snapshots); err != nil {
+		return CommandResult{}, err
+	}
+	result.Job = snapshots[0]
 	return result, nil
 }
 
@@ -907,7 +919,9 @@ func (s *Service) executeBulkEntry(ctx context.Context, deps Deps, request BulkC
 		settled.Key = request.Key
 	}
 	if settled.Job.ID == "" {
-		settled.Job = viewerSnapshot(job, request.Actor)
+		if snapshot, err := viewerSnapshotWithPin(deps.DB, request.Actor, job); err == nil {
+			settled.Job = snapshot
+		}
 	}
 
 	// A refusal that carries no result of its own — a request refused before the
@@ -995,7 +1009,7 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 	}
 	adapter, _, err := s.adapterFor(job.Kind, job.KindVersion)
 	if err != nil {
-		return refusedResult(job, request, CommandCodeNotAdvertised,
+		return refusedResult(deps.DB, job, request, CommandCodeNotAdvertised,
 			"no executor in this process can run that command", err)
 	}
 
@@ -1497,6 +1511,11 @@ func (s *Service) applyHostCommand(_ context.Context, deps Deps, request Command
 			return commandOutcome{}, err
 		}
 		return appliedOutcome("pinned", nil), nil
+	case CommandUnpin:
+		if err := s.SetPreference(deps, request.Actor, PreferenceRequest{JobID: job.ID, Pinned: boolPointer(false)}); err != nil {
+			return commandOutcome{}, err
+		}
+		return appliedOutcome("unpinned", nil), nil
 	case CommandPinLineage:
 		return s.pinVisibleLineage(deps, request, job)
 	case CommandForget:

@@ -6,6 +6,7 @@ import {
     classifyJobState,
     commandEndpoint,
     commandLabel,
+    jobCommands,
     reduceJobStreamEvent,
     stateLabel,
     streamCursorSequence,
@@ -376,7 +377,17 @@ export function jobPanel() {
         },
 
         commandsFor(job) {
-            return advertisedCommands(this.details[job.id] || job);
+            return jobCommands(this.details[job.id] || job);
+        },
+
+        async refreshJobPreference(id) {
+            const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
+            const freshJob = payload.job || payload;
+            if (freshJob?.id) {
+                this.details[id] = freshJob;
+                this.applyStreamSnapshot(freshJob);
+            }
+            return freshJob;
         },
 
         async runCommand(job, command) {
@@ -397,9 +408,16 @@ export function jobPanel() {
                 const outcome = result.result || result;
                 const freshJob = outcome.job || result.job;
                 if (freshJob?.id) this.applyStreamSnapshot(freshJob);
+                let preferenceRefreshFailed = false;
+                if (command?.key === 'pin' || command?.key === 'unpin') {
+                    try { await this.refreshJobPreference(job.id); }
+                    catch { preferenceRefreshFailed = true; }
+                }
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
                 if (successorId) globalThis.location?.assign?.(`/job?id=${encodeURIComponent(successorId)}`);
-                this.notice = outcome.message || `${commandLabel(command)} requested.`;
+                this.notice = preferenceRefreshFailed
+                    ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
+                    : outcome.message || `${commandLabel(command)} requested.`;
                 this.announce(this.notice);
                 return outcome;
             } catch (error) {

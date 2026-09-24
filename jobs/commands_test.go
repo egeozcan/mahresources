@@ -246,7 +246,7 @@ func TestCommandAdvertisementFollowsTheAdapterAndTheHostOwnedVocabulary(t *testi
 	// keys the adapter listed are decided by the host (dismiss needs a finished
 	// Job, forget needs sealed input), and pin/pin-lineage are the host's.
 	requireCommandKeys(t, "a running job", commands,
-		CommandCancel, CommandPause, "inspect", CommandPin, CommandPinLineage)
+		CommandCancel, CommandPause, "inspect", CommandPin, CommandUnpin, CommandPinLineage)
 
 	for _, command := range commands {
 		if command.JobVersion != jobRow(t, h.deps, running.ID).Version {
@@ -271,7 +271,7 @@ func TestCommandAdvertisementFollowsTheAdapterAndTheHostOwnedVocabulary(t *testi
 	// honor — while the host's own dismissal, pinning, forgetting and the
 	// adapter's Retry are there.
 	requireCommandKeys(t, "a failed job with sealed input", commands,
-		CommandPin, CommandPinLineage, CommandDismiss, CommandForget, CommandRetry, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRetry, "inspect")
 
 	forget := onlyCommand(t, commands, CommandForget)
 	if !forget.Destructive || strings.TrimSpace(forget.Confirmation) == "" {
@@ -289,7 +289,7 @@ func TestCommandAdvertisementFollowsTheAdapterAndTheHostOwnedVocabulary(t *testi
 	// The host's own bookkeeping still works, because none of it needs an executor.
 	orphan := h.acceptPlain("group-export", &owner)
 	requireCommandKeys(t, "a job whose kind has no adapter here", h.advertise(orphan.ID, viewer),
-		CommandPin, CommandPinLineage)
+		CommandPin, CommandUnpin, CommandPinLineage)
 
 	// A Job the asker may not see is answered exactly as one that does not exist.
 	if _, err := h.svc.AdvertisedCommands(context.Background(), h.deps, Access{UserID: owner + 1}, running.ID); !errors.Is(err, ErrNotFound) {
@@ -620,7 +620,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	succeeded := h.acceptReplayable(&owner)
 	h.succeed(succeeded.ID)
 	requireCommandKeys(t, "a successful job", h.advertise(succeeded.ID, viewer),
-		CommandPin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(succeeded.ID, CommandRetry, "idem-succeeded", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("retrying successful work = %v, want ErrCommandNotAdvertised", err)
@@ -637,7 +637,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 		t.Fatalf("forget the input: %v", err)
 	}
 	requireCommandKeys(t, "a job whose input was forgotten", h.advertise(forgotten.ID, viewer),
-		CommandPin, CommandPinLineage, CommandDismiss, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(forgotten.ID, CommandRetry, "idem-forgotten", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("retrying forgotten input = %v, want ErrCommandNotAdvertised", err)
@@ -648,7 +648,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	plain := h.acceptPlain(testKind, &owner)
 	h.fail(plain.ID)
 	requireCommandKeys(t, "a job with non-replayable input", h.advertise(plain.ID, viewer),
-		CommandPin, CommandPinLineage, CommandDismiss, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, "inspect")
 
 	// A successor exists: the ancestor is no longer the leaf, so a second Retry is
 	// no longer offered — and the chain stays linear by advancing the leaf instead.
@@ -660,7 +660,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	}
 	leaf := jobLinks(t, h.deps, ancestor.ID, LinkRetryOf, false)[0]
 	requireCommandKeys(t, "a job that already has a successor", h.advertise(ancestor.ID, viewer),
-		CommandPin, CommandPinLineage, CommandDismiss, CommandForget, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(ancestor.ID, CommandRetry, "idem-linear-2", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("a second retry of a non-leaf = %v, want ErrCommandNotAdvertised", err)
@@ -754,7 +754,7 @@ func TestRepeatBranchesFromSuccessfulWorkWithItsOwnRelation(t *testing.T) {
 	// Branching is what Repeat is for, so the command is still offered after one
 	// repeat has already created a Job.
 	requireCommandKeys(t, "a repeated job", h.advertise(successful.ID, viewer),
-		CommandPin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
 	second, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(successful.ID, CommandRepeat, "idem-repeat-2", viewer))
 	if err != nil {
@@ -883,6 +883,89 @@ func TestDismissAndPinChangeOnlyTheViewersOwnRelationship(t *testing.T) {
 	if pinned := pinnedJobIDs(t, h.deps, owner); len(pinned) != 1 || pinned[0] != finished.ID {
 		t.Fatalf("pins = %v, want the pinned job", pinned)
 	}
+	if !result.Job.Pinned {
+		t.Fatal("successful pin result does not show the viewer's pin")
+	}
+	viewerSnapshot, err := h.svc.Get(h.deps, viewer, finished.ID)
+	if err != nil {
+		t.Fatalf("read pinned job as its viewer: %v", err)
+	}
+	if !viewerSnapshot.Pinned {
+		t.Fatal("the viewer's job snapshot does not show its pin")
+	}
+	otherSnapshot, err := h.svc.Get(h.deps, Access{UserID: 8, Administrator: true}, finished.ID)
+	if err != nil {
+		t.Fatalf("read pinned job as another viewer: %v", err)
+	}
+	if otherSnapshot.Pinned {
+		t.Fatal("one viewer's pin leaked into another viewer's snapshot")
+	}
+	page, err := h.svc.List(h.deps, viewer, Filter{}, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("list jobs with pin state: %v", err)
+	}
+	foundPinned := false
+	for _, snapshot := range page.Jobs {
+		if snapshot.ID == finished.ID {
+			foundPinned = snapshot.Pinned
+		}
+	}
+	if !foundPinned {
+		t.Fatal("the viewer's list snapshot does not show its pin")
+	}
+	otherPage, err := h.svc.List(h.deps, Access{UserID: 8, Administrator: true}, Filter{}, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("list jobs as another viewer: %v", err)
+	}
+	for _, snapshot := range otherPage.Jobs {
+		if snapshot.ID == finished.ID && snapshot.Pinned {
+			t.Fatal("one viewer's pin leaked into another viewer's list snapshot")
+		}
+	}
+	commands, err := h.svc.AdvertisedCommands(context.Background(), h.deps, viewer, finished.ID)
+	if err != nil {
+		t.Fatalf("read pinned command surface: %v", err)
+	}
+	if !hasCommand(commands, CommandUnpin) || !hasCommand(commands, CommandPin) {
+		t.Fatalf("pinned command surface = %#v, want both idempotent bulk commands", commands)
+	}
+	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUnpin}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("a pinned job is missing from the Unpin command filter")
+	}
+
+	result, err = h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(finished.ID, CommandUnpin, "idem-unpin", viewer))
+	if err != nil {
+		t.Fatalf("unpinning a job: %v", err)
+	}
+	requireResult(t, "an unpin", result, CommandStatusSucceeded, CommandCodeApplied)
+	if result.Job.Pinned {
+		t.Fatal("successful unpin result still shows the viewer's pin")
+	}
+	viewerSnapshot, err = h.svc.Get(h.deps, viewer, finished.ID)
+	if err != nil {
+		t.Fatalf("read unpinned job: %v", err)
+	}
+	if viewerSnapshot.Pinned {
+		t.Fatal("the viewer's pin remained after Unpin")
+	}
+	commands, err = h.svc.AdvertisedCommands(context.Background(), h.deps, viewer, finished.ID)
+	if err != nil {
+		t.Fatalf("read unpinned command surface: %v", err)
+	}
+	if !hasCommand(commands, CommandUnpin) || !hasCommand(commands, CommandPin) {
+		t.Fatalf("unpinned command surface = %#v, want both idempotent bulk commands", commands)
+	}
+	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUnpin}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("an unpinned job is missing from the idempotent Unpin bulk command filter")
+	}
+	// Pinning again leaves the test's retention assertion below meaningful.
+	result, err = h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(finished.ID, CommandPin, "idem-pin-again", viewer))
+	if err != nil {
+		t.Fatalf("pinning a job again: %v", err)
+	}
+	requireResult(t, "a second pin", result, CommandStatusSucceeded, CommandCodeApplied)
 
 	// The Job's own deadline is what retention reads, so a pin is only worth
 	// anything if the sweep honors it: an expired but pinned Job stays.
@@ -896,6 +979,15 @@ func TestDismissAndPinChangeOnlyTheViewersOwnRelationship(t *testing.T) {
 	if _, err := h.svc.Get(h.deps, viewer, finished.ID); err != nil {
 		t.Fatalf("a pinned job was swept: %v", err)
 	}
+}
+
+func hasCommand(commands []Command, key string) bool {
+	for _, command := range commands {
+		if command.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // TestLineagePinningCoversVisibleRelativesAndNothingHidden is §9's "Pinning one
@@ -1476,7 +1568,7 @@ func TestPauseAndResumeFollowTheExecutorThatConfirmsTheCheckpoint(t *testing.T) 
 	// checkpoint, and holding waiting work is not what a pause means.
 	waiting := h.acceptReplayable(&owner)
 	requireCommandKeys(t, "work nobody is running", h.advertise(waiting.ID, viewer),
-		CommandCancel, "inspect", CommandPin, CommandPinLineage)
+		CommandCancel, "inspect", CommandPin, CommandUnpin, CommandPinLineage)
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(waiting.ID, CommandPause, "idem-pause-waiting", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("pausing waiting work = %v, want ErrCommandNotAdvertised", err)
@@ -1553,7 +1645,7 @@ func TestCommandResumeIsNotOfferedOnceACancellationHasWon(t *testing.T) {
 	// The cancellation still owns the Job, so what it offers is the control that ends
 	// it — and not the one that would put its work back in the queue.
 	requireCommandKeys(t, "a blocked job whose cancellation has won", h.advertise(running.ID, viewer),
-		CommandCancel, "inspect", CommandPin, CommandPinLineage)
+		CommandCancel, "inspect", CommandPin, CommandUnpin, CommandPinLineage)
 
 	before := h.adapter.commandCount()
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
@@ -1695,8 +1787,15 @@ func TestCommandExecutionRechecksWhatItDecidedFrom(t *testing.T) {
 		t.Fatal("a refused command reached the adapter")
 	}
 
+	// A pin is viewer state and does not move the Job version. A later stale
+	// command must still return the current pin state with its fresh snapshot.
+	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(running.ID, CommandPin, "idem-pin-before-stale", viewer)); err != nil {
+		t.Fatalf("pin before stale command: %v", err)
+	}
+
 	// A request decided from an older version is refused, and the answer carries
-	// the Job as it stands now rather than an empty result.
+	// the Job as it stands now, including the viewer's pin state.
 	stale := h.request(running.ID, CommandCancel, "idem-stale", viewer)
 	stale.ExpectedVersion = running.Version
 	result, err = h.svc.ExecuteCommand(context.Background(), h.deps, stale)
@@ -1707,6 +1806,9 @@ func TestCommandExecutionRechecksWhatItDecidedFrom(t *testing.T) {
 	if result.Job.Version != jobRow(t, h.deps, running.ID).Version {
 		t.Fatalf("the conflict returned version %d, want the job's current %d",
 			result.Job.Version, jobRow(t, h.deps, running.ID).Version)
+	}
+	if !result.Job.Pinned {
+		t.Fatal("the stale command conflict lost the viewer's pinned state")
 	}
 
 	// A Job the asker may not see is answered exactly as one that does not exist.

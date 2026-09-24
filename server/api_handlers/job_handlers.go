@@ -402,6 +402,7 @@ type JobSnapshotResponse struct {
 	ExecutionPrincipal jobs.PrincipalClass     `json:"executionPrincipal"`
 	ReplayClass        jobs.ReplayClass        `json:"replayClass"`
 	ReplayAvailability jobs.ReplayAvailability `json:"replayAvailability,omitempty"`
+	Pinned             bool                    `json:"pinned"`
 	Version            uint64                  `json:"version"`
 	ControlIntent      string                  `json:"controlIntent,omitempty"`
 	Failure            *JobFailureResponse     `json:"failure,omitempty"`
@@ -441,6 +442,7 @@ func jobSnapshotResponse(snap jobs.Snapshot) JobSnapshotResponse {
 		OwnerUserID: snap.OwnerUserID, ActorUserID: snap.ActorUserID, Origin: snap.Origin,
 		Visibility: snap.Visibility, ExecutionPrincipal: snap.ExecutionPrincipal,
 		ReplayClass: snap.ReplayClass, ReplayAvailability: snap.ReplayAvailability,
+		Pinned:  snap.Pinned,
 		Version: snap.Version, ControlIntent: snap.ControlIntent,
 		Progress: JobProgressResponse{
 			Phase: snap.Progress.Phase, Completed: snap.Progress.Completed, Total: snap.Progress.Total,

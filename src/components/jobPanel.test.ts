@@ -119,6 +119,26 @@ describe('Job Center panel', () => {
         expect(panel.notice).toMatch(/1 of 2 finished jobs dismissed/i);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('dismissed=false'))).toBe(true);
     });
+
+    test('refreshes viewer pin state after pinning from the panel', async () => {
+        const panel = jobPanel();
+        const job = { id: 'job-1', state: 'succeeded', version: 4, pinned: false, commands: [{ key: 'pin', label: 'Pin', jobVersion: 4 }] };
+        panel.jobs = [job];
+        vi.stubGlobal('Alpine', { store: () => ({ ask: vi.fn(async () => true) }) });
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            if (init.method === 'POST') return { result: { message: 'Pinned' } };
+            return { id: 'job-1', state: 'succeeded', version: 4, pinned: true, commands: [
+                { key: 'pin', label: 'Pin', jobVersion: 4 }, { key: 'unpin', label: 'Unpin', jobVersion: 4 },
+            ] };
+        });
+
+        await panel.runCommand(job, job.commands[0]);
+
+        expect(panel.requestJSON).toHaveBeenCalledTimes(2);
+        expect(panel.requestJSON.mock.calls[1][0]).toBe('/v1/jobs/job-1');
+        expect(panel.jobs[0].pinned).toBe(true);
+        expect(panel.commandsFor(panel.jobs[0]).map(command => command.key)).toEqual(['unpin']);
+    });
 });
 
 describe('Job Center panel accessibility hooks', () => {
@@ -681,6 +701,8 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).toContain('Dismiss finished');
         expect(template).toContain('All jobs');
         expect(template).toContain('x-for="command in commandsFor(job)"');
+        expect(template).toContain('x-show="job.pinned"');
+        expect(template).toContain('Pinned by you');
         expect(template).toContain('Active and scheduled jobs shown');
         expect(template).toContain('Jobs needing attention shown');
         expect(template).toContain("'Active jobs shown: ' + activeCount");

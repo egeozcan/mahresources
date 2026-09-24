@@ -214,7 +214,7 @@ func TestJobListRejectsUnversionedCursorBeforeReading(t *testing.T) {
 
 func TestJobDetailReturnsVersionBoundCommandsAndSafeOutputLinks(t *testing.T) {
 	ctx := &jobDetailContextStub{
-		snapshot: jobs.Snapshot{ID: "job-123", Kind: "group-export", KindVersion: 1, State: jobs.StateSucceeded, Version: 7},
+		snapshot: jobs.Snapshot{ID: "job-123", Kind: "group-export", KindVersion: 1, State: jobs.StateSucceeded, Pinned: true, Version: 7},
 		commands: []jobs.Command{{Key: jobs.CommandRepeat, Label: "Export again", JobVersion: 7, Endpoint: "/v1/jobs/job-123/commands/repeat"}},
 		outputs: []jobs.Output{{
 			JobID: "job-123", Key: "archive", Type: jobs.OutputTypeArtifact, Label: "archive.tar",
@@ -238,7 +238,7 @@ func TestJobDetailReturnsVersionBoundCommandsAndSafeOutputLinks(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Version != 7 || len(response.Commands) != 1 || response.Commands[0].JobVersion != response.Version {
+	if response.Version != 7 || !response.Pinned || len(response.Commands) != 1 || response.Commands[0].JobVersion != response.Version {
 		t.Fatalf("detail command versions are inconsistent: %#v", response)
 	}
 	if len(response.Outputs) != 1 || !strings.Contains(response.Outputs[0].URL, "/v1/jobs/job-123/outputs?key=archive") {

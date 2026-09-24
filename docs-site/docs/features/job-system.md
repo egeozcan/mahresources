@@ -168,9 +168,11 @@ database with separate staging roots.
 | Replay envelope after terminal completion | 7 days | Nonterminal execution-required input is retained |
 | Job summary export artifact | `EXPORT_RETENTION` (24 hours) | Independent from Job history |
 
-Pins and dismissal change a person's view, not expiry. Output artifacts are
-reauthorized when opened; holding a visible Job does not grant an output access
-token.
+The list, detail page, and Jobs panel mark Jobs pinned by the current viewer.
+Unpin removes that viewer's preference. While anyone keeps a Job pinned, its
+metadata and events are exempt from ordinary expiry; dismissal only changes a
+person's view. Output artifacts are reauthorized when opened; holding a visible
+Job does not grant an output access token.
 
 ## Related pages
 

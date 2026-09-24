@@ -285,7 +285,11 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return s.snapshotFor(deps, access, job), nil
+	snapshots := []Snapshot{s.snapshotFor(deps, access, job)}
+	if err := fillViewerPinState(deps.DB, access, snapshots); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshots[0], nil
 }
 
 // snapshotFor projects a stored row and answers the one question about replay
@@ -970,6 +974,11 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("%w: Finish ends a Job, and %q is not a terminal state",
 			ErrInvalidTransition, request.Outcome)
 	}
+	if request.FinalProgress != nil {
+		if err := validateProgress(*request.FinalProgress); err != nil {
+			return Snapshot{}, err
+		}
+	}
 	if err := validateTransition(&transition); err != nil {
 		return Snapshot{}, err
 	}
@@ -977,6 +986,9 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 	prepared, err := prepareTransition(deps, transition)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if request.FinalProgress != nil {
+		applyFinalProgress(&prepared, *request.FinalProgress)
 	}
 
 	var verify func(tx *gorm.DB) error
@@ -987,6 +999,27 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 		}
 	}
 	return s.commitTransition(deps, prepared, verify)
+}
+
+// applyFinalProgress adds a FinishRequest's optional final snapshot to the same
+// guarded write as its terminal transition. Progress is copied into both the
+// prepared model and its update map so the committed snapshot and stored row
+// describe the same outcome.
+func applyFinalProgress(prepared *preparedTransition, progress Progress) {
+	prepared.next.ProgressCompleted = copyInt64(progress.Completed)
+	prepared.next.ProgressTotal = copyInt64(progress.Total)
+	prepared.next.ProgressUnit = progress.Unit
+	prepared.next.ProgressMessage = progress.Message
+	prepared.next.ProgressETA = utcPtr(progress.ETA)
+	prepared.updates["progress_completed"] = prepared.next.ProgressCompleted
+	prepared.updates["progress_total"] = prepared.next.ProgressTotal
+	prepared.updates["progress_unit"] = prepared.next.ProgressUnit
+	prepared.updates["progress_message"] = prepared.next.ProgressMessage
+	prepared.updates["progress_eta"] = prepared.next.ProgressETA
+	if progress.Phase != "" {
+		prepared.next.Phase = progress.Phase
+		prepared.updates["phase"] = prepared.next.Phase
+	}
 }
 
 // preparedTransition is a transition that has passed every precondition, with

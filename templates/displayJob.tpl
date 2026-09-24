@@ -12,13 +12,14 @@
                     <h1 class="mt-2 break-words text-2xl font-semibold text-stone-900" x-text="detail.title || detail.kind || detail.id"></h1>
                     <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
                         <span class="rounded border border-stone-300 px-2 py-0.5 font-mono" x-text="stateLabel(detail)"></span>
+                        <span x-show="detail.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">Pinned by you</span>
                         <span x-text="detail.kind"></span>
                         <span x-show="detail.phase" x-text="detail.phase"></span>
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2" role="group" aria-label="Advertised job commands">
-                    <template x-for="command in advertisedCommands(detail)" :key="command.key">
+                    <template x-for="command in commandsFor(detail)" :key="command.key">
                         <button type="button" @click="runCommand(detail, command)" class="rounded border border-stone-400 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-50" x-text="command.label || command.key"></button>
                     </template>
                 </div>

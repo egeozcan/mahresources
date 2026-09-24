@@ -1297,13 +1297,21 @@ type pluginActionOutcome struct {
 // reporting the refusal when there is one.
 func (s *pluginActionSink) publishOutcome(outcome pluginActionOutcome) (jobs.Snapshot, error) {
 	if outcome.succeeded {
-		return s.finish(jobs.StateSucceeded, nil, outcome.message)
+		completed := int64(100)
+		total := int64(100)
+		progress := jobs.Progress{
+			Completed: &completed,
+			Total:     &total,
+			Unit:      "percent",
+			Message:   outcome.message,
+		}
+		return s.finish(jobs.StateSucceeded, nil, outcome.message, &progress)
 	}
 	return s.finish(jobs.StateFailed, &jobs.Failure{
 		Code:    pluginActionFailureCode,
 		Class:   jobs.FailureClassInternal,
 		Message: pluginActionFailureMessage,
-	}, pluginActionFailureMessage)
+	}, pluginActionFailureMessage, nil)
 }
 
 // settleRefused reports whether an answer ends this execution's attempts to publish,
@@ -1333,7 +1341,7 @@ func (s *pluginActionSink) finished() bool {
 	return s.settled()
 }
 
-func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, message string) (jobs.Snapshot, error) {
+func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, message string, finalProgress *jobs.Progress) (jobs.Snapshot, error) {
 	service := s.ctx.JobService()
 	if service == nil {
 		return jobs.Snapshot{}, nil
@@ -1361,6 +1369,7 @@ func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, mes
 		ExecutionRef:    s.ref(),
 		ExpectedVersion: current.Version,
 		Outcome:         outcome,
+		FinalProgress:   finalProgress,
 		Event:           event,
 		Failure:         failure,
 	})

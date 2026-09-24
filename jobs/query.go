@@ -116,7 +116,52 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 	if err := s.fillReplayAvailability(deps, page.Jobs); err != nil {
 		return Page{}, err
 	}
+	if err := fillViewerPinState(deps.DB, access, page.Jobs); err != nil {
+		return Page{}, err
+	}
 	return page, nil
+}
+
+// fillViewerPinState projects one viewer's pin preference onto a bounded set of
+// snapshots with one query. Pinning belongs to the viewer, so callers must not
+// infer it from retention state or another user's preference row.
+func fillViewerPinState(db *gorm.DB, access Access, snapshots []Snapshot) error {
+	for i := range snapshots {
+		snapshots[i].Pinned = false
+	}
+	if access.UserID == 0 || len(snapshots) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		ids = append(ids, snapshot.ID)
+	}
+	var pinnedIDs []string
+	if err := db.Model(&models.JobPreference{}).
+		Where("user_id = ? AND pinned_at IS NOT NULL AND job_id IN ?", access.UserID, ids).
+		Pluck("job_id", &pinnedIDs).Error; err != nil {
+		return fmt.Errorf("jobs: read viewer pin state: %w", err)
+	}
+	pinned := make(map[string]bool, len(pinnedIDs))
+	for _, id := range pinnedIDs {
+		pinned[id] = true
+	}
+	for i := range snapshots {
+		snapshots[i].Pinned = pinned[snapshots[i].ID]
+	}
+	return nil
+}
+
+// viewerSnapshotWithPin projects one stored Job for a viewer and attaches that
+// viewer's pin state. Refusal responses use it so a stale command cannot replace
+// a correct badge with the zero value.
+func viewerSnapshotWithPin(db *gorm.DB, access Access, job models.Job) (Snapshot, error) {
+	snapshots := []Snapshot{viewerSnapshot(job, access)}
+	if err := fillViewerPinState(db, access, snapshots); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshots[0], nil
 }
 
 // fillReplayAvailability answers each listed Job's replay question from one
@@ -414,7 +459,12 @@ func (s *Service) applyHostOnlyCommandFilter(base *gorm.DB, deps Deps, access Ac
 			return base.Where("1 = 0"), true, nil
 		}
 		return base.Where("jobs.state IN ?", terminalJobStates()), true, nil
-	case CommandPin, CommandPinLineage:
+	case CommandPin, CommandUnpin:
+		if access.UserID == 0 {
+			return base.Where("1 = 0"), true, nil
+		}
+		return base, true, nil
+	case CommandPinLineage:
 		if access.UserID == 0 {
 			return base.Where("1 = 0"), true, nil
 		}
@@ -884,8 +934,15 @@ func visibleLinks(db *gorm.DB, access Access, condition string, jobID string) ([
 		return nil, fmt.Errorf("jobs: read lineage relatives: %w", err)
 	}
 	visible := make(map[string]Snapshot, len(rows))
+	snapshots := make([]Snapshot, 0, len(rows))
 	for _, row := range rows {
-		visible[row.ID] = viewerSnapshot(row, access)
+		snapshots = append(snapshots, viewerSnapshot(row, access))
+	}
+	if err := fillViewerPinState(db, access, snapshots); err != nil {
+		return nil, err
+	}
+	for _, snapshot := range snapshots {
+		visible[snapshot.ID] = snapshot
 	}
 
 	out := make([]relativeLink, 0, len(links))
