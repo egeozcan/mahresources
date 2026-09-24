@@ -338,6 +338,8 @@ export function jobCenter(options = {}) {
         nextCursor: null,
         _allPageCursors: [],
         _listGeneration: 0,
+        _summaryGeneration: 0,
+        _filterSubmitGeneration: 0,
         bulkOutcomes: [],
         timeline: [],
         timelineError: '',
@@ -373,6 +375,8 @@ export function jobCenter(options = {}) {
             if (this._refreshTimer) clearTimeout(this._refreshTimer);
             this._streamRefreshGeneration += 1;
             this._listGeneration += 1;
+            this._summaryGeneration += 1;
+            this._filterSubmitGeneration += 1;
             this._streamRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
@@ -408,8 +412,12 @@ export function jobCenter(options = {}) {
             }
         },
 
-        async loadSummary() {
-            this.summary = await this.fetchJSON(buildJobSummaryURL({ filters: this.filters }));
+        async loadSummary(generation = ++this._summaryGeneration) {
+            const summaryURL = buildJobSummaryURL({ filters: this.filters });
+            const summary = await this.fetchJSON(summaryURL);
+            if (generation !== this._summaryGeneration || summaryURL !== buildJobSummaryURL({ filters: this.filters })) return false;
+            this.summary = summary;
+            return true;
         },
 
         scheduleStreamRefresh() {
@@ -437,6 +445,7 @@ export function jobCenter(options = {}) {
             if (this.detailId) return;
             const stateKey = JSON.stringify({ view: this.view, filters: this.filters });
             const listGeneration = this._listGeneration;
+            const summaryGeneration = ++this._summaryGeneration;
             const refreshHome = this.view === 'home' && !this.hasFilters();
             const requests = [this.fetchJSON(buildJobSummaryURL({ filters: this.filters }))];
             if (refreshHome) {
@@ -453,7 +462,7 @@ export function jobCenter(options = {}) {
                 allWindow = await this.fetchLoadedAllWindow(generation, listGeneration, stateKey);
                 if (!allWindow) return;
             }
-            if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
+            if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || summaryGeneration !== this._summaryGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
             this.summary = summary;
             if (refreshHome && homePages) {
                 this.sections = {
@@ -645,12 +654,24 @@ export function jobCenter(options = {}) {
             this.replaceURL(null);
             this.loading = true;
             this.error = '';
-            return this.loadAll().catch(error => {
-                this.error = error.message || 'Could not apply these filters.';
-            }).finally(() => { this.loading = false; });
+            const submitGeneration = ++this._filterSubmitGeneration;
+            const summaryGeneration = ++this._summaryGeneration;
+            const summaryRequest = this.loadSummary(summaryGeneration);
+            const listRequest = this.loadAll();
+            return Promise.allSettled([summaryRequest, listRequest]).then(results => {
+                if (submitGeneration !== this._filterSubmitGeneration) return;
+                const [summaryResult, listResult] = results;
+                if (listResult.status === 'rejected') throw listResult.reason;
+                if (summaryGeneration === this._summaryGeneration && summaryResult.status === 'rejected') throw summaryResult.reason;
+            }).catch(error => {
+                if (submitGeneration === this._filterSubmitGeneration) this.error = error.message || 'Could not apply these filters.';
+            }).finally(() => {
+                if (submitGeneration === this._filterSubmitGeneration) this.loading = false;
+            });
         },
 
         clearFilters() {
+            this._filterSubmitGeneration += 1;
             this.filters = emptyFilters();
             this.view = 'home';
             this.nextCursor = null;
@@ -661,6 +682,7 @@ export function jobCenter(options = {}) {
         },
 
         async setView(view) {
+            this._filterSubmitGeneration += 1;
             this.view = view === 'all' ? 'all' : 'home';
             this.nextCursor = null;
             this._allPageCursors = [];

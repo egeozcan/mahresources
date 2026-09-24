@@ -459,6 +459,77 @@ describe('Job Center event stream catch-up boundary', () => {
 });
 
 describe('Job Center live summary', () => {
+    test('refreshes summaries with submitted filters and ignores results from an older filter generation', async () => {
+        let resolveFirstSummary: (value: unknown) => void = () => {};
+        const firstSummary = new Promise(resolve => { resolveFirstSummary = resolve; });
+        vi.stubGlobal('FormData', class {
+            private values: Record<string, string>;
+            constructor(form: { search: string }) { this.values = { search: form.search }; }
+            get(key: string) { return this.values[key] || null; }
+        });
+        const center = jobCenter();
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') {
+                if (url.searchParams.get('search') === 'older filter') return firstSummary;
+                return { byState: { queued: 1 } };
+            }
+            if (url.pathname === '/v1/jobs') {
+                return { jobs: [{ id: url.searchParams.get('search'), state: 'queued' }] };
+            }
+            return {};
+        });
+        const submit = (search: string) => {
+            return center.submitFilters({ search } as HTMLFormElement);
+        };
+
+        let olderSubmissionSettled = false;
+        const olderSubmission = submit('older filter').then(() => { olderSubmissionSettled = true; });
+        const newerSubmission = submit('newer filter');
+        await newerSubmission;
+
+        expect(center.jobs.map(job => job.id)).toEqual(['newer filter']);
+        expect(center.summary).toEqual({ byState: { queued: 1 } });
+        expect(olderSubmissionSettled).toBe(false);
+        expect(center.fetchJSON.mock.calls.map(([raw]) => String(raw))).toEqual([
+            expect.stringContaining('/v1/jobs/summary?search=older+filter&dismissed=false'),
+            expect.stringContaining('/v1/jobs?search=older+filter&dismissed=false&limit=50'),
+            expect.stringContaining('/v1/jobs/summary?search=newer+filter&dismissed=false'),
+            expect.stringContaining('/v1/jobs?search=newer+filter&dismissed=false&limit=50'),
+        ]);
+
+        resolveFirstSummary({ byState: { failed: 1 } });
+        await olderSubmission;
+        expect(center.summary).toEqual({ byState: { queued: 1 } });
+    });
+
+    test('clears foreground loading when a stream refresh invalidates the submitted list request', async () => {
+        vi.useFakeTimers();
+        let resolveList: (value: unknown) => void = () => {};
+        const pendingList = new Promise(resolve => { resolveList = resolve; });
+        vi.stubGlobal('FormData', class {
+            private values: Record<string, string>;
+            constructor(form: { search: string }) { this.values = { search: form.search }; }
+            get(key: string) { return this.values[key] || null; }
+        });
+        const center = jobCenter();
+        center.fetchJSON = vi.fn(raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') return Promise.resolve({ byState: {} });
+            return pendingList;
+        });
+
+        const submission = center.submitFilters({ search: 'current filter' } as HTMLFormElement);
+        expect(center.loading).toBe(true);
+        center.scheduleStreamRefresh();
+        resolveList({ jobs: [{ id: 'current filter', state: 'queued' }] });
+        await submission;
+
+        expect(center.loading).toBe(false);
+        center.destroy();
+        vi.useRealTimers();
+    });
+
     test('uses current filters for initial and live summary refreshes', async () => {
         vi.useFakeTimers();
         const center = jobCenter();
