@@ -319,10 +319,21 @@ Same as sync, plus:
 | Function | Description |
 |----------|-------------|
 | `mah.job_progress(job_id, percent, message)` | Report progress (0-100). SSE updates throttled to 200ms. |
-| `mah.job_complete(job_id, result_table)` | Mark job as completed. Sets progress to 100. |
+| `mah.job_complete(job_id, result_table)` | Request successful completion; after the handler settles, store final progress at 100%. |
 | `mah.job_fail(job_id, error_message)` | Mark job as failed. |
 
-If the handler returns without calling `mah.job_complete` or `mah.job_fail`, an async job is always marked completed with progress 100. Only a returned `message` string is read from the table; a `success = false` field is ignored on the async path (unlike the sync path, which honors it). To fail an async action, call `mah.job_fail` or `mah.abort`.
+If the handler returns without calling `mah.job_complete` or `mah.job_fail`, an
+async job is marked completed with progress 100. The `message` string becomes
+the completion text; a nonempty result table within the size limit is stored as
+a sanitized Job summary. A `success = false` field is ignored on the async path
+(unlike the sync path, which honors it). To fail an async action, call `mah.job_fail` or
+`mah.abort`.
+
+If the result includes a canonical local `redirect` such as
+`/resource?id=17`, `/note?id=17`, or `/group?id=17`, the host also publishes an
+entity output. Opening it rechecks access to the target. Older
+plugin Jobs that stored only the summary show **View result** for the target
+and **View JSON result** for the summary.
 
 A job already marked failed or cancelled keeps that outcome. A handler that
 calls `mah.job_fail` and then returns a diagnostic table is not overruled by

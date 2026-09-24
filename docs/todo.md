@@ -13810,3 +13810,14 @@ The old cockpit rendered the plugin result's `redirect` field. The plugin still 
 The plugin-action adapter now publishes an optional typed entity output from a sanitized, canonical local Resource, Note, or Group redirect. For historical plugin-action `result` summaries, Job detail receives a strictly validated same-origin `destinationUrl`. It shows both “View result” and “View JSON result”, preserving the raw summary. New Jobs show the entity link and still let the summary open as JSON. Other Job Kinds and other summary keys do not gain navigation from a `redirect` field.
 
 The focused plugin-action completion tests, API handler tests, and 41 Job Center UI tests passed. A rebuilt local demo showed both historical links on the reported fal.ai Job; clicking “View result” opened `/resource?id=1`. Sol reviews found and verified fixes for JSON access and cross-Kind projection; the plugin output review found no actionable issues. The requested final Astra review found no actionable issues. `git diff --check` passed.
+
+## Job Center documentation audit — 2026-09-24
+
+- [x] Confirm the progress, pin, and result-link commits updated the implementation notes and Job System feature page.
+- [x] Update the task-oriented Job Center guide with completion, entity links, and per-viewer pin controls.
+- [x] Update the plugin author guide with canonical completion and result-output behavior.
+- [x] Check the documentation diff and build the docs site.
+
+### Review
+
+The earlier commits updated `docs/todo.md`, `docs/lessons.md`, and the Job System feature page. This audit fills the missing user-guide and plugin-author instructions and clarifies progress and JSON-result behavior on the feature page. `npm run build` in `docs-site` passed, and `git diff --check` found no whitespace errors. Sol and the requested final Astra review found no actionable issues.

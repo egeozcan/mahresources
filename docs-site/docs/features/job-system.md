@@ -61,6 +61,10 @@ phase such as parsing, downloading, or assembling without changing the Job
 state. The old queue endpoints may continue to use their established status
 names during compatibility.
 
+When a plugin action succeeds, its final progress is stored with the completed
+Job. The Job Center also shows older successful plugin actions as complete when
+their last stored percentage update was below 100%.
+
 An owner may inspect their Jobs, subject to the Kind's visibility rule. Admin
 visibility and resource scope are checked on every read. Ownership grants
 visibility, not permanent authority: each command and output access rechecks
@@ -137,7 +141,7 @@ Plugin actions that return a local Resource, Note, or Group redirect publish an
 entity output. Opening that output rechecks access before navigating to the
 entity. Job detail also shows a direct “View result” link for older plugin-action
 summary outputs that stored the same safe redirect before entity outputs were
-published.
+published. “View JSON result” still opens the stored summary.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale

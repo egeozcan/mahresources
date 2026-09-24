@@ -374,11 +374,18 @@ Use only the controls displayed on that Job; available commands are checked
 again when submitted. Selecting several Jobs offers only commands they all
 advertise for bulk use, with a separate result for each Job.
 
+A successful plugin action shows complete progress. When its result points to a
+Resource, Note, or Group, use the entity output link to open it. Older plugin
+Jobs with only a result summary show **View result** for the entity and **View
+JSON result** for the stored summary.
+
 A Retry creates a linked successor. Dismiss hides a finished Job from your
 view; Forget removes its stored replay input and cannot be undone. A pin keeps
 Job metadata and its event history from ordinary retention, while linked Jobs
-and output artifacts keep their own retention rules. Administrators can see
-Jobs across accounts; other accounts see only work allowed by current scope.
+and output artifacts keep their own retention rules. Pinned Jobs show **Pinned
+by you** in the list, detail page, and Jobs panel; **Unpin** removes your pin.
+Administrators can see Jobs across accounts; other accounts see only work
+allowed by current scope.
 
 Old `/downloads` links redirect to `/jobs` with recognized filters translated.
 Legacy `/v1/downloads` API routes remain available during the compatibility
