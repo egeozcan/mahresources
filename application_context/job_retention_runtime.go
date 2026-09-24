@@ -138,8 +138,10 @@ func (r *JobRetentionRuntime) Start() {
 }
 
 // Stop cancels an in-flight database or adapter cleanup, then waits for the
-// bounded sweep to return. If an adapter ignores cancellation, the renewable
-// lease remains owned until that call actually exits or this process ends.
+// bounded sweep to return. If an adapter ignores cancellation, the independent
+// lease heartbeat keeps fencing other processes until that call actually exits.
+// Stop's wait remains bounded; the sweep and its heartbeat finish together once
+// the adapter returns.
 func (r *JobRetentionRuntime) Stop() {
 	if r == nil {
 		return
@@ -200,7 +202,10 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 	}
 
 	sweepCtx, cancelSweep := context.WithCancel(r.lifeCtx)
-	heartbeatCtx, cancelHeartbeat := context.WithCancel(sweepCtx)
+	// The lease protects the full external cleanup call, including an adapter
+	// that ignores sweep cancellation. Keep renewal independent of lifeCtx and
+	// sweepCtx, and stop it only after SweepContext actually returns.
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
 	heartbeatDone := make(chan struct{})
 	leaseLost := make(chan struct{}, 1)
 	go func() {

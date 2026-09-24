@@ -266,6 +266,109 @@ func TestJobRetentionRuntimeShutdownCancelsBlockedLeaseRenewal(t *testing.T) {
 	}
 }
 
+func TestJobRetentionRuntimeKeepsFenceWhileCleanupIgnoresShutdown(t *testing.T) {
+	first := newJobContext(t)
+	if err := first.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
+		t.Fatalf("migrate runtime fence: %v", err)
+	}
+	service := first.JobService()
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = retentionRuntimeTestKind
+	if err := service.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register retention test Kind: %v", err)
+	}
+	second := newSecondRetentionRuntimeContext(t, first)
+
+	cleanupEntered := make(chan struct{})
+	secondCleanupEntered := make(chan struct{}, 1)
+	releaseCleanup := make(chan struct{})
+	var calls atomic.Int32
+	var firstCleanupActive atomic.Bool
+	var overlapped atomic.Bool
+	adapter.cleanup = func(_ context.Context, request jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error) {
+		call := calls.Add(1)
+		if call == 1 {
+			firstCleanupActive.Store(true)
+			close(cleanupEntered)
+			<-releaseCleanup // Simulate a filesystem adapter that ignores cancellation.
+			firstCleanupActive.Store(false)
+		} else {
+			if firstCleanupActive.Load() {
+				overlapped.Store(true)
+			}
+			select {
+			case secondCleanupEntered <- struct{}{}:
+			default:
+			}
+		}
+		removed := make([]string, 0, len(request.Artifacts))
+		for _, artifact := range request.Artifacts {
+			removed = append(removed, artifact.Key)
+		}
+		return jobs.ArtifactCleanupResult{Removed: removed}, nil
+	}
+	createExpiredArtifactJob(t, first)
+
+	firstRuntime := NewJobRetentionRuntime(first, service, JobRetentionRuntimeConfig{
+		Interval: time.Hour, ContinuationInterval: 10 * time.Millisecond,
+		LeaseDuration: 300 * time.Millisecond, LeaseRefreshInterval: 40 * time.Millisecond,
+		LeaseRefreshTimeout: 20 * time.Millisecond, QuiesceTimeout: 100 * time.Millisecond, BatchSize: 1,
+	})
+	secondRuntime := NewJobRetentionRuntime(second, second.JobService(), JobRetentionRuntimeConfig{
+		Interval: 50 * time.Millisecond, ContinuationInterval: 10 * time.Millisecond,
+		LeaseDuration: 300 * time.Millisecond, LeaseRefreshInterval: 40 * time.Millisecond,
+		LeaseRefreshTimeout: 20 * time.Millisecond, QuiesceTimeout: 100 * time.Millisecond, BatchSize: 1,
+	})
+	firstRuntime.Start()
+	select {
+	case <-cleanupEntered:
+	case <-time.After(2 * time.Second):
+		firstRuntime.Stop()
+		secondRuntime.Stop()
+		t.Fatal("startup sweep did not enter artifact cleanup")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		firstRuntime.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		close(releaseCleanup)
+		firstRuntime.Stop()
+		secondRuntime.Stop()
+		t.Fatal("retention shutdown exceeded its bounded wait for context-insensitive cleanup")
+	}
+
+	secondRuntime.Start()
+	// Cross multiple lease durations after Stop canceled the sweep. The first
+	// adapter is still active, so a second call here proves the fence was dropped
+	// while external cleanup was still running.
+	select {
+	case <-secondCleanupEntered:
+		overlapped.Store(true)
+	case <-time.After(900 * time.Millisecond):
+	}
+	secondRuntime.Stop()
+	close(releaseCleanup)
+
+	firstDone := make(chan struct{})
+	go func() {
+		firstRuntime.loopWG.Wait()
+		close(firstDone)
+	}()
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("retention sweep goroutines did not exit after cleanup returned")
+	}
+	if overlapped.Load() {
+		t.Fatal("a second runtime entered artifact cleanup before the first adapter call exited")
+	}
+}
+
 func TestJobRetentionRuntimeCancelsSweepWhenLeaseTokenIsReplaced(t *testing.T) {
 	ctx := newJobContext(t)
 	if err := ctx.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
