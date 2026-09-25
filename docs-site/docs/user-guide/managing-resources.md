@@ -64,7 +64,7 @@ The URL field accepts multiple URLs (one per line) for batch imports.
 For large files or slow connections, enable **Download in background**:
 
 - The download starts immediately but you can navigate away
-- Progress is tracked in the **Jobs panel**, opened from the header
+- Progress is tracked in the **Jobs panel**, opened from the header: a bar with the amount downloaded, the speed, the time left and a speed graph
 - When the download finishes, **View created resource** in the Jobs panel or the [Job Center](#job-center) opens the new resource
 - Failed downloads remain in the [Job Center](#job-center) after restart and can be retried when the Job advertises Retry
 
@@ -365,8 +365,10 @@ Uploading a custom thumbnail does not create a new version -- it only changes th
 ## Job Center
 
 Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
-`/jobs` for the full Job Center. The panel shows active work and work needing
-attention. The Job Center lists every Job you can see: downloads, exports,
+`/jobs` for the full Job Center. The panel is a drawer on the right that
+groups work needing attention, active work and recently finished work. A running
+Job shows its progress bar, speed, time left, any figures it reports and a graph
+of its speed; see [Progress, metrics and graphs](../features/job-system.md#progress-metrics-and-graphs). The Job Center lists every Job you can see: downloads, exports,
 imports, Resource Reduction, maintenance, and plugin work.
 
 The Job Center is a list page like Notes or Resources. It shows the Jobs you

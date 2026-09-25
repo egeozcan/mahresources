@@ -79,6 +79,76 @@ visibility, not permanent authority: each command and output access rechecks
 current role, scope, plugin permission, and Kind policy. A filter for another
 owner or actor never grants access to that person's Jobs.
 
+## Progress, metrics and graphs
+
+A running Job reports a progress snapshot: a phase, a message, an amount
+completed, a total, a unit and an optional estimated finish. Progress is a
+snapshot, not a Job Event. It never appears on the timeline and never moves the
+Job's version.
+
+A snapshot may also carry up to 8 **metrics**: named figures reported beside the
+primary measure, such as the segments of an HLS stream next to its bytes. Each
+metric has a key, a label, a value, an optional total and an optional unit. Up
+to 3 metrics per snapshot can be marked for graphing.
+
+Each Job keeps a bounded **progress series** on its row, so a graph survives a
+reload, a restart and the Job finishing:
+
+- A point is recorded at most once per interval. The interval starts at one
+  second.
+- Each point holds the completed amount, the rate since the previous point, and
+  the value of every graphed metric.
+- When the series reaches 120 points, adjacent points are merged and the
+  interval doubles. The first point is kept, so the series always starts where
+  the Job did and covers its whole life.
+- A rate is only recorded between comparable points: the same unit, an amount
+  that did not go down, and a gap of at most 10 seconds or three intervals,
+  whichever is longer. A pause or a restart therefore shows as a gap, not as a
+  slow stretch.
+
+The server derives two figures from the series:
+
+- **Speed**: the current rate, measured about once a second and smoothed. It is
+  reported only while the Job is running and only while progress keeps arriving;
+  after 10 seconds without a tick it is no longer reported.
+- **Time left**: the executor's own estimate when it gave one. Otherwise it is
+  estimated from the speed and the remaining amount, and marked as an estimate.
+
+A finished Job reports its **average rate** across the series instead of a
+speed. No speed is shown for a Job counting in `percent`.
+
+Who reports what:
+
+| Work | Primary measure | Metrics |
+|------|-----------------|---------|
+| Download with a known size | Bytes of the total | HLS segments, when the stream has them |
+| Download of unknown size | Bytes received, no total | None |
+| HLS stream | Segments of the total | Bytes received |
+| Group export | Bytes written | Items of the current phase |
+| Plugin action, schedule or `mah.start_job` | Percent, or the plugin's own counts | Whatever the plugin reports |
+| Plugin command | Whatever the command prints | Whatever the command prints |
+
+Plugins report metrics with the table form of `mah.job_progress`; see
+[Counts, metrics and graphs](./plugin-actions.md#counts-metrics-and-graphs).
+Commands print `::mah-progress` lines; see
+[Report progress from a command](./plugin-lua-api.md#report-progress-from-a-command).
+
+### The Jobs drawer
+
+The **Jobs** button in the header, or Control/Command + Shift + D, opens the
+Jobs drawer on the right. It groups Jobs into **Needs attention**, **Active and
+scheduled** and **Finished**. A running Job shows its progress bar, the amount
+completed, its speed, the time left, its metrics and a graph for its speed and
+for each graphed metric. A finished Job shows its average speed.
+
+Work that is running, waiting or needs attention is listed up to 50 Jobs per
+group. Finished Jobs are limited by the `download_cockpit_limit` setting
+(default 10); older ones stay on the All jobs page. Progress updates arrive over
+the live stream. They are not announced to screen readers; state changes are.
+
+The Job's own page shows the same figures with larger graphs. The `/jobs` list
+shows the speed and time left under each running Job's bar.
+
 ## CLI
 
 The plural `mr jobs` command is the canonical browsing and analytics surface:
@@ -154,7 +224,7 @@ includes them.
 | `GET` | `/v1/jobs/{id}` | Job detail, current commands, outputs, and lineage |
 | `GET` | `/v1/jobs/{id}/events` | Ordered timeline; `afterSequence` resumes a page |
 | `GET` | `/v1/jobs/{id}/outputs?key={key}` | Reauthorize and open a typed output |
-| `GET` | `/v1/jobs/events?version=2` | Canonical resumable Job SSE |
+| `GET` | `/v1/jobs/events?version=2` | Canonical resumable Job SSE, with live `job-progress` frames |
 | `POST` | `/v1/jobs/{id}/commands/{command}` | Recheck and run one advertised command |
 | `POST` | `/v1/jobs/commands/{command}` | Run one advertised bulk command, returning per-Job outcomes |
 | `GET` | `/v1/jobs/summary` | Visible aggregate with a window up to 90 days |
@@ -168,6 +238,20 @@ detail page link a succeeded Job's available entity output. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail
 still offers “View JSON result” for the stored summary.
+
+Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
+`averageRate`, `eta` with `etaEstimated`, and `updatedAt`. The progress series
+is included as `progress.series` on `GET /v1/jobs/{id}`, and on `GET /v1/jobs`
+only with `include=progressSeries`. Series points use short names: `t` is Unix
+milliseconds, `c` the completed amount, `r` the rate per second since the
+previous point, and `v` the graphed metrics by key.
+
+Once the canonical stream has sent `job-caught-up`, each poll also sends a
+`job-progress` event for every visible Job whose progress changed. Its data is
+`{jobId, version, state, progress, point, intervalMs}`, where `point` is the
+latest series point. Like `job-caught-up`, it has no SSE `id`: it never moves the
+delivery cursor and is not replayed on reconnect. A reader that reconnects
+fetches the Jobs it shows and continues from the next frame.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale

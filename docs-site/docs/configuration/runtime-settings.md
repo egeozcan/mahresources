@@ -39,7 +39,7 @@ boot value.
 | `remote_user_agent` | string | at most 8192 bytes, no control characters; empty = browser-like default | `-remote-user-agent` | next remote download |
 | `download_failed_retention` | duration | 1h–365d | `-download-failed-retention` | next history sweep |
 | `download_history_retention` | duration | 1h–365d | `-download-history-retention` | next history sweep |
-| `download_cockpit_limit` | int | 1–200 | `-download-cockpit-limit` | next jobs-panel render |
+| `download_cockpit_limit` | int | 1–200 | `-download-cockpit-limit` | next page load (Jobs drawer finished rows) |
 | `share_public_url` | string (http/https URL) | absolute http/https URL; empty = relative `/s/<token>` only | `-share-public-url` | next share link render |
 | `docs_site_base_url` | string (http/https URL) | absolute; non-empty host | `-docs-site-base-url` | next page render |
 | `docs_links_disabled` | int | 0–1; 1 hides links | `-docs-links-disabled` | next page render |

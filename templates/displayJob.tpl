@@ -52,6 +52,32 @@
                     <div class="mt-2 h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(detail)" :aria-valuetext="progressAccessibleText(detail)" :aria-label="(detail.title || detail.kind || 'Job') + ' progress: ' + progressAccessibleText(detail)">
                         <div class="h-2 rounded bg-amber-800" :class="progressIndeterminate(detail) ? 'w-full animate-pulse' : ''" :style="progressIndeterminate(detail) ? '' : `width:${progressValue(detail) ?? 0}%`"></div>
                     </div>
+                    <p x-show="statsText(detail)" class="mt-2 text-sm tabular-nums text-stone-700" data-job-stats x-text="statsText(detail)"></p>
+                    <template x-if="metricsFor(detail).length > 0">
+                        <dl class="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2" data-job-metrics>
+                            <template x-for="metric in metricsFor(detail)" :key="metric.key">
+                                <div class="flex justify-between gap-3 border-b border-stone-100 py-1">
+                                    <dt class="text-stone-600" x-text="metric.label || metric.key"></dt>
+                                    <dd class="font-medium tabular-nums text-stone-900" x-text="metricText(metric)"></dd>
+                                </div>
+                            </template>
+                        </dl>
+                    </template>
+                    <template x-if="graphsFor(detail).length > 0">
+                        <div class="mt-4 grid gap-4 sm:grid-cols-2" data-job-graphs>
+                            <template x-for="series in graphsFor(detail)" :key="series.key">
+                                <figure class="rounded border border-stone-200 p-3" data-job-graph :data-series="series.key">
+                                    <figcaption class="flex justify-between gap-2 text-xs text-stone-600">
+                                        <span x-text="series.label"></span>
+                                        <span class="tabular-nums" x-text="graphLatest(series)"></span>
+                                    </figcaption>
+                                    <svg viewBox="0 0 480 80" preserveAspectRatio="none" class="mt-2 h-20 w-full text-amber-800" role="img" :aria-label="graphLabel(series)">
+                                        <path :d="sparkline(series)" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+                                    </svg>
+                                </figure>
+                            </template>
+                        </div>
+                    </template>
                 </section>
             </template>
 

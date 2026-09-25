@@ -94,6 +94,48 @@ test.describe('Job Center panel accessibility', () => {
     });
   });
 
+  test('axe finds no serious or critical violations in a running job\'s stats, metrics and graphs', async ({ page, checkComponentA11y }) => {
+    const job = {
+      id: 'a11y-running-download',
+      kind: 'remote-download',
+      state: 'running',
+      version: 3,
+      title: 'Accessibility running download',
+      acceptedAt: new Date().toISOString(),
+      progress: {
+        completed: 3 * 1024 * 1024, total: 8 * 1024 * 1024, unit: 'bytes', message: 'Downloading',
+        rate: 512 * 1024, eta: new Date(Date.now() + 10_000).toISOString(), etaEstimated: true,
+        metrics: [{ key: 'segments', label: 'Segments', value: 12, total: 40, unit: 'items', graph: true }],
+        series: {
+          intervalMs: 1000, unit: 'bytes',
+          points: [
+            { t: 1000, c: 0, v: { segments: 0 } },
+            { t: 2000, c: 1048576, r: 1048576, v: { segments: 4 } },
+            { t: 3000, c: 3145728, r: 2097152, v: { segments: 12 } },
+          ],
+        },
+      },
+    };
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: states.includes('running') ? [job] : [], nextCursor: null } });
+    });
+    await page.route(`**/v1/jobs/${job.id}`, route => route.fulfill({
+      json: { ...job, commands: [], outputs: [], lineage: { ancestors: [], successors: [], parents: [], children: [] } },
+    }));
+
+    const { panel } = await openPanel(page);
+    const row = panel.locator('article', { hasText: 'Accessibility running download' });
+    await expect(row.getByRole('progressbar', { name: 'Accessibility running download progress' }))
+      .toHaveAttribute('aria-valuetext', /^38%, 3\.0 MB of 8\.0 MB, 512 KB\/s, about \d+ s left$/);
+    await expect(row.getByRole('img', { name: /^Speed over 1 s: latest 2\.0 MB\/s/ })).toBeVisible();
+    await expect(row.getByRole('img', { name: /^Segments over 2 s: latest 12/ })).toBeVisible();
+    await expect(row.getByRole('term').filter({ hasText: 'Segments' })).toBeVisible();
+    await checkComponentA11y('#job-center-panel', {
+      disableRules: ['landmark-no-duplicate-banner', 'landmark-no-duplicate-contentinfo'],
+    });
+  });
+
   test('decorative icons in the trigger and close control are hidden from assistive technology', async ({ page }) => {
     const { trigger, panel } = await openPanel(page);
     await expect(trigger.locator('svg')).toHaveAttribute('aria-hidden', 'true');

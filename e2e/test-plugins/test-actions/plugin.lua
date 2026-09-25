@@ -136,6 +136,28 @@ function init()
         end,
     })
 
+    -- Counts, a unit and metrics through the table form of mah.job_progress.
+    mah.action({
+        id = "metrics-demo",
+        label = "Metrics Demo",
+        description = "Reports counted progress with metrics and a graph",
+        entity = "resource",
+        placement = { "detail" },
+        async = true,
+        handler = function(ctx)
+            for i = 1, 5 do
+                mah.job_progress(ctx.job_id, {
+                    completed = i, total = 5, unit = "items", message = "Scanning batch " .. i,
+                    metrics = {
+                        { key = "rows", label = "Rows scanned", value = i * 100, graph = true },
+                        { key = "skipped", label = "Skipped", value = i - 1, total = 5, unit = "items" },
+                    },
+                })
+            end
+            mah.job_complete(ctx.job_id, { message = "Scanned 500 rows" })
+        end,
+    })
+
     -- Succeeds with work left: the Job's phase becomes "partial", which the Job
     -- Center labels "Partially completed" and its state filter selects.
     mah.action({

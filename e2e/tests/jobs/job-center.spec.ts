@@ -151,6 +151,36 @@ test.describe('Job Center', () => {
     await expect(page.getByTestId('job-detail').getByText('partial', { exact: true })).toBeHidden();
   });
 
+  test('a plugin action\'s counts and metrics reach its Job, the detail page and the drawer', async ({ page, request, apiClient }) => {
+    await apiClient.enablePlugin('test-actions');
+    const response = await request.post('/v1/jobs/action/run', {
+      data: { plugin: 'test-actions', action: 'metrics-demo', entity_ids: [99999], params: {} },
+    });
+    expect(response.status(), await response.text()).toBe(202);
+    const id = (await response.json()).canonicalJobId as string;
+    await waitForJobState(request, id, 'succeeded');
+
+    const job = await (await request.get(`/v1/jobs/${encodeURIComponent(id)}`)).json();
+    // The last report was inside the throttle window; the settlement carried it.
+    expect(job.progress).toMatchObject({ completed: 5, total: 5, unit: 'items' });
+    expect(job.progress.metrics).toEqual([
+      { key: 'rows', label: 'Rows scanned', value: 500, graph: true },
+      { key: 'skipped', label: 'Skipped', value: 4, total: 5, unit: 'items' },
+    ]);
+
+    await page.goto(`/job?id=${encodeURIComponent(id)}`);
+    const metrics = page.locator('[data-job-metrics]');
+    await expect(metrics.getByText('Rows scanned')).toBeVisible();
+    await expect(metrics.getByText('4 of 5')).toBeVisible();
+    await expect(page.getByRole('img', { name: /^Rows scanned/ })).toBeVisible();
+
+    await page.goto('/dashboard');
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const row = page.getByRole('dialog', { name: 'Jobs' }).locator(`article:has(a[href="/job?id=${id}"])`);
+    await expect(row.locator('[data-job-panel-metrics]')).toContainText('Rows scanned');
+    await expect(row.locator('[data-job-panel-metrics]')).toContainText('500');
+  });
+
   test('Dismissed Any shows a job the viewer dismissed, which the default list hides', async ({ page, request }) => {
     const stamp = Date.now();
     const name = `job-center-dismissed-${stamp}.bin`;

@@ -57,6 +57,7 @@
                 <div class="h-2 rounded bg-amber-800{% if job.Progress.Indeterminate %} w-full animate-pulse{% endif %}"></div>
                 {% endif %}
             </div>
+            {% if job.Progress.Stats %}<p class="mt-1 text-xs tabular-nums text-stone-600" data-testid="job-stats">{{ job.Progress.Stats }}</p>{% endif %}
         </div>
         {% endif %}
 

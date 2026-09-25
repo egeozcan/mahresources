@@ -100,6 +100,9 @@ type JobRowProgress struct {
 	Known          bool
 	Indeterminate  bool
 	AccessibleText string
+	// Stats is the speed line under the bar: the live rate and time left while
+	// the Job runs, its average rate once it has finished.
+	Stats string
 }
 
 // JobQuickFilter is one sidebar link: a named slice of the list with the number
@@ -599,6 +602,14 @@ func jobIsActive(state jobs.State) bool {
 // would otherwise keep an unknown total forever. Stopped work with no progress
 // data draws no bar at all.
 func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
+	out := jobRowProgressBar(snapshot)
+	if out != nil {
+		out.Stats = jobRowStats(snapshot, time.Now())
+	}
+	return out
+}
+
+func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	progress := snapshot.Progress
 	hasData := progress.Completed != nil || progress.Total != nil || progress.Message != "" || progress.Phase != ""
 	succeeded := snapshot.State == jobs.StateSucceeded

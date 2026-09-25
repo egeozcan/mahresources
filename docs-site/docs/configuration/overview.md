@@ -66,7 +66,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-export-retention` | `EXPORT_RETENTION` | How long completed group-export tars stay on disk | `24h` |
 | `-download-failed-retention` | `DOWNLOAD_FAILED_RETENTION` | How long a failed or cancelled download stays in the download history | `168h` |
 | `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | How long a completed download stays in the download history (the resource it created is unaffected) | `24h` |
-| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many finished downloads the jobs panel renders, newest first | `10` |
+| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many finished jobs the Jobs drawer shows, newest first; running, waiting and failed jobs are always listed | `10` |
 | `-job-history-retention` | `JOB_HISTORY_RETENTION` | How long a succeeded or cancelled Job's history stays after it finishes (the resource or artifact it produced is unaffected) | `720h` |
 | `-job-attention-retention` | `JOB_ATTENTION_RETENTION` | How long a failed or interrupted Job's history stays after it finishes | `2160h` |
 | `-job-pin-limit` | `JOB_PIN_LIMIT` | How many Jobs one user may pin; a pin exempts a Job's history from ordinary retention | `100` |

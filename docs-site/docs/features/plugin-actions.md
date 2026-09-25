@@ -319,8 +319,73 @@ Same as sync, plus:
 | Function | Description |
 |----------|-------------|
 | `mah.job_progress(job_id, percent, message)` | Report progress (0-100). SSE updates throttled to 200ms. |
+| `mah.job_progress(job_id, report_table)` | Report counts, a unit and metrics. See [Counts, metrics and graphs](#counts-metrics-and-graphs). |
 | `mah.job_complete(job_id, result_table)` | Request successful completion; after the handler settles, store final progress at 100%. |
 | `mah.job_fail(job_id, error_message)` | Mark job as failed. |
+
+### Counts, metrics and graphs
+
+Pass a table as the second argument to report what the job is counting. The Job
+then shows the count on its progress bar, a speed and an estimated time left in
+the Jobs drawer, on the Job's page and on the `/jobs` list, and it can draw a
+graph for any figure you mark with `graph = true`.
+
+```lua
+handler = function(ctx)
+    local rows = 0
+    for batch = 1, 20 do
+        rows = rows + process_batch(batch)
+        mah.job_progress(ctx.job_id, {
+            completed = batch, total = 20, unit = "items",
+            message = "Batch " .. batch .. " of 20",
+            metrics = {
+                { key = "rows", label = "Rows written", value = rows, graph = true },
+                { key = "skipped", label = "Skipped", value = skipped, total = 20, unit = "items" },
+            },
+        })
+    end
+end
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `percent` | number | 0-100. When it is omitted and `completed` and `total` are both known, the percent is derived from them. |
+| `completed` | number | The amount done, at least 0. |
+| `total` | number | The amount there is, at least 0. |
+| `unit` | string | What `completed` counts, at most 20 bytes. `bytes`, `items`, `percent`, `seconds` and `ms` are formatted; any other unit is shown as a number followed by the unit. |
+| `message` | string | The line shown above the bar. |
+| `metrics` | list | Up to 8 figures shown beside the bar. |
+
+Each metric is a table:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `key` | string | Required. 1-40 bytes of `a-z`, `0-9`, `_` and `-`, unique within the list. |
+| `label` | string | Shown to the reader, at most 60 bytes. Defaults to the key. |
+| `value` | number | Required. A finite number of at least 0. |
+| `total` | number | Optional. Shown as "value of total". |
+| `unit` | string | Optional, at most 20 bytes, formatted like the progress unit. |
+| `graph` | boolean | Keep this metric's history and draw it as a graph. At most 3 metrics per report. |
+
+A field the table leaves out keeps the value the previous report gave it, so a
+loop can report only what changed. `metrics` replaces the whole list when it is
+present, and `metrics = {}` clears it. An unknown field, a wrong type or a value
+outside these bounds raises a Lua error that names the field.
+
+Reports are throttled like the positional form. A report the throttle holds back
+is not lost: it is sent with the next report that passes, or when the handler
+settles, so the Job always ends on the last figures the plugin reported. On
+success, a counted job's final progress is its total, in its own unit, with its
+last metrics.
+
+Speed and time left are derived from `completed`. They are shown only when the
+unit is not `percent`, because a speed in percent says nothing. Labels, units
+and the message are redacted of the action's parameter values before they are
+stored, exactly as the message always was.
+
+The table form needs no capability beyond the one that gives the plugin
+`mah.job_progress` (`actions` or `jobs`): it reports on a job the plugin
+already owns.
 
 If the handler returns without calling `mah.job_complete` or `mah.job_fail`, an
 async job is marked completed with progress 100. The `message` string becomes

@@ -1,0 +1,125 @@
+import { describe, expect, test } from 'vitest';
+import {
+    applyProgressFrame,
+    formatAmount,
+    formatBytes,
+    formatEta,
+    formatMetric,
+    formatQuantity,
+    formatRate,
+    graphSeries,
+    graphSummary,
+    mergeLivePoint,
+    sparklinePath,
+} from './jobProgress.js';
+
+describe('job progress formatting', () => {
+    test('scales bytes and formats quantities by unit', () => {
+        expect(formatBytes(0)).toBe('0 B');
+        expect(formatBytes(1536)).toBe('1.5 KB');
+        expect(formatBytes(12.3 * 1024 * 1024)).toBe('12.3 MB');
+        expect(formatBytes(250 * 1024 * 1024)).toBe('250 MB');
+        expect(formatQuantity(42, 'percent')).toBe('42%');
+        expect(formatQuantity(1200, 'items')).toBe('1,200');
+        expect(formatQuantity(3.25, 'frames')).toBe('3.3 frames');
+        expect(formatQuantity(90, 'seconds')).toBe('2 min');
+    });
+
+    test('formats a rate, and none for a percent', () => {
+        expect(formatRate(2.1 * 1024 * 1024, 'bytes')).toBe('2.1 MB/s');
+        expect(formatRate(4.5, 'items')).toBe('4.5/s');
+        expect(formatRate(12, 'rows')).toBe('12 rows/s');
+        expect(formatRate(3, 'percent')).toBe('');
+        expect(formatRate(undefined, 'bytes')).toBe('');
+    });
+
+    test('says "about" only for an estimated ETA', () => {
+        const now = Date.parse('2026-09-25T10:00:00Z');
+        expect(formatEta({ eta: '2026-09-25T10:00:14Z', etaEstimated: true }, now)).toBe('about 14 s left');
+        expect(formatEta({ eta: '2026-09-25T10:03:00Z' }, now)).toBe('3 min left');
+        expect(formatEta({ eta: '2026-09-25T09:59:00Z', etaEstimated: true }, now)).toBe('almost done');
+        expect(formatEta({}, now)).toBe('');
+    });
+
+    test('formats an amount and a metric with its total', () => {
+        expect(formatAmount({ completed: 1024, total: 4096, unit: 'bytes' })).toBe('1.0 KB of 4.0 KB');
+        expect(formatAmount({ completed: 3, total: 12, unit: 'items' })).toBe('3 of 12 items');
+        expect(formatAmount({ completed: 2048, unit: 'bytes' })).toBe('2.0 KB');
+        expect(formatAmount({ completed: 40, total: 100, unit: 'percent' })).toBe('');
+        expect(formatMetric({ key: 'segments', value: 12, total: 40, unit: 'items' })).toBe('12 of 40');
+        expect(formatMetric({ key: 'downloaded', value: 5 * 1024 * 1024, unit: 'bytes' })).toBe('5.0 MB');
+    });
+});
+
+describe('job progress graphs', () => {
+    const job = {
+        id: 'job-1',
+        version: 3,
+        progress: {
+            unit: 'bytes',
+            metrics: [
+                { key: 'segments', label: 'Segments', value: 3, graph: true },
+                { key: 'skipped', label: 'Skipped', value: 1 },
+            ],
+            series: {
+                intervalMs: 1000,
+                unit: 'bytes',
+                points: [
+                    { t: 0, c: 0, v: { segments: 1 } },
+                    { t: 1000, c: 100, r: 100, v: { segments: 2 } },
+                    { t: 2000, c: 400, r: 300, v: { segments: 3 } },
+                ],
+            },
+        },
+    };
+
+    test('draws the speed and each graphed metric, never an ungraphed one', () => {
+        const series = graphSeries(job);
+        expect(series.map(s => s.key)).toEqual(['rate', 'segments']);
+        expect(series[0].points).toEqual([{ t: 1000, v: 100 }, { t: 2000, v: 300 }]);
+        expect(series[1].points).toHaveLength(3);
+        expect(graphSeries({ progress: { ...job.progress, unit: 'percent', series: { ...job.progress.series, unit: 'percent' } } })
+            .map(s => s.key)).toEqual(['segments']);
+    });
+
+    test('places points by time and scales from zero', () => {
+        const path = sparklinePath([{ t: 0, v: 0 }, { t: 3000, v: 10 }, { t: 4000, v: 5 }], 120, 28);
+        expect(path).toBe('M0.0 26.0 L90.0 2.0 L120.0 14.0');
+        expect(sparklinePath([{ t: 0, v: 5 }], 120, 28)).toBe('M0 2.0 L120 2.0');
+        expect(sparklinePath([], 120, 28)).toBe('');
+    });
+
+    test('summarizes a graph for a reader who cannot see it', () => {
+        const [speed] = graphSeries(job);
+        expect(graphSummary(speed)).toBe('Speed over 1 s: latest 300 B/s, peak 300 B/s, average 200 B/s');
+    });
+
+    test('a live frame replaces the snapshot and extends the series without touching the version', () => {
+        const next = applyProgressFrame(job, {
+            jobId: 'job-1', version: 3, intervalMs: 1000,
+            progress: { completed: 700, total: 1000, unit: 'bytes', rate: 300 },
+            point: { t: 3000, c: 700, r: 300, v: { segments: 4 } },
+        });
+        expect(next.version).toBe(3);
+        expect(next.progress.completed).toBe(700);
+        expect(next.progress.series.points).toHaveLength(4);
+        expect(next.progress.series.unit).toBe('bytes');
+
+        const replaced = applyProgressFrame(next, {
+            jobId: 'job-1', version: 3, progress: { completed: 750 }, point: { t: 3000, c: 750 },
+        });
+        expect(replaced.progress.series.points).toHaveLength(4);
+        expect(replaced.progress.series.points[3].c).toBe(750);
+
+        expect(applyProgressFrame(job, { jobId: 'other', progress: {} })).toBe(job);
+        expect(applyProgressFrame(job, { jobId: 'job-1', version: 2, progress: {} })).toBe(job);
+    });
+
+    test('a live series stays bounded and keeps where the Job started', () => {
+        let series = { intervalMs: 1000, points: [] as Array<{ t: number, c: number }> };
+        for (let t = 0; t < 1000; t++) series = mergeLivePoint(series, { t: t * 1000, c: t }, 1000);
+        expect(series.points.length).toBeLessThanOrEqual(241);
+        expect(series.points[0].t).toBe(0);
+        expect(series.points[series.points.length - 1].t).toBe(999000);
+    });
+});

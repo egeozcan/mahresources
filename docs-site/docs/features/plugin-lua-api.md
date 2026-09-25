@@ -109,6 +109,37 @@ failure are `failed`; operator or plugin-disable cancellation is `cancelled`;
 restart, shutdown and lost dispatch are `interrupted`. There is no command pause
 or retry operation: submit a new run for a new attempt.
 
+### Report progress from a command
+
+A command can report progress to its Job by printing lines on **stdout** that
+start with `::mah-progress ` followed by one JSON object. The object takes the
+same fields as the table form of `mah.job_progress` (`percent`, `completed`,
+`total`, `unit`, `message`, `metrics`), with the same bounds; see
+[Counts, metrics and graphs](./plugin-actions.md#counts-metrics-and-graphs).
+
+```sh
+printf '::mah-progress {"completed":%d,"total":%d,"unit":"items","message":"Encoding"}\n' "$done" "$total"
+printf '::mah-progress {"metrics":[{"key":"fps","label":"Frames per second","value":%d,"graph":true}]}\n' "$fps"
+```
+
+The Jobs drawer and the Job's page then show the bar, the speed, the time left,
+the metrics and a graph for each metric marked `graph`.
+
+- A field a line leaves out keeps its previous value. `metrics` replaces the
+  whole list when present.
+- A recognized line is removed from the output tail, so the tail keeps the
+  output a person reads.
+- A line that starts with the prefix but does not parse, has an unknown field or
+  breaks a bound stays in the output tail unchanged, where its author can find
+  it. It reports nothing.
+- A line longer than 8 KiB is passed through as ordinary output without being
+  inspected.
+- Only stdout is read. A report-shaped line on stderr is ordinary output.
+- The message, labels and units are redacted with the run's own secret
+  redaction before they are stored, as the output tail is.
+- Reports reach the Job at most every 250 ms, latest first. The last report is
+  always written before the run ends.
+
 ### Inspect exchange files
 
 A command writes into one private exchange folder. Lua identifies a file only by
@@ -2110,6 +2141,7 @@ Available in async action handlers and `mah.start_job` callbacks. See [Plugin Ac
 | Function | Description |
 |----------|-------------|
 | `mah.job_progress(job_id, percent, message)` | Report progress (0-100). SSE updates throttled to 200ms. |
+| `mah.job_progress(job_id, report_table)` | Report counts, a unit and up to 8 metrics, 3 of them graphed. See [Counts, metrics and graphs](./plugin-actions.md#counts-metrics-and-graphs). |
 | `mah.job_complete(job_id, result_table)` | Mark job completed. Sets progress to 100. |
 | `mah.job_fail(job_id, error_message)` | Mark job failed. |
 

@@ -15,17 +15,50 @@ import {
     resultURL,
     stateLabel,
     streamCursorSequence,
+    progressAccessibleText,
+    progressIndeterminate,
+    progressText,
+    progressValue,
+    phaseText,
 } from './jobCenter.js';
+import {
+    applyProgressFrame,
+    formatAmount,
+    formatEta,
+    formatMetric,
+    formatRate,
+    graphLatest,
+    graphSeries,
+    graphSummary,
+    sparklinePath,
+} from './jobProgress.js';
 
-const PANEL_LIMIT = 5;
+// Work that is running, waiting or needs a person is listed up to this many per
+// group, which is as good as uncapped for a drawer; each row also costs one
+// detail fetch for its commands, so it is not literally unbounded.
+const OPEN_WORK_LIMIT = 50;
+// Finished rows follow the deployment's download_cockpit_limit, published on the
+// page as a meta tag; this is the fallback when the tag is missing.
+const DEFAULT_FINISHED_LIMIT = 10;
 const PANEL_REFRESH_MAX_WAIT_MS = 500;
 // One list page is one bulk dismiss: the server's MaxPageSize and MaxBulkCommandJobs are both 200.
 const FINISHED_PAGE_LIMIT = 200;
-const PANEL_STATE_FILTERS = [
-    ['blocked', 'failed', 'interrupted'],
-    ['scheduled', 'queued', 'running', 'paused'],
-    ['succeeded', 'cancelled'],
-];
+const FINISHED_STATES = ['succeeded', 'cancelled'];
+// Each group is its own bounded page. Only open work asks for the progress
+// series: it is up to 120 points per Job, and a finished row shows no graph.
+function panelGroups(finishedLimit) {
+    return [
+        { key: 'attention', states: ['blocked', 'failed', 'interrupted'], limit: OPEN_WORK_LIMIT, series: false },
+        { key: 'active', states: ['scheduled', 'queued', 'running', 'paused'], limit: OPEN_WORK_LIMIT, series: true },
+        { key: 'finished', states: FINISHED_STATES, limit: finishedLimit, series: false },
+    ];
+}
+
+export function panelFinishedLimit(doc = globalThis.document) {
+    const raw = doc?.querySelector?.('meta[name="x-jobs-panel-finished-limit"]')?.getAttribute('content');
+    const parsed = Number.parseInt(raw || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_FINISHED_LIMIT;
+}
 
 export function panelCounts(jobs) {
     return (jobs || []).reduce((counts, job) => {
@@ -73,6 +106,12 @@ export function jobPanel() {
         _pendingLiveJobUpdates: new Map(),
         _resourceRefreshNotified: new Set(),
         busy: false,
+        finishedLimit: DEFAULT_FINISHED_LIMIT,
+        finishedHasMore: false,
+        // Bumped once a second while the drawer is open, so "about 14 s left"
+        // counts down between progress frames.
+        now: Date.now(),
+        _clockTimer: null,
         _liveRegion: null,
         _trigger: null,
         _lastTrigger: null,
@@ -87,6 +126,7 @@ export function jobPanel() {
         _streamGeneration: 0,
 
         init() {
+            this.finishedLimit = panelFinishedLimit();
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
@@ -95,8 +135,11 @@ export function jobPanel() {
             document.addEventListener('keydown', this._keydownHandler);
             window.addEventListener('jobs-panel-open', this._panelOpenHandler);
             this.$watch?.('isOpen', open => {
-                if (open) this.$nextTick?.(() => focusFirstIn(this.$refs?.panel));
-                else {
+                if (open) {
+                    this.startClock();
+                    this.$nextTick?.(() => focusFirstIn(this.$refs?.panel));
+                } else {
+                    this.stopClock();
                     restoreFocus(this._lastTrigger, this._trigger);
                     this._lastTrigger = null;
                 }
@@ -114,6 +157,7 @@ export function jobPanel() {
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
+            this.stopClock();
             this._refreshGeneration += 1;
             this._streamGeneration += 1;
             this._panelRefreshRequested = false;
@@ -121,7 +165,30 @@ export function jobPanel() {
             this._liveRegion?.destroy();
         },
 
+        startClock() {
+            if (this._clockTimer) return;
+            this.now = Date.now();
+            this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
+        },
+
+        stopClock() {
+            if (this._clockTimer) clearInterval(this._clockTimer);
+            this._clockTimer = null;
+        },
+
         get counts() { return panelCounts(this.jobs); },
+        get attentionJobs() { return this.jobs.filter(job => classifyJobState(job) === 'attention'); },
+        get activeJobs() { return this.jobs.filter(job => classifyJobState(job) === 'active'); },
+        get finishedJobs() { return this.jobs.filter(job => classifyJobState(job) === 'finished'); },
+        // The drawer's sections, in the order a person acts on them. An empty
+        // section is left out rather than drawn with nothing under it.
+        get groups() {
+            return [
+                { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs },
+                { key: 'active', title: 'Active and scheduled', jobs: this.activeJobs },
+                { key: 'finished', title: 'Finished', jobs: this.finishedJobs },
+            ].filter(group => group.jobs.length > 0);
+        },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
         get finishedCount() {
@@ -201,15 +268,15 @@ export function jobPanel() {
                 { generation: update.generation, previous: update.previous },
             ]));
             try {
-                const pages = await Promise.all(
-                    PANEL_STATE_FILTERS.map(states => this.requestJSON(buildPanelListURL(states))),
-                );
+                const groups = panelGroups(this.finishedLimit);
+                const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group))));
                 if (generation !== this._refreshGeneration) return;
                 const byId = new Map();
-                for (const payload of pages) {
+                pages.forEach((payload, index) => {
+                    if (groups[index].key === 'finished') this.finishedHasMore = !!payload.nextCursor;
                     for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
-                }
-                const nextJobs = boundedPanelJobs([...byId.values()]);
+                });
+                const nextJobs = this.bounded([...byId.values()]);
                 this.announceRefreshedLiveTransitions(nextJobs, pendingLiveUpdates);
                 nextJobs.forEach(job => this.trackResourceCompletion(job));
                 this.jobs = nextJobs;
@@ -290,7 +357,7 @@ export function jobPanel() {
             const current = this.jobs.find(currentJob => currentJob.id === job.id);
             if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
-            this.jobs = boundedPanelJobs(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
+            this.jobs = this.bounded(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
             return detail;
         },
 
@@ -312,9 +379,32 @@ export function jobPanel() {
                 this._pendingLiveJobUpdates.clear();
             });
             this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
+            this.eventSource.addEventListener('job-progress', event => this.handleProgressFrame(event));
             for (const eventName of ['message', 'job']) {
                 this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
             }
+        },
+
+        // A live progress frame updates the row it names in place. It is not a
+        // lifecycle event: it never refetches the list, never inserts a row the
+        // list did not return, and is never announced — a screen reader told
+        // every second that a download moved would hear nothing else.
+        handleProgressFrame(event) {
+            let frame;
+            try { frame = JSON.parse(event.data); }
+            catch { return; }
+            if (!frame?.jobId) return;
+            const index = this.jobs.findIndex(job => job.id === frame.jobId);
+            if (index < 0) return;
+            const next = applyProgressFrame(this.jobs[index], frame);
+            if (next === this.jobs[index]) return;
+            const jobs = [...this.jobs];
+            jobs[index] = next;
+            this.jobs = jobs;
+        },
+
+        bounded(jobs) {
+            return boundedPanelJobs(jobs, this.finishedLimit);
         },
 
         markStreamCaughtUp(event) {
@@ -350,7 +440,7 @@ export function jobPanel() {
                 return;
             }
             this._pendingLiveJobUpdates.delete(jobId);
-            this.jobs = boundedPanelJobs(result.jobs);
+            this.jobs = this.bounded(result.jobs);
             this.jobs.forEach(job => this.trackResourceCompletion(job));
             if (result.announcement) this.announce(result.announcement);
         },
@@ -375,7 +465,7 @@ export function jobPanel() {
         applyStreamSnapshot(job, announce = false, allowInsert = false) {
             const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert });
             if (!result.changed) return;
-            this.jobs = boundedPanelJobs(result.jobs);
+            this.jobs = this.bounded(result.jobs);
             this.trackResourceCompletion(job);
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
             if (announce && result.announcement) this.announce(result.announcement);
@@ -383,7 +473,7 @@ export function jobPanel() {
 
         upsert(job) {
             const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert: true });
-            this.jobs = boundedPanelJobs(result.jobs);
+            this.jobs = this.bounded(result.jobs);
         },
 
         detailURL(job) {
@@ -546,32 +636,83 @@ export function jobPanel() {
 
         stateLabel(job) { return stateLabel(job); },
         commandLabel(command) { return commandLabel(command); },
+        phaseText(job) { return phaseText(job); },
+        progressText(job) { return progressText(job); },
+        progressValue(job) { return progressValue(job); },
+        progressIndeterminate(job) { return progressIndeterminate(job); },
+        progressAccessibleText(job) { return progressAccessibleText(job); },
+        showsProgress(job) {
+            const progress = job?.progress || {};
+            return classifyJobState(job) === 'active' && (
+                Number.isFinite(progress.completed) || !!progress.message || job.state === 'running');
+        },
+        // The line above the bar: what the executor says it is doing, else its
+        // phase. The counts are in statsText, formatted, rather than here raw.
+        progressLabel(job) {
+            return job?.progress?.message || phaseText(job) || stateLabel(job);
+        },
+        // Everything the bar shows, for a reader who cannot see it.
+        progressValueText(job) {
+            const value = progressValue(job);
+            const parts = [value === null ? '' : `${value}%`, this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean);
+            return parts.length ? parts.join(', ') : progressAccessibleText(job);
+        },
+        amountText(job) { return formatAmount(job?.progress); },
+        rateText(job) {
+            const progress = job?.progress || {};
+            if (job?.state === 'running') return formatRate(progress.rate, progress.unit);
+            if (classifyJobState(job) === 'finished') {
+                const average = formatRate(progress.averageRate, progress.unit);
+                return average ? `average ${average}` : '';
+            }
+            return '';
+        },
+        etaText(job) { return job?.state === 'running' ? formatEta(job?.progress, this.now) : ''; },
+        statsText(job) {
+            return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
+        },
+        metricsFor(job) { return job?.progress?.metrics || []; },
+        metricText(metric) { return formatMetric(metric); },
+        graphsFor(job) { return classifyJobState(job) === 'active' ? graphSeries(job) : []; },
+        sparkline(series) { return sparklinePath(series.points, 120, 28); },
+        graphLabel(series) { return graphSummary(series); },
+        graphLatest(series) { return graphLatest(series); },
     };
 }
 
-function buildPanelListURL(states) {
+function buildPanelListURL(group) {
     const params = new URLSearchParams();
-    states.forEach(state => params.append('state', state));
+    group.states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
-    params.set('limit', String(PANEL_LIMIT));
+    params.set('limit', String(group.limit));
+    if (group.series) params.set('include', 'progressSeries');
     return `/v1/jobs?${params}`;
 }
 
 function buildFinishedPageURL(cursor) {
     const params = new URLSearchParams();
-    PANEL_STATE_FILTERS[2].forEach(state => params.append('state', state));
+    FINISHED_STATES.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
     params.set('limit', String(FINISHED_PAGE_LIMIT));
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
 }
 
-function boundedPanelJobs(jobs) {
+// Newest first, each group held to its own limit: a burst of new running work
+// must not push the failures a person has to act on out of the drawer.
+function boundedPanelJobs(jobs, finishedLimit = DEFAULT_FINISHED_LIMIT) {
     const unique = new Map();
     for (const job of jobs || []) {
         if (!unique.has(job.id)) unique.set(job.id, job);
     }
+    const limits = { attention: OPEN_WORK_LIMIT, active: OPEN_WORK_LIMIT, finished: finishedLimit };
+    const kept = { attention: 0, active: 0, finished: 0, other: 0 };
     return [...unique.values()]
         .sort((a, b) => String(b.acceptedAt || '').localeCompare(String(a.acceptedAt || '')) || String(b.id).localeCompare(String(a.id)))
-        .slice(0, PANEL_LIMIT * PANEL_STATE_FILTERS.length);
+        .filter(job => {
+            const group = classifyJobState(job);
+            if (!(group in limits)) return false;
+            kept[group] += 1;
+            return kept[group] <= limits[group];
+        });
 }

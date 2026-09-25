@@ -210,6 +210,9 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// no workers". maxUploadSize travels with them so the widget can reject
 		// an oversized file before transferring it — the server's own answer is
 		// a raw MaxBytesError at HTTP 400.
+		// The Jobs drawer's finished-row limit, read through the zero-guarded
+		// accessor for the same reason.
+		ctx["jobsPanelFinishedLimit"] = appContext.DownloadCockpitLimit()
 		ctx["uploadConcurrency"] = appContext.UploadConcurrency()
 		ctx["uploadWidgetFileCount"] = appContext.UploadWidgetFileCount()
 		ctx["uploadWidgetSizeBytes"] = appContext.UploadWidgetSizeBytes()

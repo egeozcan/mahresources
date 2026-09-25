@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { jobPanel, panelCounts, panelCommandConfirmation } from './jobPanel.js';
+import { jobPanel, panelCounts, panelCommandConfirmation, panelFinishedLimit } from './jobPanel.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -191,7 +191,7 @@ describe('Job Center panel', () => {
                 };
             }
             const parsed = new URL(url, 'http://localhost');
-            if (parsed.searchParams.get('limit') === '5') busyDuringRefresh.push(panel.busy);
+            if (parsed.searchParams.get('limit') !== '200') busyDuringRefresh.push(panel.busy);
             if (parsed.searchParams.get('limit') === '200') {
                 listURLs.push(parsed);
                 const page = pages[listURLs.length - 1] || { ids: [] };
@@ -244,7 +244,7 @@ describe('Job Center panel', () => {
         const { panel } = dismissAllHarness([{ ids: ['shown-1', 'b'] }]);
         const answer = panel.requestJSON;
         panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
-            if (!init.method && new URL(url, 'http://localhost').searchParams.get('limit') === '5') {
+            if (!init.method && new URL(url, 'http://localhost').searchParams.get('limit') !== '200') {
                 throw new Error('Request failed (503)');
             }
             return answer(url, init);
@@ -264,7 +264,7 @@ describe('Job Center panel', () => {
         let lists = 0;
         panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
             const limit = !init.method && new URL(url, 'http://localhost').searchParams.get('limit');
-            if (limit === '5') throw new Error('Request failed (503)');
+            if (limit && limit !== '200') throw new Error('Request failed (503)');
             // A stream-driven refresh lands between the pages and shows an older
             // finished row the run has not reached yet.
             if (limit === '200' && ++lists === 2) {
@@ -291,7 +291,7 @@ describe('Job Center panel', () => {
         let refreshes = 0;
         panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
             const limit = !init.method && new URL(url, 'http://localhost').searchParams.get('limit');
-            if (limit === '5') {
+            if (limit && limit !== '200') {
                 // The first refresh is a stream-driven one whose answer predates
                 // the dismissal; the final refresh fails.
                 if (++refreshes <= 3) {
@@ -382,6 +382,91 @@ describe('Job Center panel', () => {
         expect(panel.requestJSON.mock.calls[1][0]).toBe('/v1/jobs/job-1');
         expect(panel.jobs[0].pinned).toBe(true);
         expect(panel.commandsFor(panel.jobs[0]).map(command => command.key)).toEqual(['unpin']);
+    });
+});
+
+describe('Job Center drawer live progress', () => {
+    test('asks for the series only for open work, and takes the finished limit from the page', async () => {
+        const panel = jobPanel();
+        panel.finishedLimit = 7;
+        const requests: URL[] = [];
+        panel.requestJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs') requests.push(url);
+            const states = url.searchParams.getAll('state');
+            return states.includes('succeeded') ? { jobs: [], nextCursor: 'more' } : { jobs: [] };
+        });
+        await panel.refresh();
+        const byGroup = Object.fromEntries(requests.map(url => [url.searchParams.getAll('state')[0], url.searchParams]));
+        expect(byGroup.scheduled.get('include')).toBe('progressSeries');
+        expect(byGroup.blocked.has('include')).toBe(false);
+        expect(byGroup.succeeded.has('include')).toBe(false);
+        expect(byGroup.succeeded.get('limit')).toBe('7');
+        expect(panel.finishedHasMore).toBe(true);
+
+        const meta = { getAttribute: () => '25' };
+        expect(panelFinishedLimit({ querySelector: () => meta } as any)).toBe(25);
+        expect(panelFinishedLimit({ querySelector: () => null } as any)).toBe(10);
+        expect(panelFinishedLimit({ querySelector: () => ({ getAttribute: () => 'zero' }) } as any)).toBe(10);
+    });
+
+    test('a progress frame updates its row in place, never refetches, inserts or announces', () => {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.requestJSON = vi.fn();
+        const scheduled = vi.spyOn(panel, 'schedulePanelRefresh');
+        panel.jobs = [{
+            id: 'job-1', title: 'Download', kind: 'remote-download', state: 'running', version: 4,
+            acceptedAt: '2026-09-25T10:00:00Z',
+            progress: { completed: 100, total: 1000, unit: 'bytes', series: { intervalMs: 1000, unit: 'bytes', points: [{ t: 1000, c: 100 }] } },
+        }];
+
+        panel.handleProgressFrame({ data: JSON.stringify({
+            jobId: 'job-1', version: 4, state: 'running', intervalMs: 1000,
+            progress: { completed: 600, total: 1000, unit: 'bytes', rate: 500, eta: '2099-01-01T00:00:00Z', etaEstimated: true,
+                metrics: [{ key: 'segments', label: 'Segments', value: 6, total: 10, unit: 'items', graph: true }] },
+            point: { t: 2000, c: 600, r: 500, v: { segments: 6 } },
+        }) });
+        panel.handleProgressFrame({ data: JSON.stringify({ jobId: 'unlisted', version: 1, progress: { completed: 1 } }) });
+        panel.handleProgressFrame({ data: 'not json' });
+
+        expect(panel.jobs).toHaveLength(1);
+        const [job] = panel.jobs;
+        expect(job.version).toBe(4);
+        expect(job.progress.completed).toBe(600);
+        expect(job.progress.series.points).toHaveLength(2);
+        expect(panel.progressValue(job)).toBe(60);
+        expect(panel.statsText(job)).toMatch(/^600 B of 1000 B · 500 B\/s · about /);
+        expect(panel.metricText(panel.metricsFor(job)[0])).toBe('6 of 10');
+        expect(panel.graphsFor(job).map(series => series.key)).toEqual(['rate', 'segments']);
+        expect(panel.progressValueText(job)).toMatch(/^60%, 600 B of 1000 B, 500 B\/s, about /);
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        expect(scheduled).not.toHaveBeenCalled();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+    });
+
+    test('a finished row shows its average speed and no graph', () => {
+        const panel = jobPanel();
+        const job = {
+            id: 'done', state: 'succeeded', version: 2,
+            progress: { completed: 10, total: 10, unit: 'items', averageRate: 2.5,
+                series: { unit: 'items', points: [{ t: 0, c: 0 }, { t: 4000, c: 10, r: 2.5 }] } },
+        };
+        expect(panel.rateText(job)).toBe('average 2.5/s');
+        expect(panel.etaText(job)).toBe('');
+        expect(panel.graphsFor(job)).toEqual([]);
+        expect(panel.showsProgress(job)).toBe(false);
+    });
+
+    test('groups rows by what a person does next, leaving empty groups out', () => {
+        const panel = jobPanel();
+        panel.jobs = [
+            { id: 'r', state: 'running', acceptedAt: '2026-09-25T10:00:03Z' },
+            { id: 'f', state: 'failed', acceptedAt: '2026-09-25T10:00:02Z' },
+        ];
+        expect(panel.groups.map(group => [group.key, group.jobs.map(job => job.id)])).toEqual([
+            ['attention', ['f']], ['active', ['r']],
+        ]);
     });
 });
 
@@ -675,7 +760,7 @@ describe('Job Center panel accessibility hooks', () => {
         await panel._panelRefreshPromise;
 
         expect(listRequests).toHaveLength(3);
-        expect(listRequests.every(url => new URL(url, 'http://localhost').searchParams.get('limit') === '5')).toBe(true);
+        expect(listRequests.map(url => new URL(url, 'http://localhost').searchParams.get('limit'))).toEqual(['50', '50', '10']);
         expect(panel.jobs).toHaveLength(15);
         expect(detailRequests).toHaveLength(15);
         expect(detailRequests.some(path => path.includes('historic-'))).toBe(false);
@@ -690,7 +775,9 @@ describe('Job Center panel accessibility hooks', () => {
                 }),
                 lastEventId: `v2:${101 + index}`,
             });
-            expect(panel.jobs.length).toBeLessThanOrEqual(15);
+            expect(panel.activeJobs.length).toBeLessThanOrEqual(50);
+            expect(panel.attentionJobs).toHaveLength(5);
+            expect(panel.finishedJobs).toHaveLength(5);
         }
 
         stream.listeners.get('error')?.({});
@@ -705,7 +792,7 @@ describe('Job Center panel accessibility hooks', () => {
         await vi.advanceTimersByTimeAsync(150);
         await panel._panelRefreshPromise;
         expect(listRequests).toHaveLength(6);
-        expect(listRequests.slice(3).every(url => new URL(url, 'http://localhost').searchParams.get('limit') === '5')).toBe(true);
+        expect(listRequests.slice(3).map(url => new URL(url, 'http://localhost').searchParams.get('limit'))).toEqual(['50', '50', '10']);
         expect(panel.counts).toEqual({ active: 5, attention: 5 });
         expect(panel.jobs).toHaveLength(15);
         panel.destroy();
@@ -941,7 +1028,19 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).toContain('x-trap.noscroll.noreturn="isOpen"');
         expect(template).toContain('data-testid="job-panel-overlay"');
         expect(template).toContain('aria-hidden="true" @click="close()"');
-        expect(template).toContain('fixed inset-x-0 bottom-0');
+        // A full-height drawer from the right edge, full width on a narrow screen.
+        expect(template).toContain('job-drawer fixed inset-y-0 right-0');
+        expect(template).toContain('w-full max-w-md');
+        // Live progress: a real progressbar, formatted stats, metrics and graphs
+        // with an accessible summary.
+        expect(template).toContain('role="progressbar"');
+        expect(template).toContain(':aria-valuetext="progressValueText(job)"');
+        expect(template).toContain('x-text="statsText(job)"');
+        expect(template).toContain('x-for="metric in metricsFor(job)"');
+        expect(template).toContain('x-for="series in graphsFor(job)"');
+        expect(template).toContain('role="img" :aria-label="graphLabel(series)"');
+        expect(template).toContain('x-for="group in groups"');
+        expect(baseTemplate).toContain('name="x-jobs-panel-finished-limit"');
         expect(template).toContain('Dismiss finished');
         expect(template).not.toContain('Dismiss outcomes');
         expect(template).not.toContain('outcome in outcomes');

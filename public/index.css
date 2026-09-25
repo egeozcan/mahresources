@@ -152,42 +152,27 @@ html {
 }
 
 /*
- * Findings 83/102: the jobs trigger is header chrome now, not a floating corner
- * button. It reads like the ⚙ and ⌘K controls beside it; the only extra state it
- * needs is "something is running", which the old FAB expressed with animate-pulse
- * over an amber circle. Here the icon takes the accent colour and the count badge
- * carries the emphasis, because a pulsing element in the header is a distraction
- * on every page rather than a glance at a corner.
+ * The Jobs drawer eases in from the right. It is mounted by x-if, which does
+ * not run x-transition, so the entrance is a keyframe animation on the drawer
+ * itself. The offset is small on purpose: a drawer that starts a full width
+ * off-screen spends its first frames outside the viewport, where it cannot be
+ * hit or measured. It does not fade either, because a half-transparent drawer
+ * blends its text into the backdrop and fails contrast while it arrives. A
+ * reader who asked for reduced motion gets it in place.
  */
-.cockpit-trigger {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 36px;
-    height: 36px;
-    color: var(--nav-text);
-    background: none;
-    border: none;
-    cursor: pointer;
+.job-drawer {
+    animation: job-drawer-in 160ms ease-out;
 }
 
-.cockpit-trigger:hover {
-    background-color: rgba(0, 0, 0, 0.06);
-    color: var(--nav-hover);
+@keyframes job-drawer-in {
+    from { transform: translateX(1.5rem); }
+    to { transform: translateX(0); }
 }
 
-.cockpit-trigger--busy {
-    color: var(--nav-active-text, #b45309);
-}
-
-.cockpit-trigger-count {
-    padding: 0 0.35rem;
-    border-radius: 999px;
-    background: #b45309;
-    color: #fff;
-    font-size: 0.7rem;
-    font-weight: 700;
-    line-height: 1.35;
+@media (prefers-reduced-motion: reduce) {
+    .job-drawer {
+        animation: none;
+    }
 }
 
 .navbar-links {

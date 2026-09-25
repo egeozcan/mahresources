@@ -304,7 +304,9 @@ func (ctx *MahresourcesContext) DownloadFailedRetention() time.Duration {
 	return defaultDownloadFailedRetention
 }
 
-// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
+// DownloadCockpitLimit is how many finished jobs the Jobs drawer renders, newest
+// first. Work that is running, waiting or needs attention is not counted
+// against it.
 //
 // The same zero-guard the retentions need, and for a sharper reason: a context
 // built from a raw MahresourcesConfig{} (every api_test, any programmatic embed)

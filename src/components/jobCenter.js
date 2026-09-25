@@ -1,4 +1,15 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import {
+    applyProgressFrame,
+    formatAmount,
+    formatEta,
+    formatMetric,
+    formatRate,
+    graphLatest,
+    graphSeries,
+    graphSummary,
+    sparklinePath,
+} from './jobProgress.js';
 
 export const JOB_STATES = Object.freeze([
     'scheduled', 'queued', 'running', 'paused', 'blocked',
@@ -371,6 +382,8 @@ export function jobCenter(options = {}) {
         eventSource: null,
         lastSequence: 0,
         streamCaughtUp: false,
+        now: Date.now(),
+        _clockTimer: null,
         _liveRegion: null,
 
         init() {
@@ -378,11 +391,14 @@ export function jobCenter(options = {}) {
                 this.detailId = new URLSearchParams(globalThis.location?.search || '').get('id') || '';
             }
             this._liveRegion = createLiveRegion();
+            // Keeps "about 14 s left" counting down between progress frames.
+            this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
             this.connect();
             this.load();
         },
 
         destroy() {
+            if (this._clockTimer) clearInterval(this._clockTimer);
             this.eventSource?.close();
             this._liveRegion?.destroy();
         },
@@ -500,9 +516,25 @@ export function jobCenter(options = {}) {
                 this.streamCaughtUp = false;
             });
             this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
+            this.eventSource.addEventListener('job-progress', event => this.handleProgressFrame(event));
             for (const eventName of ['message', 'job']) {
                 this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
             }
+        },
+
+        // Live progress for the Job on this page: the snapshot is replaced and
+        // the graph extended in place. It is never announced; lifecycle events
+        // are what the live region is for.
+        handleProgressFrame(event) {
+            let frame;
+            try { frame = JSON.parse(event.data); }
+            catch { return; }
+            if (!frame?.jobId || this.detail?.id !== frame.jobId) return;
+            const next = applyProgressFrame(this.detail, frame);
+            if (next === this.detail) return;
+            this.detail = next;
+            this.details[next.id] = next;
+            this.jobs = this.jobs.map(job => job.id === next.id ? next : job);
         },
 
         markStreamCaughtUp(event) {
@@ -556,6 +588,23 @@ export function jobCenter(options = {}) {
         },
 
         progressText(job) { return progressText(job); },
+        amountText(job) { return formatAmount(job?.progress); },
+        rateText(job) {
+            const progress = job?.progress || {};
+            if (job?.state === 'running') return formatRate(progress.rate, progress.unit);
+            const average = formatRate(progress.averageRate, progress.unit);
+            return average ? `average ${average}` : '';
+        },
+        etaText(job) { return job?.state === 'running' ? formatEta(job?.progress, this.now) : ''; },
+        statsText(job) {
+            return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
+        },
+        metricsFor(job) { return job?.progress?.metrics || []; },
+        metricText(metric) { return formatMetric(metric); },
+        graphsFor(job) { return graphSeries(job); },
+        sparkline(series) { return sparklinePath(series.points, 480, 80); },
+        graphLabel(series) { return graphSummary(series); },
+        graphLatest(series) { return graphLatest(series); },
         progressValue(job) { return progressValue(job); },
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },

@@ -32,6 +32,7 @@
     {# The list page's row count, published for the mass-edit panel's "edit all N #}
     {# results" mode. 0 on pages that do not render a mass-edit panel.            #}
     <meta name="x-total-count" content="{{ totalCount|default:0 }}">
+    <meta name="x-jobs-panel-finished-limit" content="{{ jobsPanelFinishedLimit|default:10 }}">
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>

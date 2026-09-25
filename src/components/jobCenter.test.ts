@@ -335,6 +335,37 @@ describe('Job Center event stream catch-up boundary', () => {
     });
 });
 
+describe('Job detail live progress', () => {
+    test('a frame for this Job updates its figures and graph without an announcement', () => {
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const center = jobCenter();
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.detail = { id: 'job-9', state: 'running', version: 2,
+            progress: { completed: 1, total: 4, unit: 'items', series: { unit: 'items', points: [{ t: 0, c: 1 }] } } };
+        center.jobs = [center.detail];
+        center.connect();
+        const stream = center.eventSource as unknown as FakeEventSource;
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify({
+            jobId: 'job-9', version: 2, progress: { completed: 3, total: 4, unit: 'items', rate: 2 },
+            point: { t: 1000, c: 3, r: 2 },
+        }) });
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify({ jobId: 'another', version: 1, progress: { completed: 99 } }) });
+
+        expect(center.detail.progress.completed).toBe(3);
+        expect(center.jobs[0].progress.completed).toBe(3);
+        expect(center.statsText(center.detail)).toBe('3 of 4 items · 2/s');
+        expect(center.graphsFor(center.detail).map((series: any) => series.key)).toEqual(['rate']);
+        expect(center.sparkline(center.graphsFor(center.detail)[0])).toMatch(/^M/);
+        expect(center._liveRegion.announce).not.toHaveBeenCalled();
+    });
+});
+
 describe('Job Center templates', () => {
     const detailTemplate = readFileSync(fileURLToPath(new URL('../../templates/displayJob.tpl', import.meta.url)), 'utf8');
 
