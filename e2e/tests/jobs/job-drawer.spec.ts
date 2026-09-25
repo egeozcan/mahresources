@@ -118,4 +118,36 @@ test.describe('Jobs drawer', () => {
     await expect(card).toContainText('connection refused');
     await expect(card).not.toContainText('signature');
   });
+  test('a download that fails while the drawer is open is announced from inside it, with its reason', async ({ page, request }) => {
+    // Held long enough for the drawer to see the Job running, so the failure is
+    // a live transition, which is what gets announced.
+    const server = http.createServer((_request, response) => {
+      setTimeout(() => {
+        response.writeHead(403, { 'Content-Type': 'text/plain' });
+        response.end('no');
+      }, 3000);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      await page.goto('/dashboard');
+      await page.keyboard.press('Control+Shift+D');
+      const drawer = page.getByRole('dialog', { name: 'Jobs' });
+      await expect(drawer.getByText('Live updates connected')).toBeVisible({ timeout: 10_000 });
+
+      const name = `job-drawer-announced-${Date.now()}.bin`;
+      const response = await request.post('/v1/download/submit', {
+        data: { URL: `http://127.0.0.1:${port}/${name}`, Name: name, FileName: name },
+      });
+      expect(response.status(), await response.text()).toBe(202);
+      const id = (await response.json()).jobs?.[0]?.canonicalJobId as string;
+      await expect(drawer.locator(`article:has(a[href="/job?id=${id}"])`)).toBeVisible({ timeout: 10_000 });
+
+      const announcer = drawer.locator('[data-job-panel-announcer]');
+      await expect(announcer).toHaveAttribute('role', 'status');
+      await expect(announcer).toContainText(`${name} failed: HTTP 403 Forbidden`, { timeout: 15_000 });
+    } finally {
+      server.close();
+    }
+  });
 });

@@ -1044,6 +1044,40 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('announces from inside the open drawer, which is aria-modal, and from the page otherwise', () => {
+        vi.useFakeTimers();
+        const announcer = { textContent: 'stale' };
+        vi.stubGlobal('document', {
+            querySelector: vi.fn((selector: string) =>
+                selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
+        });
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+
+        panel.isOpen = true;
+        panel.announce('video.mp4 failed: HTTP 403 Forbidden.');
+        expect(announcer.textContent).toBe('');
+        vi.advanceTimersByTime(50);
+        expect(announcer.textContent).toBe('video.mp4 failed: HTTP 403 Forbidden.');
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        panel.isOpen = false;
+        panel.announce('clip.mp4 failed.');
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('clip.mp4 failed.');
+        vi.useRealTimers();
+    });
+
+    test('the drawer carries its own polite status region, inside the dialog', () => {
+        const template = readFileSync(fileURLToPath(new URL('../../templates/partials/jobPanel.tpl', import.meta.url)), 'utf8');
+        const dialogStart = template.indexOf('role="dialog" aria-modal="true"');
+        const announcer = template.indexOf('data-job-panel-announcer');
+        const dialogEnd = template.indexOf('</section>', template.lastIndexOf('</footer>'));
+        expect(dialogStart).toBeGreaterThan(-1);
+        expect(announcer).toBeGreaterThan(dialogStart);
+        expect(announcer).toBeLessThan(dialogEnd);
+        expect(template).toContain('role="status" aria-live="polite" aria-atomic="true" data-job-panel-announcer');
+    });
+
     test('template traps focus, supports a narrow viewport, and names the new actions', () => {
         const template = readFileSync(fileURLToPath(new URL('../../templates/partials/jobPanel.tpl', import.meta.url)), 'utf8');
         const baseTemplate = readFileSync(fileURLToPath(new URL('../../templates/layouts/base.tpl', import.meta.url)), 'utf8');

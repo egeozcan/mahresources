@@ -69,6 +69,12 @@ func TestFailureReasonKeepsTheReasonAndNoURLBeyondItsOrigin(t *testing.T) {
 			want: []string{"fetch https://cdn.example.com failed"},
 		},
 		{
+			name: "a server repeating a query value in a playlist attribute",
+			err: fmt.Errorf("could not read the HLS playlist: %w",
+				errors.New(`this HLS stream is protected by DRM (key format "do-not-store") and cannot be downloaded`)),
+			want: []string{"protected by DRM (key format", "cannot be downloaded"},
+		},
+		{
 			name: "a reason with nothing to hide passes through",
 			err:  errors.New("remote server stopped sending data (idle timeout after 1m0s)"),
 			want: []string{"remote server stopped sending data (idle timeout after 1m0s)"},
@@ -82,7 +88,7 @@ func TestFailureReasonKeepsTheReasonAndNoURLBeyondItsOrigin(t *testing.T) {
 					t.Fatalf("failureReason = %q, want it to contain %q", got, want)
 				}
 			}
-			for _, refused := range []string{"signature", "secret", "hunter2", "Bob's", "/seg3", "private/file"} {
+			for _, refused := range []string{"signature", "do-not-store", "secret", "hunter2", "Bob's", "/seg3", "private/file"} {
 				if strings.Contains(got, refused) {
 					t.Fatalf("failureReason = %q carries %q", got, refused)
 				}
@@ -107,6 +113,19 @@ func TestFailureReasonRemovesTheSubmittedInputWhateverItLooksLike(t *testing.T) 
 		if !strings.Contains(got, "the URL has no host") {
 			t.Fatalf("failureReason(%q) = %q lost the reason", submitted, got)
 		}
+	}
+}
+
+// TestFailureReasonRemovesATokenInAPathSegment: a capability URL carries its
+// token in the path rather than the query, and a short part is not a token.
+func TestFailureReasonRemovesATokenInAPathSegment(t *testing.T) {
+	const submitted = "https://files.example.com/s/Kq7vTz91xBw/v2/clip.mp4?v=1"
+	got := failureReason(submitted, errors.New("share Kq7vTz91xBw has expired (v2 link)"))
+	if strings.Contains(got, "Kq7vTz91xBw") {
+		t.Fatalf("failureReason = %q carries the path token", got)
+	}
+	if !strings.Contains(got, "has expired (v2 link)") {
+		t.Fatalf("failureReason = %q erased a short part from the reason", got)
 	}
 }
 

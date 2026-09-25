@@ -119,6 +119,7 @@ export function jobPanel() {
         now: Date.now(),
         _clockTimer: null,
         _liveRegion: null,
+        _drawerAnnounceTimer: null,
         _trigger: null,
         _lastTrigger: null,
         _root: null,
@@ -169,6 +170,7 @@ export function jobPanel() {
             this._panelRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
+            clearTimeout(this._drawerAnnounceTimer);
         },
 
         startClock() {
@@ -240,8 +242,22 @@ export function jobPanel() {
             this._lastTrigger = null;
         },
 
+        // The open drawer is aria-modal, and a screen reader may ignore a live
+        // region outside a modal dialog: the one on <body> goes unheard exactly
+        // when someone is watching the drawer. While it is open the drawer's own
+        // status region speaks instead, cleared first so a repeated message is
+        // announced again, as createLiveRegion does.
         announce(message) {
-            this._liveRegion?.announce(message);
+            const inside = this.isOpen
+                ? document.querySelector?.('#job-center-panel [data-job-panel-announcer]')
+                : null;
+            if (!inside) {
+                this._liveRegion?.announce(message);
+                return;
+            }
+            clearTimeout(this._drawerAnnounceTimer);
+            inside.textContent = '';
+            this._drawerAnnounceTimer = setTimeout(() => { inside.textContent = message; }, 50);
         },
 
         async requestJSON(url, init = {}) {

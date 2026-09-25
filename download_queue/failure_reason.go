@@ -32,12 +32,18 @@ import (
 //     reason phrase, which is free text the server chose. A wrapper whose text
 //     ends in its cause's keeps its own prefix and renders the cause the same way.
 //  2. By the submitted URL. A literal occurrence of it is cut to its origin, and
-//     one of its path, query, fragment or user info is removed, wherever it
-//     appears; that covers a refusal that echoes the raw input it could not
-//     parse, which may not look like a URL at all.
+//     one of its path, query, fragment or user info, or any one query value or
+//     path segment of six characters or more, is removed wherever it appears;
+//     that covers a refusal that echoes the raw input it could not parse, which
+//     may not look like a URL at all, and a server repeating a token.
 //  3. As a backstop, every quoted string that looks like a URL or a reference is
 //     cut to its origin, or to an ellipsis when it has none, and so is every
 //     unquoted scheme://… token.
+//
+// What this cannot promise is that text a server authored holds nothing it
+// chose to put there. A server that has the submitted URL can write a token
+// into any field, which layer 2 removes only when it is the submitted URL's
+// own; and whatever a server sends is stored anyway, as the downloaded file.
 func failureReason(submitted string, err error) string {
 	if err == nil {
 		return ""
@@ -126,6 +132,17 @@ func submittedURLSecrets(submitted string) []string {
 			add(parsed.User.String())
 			add(parsed.User.Username())
 		}
+		// Each value on its own too, raw and decoded: a server can repeat a token
+		// without the rest of the URL around it, in a header it sends back or in a
+		// playlist attribute an HLS error then quotes. A capability URL keeps its
+		// token in a path segment instead, so those count as well.
+		for _, pair := range strings.Split(parsed.RawQuery, "&") {
+			_, value, _ := strings.Cut(pair, "=")
+			addPart(add, value)
+		}
+		for _, segment := range strings.Split(parsed.EscapedPath(), "/") {
+			addPart(add, segment)
+		}
 	}
 	// Longest first.
 	for i := 1; i < len(secrets); i++ {
@@ -134,6 +151,21 @@ func submittedURLSecrets(submitted string) []string {
 		}
 	}
 	return secrets
+}
+
+// minSecretPartLength is the shortest single query value or path segment removed
+// on its own. Shorter ones ("1", "en", "v2") are not tokens, and removing them
+// would erase the same characters from unrelated words in the reason.
+const minSecretPartLength = 6
+
+// addPart adds one escaped URL part, and its decoded form when that differs.
+func addPart(add func(string), escaped string) {
+	if len(escaped) >= minSecretPartLength {
+		add(escaped)
+	}
+	if decoded, err := url.QueryUnescape(escaped); err == nil && decoded != escaped && len(decoded) >= minSecretPartLength {
+		add(decoded)
+	}
 }
 
 // scrubQuoted cuts every Go-quoted string that looks like a URL or a reference.

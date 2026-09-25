@@ -34,6 +34,9 @@
                     </button>
                 </header>
 
+                {# Announcements while the drawer is open: it is aria-modal, so the page's own live region may go unheard. #}
+                <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-job-panel-announcer></div>
+
                 <div class="grid grid-cols-2 gap-2 border-b border-stone-200 p-3">
                     <div class="rounded bg-stone-50 px-3 py-2">
                         <span class="block text-xs font-mono uppercase tracking-wide text-stone-500">Active and scheduled jobs shown</span>
