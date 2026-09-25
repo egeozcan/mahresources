@@ -558,11 +558,12 @@ func hasCommand(commands []jobs.Command, key string) bool {
 	return false
 }
 
-// TestADownloadClassifiesItsFailureWithoutCarryingTheURL keeps the reason and the
-// URL apart: the Job records why the transfer failed, because that is the one thing
-// the person reading the Jobs drawer needs, but not the URL it failed on — the
-// queue's errors can name it, query included, and a Job's failure message is
-// searchable text.
+// TestADownloadClassifiesItsFailureWithoutCarryingTheURL: the Job records why the
+// transfer failed, because that is the one thing the person reading the Jobs
+// drawer needs. An HTTP status's error names no URL, so what this pins is the
+// reason and the classification; its URL assertions guard against the URL
+// arriving some other way. TestARefusedConnectionSaysSoWithoutItsURL is the
+// failure whose own text names the URL, and the one that shows it is kept out.
 func TestADownloadClassifiesItsFailureWithoutCarryingTheURL(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	// A server that fails every request: the transfer fails for a reason only the
