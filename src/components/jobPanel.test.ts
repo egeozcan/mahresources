@@ -1046,7 +1046,7 @@ describe('Job Center panel accessibility hooks', () => {
 
     test('announces from inside the open drawer, which is aria-modal, and from the page otherwise', () => {
         vi.useFakeTimers();
-        const announcer = { textContent: 'stale' };
+        const announcer = { textContent: 'stale', isConnected: true };
         vi.stubGlobal('document', {
             querySelector: vi.fn((selector: string) =>
                 selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
@@ -1064,6 +1064,15 @@ describe('Job Center panel accessibility hooks', () => {
         panel.isOpen = false;
         panel.announce('clip.mp4 failed.');
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('clip.mp4 failed.');
+
+        // Closed between the announcement and its landing: x-if removed the
+        // drawer's region, so the page's must say it.
+        panel.isOpen = true;
+        panel.announce('reel.mp4 failed: HTTP 404 Not Found.');
+        panel.isOpen = false;
+        announcer.isConnected = false;
+        vi.advanceTimersByTime(50);
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('reel.mp4 failed: HTTP 404 Not Found.');
         vi.useRealTimers();
     });
 

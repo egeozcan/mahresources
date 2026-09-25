@@ -31,11 +31,12 @@ import (
 //     find. An HTTP status is rendered from the code, never from the server's own
 //     reason phrase, which is free text the server chose. A wrapper whose text
 //     ends in its cause's keeps its own prefix and renders the cause the same way.
-//  2. By the submitted URL. A literal occurrence of it is cut to its origin, and
-//     one of its path, query, fragment or user info, or any one query value or
-//     path segment of six characters or more, is removed wherever it appears;
-//     that covers a refusal that echoes the raw input it could not parse, which
-//     may not look like a URL at all, and a server repeating a token.
+//  2. By the submission. A literal occurrence of the submitted URL is cut to its
+//     origin, and one of its path, query, fragment or user info, or any one query
+//     value or path segment of six characters or more, is removed wherever it
+//     appears; so is a header value the download sent, whole or in part. That
+//     covers a refusal that echoes the raw input it could not parse, which may
+//     not look like a URL at all, and a server repeating a token.
 //  3. As a backstop, every quoted string that looks like a URL or a reference is
 //     cut to its origin, or to an ellipsis when it has none, and so is every
 //     unquoted scheme://… token.
@@ -44,11 +45,11 @@ import (
 // chose to put there. A server that has the submitted URL can write a token
 // into any field, which layer 2 removes only when it is the submitted URL's
 // own; and whatever a server sends is stored anyway, as the downloaded file.
-func failureReason(submitted string, err error) string {
+func failureReason(submitted string, headers map[string]string, err error) string {
 	if err == nil {
 		return ""
 	}
-	return scrubReasonText(submitted, renderReason(err))
+	return scrubReasonText(submitted, headers, renderReason(err))
 }
 
 // renderReason is layer 1.
@@ -91,11 +92,11 @@ func statusReason(code int) string {
 var reasonURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*:/[^\s"]*`)
 
 // scrubReasonText is layers 2 and 3.
-func scrubReasonText(submitted, text string) string {
+func scrubReasonText(submitted string, headers map[string]string, text string) string {
 	if len(submitted) > 1 {
 		text = strings.ReplaceAll(text, submitted, originOrEllipsis(submitted))
 	}
-	for _, secret := range submittedURLSecrets(submitted) {
+	for _, secret := range submittedSecrets(submitted, headers) {
 		text = strings.ReplaceAll(text, secret, "…")
 	}
 	text = scrubQuoted(text)
@@ -106,10 +107,11 @@ func scrubReasonText(submitted, text string) string {
 	})
 }
 
-// submittedURLSecrets lists the parts of the submitted URL that must not appear,
-// longest first so a longer part is replaced before any part inside it. The URL
-// as a whole is replaced by its origin before these run.
-func submittedURLSecrets(submitted string) []string {
+// submittedSecrets lists what the submission carried that must not appear: the
+// parts of its URL and the values of the headers it sent. Longest first, so a
+// longer part is replaced before any part inside it. The URL as a whole is
+// replaced by its origin before these run.
+func submittedSecrets(submitted string, headers map[string]string) []string {
 	var secrets []string
 	add := func(s string) {
 		// A one-character path such as "/" would erase every slash in the text.
@@ -131,6 +133,9 @@ func submittedURLSecrets(submitted string) []string {
 		if parsed.User != nil {
 			add(parsed.User.String())
 			add(parsed.User.Username())
+			if password, ok := parsed.User.Password(); ok {
+				add(password)
+			}
 		}
 		// Each value on its own too, raw and decoded: a server can repeat a token
 		// without the rest of the URL around it, in a header it sends back or in a
@@ -142,6 +147,21 @@ func submittedURLSecrets(submitted string) []string {
 		}
 		for _, segment := range strings.Split(parsed.EscapedPath(), "/") {
 			addPart(add, segment)
+		}
+	}
+	// A header value is a credential as often as not (a Cookie, an Authorization),
+	// and one is more often repeated in part than whole: a cookie's value, the
+	// token after "Bearer".
+	for _, value := range headers {
+		if len(value) >= minSecretPartLength {
+			add(value)
+		}
+		for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+			return r == ';' || r == '=' || r == ',' || r == ' ' || r == '\t'
+		}) {
+			if len(part) >= minSecretPartLength {
+				add(part)
+			}
 		}
 	}
 	// Longest first.

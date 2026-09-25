@@ -747,12 +747,16 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		domainLease.reportBackoff(err)
 	}
 
+	var sentHeaders map[string]string
+	if job.creator != nil {
+		sentHeaders = job.creator.Headers
+	}
 	status, errMsg, reason, resourceID := JobStatusCompleted, "", "", uint(0)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Download cancelled"
 	case err != nil:
-		status, errMsg, reason = JobStatusFailed, err.Error(), failureReason(job.URL, err)
+		status, errMsg, reason = JobStatusFailed, err.Error(), failureReason(job.URL, sentHeaders, err)
 	default:
 		// Deliberately not overridden by an accepted cancel: the resource exists and
 		// the version row is written, so reporting `cancelled` here would orphan a

@@ -82,7 +82,7 @@ func TestFailureReasonKeepsTheReasonAndNoURLBeyondItsOrigin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := failureReason(submitted, tc.err)
+			got := failureReason(submitted, nil, tc.err)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("failureReason = %q, want it to contain %q", got, want)
@@ -106,7 +106,7 @@ func TestFailureReasonRemovesTheSubmittedInputWhateverItLooksLike(t *testing.T) 
 		"cdn.example.com/private/file?signature=do-not-store",
 	} {
 		err := fmt.Errorf("blocked request to %s: the URL has no host", submitted)
-		got := failureReason(submitted, err)
+		got := failureReason(submitted, nil, err)
 		if strings.Contains(got, "signature") || strings.Contains(got, "private") {
 			t.Fatalf("failureReason(%q) = %q", submitted, got)
 		}
@@ -120,12 +120,32 @@ func TestFailureReasonRemovesTheSubmittedInputWhateverItLooksLike(t *testing.T) 
 // token in the path rather than the query, and a short part is not a token.
 func TestFailureReasonRemovesATokenInAPathSegment(t *testing.T) {
 	const submitted = "https://files.example.com/s/Kq7vTz91xBw/v2/clip.mp4?v=1"
-	got := failureReason(submitted, errors.New("share Kq7vTz91xBw has expired (v2 link)"))
+	got := failureReason(submitted, nil, errors.New("share Kq7vTz91xBw has expired (v2 link)"))
 	if strings.Contains(got, "Kq7vTz91xBw") {
 		t.Fatalf("failureReason = %q carries the path token", got)
 	}
 	if !strings.Contains(got, "has expired (v2 link)") {
 		t.Fatalf("failureReason = %q erased a short part from the reason", got)
+	}
+}
+
+// TestFailureReasonRemovesWhatTheSubmissionSent: a password alone, and a header
+// value whole or in part, as a server might repeat one in a diagnostic.
+func TestFailureReasonRemovesWhatTheSubmissionSent(t *testing.T) {
+	const submitted = "https://user:pa55w0rd-x@cdn.example.com/clip.mp4"
+	headers := map[string]string{
+		"Cookie":        "session=c00kie-value; theme=dark",
+		"Authorization": "Bearer t0ken-value-xyz",
+	}
+	err := errors.New(`server said: bad key "pa55w0rd-x", cookie c00kie-value, token t0ken-value-xyz`)
+	got := failureReason(submitted, headers, err)
+	for _, refused := range []string{"pa55w0rd-x", "c00kie-value", "t0ken-value-xyz"} {
+		if strings.Contains(got, refused) {
+			t.Fatalf("failureReason = %q carries %q", got, refused)
+		}
+	}
+	if !strings.Contains(got, "server said: bad key") {
+		t.Fatalf("failureReason = %q lost the reason", got)
 	}
 }
 

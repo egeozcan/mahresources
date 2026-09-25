@@ -246,7 +246,8 @@ export function jobPanel() {
         // region outside a modal dialog: the one on <body> goes unheard exactly
         // when someone is watching the drawer. While it is open the drawer's own
         // status region speaks instead, cleared first so a repeated message is
-        // announced again, as createLiveRegion does.
+        // announced again, as createLiveRegion does. A drawer closed before the
+        // message lands has taken its region with it, so the page's speaks then.
         announce(message) {
             const inside = this.isOpen
                 ? document.querySelector?.('#job-center-panel [data-job-panel-announcer]')
@@ -257,7 +258,10 @@ export function jobPanel() {
             }
             clearTimeout(this._drawerAnnounceTimer);
             inside.textContent = '';
-            this._drawerAnnounceTimer = setTimeout(() => { inside.textContent = message; }, 50);
+            this._drawerAnnounceTimer = setTimeout(() => {
+                if (inside.isConnected) inside.textContent = message;
+                else this._liveRegion?.announce(message);
+            }, 50);
         },
 
         async requestJSON(url, init = {}) {
