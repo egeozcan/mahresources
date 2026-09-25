@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"errors"
+	"fmt"
 	"mahresources/models"
 	"math"
 	"strings"
@@ -357,17 +358,17 @@ func TestLiveProgressReturnsOnlyVisibleChangesAfterTheWatermark(t *testing.T) {
 		return out
 	}
 
-	mine, err := svc.LiveProgress(deps, Access{UserID: 7}, at(0), 0)
+	mine, err := svc.LiveProgress(deps, Access{UserID: 7}, at(0), "", 0)
 	if err != nil {
 		t.Fatalf("LiveProgress: %v", err)
 	}
 	if got := ids(mine); len(got) != 1 || got[0] != owned.ID {
 		t.Fatalf("owner's live progress = %v; want only their own Job %s", got, owned.ID)
 	}
-	if other, _ := svc.LiveProgress(deps, Access{UserID: 9}, at(0), 0); len(other) != 0 {
+	if other, _ := svc.LiveProgress(deps, Access{UserID: 9}, at(0), "", 0); len(other) != 0 {
 		t.Fatalf("a user who owns neither Job saw live progress for %v", ids(other))
 	}
-	all, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, at(0), 0)
+	all, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, at(0), "", 0)
 	if err != nil {
 		t.Fatalf("admin LiveProgress: %v", err)
 	}
@@ -377,13 +378,52 @@ func TestLiveProgressReturnsOnlyVisibleChangesAfterTheWatermark(t *testing.T) {
 
 	// The watermark is exclusive: a reader that saw the change at +1s is not
 	// sent it again, and sees the next one.
-	after, err := svc.LiveProgress(deps, Access{UserID: 7}, at(1), 0)
+	after, err := svc.LiveProgress(deps, Access{UserID: 7}, at(1), owned.ID, 0)
 	if err != nil || len(after) != 0 {
 		t.Fatalf("after the watermark: %v, %v; want nothing", ids(after), err)
 	}
 	report(owned, "claim-mine", 3, 200)
-	after, err = svc.LiveProgress(deps, Access{UserID: 7}, at(1), 0)
+	after, err = svc.LiveProgress(deps, Access{UserID: 7}, at(1), owned.ID, 0)
 	if err != nil || len(after) != 1 || after[0].Progress.Completed == nil || *after[0].Progress.Completed != 200 {
 		t.Fatalf("next change = %+v, %v; want the owned Job at 200", after, err)
+	}
+}
+
+func TestAdvanceSeriesStaysBoundedWhenTheGraphedKeysKeepChanging(t *testing.T) {
+	var series ProgressSeries
+	for second := 0; second <= 5000; second++ {
+		key := fmt.Sprintf("m%d", second%1000)
+		series, _ = advanceSeries(series, at(float64(second)), Progress{Metrics: []Metric{
+			{Key: key, Label: key, Value: 1, Graph: true},
+		}}, false)
+	}
+	for i, point := range series.Points {
+		if len(point.Values) > MaxGraphedMetrics {
+			t.Fatalf("point %d holds %d graphed values; a merge must not accumulate keys", i, len(point.Values))
+		}
+	}
+}
+
+func TestLiveProgressResumesInsideOneTimestamp(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := at(5)
+	deps.Now = func() time.Time { return clock }
+	first := seededExecution(t, deps, StateRunning, "claim-1")
+	second := seededExecution(t, deps, StateRunning, "claim-2")
+	for _, job := range []models.Job{first, second} {
+		if _, err := svc.UpdateProgress(deps, ExecutionRef{JobID: job.ID, ExecutionToken: job.ExecutionToken},
+			Progress{Completed: int64Ptr(1), Unit: "items"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin := Access{UserID: 1, Administrator: true}
+	page, err := svc.LiveProgress(deps, admin, at(0), "", 1)
+	if err != nil || len(page) != 1 {
+		t.Fatalf("first page = %d rows, %v", len(page), err)
+	}
+	next, err := svc.LiveProgress(deps, admin, *page[0].ProgressUpdatedAt, page[0].ID, 1)
+	if err != nil || len(next) != 1 || next[0].ID == page[0].ID {
+		t.Fatalf("second page = %+v, %v; want the other Job that shares the timestamp", next, err)
 	}
 }

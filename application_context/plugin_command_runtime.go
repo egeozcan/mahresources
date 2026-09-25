@@ -55,6 +55,9 @@ func (p commandProgress) Report(report plugin_commands.ProgressReport) {
 	}
 }
 
+// Flush writes the last report before the runner finishes the Job.
+func (p commandProgress) Flush() { p.mirror.close() }
+
 // commandProgressInterval is the most often a command's reports are written to
 // its Job. A command can print a report per frame; the Job keeps a snapshot, so
 // the latest one written every quarter second loses nothing a reader could see.
@@ -68,6 +71,10 @@ type commandProgressMirror struct {
 	jobID  string
 	target progressWriter
 
+	// writeMu serializes writes, and each write takes the snapshot it writes
+	// only once it holds it, so a later write always carries a newer snapshot
+	// and close waits out a timer write already in flight.
+	writeMu   sync.Mutex
 	mu        sync.Mutex
 	current   jobs.Progress
 	lastWrite time.Time
@@ -127,6 +134,15 @@ func (m *commandProgressMirror) report(report plugin_commands.ProgressReport) {
 func (m *commandProgressMirror) flush() {
 	m.mu.Lock()
 	m.timer = nil
+	m.mu.Unlock()
+	m.writePending()
+}
+
+// writePending writes the held snapshot, if any, under writeMu.
+func (m *commandProgressMirror) writePending() {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	m.mu.Lock()
 	if !m.pending {
 		m.mu.Unlock()
 		return
@@ -138,8 +154,9 @@ func (m *commandProgressMirror) flush() {
 	m.write(progress)
 }
 
-// close stops the throttle and writes whatever it was still holding, so the
-// Job finishes on the command's last report rather than on the one before it.
+// close stops the throttle and writes whatever it was still holding, waiting
+// for a write already in flight, so the Job finishes on the command's last
+// report rather than on the one before it. It is safe to call more than once.
 func (m *commandProgressMirror) close() {
 	if m == nil {
 		return
@@ -150,13 +167,8 @@ func (m *commandProgressMirror) close() {
 		m.timer.Stop()
 		m.timer = nil
 	}
-	pending := m.pending
-	progress := m.current
-	m.pending = false
 	m.mu.Unlock()
-	if pending {
-		m.write(progress)
-	}
+	m.writePending()
 }
 
 func (m *commandProgressMirror) write(progress jobs.Progress) {

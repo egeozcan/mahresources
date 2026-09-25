@@ -270,6 +270,7 @@ func (nopProgress) SetPhase(string)               {}
 func (nopProgress) SetPhaseProgress(int64, int64) {}
 func (nopProgress) SetAuthoritativeStatus(string) {}
 func (nopProgress) Report(ProgressReport)         {}
+func (nopProgress) Flush()                        {}
 
 type dispatcherTestExecutor struct{ store Store }
 

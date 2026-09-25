@@ -27,17 +27,19 @@ type jobEventContextStub struct {
 	pages     [][]jobs.Event
 	// progress is the live-progress read's answer per call, and progressSince
 	// the watermark each call was made with.
-	progress      [][]jobs.Snapshot
-	progressErr   error
-	progressSince []time.Time
-	progressMu    sync.Mutex
+	progress         [][]jobs.Snapshot
+	progressErr      error
+	progressSince    []time.Time
+	progressSinceIDs []string
+	progressMu       sync.Mutex
 }
 
-func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
+func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, sinceID string, _ int) ([]jobs.Snapshot, error) {
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	call := len(s.progressSince)
 	s.progressSince = append(s.progressSince, since)
+	s.progressSinceIDs = append(s.progressSinceIDs, sinceID)
 	if call < len(s.progress) {
 		return s.progress[call], s.progressErr
 	}
@@ -466,5 +468,11 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 	calls := ctx.progressCalls()
 	if len(calls) < 2 || !calls[1].Equal(updated) {
 		t.Fatalf("live progress watermarks = %v; want the second read to start from the delivered row's %v", calls, updated)
+	}
+	ctx.progressMu.Lock()
+	ids := append([]string(nil), ctx.progressSinceIDs...)
+	ctx.progressMu.Unlock()
+	if ids[0] != "" || ids[1] != "job-123" {
+		t.Fatalf("live progress watermark ids = %v; want the delivered row's id to resume after", ids)
 	}
 }

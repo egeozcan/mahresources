@@ -2,7 +2,8 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import {
     applyProgressFrame,
     formatAmount,
-    formatEta,
+    liveEtaText,
+    liveRateText,
     formatMetric,
     formatRate,
     graphLatest,
@@ -591,11 +592,11 @@ export function jobCenter(options = {}) {
         amountText(job) { return formatAmount(job?.progress); },
         rateText(job) {
             const progress = job?.progress || {};
-            if (job?.state === 'running') return formatRate(progress.rate, progress.unit);
+            if (job?.state === 'running') return liveRateText(progress, this.now);
             const average = formatRate(progress.averageRate, progress.unit);
             return average ? `average ${average}` : '';
         },
-        etaText(job) { return job?.state === 'running' ? formatEta(job?.progress, this.now) : ''; },
+        etaText(job) { return job?.state === 'running' ? liveEtaText(job?.progress, this.now) : ''; },
         statsText(job) {
             return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
         },

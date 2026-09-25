@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"mahresources/models/jobmetrics"
 )
@@ -177,30 +178,88 @@ func (f *progressLineFilter) endLine() error {
 }
 
 // redactReport applies the run's output redaction to every text field, since a
-// progress report is persisted on the Job just as the tail is.
+// progress report is persisted on the Job just as the tail is. Control
+// sequences are stripped first, exactly as the tail strips them before it
+// redacts: JSON can carry an escape character, and a secret split by one would
+// otherwise slip past an exact-value match and still read whole on the page.
 func (f *progressLineFilter) redactReport(report ProgressReport) ProgressReport {
-	if f.redact == nil {
-		return report
+	clean := func(value string) string {
+		value = stripProgressControls(value)
+		if f.redact != nil {
+			value = f.redact(value)
+		}
+		return value
 	}
 	text := func(value *string) *string {
 		if value == nil {
 			return nil
 		}
-		redacted := f.redact(*value)
-		return &redacted
+		cleaned := clean(*value)
+		return &cleaned
 	}
 	report.Unit = text(report.Unit)
 	report.Message = text(report.Message)
 	if report.Metrics != nil {
 		metrics := jobmetrics.Clone(*report.Metrics)
 		for i := range metrics {
-			metrics[i].Label = f.redact(metrics[i].Label)
-			metrics[i].Unit = f.redact(metrics[i].Unit)
-			if f.redact(metrics[i].Key) != metrics[i].Key {
+			metrics[i].Label = clean(metrics[i].Label)
+			metrics[i].Unit = clean(metrics[i].Unit)
+			if clean(metrics[i].Key) != metrics[i].Key {
 				metrics[i].Key = fmt.Sprintf("metric-%d", i+1)
 			}
 		}
 		report.Metrics = &metrics
 	}
 	return report
+}
+
+// stripProgressControls removes what outputTail removes from captured output
+// (ESC-introduced CSI and OSC sequences, and every other C0 control and DEL),
+// turns a newline or tab into a space, since a label or message is one line,
+// and removes the C1 controls, which a JSON string can spell as single runes.
+func stripProgressControls(value string) string {
+	var out strings.Builder
+	out.Grow(len(value))
+	escape, csi, osc, oscEscape := false, false, false, false
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		switch {
+		case osc:
+			if b == 0x07 || (oscEscape && b == '\\') {
+				osc, oscEscape = false, false
+				continue
+			}
+			oscEscape = b == 0x1b
+			continue
+		case csi:
+			if b >= 0x40 && b <= 0x7e {
+				csi = false
+			}
+			continue
+		case escape:
+			escape = false
+			switch b {
+			case '[':
+				csi = true
+			case ']':
+				osc = true
+			}
+			continue
+		case b == 0x1b:
+			escape = true
+			continue
+		case b == '\n' || b == '\t':
+			out.WriteByte(' ')
+			continue
+		case b < 0x20 || b == 0x7f:
+			continue
+		}
+		out.WriteByte(b)
+	}
+	return strings.Map(func(r rune) rune {
+		if r >= 0x80 && r <= 0x9f {
+			return -1
+		}
+		return r
+	}, out.String())
 }

@@ -262,18 +262,18 @@ func mergePoints(a, b SeriesPoint) SeriesPoint {
 		rate := *a.Rate
 		merged.Rate = &rate
 	}
-	if len(a.Values) > 0 || len(b.Values) > 0 {
+	// Only the later point's keys survive a merge. Keeping the union would let a
+	// reporter that changes which metrics it graphs grow every merged point by
+	// one set of keys per compaction, so the series would stay 120 points long
+	// and still grow without bound. A metric that stopped being graphed loses
+	// the one sample it had in the older half, which is all a merge can lose.
+	if len(b.Values) > 0 {
 		merged.Values = make(map[string]float64, len(b.Values))
 		for key, value := range b.Values {
 			if other, ok := a.Values[key]; ok {
 				value = (value + other) / 2
 			}
 			merged.Values[key] = value
-		}
-		for key, value := range a.Values {
-			if _, ok := merged.Values[key]; !ok {
-				merged.Values[key] = value
-			}
 		}
 	}
 	return merged

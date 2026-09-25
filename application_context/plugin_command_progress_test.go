@@ -13,9 +13,11 @@ import (
 type recordingProgressWriter struct {
 	mu     sync.Mutex
 	writes []jobs.Progress
+	delay  time.Duration
 }
 
 func (w *recordingProgressWriter) Progress(progress jobs.Progress) (jobs.Snapshot, error) {
+	time.Sleep(w.delay)
 	w.mu.Lock()
 	w.writes = append(w.writes, progress)
 	w.mu.Unlock()
@@ -75,5 +77,23 @@ func TestCommandProgressMirrorThrottlesAndFlushesTheLastReport(t *testing.T) {
 	time.Sleep(commandProgressInterval + 50*time.Millisecond)
 	if got := len(writer.written()); got != len(writes) {
 		t.Fatalf("a report after close was written (%d writes, was %d)", got, len(writes))
+	}
+}
+
+func TestCommandProgressMirrorCloseWaitsForAWriteInFlightAndWritesTheNewest(t *testing.T) {
+	writer := &recordingProgressWriter{delay: 150 * time.Millisecond}
+	mirror := &commandProgressMirror{jobID: "job-1", target: writer}
+	mirror.report(plugin_commands.ProgressReport{Completed: i64(1), Total: i64(3)})
+	time.Sleep(30 * time.Millisecond) // the timer write of 1 is now in flight
+	mirror.report(plugin_commands.ProgressReport{Completed: i64(3)})
+	mirror.close()
+	writes := writer.written()
+	if len(writes) == 0 || *writes[len(writes)-1].Completed != 3 {
+		t.Fatalf("writes = %+v; close must return after the newest report is written", writes)
+	}
+	for i := 1; i < len(writes); i++ {
+		if *writes[i].Completed < *writes[i-1].Completed {
+			t.Fatalf("an older snapshot was written after a newer one: %+v", writes)
+		}
 	}
 }

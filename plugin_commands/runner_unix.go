@@ -741,6 +741,9 @@ func (e *commandExecutor) finishWithoutStart(run QueuedRun, fallback string) Out
 }
 
 func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
+	if run.progress != nil {
+		run.progress.Flush()
+	}
 	won, err := e.deps.Store.FinishRun(run.RunID, finish)
 	if err != nil {
 		return e.outcomeAfterPersistenceError(run.RunID, finish.Error, err)

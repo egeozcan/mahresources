@@ -223,6 +223,11 @@ type Progress interface {
 	// stdout (see ProgressLinePrefix), already parsed, validated and redacted.
 	// It is called from the stdout drain, so it must not block for long.
 	Report(ProgressReport)
+	// Flush writes whatever Report is still holding and stops accepting more.
+	// The runner calls it before it records the run's outcome: once the Job is
+	// finished, a progress write is refused, so a report still waiting on a
+	// throttle would be lost.
+	Flush()
 }
 
 type Outcome struct {

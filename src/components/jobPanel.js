@@ -24,7 +24,8 @@ import {
 import {
     applyProgressFrame,
     formatAmount,
-    formatEta,
+    liveEtaText,
+    liveRateText,
     formatMetric,
     formatRate,
     graphLatest,
@@ -660,14 +661,14 @@ export function jobPanel() {
         amountText(job) { return formatAmount(job?.progress); },
         rateText(job) {
             const progress = job?.progress || {};
-            if (job?.state === 'running') return formatRate(progress.rate, progress.unit);
+            if (job?.state === 'running') return liveRateText(progress, this.now);
             if (classifyJobState(job) === 'finished') {
                 const average = formatRate(progress.averageRate, progress.unit);
                 return average ? `average ${average}` : '';
             }
             return '';
         },
-        etaText(job) { return job?.state === 'running' ? formatEta(job?.progress, this.now) : ''; },
+        etaText(job) { return job?.state === 'running' ? liveEtaText(job?.progress, this.now) : ''; },
         statsText(job) {
             return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
         },

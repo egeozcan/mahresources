@@ -990,6 +990,11 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	// goroutines at once.
 	var notifyMu sync.Mutex
 	var lastNotify time.Time
+	// Serializes the durable progress mirror across segment workers. Each
+	// mirror takes its snapshot once it holds this, so two workers that both
+	// found a notification due cannot commit in the wrong order and leave the
+	// Job on the older count and a lost series sample.
+	var mirrorMu sync.Mutex
 	deps := hls.Deps{
 		Client:     client,
 		CheckURL:   checkURL,
@@ -1027,7 +1032,9 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			notifyMu.Unlock()
 			if due {
 				dm.notifyJob("updated", job)
+				mirrorMu.Lock()
 				dm.mirrorProgress(job)
+				mirrorMu.Unlock()
 			}
 		})
 	if err != nil {

@@ -18,7 +18,7 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
-	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
+	GetLiveJobProgress(since time.Time, sinceID string, limit int) ([]jobs.Snapshot, error)
 }
 
 // JobProgressFrame is one live progress update on the canonical stream. It is
@@ -161,7 +161,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("X-Accel-Buffering", "no")
 
 		const catchupPageSize = jobs.DefaultEventPageSize
-		progressSince := time.Now().Add(-liveProgressLookback)
+		progressSince, progressSinceID := time.Now().Add(-liveProgressLookback), ""
 		poll := time.NewTicker(time.Second)
 		defer poll.Stop()
 		heartbeat := time.NewTicker(15 * time.Second)
@@ -211,7 +211,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			// lifecycle event that explains it. A failed read skips this poll's
 			// frames rather than ending the stream: the events are the part a
 			// reconnect must recover, and the next tick reads progress afresh.
-			if snapshots, err := ctx.GetLiveJobProgress(progressSince, jobs.MaxLiveProgressRows); err == nil && len(snapshots) > 0 {
+			if snapshots, err := ctx.GetLiveJobProgress(progressSince, progressSinceID, jobs.MaxLiveProgressRows); err == nil && len(snapshots) > 0 {
 				now := time.Now()
 				for _, snap := range snapshots {
 					data, err := json.Marshal(jobProgressFrame(snap, now))
@@ -219,8 +219,10 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 						return
 					}
 					fmt.Fprintf(w, "event: job-progress\ndata: %s\n\n", data)
-					if snap.ProgressUpdatedAt != nil && snap.ProgressUpdatedAt.After(progressSince) {
-						progressSince = *snap.ProgressUpdatedAt
+					// Rows arrive in watermark order, so the last one is the
+					// new watermark.
+					if snap.ProgressUpdatedAt != nil {
+						progressSince, progressSinceID = *snap.ProgressUpdatedAt, snap.ID
 					}
 				}
 				flusher.Flush()

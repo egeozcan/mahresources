@@ -35,12 +35,12 @@ func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery 
 
 // GetLiveJobProgress revalidates the credential exactly as the event poll does:
 // a live progress frame is as much a read of the Job as its events are.
-func (ctx currentCanonicalJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+func (ctx currentCanonicalJobEventsContext) GetLiveJobProgress(since time.Time, sinceID string, limit int) ([]jobs.Snapshot, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
 	}
-	return scoped.GetLiveJobProgress(since, limit)
+	return scoped.GetLiveJobProgress(since, sinceID, limit)
 }
 
 func (ctx currentCanonicalJobEventsContext) current() (*application_context.MahresourcesContext, error) {

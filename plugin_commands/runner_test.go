@@ -199,11 +199,18 @@ type recordingCommandProgress struct {
 	statuses []string
 	mu       sync.Mutex
 	reports  []ProgressReport
+	flushes  int
 }
 
 func (p *recordingCommandProgress) Report(report ProgressReport) {
 	p.mu.Lock()
 	p.reports = append(p.reports, report)
+	p.mu.Unlock()
+}
+
+func (p *recordingCommandProgress) Flush() {
+	p.mu.Lock()
+	p.flushes++
 	p.mu.Unlock()
 }
 
@@ -1172,6 +1179,12 @@ func TestRunnerReportsStdoutProgressLinesAndKeepsThemOutOfTheTail(t *testing.T) 
 	}
 	if reports[0].Completed == nil || *reports[0].Completed != 2 || reports[1].Metrics == nil || (*reports[1].Metrics)[0].Key != "fps" {
 		t.Fatalf("reports = %+v", reports)
+	}
+	progress.mu.Lock()
+	flushes := progress.flushes
+	progress.mu.Unlock()
+	if flushes == 0 {
+		t.Fatal("the runner recorded the outcome without flushing the progress reports first")
 	}
 	_, output, _ := store.Run(run.RunID)
 	if strings.Count(output.OutputTail, ProgressLinePrefix) != 1 || !strings.Contains(output.OutputTail, `{"completed":99}`) {

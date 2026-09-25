@@ -76,6 +76,28 @@ export function formatRate(rate, unit = '') {
     return `${formatNumber(rate)} ${unit}/s`;
 }
 
+// How long a speed stays true without a new report, matching the server's own
+// rule. A stalled transfer sends no frame, so the last speed would otherwise
+// stay on screen for as long as the page did.
+const STALE_AFTER_MS = 10_000;
+
+/** Whether a running Job's speed and estimated time left are still current. */
+export function progressIsFresh(progress, now = Date.now()) {
+    const updated = Date.parse(progress?.updatedAt || '');
+    return !Number.isFinite(updated) || now - updated <= STALE_AFTER_MS;
+}
+
+/** The speed of a running Job, or '' once it has gone stale. */
+export function liveRateText(progress, now = Date.now()) {
+    return progressIsFresh(progress, now) ? formatRate(progress?.rate, progress?.unit) : '';
+}
+
+/** The time left of a running Job; an estimate is dropped once it has gone stale. */
+export function liveEtaText(progress, now = Date.now()) {
+    if (progress?.etaEstimated && !progressIsFresh(progress, now)) return '';
+    return formatEta(progress, now);
+}
+
 /** "about 14 s left" for an estimate, "14 s left" for an executor's own ETA. */
 export function formatEta(progress, now = Date.now()) {
     const eta = progress?.eta ? Date.parse(progress.eta) : NaN;
@@ -215,6 +237,11 @@ export function applyProgressFrame(job, frame) {
     if (!job || !frame || job.id !== frame.jobId) return job;
     if (Number(frame.version || 0) < Number(job.version || 0)) return job;
     const previous = job.progress || {};
+    // The same version can still carry an older snapshot: the stream starts a
+    // little in the past, so a frame can arrive after a fetch that was newer.
+    const incomingAt = Date.parse(frame.progress?.updatedAt || '');
+    const currentAt = Date.parse(previous.updatedAt || '');
+    if (Number.isFinite(incomingAt) && Number.isFinite(currentAt) && incomingAt < currentAt) return job;
     const series = frame.point
         ? mergeLivePoint(previous.series, frame.point, frame.intervalMs)
         : previous.series;

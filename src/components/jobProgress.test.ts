@@ -9,6 +9,8 @@ import {
     formatRate,
     graphSeries,
     graphSummary,
+    liveEtaText,
+    liveRateText,
     mergeLivePoint,
     sparklinePath,
 } from './jobProgress.js';
@@ -121,5 +123,30 @@ describe('job progress graphs', () => {
         expect(series.points.length).toBeLessThanOrEqual(241);
         expect(series.points[0].t).toBe(0);
         expect(series.points[series.points.length - 1].t).toBe(999000);
+    });
+});
+
+describe('job progress freshness', () => {
+    test('a stalled Job stops showing a speed and an estimated time left', () => {
+        const now = Date.parse('2026-09-25T10:00:30Z');
+        const progress = {
+            unit: 'bytes', rate: 2048, eta: '2026-09-25T10:01:00Z', etaEstimated: true,
+            updatedAt: '2026-09-25T10:00:25Z',
+        };
+        expect(liveRateText(progress, now)).toBe('2.0 KB/s');
+        expect(liveEtaText(progress, now)).toBe('about 30 s left');
+        const stalled = { ...progress, updatedAt: '2026-09-25T10:00:10Z' };
+        expect(liveRateText(stalled, now)).toBe('');
+        expect(liveEtaText(stalled, now)).toBe('');
+        // An executor's own ETA is its statement, not an estimate from a speed.
+        expect(liveEtaText({ ...stalled, etaEstimated: false }, now)).toBe('30 s left');
+    });
+
+    test('a frame older than the snapshot the row holds is ignored', () => {
+        const job = { id: 'j', version: 1, progress: { completed: 90, updatedAt: '2026-09-25T10:00:05Z' } };
+        const stale = { jobId: 'j', version: 1, progress: { completed: 30, updatedAt: '2026-09-25T10:00:02Z' }, point: { t: 1, c: 30 } };
+        expect(applyProgressFrame(job, stale)).toBe(job);
+        const fresh = { jobId: 'j', version: 1, progress: { completed: 95, updatedAt: '2026-09-25T10:00:06Z' } };
+        expect(applyProgressFrame(job, fresh).progress.completed).toBe(95);
     });
 });

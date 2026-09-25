@@ -109,3 +109,20 @@ func TestProgressFilterRedactsReportText(t *testing.T) {
 		t.Fatalf("redacted key = %q; want a neutral replacement", metric.Key)
 	}
 }
+
+func TestProgressFilterRedactsASecretSplitByControlSequences(t *testing.T) {
+	h := newProgressFilterHarness("hunter2")
+	// JSON escapes put an ESC-introduced colour code, a C1 CSI and a NUL inside
+	// the secret; the page would still show it whole.
+	_, _ = h.filter.Write([]byte(`::mah-progress {"message":"key hun\u001b[31mter2 and hunt\u009ber2 and h\u0000unter2","metrics":[{"key":"k","label":"hun\u001b]0;x\u0007ter2","value":1}]}` + "\n"))
+	if len(h.reports) != 1 {
+		t.Fatalf("reports = %+v", h.reports)
+	}
+	message := *h.reports[0].Message
+	label := (*h.reports[0].Metrics)[0].Label
+	for _, text := range []string{message, label} {
+		if strings.Contains(stripProgressControls(text), "hunter2") || strings.ContainsAny(text, "\x1b\x00\u009b") {
+			t.Fatalf("report text %q still carries the secret or a control character", text)
+		}
+	}
+}
