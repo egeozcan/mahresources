@@ -198,6 +198,17 @@ describe('unit changes and key collisions', () => {
         expect(graphSeries(next).map(s => s.key)).toEqual([]);
     });
 
+    test('a graphed metric that changes unit in a frame loses its old values', () => {
+        const job = { id: 'j', version: 1, progress: {
+            metrics: [{ key: 'size', label: 'Size', value: 2048, unit: 'bytes', graph: true }],
+            series: { points: [{ t: 0, v: { size: 1024 } }, { t: 1000, v: { size: 2048 } }] } } };
+        const next = applyProgressFrame(job, { jobId: 'j', version: 1,
+            progress: { metrics: [{ key: 'size', label: 'Size', value: 3, unit: 'items', graph: true }] },
+            point: { t: 2000, v: { size: 3 } } });
+        const [size] = graphSeries(next);
+        expect(size.points).toEqual([{ t: 2000, v: 3 }]);
+    });
+
     test('a metric keyed rate does not collide with the speed graph', () => {
         const job = { progress: { unit: 'bytes', metrics: [{ key: 'rate', label: 'Rate', value: 1, graph: true }],
             series: { unit: 'bytes', points: [{ t: 0, c: 0, v: { rate: 1 } }, { t: 1000, c: 10, r: 10, v: { rate: 2 } }] } } };

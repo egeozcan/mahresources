@@ -300,6 +300,26 @@ export function applyProgressFrame(job, frame) {
             },
         };
     }
+    // Likewise per graphed metric: a key now reported in another unit loses
+    // the values it held in the old one, as the server's series does.
+    const heldUnits = new Map((previous.metrics || []).filter(metric => metric.graph).map(metric => [metric.key, metric.unit || '']));
+    const changedKeys = (frame.progress?.metrics || [])
+        .filter(metric => metric.graph && heldUnits.has(metric.key) && heldUnits.get(metric.key) !== (metric.unit || ''))
+        .map(metric => metric.key);
+    if (changedKeys.length && previous.series) {
+        previous = {
+            ...previous,
+            series: {
+                ...previous.series,
+                points: (previous.series.points || []).map(point => {
+                    if (!point.v) return point;
+                    const values = { ...point.v };
+                    changedKeys.forEach(key => { delete values[key]; });
+                    return { ...point, v: values };
+                }),
+            },
+        };
+    }
     // The same version can still carry an older snapshot: the stream starts a
     // little in the past, so a frame can arrive after a fetch that was newer.
     const incomingAt = Date.parse(frame.progress?.updatedAt || '');
