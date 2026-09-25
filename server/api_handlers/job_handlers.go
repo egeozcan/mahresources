@@ -158,7 +158,7 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 		}
 
 		response := JobDetailResponse{
-			JobSnapshotResponse: jobSnapshotResponse(snap),
+			JobSnapshotResponse: jobSnapshotResponseAt(snap, time.Now(), true),
 			Commands:            make([]JobCommandResponse, 0, len(commands)),
 			Outputs:             make([]JobOutputResponse, 0, len(outputs)),
 			Lineage:             jobLineageResponse(lineage),
@@ -233,9 +233,15 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 			writeJobServiceError(w, err)
 			return
 		}
+		withSeries, err := parseJobInclude(r.URL.Query())
+		if err != nil {
+			writeJobError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		now := time.Now()
 		response := JobListResponse{Jobs: make([]JobSnapshotResponse, 0, len(page.Jobs))}
 		for _, snap := range page.Jobs {
-			response.Jobs = append(response.Jobs, jobSnapshotResponse(snap))
+			response.Jobs = append(response.Jobs, jobSnapshotResponseAt(snap, now, withSeries))
 		}
 		if page.Next != nil {
 			response.NextCursor, err = jobview.EncodeCursor(*page.Next)
@@ -435,9 +441,89 @@ type JobProgressResponse struct {
 	Unit      string     `json:"unit,omitempty"`
 	Message   string     `json:"message,omitempty"`
 	ETA       *time.Time `json:"eta,omitempty"`
+	// ETAEstimated reports that ETA was estimated from the live rate rather
+	// than reported by the executor.
+	ETAEstimated bool `json:"etaEstimated,omitempty"`
+	// Rate is the current speed in Unit per second, present only while the Job
+	// runs and its progress is fresh. AverageRate is the rate across the Job's
+	// recorded history, which is what a finished Job reports.
+	Rate        *float64                   `json:"rate,omitempty"`
+	AverageRate *float64                   `json:"averageRate,omitempty"`
+	UpdatedAt   *time.Time                 `json:"updatedAt,omitempty"`
+	Metrics     []JobMetricResponse        `json:"metrics,omitempty"`
+	Series      *JobProgressSeriesResponse `json:"series,omitempty"`
+}
+
+// JobMetricResponse is one figure a Job reports beside its primary measure.
+type JobMetricResponse struct {
+	Key   string   `json:"key"`
+	Label string   `json:"label"`
+	Value float64  `json:"value"`
+	Total *float64 `json:"total,omitempty"`
+	Unit  string   `json:"unit,omitempty"`
+	Graph bool     `json:"graph,omitempty"`
+}
+
+// JobProgressSeriesResponse is a Job's bounded progress history. Points use the
+// stored short names: t is Unix milliseconds, c the completed count, r the
+// completed count's change per second, and v the graphed metrics by key.
+type JobProgressSeriesResponse struct {
+	IntervalMs int64                    `json:"intervalMs"`
+	Unit       string                   `json:"unit,omitempty"`
+	Points     []JobSeriesPointResponse `json:"points"`
+}
+
+type JobSeriesPointResponse struct {
+	T int64              `json:"t"`
+	C *float64           `json:"c,omitempty"`
+	R *float64           `json:"r,omitempty"`
+	V map[string]float64 `json:"v,omitempty"`
+}
+
+// jobProgressResponse projects a snapshot's progress with the figures derived
+// from its history. The series itself is opt-in: it is up to 120 points per
+// Job, which a detail page and the Jobs drawer want and a plain listing does
+// not.
+func jobProgressResponse(snap jobs.Snapshot, now time.Time, withSeries bool) JobProgressResponse {
+	progress := JobProgressResponse{
+		Phase: snap.Progress.Phase, Completed: snap.Progress.Completed, Total: snap.Progress.Total,
+		Unit: snap.Progress.Unit, Message: snap.Progress.Message,
+		Rate: snap.LiveRate(now), AverageRate: snap.ProgressSeries.AverageRate(),
+		UpdatedAt: snap.ProgressUpdatedAt,
+	}
+	progress.ETA, progress.ETAEstimated = snap.ExpectedFinish(now)
+	for _, metric := range snap.Progress.Metrics {
+		progress.Metrics = append(progress.Metrics, JobMetricResponse{
+			Key: metric.Key, Label: metric.Label, Value: metric.Value, Total: metric.Total,
+			Unit: metric.Unit, Graph: metric.Graph,
+		})
+	}
+	if withSeries {
+		progress.Series = jobSeriesResponse(snap.ProgressSeries)
+	}
+	return progress
+}
+
+func jobSeriesResponse(series jobs.ProgressSeries) *JobProgressSeriesResponse {
+	out := &JobProgressSeriesResponse{
+		IntervalMs: series.IntervalMs, Unit: series.Unit,
+		Points: make([]JobSeriesPointResponse, 0, len(series.Points)),
+	}
+	for _, point := range series.Points {
+		out.Points = append(out.Points, jobSeriesPointResponse(point))
+	}
+	return out
+}
+
+func jobSeriesPointResponse(point jobs.SeriesPoint) JobSeriesPointResponse {
+	return JobSeriesPointResponse{T: point.At, C: point.Completed, R: point.Rate, V: point.Values}
 }
 
 func jobSnapshotResponse(snap jobs.Snapshot) JobSnapshotResponse {
+	return jobSnapshotResponseAt(snap, time.Now(), false)
+}
+
+func jobSnapshotResponseAt(snap jobs.Snapshot, now time.Time, withSeries bool) JobSnapshotResponse {
 	response := JobSnapshotResponse{
 		ID: snap.ID, Kind: snap.Kind, KindVersion: snap.KindVersion, State: snap.State,
 		Phase: snap.Phase, Title: snap.Title, Summary: append(json.RawMessage(nil), snap.Summary...),
@@ -446,10 +532,7 @@ func jobSnapshotResponse(snap jobs.Snapshot) JobSnapshotResponse {
 		ReplayClass: snap.ReplayClass, ReplayAvailability: snap.ReplayAvailability,
 		Pinned:  snap.Pinned,
 		Version: snap.Version, ControlIntent: snap.ControlIntent,
-		Progress: JobProgressResponse{
-			Phase: snap.Progress.Phase, Completed: snap.Progress.Completed, Total: snap.Progress.Total,
-			Unit: snap.Progress.Unit, Message: snap.Progress.Message, ETA: snap.Progress.ETA,
-		},
+		Progress:   jobProgressResponse(snap, now, withSeries),
 		AcceptedAt: snap.AcceptedAt, ScheduledFor: snap.ScheduledFor, QueuedAt: snap.QueuedAt,
 		StartedAt: snap.StartedAt, LastResumedAt: snap.LastResumedAt, FinishedAt: snap.FinishedAt,
 		RunningDuration: snap.RunningDuration, PausedDuration: snap.PausedDuration,
@@ -459,6 +542,24 @@ func jobSnapshotResponse(snap jobs.Snapshot) JobSnapshotResponse {
 		response.Failure = &JobFailureResponse{Code: snap.Failure.Code, Class: snap.Failure.Class, Message: snap.Failure.Message}
 	}
 	return response
+}
+
+// parseJobInclude reads a listing's opt-in projections. The only one is the
+// progress series; an unknown name is refused rather than ignored, so a typo is
+// not a silently smaller response.
+func parseJobInclude(values url.Values) (progressSeries bool, err error) {
+	for _, raw := range values["include"] {
+		for _, name := range strings.Split(raw, ",") {
+			switch strings.TrimSpace(name) {
+			case "":
+			case "progressSeries":
+				progressSeries = true
+			default:
+				return false, fmt.Errorf("include %q is not supported; the only option is progressSeries", name)
+			}
+		}
+	}
+	return progressSeries, nil
 }
 
 func parseJobLimit(values url.Values) (int, error) {

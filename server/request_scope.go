@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -25,6 +26,24 @@ type currentCanonicalJobEventsContext struct {
 }
 
 func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+	scoped, err := ctx.current()
+	if err != nil {
+		return nil, err
+	}
+	return scoped.GetPublishedJobEvents(afterDelivery, limit)
+}
+
+// GetLiveJobProgress revalidates the credential exactly as the event poll does:
+// a live progress frame is as much a read of the Job as its events are.
+func (ctx currentCanonicalJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+	scoped, err := ctx.current()
+	if err != nil {
+		return nil, err
+	}
+	return scoped.GetLiveJobProgress(since, limit)
+}
+
+func (ctx currentCanonicalJobEventsContext) current() (*application_context.MahresourcesContext, error) {
 	principal := auth.PrincipalFromContext(ctx.request.Context())
 	if ctx.appCtx.AuthEnabled() {
 		principal, _, _ = resolvePrincipal(ctx.appCtx, ctx.request)
@@ -32,7 +51,7 @@ func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery 
 			return nil, errors.New("Job event stream authentication is no longer valid")
 		}
 	}
-	return ctx.appCtx.WithPrincipal(principal).GetPublishedJobEvents(afterDelivery, limit)
+	return ctx.appCtx.WithPrincipal(principal), nil
 }
 
 // scopedEditName / scopedEditDescription / scopedEditMeta build the per-entity

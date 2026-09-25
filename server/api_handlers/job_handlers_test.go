@@ -454,3 +454,86 @@ func TestJobSummaryExportMapsWriteRoleRefusalToForbidden(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 }
+
+func progressSnapshot(id string, state jobs.State) jobs.Snapshot {
+	completed, total := int64(50), int64(100)
+	rate := 5.0
+	start, now := 45.0, 50.0
+	return jobs.Snapshot{
+		ID: id, Kind: "remote-download", KindVersion: 1, State: state, Version: 3,
+		Progress: jobs.Progress{
+			Completed: &completed, Total: &total, Unit: "bytes",
+			Metrics: []jobs.Metric{{Key: "segments", Label: "Segments", Value: 2, Unit: "items", Graph: true}},
+		},
+		ProgressSeries: jobs.ProgressSeries{
+			IntervalMs: 1000, Unit: "bytes", Rate: &rate,
+			Anchor: &jobs.RateAnchor{At: time.Now().UnixMilli(), Completed: 50},
+			Points: []jobs.SeriesPoint{{At: 1000, Completed: &start}, {At: 2000, Completed: &now, Rate: &rate, Values: map[string]float64{"segments": 2}}},
+		},
+	}
+}
+
+func TestJobListIncludesTheProgressSeriesOnlyWhenAsked(t *testing.T) {
+	ctx := &jobListContextStub{page: jobs.Page{Jobs: []jobs.Snapshot{progressSnapshot("job-1", jobs.StateRunning)}}}
+	list := func(query string) JobListResponse {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		GetJobListHandler(ctx)(recorder, httptest.NewRequest(http.MethodGet, "/v1/jobs"+query, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET /v1/jobs%s = %d: %s", query, recorder.Code, recorder.Body.String())
+		}
+		var response JobListResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return response
+	}
+
+	plain := list("").Jobs[0].Progress
+	if plain.Series != nil {
+		t.Fatalf("a plain listing carried the series: %+v", plain.Series)
+	}
+	if plain.Rate == nil || *plain.Rate != 5 || len(plain.Metrics) != 1 || !plain.ETAEstimated {
+		t.Fatalf("plain listing progress = %+v; want rate, metrics and an estimated ETA", plain)
+	}
+	withSeries := list("?include=progressSeries").Jobs[0].Progress
+	if withSeries.Series == nil || len(withSeries.Series.Points) != 2 || withSeries.Series.Points[1].V["segments"] != 2 {
+		t.Fatalf("include=progressSeries progress = %+v; want both points", withSeries.Series)
+	}
+
+	recorder := httptest.NewRecorder()
+	GetJobListHandler(ctx)(recorder, httptest.NewRequest(http.MethodGet, "/v1/jobs?include=everything", nil))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("an unknown include = %d; want 400", recorder.Code)
+	}
+}
+
+func TestJobProgressReportsNoLiveRateOnceTheJobStops(t *testing.T) {
+	for _, state := range []jobs.State{jobs.StatePaused, jobs.StateSucceeded} {
+		progress := jobProgressResponse(progressSnapshot("job-1", state), time.Now(), false)
+		if progress.Rate != nil || progress.ETA != nil {
+			t.Fatalf("%s Job reported rate %v and ETA %v; a stopped Job has neither", state, progress.Rate, progress.ETA)
+		}
+		if progress.AverageRate == nil {
+			t.Fatalf("%s Job lost its average rate", state)
+		}
+	}
+}
+
+func TestJobDetailCarriesTheProgressSeries(t *testing.T) {
+	snap := progressSnapshot("job-123", jobs.StateRunning)
+	ctx := &jobDetailContextStub{snapshot: snap, lineage: jobs.Lineage{Job: snap}}
+	recorder := httptest.NewRecorder()
+	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123", nil), map[string]string{"id": "job-123"})
+	GetJobDetailHandler(ctx)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response JobDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if response.Progress.Series == nil || len(response.Progress.Series.Points) != 2 {
+		t.Fatalf("detail series = %+v; want the stored points", response.Progress.Series)
+	}
+}

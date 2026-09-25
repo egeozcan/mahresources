@@ -18,6 +18,42 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
+	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
+}
+
+// JobProgressFrame is one live progress update on the canonical stream. It is
+// not a durable event: it has no SSE id and never moves the delivery cursor, so
+// a reconnect replays events and simply resumes live frames from then on. Point
+// is the latest sample of the Job's progress series, for a reader extending a
+// graph it already holds.
+type JobProgressFrame struct {
+	JobID    string                  `json:"jobId"`
+	Version  uint64                  `json:"version"`
+	State    jobs.State              `json:"state"`
+	Progress JobProgressResponse     `json:"progress"`
+	Point    *JobSeriesPointResponse `json:"point,omitempty"`
+	// IntervalMs is the series' current sampling interval, which doubles as it
+	// compacts, so a reader knows how far apart stored points are.
+	IntervalMs int64 `json:"intervalMs,omitempty"`
+}
+
+// liveProgressLookback is how far before the stream opened its live feed
+// starts. A progress timestamp is written by whichever process runs the Job, so
+// a little overlap absorbs clock skew between processes; a frame delivered
+// twice is harmless, because each one replaces the row's progress.
+const liveProgressLookback = 2 * time.Second
+
+func jobProgressFrame(snap jobs.Snapshot, now time.Time) JobProgressFrame {
+	frame := JobProgressFrame{
+		JobID: snap.ID, Version: snap.Version, State: snap.State,
+		Progress:   jobProgressResponse(snap, now, false),
+		IntervalMs: snap.ProgressSeries.IntervalMs,
+	}
+	if points := snap.ProgressSeries.Points; len(points) > 0 {
+		point := jobSeriesPointResponse(points[len(points)-1])
+		frame.Point = &point
+	}
+	return frame
 }
 
 type JobEventResponse struct {
@@ -125,6 +161,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("X-Accel-Buffering", "no")
 
 		const catchupPageSize = jobs.DefaultEventPageSize
+		progressSince := time.Now().Add(-liveProgressLookback)
 		poll := time.NewTicker(time.Second)
 		defer poll.Stop()
 		heartbeat := time.NewTicker(15 * time.Second)
@@ -168,6 +205,25 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
 				flusher.Flush()
 				caughtUp = true
+			}
+			// Live progress follows the durable events in each poll and is only
+			// sent once the reader is caught up, so a frame never overtakes the
+			// lifecycle event that explains it. A failed read skips this poll's
+			// frames rather than ending the stream: the events are the part a
+			// reconnect must recover, and the next tick reads progress afresh.
+			if snapshots, err := ctx.GetLiveJobProgress(progressSince, jobs.MaxLiveProgressRows); err == nil && len(snapshots) > 0 {
+				now := time.Now()
+				for _, snap := range snapshots {
+					data, err := json.Marshal(jobProgressFrame(snap, now))
+					if err != nil {
+						return
+					}
+					fmt.Fprintf(w, "event: job-progress\ndata: %s\n\n", data)
+					if snap.ProgressUpdatedAt != nil && snap.ProgressUpdatedAt.After(progressSince) {
+						progressSince = *snap.ProgressUpdatedAt
+					}
+				}
+				flusher.Flush()
 			}
 			select {
 			case <-r.Context().Done():

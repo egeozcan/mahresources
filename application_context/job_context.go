@@ -198,6 +198,16 @@ func (ctx *MahresourcesContext) GetPublishedJobEvents(afterDelivery uint64, limi
 	return service.PublishedEvents(ctx.jobDeps(), ctx.jobAccess(), afterDelivery, limit)
 }
 
+// GetLiveJobProgress returns the visible Jobs whose progress changed after
+// since: the live feed beside the durable event stream.
+func (ctx *MahresourcesContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	return service.LiveProgress(ctx.jobDeps(), ctx.jobAccess(), since, limit)
+}
+
 // GetJobOutputs returns one visible Job's typed outputs.
 func (ctx *MahresourcesContext) GetJobOutputs(jobID string) ([]jobs.Output, error) {
 	service, err := ctx.requireJobService()

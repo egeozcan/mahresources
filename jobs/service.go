@@ -571,6 +571,14 @@ func (s *Service) UpdateProgress(deps Deps, ref ExecutionRef, progress Progress)
 		"phase":              next.Phase,
 		"updated_at":         now,
 	}
+	// The series is advanced from the row read above, outside the transaction,
+	// so the transaction still opens with its write. The executor holding the
+	// token is the only writer of progress, so the read is current; a tick that
+	// races a transition loses one sample at worst, and the guarded write below
+	// refuses it anyway.
+	if err := applyProgressHistory(&next, updates, now, progress, false); err != nil {
+		return Snapshot{}, err
+	}
 
 	var snap Snapshot
 	err = deps.DB.Transaction(func(tx *gorm.DB) error {
@@ -827,7 +835,7 @@ func validateProgress(progress Progress) error {
 	if progress.Total != nil && *progress.Total < 0 {
 		return invalid("total is negative")
 	}
-	return nil
+	return validateMetrics(progress.Metrics)
 }
 
 // copyUint copies an optional user id so the caller's value can never be written
@@ -988,7 +996,9 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if request.FinalProgress != nil {
-		applyFinalProgress(&prepared, *request.FinalProgress)
+		if err := applyFinalProgress(&prepared, *request.FinalProgress, deps.now()); err != nil {
+			return Snapshot{}, err
+		}
 	}
 
 	var verify func(tx *gorm.DB) error
@@ -1005,7 +1015,7 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 // guarded write as its terminal transition. Progress is copied into both the
 // prepared model and its update map so the committed snapshot and stored row
 // describe the same outcome.
-func applyFinalProgress(prepared *preparedTransition, progress Progress) {
+func applyFinalProgress(prepared *preparedTransition, progress Progress, now time.Time) error {
 	prepared.next.ProgressCompleted = copyInt64(progress.Completed)
 	prepared.next.ProgressTotal = copyInt64(progress.Total)
 	prepared.next.ProgressUnit = progress.Unit
@@ -1020,6 +1030,34 @@ func applyFinalProgress(prepared *preparedTransition, progress Progress) {
 		prepared.next.Phase = progress.Phase
 		prepared.updates["phase"] = prepared.next.Phase
 	}
+	return applyProgressHistory(&prepared.next, prepared.updates, now, progress, true)
+}
+
+// applyProgressHistory adds a snapshot's metrics and its series sample to a
+// progress write. The series column is only written when the sample changed it,
+// which is at most once a second for a Job ticking faster than that, so the
+// history costs one small JSON write per interval rather than one per tick.
+func applyProgressHistory(next *models.Job, updates map[string]any, now time.Time, progress Progress, final bool) error {
+	metrics, err := encodeMetrics(progress.Metrics)
+	if err != nil {
+		return err
+	}
+	next.ProgressMetrics = metrics
+	updates["progress_metrics"] = metrics
+
+	series, changed := advanceSeries(decodeSeries(next.ProgressSeries), now, progress, final)
+	if changed {
+		encoded, err := json.Marshal(series)
+		if err != nil {
+			return fmt.Errorf("jobs: encode progress series: %w", err)
+		}
+		next.ProgressSeries = types.JSON(encoded)
+		updates["progress_series"] = next.ProgressSeries
+	}
+	updatedAt := now.UTC()
+	next.ProgressUpdatedAt = &updatedAt
+	updates["progress_updated_at"] = next.ProgressUpdatedAt
+	return nil
 }
 
 // preparedTransition is a transition that has passed every precondition, with

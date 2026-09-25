@@ -951,6 +951,9 @@ type Progress struct {
 	Unit      string
 	Message   string
 	ETA       *time.Time
+	// Metrics are the figures reported beside the primary measure. Like the
+	// fields above, each tick replaces the whole set: a nil slice clears it.
+	Metrics []Metric
 }
 
 // Failure describes an unsuccessful outcome in bounded, sanitized terms.
@@ -1055,22 +1058,26 @@ type Snapshot struct {
 	// Pinned reports whether the viewer who requested this snapshot pinned the
 	// Job. It is a viewer preference, so executor-side transition snapshots leave
 	// it false until a reader projects the preference for a specific viewer.
-	Pinned          bool
-	Version         uint64
-	ControlIntent   string
-	Failure         *Failure
-	Progress        Progress
-	AcceptedAt      time.Time
-	ScheduledFor    *time.Time
-	QueuedAt        *time.Time
-	StartedAt       *time.Time
-	LastResumedAt   *time.Time
-	FinishedAt      *time.Time
-	RunningDuration time.Duration
-	PausedDuration  time.Duration
-	BlockedDuration time.Duration
-	QueueDuration   time.Duration
-	ExpiresAt       *time.Time
+	Pinned        bool
+	Version       uint64
+	ControlIntent string
+	Failure       *Failure
+	Progress      Progress
+	// ProgressSeries is the bounded history behind the Job's graphs, and
+	// ProgressUpdatedAt the instant its progress last changed.
+	ProgressSeries    ProgressSeries
+	ProgressUpdatedAt *time.Time
+	AcceptedAt        time.Time
+	ScheduledFor      *time.Time
+	QueuedAt          *time.Time
+	StartedAt         *time.Time
+	LastResumedAt     *time.Time
+	FinishedAt        *time.Time
+	RunningDuration   time.Duration
+	PausedDuration    time.Duration
+	BlockedDuration   time.Duration
+	QueueDuration     time.Duration
+	ExpiresAt         *time.Time
 }
 
 // Terminal reports whether the snapshot's Job reached an end state.

@@ -179,7 +179,10 @@ func snapshot(job models.Job) Snapshot {
 			Unit:      job.ProgressUnit,
 			Message:   job.ProgressMessage,
 			ETA:       job.ProgressETA,
+			Metrics:   decodeMetrics(job.ProgressMetrics),
 		},
+		ProgressSeries:    decodeSeries(job.ProgressSeries),
+		ProgressUpdatedAt: job.ProgressUpdatedAt,
 	}
 	if job.FailureCode != "" || job.FailureClass != "" || job.FailureMessage != "" || job.FailureDiagnosticRef != "" {
 		snap.Failure = &Failure{

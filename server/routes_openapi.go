@@ -105,17 +105,25 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 // advertise endpoints before their complete-Kind and retirement readiness
 // checks pass.
 func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
+	// Array items use partial schemas; these DTOs are flat, so their partial
+	// form is their whole wire shape.
+	r.SetPartialFields("JobMetricResponse", "Key", "Label", "Value", "Total", "Unit", "Graph")
+	r.SetPartialFields("JobSeriesPointResponse", "T", "C", "R", "V")
 	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobSnapshotResponse{}))
+	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobProgressFrame{}))
 	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobSummaryExportRequest{}))
 	filterParams := canonicalJobFilterQueryParams()
 	listParams := append(append([]openapi.QueryParam(nil), filterParams...),
 		openapi.QueryParam{Name: "cursor", Type: "string", Description: "Opaque keyset cursor returned by the prior page."},
 		openapi.QueryParam{Name: "limit", Type: "integer", Description: "Page size, bounded by the server."},
 	)
+	listOnlyParams := append(append([]openapi.QueryParam(nil), listParams...),
+		openapi.QueryParam{Name: "include", Type: "string", Description: "Set to progressSeries to include each Job's bounded progress history (progress.series). Any other value is refused with 400."},
+	)
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs", OperationID: "listCanonicalJobs",
 		Summary: "List visible canonical Jobs", Tags: []string{"jobs"},
-		ExtraQueryParams: listParams, ResponseType: reflect.TypeOf(api_handlers.JobListResponse{}),
+		ExtraQueryParams: listOnlyParams, ResponseType: reflect.TypeOf(api_handlers.JobListResponse{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       jobAPIErrorResponses(),
 	})
@@ -163,7 +171,7 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs/events", OperationID: "streamCanonicalJobEvents",
 		Summary: "Stream resumable canonical Job events", Tags: []string{"jobs"},
-		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream.",
+		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream.",
 		LegacyJobCompatibility: true,
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "version", Type: "string", Description: "Set to 2 for the canonical stream; omit to retain the legacy compatibility stream."},

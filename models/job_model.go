@@ -117,6 +117,12 @@ type Job struct {
 	ProgressUnit      string     `gorm:"size:20" json:"progressUnit,omitempty"`
 	ProgressMessage   string     `gorm:"size:500" json:"progressMessage,omitempty"`
 	ProgressETA       *time.Time `json:"progressEta,omitempty"`
+	// ProgressMetrics is the tick's []jobs.Metric and ProgressSeries the bounded
+	// jobs.ProgressSeries history behind a Job's graphs. ProgressUpdatedAt is
+	// when either last changed: the live progress feed pages on it.
+	ProgressMetrics   types.JSON `gorm:"type:json" json:"progressMetrics,omitempty"`
+	ProgressSeries    types.JSON `gorm:"type:json" json:"progressSeries,omitempty"`
+	ProgressUpdatedAt *time.Time `gorm:"index:idx_jobs_progress_updated" json:"progressUpdatedAt,omitempty"`
 
 	// AcceptedAt is the acceptance instant, and the keyset column every visible
 	// listing pages on. The rest are the common UTC instants; StateEnteredAt is

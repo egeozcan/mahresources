@@ -25,6 +25,29 @@ type jobEventContextStub struct {
 	lastAfter uint64
 	after     []uint64
 	pages     [][]jobs.Event
+	// progress is the live-progress read's answer per call, and progressSince
+	// the watermark each call was made with.
+	progress      [][]jobs.Snapshot
+	progressErr   error
+	progressSince []time.Time
+	progressMu    sync.Mutex
+}
+
+func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	call := len(s.progressSince)
+	s.progressSince = append(s.progressSince, since)
+	if call < len(s.progress) {
+		return s.progress[call], s.progressErr
+	}
+	return nil, s.progressErr
+}
+
+func (s *jobEventContextStub) progressCalls() []time.Time {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return append([]time.Time(nil), s.progressSince...)
 }
 
 func (s *jobEventContextStub) GetJobTimeline(_ string, after uint64, _ int) ([]jobs.Event, error) {
@@ -374,4 +397,74 @@ func (w *sseTestWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.body.String()
+}
+
+func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
+	delivery := uint64(6)
+	updated := time.Now().Add(time.Hour).UTC()
+	completed, total := int64(400), int64(1000)
+	rate := 100.0
+	ctx := &jobEventContextStub{
+		events: []jobs.Event{{
+			ID: "event-row-6", JobID: "job-123", Sequence: 4, JobVersion: 5,
+			Type: jobs.EventStarted, DeliverySequence: &delivery, CreatedAt: time.Now().UTC(),
+		}},
+		progress: [][]jobs.Snapshot{{{
+			ID: "job-123", Version: 5, State: jobs.StateRunning,
+			Progress: jobs.Progress{
+				Completed: &completed, Total: &total, Unit: "bytes",
+				Metrics: []jobs.Metric{{Key: "segments", Label: "Segments", Value: 4, Graph: true}},
+			},
+			ProgressSeries: jobs.ProgressSeries{
+				IntervalMs: 1000, Unit: "bytes", Rate: &rate,
+				Anchor: &jobs.RateAnchor{At: time.Now().UnixMilli(), Completed: 400},
+				Points: []jobs.SeriesPoint{{At: 1, Completed: new(float64)}, {At: 1001, Rate: &rate, Values: map[string]float64{"segments": 4}}},
+			},
+			ProgressUpdatedAt: &updated,
+		}}},
+	}
+	response := newSSETestWriter()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=v2:5", nil).WithContext(requestCtx)
+	finished := make(chan struct{})
+	go func() {
+		GetCanonicalJobEventsHandler(ctx)(response, request)
+		close(finished)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for len(ctx.progressCalls()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-finished
+
+	body := response.String()
+	caughtUp := strings.Index(body, "event: job-caught-up\n")
+	frameAt := strings.Index(body, "event: job-progress\ndata: ")
+	if caughtUp < 0 || frameAt < 0 || frameAt < caughtUp {
+		t.Fatalf("SSE body = %q; want a job-progress frame after the caught-up marker", body)
+	}
+	if strings.Count(body, "id: ") != 1 {
+		t.Fatalf("SSE body = %q; a live progress frame must carry no delivery id", body)
+	}
+	line := body[frameAt+len("event: job-progress\ndata: "):]
+	line = line[:strings.Index(line, "\n")]
+	var frame JobProgressFrame
+	if err := json.Unmarshal([]byte(line), &frame); err != nil {
+		t.Fatalf("frame %q: %v", line, err)
+	}
+	if frame.JobID != "job-123" || frame.Progress.Completed == nil || *frame.Progress.Completed != 400 ||
+		frame.Progress.Rate == nil || *frame.Progress.Rate != 100 || !frame.Progress.ETAEstimated || frame.Progress.ETA == nil {
+		t.Fatalf("frame = %+v; want the Job's progress with its live rate and an estimated ETA", frame)
+	}
+	if len(frame.Progress.Metrics) != 1 || frame.Progress.Metrics[0].Key != "segments" {
+		t.Fatalf("frame metrics = %+v", frame.Progress.Metrics)
+	}
+	if frame.Point == nil || frame.Point.T != 1001 || frame.Point.V["segments"] != 4 || frame.Progress.Series != nil {
+		t.Fatalf("frame point = %+v, series = %+v; want only the latest point", frame.Point, frame.Progress.Series)
+	}
+	calls := ctx.progressCalls()
+	if len(calls) < 2 || !calls[1].Equal(updated) {
+		t.Fatalf("live progress watermarks = %v; want the second read to start from the delivered row's %v", calls, updated)
+	}
 }

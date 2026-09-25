@@ -1528,3 +1528,35 @@ func failureClassCounts(base *gorm.DB) ([]FailureClassCount, error) {
 	}
 	return failures, nil
 }
+
+// MaxLiveProgressRows bounds one live-progress read. Only Jobs whose progress
+// moved since the caller's watermark are returned, which in practice is the
+// few that are running; the bound keeps a burst from becoming one huge frame.
+const MaxLiveProgressRows = 100
+
+// LiveProgress returns the visible Jobs whose progress changed after since,
+// oldest change first, so a caller can advance its watermark to the last row's
+// ProgressUpdatedAt and resume there.
+//
+// It exists because a progress tick is deliberately not a Job Event: the
+// resumable event stream never carries one. This read is the live feed beside
+// it — no cursor, no durability, and the same visibility predicate as every
+// other read, so a hidden Job's progress is never delivered.
+func (s *Service) LiveProgress(deps Deps, access Access, since time.Time, limit int) ([]Snapshot, error) {
+	if limit <= 0 || limit > MaxLiveProgressRows {
+		limit = MaxLiveProgressRows
+	}
+	var rows []models.Job
+	err := jobQuery(deps.DB.Model(&models.Job{}), access).
+		Where("jobs.progress_updated_at > ?", since.UTC()).
+		Order("jobs.progress_updated_at ASC").Order("jobs.id ASC").
+		Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("jobs: read live progress: %w", err)
+	}
+	snapshots := make([]Snapshot, 0, len(rows))
+	for _, row := range rows {
+		snapshots = append(snapshots, viewerSnapshot(row, access))
+	}
+	return snapshots, nil
+}
