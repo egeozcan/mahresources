@@ -251,15 +251,15 @@ func compactPoints(points []SeriesPoint) []SeriesPoint {
 
 func mergePoints(a, b SeriesPoint) SeriesPoint {
 	merged := SeriesPoint{At: b.At, Completed: b.Completed}
+	// A nil rate on the later point marks a gap (a pause, a restart, a change
+	// of unit) ending there, and the merged point sits at its timestamp, so it
+	// keeps the gap rather than inheriting the earlier point's throughput.
 	switch {
 	case a.Rate != nil && b.Rate != nil:
 		rate := (*a.Rate + *b.Rate) / 2
 		merged.Rate = &rate
 	case b.Rate != nil:
 		rate := *b.Rate
-		merged.Rate = &rate
-	case a.Rate != nil:
-		rate := *a.Rate
 		merged.Rate = &rate
 	}
 	// Only the later point's keys survive a merge. Keeping the union would let a

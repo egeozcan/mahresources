@@ -229,6 +229,26 @@ export function mergeLivePoint(series, point, intervalMs) {
 }
 
 /**
+ * Reconciles a fetched copy of a Job with the one already held. Progress ticks
+ * do not move a Job's version, so a list or detail response that was issued
+ * before the latest live frame can carry an older snapshot at the same
+ * version; the held progress wins then. A response that carries no series
+ * (a command's answer, a plain listing) keeps the series already drawn.
+ */
+export function mergeFetchedProgress(next, previous) {
+    if (!next || !previous || next.id !== previous.id || next === previous) return next;
+    const incoming = next.progress || {};
+    const held = previous.progress || {};
+    const incomingAt = Date.parse(incoming.updatedAt || '');
+    const heldAt = Date.parse(held.updatedAt || '');
+    if (Number.isFinite(incomingAt) && Number.isFinite(heldAt) && incomingAt < heldAt) {
+        return { ...next, progress: held };
+    }
+    if (!incoming.series && held.series) return { ...next, progress: { ...incoming, series: held.series } };
+    return next;
+}
+
+/**
  * Applies one job-progress frame to a listed Job. The frame replaces the
  * progress snapshot and extends the series the row already holds; it never
  * changes the Job's version or state, which only lifecycle events move.

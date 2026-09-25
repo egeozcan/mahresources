@@ -915,14 +915,16 @@ func (s *pluginActionSink) progressOf(report plugin_system.HostProgress) jobs.Pr
 		completed, total := int64(report.Percent), int64(100)
 		progress.Completed, progress.Total, progress.Unit = &completed, &total, "percent"
 	}
-	for i, metric := range report.Metrics {
+	for _, metric := range report.Metrics {
+		// A key is restricted to a-z, 0-9, _ and -, so a redacted one cannot
+		// carry the marker. The metric is left out rather than renamed: any
+		// replacement name could collide with another key, which would fail
+		// the whole snapshot, or be the very value being hidden.
+		if s.safeText(metric.Key, jobs.MaxMetricKeyBytes) != metric.Key {
+			continue
+		}
 		metric.Label = s.safeText(metric.Label, jobs.MaxMetricLabelBytes)
 		metric.Unit = s.safeText(metric.Unit, jobs.MaxProgressUnitBytes)
-		// A key is restricted to a-z, 0-9, _ and -, so a redacted one cannot keep
-		// the marker; it is renamed instead, which still keeps the value out.
-		if redacted := s.safeText(metric.Key, jobs.MaxMetricKeyBytes); redacted != metric.Key {
-			metric.Key = fmt.Sprintf("metric-%d", i+1)
-		}
 		if metric.Total != nil {
 			total := *metric.Total
 			metric.Total = &total

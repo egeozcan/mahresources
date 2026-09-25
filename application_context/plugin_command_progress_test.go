@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,18 @@ type recordingProgressWriter struct {
 	mu     sync.Mutex
 	writes []jobs.Progress
 	delay  time.Duration
+	// failures is how many calls refuse before one succeeds.
+	failures int
 }
 
 func (w *recordingProgressWriter) Progress(progress jobs.Progress) (jobs.Snapshot, error) {
 	time.Sleep(w.delay)
 	w.mu.Lock()
+	if w.failures > 0 {
+		w.failures--
+		w.mu.Unlock()
+		return jobs.Snapshot{}, errors.New("database is locked")
+	}
 	w.writes = append(w.writes, progress)
 	w.mu.Unlock()
 	return jobs.Snapshot{}, nil
@@ -95,5 +103,16 @@ func TestCommandProgressMirrorCloseWaitsForAWriteInFlightAndWritesTheNewest(t *t
 		if *writes[i].Completed < *writes[i-1].Completed {
 			t.Fatalf("an older snapshot was written after a newer one: %+v", writes)
 		}
+	}
+}
+
+func TestCommandProgressMirrorRetriesTheFinalWrite(t *testing.T) {
+	writer := &recordingProgressWriter{failures: 2}
+	mirror := &commandProgressMirror{jobID: "job-1", target: writer, lastWrite: time.Now()}
+	mirror.report(plugin_commands.ProgressReport{Completed: i64(7)})
+	mirror.close()
+	writes := writer.written()
+	if len(writes) != 1 || *writes[0].Completed != 7 {
+		t.Fatalf("writes = %+v; the final report must survive a transient refusal", writes)
 	}
 }

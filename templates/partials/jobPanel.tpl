@@ -79,7 +79,7 @@
                                             <div class="h-2 overflow-hidden rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
                                                  :aria-valuenow="progressValue(job)" :aria-valuetext="progressValueText(job)"
                                                  :aria-label="(job.title || job.kind || 'Job') + ' progress'">
-                                                <div class="h-2 rounded" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-800', progressIndeterminate(job) ? 'w-full animate-pulse' : '']"
+                                                <div class="h-2 rounded" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-800', progressIndeterminate(job) ? 'w-full motion-safe:animate-pulse' : '']"
                                                      :style="{ width: progressIndeterminate(job) ? '100%' : (progressValue(job) ?? 0) + '%' }"></div>
                                             </div>
                                         </div>

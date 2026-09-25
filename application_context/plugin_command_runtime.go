@@ -135,11 +135,18 @@ func (m *commandProgressMirror) flush() {
 	m.mu.Lock()
 	m.timer = nil
 	m.mu.Unlock()
-	m.writePending()
+	m.writePending(1)
 }
 
-// writePending writes the held snapshot, if any, under writeMu.
-func (m *commandProgressMirror) writePending() {
+// commandProgressFinalAttempts bounds the final flush's retries. A throttled
+// write that fails is simply replaced by the next report; the final one has no
+// next report, and once the Job is finished nothing can write it, so a
+// transient refusal (a busy database) is worth a few short retries.
+const commandProgressFinalAttempts = 4
+
+// writePending writes the held snapshot, if any, under writeMu, trying up to
+// attempts times while the refusal is not the fence's.
+func (m *commandProgressMirror) writePending(attempts int) {
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
 	m.mu.Lock()
@@ -151,7 +158,17 @@ func (m *commandProgressMirror) writePending() {
 	m.pending = false
 	m.lastWrite = time.Now()
 	m.mu.Unlock()
-	m.write(progress)
+	for attempt := 1; ; attempt++ {
+		_, err := m.target.Progress(progress)
+		if err == nil || mirrorRefusalIsSilent(err) {
+			return
+		}
+		if attempt >= attempts {
+			log.Printf("warning: could not record command progress for job %s: %v", m.jobID, err)
+			return
+		}
+		time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+	}
 }
 
 // close stops the throttle and writes whatever it was still holding, waiting
@@ -168,14 +185,9 @@ func (m *commandProgressMirror) close() {
 		m.timer = nil
 	}
 	m.mu.Unlock()
-	m.writePending()
+	m.writePending(commandProgressFinalAttempts)
 }
 
-func (m *commandProgressMirror) write(progress jobs.Progress) {
-	if _, err := m.target.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
-		log.Printf("warning: could not record command progress for job %s: %v", m.jobID, err)
-	}
-}
 
 // mergeCommandProgress folds one report into the running snapshot. A field the
 // report omits keeps its previous value, and metrics replace as a set, exactly

@@ -27,19 +27,17 @@ type jobEventContextStub struct {
 	pages     [][]jobs.Event
 	// progress is the live-progress read's answer per call, and progressSince
 	// the watermark each call was made with.
-	progress         [][]jobs.Snapshot
-	progressErr      error
-	progressSince    []time.Time
-	progressSinceIDs []string
-	progressMu       sync.Mutex
+	progress      [][]jobs.Snapshot
+	progressErr   error
+	progressSince []time.Time
+	progressMu    sync.Mutex
 }
 
-func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, sinceID string, _ int) ([]jobs.Snapshot, error) {
+func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	call := len(s.progressSince)
 	s.progressSince = append(s.progressSince, since)
-	s.progressSinceIDs = append(s.progressSinceIDs, sinceID)
 	if call < len(s.progress) {
 		return s.progress[call], s.progressErr
 	}
@@ -425,6 +423,12 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 			ProgressUpdatedAt: &updated,
 		}}},
 	}
+	// The same snapshot on the second read is not sent again; a newer one on
+	// the third is.
+	newer := updated.Add(time.Second)
+	moved := ctx.progress[0][0]
+	moved.ProgressUpdatedAt = &newer
+	ctx.progress = append(ctx.progress, ctx.progress[0], []jobs.Snapshot{moved})
 	response := newSSETestWriter()
 	requestCtx, cancel := context.WithCancel(context.Background())
 	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=v2:5", nil).WithContext(requestCtx)
@@ -433,8 +437,8 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 		GetCanonicalJobEventsHandler(ctx)(response, request)
 		close(finished)
 	}()
-	deadline := time.Now().Add(3 * time.Second)
-	for len(ctx.progressCalls()) < 2 && time.Now().Before(deadline) {
+	deadline := time.Now().Add(6 * time.Second)
+	for len(ctx.progressCalls()) < 4 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	cancel()
@@ -445,6 +449,9 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 	frameAt := strings.Index(body, "event: job-progress\ndata: ")
 	if caughtUp < 0 || frameAt < 0 || frameAt < caughtUp {
 		t.Fatalf("SSE body = %q; want a job-progress frame after the caught-up marker", body)
+	}
+	if frames := strings.Count(body, "event: job-progress\n"); frames != 2 {
+		t.Fatalf("SSE body has %d progress frames; want one per distinct snapshot, not one per read", frames)
 	}
 	if strings.Count(body, "id: ") != 1 {
 		t.Fatalf("SSE body = %q; a live progress frame must carry no delivery id", body)
@@ -466,13 +473,12 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 		t.Fatalf("frame point = %+v, series = %+v; want only the latest point", frame.Point, frame.Progress.Series)
 	}
 	calls := ctx.progressCalls()
-	if len(calls) < 2 || !calls[1].Equal(updated) {
-		t.Fatalf("live progress watermarks = %v; want the second read to start from the delivered row's %v", calls, updated)
+	if len(calls) < 2 {
+		t.Fatalf("live progress was read %d times; want a read per poll", len(calls))
 	}
-	ctx.progressMu.Lock()
-	ids := append([]string(nil), ctx.progressSinceIDs...)
-	ctx.progressMu.Unlock()
-	if ids[0] != "" || ids[1] != "job-123" {
-		t.Fatalf("live progress watermark ids = %v; want the delivered row's id to resume after", ids)
+	for _, since := range calls {
+		if age := time.Since(since); age < liveProgressWindow-5*time.Second || age > liveProgressWindow+5*time.Second {
+			t.Fatalf("a live read started %v back; want the %v window from the stream's own clock", age, liveProgressWindow)
+		}
 	}
 }

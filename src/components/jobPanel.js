@@ -24,6 +24,7 @@ import {
 import {
     applyProgressFrame,
     formatAmount,
+    mergeFetchedProgress,
     liveEtaText,
     liveRateText,
     formatMetric,
@@ -404,8 +405,11 @@ export function jobPanel() {
             this.jobs = jobs;
         },
 
+        // Every list assignment goes through here, so a fetched or command-
+        // answered copy of a row never rolls back the live progress it holds.
         bounded(jobs) {
-            return boundedPanelJobs(jobs, this.finishedLimit);
+            const held = new Map(this.jobs.map(job => [job.id, job]));
+            return boundedPanelJobs((jobs || []).map(job => mergeFetchedProgress(job, held.get(job?.id))), this.finishedLimit);
         },
 
         markStreamCaughtUp(event) {
@@ -640,7 +644,9 @@ export function jobPanel() {
         phaseText(job) { return phaseText(job); },
         progressText(job) { return progressText(job); },
         progressValue(job) { return progressValue(job); },
-        progressIndeterminate(job) { return progressIndeterminate(job); },
+        // Only running work pulses: a paused or queued Job with no total is
+        // waiting, not working.
+        progressIndeterminate(job) { return progressIndeterminate(job) && job?.state === 'running'; },
         progressAccessibleText(job) { return progressAccessibleText(job); },
         showsProgress(job) {
             const progress = job?.progress || {};

@@ -93,20 +93,24 @@ func TestProgressFilterPassesAnOverlongLineThroughUninspected(t *testing.T) {
 }
 
 func TestProgressFilterRedactsReportText(t *testing.T) {
-	h := newProgressFilterHarness("hunter2")
-	_, _ = h.filter.Write([]byte(`::mah-progress {"message":"using hunter2","unit":"hunter2","metrics":[{"key":"hunter2","label":"Rows for hunter2","value":1}]}` + "\n"))
+	h := newProgressFilterHarness("hunter2", "line\nbreak")
+	_, _ = h.filter.Write([]byte(`::mah-progress {"message":"using hunter2 and line\nbreak","unit":"hunter2","metrics":[{"key":"hunter2","label":"x","value":1},{"key":"rows","label":"Rows for hunter2","value":2}]}` + "\n"))
 	if len(h.reports) != 1 {
 		t.Fatalf("reports = %+v", h.reports)
 	}
 	report := h.reports[0]
-	metric := (*report.Metrics)[0]
-	for _, text := range []string{*report.Message, *report.Unit, metric.Label, metric.Key} {
-		if strings.Contains(text, "hunter2") {
-			t.Fatalf("report carried the secret: %+v / %+v", report, metric)
-		}
+	// A metric whose key is the secret is left out; renaming it could collide
+	// with another key or be the secret itself.
+	if len(*report.Metrics) != 1 || (*report.Metrics)[0].Key != "rows" {
+		t.Fatalf("metrics = %+v; want only the rows metric", *report.Metrics)
 	}
-	if metric.Key != "metric-1" {
-		t.Fatalf("redacted key = %q; want a neutral replacement", metric.Key)
+	for _, text := range []string{*report.Message, *report.Unit, (*report.Metrics)[0].Label} {
+		if strings.Contains(text, "hunter2") || strings.Contains(text, "line break") || strings.Contains(text, "line\nbreak") {
+			t.Fatalf("report carried a secret: %q", text)
+		}
+		if strings.ContainsAny(text, "\n\t") {
+			t.Fatalf("report text %q is not one line", text)
+		}
 	}
 }
 

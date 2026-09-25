@@ -18,7 +18,7 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
-	GetLiveJobProgress(since time.Time, sinceID string, limit int) ([]jobs.Snapshot, error)
+	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
 }
 
 // JobProgressFrame is one live progress update on the canonical stream. It is
@@ -37,11 +37,14 @@ type JobProgressFrame struct {
 	IntervalMs int64 `json:"intervalMs,omitempty"`
 }
 
-// liveProgressLookback is how far before the stream opened its live feed
-// starts. A progress timestamp is written by whichever process runs the Job, so
-// a little overlap absorbs clock skew between processes; a frame delivered
-// twice is harmless, because each one replaces the row's progress.
-const liveProgressLookback = 2 * time.Second
+// liveProgressWindow is how far back each poll looks for progress changes. A
+// progress timestamp is written by whichever process runs the Job, so it
+// cannot be a cursor: one writer's clock running ahead would hold a watermark
+// past every other writer's updates. Each poll instead reads this window and
+// sends only the snapshots this connection has not sent, so skew up to the
+// window's width costs nothing. A frame repeated after a reconnect is
+// harmless: each one replaces the row's progress.
+const liveProgressWindow = 30 * time.Second
 
 func jobProgressFrame(snap jobs.Snapshot, now time.Time) JobProgressFrame {
 	frame := JobProgressFrame{
@@ -161,7 +164,8 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("X-Accel-Buffering", "no")
 
 		const catchupPageSize = jobs.DefaultEventPageSize
-		progressSince, progressSinceID := time.Now().Add(-liveProgressLookback), ""
+		// The progress snapshot this connection last sent for each Job.
+		sentProgress := map[string]time.Time{}
 		poll := time.NewTicker(time.Second)
 		defer poll.Stop()
 		heartbeat := time.NewTicker(15 * time.Second)
@@ -211,21 +215,32 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			// lifecycle event that explains it. A failed read skips this poll's
 			// frames rather than ending the stream: the events are the part a
 			// reconnect must recover, and the next tick reads progress afresh.
-			if snapshots, err := ctx.GetLiveJobProgress(progressSince, progressSinceID, jobs.MaxLiveProgressRows); err == nil && len(snapshots) > 0 {
-				now := time.Now()
+			now := time.Now()
+			if snapshots, err := ctx.GetLiveJobProgress(now.Add(-liveProgressWindow), jobs.MaxLiveProgressRows); err == nil {
+				seen := make(map[string]time.Time, len(snapshots))
+				wrote := false
 				for _, snap := range snapshots {
+					if snap.ProgressUpdatedAt == nil {
+						continue
+					}
+					updated := *snap.ProgressUpdatedAt
+					seen[snap.ID] = updated
+					if last, ok := sentProgress[snap.ID]; ok && last.Equal(updated) {
+						continue
+					}
 					data, err := json.Marshal(jobProgressFrame(snap, now))
 					if err != nil {
 						return
 					}
 					fmt.Fprintf(w, "event: job-progress\ndata: %s\n\n", data)
-					// Rows arrive in watermark order, so the last one is the
-					// new watermark.
-					if snap.ProgressUpdatedAt != nil {
-						progressSince, progressSinceID = *snap.ProgressUpdatedAt, snap.ID
-					}
+					wrote = true
 				}
-				flusher.Flush()
+				// Only Jobs still inside the window are remembered, which
+				// bounds the map by the read's own row limit.
+				sentProgress = seen
+				if wrote {
+					flusher.Flush()
+				}
 			}
 			select {
 			case <-r.Context().Done():

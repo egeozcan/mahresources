@@ -458,6 +458,27 @@ describe('Job Center drawer live progress', () => {
         expect(panel.showsProgress(job)).toBe(false);
     });
 
+    test('a list refresh answered before the latest frame keeps the newer progress', async () => {
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'job-1', state: 'running', version: 4, acceptedAt: '2026-09-25T10:00:00Z',
+            progress: { completed: 900, updatedAt: '2026-09-25T10:00:09Z' } }];
+        panel.requestJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname !== '/v1/jobs') return { id: 'job-1', commands: [] };
+            return { jobs: url.searchParams.getAll('state').includes('running')
+                ? [{ id: 'job-1', state: 'running', version: 4, acceptedAt: '2026-09-25T10:00:00Z',
+                    progress: { completed: 300, updatedAt: '2026-09-25T10:00:03Z' } }] : [] };
+        });
+        await panel.refresh();
+        expect(panel.jobs[0].progress.completed).toBe(900);
+    });
+
+    test('only running work pulses', () => {
+        const panel = jobPanel();
+        expect(panel.progressIndeterminate({ state: 'running', progress: {} })).toBe(true);
+        expect(panel.progressIndeterminate({ state: 'paused', progress: {} })).toBe(false);
+    });
+
     test('groups rows by what a person does next, leaving empty groups out', () => {
         const panel = jobPanel();
         panel.jobs = [

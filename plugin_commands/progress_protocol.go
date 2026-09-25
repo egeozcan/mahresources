@@ -182,13 +182,15 @@ func (f *progressLineFilter) endLine() error {
 // sequences are stripped first, exactly as the tail strips them before it
 // redacts: JSON can carry an escape character, and a secret split by one would
 // otherwise slip past an exact-value match and still read whole on the page.
+// Newlines and tabs survive until after redaction, because a secret may
+// contain them; only then do they become spaces.
 func (f *progressLineFilter) redactReport(report ProgressReport) ProgressReport {
 	clean := func(value string) string {
 		value = stripProgressControls(value)
 		if f.redact != nil {
 			value = f.redact(value)
 		}
-		return value
+		return strings.NewReplacer("\n", " ", "\t", " ").Replace(value)
 	}
 	text := func(value *string) *string {
 		if value == nil {
@@ -200,13 +202,16 @@ func (f *progressLineFilter) redactReport(report ProgressReport) ProgressReport 
 	report.Unit = text(report.Unit)
 	report.Message = text(report.Message)
 	if report.Metrics != nil {
-		metrics := jobmetrics.Clone(*report.Metrics)
-		for i := range metrics {
-			metrics[i].Label = clean(metrics[i].Label)
-			metrics[i].Unit = clean(metrics[i].Unit)
-			if clean(metrics[i].Key) != metrics[i].Key {
-				metrics[i].Key = fmt.Sprintf("metric-%d", i+1)
+		metrics := make([]jobmetrics.Metric, 0, len(*report.Metrics))
+		for _, metric := range jobmetrics.Clone(*report.Metrics) {
+			// A key that redaction would change is left out rather than
+			// renamed: a replacement could collide or be the hidden value.
+			if clean(metric.Key) != metric.Key {
+				continue
 			}
+			metric.Label = clean(metric.Label)
+			metric.Unit = clean(metric.Unit)
+			metrics = append(metrics, metric)
 		}
 		report.Metrics = &metrics
 	}
@@ -214,9 +219,9 @@ func (f *progressLineFilter) redactReport(report ProgressReport) ProgressReport 
 }
 
 // stripProgressControls removes what outputTail removes from captured output
-// (ESC-introduced CSI and OSC sequences, and every other C0 control and DEL),
-// turns a newline or tab into a space, since a label or message is one line,
-// and removes the C1 controls, which a JSON string can spell as single runes.
+// (ESC-introduced CSI and OSC sequences, and every C0 control but newline and
+// tab, and DEL), and removes the C1 controls, which a JSON string can spell as
+// single runes.
 func stripProgressControls(value string) string {
 	var out strings.Builder
 	out.Grow(len(value))
@@ -248,10 +253,7 @@ func stripProgressControls(value string) string {
 		case b == 0x1b:
 			escape = true
 			continue
-		case b == '\n' || b == '\t':
-			out.WriteByte(' ')
-			continue
-		case b < 0x20 || b == 0x7f:
+		case b < 0x20 && b != '\n' && b != '\t', b == 0x7f:
 			continue
 		}
 		out.WriteByte(b)

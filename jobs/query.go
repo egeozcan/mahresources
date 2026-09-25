@@ -1534,24 +1534,24 @@ func failureClassCounts(base *gorm.DB) ([]FailureClassCount, error) {
 // few that are running; the bound keeps a burst from becoming one huge frame.
 const MaxLiveProgressRows = 100
 
-// LiveProgress returns the visible Jobs whose progress changed after the
-// watermark (since, sinceID), oldest change first. A caller advances the
-// watermark to the last row's ProgressUpdatedAt and ID and resumes there; the
-// ID half is what keeps rows that share one timestamp across a page boundary
-// from being skipped.
+// LiveProgress returns the visible Jobs whose progress changed after since,
+// newest change first. The timestamps are written by whichever process runs
+// each Job, so they are not a cursor: a caller reads a recent window every time
+// and remembers which snapshot of each Job it already sent, which tolerates
+// clock skew between writers up to the window's width.
 //
 // It exists because a progress tick is deliberately not a Job Event: the
 // resumable event stream never carries one. This read is the live feed beside
 // it — no cursor, no durability, and the same visibility predicate as every
 // other read, so a hidden Job's progress is never delivered.
-func (s *Service) LiveProgress(deps Deps, access Access, since time.Time, sinceID string, limit int) ([]Snapshot, error) {
+func (s *Service) LiveProgress(deps Deps, access Access, since time.Time, limit int) ([]Snapshot, error) {
 	if limit <= 0 || limit > MaxLiveProgressRows {
 		limit = MaxLiveProgressRows
 	}
 	var rows []models.Job
 	err := jobQuery(deps.DB.Model(&models.Job{}), access).
-		Where("jobs.progress_updated_at > ? OR (jobs.progress_updated_at = ? AND jobs.id > ?)", since.UTC(), since.UTC(), sinceID).
-		Order("jobs.progress_updated_at ASC").Order("jobs.id ASC").
+		Where("jobs.progress_updated_at > ?", since.UTC()).
+		Order("jobs.progress_updated_at DESC").Order("jobs.id DESC").
 		Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read live progress: %w", err)

@@ -247,11 +247,17 @@ milliseconds, `c` the completed amount, `r` the rate per second since the
 previous point, and `v` the graphed metrics by key.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
-`job-progress` event for every visible Job whose progress changed. Its data is
-`{jobId, version, state, progress, point, intervalMs}`, where `point` is the
-latest series point. Like `job-caught-up`, it has no SSE `id`: it never moves the
-delivery cursor and is not replayed on reconnect. A reader that reconnects
-fetches the Jobs it shows and continues from the next frame.
+`job-progress` event for every visible Job whose progress changed in the last
+30 seconds and whose current snapshot this connection has not sent yet. Its
+data is `{jobId, version, state, progress, point, intervalMs}`, where `point` is
+the latest series point. Like `job-caught-up`, it has no SSE `id` and never
+moves the delivery cursor. A new connection can therefore receive frames for
+changes an earlier connection already delivered. Each frame replaces the Job's
+progress, so a reader treats a repeat as a no-op: it ignores a frame whose
+`progress.updatedAt` is older than the progress it holds, and replaces rather
+than appends a point whose `t` equals its last point's. Progress timestamps are
+written by whichever process runs the Job, and the 30-second window is what
+absorbs clock skew between those processes.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale

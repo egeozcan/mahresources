@@ -2,6 +2,7 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import {
     applyProgressFrame,
     formatAmount,
+    mergeFetchedProgress,
     liveEtaText,
     liveRateText,
     formatMetric,
@@ -582,9 +583,10 @@ export function jobCenter(options = {}) {
         applyStreamSnapshot(job, previousResult = null, announce = false) {
             if (!job?.id) return;
             const result = previousResult || reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
-            if (result.changed) this.jobs = result.jobs;
-            this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
-            if (this.detail?.id === job.id) this.detail = { ...this.detail, ...job };
+            const held = new Map(this.jobs.map(current => [current.id, current]));
+            if (result.changed) this.jobs = result.jobs.map(next => mergeFetchedProgress(next, held.get(next.id)));
+            this.details[job.id] = mergeFetchedProgress({ ...(this.details[job.id] || {}), ...job }, this.details[job.id]);
+            if (this.detail?.id === job.id) this.detail = mergeFetchedProgress({ ...this.detail, ...job }, this.detail);
             if (announce && result.announcement) this._liveRegion?.announce(result.announcement);
         },
 

@@ -11,6 +11,7 @@ import {
     graphSummary,
     liveEtaText,
     liveRateText,
+    mergeFetchedProgress,
     mergeLivePoint,
     sparklinePath,
 } from './jobProgress.js';
@@ -148,5 +149,19 @@ describe('job progress freshness', () => {
         expect(applyProgressFrame(job, stale)).toBe(job);
         const fresh = { jobId: 'j', version: 1, progress: { completed: 95, updatedAt: '2026-09-25T10:00:06Z' } };
         expect(applyProgressFrame(job, fresh).progress.completed).toBe(95);
+    });
+});
+
+describe('fetched copies of a Job', () => {
+    test('never roll back newer live progress, and keep the drawn series', () => {
+        const held = { id: 'j', version: 2, progress: { completed: 90, updatedAt: '2026-09-25T10:00:09Z', series: { points: [{ t: 1 }] } } };
+        const older = { id: 'j', version: 2, state: 'running', progress: { completed: 40, updatedAt: '2026-09-25T10:00:03Z' } };
+        expect(mergeFetchedProgress(older, held).progress.completed).toBe(90);
+        expect(mergeFetchedProgress(older, held).state).toBe('running');
+        const newerNoSeries = { id: 'j', version: 3, progress: { completed: 95, updatedAt: '2026-09-25T10:00:10Z' } };
+        const merged = mergeFetchedProgress(newerNoSeries, held);
+        expect(merged.progress.completed).toBe(95);
+        expect(merged.progress.series).toBe(held.progress.series);
+        expect(mergeFetchedProgress(older, undefined)).toBe(older);
     });
 });
