@@ -1088,6 +1088,10 @@ components:
                     type: array
                 unit:
                     type: string
+                units:
+                    additionalProperties:
+                        type: string
+                    type: object
             type: object
         JobSeriesPointResponse:
             properties:

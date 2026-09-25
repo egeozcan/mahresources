@@ -145,7 +145,11 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	// A rate is only meaningful within one unit. A change of unit ends every
 	// rate measured in the old one, and keeps the graphed metrics, which carry
 	// their own units.
-	if progress.Unit != series.Unit {
+	// A tick that reports no measure at all (an HLS stream muxing, say, between
+	// counting segments and finishing) says nothing about the unit, and must
+	// not erase the history measured in it.
+	noMeasure := progress.Completed == nil && progress.Unit == ""
+	if progress.Unit != series.Unit && !noMeasure {
 		if len(series.Points) > 0 || series.Anchor != nil {
 			for i := range series.Points {
 				series.Points[i].Rate = nil

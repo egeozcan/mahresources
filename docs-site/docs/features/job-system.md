@@ -244,7 +244,10 @@ Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
 is included as `progress.series` on `GET /v1/jobs/{id}`, and on `GET /v1/jobs`
 only with `include=progressSeries`. Series points use short names: `t` is Unix
 milliseconds, `c` the completed amount, `r` the rate per second since the
-previous point, and `v` the graphed metrics by key.
+previous point, and `v` the graphed metrics by key. `series.units` records the
+unit each graphed key was reported in; a key that comes back in another unit
+starts a fresh history. A tick that reports no measure at all, such as an HLS
+stream while it muxes, leaves the history as it was.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
 `job-progress` event for every visible Job whose progress changed in the last

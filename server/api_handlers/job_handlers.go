@@ -471,6 +471,10 @@ type JobProgressSeriesResponse struct {
 	IntervalMs int64                    `json:"intervalMs"`
 	Unit       string                   `json:"unit,omitempty"`
 	Points     []JobSeriesPointResponse `json:"points"`
+	// Units is each graphed metric key's unit as the series recorded it, so a
+	// reader extending the series from live frames can tell when a key comes
+	// back in another unit.
+	Units map[string]string `json:"units,omitempty"`
 }
 
 type JobSeriesPointResponse struct {
@@ -508,6 +512,7 @@ func jobSeriesResponse(series jobs.ProgressSeries) *JobProgressSeriesResponse {
 	out := &JobProgressSeriesResponse{
 		IntervalMs: series.IntervalMs, Unit: series.Unit,
 		Points: make([]JobSeriesPointResponse, 0, len(series.Points)),
+		Units:  series.Units,
 	}
 	for _, point := range series.Points {
 		out.Points = append(out.Points, jobSeriesPointResponse(point))

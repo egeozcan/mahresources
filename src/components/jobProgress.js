@@ -301,17 +301,28 @@ export function applyProgressFrame(job, frame) {
         };
     }
     // Likewise per graphed metric: a key now reported in another unit loses
-    // the values it held in the old one, as the server's series does.
-    const heldUnits = new Map((previous.metrics || []).filter(metric => metric.graph).map(metric => [metric.key, metric.unit || '']));
-    const changedKeys = (frame.progress?.metrics || [])
-        .filter(metric => metric.graph && heldUnits.has(metric.key) && heldUnits.get(metric.key) !== (metric.unit || ''))
-        .map(metric => metric.key);
-    if (changedKeys.length && previous.series) {
+    // the values it held in the old one, as the server's series does. The
+    // series carries each key's recorded unit (series.units), which survives
+    // a report that omitted the metric; the held metrics fill in for a series
+    // that predates it.
+    if (previous.series) {
+        const units = { ...(previous.series.units || {}) };
+        for (const metric of previous.metrics || []) {
+            if (metric.graph && !(metric.key in units)) units[metric.key] = metric.unit || '';
+        }
+        const changedKeys = [];
+        for (const metric of frame.progress?.metrics || []) {
+            if (!metric.graph) continue;
+            const unit = metric.unit || '';
+            if (metric.key in units && units[metric.key] !== unit) changedKeys.push(metric.key);
+            units[metric.key] = unit;
+        }
         previous = {
             ...previous,
             series: {
                 ...previous.series,
-                points: (previous.series.points || []).map(point => {
+                units,
+                points: !changedKeys.length ? previous.series.points : (previous.series.points || []).map(point => {
                     if (!point.v) return point;
                     const values = { ...point.v };
                     changedKeys.forEach(key => { delete values[key]; });

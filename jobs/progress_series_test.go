@@ -481,3 +481,16 @@ func TestAGraphedKeyReusedInAnotherUnitStartsAFreshHistory(t *testing.T) {
 		t.Fatalf("points holding size = %d, unit %q; want only the items sample", held, series.Units["size"])
 	}
 }
+
+func TestATickWithNoMeasureKeepsTheHistory(t *testing.T) {
+	var series ProgressSeries
+	series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Total: int64Ptr(10), Unit: "items"}, false)
+	series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(10), Total: int64Ptr(10), Unit: "items"}, false)
+	series, _ = advanceSeries(series, at(2), Progress{Phase: "muxing"}, false)
+	if series.Unit != "items" || series.Points[1].Completed == nil || series.Points[1].Rate == nil {
+		t.Fatalf("series = %+v; a tick with no measure must not erase the items history", series)
+	}
+	if avg := series.AverageRate(); avg == nil || *avg != 10 {
+		t.Fatalf("average rate = %v; want 10 items/s", avg)
+	}
+}
