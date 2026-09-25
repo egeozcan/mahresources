@@ -2110,3 +2110,10 @@ where the review's own record lives.
 ## Job Center dismissal filters — 2026-09-24
 
 - Treat an **Any** filter as the absence of a query parameter throughout list, summary, pagination, and live refresh requests. Apply the undismissed default only to Overview. Clear All jobs filters when entering Overview so later stream refreshes use the same scope as its summary. Test both directions of view navigation against dismissed records.
+
+## Jobs drawer failure reason — 2026-09-25
+
+- Run the pi review loop on every change before reporting it done, including a small fix that already has green tests. A one-request fix here went out with a string-matching URL redaction that four review rounds showed was unsafe; the tests only covered the inputs I had thought of.
+- Redact at the source that still holds the error value, not in the text afterwards. A `*url.Error` carries its URL separately, a status is a code, and a wrapper's prefix can be split from its cause. A regexp over the rendered string misses an apostrophe, a relative reference and a raw input that does not look like a URL.
+- A live region outside an `aria-modal` dialog may go unheard while the dialog is open. A dialog that announces needs its own region, and the two regions' pending messages need one owner: decide the destination when the message lands, and let the newest cancel the older in either region.
+- Run the full E2E suite before each review round that changes shared markup, not only the specs for the feature. A second `role="status"` in the drawer broke an unrelated accessibility spec's strict locator, and the feature spec could not show it.
