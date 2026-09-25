@@ -1052,27 +1052,67 @@ describe('Job Center panel accessibility hooks', () => {
                 selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
         });
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const page: string[] = [];
+        panel._liveRegion = { announce: vi.fn((message: string) => page.push(message)), destroy: vi.fn() } as any;
 
         panel.isOpen = true;
         panel.announce('video.mp4 failed: HTTP 403 Forbidden.');
         expect(announcer.textContent).toBe('');
         vi.advanceTimersByTime(50);
         expect(announcer.textContent).toBe('video.mp4 failed: HTTP 403 Forbidden.');
-        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        expect(page).toEqual([]);
 
         panel.isOpen = false;
         panel.announce('clip.mp4 failed.');
-        expect(panel._liveRegion.announce).toHaveBeenCalledWith('clip.mp4 failed.');
+        expect(page).toEqual(['clip.mp4 failed.']);
+        vi.useRealTimers();
+    });
 
-        // Closed between the announcement and its landing: x-if removed the
-        // drawer's region, so the page's must say it.
+    test('a drawer announcement lands where the drawer is when it lands, and the newest wins', () => {
+        vi.useFakeTimers();
+        let announcer = { textContent: '', isConnected: true };
+        vi.stubGlobal('document', {
+            querySelector: vi.fn((selector: string) =>
+                selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
+        });
+        const panel = jobPanel();
+        const page: string[] = [];
+        panel._liveRegion = { announce: vi.fn((message: string) => page.push(message)), destroy: vi.fn() } as any;
+
+        // Queued inside the drawer; the drawer closes (x-if removes its region)
+        // and it lands on the page instead.
         panel.isOpen = true;
-        panel.announce('reel.mp4 failed: HTTP 404 Not Found.');
+        panel.announce('A failed.');
         panel.isOpen = false;
         announcer.isConnected = false;
         vi.advanceTimersByTime(50);
-        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('reel.mp4 failed: HTTP 404 Not Found.');
+        expect(page).toEqual(['A failed.']);
+
+        // The same, but a newer failure is said on the page before A lands:
+        // only the newer one is said.
+        page.length = 0;
+        announcer = { textContent: '', isConnected: true };
+        panel.isOpen = true;
+        panel.announce('B failed.');
+        panel.isOpen = false;
+        announcer.isConnected = false;
+        vi.advanceTimersByTime(20);
+        panel.announce('C failed.');
+        vi.advanceTimersByTime(100);
+        expect(page).toEqual(['C failed.']);
+
+        // Closed and reopened before it lands: said inside the new dialog.
+        page.length = 0;
+        announcer = { textContent: '', isConnected: true };
+        panel.isOpen = true;
+        panel.announce('D failed.');
+        panel.isOpen = false;
+        announcer.isConnected = false;
+        panel.isOpen = true;
+        announcer = { textContent: '', isConnected: true };
+        vi.advanceTimersByTime(50);
+        expect(announcer.textContent).toBe('D failed.');
+        expect(page).toEqual([]);
         vi.useRealTimers();
     });
 

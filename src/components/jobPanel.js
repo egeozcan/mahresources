@@ -244,24 +244,34 @@ export function jobPanel() {
 
         // The open drawer is aria-modal, and a screen reader may ignore a live
         // region outside a modal dialog: the one on <body> goes unheard exactly
-        // when someone is watching the drawer. While it is open the drawer's own
-        // status region speaks instead, cleared first so a repeated message is
-        // announced again, as createLiveRegion does. A drawer closed before the
-        // message lands has taken its region with it, so the page's speaks then.
+        // when someone is watching the drawer. While it is open, its own status
+        // region speaks instead. That one lands a tick later (cleared first, so
+        // the same message said twice is heard twice), and where it lands is
+        // decided then: the drawer's region if the drawer is still open, the
+        // page's if it closed meanwhile and took its region with it. Any newer
+        // announcement replaces a pending one, as createLiveRegion's own do, so
+        // an older message cannot land over a newer one said elsewhere.
         announce(message) {
-            const inside = this.isOpen
-                ? document.querySelector?.('#job-center-panel [data-job-panel-announcer]')
-                : null;
+            clearTimeout(this._drawerAnnounceTimer);
+            this._drawerAnnounceTimer = null;
+            const inside = this._drawerAnnouncer();
             if (!inside) {
                 this._liveRegion?.announce(message);
                 return;
             }
-            clearTimeout(this._drawerAnnounceTimer);
             inside.textContent = '';
             this._drawerAnnounceTimer = setTimeout(() => {
-                if (inside.isConnected) inside.textContent = message;
+                this._drawerAnnounceTimer = null;
+                const region = this._drawerAnnouncer();
+                if (region) region.textContent = message;
                 else this._liveRegion?.announce(message);
             }, 50);
+        },
+
+        _drawerAnnouncer() {
+            if (!this.isOpen) return null;
+            const region = document.querySelector?.('#job-center-panel [data-job-panel-announcer]');
+            return region?.isConnected ? region : null;
         },
 
         async requestJSON(url, init = {}) {

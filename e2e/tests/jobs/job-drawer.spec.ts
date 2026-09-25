@@ -119,14 +119,17 @@ test.describe('Jobs drawer', () => {
     await expect(card).not.toContainText('signature');
   });
   test('a download that fails while the drawer is open is announced from inside it, with its reason', async ({ page, request }) => {
-    // Held long enough for the drawer to see the Job running, so the failure is
-    // a live transition, which is what gets announced.
-    const server = http.createServer((_request, response) => {
-      setTimeout(() => {
+    // Held until the drawer has shown the Job running, so the failure is a live
+    // transition, which is what gets announced. A fixed delay would race a slow
+    // drawer, whose first sight of the Job could then be the failure itself.
+    const held: http.ServerResponse[] = [];
+    const server = http.createServer((_request, response) => { held.push(response); });
+    const release = () => {
+      for (const response of held.splice(0)) {
         response.writeHead(403, { 'Content-Type': 'text/plain' });
         response.end('no');
-      }, 3000);
-    });
+      }
+    };
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
     try {
@@ -141,12 +144,17 @@ test.describe('Jobs drawer', () => {
       });
       expect(response.status(), await response.text()).toBe(202);
       const id = (await response.json()).jobs?.[0]?.canonicalJobId as string;
-      await expect(drawer.locator(`article:has(a[href="/job?id=${id}"])`)).toBeVisible({ timeout: 10_000 });
+      const row = drawer.locator(`article:has(a[href="/job?id=${id}"])`);
+      await expect(row).toBeVisible({ timeout: 10_000 });
+      await expect(row).toContainText('Running', { timeout: 10_000 });
+      await expect.poll(() => held.length, { timeout: 10_000 }).toBeGreaterThan(0);
+      release();
 
       const announcer = drawer.locator('[data-job-panel-announcer]');
       await expect(announcer).toHaveAttribute('role', 'status');
       await expect(announcer).toContainText(`${name} failed: HTTP 403 Forbidden`, { timeout: 15_000 });
     } finally {
+      release();
       server.close();
     }
   });
