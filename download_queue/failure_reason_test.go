@@ -174,3 +174,30 @@ func TestFailureReasonLeavesTheLegacyErrorAlone(t *testing.T) {
 		t.Fatalf("the legacy representation carries the rendering: %s", encoded)
 	}
 }
+
+// TestFailureReasonIsNotQuadraticInTheSubmittedURL: the submitted URL is the
+// caller's to shape, up to the replay input's 1 MiB, and a failure is rendered
+// on a download worker. One made of many short path segments must not turn the
+// rendering of a constant reason into seconds of CPU.
+func TestFailureReasonIsNotQuadraticInTheSubmittedURL(t *testing.T) {
+	var path strings.Builder
+	for i := 0; i < 65000; i++ {
+		path.WriteString("/a")
+		path.WriteString(strings.Repeat(string(rune('a'+i%26)), 4))
+		path.WriteByte(byte('0' + i%10))
+	}
+	for i := 0; i < 65000; i++ {
+		path.WriteString("/b")
+		path.WriteString(strings.Repeat(string(rune('a'+i%26)), 5))
+		path.WriteByte(byte('0' + i%10))
+	}
+	submitted := "https://cdn.example.com" + path.String()
+	start := time.Now()
+	got := failureReason(submitted, nil, errors.New("HTTP 414 URI Too Long"))
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("rendering took %s for a %d-byte URL", elapsed, len(submitted))
+	}
+	if got != "HTTP 414 URI Too Long" {
+		t.Fatalf("failureReason = %q", got)
+	}
+}

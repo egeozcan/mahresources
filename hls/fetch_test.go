@@ -323,6 +323,13 @@ func TestFetchRetriesTransientButNotPermanentFailures(t *testing.T) {
 	if _, err = fetchAll(t, deps(), srv.URL+"/index.m3u8", Options{SegmentRetries: 3}, nil); err == nil {
 		t.Fatal("a 404 segment produced a video")
 	}
+	// The download queue names a status by its code, from this type, rather than
+	// repeating the status line the server wrote; a plain error here would put
+	// the server's own text into the durable Job.
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) || statusErr.Code != http.StatusNotFound {
+		t.Errorf("a 404 segment failed with %v, want a *StatusError carrying 404", err)
+	}
 	if attempts.Load() != 1 {
 		t.Errorf("a 404 segment was attempted %d times, want 1 — retrying it cannot change the answer", attempts.Load())
 	}

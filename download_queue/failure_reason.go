@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -96,8 +97,14 @@ func scrubReasonText(submitted string, headers map[string]string, text string) s
 	if len(submitted) > 1 {
 		text = strings.ReplaceAll(text, submitted, originOrEllipsis(submitted))
 	}
-	for _, secret := range submittedSecrets(submitted, headers) {
-		text = strings.ReplaceAll(text, secret, "…")
+	if secrets := submittedSecrets(submitted, headers); len(secrets) > 0 {
+		// One pass over the text, not one per secret: the submitted URL is the
+		// caller's to shape, and a long one of short segments is a great many.
+		pairs := make([]string, 0, 2*len(secrets))
+		for _, secret := range secrets {
+			pairs = append(pairs, secret, "…")
+		}
+		text = strings.NewReplacer(pairs...).Replace(text)
 	}
 	text = scrubQuoted(text)
 	return reasonURLPattern.ReplaceAllStringFunc(text, func(match string) string {
@@ -108,9 +115,8 @@ func scrubReasonText(submitted string, headers map[string]string, text string) s
 }
 
 // submittedSecrets lists what the submission carried that must not appear: the
-// parts of its URL and the values of the headers it sent. Longest first, so a
-// longer part is replaced before any part inside it. The URL as a whole is
-// replaced by its origin before these run.
+// parts of its URL and the values of the headers it sent, longest first. The URL
+// as a whole is replaced by its origin before these run.
 func submittedSecrets(submitted string, headers map[string]string) []string {
 	var secrets []string
 	add := func(s string) {
@@ -164,12 +170,12 @@ func submittedSecrets(submitted string, headers map[string]string) []string {
 			}
 		}
 	}
-	// Longest first.
-	for i := 1; i < len(secrets); i++ {
-		for j := i; j > 0 && len(secrets[j]) > len(secrets[j-1]); j-- {
-			secrets[j], secrets[j-1] = secrets[j-1], secrets[j]
-		}
-	}
+	// Longest first, so that where two match at one position the longer is the
+	// one replaced (a Replacer prefers the earlier of its pairs). Deduplicated,
+	// and sorted in n log n: the parts are as many as the caller made them.
+	slices.Sort(secrets)
+	secrets = slices.Compact(secrets)
+	slices.SortStableFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	return secrets
 }
 
