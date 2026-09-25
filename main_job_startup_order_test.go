@@ -66,7 +66,7 @@ end
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("migrateJobCore: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestImportRetryFactsBackfillOnUpgradeAndReconcileOnRestart(t *testing.T) {
 	); err != nil {
 		t.Fatalf("migrate application tables: %v", err)
 	}
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("migrate Job core: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestImportRetryFactsBackfillOnUpgradeAndReconcileOnRestart(t *testing.T) {
 		"apply-plan-missing": seedFailedImport(application_context.JobKindGroupImportApply,
 			`{"parseHandle":"upgrade-apply-plan-missing","plan":"_imports/upgrade-apply-plan-missing.plan.json","decisions":{"mappingActions":{},"danglingActions":{}}}`),
 	}
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("migrate Job core during upgrade: %v", err)
 	}
 	var beforeUpgrade int64

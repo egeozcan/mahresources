@@ -72,17 +72,16 @@ func requireVisibleJob(db *gorm.DB, access Access, jobID string) error {
 // accepted_at is not unique: a page boundary drawn on the instant alone would
 // either repeat or skip every Job accepted in the same tick.
 func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, limit int) (Page, error) {
-	query, size, err := s.listQuery(deps, access, filter, cursor, limit)
-	if err != nil {
-		return Page{}, err
-	}
-	query = continueAfter(query, cursor)
-
 	// One row beyond the page is read so the answer says whether there is a next
 	// page without a second query, and without ever reporting a next page that
 	// turns out to be empty.
-	var rows []models.Job
-	if err := query.Order("jobs.accepted_at DESC, jobs.id DESC").Limit(size + 1).Find(&rows).Error; err != nil {
+	if err := validateCursor(cursor); err != nil {
+		return Page{}, err
+	}
+	rows, size, err := s.readListRows(deps, access, filter, limit, false, true, func(query *gorm.DB) *gorm.DB {
+		return continueAfter(query, cursor)
+	})
+	if err != nil {
 		return Page{}, fmt.Errorf("jobs: list: %w", err)
 	}
 
@@ -125,17 +124,13 @@ func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cur
 	if before.ID == "" {
 		return s.List(deps, access, filter, Cursor{}, limit)
 	}
-	query, size, err := s.listQuery(deps, access, filter, before, limit)
-	if err != nil {
+	if err := validateCursor(before); err != nil {
 		return Page{}, err
 	}
-
-	// Two statements branch from this query, so each takes its own session: a
-	// chained GORM handle shares its statement, and the probe below would
-	// otherwise inherit this read's condition and find nothing.
-	var rows []models.Job
-	if err := continueBefore(query.Session(&gorm.Session{}), before).
-		Order("jobs.accepted_at ASC, jobs.id ASC").Limit(size + 1).Find(&rows).Error; err != nil {
+	rows, size, err := s.readListRows(deps, access, filter, limit, false, false, func(query *gorm.DB) *gorm.DB {
+		return continueBefore(query, before)
+	})
+	if err != nil {
 		return Page{}, fmt.Errorf("jobs: list before: %w", err)
 	}
 	if len(rows) <= size {
@@ -153,12 +148,14 @@ func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cur
 	// Whether anything is older than this page is asked rather than assumed: the
 	// cursor's own row may be gone, and a Next that opens an empty page is the
 	// answer List promises never to give.
-	var older int64
 	last := *cursorOf(rows[len(rows)-1])
-	if err := continueAfter(query.Session(&gorm.Session{}), last).Limit(1).Count(&older).Error; err != nil {
+	older, _, err := s.readListRows(deps, access, filter, limit, true, true, func(query *gorm.DB) *gorm.DB {
+		return continueAfter(query, last)
+	})
+	if err != nil {
 		return Page{}, fmt.Errorf("jobs: list before: %w", err)
 	}
-	if older > 0 {
+	if len(older) > 0 {
 		page.Next = &last
 	}
 	return s.finishPage(deps, access, page)
@@ -170,11 +167,119 @@ func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cur
 // an old failure that still needs attention disappear from the count while
 // remaining in the list.
 func (s *Service) CountByState(deps Deps, access Access, filter Filter) (map[string]int64, error) {
-	query, _, err := s.listQuery(deps, access, filter, Cursor{}, 0)
-	if err != nil {
-		return nil, err
+	branches := listBranches(filter)
+	queries := make([]*gorm.DB, 0, len(branches))
+	for _, branch := range branches {
+		query, _, err := s.listQuery(deps, access, branch, Cursor{}, 0)
+		if err != nil {
+			return nil, err
+		}
+		queries = append(queries, query)
 	}
-	return countByColumn(query, "state")
+	if len(queries) == 1 {
+		return countByColumn(queries[0], "state")
+	}
+	// The branches are disjoint, so their counts add — in one statement, so both
+	// are counted from one snapshot and a Job that moved between them in the
+	// meantime is not counted twice.
+	grouped := func(query *gorm.DB) *gorm.DB {
+		return query.Select("jobs.state AS value, COUNT(*) AS count").Group("jobs.state")
+	}
+	var rows []struct {
+		Value string
+		Count int64
+	}
+	if err := deps.DB.Raw("SELECT value, SUM(count) AS count FROM (SELECT value, count FROM (?) AS a UNION ALL SELECT value, count FROM (?) AS b) AS branches GROUP BY value",
+		grouped(queries[0]), grouped(queries[1])).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("jobs: aggregate by state: %w", err)
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Value] = row.Count
+	}
+	return counts, nil
+}
+
+// listBranches is the filter as the listing reads it: itself, or — when the
+// partial token sits beside other states that do not already include it — two
+// filters, the other states and the partial token alone. They are disjoint (the
+// first cannot hold a succeeded Job), each is one indexed seek, and List merges
+// them by the keyset. As one ordinary predicate neither spelling seeks both: a
+// bare OR lets the planner walk the accepted-order index filtering as it goes,
+// and state IN (..., succeeded) reads every succeeded entry to test its phase —
+// tens of milliseconds at 400,000 Jobs for a handful of matches, against
+// microseconds for either branch alone. The listing combines the branches in one
+// statement (readListRows); every other reader gets their ids as one predicate
+// (applyFilter).
+func listBranches(filter Filter) []Filter {
+	partial := false
+	var others []string
+	for _, token := range filter.States {
+		if token == FilterStatePartial {
+			partial = true
+			continue
+		}
+		others = append(others, token)
+	}
+	if !partial || len(others) == 0 || slices.Contains(others, string(StateSucceeded)) {
+		return []Filter{filter}
+	}
+	rest, partialOnly := filter, filter
+	rest.States = others
+	partialOnly.States = []string{FilterStatePartial}
+	return []Filter{rest, partialOnly}
+}
+
+// readListRows reads one keyset-bounded run of a listing, newest first when desc,
+// oldest first otherwise: at most size+1 rows, or one when probe asks only
+// whether any row is there. position applies the keyset bound to each branch.
+//
+// With two branches (listBranches) each is ordered and limited on its own index
+// and the two are combined in ONE statement. Separate statements would read two
+// snapshots, and a Job moving from one branch to the other between them — a
+// running Job succeeding as partial — would be returned twice.
+func (s *Service) readListRows(deps Deps, access Access, filter Filter, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) ([]models.Job, int, error) {
+	query, size, union, err := s.listRowsQuery(deps, access, filter, limit, probe, desc, position)
+	if err != nil {
+		return nil, 0, err
+	}
+	var rows []models.Job
+	if union {
+		err = query.Scan(&rows).Error
+	} else {
+		err = query.Find(&rows).Error
+	}
+	return rows, size, err
+}
+
+// listRowsQuery builds the statement readListRows runs, so a test can explain
+// exactly what the listing executes. union reports whether it is the raw
+// two-branch statement (read with Scan) rather than a query-builder one.
+func (s *Service) listRowsQuery(deps Deps, access Access, filter Filter, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) (*gorm.DB, int, bool, error) {
+	order := "jobs.accepted_at DESC, jobs.id DESC"
+	outer := "accepted_at DESC, id DESC"
+	if !desc {
+		order, outer = "jobs.accepted_at ASC, jobs.id ASC", "accepted_at ASC, id ASC"
+	}
+	branches := listBranches(filter)
+	queries := make([]*gorm.DB, 0, len(branches))
+	size, take := 0, 1
+	for _, branch := range branches {
+		query, branchSize, err := s.listQuery(deps, access, branch, Cursor{}, limit)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		size = branchSize
+		if !probe {
+			take = size + 1
+		}
+		queries = append(queries, position(query.Session(&gorm.Session{})).Order(order).Limit(take))
+	}
+	if len(queries) == 1 {
+		return queries[0], size, false, nil
+	}
+	return deps.DB.Raw("SELECT * FROM (?) AS a UNION ALL SELECT * FROM (?) AS b ORDER BY "+outer+" LIMIT ?",
+		queries[0], queries[1], take), size, true, nil
 }
 
 // listQuery validates one listing question and builds its filtered, visible,
@@ -309,7 +414,7 @@ func validateFilter(filter Filter) error {
 	}
 
 	for _, state := range filter.States {
-		if !State(state).Valid() {
+		if state != FilterStatePartial && !State(state).Valid() {
 			return invalid("unknown state %q", state)
 		}
 	}
@@ -323,8 +428,14 @@ func validateFilter(filter Filter) error {
 			return invalid("origin filter %q is empty or over its ceiling", origin)
 		}
 	}
-	if filter.Relationship != "" && !knownLinkType(filter.Relationship) {
-		return invalid("relationship %q is not one of %s", filter.Relationship, strings.Join(LinkTypes, ", "))
+	for _, relation := range []struct{ name, value string }{
+		{"relationship", filter.Relationship},
+		{"inboundRelationship", filter.InboundRelationship},
+		{"noInboundRelationship", filter.NoInboundRelationship},
+	} {
+		if relation.value != "" && !knownLinkType(relation.value) {
+			return invalid("%s %q is not one of %s", relation.name, relation.value, strings.Join(LinkTypes, ", "))
+		}
 	}
 	if filter.AcceptedAfter != nil && filter.AcceptedBefore != nil &&
 		filter.AcceptedAfter.After(*filter.AcceptedBefore) {
@@ -350,8 +461,27 @@ func ValidateFilter(filter Filter) error { return validateFilter(filter) }
 // passed in because the preference dimensions are the asker's own rows: a
 // dismissal belongs to one viewer's list, never to the Job.
 func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
+	if branches := listBranches(filter); len(branches) == 2 {
+		// The partial token beside other states, as one predicate (Summary, and
+		// every reader other than the listing, which reads the branches itself):
+		// the union of the two branches' ids, each branch the whole filter — the
+		// asker's visibility, the summary window, every other dimension — so each
+		// is an indexed seek bounded as tightly as a single-state filter is. A
+		// branch that carried only its state would materialize every historical
+		// match before an outer window threw most of them away.
+		fresh := db.Session(&gorm.Session{NewDB: true})
+		ids := make([]*gorm.DB, 0, 2)
+		for _, branch := range branches {
+			query, err := applyFilter(visibleTo(fresh.Model(&models.Job{}), access), access, branch)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, query.Select("jobs.id"))
+		}
+		return db.Where("jobs.id IN (SELECT id FROM (?) AS r UNION ALL SELECT id FROM (?) AS p)", ids[0], ids[1]), nil
+	}
 	if len(filter.States) > 0 {
-		db = db.Where("jobs.state IN ?", filter.States)
+		db = applyStateFilter(db, filter.States)
 	}
 	if len(filter.Kinds) > 0 {
 		db = db.Where("jobs.kind IN ?", filter.Kinds)
@@ -372,12 +502,13 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 		db = db.Where("jobs.accepted_at <= ?", filter.AcceptedBefore.UTC())
 	}
 	if filter.Relationship != "" {
-		// The subquery is built on a fresh statement so it carries the visibility
-		// predicate and nothing else: inherited conditions would ask the far
-		// endpoint to satisfy the asker's own filters, which would hide relations
-		// rather than authorize them.
-		visible := visibleJobIDs(db.Session(&gorm.Session{NewDB: true}), access)
-		db = db.Where(relationshipPredicate, filter.Relationship, visible)
+		db = db.Where("EXISTS (?)", linkedJobs(db, access, filter.Relationship, "from_job_id", "to_job_id"))
+	}
+	if filter.InboundRelationship != "" {
+		db = db.Where("EXISTS (?)", linkedJobs(db, access, filter.InboundRelationship, "to_job_id", "from_job_id"))
+	}
+	if filter.NoInboundRelationship != "" {
+		db = db.Where("NOT EXISTS (?)", linkedJobs(db, access, filter.NoInboundRelationship, "to_job_id", "from_job_id"))
 	}
 	if filter.Pinned != nil {
 		db = db.Where(preferencePredicate("pinned_at", *filter.Pinned), access.UserID)
@@ -391,23 +522,57 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 	return db, nil
 }
 
-// relationshipPredicate selects the Jobs that are the FROM endpoint of a lineage
-// relation *and* whose far endpoint the asker may see: the successor a Retry or
-// Repeat created, or the parent of a child stage. The endpoint is the relation's
-// own spelling — FromJobID means the successor or the parent everywhere else —
-// so a filter and a write agree about what "this Job is a retry of that one"
-// points at.
+// applyStateFilter narrows to the named states. FilterStatePartial is succeeded
+// with the partial phase. Beside other states it never reaches here as a mixed
+// list — applyFilter reads that as two branches — so what remains is the token
+// alone, or with succeeded, which already includes every partial Job.
+func applyStateFilter(db *gorm.DB, tokens []string) *gorm.DB {
+	states := make([]string, 0, len(tokens))
+	partial := false
+	for _, token := range tokens {
+		if token == FilterStatePartial {
+			partial = true
+			continue
+		}
+		states = append(states, token)
+	}
+	if partial && len(states) == 0 {
+		return db.Where("jobs.state = ? AND jobs.phase = ?", string(StateSucceeded), PhasePartial)
+	}
+	return db.Where("jobs.state IN ?", states)
+}
+
+// linkedJobs is the correlated subquery behind the three lineage filters: the
+// links of one type whose near column is the outer Job and whose far endpoint
+// the asker may see. Relationship reads a link from its FROM end (the successor
+// a Retry, Continue or Repeat created, or the parent of a child stage); the
+// inbound filters read it from its TO end (the Job that was retried or repeated,
+// or a child stage). The columns are the relation's own spelling, so a filter
+// and a write agree about what "this Job is a retry of that one" points at.
 //
-// The far endpoint is filtered by the same visibility subquery every other read
+// The far endpoint is filtered by the same visibility rule every other read
 // uses, because a relation is a fact about two Jobs: matching on the link row
 // alone made a visible Job whose only relative was hidden answer "yes" to "does
 // this have a relative", which is the existence of the hidden relationship
-// published as a filter result — and counted as one in an aggregate. Lineage
-// already drops those relatives; the filter has to agree with it.
-const relationshipPredicate = `EXISTS (
-	SELECT 1 FROM job_links l
-	WHERE l.type = ? AND l.from_job_id = jobs.id AND l.to_job_id IN (?)
-)`
+// published as a filter result — and counted as one in an aggregate. Under NOT
+// EXISTS the same rule makes a Job whose only successor is hidden read as not
+// followed. Lineage already drops those relatives; the filters agree with it.
+//
+// Each link is checked against its own far Job rather than against "IN (every
+// Job the asker may see)", which materializes that whole set — all of them, for
+// an administrator — before one page is read. The far Job is its own FROM clause
+// so visibleTo's unqualified columns resolve to it, and it is built on a fresh
+// statement so it carries the visibility rule and nothing else: inherited
+// conditions would ask the far endpoint to satisfy the asker's own filters,
+// which would hide relations rather than authorize them.
+func linkedJobs(db *gorm.DB, access Access, linkType, nearColumn, farColumn string) *gorm.DB {
+	fresh := db.Session(&gorm.Session{NewDB: true})
+	far := visibleTo(fresh.Table("jobs AS far"), access).
+		Select("1").Where("far.id = l." + farColumn)
+	return fresh.Table("job_links AS l").Select("1").
+		Where("l.type = ? AND l."+nearColumn+" = jobs.id", linkType).
+		Where("EXISTS (?)", far)
+}
 
 // preferencePredicate is one viewer-preference predicate over the asker's own
 // rows: a Job the asker has (or has not) pinned or dismissed. A viewer with no

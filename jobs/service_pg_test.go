@@ -37,6 +37,9 @@ func newPGDeps(t *testing.T) Deps {
 	if err := db.AutoMigrate(jobCoreTables()...); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
+	if err := models.EnsureJobFilterIndexes(db); err != nil {
+		t.Fatalf("create job filter indexes: %v", err)
+	}
 	return Deps{DB: db}
 }
 

@@ -15,6 +15,13 @@ expires according to the server's export-retention setting. Read the Job with
 The accepted Job is owned by the submitting account. Filtering by another
 owner or actor does not grant access to that person's Jobs.
 
+An export cannot filter by `--state partial`, `--inbound-relationship` or
+`--no-inbound-relationship`; the server refuses those with a 400. The export's
+filter is stored and run later, possibly by a worker from an older release.
+Such a worker fails an export filtered by the partial state, but it silently
+ignores the inbound relationship filters and exports a wider summary. Use
+`jobs summary` for those filters over a window of up to 90 days.
+
 # Example
 
   # Queue a CSV export for a year of remote downloads

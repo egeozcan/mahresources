@@ -10,7 +10,12 @@ List the durable Jobs visible to the current account. The server orders results
 newest first and returns an opaque `nextCursor` when another page is available.
 Pass that value to `--cursor` to continue. Use the repeatable state, kind, and
 origin filters, or narrow by owner, actor, accepted time, relationship, text,
-advertised command, or your pin and dismissal preferences.
+advertised command, or your pin and dismissal preferences. Besides the
+lifecycle states, `--state` accepts `partial`: succeeded Jobs whose Kind
+recorded that the work stopped short of finished. `--inbound-relationship`
+matches Jobs another visible Job links to (`retry-of`: retried or continued,
+`repeat-of`: repeated, `parent-child`: a child stage), and
+`--no-inbound-relationship` matches Jobs no visible Job links to that way.
 
 The canonical list endpoint is controlled by the server's Job Center release
 gate. While that endpoint is unavailable, an unfiltered `jobs list` request
@@ -21,6 +26,12 @@ the legacy response explicitly.
 
   # Find failed remote downloads
   mr jobs list --state failed --kind remote-download --limit 50
+
+  # Find work that stopped short of finished, or failed
+  mr jobs list --state partial --state failed
+
+  # Failed Jobs nobody has retried yet
+  mr jobs list --state failed --no-inbound-relationship retry-of
 
   # Continue from an opaque cursor on the next page
   mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'

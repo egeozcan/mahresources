@@ -15,6 +15,13 @@ expires according to the server's export-retention setting. Read the Job with
 The accepted Job is owned by the submitting account. Filtering by another
 owner or actor does not grant access to that person's Jobs.
 
+An export cannot filter by `--state partial`, `--inbound-relationship` or
+`--no-inbound-relationship`; the server refuses those with a 400. The export's
+filter is stored and run later, possibly by a worker from an older release.
+Such a worker fails an export filtered by the partial state, but it silently
+ignores the inbound relationship filters and exports a wider summary. Use
+`jobs summary` for those filters over a window of up to 90 days.
+
 ## Usage
 
 ```bash
@@ -48,6 +55,8 @@ mr jobs summary export --from 2024-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --f
 | `--accepted-after` | string | `` | Include Jobs accepted at or after RFC3339 time |
 | `--accepted-before` | string | `` | Include Jobs accepted at or before RFC3339 time |
 | `--relationship` | string | `` | Filter by visible lineage relationship |
+| `--inbound-relationship` | string | `` | Filter Jobs a visible Job links to with this relationship (retried, repeated, or child stage) |
+| `--no-inbound-relationship` | string | `` | Filter Jobs no visible Job links to with this relationship (for example, not yet retried) |
 | `--search` | string | `` | Search visible Job text and output labels |
 | `--command` | string | `` | Filter Jobs currently advertising this command key |
 | `--pinned` | string | `` | Filter this viewer's pin preference (true or false) |

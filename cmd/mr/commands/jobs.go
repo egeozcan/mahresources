@@ -354,6 +354,8 @@ type cliJobFilterFlags struct {
 	ownerID, actorID              uint
 	acceptedAfter, acceptedBefore string
 	relationship, search, command string
+	inboundRelationship           string
+	noInboundRelationship         string
 	pinned, dismissed             string
 }
 
@@ -368,6 +370,8 @@ func (f *jobFilterFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.acceptedAfter, "accepted-after", "", "Include Jobs accepted at or after RFC3339 time")
 	cmd.Flags().StringVar(&f.acceptedBefore, "accepted-before", "", "Include Jobs accepted at or before RFC3339 time")
 	cmd.Flags().StringVar(&f.relationship, "relationship", "", "Filter by visible lineage relationship")
+	cmd.Flags().StringVar(&f.inboundRelationship, "inbound-relationship", "", "Filter Jobs a visible Job links to with this relationship (retried, repeated, or child stage)")
+	cmd.Flags().StringVar(&f.noInboundRelationship, "no-inbound-relationship", "", "Filter Jobs no visible Job links to with this relationship (for example, not yet retried)")
 	cmd.Flags().StringVar(&f.search, "search", "", "Search visible Job text and output labels")
 	cmd.Flags().StringVar(&f.command, "command", "", "Filter Jobs currently advertising this command key")
 	cmd.Flags().StringVar(&f.pinned, "pinned", "", "Filter this viewer's pin preference (true or false)")
@@ -403,6 +407,12 @@ func (f cliJobFilterFlags) query(cmd *cobra.Command) (url.Values, error) {
 	}
 	if f.relationship != "" {
 		query.Set("relationship", f.relationship)
+	}
+	if f.inboundRelationship != "" {
+		query.Set("inboundRelationship", f.inboundRelationship)
+	}
+	if f.noInboundRelationship != "" {
+		query.Set("noInboundRelationship", f.noInboundRelationship)
 	}
 	if f.search != "" {
 		query.Set("search", f.search)

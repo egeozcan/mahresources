@@ -22,6 +22,8 @@ import {
     resultOutput,
     resultURL,
     selectedBulkCommands,
+    phaseText,
+    stateLabel,
     warningEvents,
 } from './jobCenter.js';
 
@@ -41,6 +43,27 @@ const unfamiliarJob = {
 };
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('stateLabel', () => {
+    test('names a succeeded job its Kind left unfinished', () => {
+        expect(stateLabel({ state: 'succeeded', phase: 'partial' })).toBe('Partially completed');
+        expect(stateLabel({ state: 'succeeded' })).toBe('Succeeded');
+        // The phase only means "unfinished" once the job has succeeded.
+        expect(stateLabel({ state: 'running', phase: 'partial' })).toBe('Running');
+    });
+
+    test('a partial success reads as partial in its progress, and its phase is not repeated', () => {
+        expect(progressText({ state: 'succeeded', phase: 'partial' })).toBe('Partially completed');
+        expect(progressText({ state: 'succeeded' })).toBe('Completed');
+        const finishedShare = { state: 'succeeded', phase: 'partial', progress: { completed: 3, total: 3, message: 'Did 3 of 9 shares.' } };
+        expect(progressText(finishedShare)).toBe('Partially completed: Did 3 of 9 shares.');
+        expect(progressValue(finishedShare)).toBe(100);
+        expect(progressAccessibleText(finishedShare)).toBe('Partially completed: Did 3 of 9 shares.');
+        expect(phaseText({ state: 'succeeded', phase: 'partial' })).toBe('');
+        expect(phaseText({ state: 'running', phase: 'partial' })).toBe('partial');
+        expect(phaseText({ state: 'running', phase: 'downloading' })).toBe('downloading');
+    });
+});
 
 describe('Job Center API declarations', () => {
     test('individual pin controls follow viewer pin state and refresh after changing it', async () => {

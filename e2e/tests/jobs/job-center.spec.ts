@@ -116,6 +116,41 @@ test.describe('Job Center', () => {
     await expect(page.getByRole('alert')).toHaveCount(0);
   });
 
+  test('the State filter selects partially completed jobs, which the card names', async ({ page, request, apiClient }) => {
+    await apiClient.enablePlugin('test-actions');
+    const run = async (action: string) => {
+      const response = await request.post('/v1/jobs/action/run', {
+        data: { plugin: 'test-actions', action, entity_ids: [99999], params: {} },
+      });
+      expect(response.status(), await response.text()).toBe(202);
+      const id = (await response.json()).canonicalJobId as string;
+      expect(id).toEqual(expect.any(String));
+      await waitForJobState(request, id, 'succeeded');
+      return id;
+    };
+    const partial = await run('partial-demo');
+    const complete = await run('async-demo');
+
+    await page.goto('/jobs?kind=plugin-action&dismissed=any');
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(page.locator(`[data-job-id="${partial}"] [data-testid="job-state"]`)).toHaveText('Partially completed');
+    await expect(page.locator(`[data-job-id="${complete}"] [data-testid="job-state"]`)).toHaveText('Succeeded');
+
+    await form.getByRole('checkbox', { name: 'partially completed' }).check();
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/state=partial/);
+    await expect(form.getByRole('checkbox', { name: 'partially completed' })).toBeChecked();
+    await expect(page.locator(`[data-job-id="${partial}"]`)).toBeVisible();
+    await expect(page.locator(`[data-job-id="${complete}"]`)).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    // The detail page names it the same way.
+    await page.goto(`/job?id=${encodeURIComponent(partial)}`);
+    await expect(page.getByText('Partially completed', { exact: true })).toBeVisible();
+    // The label is the phase; the raw spelling is not repeated beside it.
+    await expect(page.getByTestId('job-detail').getByText('partial', { exact: true })).toBeHidden();
+  });
+
   test('Dismissed Any shows a job the viewer dismissed, which the default list hides', async ({ page, request }) => {
     const stamp = Date.now();
     const name = `job-center-dismissed-${stamp}.bin`;
@@ -333,6 +368,48 @@ test.describe('Job Center', () => {
     const successor = await readJob(request, successorId!);
     expect(successor?.lineage?.ancestors?.some(job => job.id === canonicalId)).toBe(true);
     await expect(page.getByTestId('job-detail').getByRole('heading', { name: original!.title!, exact: true })).toBeVisible();
+  });
+
+  test('Has not been retried lists the failed jobs nobody retried, and Has been the ones somebody did', async ({ page, request }) => {
+    const stamp = Date.now();
+    const prefix = `job-center-inbound-${stamp}`;
+    const groupId = await createGroup(request, prefix);
+    const retried = await submitFailingDownload(request, groupId, `${prefix}-retried.bin`);
+    const untouched = await submitFailingDownload(request, groupId, `${prefix}-untouched.bin`);
+    await waitForJobState(request, retried.canonicalId, 'failed');
+    await waitForJobState(request, untouched.canonicalId, 'failed');
+
+    const job = await readJob(request, retried.canonicalId);
+    const retry = job?.commands?.find(command => command.key === 'retry');
+    expect(retry).toBeTruthy();
+    const key = `job-center-inbound-retry-${stamp}`;
+    const response = await request.post(retry!.endpoint, {
+      headers: { 'Idempotency-Key': key },
+      data: { expectedVersion: retry!.jobVersion, idempotencyKey: key },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+
+    await page.goto(`/jobs?search=${encodeURIComponent(prefix)}&state=failed`);
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(page.locator(`[data-job-id="${retried.canonicalId}"]`)).toBeVisible();
+    await expect(page.locator(`[data-job-id="${untouched.canonicalId}"]`)).toBeVisible();
+    // The command select shows words, and still sends the key.
+    await expect(form.getByRole('combobox', { name: 'Available command' }).locator('option', { hasText: 'Forget replay input' })).toHaveAttribute('value', 'forget');
+
+    await form.getByRole('combobox', { name: 'Has not been' }).selectOption({ label: 'retried or continued' });
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/noInboundRelationship=retry-of/);
+    await expect(page.locator(`[data-job-id="${untouched.canonicalId}"]`)).toBeVisible();
+    await expect(page.locator(`[data-job-id="${retried.canonicalId}"]`)).toHaveCount(0);
+    await expect(form.getByRole('combobox', { name: 'Has not been' })).toHaveValue('retry-of');
+
+    await form.getByRole('combobox', { name: 'Has not been' }).selectOption('');
+    await form.getByRole('combobox', { name: 'Has been', exact: true }).selectOption({ label: 'retried or continued' });
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/inboundRelationship=retry-of/);
+    await expect(page.locator(`[data-job-id="${retried.canonicalId}"]`)).toBeVisible();
+    await expect(page.locator(`[data-job-id="${untouched.canonicalId}"]`)).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveCount(0);
   });
 
   test('shows the viewer pin in the list, detail, and panel and lets them unpin', async ({ page, request }) => {

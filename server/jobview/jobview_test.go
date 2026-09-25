@@ -43,6 +43,18 @@ func TestParseFilterReadsRepeatedAndCommaSeparatedValues(t *testing.T) {
 	}
 }
 
+func TestParseFilterReadsBothEndsOfARelationship(t *testing.T) {
+	filter, err := ParseFilter(url.Values{
+		"relationship": {"repeat-of"}, "inboundRelationship": {"parent-child"}, "noInboundRelationship": {"retry-of"},
+	})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if filter.Relationship != "repeat-of" || filter.InboundRelationship != "parent-child" || filter.NoInboundRelationship != "retry-of" {
+		t.Fatalf("filter = %+v", filter)
+	}
+}
+
 func TestCursorRoundTrips(t *testing.T) {
 	cursor := jobs.Cursor{AcceptedAt: time.Date(2026, 9, 1, 8, 0, 0, 5, time.UTC), ID: "abc"}
 	token, err := EncodeCursor(cursor)

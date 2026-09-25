@@ -45,6 +45,8 @@ mr jobs summary export --from 2025-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --f
 | `--accepted-after` | string | `` | Include Jobs accepted at or after RFC3339 time |
 | `--accepted-before` | string | `` | Include Jobs accepted at or before RFC3339 time |
 | `--relationship` | string | `` | Filter by visible lineage relationship |
+| `--inbound-relationship` | string | `` | Filter Jobs a visible Job links to with this relationship (retried, repeated, or child stage) |
+| `--no-inbound-relationship` | string | `` | Filter Jobs no visible Job links to with this relationship (for example, not yet retried) |
 | `--search` | string | `` | Search visible Job text and output labels |
 | `--command` | string | `` | Filter Jobs currently advertising this command key |
 | `--pinned` | string | `` | Filter this viewer's pin preference (true or false) |

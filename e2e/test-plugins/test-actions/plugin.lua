@@ -135,4 +135,19 @@ function init()
             mah.job_complete(ctx.job_id, { message = "Done!", steps_completed = ctx.params.steps })
         end,
     })
+
+    -- Succeeds with work left: the Job's phase becomes "partial", which the Job
+    -- Center labels "Partially completed" and its state filter selects.
+    mah.action({
+        id = "partial-demo",
+        label = "Partial Demo",
+        description = "Completes one share of the work and leaves the rest",
+        entity = "resource",
+        placement = { "detail" },
+        async = true,
+        retry = true,
+        handler = function(ctx)
+            return { message = "Did 1 of 3 shares.", continue = true }
+        end,
+    })
 end

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -159,11 +161,90 @@ func TestListFiltersByTheStoredDimensions(t *testing.T) {
 	requireIDs(t, "combined", pageIDs(combined), delta.ID)
 }
 
+// TestPartialStateFilterSelectsSucceededJobsLeftUnfinished proves the filter's
+// "partial" token is a subset of succeeded — the Jobs a Kind recorded as stopped
+// short — and that it joins the other states as one more alternative rather
+// than narrowing them. A running Job carrying the same phase spelling is not
+// partial: the phase only means "unfinished" once the Job has succeeded.
+func TestPartialStateFilterSelectsSucceededJobsLeftUnfinished(t *testing.T) {
+	testPartialStateFilterSelectsSucceededJobsLeftUnfinished(t, newTestDeps(t))
+}
+
+func testPartialStateFilterSelectsSucceededJobsLeftUnfinished(t *testing.T, deps Deps) {
+	svc := NewService()
+	clock := time.Date(2031, 6, 3, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	finish := func(title string, to State, phase string) Snapshot {
+		clock = clock.Add(time.Minute)
+		snap := acceptFor(t, svc, deps, Acceptance{
+			Kind: "plugin-action", KindVersion: 1, State: StateQueued, Origin: "ui", Title: title,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+		snap = advanceReplayJob(t, svc, deps, snap, StateRunning)
+		if to == StateRunning {
+			if phase == "" {
+				return snap
+			}
+			next, err := svc.UpdateProgress(deps, ExecutionRef{JobID: snap.ID, ExecutionToken: executionTokenOf(t, deps, snap.ID)}, Progress{Phase: phase})
+			if err != nil {
+				t.Fatalf("UpdateProgress: %v", err)
+			}
+			return next
+		}
+		transition := Transition{
+			JobID: snap.ID, ExpectedVersion: snap.Version, To: to, Phase: phase,
+			ExecutionToken: executionTokenOf(t, deps, snap.ID),
+		}
+		if to == StateFailed {
+			transition.Failure = &Failure{Code: "test-failure", Class: FailureClassInternal, Message: "gave up"}
+		}
+		next, err := svc.Transition(deps, transition)
+		if err != nil {
+			t.Fatalf("Transition -> %s: %v", to, err)
+		}
+		return next
+	}
+	complete := finish("complete", StateSucceeded, "")
+	partial := finish("partial", StateSucceeded, PhasePartial)
+	failed := finish("failed", StateFailed, "")
+	runningPartial := finish("running with the phase", StateRunning, PhasePartial)
+	if runningPartial.Phase != PhasePartial {
+		t.Fatalf("setup: running job phase = %q, want %q", runningPartial.Phase, PhasePartial)
+	}
+
+	admin := Access{UserID: 1, Administrator: true}
+	requireIDs(t, "partial", pageIDs(listFor(t, svc, deps, admin, Filter{States: []string{FilterStatePartial}}, Cursor{}, 0)),
+		partial.ID)
+	requireIDs(t, "succeeded still includes partial",
+		pageIDs(listFor(t, svc, deps, admin, Filter{States: []string{string(StateSucceeded)}}, Cursor{}, 0)),
+		partial.ID, complete.ID)
+	requireIDs(t, "partial or failed",
+		pageIDs(listFor(t, svc, deps, admin, Filter{States: []string{string(StateFailed), FilterStatePartial}}, Cursor{}, 0)),
+		failed.ID, partial.ID)
+	requireIDs(t, "succeeded and partial is succeeded",
+		pageIDs(listFor(t, svc, deps, admin, Filter{States: []string{string(StateSucceeded), FilterStatePartial}}, Cursor{}, 0)),
+		partial.ID, complete.ID)
+	requireIDs(t, "partial with another dimension",
+		pageIDs(listFor(t, svc, deps, admin, Filter{States: []string{FilterStatePartial}, Search: "complete"}, Cursor{}, 0)))
+
+	counts, err := svc.CountByState(deps, admin, Filter{States: []string{FilterStatePartial}})
+	if err != nil {
+		t.Fatalf("CountByState: %v", err)
+	}
+	if counts[string(StateSucceeded)] != 1 || len(counts) != 1 {
+		t.Fatalf("CountByState(partial) = %v, want succeeded: 1", counts)
+	}
+}
+
 // TestListFiltersByLineageRelationship pins the relation filter to the spelling
 // every other lineage read uses: the FROM endpoint of a link, which is the
 // successor of a Retry or Repeat and the parent of a child stage.
 func TestListFiltersByLineageRelationship(t *testing.T) {
-	deps := newTestDeps(t)
+	testListFiltersByLineageRelationship(t, newTestDeps(t))
+}
+
+func testListFiltersByLineageRelationship(t *testing.T, deps Deps) {
 	svc := NewService()
 	clock := time.Date(2031, 6, 4, 9, 0, 0, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
@@ -196,6 +277,478 @@ func TestListFiltersByLineageRelationship(t *testing.T) {
 
 	if _, err := svc.List(deps, admin, Filter{Relationship: "retried"}, Cursor{}, 0); !errors.Is(err, ErrInvalidFilter) {
 		t.Fatalf("an unknown relationship = %v, want ErrInvalidFilter", err)
+	}
+}
+
+// TestPartialStateFilterUsesAnIndex pins the plan: partial Jobs are a sliver of
+// the succeeded ones, and a deployment holds millions, so the list page and the
+// count must find them through an index that carries the phase rather than by
+// reading every succeeded row to test it.
+func TestPartialStateFilterUsesAnIndex(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	admin := Access{UserID: 1, Administrator: true}
+	owner := Access{UserID: 7}
+	filter := Filter{States: []string{FilterStatePartial}}
+
+	for _, tc := range []struct {
+		name   string
+		access Access
+		index  string
+	}{
+		{"administrator", admin, "idx_jobs_state_phase"},
+		// An owner's reads carry the visibility predicate, which leads its own
+		// index; the phase has to sit in that one too.
+		{"owner", owner, "idx_jobs_visible_phase"},
+	} {
+		for what, build := range pagePlanQueries() {
+			plan := explainListQuery(t, svc, deps, tc.access, filter, build)
+			if !strings.Contains(plan, tc.index) || strings.Contains(plan, "TEMP B-TREE") {
+				t.Errorf("the %s's partial %s does not read %s in order:\n%s", tc.name, what, tc.index, plan)
+			}
+		}
+	}
+}
+
+// TestRelationshipFiltersCheckEachLinkRatherThanListingTheVisibleJobs pins the
+// plan of all three lineage filters. Their far endpoint must be visible, and
+// answering that with "IN (every Job the asker may see)" materializes that whole
+// set — every Job, for an administrator — before a 50-row page. Each link is
+// checked against its own far Job instead.
+func TestRelationshipFiltersCheckEachLinkRatherThanListingTheVisibleJobs(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	for _, access := range []Access{{UserID: 1, Administrator: true}, {UserID: 7}} {
+		for _, tc := range []struct {
+			filter Filter
+			lookup string // the link index search that bounds each Job to its own links
+		}{
+			{Filter{Relationship: string(LinkRetryOf)}, "(type=? AND from_job_id=?)"},
+			{Filter{InboundRelationship: string(LinkRetryOf)}, "idx_job_links_inbound (to_job_id=? AND type=?)"},
+			{Filter{NoInboundRelationship: string(LinkRetryOf)}, "idx_job_links_inbound (to_job_id=? AND type=?)"},
+		} {
+			for what, build := range pagePlanQueries() {
+				plan := explainListQuery(t, svc, deps, access, tc.filter, build)
+				// The outer list may scan jobs (that is the listing); the link
+				// and its far Job must each be a keyed search.
+				if strings.Contains(plan, "LIST SUBQUERY") || strings.Contains(plan, "SCAN l") ||
+					strings.Contains(plan, "SCAN far") || !strings.Contains(plan, tc.lookup) {
+					t.Errorf("%+v %s for %+v does not look each link up by its own Job:\n%s", tc.filter, what, access, plan)
+				}
+			}
+		}
+	}
+}
+
+// TestMixedPartialFilterPagesAcrossBothBranches is "failed or partially
+// completed" walked with a small page, forward and back. The list reads the two
+// branches separately — each through its own index — and merges them by the
+// keyset, so the pages must be exactly the newest-first order of the union, with
+// Next and Prev that continue it, as the single-query listing's are.
+func TestMixedPartialFilterPagesAcrossBothBranches(t *testing.T) {
+	testMixedPartialFilterPagesAcrossBothBranches(t, newTestDeps(t))
+}
+
+func testMixedPartialFilterPagesAcrossBothBranches(t *testing.T, deps Deps) {
+	svc := NewService()
+	clock := time.Date(2031, 7, 1, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	var want []string // newest first
+	for i := 0; i < 9; i++ {
+		clock = clock.Add(time.Minute)
+		snap := acceptFor(t, svc, deps, Acceptance{
+			Kind: "plugin-action", KindVersion: 1, State: StateQueued, Origin: "ui", Title: fmt.Sprintf("job %d", i),
+			OwnerUserID: uintPtr(7), Replay: ReplayInput{NonReplayable: true},
+		})
+		snap = advanceReplayJob(t, svc, deps, snap, StateRunning)
+		transition := Transition{JobID: snap.ID, ExpectedVersion: snap.Version, ExecutionToken: executionTokenOf(t, deps, snap.ID)}
+		switch i % 3 {
+		case 0: // failed: in the filter
+			transition.To = StateFailed
+			transition.Failure = &Failure{Code: "x", Class: FailureClassInternal, Message: "x"}
+		case 1: // partial: in the filter
+			transition.To, transition.Phase = StateSucceeded, PhasePartial
+		default: // complete: not in the filter
+			transition.To = StateSucceeded
+		}
+		if _, err := svc.Transition(deps, transition); err != nil {
+			t.Fatalf("finish %d: %v", i, err)
+		}
+		if i%3 != 2 {
+			want = append([]string{snap.ID}, want...)
+		}
+	}
+
+	filter := Filter{States: []string{string(StateFailed), FilterStatePartial}}
+	for _, access := range []Access{{UserID: 1, Administrator: true}, {UserID: 7}} {
+		var got []string
+		var pages []Page
+		cursor := Cursor{}
+		for {
+			page := listFor(t, svc, deps, access, filter, cursor, 2)
+			pages = append(pages, page)
+			got = append(got, pageIDs(page)...)
+			if page.Next == nil {
+				break
+			}
+			cursor = *page.Next
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("admin=%v walked %v, want %v", access.Administrator, got, want)
+		}
+		// Walking back from the last page lands on each earlier page in turn.
+		for i := len(pages) - 1; i > 0; i-- {
+			back, err := svc.ListBefore(deps, access, filter, *pages[i].Prev, 2)
+			if err != nil {
+				t.Fatalf("ListBefore: %v", err)
+			}
+			if !slices.Equal(pageIDs(back), pageIDs(pages[i-1])) {
+				t.Fatalf("admin=%v back from page %d = %v, want %v", access.Administrator, i, pageIDs(back), pageIDs(pages[i-1]))
+			}
+		}
+		counts, err := svc.CountByState(deps, access, filter)
+		if err != nil {
+			t.Fatalf("CountByState: %v", err)
+		}
+		if counts[string(StateFailed)] != 3 || counts[string(StateSucceeded)] != 3 || len(counts) != 2 {
+			t.Fatalf("admin=%v counts = %v, want failed 3, succeeded 3", access.Administrator, counts)
+		}
+	}
+}
+
+// TestListBranchesSplitsOnlyAMixedPartialFilter pins when the listing reads two
+// branches: the partial token beside other states that do not include it. Every
+// other filter is read as itself, and the split keeps every other dimension.
+func TestListBranchesSplitsOnlyAMixedPartialFilter(t *testing.T) {
+	for name, tc := range map[string]struct {
+		states []string
+		want   [][]string
+	}{
+		"no partial":          {[]string{"failed", "blocked"}, [][]string{{"failed", "blocked"}}},
+		"partial alone":       {[]string{FilterStatePartial}, [][]string{{FilterStatePartial}}},
+		"partial + succeeded": {[]string{"succeeded", FilterStatePartial}, [][]string{{"succeeded", FilterStatePartial}}},
+		"partial + failed":    {[]string{"failed", FilterStatePartial, "blocked"}, [][]string{{"failed", "blocked"}, {FilterStatePartial}}},
+	} {
+		branches := listBranches(Filter{States: tc.states, Kinds: []string{"k"}, Search: "s"})
+		if len(branches) != len(tc.want) {
+			t.Fatalf("%s: %d branches, want %d", name, len(branches), len(tc.want))
+		}
+		for i, branch := range branches {
+			if !slices.Equal(branch.States, tc.want[i]) || !slices.Equal(branch.Kinds, []string{"k"}) || branch.Search != "s" {
+				t.Errorf("%s: branch %d = %+v, want states %v with the other dimensions kept", name, i, branch, tc.want[i])
+			}
+		}
+	}
+}
+
+// TestMixedPartialPredicateBoundsEachBranchByTheWholeFilter is the summary's
+// window reaching both branches. Each branch is the whole filter, not its state
+// alone, so a narrow recent window bounds the seek into a long history of
+// failures instead of materializing all of them for an outer window to discard.
+func TestMixedPartialPredicateBoundsEachBranchByTheWholeFilter(t *testing.T) {
+	deps := newTestDeps(t)
+	from := time.Date(2031, 6, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	filter := Filter{
+		States: []string{string(StateFailed), FilterStatePartial}, Kinds: []string{"remote-download"},
+		AcceptedAfter: &from, AcceptedBefore: &to,
+	}
+	for _, access := range []Access{{UserID: 1, Administrator: true}, {UserID: 7}} {
+		query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
+		if err != nil {
+			t.Fatalf("applyFilter: %v", err)
+		}
+		statement := query.Session(&gorm.Session{DryRun: true}).Find(&[]models.Job{}).Statement
+		sql := statement.SQL.String()
+		arms := strings.Split(sql, "UNION ALL")
+		if len(arms) != 2 {
+			t.Fatalf("admin=%v: want two branches, got SQL %s", access.Administrator, sql)
+		}
+		for i, arm := range arms {
+			for _, bound := range []string{"jobs.accepted_at >=", "jobs.accepted_at <=", "jobs.kind IN"} {
+				if !strings.Contains(arm, bound) {
+					t.Errorf("admin=%v branch %d lacks %q:\n%s", access.Administrator, i, bound, arm)
+				}
+			}
+		}
+	}
+}
+
+// TestMixedPartialPredicateSeeksBothBranchesOnAPopulatedTable pins the single
+// predicate a mixed partial filter becomes wherever it is read as one (Summary,
+// and any reader other than the listing, which reads the branches directly):
+// each branch is its own indexed seek — the partial one on the phase — and the
+// outer read fetches the matched Jobs by id rather than walking every Job, or
+// every succeeded one, to test them. The table is populated and analyzed,
+// because SQLite plans an empty table from guesses no deployment shares.
+func TestMixedPartialPredicateSeeksBothBranchesOnAPopulatedTable(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	owner := uint(7)
+	base := time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)
+	rows := make([]models.Job, 0, 20000)
+	for i := 0; i < 20000; i++ {
+		state, phase := string(StateSucceeded), ""
+		switch {
+		case i%4000 == 1:
+			state = string(StateFailed)
+		case i%10000 == 7:
+			phase = PhasePartial
+		}
+		rows = append(rows, models.Job{
+			ID: fmt.Sprintf("00000000-0000-7000-8000-%012d", i), Kind: "remote-download", KindVersion: 1,
+			State: state, Phase: phase, VisibilityClass: string(VisibilityOwner), OwnerUserID: &owner,
+			Origin: "api", Title: "job", AcceptedAt: base.Add(time.Duration(i) * time.Second),
+			ReplayClass: string(ReplayClassNonReplayable),
+		})
+	}
+	if err := deps.DB.Session(&gorm.Session{SkipHooks: true}).CreateInBatches(rows, 500).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := deps.DB.Exec("ANALYZE").Error; err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+
+	filter := Filter{States: []string{string(StateFailed), FilterStatePartial}}
+	for _, access := range []Access{{UserID: 1, Administrator: true}, {UserID: owner}} {
+		for what, build := range pagePlanQueries() {
+			plan := explainListQuery(t, svc, deps, access, filter, build)
+			if !strings.Contains(plan, "state=? AND phase=?)") || !strings.Contains(plan, "(id=?)") ||
+				strings.Contains(plan, "SCAN jobs") {
+				t.Errorf("admin=%v %s: the mixed predicate does not seek both branches and fetch by id:\n%s", access.Administrator, what, plan)
+			}
+		}
+
+		// The statements List and ListBefore actually run: two ordered, limited
+		// branches, the partial one seeking on the phase, and the other reading
+		// no more than the same listing without the partial token does (its own
+		// plan is the plain state filter's, whatever that is).
+		middle := Cursor{AcceptedAt: base.Add(10000 * time.Second), ID: fmt.Sprintf("00000000-0000-7000-8000-%012d", 10000)}
+		for _, direction := range []struct {
+			name   string
+			desc   bool
+			cursor Cursor
+		}{{"List", true, Cursor{}}, {"List after a cursor", true, middle}, {"ListBefore", false, middle}} {
+			sql, vars := listRowsStatement(t, svc, deps, access, filter, direction.desc, direction.cursor)
+			plan := explainSQLite(t, deps, sql, vars)
+			plainSQL, plainVars := listRowsStatement(t, svc, deps, access, Filter{States: []string{string(StateFailed)}}, direction.desc, direction.cursor)
+			plain := explainSQLite(t, deps, plainSQL, plainVars)
+			if !strings.Contains(sql, "UNION ALL") || !strings.Contains(plan, "state=? AND phase=?") {
+				t.Errorf("admin=%v %s: the listing statement does not seek the partial branch:\n%s\n%s", access.Administrator, direction.name, sql, plan)
+			}
+			for _, line := range strings.Split(plan, "\n") {
+				if strings.HasPrefix(line, "SCAN jobs") && !strings.Contains(plain, line) {
+					t.Errorf("admin=%v %s: the mixed listing scans where the plain one does not (%q):\n%s\nplain:\n%s", access.Administrator, direction.name, line, plan, plain)
+				}
+			}
+		}
+	}
+}
+
+// explainSQLite is SQLite's plan for one statement.
+func explainSQLite(t *testing.T, deps Deps, sql string, vars []any) string {
+	t.Helper()
+	rows, err := deps.DB.Raw("EXPLAIN QUERY PLAN "+sql, vars...).Rows()
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("read plan: %v", err)
+		}
+		plan.WriteString(detail + "\n")
+	}
+	return plan.String()
+}
+
+// listRowsStatement is the SQL and arguments List (desc) or ListBefore (asc)
+// runs for one filter from one cursor — the statement itself, not a stand-in.
+func listRowsStatement(t *testing.T, svc *Service, deps Deps, access Access, filter Filter, desc bool, cursor Cursor) (string, []any) {
+	t.Helper()
+	position := func(q *gorm.DB) *gorm.DB { return continueAfter(q, cursor) }
+	if !desc {
+		position = func(q *gorm.DB) *gorm.DB { return continueBefore(q, cursor) }
+	}
+	query, _, union, err := svc.listRowsQuery(deps, access, filter, 0, false, desc, position)
+	if err != nil {
+		t.Fatalf("listRowsQuery: %v", err)
+	}
+	dry := query.Session(&gorm.Session{DryRun: true})
+	var statement *gorm.Statement
+	if union {
+		statement = dry.Scan(&[]models.Job{}).Statement
+	} else {
+		statement = dry.Find(&[]models.Job{}).Statement
+	}
+	return statement.SQL.String(), statement.Vars
+}
+
+var planIndexName = regexp.MustCompile(`USING (COVERING )?INDEX \S+`)
+
+// planShape is a plan with its index names removed.
+func planShape(plan string) string {
+	return planIndexName.ReplaceAllString(plan, "USING INDEX")
+}
+
+// TestJobFilterIndexesAreIdempotent is the startup step run a second time, as
+// every restart does: nothing to create, nothing refused.
+func TestJobFilterIndexesAreIdempotent(t *testing.T) {
+	deps := newTestDeps(t)
+	if err := models.EnsureJobFilterIndexes(deps.DB); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	for _, name := range []string{"idx_jobs_state_phase", "idx_jobs_visible_phase", "idx_job_links_inbound"} {
+		var count int64
+		if err := deps.DB.Raw("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&count).Error; err != nil || count != 1 {
+			t.Errorf("%s: count %d, %v", name, count, err)
+		}
+	}
+
+	// An index under the name but on other columns is replaced, not accepted.
+	if err := deps.DB.Exec("DROP INDEX idx_job_links_inbound").Error; err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if err := deps.DB.Exec("CREATE INDEX idx_job_links_inbound ON job_links (type)").Error; err != nil {
+		t.Fatalf("create the wrong shape: %v", err)
+	}
+	if err := models.EnsureJobFilterIndexes(deps.DB); err != nil {
+		t.Fatalf("pass over a wrong shape: %v", err)
+	}
+	var columns []string
+	if err := deps.DB.Raw("SELECT name FROM pragma_index_info('idx_job_links_inbound') ORDER BY seqno").Scan(&columns).Error; err != nil {
+		t.Fatalf("index info: %v", err)
+	}
+	if !slices.Equal(columns, []string{"to_job_id", "type", "from_job_id"}) {
+		t.Fatalf("idx_job_links_inbound columns after the pass = %v", columns)
+	}
+
+	// Or on the right columns of another table, such as a retained backup copy.
+	if err := deps.DB.Exec("DROP INDEX idx_jobs_state_phase").Error; err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if err := deps.DB.Exec("CREATE TABLE jobs_backup AS SELECT * FROM jobs").Error; err != nil {
+		t.Fatalf("backup table: %v", err)
+	}
+	if err := deps.DB.Exec("CREATE INDEX idx_jobs_state_phase ON jobs_backup (state, phase, accepted_at, id)").Error; err != nil {
+		t.Fatalf("index the backup: %v", err)
+	}
+	if err := models.EnsureJobFilterIndexes(deps.DB); err != nil {
+		t.Fatalf("pass over an index on another table: %v", err)
+	}
+	var table string
+	if err := deps.DB.Raw("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = 'idx_jobs_state_phase'").Scan(&table).Error; err != nil || table != "jobs" {
+		t.Fatalf("idx_jobs_state_phase is on %q (%v), want jobs", table, err)
+	}
+}
+
+func pagePlanQueries() map[string]func(*gorm.DB) *gorm.DB {
+	return map[string]func(*gorm.DB) *gorm.DB{
+		"page": func(q *gorm.DB) *gorm.DB {
+			return q.Order("jobs.accepted_at DESC, jobs.id DESC").Limit(51).Find(&[]models.Job{})
+		},
+		"count": func(q *gorm.DB) *gorm.DB {
+			var n int64
+			return q.Count(&n)
+		},
+	}
+}
+
+// explainListQuery is SQLite's plan for one listing question.
+func explainListQuery(t *testing.T, svc *Service, deps Deps, access Access, filter Filter, build func(*gorm.DB) *gorm.DB) string {
+	t.Helper()
+	query, _, err := svc.listQuery(deps, access, filter, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("listQuery: %v", err)
+	}
+	statement := build(query.Session(&gorm.Session{DryRun: true})).Statement
+	rows, err := deps.DB.Raw("EXPLAIN QUERY PLAN "+statement.SQL.String(), statement.Vars...).Rows()
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("read plan: %v", err)
+		}
+		plan.WriteString(detail + "\n")
+	}
+	return plan.String()
+}
+
+// TestListFiltersByInboundRelationship is the other end of a link: the Job a
+// Retry or Repeat was made from, or a child stage. With the negation it answers
+// "failed and nobody has retried it yet". A successor the viewer cannot see
+// does not count, in either direction: lineage drops hidden relatives, and a
+// filter that disagreed would publish that the hidden Job exists.
+func TestListFiltersByInboundRelationship(t *testing.T) {
+	testListFiltersByInboundRelationship(t, newTestDeps(t))
+}
+
+func testListFiltersByInboundRelationship(t *testing.T, deps Deps) {
+	svc := NewService()
+	clock := time.Date(2031, 6, 4, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accept := func(title string, class VisibilityClass) Snapshot {
+		clock = clock.Add(time.Minute)
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			OwnerUserID: uintPtr(7), Visibility: class, Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	link := func(kind LinkType, from, to Snapshot) {
+		if err := svc.Link(deps, LinkRequest{Type: kind, FromJobID: from.ID, ToJobID: to.ID}); err != nil {
+			t.Fatalf("%s link: %v", kind, err)
+		}
+	}
+	retried := accept("retried", VisibilityOwner)
+	retry := accept("the retry", VisibilityOwner)
+	repeated := accept("repeated", VisibilityOwner)
+	repeat := accept("the repeat", VisibilityOwner)
+	hiddenlyRetried := accept("retried by a hidden job", VisibilityOwner)
+	hiddenRetry := accept("a retry the owner may not read", VisibilityAdmin)
+	untouched := accept("untouched", VisibilityOwner)
+	link(LinkRetryOf, retry, retried)
+	link(LinkRepeatOf, repeat, repeated)
+	link(LinkRetryOf, hiddenRetry, hiddenlyRetried)
+	link(LinkParentChild, retry, untouched)
+
+	admin := Access{UserID: 1, Administrator: true}
+	owner := Access{UserID: 7}
+	requireIDs(t, "retried, admin", pageIDs(listFor(t, svc, deps, admin, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
+		hiddenlyRetried.ID, retried.ID)
+	requireIDs(t, "retried, owner", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
+		retried.ID)
+	requireIDs(t, "repeated", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkRepeatOf)}, Cursor{}, 0)),
+		repeated.ID)
+	requireIDs(t, "child stage", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkParentChild)}, Cursor{}, 0)),
+		untouched.ID)
+
+	requireIDs(t, "not retried, owner", pageIDs(listFor(t, svc, deps, owner, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
+		untouched.ID, hiddenlyRetried.ID, repeat.ID, repeated.ID, retry.ID)
+	requireIDs(t, "not retried, admin", pageIDs(listFor(t, svc, deps, admin, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
+		untouched.ID, hiddenRetry.ID, repeat.ID, repeated.ID, retry.ID)
+
+	summary, err := svc.Summary(deps, owner, Filter{InboundRelationship: string(LinkRetryOf)}, 0)
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if summary.Total != 1 {
+		t.Fatalf("the owner's aggregate counted %d retried Jobs, want 1", summary.Total)
+	}
+
+	for _, filter := range []Filter{{InboundRelationship: "retried"}, {NoInboundRelationship: "retried"}} {
+		if _, err := svc.List(deps, admin, filter, Cursor{}, 0); !errors.Is(err, ErrInvalidFilter) {
+			t.Fatalf("an unknown inbound relationship %+v = %v, want ErrInvalidFilter", filter, err)
+		}
 	}
 }
 
@@ -1684,7 +2237,10 @@ func TestSummaryCountsStatesKindsDurationsAndFailures(t *testing.T) {
 // existence. The predicate asks the shared visibility question about the far
 // endpoint, so a listing, an aggregate and the lineage view all answer alike.
 func TestListFiltersByLineageRelationshipWithoutRevealingAHiddenRelative(t *testing.T) {
-	deps := newTestDeps(t)
+	testListFiltersByLineageRelationshipWithoutRevealingAHiddenRelative(t, newTestDeps(t))
+}
+
+func testListFiltersByLineageRelationshipWithoutRevealingAHiddenRelative(t *testing.T, deps Deps) {
 	svc := NewService()
 	clock := time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }

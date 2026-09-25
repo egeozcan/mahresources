@@ -319,3 +319,45 @@ func TestSummaryExportLegacyArtifactWithoutPersistedScopeIsHidden(t *testing.T) 
 		t.Fatalf("legacy summary output open error = %v, want forbidden", err)
 	}
 }
+
+// TestSummaryExportRefusesFilterDimensionsAnOlderWorkerWouldDrop covers a
+// mixed-version rollout. An export seals its filter and a worker decodes it with
+// plain JSON, so a worker from a release that predates a filter dimension drops
+// it and exports a wider summary than was asked for, with no error. The partial
+// state and the inbound relationships are therefore refused at submission (and
+// on any record that carries them), not sealed. The interactive summary seals
+// nothing and keeps them.
+func TestSummaryExportRefusesFilterDimensionsAnOlderWorkerWouldDrop(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	from := time.Now().UTC().Add(-181 * 24 * time.Hour)
+	to := time.Now().UTC().Add(time.Hour)
+
+	for name, filter := range map[string]jobs.Filter{
+		"partial state":           {States: []string{string(jobs.StateFailed), jobs.FilterStatePartial}},
+		"inbound relationship":    {InboundRelationship: string(jobs.LinkRetryOf)},
+		"no inbound relationship": {NoInboundRelationship: string(jobs.LinkRetryOf)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ctx.SubmitJobSummaryExport(filter, from, to, "json", "api"); !errors.Is(err, jobs.ErrInvalidFilter) {
+				t.Fatalf("submit = %v, want ErrInvalidFilter", err)
+			}
+			raw, err := json.Marshal(jobSummaryExportInput{
+				Filter: filter, From: from, To: to, Format: "json",
+				Scope: jobSummaryExportDataScope{Class: jobSummaryExportAdminScope},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := jobSummaryExportCodec().Decode(raw, jobSummaryExportVersion); err == nil {
+				t.Fatal("a sealed record carrying the dimension decoded; it must be refused")
+			}
+		})
+	}
+
+	if _, err := ctx.SubmitJobSummaryExport(jobs.Filter{States: []string{string(jobs.StateFailed)}}, from, to, "json", "api"); err != nil {
+		t.Fatalf("a plain filtered export = %v", err)
+	}
+	if _, err := ctx.GetJobSummaryRange(jobs.Filter{InboundRelationship: string(jobs.LinkRetryOf)}, from, to); err != nil {
+		t.Fatalf("the interactive summary refused an inbound filter: %v", err)
+	}
+}

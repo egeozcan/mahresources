@@ -54,8 +54,8 @@
                 <legend class="block text-xs font-mono font-medium text-stone-600">State</legend>
                 {% for state in jobStateOptions %}
                 <label class="flex items-center gap-2 min-h-7 cursor-pointer">
-                    <input type="checkbox" name="state" value="{{ state }}"{% if state in jobFilter.States %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
-                    <span class="text-xs font-mono font-medium text-stone-600">{{ state }}</span>
+                    <input type="checkbox" name="state" value="{{ state.Value }}"{% if state.Value in jobFilter.States %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
+                    <span class="text-xs font-mono font-medium text-stone-600">{{ state.Label }}</span>
                 </label>
                 {% endfor %}
             </fieldset>
@@ -75,8 +75,8 @@
             <label for="job-filter-command" class="block text-xs font-mono font-medium text-stone-600 mt-2">Available command</label>
             <select name="command" id="job-filter-command" aria-describedby="job-filter-command-help" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
                 <option value="">Any</option>
-                {% for key in jobCommandOptions %}
-                <option value="{{ key }}"{% if jobFilter.Command == key %} selected{% endif %}>{{ key }}</option>
+                {% for option in jobCommandOptions %}
+                <option value="{{ option.Value }}"{% if jobFilter.Command == option.Value %} selected{% endif %}>{{ option.Label }}</option>
                 {% endfor %}
             </select>
             <p id="job-filter-command-help" class="mt-0.5 text-xs text-stone-500">Jobs currently offering this command.</p>
@@ -103,6 +103,24 @@
                 <option value="repeat-of"{% if jobFilter.Relationship == "repeat-of" %} selected{% endif %}>Repeat successor</option>
                 <option value="parent-child"{% if jobFilter.Relationship == "parent-child" %} selected{% endif %}>Parent stage</option>
             </select>
+
+            {# The other end of a lineage link: what later Jobs did with this one. #}
+            <label for="job-filter-inbound" class="block text-xs font-mono font-medium text-stone-600 mt-2">Has been</label>
+            <select name="inboundRelationship" id="job-filter-inbound" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="">Any</option>
+                {% for option in jobInboundOptions %}
+                <option value="{{ option.Value }}"{% if jobFilter.InboundRelationship == option.Value %} selected{% endif %}>{{ option.Label }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="job-filter-no-inbound" class="block text-xs font-mono font-medium text-stone-600 mt-2">Has not been</label>
+            <select name="noInboundRelationship" id="job-filter-no-inbound" aria-describedby="job-filter-no-inbound-help" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="">Any</option>
+                {% for option in jobNoInboundOptions %}
+                <option value="{{ option.Value }}"{% if jobFilter.NoInboundRelationship == option.Value %} selected{% endif %}>{{ option.Label }}</option>
+                {% endfor %}
+            </select>
+            <p id="job-filter-no-inbound-help" class="mt-0.5 text-xs text-stone-500">Counts only jobs you can see.</p>
 
             <label for="job-filter-pinned" class="block text-xs font-mono font-medium text-stone-600 mt-2">Pinned</label>
             <select name="pinned" id="job-filter-pinned" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">

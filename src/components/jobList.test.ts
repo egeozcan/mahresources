@@ -213,6 +213,12 @@ describe('job list live refresh', () => {
         expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('4 jobs changed state.');
     });
 
+    test('announces a partial success as partially completed', () => {
+        const before = new Map([['p', { id: 'p', title: 'Sweep', state: 'running' }]]);
+        const after = new Map([['p', { id: 'p', title: 'Sweep', state: 'succeeded', phase: 'partial' }]]);
+        expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('Sweep partially completed.');
+    });
+
     test('keeps a details element the reader opened open across the morph', () => {
         const from = document.createElement('details');
         from.open = true;

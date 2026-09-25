@@ -5865,7 +5865,7 @@ paths:
         get:
             operationId: listCanonicalJobs
             parameters:
-                - description: Filter by state; repeat or comma-separate values.
+                - description: Filter by state; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`.
                   explode: true
                   in: query
                   name: state
@@ -5874,7 +5874,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Filter by states; repeat or comma-separate values.
+                - description: Filter by states; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`.
                   explode: true
                   in: query
                   name: states
@@ -5927,6 +5927,16 @@ paths:
                 - description: Filter by a supported lineage relationship.
                   in: query
                   name: relationship
+                  schema:
+                    type: string
+                - description: 'Filter to Jobs a visible Job links to with this lineage relationship: retried or continued (retry-of), repeated (repeat-of), or a child stage (parent-child).'
+                  in: query
+                  name: inboundRelationship
+                  schema:
+                    type: string
+                - description: Filter to Jobs no visible Job links to with this lineage relationship, for example not yet retried (retry-of).
+                  in: query
+                  name: noInboundRelationship
                   schema:
                     type: string
                 - description: Filter by owner user ID.
@@ -7549,7 +7559,7 @@ paths:
         get:
             operationId: summarizeCanonicalJobs
             parameters:
-                - description: Filter by state; repeat or comma-separate values.
+                - description: Filter by state; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`.
                   explode: true
                   in: query
                   name: state
@@ -7558,7 +7568,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Filter by states; repeat or comma-separate values.
+                - description: Filter by states; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`.
                   explode: true
                   in: query
                   name: states
@@ -7611,6 +7621,16 @@ paths:
                 - description: Filter by a supported lineage relationship.
                   in: query
                   name: relationship
+                  schema:
+                    type: string
+                - description: 'Filter to Jobs a visible Job links to with this lineage relationship: retried or continued (retry-of), repeated (repeat-of), or a child stage (parent-child).'
+                  in: query
+                  name: inboundRelationship
+                  schema:
+                    type: string
+                - description: Filter to Jobs no visible Job links to with this lineage relationship, for example not yet retried (retry-of).
+                  in: query
+                  name: noInboundRelationship
                   schema:
                     type: string
                 - description: Filter by owner user ID.
@@ -7671,10 +7691,10 @@ paths:
                 - jobs
     /v1/jobs/summary/export:
         post:
-            description: Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters.
+            description: Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters, except the `partial` state and the inbound relationship filters, which are refused with 400 because an export's filter is stored and may be run by a worker from an older release that does not know them.
             operationId: exportCanonicalJobSummary
             parameters:
-                - description: Filter by state; repeat or comma-separate values.
+                - description: Filter by state; repeat or comma-separate values. The `partial` token is refused for exports.
                   explode: true
                   in: query
                   name: state
@@ -7683,7 +7703,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Filter by states; repeat or comma-separate values.
+                - description: Filter by state; repeat or comma-separate values. The `partial` token is refused for exports.
                   explode: true
                   in: query
                   name: states

@@ -634,6 +634,15 @@ type Filter struct {
 	// relation.
 	Relationship string
 
+	// InboundRelationship narrows to Jobs that are the TO endpoint of a link of
+	// that type from a Job the asker may see: the Job a Retry, Continue or Repeat
+	// was made from, or a child stage. NoInboundRelationship is its negation — "no
+	// visible Job links here with that type" — which is how "failed and nobody
+	// has retried it" is asked. A relative the asker cannot see counts as absent
+	// in both, as it does in lineage.
+	InboundRelationship   string
+	NoInboundRelationship string
+
 	// Search matches the bounded, sanitized text a viewer may read: the UUID,
 	// title, sanitized summary, sanitized failure message and output labels. It
 	// never reaches ciphertext or a protected diagnostic reference.
@@ -1875,7 +1884,20 @@ const (
 	PhaseCancelling = "cancelling"
 	// PhasePausing is the phase of a running Job that is reaching a checkpoint.
 	PhasePausing = "pausing"
+	// PhasePartial is the phase a Kind records on a *succeeded* Job whose work
+	// stopped short of finished: the run did its share and left the rest for a
+	// Continue. The state stays succeeded, because nothing failed; the phase is
+	// what the list filter's FilterStatePartial and the Job Center's
+	// "Partially completed" label read. On any other state it means nothing.
+	PhasePartial = "partial"
 )
+
+// FilterStatePartial is the one Filter.States token that is not a State: the
+// succeeded Jobs whose phase is PhasePartial. It is an alternative among the
+// states like any other token, so "failed or partially completed" is one
+// question, and it narrows succeeded rather than replacing it — a filter for
+// succeeded still includes these, because that is their stored state.
+const FilterStatePartial = "partial"
 
 // CommandContext is what an adapter is told when the host asks which commands a
 // Job offers.

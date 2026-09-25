@@ -46,7 +46,8 @@ func TestJobsListCarriesCanonicalFiltersAndCursor(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := runJobCLI(t, server.URL, false, "list", "--state", "failed", "--state", "interrupted", "--kind", "remote-download", "--owner-id", "7", "--accepted-after", "2026-01-02T03:04:05Z", "--cursor", "previous", "--limit", "25")
+	err := runJobCLI(t, server.URL, false, "list", "--state", "failed", "--state", "interrupted", "--kind", "remote-download", "--owner-id", "7", "--accepted-after", "2026-01-02T03:04:05Z", "--cursor", "previous", "--limit", "25",
+		"--inbound-relationship", "repeat-of", "--no-inbound-relationship", "retry-of")
 	if err != nil {
 		t.Fatalf("jobs list: %v", err)
 	}
@@ -57,6 +58,7 @@ func TestJobsListCarriesCanonicalFiltersAndCursor(t *testing.T) {
 	for key, want := range map[string]string{
 		"states": "failed,interrupted", "kinds": "remote-download", "ownerId": "7",
 		"acceptedAfter": "2026-01-02T03:04:05Z", "cursor": "previous", "limit": "25",
+		"inboundRelationship": "repeat-of", "noInboundRelationship": "retry-of",
 	} {
 		if got := query.Get(key); got != want {
 			t.Errorf("query %s = %q, want %q (all: %v)", key, got, want, query)

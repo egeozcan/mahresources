@@ -262,6 +262,19 @@ func TestJobRowProgressNamesEveryBar(t *testing.T) {
 		t.Fatalf("finished unknown size = %+v", finished)
 	}
 
+	// A partial success is not "Completed": the bar says what the badge says.
+	partial := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded, Phase: jobs.PhasePartial})
+	if partial == nil || partial.Text != "Partially completed" || partial.AccessibleText != "Partially completed" {
+		t.Fatalf("partial success with no progress = %+v", partial)
+	}
+	// A finished total and the run's last message still read as partial, with
+	// the message kept: it is usually what says how much is left.
+	partialDone := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded, Phase: jobs.PhasePartial,
+		Progress: jobs.Progress{Completed: i64(3), Total: i64(3), Message: "Did 3 of 9 shares."}})
+	if partialDone.Text != "Partially completed: Did 3 of 9 shares." || partialDone.AccessibleText != partialDone.Text || partialDone.Percent != 100 {
+		t.Fatalf("partial success with a finished total = %+v", partialDone)
+	}
+
 	stale := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded, Progress: jobs.Progress{Completed: i64(70), Total: i64(100), Message: "Fetching"}})
 	if stale.Text != "Completed" || stale.Percent != 100 {
 		t.Fatalf("a succeeded job's stale percentage = %+v", stale)
@@ -307,13 +320,40 @@ func TestJobFilterFormKeepsWhatTheURLAsked(t *testing.T) {
 
 func TestJobCommandOptionsKeepEveryFilterableKey(t *testing.T) {
 	options := jobCommandOptions("")
-	for _, key := range []string{"retry", "inspect", "retry-import", "forget"} {
-		if !slices.Contains(options, key) {
-			t.Errorf("the command filter does not offer %q: %v", key, options)
+	labels := map[string]string{}
+	for _, option := range options {
+		labels[option.Value] = option.Label
+	}
+	// The select shows words, not keys: what a Job card's button says.
+	for key, label := range map[string]string{
+		"retry": "Retry", "continue": "Continue", "inspect": "Inspect command history",
+		"retry-import": "Retry import", "pin-lineage": "Pin visible lineage", "forget": "Forget replay input",
+	} {
+		if labels[key] != label {
+			t.Errorf("the command filter offers %q as %q, want %q", key, labels[key], label)
 		}
 	}
-	if kept := jobCommandOptions("future-key"); kept[len(kept)-1] != "future-key" {
+	if kept := jobCommandOptions("future-key"); kept[len(kept)-1] != (JobSelectOption{Value: "future-key", Label: "future-key"}) {
 		t.Errorf("a key the URL names was dropped from the select: %v", kept)
+	}
+}
+
+func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
+	options := jobInboundRelationshipOptions("")
+	want := []JobSelectOption{
+		{Value: "retry-of", Label: "retried or continued"},
+		{Value: "repeat-of", Label: "repeated"},
+		{Value: "parent-child", Label: "a child stage"},
+	}
+	if !slices.Equal(options, want) {
+		t.Fatalf("inbound options = %v, want %v", options, want)
+	}
+	if kept := jobInboundRelationshipOptions("future-link"); len(kept) != 4 || kept[3].Value != "future-link" {
+		t.Fatalf("a relationship the URL names was dropped from the select: %v", kept)
+	}
+	form := jobFilterForm(url.Values{"inboundRelationship": {"repeat-of"}, "noInboundRelationship": {"retry-of"}})
+	if form.InboundRelationship != "repeat-of" || form.NoInboundRelationship != "retry-of" {
+		t.Fatalf("form = %+v", form)
 	}
 }
 
@@ -332,5 +372,50 @@ func TestJobRowTimesShareOneZone(t *testing.T) {
 	want := accepted.In(time.Local).Format("2006-01-02 15:04")
 	if row.Accepted.Minute != want || row.Started.Display[:16] != started.In(time.Local).Format("2006-01-02 15:04") {
 		t.Fatalf("accepted %q / started %q, want both in the server's zone (%q)", row.Accepted.Minute, row.Started.Display, want)
+	}
+}
+
+// TestJobStateOptionsOfferPartiallyCompleted pins the State fieldset: every
+// lifecycle state under its own spelling, and the filter-only partial token
+// right after succeeded, which it narrows.
+func TestJobStateOptionsOfferPartiallyCompleted(t *testing.T) {
+	options := jobStateOptions()
+	var values []string
+	for _, option := range options {
+		values = append(values, option.Value)
+	}
+	want := []string{"scheduled", "queued", "running", "paused", "blocked", "succeeded", jobs.FilterStatePartial, "failed", "cancelled", "interrupted"}
+	if !slices.Equal(values, want) {
+		t.Fatalf("state option values = %v, want %v", values, want)
+	}
+	if label := options[6].Label; label != "partially completed" {
+		t.Fatalf("partial option label = %q, want %q", label, "partially completed")
+	}
+	if label := options[5].Label; label != "succeeded" {
+		t.Fatalf("succeeded option label = %q, want its own spelling", label)
+	}
+}
+
+// TestJobRowNamesAPartialSuccess is the card for a succeeded Job its Kind left
+// unfinished: the badge says so, and the raw phase is not repeated beside it.
+// The same phase on a running Job is only a phase.
+func TestJobRowNamesAPartialSuccess(t *testing.T) {
+	reader := &fakeJobListReader{}
+	partial := jobRow(reader, jobs.Snapshot{ID: "p", Kind: "plugin-action", State: jobs.StateSucceeded, Phase: jobs.PhasePartial})
+	if partial.StateLabel != "Partially completed" || partial.Phase != "" {
+		t.Fatalf("partial row = label %q, phase %q; want Partially completed and no phase", partial.StateLabel, partial.Phase)
+	}
+	// The live list announces a state change from this payload, so it carries
+	// the phase its label is read from.
+	if !strings.Contains(partial.Entity, `"phase":"partial"`) {
+		t.Fatalf("partial row payload %s lacks its phase", partial.Entity)
+	}
+	complete := jobRow(reader, jobs.Snapshot{ID: "c", Kind: "plugin-action", State: jobs.StateSucceeded})
+	if complete.StateLabel != "Succeeded" {
+		t.Fatalf("complete row label = %q, want Succeeded", complete.StateLabel)
+	}
+	running := jobRow(reader, jobs.Snapshot{ID: "r", Kind: "plugin-action", State: jobs.StateRunning, Phase: jobs.PhasePartial})
+	if running.StateLabel != "Running" || running.Phase != jobs.PhasePartial {
+		t.Fatalf("running row = label %q, phase %q; want Running and its phase", running.StateLabel, running.Phase)
 	}
 }

@@ -129,6 +129,8 @@ type JobFilterForm struct {
 	AcceptedAfterInstant  string
 	AcceptedBeforeInstant string
 	Relationship          string
+	InboundRelationship   string
+	NoInboundRelationship string
 	Pinned                string
 	Dismissed             string
 }
@@ -150,8 +152,10 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			"pageTitle":               "Job Center",
 			"jobCenterCutoverEnabled": JobCenterCutoverEnabled,
 			"jobFilter":               jobFilterForm(query),
-			"jobStateOptions":         jobStateNames(),
+			"jobStateOptions":         jobStateOptions(),
 			"jobCommandOptions":       jobCommandOptions(query.Get("command")),
+			"jobInboundOptions":       jobInboundRelationshipOptions(query.Get("inboundRelationship")),
+			"jobNoInboundOptions":     jobInboundRelationshipOptions(query.Get("noInboundRelationship")),
 			"jobs":                    []JobRow{},
 		}.Update(StaticTemplateCtx(request))
 		if reader == nil {
@@ -213,23 +217,65 @@ func jobKindOptions(registered, requested []string) []string {
 	return options
 }
 
-// jobCommandOptions is the "Available command" select: the known vocabulary,
-// plus the key the URL already names when it is not in it, so a link naming a
-// key the list does not know keeps its filter when another one is changed.
-func jobCommandOptions(current string) []string {
-	options := application_context.JobCommandFilterKeys()
-	if current = strings.TrimSpace(current); current != "" && !slices.Contains(options, current) {
-		options = append(options, current)
+// jobCommandOptions is the "Available command" select: the known vocabulary in
+// words, plus the key the URL already names when it is not in it, so a link
+// naming a key the list does not know keeps its filter when another one is
+// changed.
+func jobCommandOptions(current string) []JobSelectOption {
+	var options []JobSelectOption
+	for _, option := range application_context.JobCommandFilterOptions() {
+		options = append(options, JobSelectOption{Value: option.Key, Label: option.Label})
+	}
+	return withURLOption(options, current)
+}
+
+// withURLOption appends the value a URL names when no option carries it, shown
+// as the value itself.
+func withURLOption(options []JobSelectOption, current string) []JobSelectOption {
+	current = strings.TrimSpace(current)
+	if current != "" && !slices.ContainsFunc(options, func(o JobSelectOption) bool { return o.Value == current }) {
+		options = append(options, JobSelectOption{Value: current, Label: current})
 	}
 	return options
 }
 
-func jobStateNames() []string {
-	names := make([]string, 0, len(jobs.AllStates))
+// JobSelectOption is one option of a sidebar select.
+type JobSelectOption struct {
+	Value string
+	Label string
+}
+
+// jobInboundRelationshipOptions is the "Has been" and "Has not been" selects:
+// the far end of each lineage link, read from the Job it points at — retried or
+// continued, repeated, or made a child stage of another Job. A URL naming a
+// value outside these keeps it as its own option, so resubmitting the form does
+// not drop it.
+func jobInboundRelationshipOptions(current string) []JobSelectOption {
+	return withURLOption([]JobSelectOption{
+		{Value: string(jobs.LinkRetryOf), Label: "retried or continued"},
+		{Value: string(jobs.LinkRepeatOf), Label: "repeated"},
+		{Value: string(jobs.LinkParentChild), Label: "a child stage"},
+	}, current)
+}
+
+// JobStateOption is one checkbox of the State fieldset.
+type JobStateOption struct {
+	Value string
+	Label string
+}
+
+// jobStateOptions is the State fieldset: every lifecycle state under its own
+// spelling, and the filter-only partial token right after the succeeded state
+// it narrows.
+func jobStateOptions() []JobStateOption {
+	options := make([]JobStateOption, 0, len(jobs.AllStates)+1)
 	for _, state := range jobs.AllStates {
-		names = append(names, string(state))
+		options = append(options, JobStateOption{Value: string(state), Label: string(state)})
+		if state == jobs.StateSucceeded {
+			options = append(options, JobStateOption{Value: jobs.FilterStatePartial, Label: "partially completed"})
+		}
 	}
-	return names
+	return options
 }
 
 // jobListFilter reads the page's filter. The sidebar form submits every field,
@@ -276,18 +322,20 @@ func addJobListError(err error, ctx pongo2.Context) pongo2.Context {
 
 func jobFilterForm(query url.Values) JobFilterForm {
 	form := JobFilterForm{
-		Search:         query.Get("search"),
-		Command:        query.Get("command"),
-		Kinds:          nonEmptyTokens(query, "kind", "kinds"),
-		States:         nonEmptyTokens(query, "state", "states"),
-		Origins:        nonEmptyTokens(query, "origin", "origins"),
-		OwnerID:        query.Get("ownerId"),
-		ActorID:        query.Get("actorId"),
-		AcceptedAfter:  datetimeInputValue(query.Get("acceptedAfter"), false),
-		AcceptedBefore: datetimeInputValue(query.Get("acceptedBefore"), true),
-		Relationship:   query.Get("relationship"),
-		Pinned:         query.Get("pinned"),
-		Dismissed:      query.Get("dismissed"),
+		Search:                query.Get("search"),
+		Command:               query.Get("command"),
+		Kinds:                 nonEmptyTokens(query, "kind", "kinds"),
+		States:                nonEmptyTokens(query, "state", "states"),
+		Origins:               nonEmptyTokens(query, "origin", "origins"),
+		OwnerID:               query.Get("ownerId"),
+		ActorID:               query.Get("actorId"),
+		AcceptedAfter:         datetimeInputValue(query.Get("acceptedAfter"), false),
+		AcceptedBefore:        datetimeInputValue(query.Get("acceptedBefore"), true),
+		Relationship:          query.Get("relationship"),
+		InboundRelationship:   query.Get("inboundRelationship"),
+		NoInboundRelationship: query.Get("noInboundRelationship"),
+		Pinned:                query.Get("pinned"),
+		Dismissed:             query.Get("dismissed"),
 	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
@@ -477,11 +525,15 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	}
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
-		StateLabel: jobStateLabel(snapshot.State), Phase: snapshot.Phase, Pinned: snapshot.Pinned,
+		StateLabel: jobStateLabel(snapshot), Phase: snapshot.Phase, Pinned: snapshot.Pinned,
 		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
 		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
 		Progress:  jobRowProgress(snapshot),
 		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
+	}
+	if jobIsPartial(snapshot) {
+		// The badge already says it; the raw phase beside it would say it twice.
+		row.Phase = ""
 	}
 	if snapshot.Failure != nil {
 		row.FailureMessage = snapshot.Failure.Message
@@ -496,14 +548,23 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	}
 	entity, _ := json.Marshal(map[string]any{
 		"id": snapshot.ID, "title": title, "kind": snapshot.Kind, "state": snapshot.State,
-		"version": snapshot.Version, "pinned": snapshot.Pinned,
+		"phase": snapshot.Phase, "version": snapshot.Version, "pinned": snapshot.Pinned,
 	})
 	row.Entity = string(entity)
 	return row
 }
 
-func jobStateLabel(state jobs.State) string {
-	text := strings.ReplaceAll(string(state), "-", " ")
+// jobIsPartial reports a succeeded Job its Kind recorded as stopped short of
+// finished — what the State filter's "partially completed" selects.
+func jobIsPartial(snapshot jobs.Snapshot) bool {
+	return snapshot.State == jobs.StateSucceeded && snapshot.Phase == jobs.PhasePartial
+}
+
+func jobStateLabel(snapshot jobs.Snapshot) string {
+	if jobIsPartial(snapshot) {
+		return "Partially completed"
+	}
+	text := strings.ReplaceAll(string(snapshot.State), "-", " ")
 	if text == "" {
 		return "Unknown"
 	}
@@ -546,6 +607,16 @@ func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 	}
 
 	knownTotal := progress.Completed != nil && progress.Total != nil && *progress.Total > 0
+	if jobIsPartial(snapshot) {
+		// The run is over and its share is done, but the work is not: the bar
+		// says what the badge says, keeping the run's last message, which is
+		// usually what says how much is left.
+		text := jobStateLabel(snapshot)
+		if progress.Message != "" {
+			text += ": " + progress.Message
+		}
+		return &JobRowProgress{Text: text, Percent: 100, Known: true, AccessibleText: text}
+	}
 	if succeeded && !(knownTotal && *progress.Completed >= *progress.Total) {
 		return &JobRowProgress{Text: "Completed", Percent: 100, Known: true, AccessibleText: "Completed"}
 	}

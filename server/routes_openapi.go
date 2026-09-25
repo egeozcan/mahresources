@@ -132,9 +132,9 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/jobs/summary/export", OperationID: "exportCanonicalJobSummary",
 		Summary: "Queue a filtered long-range Job summary export", Tags: []string{"jobs"},
-		Description: "Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters.",
+		Description: "Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters, except the `partial` state and the inbound relationship filters, which are refused with 400 because an export's filter is stored and may be run by a worker from an older release that does not know them.",
 		RequestType: reflect.TypeOf(api_handlers.JobSummaryExportRequest{}), RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
-		ExtraQueryParams: filterParams,
+		ExtraQueryParams: summaryExportFilterQueryParams(filterParams),
 		ResponseType:     reflect.TypeOf(api_handlers.JobSummaryExportResponse{}), SuccessStatus: http.StatusAccepted,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       map[int]string{http.StatusBadRequest: "Invalid filter, date range, or format", http.StatusForbidden: "Insufficient permissions"},
@@ -229,16 +229,36 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	})
 }
 
+// summaryExportFilterQueryParams is the list filter a summary export accepts:
+// the same parameters without the ones it refuses (unsealableSummaryFilterDimension
+// in application_context), so the contract does not offer what a submission
+// answers with 400.
+func summaryExportFilterQueryParams(listParams []openapi.QueryParam) []openapi.QueryParam {
+	out := make([]openapi.QueryParam, 0, len(listParams))
+	for _, param := range listParams {
+		switch param.Name {
+		case "inboundRelationship", "noInboundRelationship":
+			continue
+		case "state", "states":
+			param.Description = "Filter by state; repeat or comma-separate values. The `partial` token is refused for exports."
+		}
+		out = append(out, param)
+	}
+	return out
+}
+
 func canonicalJobFilterQueryParams() []openapi.QueryParam {
 	return []openapi.QueryParam{
-		{Name: "state", Type: "array", ItemType: "string", Description: "Filter by state; repeat or comma-separate values."},
-		{Name: "states", Type: "array", ItemType: "string", Description: "Filter by states; repeat or comma-separate values."},
+		{Name: "state", Type: "array", ItemType: "string", Description: "Filter by state; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`."},
+		{Name: "states", Type: "array", ItemType: "string", Description: "Filter by states; repeat or comma-separate values. Besides the lifecycle states, `partial` selects succeeded Jobs whose phase is `partial`."},
 		{Name: "kind", Type: "array", ItemType: "string", Description: "Filter by Kind; repeat or comma-separate values."},
 		{Name: "kinds", Type: "array", ItemType: "string", Description: "Filter by Kinds; repeat or comma-separate values."},
 		{Name: "origin", Type: "array", ItemType: "string", Description: "Filter by origin; repeat or comma-separate values."},
 		{Name: "origins", Type: "array", ItemType: "string", Description: "Filter by origins; repeat or comma-separate values."},
 		{Name: "search", Type: "string", Description: "Search safe Job title, summary, and phase fields."},
 		{Name: "relationship", Type: "string", Description: "Filter by a supported lineage relationship."},
+		{Name: "inboundRelationship", Type: "string", Description: "Filter to Jobs a visible Job links to with this lineage relationship: retried or continued (retry-of), repeated (repeat-of), or a child stage (parent-child)."},
+		{Name: "noInboundRelationship", Type: "string", Description: "Filter to Jobs no visible Job links to with this lineage relationship, for example not yet retried (retry-of)."},
 		{Name: "ownerId", Type: "integer", Description: "Filter by owner user ID."},
 		{Name: "actorId", Type: "integer", Description: "Filter by actor user ID."},
 		{Name: "acceptedAfter", Type: "string", Description: "Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second."},

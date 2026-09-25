@@ -138,10 +138,24 @@ export function stateOf(job) {
     return String(job?.state || 'unknown').toLowerCase();
 }
 
+// A succeeded job whose Kind recorded the `partial` phase stopped short of
+// finished and may offer Continue; its state is still succeeded. The /jobs card
+// (job_template_context.go jobStateLabel) says the same.
+export function isPartialSuccess(job) {
+    return stateOf(job) === 'succeeded' && job?.phase === 'partial';
+}
+
 export function stateLabel(job) {
     const state = stateOf(job);
     if (!state) return 'Unknown';
+    if (isPartialSuccess(job)) return 'Partially completed';
     return state.charAt(0).toUpperCase() + state.slice(1).replaceAll('-', ' ');
+}
+
+// The phase shown beside the state, or nothing when the state label already
+// says it: a partial success's label is its phase.
+export function phaseText(job) {
+    return isPartialSuccess(job) ? '' : String(job?.phase || '');
 }
 
 export function classifyJobState(jobOrState) {
@@ -276,6 +290,8 @@ export function streamCursorSequence(value) {
 // and would keep pulsing "In progress" on a download that finished long ago.
 function progressSupersededBySuccess(job) {
     if (job?.state !== 'succeeded') return false;
+    // A partial success always reads as partial, whatever its last row says.
+    if (isPartialSuccess(job)) return true;
     const progress = job?.progress || {};
     const completed = progress.completed;
     const total = progress.total;
@@ -283,6 +299,12 @@ function progressSupersededBySuccess(job) {
 }
 
 export function progressText(job) {
+    if (isPartialSuccess(job)) {
+        // The bar says what the badge says, keeping the run's last message:
+        // it is usually what says how much is left.
+        const message = job?.progress?.message;
+        return message ? `Partially completed: ${message}` : 'Partially completed';
+    }
     if (progressSupersededBySuccess(job)) return 'Completed';
     const progress = job?.progress || {};
     if (progress.message) return progress.message;
@@ -538,6 +560,7 @@ export function jobCenter(options = {}) {
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
+        phaseText(job) { return phaseText(job); },
         stateClass(job) { return classifyJobState(job); },
         commandLabel(command) { return commandLabel(command); },
         advertisedCommands(job) { return advertisedCommands(this.details[job.id] || job); },

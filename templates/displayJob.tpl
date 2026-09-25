@@ -14,7 +14,7 @@
                         <span class="rounded border border-stone-300 px-2 py-0.5 font-mono" x-text="stateLabel(detail)"></span>
                         <span x-show="detail.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">Pinned by you</span>
                         <span x-text="detail.kind"></span>
-                        <span x-show="detail.phase" x-text="detail.phase"></span>
+                        <span x-show="phaseText(detail)" x-text="phaseText(detail)"></span>
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
                 </div>

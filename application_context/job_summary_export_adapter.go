@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,6 +131,26 @@ func jobSummaryExportCodec() jobs.ReplayCodec {
 	}
 }
 
+// unsealableSummaryFilterDimension names a filter dimension an export may not
+// seal, or "" when there is none. An export's filter is decoded by whichever
+// worker claims it, with plain JSON, so a worker from a release that predates a
+// dimension drops it and exports a wider summary than was asked for, with no
+// error; a v1 worker that meets the partial token refuses the whole filter. The
+// dimensions below postdate v1 and are refused here instead of sealed. Offering
+// them to exports needs a Kind version that older workers do not claim, and a
+// way back for the ones such a worker blocks as adapter-missing.
+func unsealableSummaryFilterDimension(filter jobs.Filter) string {
+	switch {
+	case slices.Contains(filter.States, jobs.FilterStatePartial):
+		return "the partially completed state"
+	case filter.InboundRelationship != "":
+		return "inboundRelationship"
+	case filter.NoInboundRelationship != "":
+		return "noInboundRelationship"
+	}
+	return ""
+}
+
 func jobSummaryExportInputOf(raw json.RawMessage) (*jobSummaryExportInput, error) {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return nil, errors.New("a Job summary export input is not valid JSON")
@@ -149,6 +170,9 @@ func jobSummaryExportInputOf(raw json.RawMessage) (*jobSummaryExportInput, error
 	}
 	if input.Format != "csv" && input.Format != "json" {
 		return nil, errors.New("a Job summary export format must be csv or json")
+	}
+	if dimension := unsealableSummaryFilterDimension(input.Filter); dimension != "" {
+		return nil, fmt.Errorf("%w: a Job summary export cannot filter by %s", jobs.ErrInvalidFilter, dimension)
 	}
 	input.From = input.From.UTC()
 	input.To = input.To.UTC()

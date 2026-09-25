@@ -61,6 +61,14 @@ phase such as parsing, downloading, or assembling without changing the Job
 state. The old queue endpoints may continue to use their established status
 names during compatibility.
 
+One phase has a host-wide meaning. A succeeded Job with phase `partial` stopped
+short of finished: its Kind recorded that the run did its share and left the
+rest. A plugin action records it when its handler returns `continue = true`.
+The Job Center labels such a Job **Partially completed**, and the state filter
+accepts `partial` as one more alternative (`state=failed,partial` lists failed
+Jobs and partial ones). `partial` is a subset of `succeeded`: a filter for
+`succeeded` still includes these Jobs, because that is their stored state.
+
 When a plugin action succeeds, its final progress is stored with the completed
 Job. The Job Center also shows older successful plugin actions as complete when
 their last stored percentage update was below 100%.
@@ -84,7 +92,17 @@ mr jobs summary --window 30d --json
 
 `jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
-advertised command, and the viewer's pin and dismissal preferences. `get`
+advertised command, and the viewer's pin and dismissal preferences.
+
+A lineage link has two ends, and each has a filter. `relationship` matches the
+Job the link starts from: a Retry, Continue or Repeat successor, or a parent
+stage. `inboundRelationship` matches the Job it points at: one that was retried
+or continued (`retry-of`), repeated (`repeat-of`), or a child stage
+(`parent-child`). `noInboundRelationship` is its negation, so
+`state=failed&noInboundRelationship=retry-of` lists failed Jobs nobody has
+retried. Only Jobs the viewer can see count as the other end, so a Job whose
+only retry is hidden from the viewer reads as not retried. On the Job Center
+page these are the **Has been** and **Has not been** selects. `get`
 returns the current command and output declarations. `timeline` reads ordered
 durable events by per-Job sequence. `summary` uses the same visibility and
 filters as listing and accepts windows up to 90 days.
@@ -116,7 +134,12 @@ mr jobs summary export \
 ```
 
 The export Job applies the same visibility predicate and filters as interactive
-summary. Its CSV or JSON is a typed artifact, not a replacement for the Job
+summary, except `state=partial`, `inboundRelationship` and
+`noInboundRelationship`, which an export refuses with a 400. An export's filter
+is stored and run later, possibly by a worker from an older release. Such a
+worker fails an export filtered by `state=partial`, which it reads as an unknown
+state, but it silently ignores the inbound relationship filters and exports a
+wider summary than was asked for. Its CSV or JSON is a typed artifact, not a replacement for the Job
 record; export retention controls when the bytes expire. A Job's history,
 encrypted replay envelope, and output artifact have separate retention policies.
 

@@ -98,8 +98,9 @@ const (
 // the continuation advertisement reads — a Job is offered Continue only when its
 // Kind (this adapter) says the work was left unfinished, never from state alone,
 // because a succeeded plugin action is the normal outcome and only the plugin
-// knows whether it exhausted its work.
-const pluginActionPhasePartial = "partial"
+// knows whether it exhausted its work. It is the host's jobs.PhasePartial, so
+// the list's "partially completed" filter and label read it too.
+const pluginActionPhasePartial = jobs.PhasePartial
 
 // pluginActionResultContinueKey is the reserved result-table key a handler sets
 // to true to have its successful completion recorded as partial. It is read from

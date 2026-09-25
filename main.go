@@ -648,7 +648,7 @@ func main() {
 	// subsequent start preflights against, and keeping the two together is what
 	// makes "the tables exist" and "the epoch is recorded" one fact rather than
 	// two that can drift.
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, context.Config.DbDsn); err != nil {
 		fail("failed to migrate the job core: %v", err)
 		return
 	}
@@ -1049,7 +1049,7 @@ func activatePluginsWithJobControlPlane(context *application_context.Mahresource
 // It lives here rather than inline so the startup step is testable without
 // starting a server, and it is idempotent: AutoMigrate is, and
 // EnsureJobWriterEpoch only ever writes a missing row.
-func migrateJobCore(db *gorm.DB) error {
+func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 	if err := db.AutoMigrate(
 		&models.Job{},
 		&models.JobResourceReceipt{},
@@ -1077,7 +1077,37 @@ func migrateJobCore(db *gorm.DB) error {
 	if err := models.EnsureJobResourceReceiptConstraints(db); err != nil {
 		return err
 	}
+	if db.Dialector.Name() == "postgres" {
+		// Built CONCURRENTLY, which on a large jobs table takes a while and may
+		// wait for another server's build, so it runs beside the server rather
+		// than in front of it, on a connection of its own rather than one of the
+		// application's — and it keeps trying until the indexes exist, because a
+		// build that failed (here or on the server it waited for) would otherwise
+		// leave them missing until the next restart.
+		go ensureJobFilterIndexesUntilBuilt(func() error {
+			return models.EnsureJobFilterIndexesOnOwnConnection(postgresDSN)
+		}, jobFilterIndexRetryInterval)
+	} else if err := models.EnsureJobFilterIndexes(db); err != nil {
+		// SQLite has one writer: a build beside the server would hold it while
+		// requests wait, so it happens here, before any are served.
+		return err
+	}
 	return models.EnsureJobWriterEpoch(db)
+}
+
+// jobFilterIndexRetryInterval is how long a failed filter-index build waits
+// before it is tried again.
+const jobFilterIndexRetryInterval = 5 * time.Minute
+
+func ensureJobFilterIndexesUntilBuilt(build func() error, retry time.Duration) {
+	for {
+		err := build()
+		if err == nil {
+			return
+		}
+		log.Printf("warning: the Job list filter indexes could not be built; retrying in %s: %v", retry, err)
+		time.Sleep(retry)
+	}
 }
 
 // resolveDefaultResourceCategory finds or creates the default resource category

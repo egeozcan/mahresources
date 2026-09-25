@@ -27,6 +27,8 @@ func ParseFilter(values url.Values) (jobs.Filter, error) {
 	filter.Origins = tokens(values, "origins", "origin")
 	filter.Search = values.Get("search")
 	filter.Relationship = values.Get("relationship")
+	filter.InboundRelationship = values.Get("inboundRelationship")
+	filter.NoInboundRelationship = values.Get("noInboundRelationship")
 	var err error
 	if filter.OwnerID, err = positiveUint(values, "ownerId"); err != nil {
 		return jobs.Filter{}, err

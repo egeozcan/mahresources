@@ -54,6 +54,9 @@ type Job struct {
 	// State is the normalized lifecycle state; Phase is an optional finer step
 	// a Kind publishes ("downloading segments", "quarantined") and never
 	// redefines State.
+	//
+	// Two further indexes carry phase for the list's "partially completed"
+	// filter; they are built outside AutoMigrate (job_filter_indexes.go).
 	State string `gorm:"size:20;not null;index:idx_jobs_kind_state,priority:2;index:idx_jobs_visible,priority:3;index:idx_jobs_retention,priority:1" json:"state"`
 	Phase string `gorm:"size:60" json:"phase,omitempty"`
 
@@ -215,6 +218,10 @@ const (
 
 // JobLink is one typed durable relation between two Jobs, unique on
 // (type, from, to) so the same relation cannot be recorded twice.
+//
+// idx_job_links_inbound, which reads a link from its TO end for the list's
+// "has been retried" filters, is built outside AutoMigrate
+// (job_filter_indexes.go).
 type JobLink struct {
 	ID        uint      `gorm:"primarykey" json:"id"`
 	Type      string    `gorm:"size:20;not null;uniqueIndex:idx_job_links_unique,priority:1" json:"type"`

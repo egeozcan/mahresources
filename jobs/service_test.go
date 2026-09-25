@@ -74,6 +74,9 @@ func newFileDeps(t *testing.T) (Deps, string) {
 	if err := db.AutoMigrate(append(jobCoreTables(), &models.PluginKV{})...); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
+	if err := models.EnsureJobFilterIndexes(db); err != nil {
+		t.Fatalf("create job filter indexes: %v", err)
+	}
 	return Deps{DB: db}, dsn
 }
 

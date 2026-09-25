@@ -299,15 +299,36 @@ func (a *pluginCommandJobAdapter) SelectCommandJobs(_ context.Context, request j
 	return nil, false, nil
 }
 
-// JobCommandFilterKeys is the command vocabulary the Job list's "Available
+// JobCommandFilterOption is one entry of the "Available command" filter: the
+// key the filter sends and the words the select shows.
+type JobCommandFilterOption struct {
+	Key   string
+	Label string
+}
+
+// JobCommandFilterOptions is the command vocabulary the Job list's "Available
 // command" filter offers: the host's own keys and every key a Kind's selector
 // above answers. The selectors are switches, so this list is kept beside them;
 // a key a selector gains belongs here too, or the filter cannot offer it.
-func JobCommandFilterKeys() []string {
-	return []string{
-		jobs.CommandCancel, jobs.CommandPause, jobs.CommandResume, jobs.CommandRetry, jobs.CommandContinue, jobs.CommandRepeat,
-		pluginCommandInspectKey, pluginCommandImportRetryKey,
-		jobs.CommandDismiss, jobs.CommandPin, jobs.CommandUnpin, jobs.CommandPinLineage, jobs.CommandForget,
+//
+// A label is the generic name of the command. A Kind may advertise the same key
+// under its own words (an export's Repeat is "Export again"), but the filter
+// spans Kinds, so it names what every one of them shares.
+func JobCommandFilterOptions() []JobCommandFilterOption {
+	return []JobCommandFilterOption{
+		{jobs.CommandCancel, "Cancel"},
+		{jobs.CommandPause, "Pause"},
+		{jobs.CommandResume, "Resume"},
+		{jobs.CommandRetry, "Retry"},
+		{jobs.CommandContinue, "Continue"},
+		{jobs.CommandRepeat, "Repeat"},
+		{pluginCommandInspectKey, "Inspect command history"},
+		{pluginCommandImportRetryKey, "Retry import"},
+		{jobs.CommandDismiss, "Dismiss"},
+		{jobs.CommandPin, "Pin"},
+		{jobs.CommandUnpin, "Unpin"},
+		{jobs.CommandPinLineage, "Pin visible lineage"},
+		{jobs.CommandForget, "Forget replay input"},
 	}
 }
 

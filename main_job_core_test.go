@@ -24,7 +24,7 @@ func TestJobCoreMigrationSeedsTheWriterEpoch(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("migrateJobCore: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestJobCoreMigrationSeedsTheWriterEpoch(t *testing.T) {
 	}
 
 	// Idempotent: a second start must not disturb the row.
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("second migrateJobCore: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestJobCoreMigrationSeedsTheWriterEpoch(t *testing.T) {
 		Update("minimum_epoch", advanced).Error; err != nil {
 		t.Fatalf("advance epoch: %v", err)
 	}
-	if err := migrateJobCore(db); err != nil {
+	if err := migrateJobCore(db, ""); err != nil {
 		t.Fatalf("migrateJobCore against an advanced epoch: %v", err)
 	}
 	if err := db.Where("id = ?", models.JobWriterEpochRowID).First(&epoch).Error; err != nil {

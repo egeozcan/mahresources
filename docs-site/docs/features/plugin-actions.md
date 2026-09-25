@@ -352,8 +352,9 @@ mah.job_complete(ctx.job_id, {
 })
 ```
 
-The Job still succeeds, because nothing failed, but its phase becomes `partial`.
-The `continue` key itself is not stored in the Job's result output. When the
+The Job still succeeds, because nothing failed, but its phase becomes `partial`,
+and the Job Center labels it **Partially completed**. The `continue` key itself is
+not stored in the Job's result output. When the
 action also declares `retry = true`, the Jobs panel and the Job Center offer
 **Continue** on that Job: a new Job that reruns the same handler with the same
 input, linked like a Retry, so at most one continuation of a Job exists. This is
