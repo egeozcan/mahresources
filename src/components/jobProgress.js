@@ -143,22 +143,33 @@ export function graphSeries(job) {
     if (points.length === 0) return [];
     const out = [];
     const unit = progress.series?.unit || progress.unit || '';
+    // A point with no value stays in the series as a gap (v: null), so a pause
+    // is drawn as a break in the line rather than bridged.
     if (unit !== 'percent' && points.some(point => finite(point.r))) {
         out.push({
             key: 'rate',
             label: 'Speed',
             unit,
             rate: true,
-            points: points.filter(point => finite(point.r)).map(point => ({ t: point.t, v: point.r })),
+            points: trimGaps(points.map(point => ({ t: point.t, v: finite(point.r) ? point.r : null }))),
         });
     }
     for (const metric of progress.metrics || []) {
         if (!metric.graph) continue;
-        const values = points.filter(point => finite(point?.v?.[metric.key])).map(point => ({ t: point.t, v: point.v[metric.key] }));
-        if (values.length === 0) continue;
-        out.push({ key: metric.key, label: metric.label || metric.key, unit: metric.unit || '', rate: false, points: values });
+        const values = points.map(point => ({ t: point.t, v: finite(point?.v?.[metric.key]) ? point.v[metric.key] : null }));
+        if (!values.some(point => finite(point.v))) continue;
+        out.push({ key: metric.key, label: metric.label || metric.key, unit: metric.unit || '', rate: false, points: trimGaps(values) });
     }
     return out;
+}
+
+// Drops the gaps before the first value and after the last, which carry no
+// information: the very first point never has a rate.
+function trimGaps(points) {
+    const first = points.findIndex(point => finite(point.v));
+    let last = points.length - 1;
+    while (last >= 0 && !finite(points[last].v)) last -= 1;
+    return first < 0 ? [] : points.slice(first, last + 1);
 }
 
 function seriesValue(series, value) {
@@ -171,7 +182,8 @@ function seriesValue(series, value) {
  * The vertical scale starts at zero so a steady rate reads as steady.
  */
 export function sparklinePath(points, width = 120, height = 32) {
-    const usable = (points || []).filter(point => finite(point?.t) && finite(point?.v));
+    const timed = (points || []).filter(point => finite(point?.t));
+    const usable = timed.filter(point => finite(point.v));
     if (usable.length === 0) return '';
     const first = usable[0].t;
     const last = usable[usable.length - 1].t;
@@ -184,14 +196,25 @@ export function sparklinePath(points, width = 120, height = 32) {
         const py = y(usable[0].v).toFixed(1);
         return `M0 ${py} L${width} ${py}`;
     }
-    return usable.map((point, index) => `${index === 0 ? 'M' : 'L'}${x(point.t).toFixed(1)} ${y(point.v).toFixed(1)}`).join(' ');
+    // A gap lifts the pen: the next value starts a new segment.
+    const parts = [];
+    let penDown = false;
+    for (const point of timed) {
+        if (!finite(point.v)) {
+            penDown = false;
+            continue;
+        }
+        parts.push(`${penDown ? 'L' : 'M'}${x(point.t).toFixed(1)} ${y(point.v).toFixed(1)}`);
+        penDown = true;
+    }
+    return parts.join(' ');
 }
 
 /** The accessible summary of one graph: its span, latest, peak and average. */
 export function graphSummary(series) {
     const values = (series?.points || []).map(point => point.v).filter(finite);
     if (values.length === 0) return `${series?.label || 'Graph'}: no samples yet`;
-    const points = series.points;
+    const points = series.points.filter(point => finite(point.v));
     const span = (points[points.length - 1].t - points[0].t) / 1000;
     const latest = values[values.length - 1];
     const peak = Math.max(...values);
@@ -202,7 +225,7 @@ export function graphSummary(series) {
 
 /** Latest value of a series, formatted, for the visible caption beside a graph. */
 export function graphLatest(series) {
-    const points = series?.points || [];
+    const points = (series?.points || []).filter(point => finite(point.v));
     if (points.length === 0) return '';
     return seriesValue(series, points[points.length - 1].v);
 }
@@ -239,6 +262,11 @@ export function mergeFetchedProgress(next, previous) {
     if (!next || !previous || next.id !== previous.id || next === previous) return next;
     const incoming = next.progress || {};
     const held = previous.progress || {};
+    // A newer version is a newer execution or transition: its progress wins
+    // whatever its timestamp says, since each process stamps its own clock.
+    if (Number(next.version || 0) > Number(previous.version || 0)) {
+        return incoming.series || !held.series ? next : { ...next, progress: { ...incoming, series: held.series } };
+    }
     const incomingAt = Date.parse(incoming.updatedAt || '');
     const heldAt = Date.parse(held.updatedAt || '');
     if (Number.isFinite(incomingAt) && Number.isFinite(heldAt) && incomingAt < heldAt) {
@@ -261,7 +289,8 @@ export function applyProgressFrame(job, frame) {
     // little in the past, so a frame can arrive after a fetch that was newer.
     const incomingAt = Date.parse(frame.progress?.updatedAt || '');
     const currentAt = Date.parse(previous.updatedAt || '');
-    if (Number.isFinite(incomingAt) && Number.isFinite(currentAt) && incomingAt < currentAt) return job;
+    const sameVersion = Number(frame.version || 0) === Number(job.version || 0);
+    if (sameVersion && Number.isFinite(incomingAt) && Number.isFinite(currentAt) && incomingAt < currentAt) return job;
     const series = frame.point
         ? mergeLivePoint(previous.series, frame.point, frame.intervalMs)
         : previous.series;

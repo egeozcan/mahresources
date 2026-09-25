@@ -164,6 +164,14 @@ func (m *commandProgressMirror) writePending(attempts int) {
 			return
 		}
 		if attempt >= attempts {
+			if attempts < commandProgressFinalAttempts {
+				// A throttled write that failed is held again, so the next
+				// report or the final flush writes it rather than losing it.
+				m.mu.Lock()
+				m.pending = true
+				m.mu.Unlock()
+				return
+			}
 			log.Printf("warning: could not record command progress for job %s: %v", m.jobID, err)
 			return
 		}

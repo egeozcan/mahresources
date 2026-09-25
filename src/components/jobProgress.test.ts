@@ -165,3 +165,24 @@ describe('fetched copies of a Job', () => {
         expect(mergeFetchedProgress(older, undefined)).toBe(older);
     });
 });
+
+describe('graph gaps and newer versions', () => {
+    test('a pause breaks the speed line instead of bridging it', () => {
+        const job = { progress: { unit: 'bytes', series: { unit: 'bytes', points: [
+            { t: 0, c: 0 }, { t: 1000, c: 100, r: 100 }, { t: 2000, c: 200, r: 100 },
+            { t: 600000, c: 300 }, { t: 601000, c: 400, r: 100 }, { t: 602000, c: 500, r: 100 },
+        ] } } };
+        const [speed] = graphSeries(job);
+        expect(speed.points[0]).toEqual({ t: 1000, v: 100 });
+        const path = sparklinePath(speed.points, 120, 28);
+        expect(path.match(/M/g)).toHaveLength(2);
+    });
+
+    test('a newer version wins over an older-looking timestamp', () => {
+        const held = { id: 'j', version: 2, progress: { completed: 90, updatedAt: '2026-09-25T10:00:30Z' } };
+        const resumed = { id: 'j', version: 3, progress: { completed: 10, updatedAt: '2026-09-25T10:00:10Z' } };
+        expect(mergeFetchedProgress(resumed, held).progress.completed).toBe(10);
+        const frame = { jobId: 'j', version: 3, progress: { completed: 12, updatedAt: '2026-09-25T10:00:11Z' } };
+        expect(applyProgressFrame(held, frame).progress.completed).toBe(12);
+    });
+});

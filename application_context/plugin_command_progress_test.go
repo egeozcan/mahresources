@@ -116,3 +116,17 @@ func TestCommandProgressMirrorRetriesTheFinalWrite(t *testing.T) {
 		t.Fatalf("writes = %+v; the final report must survive a transient refusal", writes)
 	}
 }
+
+func TestCommandProgressMirrorHoldsAFailedTimerWriteForTheFinalFlush(t *testing.T) {
+	writer := &recordingProgressWriter{failures: 1}
+	mirror := &commandProgressMirror{jobID: "job-1", target: writer}
+	mirror.report(plugin_commands.ProgressReport{Completed: i64(5)})
+	time.Sleep(50 * time.Millisecond) // the timer's single attempt fails
+	if len(writer.written()) != 0 {
+		t.Fatal("the failing write was recorded")
+	}
+	mirror.close()
+	if writes := writer.written(); len(writes) != 1 || *writes[0].Completed != 5 {
+		t.Fatalf("writes = %+v; the final flush must write the report the timer failed to", writes)
+	}
+}

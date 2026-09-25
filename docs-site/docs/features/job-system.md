@@ -248,7 +248,8 @@ previous point, and `v` the graphed metrics by key.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
 `job-progress` event for every visible Job whose progress changed in the last
-30 seconds and whose current snapshot this connection has not sent yet. Its
+30 seconds and whose current snapshot this connection has not sent yet, up to
+the 500 most recently changed Jobs. Its
 data is `{jobId, version, state, progress, point, intervalMs}`, where `point` is
 the latest series point. Like `job-caught-up`, it has no SSE `id` and never
 moves the delivery cursor. A new connection can therefore receive frames for

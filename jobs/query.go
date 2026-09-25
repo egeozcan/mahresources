@@ -1530,9 +1530,11 @@ func failureClassCounts(base *gorm.DB) ([]FailureClassCount, error) {
 }
 
 // MaxLiveProgressRows bounds one live-progress read. Only Jobs whose progress
-// moved since the caller's watermark are returned, which in practice is the
-// few that are running; the bound keeps a burst from becoming one huge frame.
-const MaxLiveProgressRows = 100
+// moved inside the caller's window are returned, which in practice is the few
+// that are running. The read is newest first, so past this many concurrently
+// reporting Jobs the least recently changed ones get no frames; it is set far
+// above what one deployment's job concurrency produces.
+const MaxLiveProgressRows = 500
 
 // LiveProgress returns the visible Jobs whose progress changed after since,
 // newest change first. The timestamps are written by whichever process runs
