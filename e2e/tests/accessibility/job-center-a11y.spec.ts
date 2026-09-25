@@ -25,10 +25,18 @@ test.describe('Job Center panel accessibility', () => {
     await expect(close).toBeVisible();
     await expect(close).toHaveAttribute('aria-label', 'Close Jobs panel');
 
-    const status = panel.getByRole('status');
+    // Two polite status regions: the connection line, which is visible, and the
+    // announcer the drawer speaks through while it is open (it is aria-modal, so
+    // the page's own live region may go unheard), which is visually hidden.
+    const status = panel.getByRole('status').filter({ hasText: /Live updates connected|Reconnecting|Connecting to live updates/ });
     await expect(status).toBeVisible();
     await expect(status).toHaveAttribute('aria-live', 'polite');
     await expect(status).not.toBeEmpty();
+
+    const announcer = panel.locator('[data-job-panel-announcer]');
+    await expect(announcer).toHaveAttribute('role', 'status');
+    await expect(announcer).toHaveAttribute('aria-live', 'polite');
+    await expect(panel.getByRole('status')).toHaveCount(2);
   });
 
   test('detail command controls are exposed as a named group', async ({ page }) => {

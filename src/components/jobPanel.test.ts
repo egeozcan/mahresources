@@ -1116,6 +1116,57 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('the newest announcement wins across the page region and the drawer region', () => {
+        vi.useFakeTimers();
+        let announcer = { textContent: '', isConnected: true };
+        vi.stubGlobal('document', {
+            querySelector: vi.fn((selector: string) =>
+                selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
+        });
+        // A page region with createLiveRegion's own delay and cancel.
+        const spoken: string[] = [];
+        const page = {
+            pending: null as string | null, timer: undefined as any,
+            announce(message: string) {
+                clearTimeout(this.timer);
+                this.pending = message;
+                this.timer = setTimeout(() => { spoken.push(message); this.pending = null; }, 50);
+            },
+            cancel() { clearTimeout(this.timer); const message = this.pending; this.pending = null; return message; },
+            destroy() {},
+        };
+        const panel = jobPanel();
+        panel._liveRegion = page as any;
+
+        // A said on the page; the drawer opens and B is said inside it; the
+        // drawer closes before B lands. Only B is said, and on the page.
+        panel.announce('A failed.');
+        vi.advanceTimersByTime(5);
+        panel.isOpen = true;
+        panel.announce('B failed.');
+        panel.isOpen = false;
+        announcer.isConnected = false;
+        vi.advanceTimersByTime(200);
+        expect(spoken).toEqual(['B failed.']);
+
+        // A said on the page just before the drawer opens: said inside it.
+        spoken.length = 0;
+        announcer = { textContent: '', isConnected: true };
+        panel.announce('C failed.');
+        panel.isOpen = true;
+        panel.adoptPendingAnnouncement();
+        vi.advanceTimersByTime(200);
+        expect(announcer.textContent).toBe('C failed.');
+        expect(spoken).toEqual([]);
+
+        // Nothing pending: opening says nothing.
+        announcer.textContent = '';
+        panel.adoptPendingAnnouncement();
+        vi.advanceTimersByTime(200);
+        expect(announcer.textContent).toBe('');
+        vi.useRealTimers();
+    });
+
     test('the drawer carries its own polite status region, inside the dialog', () => {
         const template = readFileSync(fileURLToPath(new URL('../../templates/partials/jobPanel.tpl', import.meta.url)), 'utf8');
         const dialogStart = template.indexOf('role="dialog" aria-modal="true"');

@@ -180,16 +180,14 @@ func TestFailureReasonLeavesTheLegacyErrorAlone(t *testing.T) {
 // on a download worker. One made of many short path segments must not turn the
 // rendering of a constant reason into seconds of CPU.
 func TestFailureReasonIsNotQuadraticInTheSubmittedURL(t *testing.T) {
+	// Every segment distinct and at least six characters, so deduplication
+	// cannot shrink the set: 130,000 secrets, two lengths, about 1 MB.
 	var path strings.Builder
 	for i := 0; i < 65000; i++ {
-		path.WriteString("/a")
-		path.WriteString(strings.Repeat(string(rune('a'+i%26)), 4))
-		path.WriteByte(byte('0' + i%10))
+		fmt.Fprintf(&path, "/a%05d", i)
 	}
 	for i := 0; i < 65000; i++ {
-		path.WriteString("/b")
-		path.WriteString(strings.Repeat(string(rune('a'+i%26)), 5))
-		path.WriteByte(byte('0' + i%10))
+		fmt.Fprintf(&path, "/b%06d", i)
 	}
 	submitted := "https://cdn.example.com" + path.String()
 	start := time.Now()

@@ -144,7 +144,10 @@ export function jobPanel() {
             this.$watch?.('isOpen', open => {
                 if (open) {
                     this.startClock();
-                    this.$nextTick?.(() => focusFirstIn(this.$refs?.panel));
+                    this.$nextTick?.(() => {
+                        focusFirstIn(this.$refs?.panel);
+                        this.adoptPendingAnnouncement();
+                    });
                 } else {
                     this.stopClock();
                     restoreFocus(this._lastTrigger, this._trigger);
@@ -248,9 +251,11 @@ export function jobPanel() {
         // region speaks instead. That one lands a tick later (cleared first, so
         // the same message said twice is heard twice), and where it lands is
         // decided then: the drawer's region if the drawer is still open, the
-        // page's if it closed meanwhile and took its region with it. Any newer
-        // announcement replaces a pending one, as createLiveRegion's own do, so
-        // an older message cannot land over a newer one said elsewhere.
+        // page's if it closed meanwhile and took its region with it.
+        //
+        // Two regions means two pending messages, and the newest must win across
+        // both, as it does within one: any announcement cancels the drawer's
+        // pending one, and one made inside the drawer withdraws the page's.
         announce(message) {
             clearTimeout(this._drawerAnnounceTimer);
             this._drawerAnnounceTimer = null;
@@ -259,6 +264,7 @@ export function jobPanel() {
                 this._liveRegion?.announce(message);
                 return;
             }
+            this._liveRegion?.cancel?.();
             inside.textContent = '';
             this._drawerAnnounceTimer = setTimeout(() => {
                 this._drawerAnnounceTimer = null;
@@ -266,6 +272,13 @@ export function jobPanel() {
                 if (region) region.textContent = message;
                 else this._liveRegion?.announce(message);
             }, 50);
+        },
+
+        // A message the page had not yet spoken when the drawer opened would land
+        // behind the dialog: it is said inside the drawer instead.
+        adoptPendingAnnouncement() {
+            const pending = this._liveRegion?.cancel?.();
+            if (pending) this.announce(pending);
         },
 
         _drawerAnnouncer() {

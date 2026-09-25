@@ -2,7 +2,7 @@
  * Create a visually hidden ARIA live region for screen reader announcements.
  * @param {HTMLElement} [parent=document.body] - The parent element to append the region to.
  * @param {{ assertive?: boolean }} [options] - assertive=true uses role="alert"/aria-live="assertive" (for errors); default is polite.
- * @returns {{ element: HTMLElement, announce: (message: string) => void, destroy: () => void }}
+ * @returns {{ element: HTMLElement, announce: (message: string) => void, cancel: () => (string|null), destroy: () => void }}
  */
 export function createLiveRegion(parent = document.body, { assertive = false } = {}) {
     const element = document.createElement('div');
@@ -23,15 +23,32 @@ export function createLiveRegion(parent = document.body, { assertive = false } =
     parent.appendChild(element);
 
     let announceTimeout = null;
+    let pendingMessage = null;
 
     function announce(message) {
         if (announceTimeout) {
             clearTimeout(announceTimeout);
         }
         element.textContent = '';
+        pendingMessage = message;
         announceTimeout = setTimeout(() => {
+            announceTimeout = null;
+            pendingMessage = null;
             element.textContent = message;
         }, 50);
+    }
+
+    // Withdraws a message that has not landed yet and returns it, or null. For a
+    // caller that announces through a second region of its own (a modal dialog's):
+    // a newer message there must replace this one, not be followed by it.
+    function cancel() {
+        if (announceTimeout) {
+            clearTimeout(announceTimeout);
+            announceTimeout = null;
+        }
+        const message = pendingMessage;
+        pendingMessage = null;
+        return message;
     }
 
     function destroy() {
@@ -44,5 +61,5 @@ export function createLiveRegion(parent = document.body, { assertive = false } =
         }
     }
 
-    return { element, announce, destroy };
+    return { element, announce, cancel, destroy };
 }
