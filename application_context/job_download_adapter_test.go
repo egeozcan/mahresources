@@ -675,6 +675,64 @@ func TestADeferredDownloadIsAcceptedAsAScheduledJob(t *testing.T) {
 // TestDueDeferredWorkRunsAsTheSameJob is the "no second execution" property: the
 // Job accepted for the future is the Job that runs, and its due time is what makes
 // it claimable.
+// TestMaterializingADeferredJobThatMovedMeanwhileIsNotAFailure pins the race the
+// due sweep loses to the dispatch loop: it reads the Job as scheduled, the loop
+// promotes it, and the sweep's own conditional transition then conflicts. The
+// Job is materialized either way, which is what the function's contract says of
+// a Job no longer scheduled, so the answer is success and not an error. An error
+// here marks the scheduled row failed while the download it asked for runs.
+//
+// The interleave is injected, not left to timing: a callback on the sweep's read
+// of the Job commits the loop's promotion right after it, through the service,
+// on its own connection and transaction — as the loop's would be. (Injecting it
+// inside the sweep's own transition shares that transaction's rollback, which
+// no real race does.)
+func TestMaterializingADeferredJobThatMovedMeanwhileIsNotAFailure(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	enableDownloadTestPlugin(t, ctx)
+	actor, err := ctx.CreateUser(&UserInput{Username: "planner-race", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the acting user: %v", err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "http://example.invalid/later.txt"},
+		time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	accepted, err := ctx.ResolveJobHandle(ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(row.ID), 10))
+	if err != nil {
+		t.Fatalf("resolve the row's handle: %v", err)
+	}
+
+	var promoted atomic.Bool
+	var promoteErr error
+	callbackName := "test:promote-after-materialize-read:" + accepted.ID
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "jobs" || tx.Error != nil || !promoted.CompareAndSwap(false, true) {
+			return
+		}
+		current, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, accepted.ID)
+		if err == nil {
+			_, err = ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+				JobID: accepted.ID, ExpectedVersion: current.Version, To: jobs.StateQueued,
+			})
+		}
+		promoteErr = err
+	}); err != nil {
+		t.Fatalf("register the promotion callback: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(callbackName) })
+
+	jobID, materialized, err := ctx.materializeDeferredDownloadJob(row.ID)
+	if !promoted.Load() || promoteErr != nil {
+		t.Fatalf("setup: the concurrent promotion did not land (%v), so no race was exercised", promoteErr)
+	}
+	if err != nil || !materialized || jobID != accepted.ID {
+		t.Fatalf("materialize after a concurrent promotion = (%q, %v, %v), want (%s, true, nil)", jobID, materialized, err, accepted.ID)
+	}
+}
+
 func TestDueDeferredWorkRunsAsTheSameJob(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	server := plainContentServer(t, "deferred body")

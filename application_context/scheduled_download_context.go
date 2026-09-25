@@ -547,6 +547,20 @@ func (ctx *MahresourcesContext) materializeDeferredDownloadJob(rowID uint) (stri
 		ExpectedVersion: job.Version,
 		To:              jobs.StateQueued,
 	})
+	if errors.Is(err, jobs.ErrVersionConflict) || errors.Is(err, jobs.ErrIllegalTransition) {
+		// The Job moved between the read and the write — the dispatch loop
+		// promoted it, or someone cancelled it. That is the moved-on case above,
+		// reached by losing a race rather than by arriving late, and it gets the
+		// same answer. Reporting the conflict instead marked the row failed while
+		// the download it asked for ran.
+		current, readErr := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)
+		if readErr != nil {
+			return "", false, readErr
+		}
+		if current.State != jobs.StateScheduled {
+			return job.ID, true, nil
+		}
+	}
 	if err != nil {
 		return "", false, err
 	}

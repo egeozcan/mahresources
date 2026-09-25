@@ -69,7 +69,10 @@ func acceptAndClaimExportForTest(t *testing.T, ctx *MahresourcesContext, handle 
 	if err != nil {
 		t.Fatalf("encode the export input: %v", err)
 	}
-	accepted, err := service.Accept(ctx.jobDeps(), jobs.Acceptance{
+	// Accepted and claimed in one transaction: these fixtures run on a context
+	// whose dispatch loop is live, and a separate Accept then Claim left it a
+	// window to claim the queued export first under load.
+	execution, accepted, err := service.AcceptClaimed(context.Background(), ctx.jobDeps(), jobs.Acceptance{
 		Kind:        JobKindGroupExport,
 		KindVersion: jobExportKindVersion,
 		State:       jobs.StateQueued,
@@ -77,11 +80,7 @@ func acceptAndClaimExportForTest(t *testing.T, ctx *MahresourcesContext, handle 
 		Title:       "Group export",
 		Replay:      jobs.ReplayInput{Input: input},
 		LegacyRefs:  []jobs.LegacyRef{{Namespace: GroupExportHandleNamespace, Handle: handle}},
-	})
-	if err != nil {
-		t.Fatalf("accept the export: %v", err)
-	}
-	execution, claimed, err := service.Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+	}, jobs.ClaimRequest{
 		Kind:        JobKindGroupExport,
 		KindVersion: jobExportKindVersion,
 		// A runtime that is provably gone, because that is the state these fixtures
@@ -94,10 +93,10 @@ func acceptAndClaimExportForTest(t *testing.T, ctx *MahresourcesContext, handle 
 		Lease:    lease,
 	})
 	if err != nil {
-		t.Fatalf("claim the export: %v", err)
+		t.Fatalf("accept and claim the export: %v", err)
 	}
-	if !claimed || execution.JobID != accepted.ID {
-		t.Fatalf("the claim is %v for %s, want a claim of %s", claimed, execution.JobID, accepted.ID)
+	if execution.JobID != accepted.ID {
+		t.Fatalf("the claim is for %s, want a claim of %s", execution.JobID, accepted.ID)
 	}
 	return accepted, execution
 }
