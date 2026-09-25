@@ -147,7 +147,9 @@ export function graphSeries(job) {
     // is drawn as a break in the line rather than bridged.
     if (unit !== 'percent' && points.some(point => finite(point.r))) {
         out.push({
-            key: 'rate',
+            // Not a valid metric key (those are a-z, 0-9, _ and -), so a
+            // plugin metric can never share the speed graph's x-for key.
+            key: ':speed',
             label: 'Speed',
             unit,
             rate: true,
@@ -284,7 +286,20 @@ export function mergeFetchedProgress(next, previous) {
 export function applyProgressFrame(job, frame) {
     if (!job || !frame || job.id !== frame.jobId) return job;
     if (Number(frame.version || 0) < Number(job.version || 0)) return job;
-    const previous = job.progress || {};
+    let previous = job.progress || {};
+    // A change of unit ends the old rates, as the server's own series does;
+    // without this the drawer would keep a bytes/s graph for a count of items.
+    const nextUnit = frame.progress?.unit || '';
+    if (previous.series && (previous.series.unit || '') !== nextUnit) {
+        previous = {
+            ...previous,
+            series: {
+                ...previous.series,
+                unit: nextUnit,
+                points: (previous.series.points || []).map(({ c, r, ...rest }) => rest),
+            },
+        };
+    }
     // The same version can still carry an older snapshot: the stream starts a
     // little in the past, so a frame can arrive after a fetch that was newer.
     const incomingAt = Date.parse(frame.progress?.updatedAt || '');

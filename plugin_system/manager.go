@@ -1623,7 +1623,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			// a snapshot, not an event, so nothing is lost by replacing it less
 			// often: a held-back report is flushed by the next one that passes or
 			// by the settlement, and the terminal report is never throttled.
-			_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(report); return nil })
+			if err := reportHostJob(job, func(sink HostJobSink) error { return sink.Progress(report) }); err != nil {
+				// Held again, so the next report or the settlement sends it.
+				job.mu.Lock()
+				job.progressPending = true
+				job.mu.Unlock()
+			}
 		}
 		return 0
 	})

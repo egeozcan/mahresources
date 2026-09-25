@@ -196,7 +196,6 @@ func (m *commandProgressMirror) close() {
 	m.writePending(commandProgressFinalAttempts)
 }
 
-
 // mergeCommandProgress folds one report into the running snapshot. A field the
 // report omits keeps its previous value, and metrics replace as a set, exactly
 // as the Lua table form does. A command that reports only a percent is recorded

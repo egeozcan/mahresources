@@ -893,12 +893,12 @@ func (s *pluginActionSink) Started(message string) {
 // the Job a speed and an ETA; one that reports only a percent is recorded as a
 // count out of 100. Labels and units are the plugin's text too, and are
 // redacted like the message.
-func (s *pluginActionSink) Progress(report plugin_system.HostProgress) {
+func (s *pluginActionSink) Progress(report plugin_system.HostProgress) error {
 	progress := s.progressOf(report)
 	s.lastProgressMu.Lock()
 	s.lastProgress = &progress
 	s.lastProgressMu.Unlock()
-	s.progress(progress)
+	return s.progress(progress)
 }
 
 func (s *pluginActionSink) progressOf(report plugin_system.HostProgress) jobs.Progress {
@@ -1236,14 +1236,18 @@ func appendPluginScalarText(values []string, value any) []string {
 	return values
 }
 
-func (s *pluginActionSink) progress(progress jobs.Progress) {
+// progress writes one snapshot. A fence's refusal is the fence doing its job and
+// answers nil; anything else is returned so the caller can hold the report.
+func (s *pluginActionSink) progress(progress jobs.Progress) error {
 	service := s.ctx.JobService()
 	if service == nil {
-		return
+		return nil
 	}
 	if _, err := service.UpdateProgress(s.ctx.jobDeps(), s.ref(), progress); err != nil && !mirrorRefusalIsSilent(err) {
 		log.Printf("warning: could not record progress for job %s: %v", s.execution.JobID, err)
+		return err
 	}
+	return nil
 }
 
 // Completed records the execution's own success, publishing the plugin's result

@@ -78,7 +78,7 @@ describe('job progress graphs', () => {
 
     test('draws the speed and each graphed metric, never an ungraphed one', () => {
         const series = graphSeries(job);
-        expect(series.map(s => s.key)).toEqual(['rate', 'segments']);
+        expect(series.map(s => s.key)).toEqual([':speed', 'segments']);
         expect(series[0].points).toEqual([{ t: 1000, v: 100 }, { t: 2000, v: 300 }]);
         expect(series[1].points).toHaveLength(3);
         expect(graphSeries({ progress: { ...job.progress, unit: 'percent', series: { ...job.progress.series, unit: 'percent' } } })
@@ -184,5 +184,23 @@ describe('graph gaps and newer versions', () => {
         expect(mergeFetchedProgress(resumed, held).progress.completed).toBe(10);
         const frame = { jobId: 'j', version: 3, progress: { completed: 12, updatedAt: '2026-09-25T10:00:11Z' } };
         expect(applyProgressFrame(held, frame).progress.completed).toBe(12);
+    });
+});
+
+describe('unit changes and key collisions', () => {
+    test('a frame in a new unit ends the old rates', () => {
+        const job = { id: 'j', version: 1, progress: { unit: 'bytes', series: { unit: 'bytes', points: [
+            { t: 0, c: 0 }, { t: 1000, c: 100, r: 100, v: { rows: 1 } },
+        ] } } };
+        const next = applyProgressFrame(job, { jobId: 'j', version: 1, progress: { unit: 'items', completed: 1 }, point: { t: 2000, c: 1 } });
+        expect(next.progress.series.unit).toBe('items');
+        expect(next.progress.series.points[1]).toEqual({ t: 1000, v: { rows: 1 } });
+        expect(graphSeries(next).map(s => s.key)).toEqual([]);
+    });
+
+    test('a metric keyed rate does not collide with the speed graph', () => {
+        const job = { progress: { unit: 'bytes', metrics: [{ key: 'rate', label: 'Rate', value: 1, graph: true }],
+            series: { unit: 'bytes', points: [{ t: 0, c: 0, v: { rate: 1 } }, { t: 1000, c: 10, r: 10, v: { rate: 2 } }] } } };
+        expect(graphSeries(job).map(s => s.key)).toEqual([':speed', 'rate']);
     });
 });

@@ -167,6 +167,27 @@ func (pm *PluginManager) reportLostCallbacks(reason string) {
 	}
 }
 
+// flushHeldProgress sends a report the throttle held back, or one whose write
+// failed, before any outcome is reported: once the Job is terminal a progress
+// write is refused, so the Job would end on an earlier report's counts and
+// metrics. Every path that reports an outcome calls it first. A report that is
+// refused again stays held for the next caller.
+func flushHeldProgress(job *ActionJob) {
+	job.mu.Lock()
+	pending := job.progressPending
+	progress := job.hostProgressLocked()
+	job.progressPending = false
+	job.mu.Unlock()
+	if !pending {
+		return
+	}
+	if err := reportHostJob(job, func(sink HostJobSink) error { return sink.Progress(progress) }); err != nil {
+		job.mu.Lock()
+		job.progressPending = true
+		job.mu.Unlock()
+	}
+}
+
 // hostProgressLocked is the entry's latest report in the shape the durable Job
 // takes. The caller holds mu.
 func (j *ActionJob) hostProgressLocked() HostProgress {
@@ -414,6 +435,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 			job.Message = message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
+			flushHeldProgress(job)
 			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
 			log.Printf("[plugin] panic in %s: %v", logLabel, r)
 		}
@@ -471,17 +493,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 // own report is about work it declared finished, and a Go-level failure raised after
 // it says nothing about whether that work is done.
 func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workErr error) {
-	// A report the throttle held back is sent before the outcome, so the
-	// durable Job ends on the plugin's last counts and metrics rather than on
-	// whichever report happened to fall outside the throttle window.
-	job.mu.Lock()
-	pending := job.progressPending
-	progress := job.hostProgressLocked()
-	job.progressPending = false
-	job.mu.Unlock()
-	if pending {
-		_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(progress); return nil })
-	}
+	flushHeldProgress(job)
 
 	job.mu.Lock()
 	status := job.Status
@@ -606,6 +618,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			// call. Attempting it here is only so a Job is not left without an
 			// outcome if that path is never reached, and a refusal is swallowed for
 			// the settle path to make good on.
+			flushHeldProgress(job)
 			_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
 		}
 

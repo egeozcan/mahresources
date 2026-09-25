@@ -69,8 +69,9 @@ type HostJobSink interface {
 	Started(message string)
 	// Progress replaces the Job's bounded progress snapshot. It is not an event:
 	// the caller throttles it, so a plugin that reports every percent of a long
-	// loop does not write a timeline.
-	Progress(progress HostProgress)
+	// loop does not write a timeline. A non-nil answer means the snapshot was
+	// not recorded and is worth sending again; a fence's refusal is nil.
+	Progress(progress HostProgress) error
 	// Completed reports the action's own success, with its result table when the
 	// plugin returned one. A non-nil answer means the outcome was not durably
 	// recorded.

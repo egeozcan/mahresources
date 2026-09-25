@@ -68,6 +68,9 @@ type ProgressSeries struct {
 	Points     []SeriesPoint `json:"points"`
 	Rate       *float64      `json:"rate,omitempty"`
 	Anchor     *RateAnchor   `json:"anchor,omitempty"`
+	// Units is each graphed metric's unit, so a key reused in another unit
+	// starts a fresh history instead of joining numbers that do not compare.
+	Units map[string]string `json:"units,omitempty"`
 }
 
 // CurrentRate is the Job's current speed in units of Completed per second, or
@@ -183,6 +186,10 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		changed = true
 	}
 
+	if reuniteMetricUnits(&series, progress.Metrics) {
+		changed = true
+	}
+
 	point := SeriesPoint{At: nowMs, Completed: completed, Values: graphedValues(progress.Metrics)}
 	count := len(series.Points)
 	switch {
@@ -208,7 +215,51 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		series.Points = compactPoints(series.Points)
 		series.IntervalMs *= 2
 	}
+	pruneMetricUnits(&series)
 	return series, changed
+}
+
+// reuniteMetricUnits drops a graphed key's history when the key comes back in a
+// different unit, and records each graphed key's current unit.
+func reuniteMetricUnits(series *ProgressSeries, metrics []Metric) bool {
+	changed := false
+	for _, metric := range metrics {
+		if !metric.Graph {
+			continue
+		}
+		previous, known := series.Units[metric.Key]
+		if known && previous == metric.Unit {
+			continue
+		}
+		if known {
+			for i := range series.Points {
+				delete(series.Points[i].Values, metric.Key)
+			}
+		}
+		if series.Units == nil {
+			series.Units = make(map[string]string, MaxGraphedMetrics)
+		}
+		series.Units[metric.Key] = metric.Unit
+		changed = true
+	}
+	return changed
+}
+
+// pruneMetricUnits forgets the unit of a key no point holds any more, which
+// bounds the map by the keys the series itself still carries.
+func pruneMetricUnits(series *ProgressSeries) {
+	for key := range series.Units {
+		held := false
+		for _, point := range series.Points {
+			if _, ok := point.Values[key]; ok {
+				held = true
+				break
+			}
+		}
+		if !held {
+			delete(series.Units, key)
+		}
+	}
 }
 
 // pointRate is Completed's change per second between two points, or nil when
@@ -304,6 +355,23 @@ func cloneSeries(series ProgressSeries) ProgressSeries {
 	if series.Rate != nil {
 		rate := *series.Rate
 		out.Rate = &rate
+	}
+	// Point value maps are replaced, never edited, except by a unit change,
+	// which edits them; copy them so the caller's series is left alone.
+	for i := range out.Points {
+		if out.Points[i].Values != nil {
+			values := make(map[string]float64, len(out.Points[i].Values))
+			for key, value := range out.Points[i].Values {
+				values[key] = value
+			}
+			out.Points[i].Values = values
+		}
+	}
+	if series.Units != nil {
+		out.Units = make(map[string]string, len(series.Units))
+		for key, unit := range series.Units {
+			out.Units[key] = unit
+		}
 	}
 	return out
 }

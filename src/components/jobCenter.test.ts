@@ -360,7 +360,7 @@ describe('Job detail live progress', () => {
         expect(center.detail.progress.completed).toBe(3);
         expect(center.jobs[0].progress.completed).toBe(3);
         expect(center.statsText(center.detail)).toBe('3 of 4 items · 2/s');
-        expect(center.graphsFor(center.detail).map((series: any) => series.key)).toEqual(['rate']);
+        expect(center.graphsFor(center.detail).map((series: any) => series.key)).toEqual([':speed']);
         expect(center.sparkline(center.graphsFor(center.detail)[0])).toMatch(/^M/);
         expect(center._liveRegion.announce).not.toHaveBeenCalled();
     });

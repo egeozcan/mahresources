@@ -407,6 +407,8 @@ describe('Job Center drawer live progress', () => {
         const meta = { getAttribute: () => '25' };
         expect(panelFinishedLimit({ querySelector: () => meta } as any)).toBe(25);
         expect(panelFinishedLimit({ querySelector: () => null } as any)).toBe(10);
+        // The list API refuses a page over 200, which would blank the drawer.
+        expect(panelFinishedLimit({ querySelector: () => ({ getAttribute: () => '5000' }) } as any)).toBe(200);
         expect(panelFinishedLimit({ querySelector: () => ({ getAttribute: () => 'zero' }) } as any)).toBe(10);
     });
 
@@ -438,7 +440,7 @@ describe('Job Center drawer live progress', () => {
         expect(panel.progressValue(job)).toBe(60);
         expect(panel.statsText(job)).toMatch(/^600 B of 1000 B · 500 B\/s · about /);
         expect(panel.metricText(panel.metricsFor(job)[0])).toBe('6 of 10');
-        expect(panel.graphsFor(job).map(series => series.key)).toEqual(['rate', 'segments']);
+        expect(panel.graphsFor(job).map(series => series.key)).toEqual([':speed', 'segments']);
         expect(panel.progressValueText(job)).toMatch(/^60%, 600 B of 1000 B, 500 B\/s, about /);
         expect(panel.requestJSON).not.toHaveBeenCalled();
         expect(scheduled).not.toHaveBeenCalled();

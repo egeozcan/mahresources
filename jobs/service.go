@@ -999,6 +999,14 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 		if err := applyFinalProgress(&prepared, *request.FinalProgress, deps.now()); err != nil {
 			return Snapshot{}, err
 		}
+	} else if len(prepared.next.ProgressSeries) > 0 {
+		// Most executors finish without a final snapshot; their last tick may
+		// have landed inside the sampling interval and never reached the
+		// series. Closing the series with the stored snapshot puts the final
+		// count on the graph and in the average rate.
+		if err := applyProgressHistory(&prepared.next, prepared.updates, deps.now(), storedProgress(prepared.next), true); err != nil {
+			return Snapshot{}, err
+		}
 	}
 
 	var verify func(tx *gorm.DB) error
@@ -1031,6 +1039,15 @@ func applyFinalProgress(prepared *preparedTransition, progress Progress, now tim
 		prepared.updates["phase"] = prepared.next.Phase
 	}
 	return applyProgressHistory(&prepared.next, prepared.updates, now, progress, true)
+}
+
+// storedProgress is the progress snapshot a row currently holds.
+func storedProgress(job models.Job) Progress {
+	return Progress{
+		Completed: copyInt64(job.ProgressCompleted), Total: copyInt64(job.ProgressTotal),
+		Unit: job.ProgressUnit, Message: job.ProgressMessage, ETA: job.ProgressETA,
+		Metrics: decodeMetrics(job.ProgressMetrics),
+	}
 }
 
 // applyProgressHistory adds a snapshot's metrics and its series sample to a

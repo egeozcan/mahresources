@@ -42,6 +42,9 @@ const OPEN_WORK_LIMIT = 50;
 // Finished rows follow the deployment's download_cockpit_limit, published on the
 // page as a meta tag; this is the fallback when the tag is missing.
 const DEFAULT_FINISHED_LIMIT = 10;
+// The list API's page ceiling. The boot flag is not bounded like the runtime
+// setting, and a page over the ceiling is refused, which would blank the drawer.
+const MAX_FINISHED_LIMIT = 200;
 const PANEL_REFRESH_MAX_WAIT_MS = 500;
 // One list page is one bulk dismiss: the server's MaxPageSize and MaxBulkCommandJobs are both 200.
 const FINISHED_PAGE_LIMIT = 200;
@@ -59,7 +62,7 @@ function panelGroups(finishedLimit) {
 export function panelFinishedLimit(doc = globalThis.document) {
     const raw = doc?.querySelector?.('meta[name="x-jobs-panel-finished-limit"]')?.getAttribute('content');
     const parsed = Number.parseInt(raw || '', 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_FINISHED_LIMIT;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_FINISHED_LIMIT) : DEFAULT_FINISHED_LIMIT;
 }
 
 export function panelCounts(jobs) {

@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -62,14 +63,27 @@ type recordingSink struct {
 	// refuseTerminal makes the terminal reports answer "not durable yet", which is
 	// what a transient write failure looks like to plugin_system.
 	refuseTerminal bool
+	// refuseProgress is how many progress reports are refused before one lands.
+	refuseProgress int
+	events         []string
 }
 
 func (s *recordingSink) Started(string) { s.bump(&s.started) }
-func (s *recordingSink) Progress(report HostProgress) {
+func (s *recordingSink) Progress(report HostProgress) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refuseProgress > 0 {
+		s.refuseProgress--
+		return errors.New("database is locked")
+	}
 	s.progress++
 	s.reports = append(s.reports, report)
-	s.mu.Unlock()
+	completed := int64(-1)
+	if report.Completed != nil {
+		completed = *report.Completed
+	}
+	s.events = append(s.events, fmt.Sprintf("progress:%d", completed))
+	return nil
 }
 func (s *recordingSink) Completed(message string, _ map[string]any) error {
 	s.mu.Lock()
@@ -79,6 +93,7 @@ func (s *recordingSink) Completed(message string, _ map[string]any) error {
 	}
 	s.completed++
 	s.message = message
+	s.events = append(s.events, "completed")
 	return nil
 }
 
@@ -374,4 +389,57 @@ func TestRuntimeIdentityRoundTrips(t *testing.T) {
 	if err != nil || pid != os.Getpid() {
 		t.Fatal("pid sanity check failed")
 	}
+}
+
+// TestHeldProgressReachesTheHostBeforeTheOutcome covers the two ways a report
+// can be held back: the throttle, and a write the host refused. Either way it
+// must land before the outcome, including on the path where the handler's
+// returned table is the outcome.
+func TestHeldProgressReachesTheHostBeforeTheOutcome(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "held-plugin", `
+plugin = { name = "held-plugin", version = "1.0", api_version = 1, capabilities = { "actions", "jobs" } }
+
+function work(ctx)
+    mah.job_progress(ctx.job_id, { completed = 4, total = 10, unit = "items" })
+    mah.job_progress(ctx.job_id, { completed = 9 })
+    return { message = "returned" }
+end
+
+function init()
+    mah.action({ id = "work", label = "Work", entity = "resource", async = true, handler = work })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("plugin manager: %v", err)
+	}
+	defer pm.Close()
+	// The first report is refused, the second is inside the throttle window.
+	sink := &recordingSink{refuseProgress: 1}
+	pm.SetHostJobs(&recordingHostJobs{ref: &HostJobRef{JobID: "job-1", Handle: "handle-1", Sink: sink}})
+	if err := pm.EnablePlugin("held-plugin"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "job-1", Handle: "handle-1", Sink: sink},
+		nil, "held-plugin", "work", 5, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		events := append([]string(nil), sink.events...)
+		sink.mu.Unlock()
+		for i, event := range events {
+			if event != "completed" {
+				continue
+			}
+			if i == 0 || events[i-1] != "progress:9" {
+				t.Fatalf("events = %v; the last report must land just before the outcome", events)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the action never completed")
 }

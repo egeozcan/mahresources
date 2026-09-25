@@ -432,3 +432,52 @@ func TestCompactionKeepsAPauseGap(t *testing.T) {
 		t.Fatalf("merged rate = %v; a pause ending at the later point must stay a gap", *merged.Rate)
 	}
 }
+
+func TestFinishWithoutFinalProgressClosesTheSeries(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := at(0)
+	deps.Now = func() time.Time { return clock }
+	job := seededExecution(t, deps, StateRunning, "claim-a")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-a"}
+	for _, tick := range []struct {
+		at        float64
+		completed int64
+	}{{0, 0}, {1, 100}, {1.4, 180}} {
+		clock = at(tick.at)
+		if _, err := svc.UpdateProgress(deps, ref, Progress{Completed: int64Ptr(tick.completed), Unit: "bytes"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock = at(1.5)
+	finished, err := svc.Finish(deps, FinishRequest{ExecutionRef: ref, ExpectedVersion: job.Version, Outcome: StateSucceeded})
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	points := finished.ProgressSeries.Points
+	if last := points[len(points)-1]; last.Completed == nil || *last.Completed != 180 {
+		t.Fatalf("last point = %+v; the tick inside the interval must close the series", last)
+	}
+	if finished.ProgressSeries.Anchor != nil {
+		t.Fatal("a finished Job still holds a live rate anchor")
+	}
+}
+
+func TestAGraphedKeyReusedInAnotherUnitStartsAFreshHistory(t *testing.T) {
+	var series ProgressSeries
+	metric := func(unit string, value float64) Progress {
+		return Progress{Metrics: []Metric{{Key: "size", Label: "Size", Value: value, Unit: unit, Graph: true}}}
+	}
+	series, _ = advanceSeries(series, at(0), metric("bytes", 1024), false)
+	series, _ = advanceSeries(series, at(1), metric("bytes", 2048), false)
+	series, _ = advanceSeries(series, at(2), metric("items", 3), false)
+	held := 0
+	for _, point := range series.Points {
+		if _, ok := point.Values["size"]; ok {
+			held++
+		}
+	}
+	if held != 1 || series.Units["size"] != "items" {
+		t.Fatalf("points holding size = %d, unit %q; want only the items sample", held, series.Units["size"])
+	}
+}
