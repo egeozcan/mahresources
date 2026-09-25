@@ -289,8 +289,11 @@ export function applyProgressFrame(job, frame) {
     let previous = job.progress || {};
     // A change of unit ends the old rates, as the server's own series does;
     // without this the drawer would keep a bytes/s graph for a count of items.
+    // A frame with no measure at all (an HLS stream muxing) is not a change of
+    // unit, exactly as the server's series treats it.
     const nextUnit = frame.progress?.unit || '';
-    if (previous.series && (previous.series.unit || '') !== nextUnit) {
+    const noMeasure = !nextUnit && !finite(frame.progress?.completed);
+    if (previous.series && !noMeasure && (previous.series.unit || '') !== nextUnit) {
         previous = {
             ...previous,
             series: {

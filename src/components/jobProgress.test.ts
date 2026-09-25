@@ -188,6 +188,15 @@ describe('graph gaps and newer versions', () => {
 });
 
 describe('unit changes and key collisions', () => {
+    test('a frame with no measure keeps the speed graph', () => {
+        const job = { id: 'j', version: 1, progress: { unit: 'items', series: { unit: 'items', points: [
+            { t: 0, c: 0 }, { t: 1000, c: 10, r: 10 },
+        ] } } };
+        const next = applyProgressFrame(job, { jobId: 'j', version: 1, progress: { message: 'muxing' }, point: { t: 2000 } });
+        expect(next.progress.series.unit).toBe('items');
+        expect(graphSeries({ progress: { ...next.progress, unit: 'items' } }).map(s => s.key)).toEqual([':speed']);
+    });
+
     test('a frame in a new unit ends the old rates', () => {
         const job = { id: 'j', version: 1, progress: { unit: 'bytes', series: { unit: 'bytes', points: [
             { t: 0, c: 0 }, { t: 1000, c: 100, r: 100, v: { rows: 1 } },
