@@ -111,12 +111,14 @@ test.describe('Jobs drawer', () => {
     await expect(reason).toContainText('Reason:');
     await expect(reason).toContainText('connection refused');
     await expect(reason).not.toContainText('signature');
+    await expect(reason).not.toContainText('do-not-show');
     await expect(reason).not.toContainText('secret-path');
 
     await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
     const card = page.locator(`article[data-job-id="${id}"]`);
     await expect(card).toContainText('connection refused');
     await expect(card).not.toContainText('signature');
+    await expect(card).not.toContainText('do-not-show');
   });
   test('a download that fails while the drawer is open is announced from inside it, with its reason', async ({ page, request }) => {
     // Held until the drawer has shown the Job running, so the failure is a live
