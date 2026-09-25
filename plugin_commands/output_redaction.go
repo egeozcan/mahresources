@@ -331,6 +331,24 @@ func redactCommandOutputTail(output string, secrets [][]byte, inputCoverageIncom
 	return string(remaining)
 }
 
+// redactProgressText applies the tail's redaction to one short progress field.
+// The tail pads a replaced secret with spaces to keep its length, which a label
+// has no use for.
+func redactProgressText(value string, secrets [][]byte, inputCoverageIncomplete bool) string {
+	if value == "" {
+		return value
+	}
+	return strings.TrimRight(redactCommandOutputTail(value, secrets, inputCoverageIncomplete), " ")
+}
+
+func cloneCommandOutputSecrets(secrets [][]byte) [][]byte {
+	out := make([][]byte, len(secrets))
+	for i, secret := range secrets {
+		out[i] = append([]byte(nil), secret...)
+	}
+	return out
+}
+
 func clearCommandOutputSecrets(secrets [][]byte) {
 	for _, secret := range secrets {
 		clear(secret)

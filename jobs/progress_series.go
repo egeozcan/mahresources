@@ -3,22 +3,19 @@ package jobs
 import (
 	"encoding/json"
 	"fmt"
-	"math"
-	"regexp"
 	"time"
 
+	"mahresources/models/jobmetrics"
 	"mahresources/models/types"
 )
 
-// Metric ceilings. A Job's metrics render as a row of labelled values in the
-// Jobs drawer and on the detail page, and every graphed one draws its own
-// chart, so both counts are bounded where they are accepted rather than
-// trimmed where they are drawn.
+// Metric ceilings, re-exported from jobmetrics so the Service's own callers
+// need not import it.
 const (
-	MaxProgressMetrics  = 8
-	MaxGraphedMetrics   = 3
-	MaxMetricKeyBytes   = 40
-	MaxMetricLabelBytes = 60
+	MaxProgressMetrics  = jobmetrics.MaxMetrics
+	MaxGraphedMetrics   = jobmetrics.MaxGraphed
+	MaxMetricKeyBytes   = jobmetrics.MaxKeyBytes
+	MaxMetricLabelBytes = jobmetrics.MaxLabelBytes
 
 	// MaxSeriesPoints bounds a Job's stored history. When a series would grow
 	// past it, adjacent points are merged and the interval doubles, so the
@@ -33,24 +30,9 @@ const (
 	rateStaleAfter = 10 * time.Second
 )
 
-var metricKeyPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
-
-// Metric is one named figure an executor reports beside its primary measure:
-// segments fetched next to the bytes they held, rows scanned by a plugin, a
-// queue depth. It is part of the progress snapshot, so each tick replaces the
-// whole set.
-//
-// Graph asks for the metric's history to be kept in the Job's progress series
-// and drawn. It is opt-in because a graph is only worth its space for a figure
-// that moves.
-type Metric struct {
-	Key   string   `json:"key"`
-	Label string   `json:"label"`
-	Value float64  `json:"value"`
-	Total *float64 `json:"total,omitempty"`
-	Unit  string   `json:"unit,omitempty"`
-	Graph bool     `json:"graph,omitempty"`
-}
+// Metric is one named figure reported beside a Job's primary measure. See
+// jobmetrics.Metric.
+type Metric = jobmetrics.Metric
 
 // SeriesPoint is one sample of a Job's progress history. The JSON names are
 // short because a full series is stored on the Job row and sent to the Jobs
@@ -326,65 +308,13 @@ func cloneSeries(series ProgressSeries) ProgressSeries {
 	return out
 }
 
-func cloneMetrics(metrics []Metric) []Metric {
-	if len(metrics) == 0 {
-		return nil
-	}
-	out := make([]Metric, len(metrics))
-	for i, metric := range metrics {
-		out[i] = metric
-		if metric.Total != nil {
-			total := *metric.Total
-			out[i].Total = &total
-		}
-	}
-	return out
-}
-
-// validateMetrics checks a snapshot's metrics against their ceilings. A value
-// that is not a finite, non-negative number cannot be drawn or compared, so it
-// is refused rather than stored.
-func validateMetrics(metrics []Metric) error {
-	invalid := func(format string, args ...any) error {
-		return fmt.Errorf("%w: %s", ErrInvalidProgress, fmt.Sprintf(format, args...))
-	}
-	if len(metrics) > MaxProgressMetrics {
-		return invalid("%d metrics, over the %d-metric ceiling", len(metrics), MaxProgressMetrics)
-	}
-	seen := make(map[string]bool, len(metrics))
-	graphed := 0
-	for i, metric := range metrics {
-		switch {
-		case metric.Key == "":
-			return invalid("metric %d has no key", i+1)
-		case len(metric.Key) > MaxMetricKeyBytes:
-			return invalid("metric key %q is over the %d-byte ceiling", metric.Key, MaxMetricKeyBytes)
-		case !metricKeyPattern.MatchString(metric.Key):
-			return invalid("metric key %q may only use a-z, 0-9, _ and -", metric.Key)
-		case seen[metric.Key]:
-			return invalid("metric key %q is repeated", metric.Key)
-		case len(metric.Label) > MaxMetricLabelBytes:
-			return invalid("metric %q label is over the %d-byte ceiling", metric.Key, MaxMetricLabelBytes)
-		case len(metric.Unit) > MaxProgressUnitBytes:
-			return invalid("metric %q unit is over the %d-byte ceiling", metric.Key, MaxProgressUnitBytes)
-		case !finiteNonNegative(metric.Value):
-			return invalid("metric %q value must be a finite number of at least zero", metric.Key)
-		case metric.Total != nil && !finiteNonNegative(*metric.Total):
-			return invalid("metric %q total must be a finite number of at least zero", metric.Key)
-		}
-		seen[metric.Key] = true
-		if metric.Graph {
-			graphed++
-		}
-	}
-	if graphed > MaxGraphedMetrics {
-		return invalid("%d graphed metrics, over the %d-graph ceiling", graphed, MaxGraphedMetrics)
+// ValidateMetrics checks a snapshot's metrics against their ceilings,
+// answering ErrInvalidProgress.
+func ValidateMetrics(metrics []Metric) error {
+	if err := jobmetrics.Validate(metrics); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidProgress, err.Error())
 	}
 	return nil
-}
-
-func finiteNonNegative(v float64) bool {
-	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
 }
 
 // encodeMetrics is the stored form of a snapshot's metrics: nil for none, so a

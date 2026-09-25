@@ -316,7 +316,25 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	var drains sync.WaitGroup
 	drains.Add(2)
 	drainDone := make(chan struct{})
-	go func() { defer drains.Done(); _, _ = io.Copy(tail, stdoutR) }()
+	// stdout passes through the progress-line filter; stderr does not, so a
+	// report is only ever something the command deliberately printed to stdout.
+	// The filter redacts with its own copy of the run's secrets, cleared by the
+	// drain itself: a drain the cleanup deadline cut short can still be
+	// flushing after Execute has cleared outputSecrets.
+	progressSecrets := cloneCommandOutputSecrets(outputSecrets)
+	report := func(ProgressReport) {}
+	if run.progress != nil {
+		report = run.progress.Report
+	}
+	stdoutFilter := newProgressLineFilter(tail, report, func(value string) string {
+		return redactProgressText(value, progressSecrets, inputCoverageIncomplete)
+	})
+	go func() {
+		defer drains.Done()
+		defer clearCommandOutputSecrets(progressSecrets)
+		_, _ = io.Copy(stdoutFilter, stdoutR)
+		_ = stdoutFilter.Flush()
+	}()
 	go func() { defer drains.Done(); _, _ = io.Copy(tail, stderrR) }()
 	go func() { drains.Wait(); close(drainDone) }()
 

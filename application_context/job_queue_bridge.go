@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"slices"
 	"time"
 
 	"mahresources/download_queue"
@@ -454,7 +455,7 @@ func (ctx *MahresourcesContext) queueExecutionStillOwnsJob(execution jobs.Execut
 
 func queueProgressIsEmpty(progress jobs.Progress) bool {
 	return progress.Phase == "" && progress.Completed == nil && progress.Total == nil &&
-		progress.Unit == "" && progress.Message == "" && progress.ETA == nil
+		progress.Unit == "" && progress.Message == "" && progress.ETA == nil && len(progress.Metrics) == 0
 }
 
 // finishQueueExecution is what a queue-backed Kind's Dispatch returns: the terminal
@@ -965,6 +966,15 @@ func queueJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 			total := snap.TotalSize
 			progress.Total = &total
 		}
+		// The phase's item count is the second half of what the export UI
+		// always showed; it rides along as a metric rather than competing with
+		// bytes for the one primary measure.
+		if snap.PhaseTotal > 0 {
+			total := float64(snap.PhaseTotal)
+			progress.Metrics = []jobs.Metric{{
+				Key: "items", Label: "Items", Value: float64(snap.PhaseCount), Total: &total, Unit: "items",
+			}}
+		}
 		return progress
 	}
 	switch {
@@ -986,7 +996,14 @@ func sameProgress(left, right jobs.Progress) bool {
 		left.Message == right.Message &&
 		left.Unit == right.Unit &&
 		sameCount(left.Completed, right.Completed) &&
-		sameCount(left.Total, right.Total)
+		sameCount(left.Total, right.Total) &&
+		slices.EqualFunc(left.Metrics, right.Metrics, sameMetric)
+}
+
+func sameMetric(left, right jobs.Metric) bool {
+	sameTotal := (left.Total == nil) == (right.Total == nil) && (left.Total == nil || *left.Total == *right.Total)
+	return left.Key == right.Key && left.Label == right.Label && left.Value == right.Value &&
+		left.Unit == right.Unit && left.Graph == right.Graph && sameTotal
 }
 
 func sameCount(left, right *int64) bool {

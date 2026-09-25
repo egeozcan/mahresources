@@ -858,6 +858,10 @@ type pluginActionSink struct {
 	pending atomic.Pointer[pluginActionOutcome]
 	// retryOnce starts the one retry goroutine this sink may have.
 	retryOnce sync.Once
+	// lastProgress is the most recent report, kept so a successful outcome can
+	// finish on the plugin's own counts and metrics instead of a bare 100%.
+	lastProgressMu sync.Mutex
+	lastProgress   *jobs.Progress
 }
 
 func newPluginActionSink(ctx *MahresourcesContext, execution jobs.Execution, input *pluginActionJobInput) *pluginActionSink {
@@ -884,15 +888,85 @@ func (s *pluginActionSink) Started(message string) {
 //
 // The plugin's own text is redacted first, because a progress snapshot is durable
 // and searchable in exactly the way a Job's sealed input is not.
-func (s *pluginActionSink) Progress(percent int, message string) {
-	completed := int64(percent)
-	total := int64(100)
-	s.progress(jobs.Progress{
-		Completed: &completed,
-		Total:     &total,
-		Unit:      "percent",
-		Message:   s.safeText(message, jobs.MaxProgressMessageBytes),
-	})
+//
+// A plugin that reports counts is recorded in its own unit, which is what gives
+// the Job a speed and an ETA; one that reports only a percent is recorded as a
+// count out of 100. Labels and units are the plugin's text too, and are
+// redacted like the message.
+func (s *pluginActionSink) Progress(report plugin_system.HostProgress) {
+	progress := s.progressOf(report)
+	s.lastProgressMu.Lock()
+	s.lastProgress = &progress
+	s.lastProgressMu.Unlock()
+	s.progress(progress)
+}
+
+func (s *pluginActionSink) progressOf(report plugin_system.HostProgress) jobs.Progress {
+	progress := jobs.Progress{Message: s.safeText(report.Message, jobs.MaxProgressMessageBytes)}
+	if report.Completed != nil {
+		completed := *report.Completed
+		progress.Completed = &completed
+		if report.Total != nil {
+			total := *report.Total
+			progress.Total = &total
+		}
+		progress.Unit = s.safeText(report.Unit, jobs.MaxProgressUnitBytes)
+	} else {
+		completed, total := int64(report.Percent), int64(100)
+		progress.Completed, progress.Total, progress.Unit = &completed, &total, "percent"
+	}
+	for i, metric := range report.Metrics {
+		metric.Label = s.safeText(metric.Label, jobs.MaxMetricLabelBytes)
+		metric.Unit = s.safeText(metric.Unit, jobs.MaxProgressUnitBytes)
+		// A key is restricted to a-z, 0-9, _ and -, so a redacted one cannot keep
+		// the marker; it is renamed instead, which still keeps the value out.
+		if redacted := s.safeText(metric.Key, jobs.MaxMetricKeyBytes); redacted != metric.Key {
+			metric.Key = fmt.Sprintf("metric-%d", i+1)
+		}
+		if metric.Total != nil {
+			total := *metric.Total
+			metric.Total = &total
+		}
+		progress.Metrics = append(progress.Metrics, metric)
+	}
+	return progress
+}
+
+// finalProgress is what a successful outcome records: the last report brought to
+// completion, keeping its unit and metrics, or a bare 100% when the plugin never
+// counted anything.
+func (s *pluginActionSink) finalProgress(message, phase string) jobs.Progress {
+	s.lastProgressMu.Lock()
+	last := s.lastProgress
+	s.lastProgressMu.Unlock()
+
+	completed, total := int64(100), int64(100)
+	final := jobs.Progress{Completed: &completed, Total: &total, Unit: "percent", Message: message, Phase: phase}
+	if last == nil {
+		return final
+	}
+	final.Metrics = last.Metrics
+	if last.Unit != "percent" && last.Completed != nil {
+		// A partial completion stopped short on purpose, so its count is left
+		// where the plugin put it; a full one reached its total.
+		done := *last.Completed
+		if phase != pluginActionPhasePartial && last.Total != nil && *last.Total > done {
+			done = *last.Total
+		}
+		final.Completed, final.Total, final.Unit = &done, copyCount(last.Total), last.Unit
+		if final.Total == nil {
+			final.Total = &done
+		}
+	}
+	return final
+}
+
+func copyCount(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
 }
 
 // safeText is the one redaction policy for text a plugin supplies: every value of
@@ -1435,15 +1509,7 @@ type pluginActionOutcome struct {
 // reporting the refusal when there is one.
 func (s *pluginActionSink) publishOutcome(outcome pluginActionOutcome) (jobs.Snapshot, error) {
 	if outcome.succeeded {
-		completed := int64(100)
-		total := int64(100)
-		progress := jobs.Progress{
-			Completed: &completed,
-			Total:     &total,
-			Unit:      "percent",
-			Message:   outcome.message,
-			Phase:     outcome.phase,
-		}
+		progress := s.finalProgress(outcome.message, outcome.phase)
 		return s.finish(jobs.StateSucceeded, nil, outcome.message, &progress)
 	}
 	return s.finish(jobs.StateFailed, &jobs.Failure{

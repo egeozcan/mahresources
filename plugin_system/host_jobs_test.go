@@ -57,6 +57,7 @@ type recordingSink struct {
 	failed    int
 	lost      []string
 	progress  int
+	reports   []HostProgress
 	message   string
 	// refuseTerminal makes the terminal reports answer "not durable yet", which is
 	// what a transient write failure looks like to plugin_system.
@@ -64,9 +65,10 @@ type recordingSink struct {
 }
 
 func (s *recordingSink) Started(string) { s.bump(&s.started) }
-func (s *recordingSink) Progress(int, string) {
+func (s *recordingSink) Progress(report HostProgress) {
 	s.mu.Lock()
 	s.progress++
+	s.reports = append(s.reports, report)
 	s.mu.Unlock()
 }
 func (s *recordingSink) Completed(message string, _ map[string]any) error {

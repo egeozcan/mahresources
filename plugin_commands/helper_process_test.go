@@ -162,6 +162,15 @@ func runPluginCommandHelper(args []string) int {
 		for {
 			time.Sleep(time.Second)
 		}
+	case "progress":
+		// Ordinary output around two reports on stdout, and one report-shaped
+		// line on stderr, which is never parsed.
+		fmt.Fprintln(os.Stdout, "encoding started")
+		fmt.Fprintln(os.Stdout, `::mah-progress {"completed":2,"total":4,"unit":"items","message":"Encoding"}`)
+		fmt.Fprintln(os.Stderr, `::mah-progress {"completed":99}`)
+		fmt.Fprintln(os.Stdout, `::mah-progress {"completed":4,"metrics":[{"key":"fps","label":"Frames/s","value":30,"graph":true}]}`)
+		fmt.Fprintln(os.Stdout, "encoding finished")
+		return 0
 	case "sleep":
 		for {
 			time.Sleep(time.Second)

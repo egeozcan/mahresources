@@ -1570,13 +1570,16 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 		jobID := L.CheckString(1)
-		percent := L.CheckInt(2)
-		message := L.CheckString(3)
-
-		if percent < 0 {
-			percent = 0
-		} else if percent > 100 {
-			percent = 100
+		// Two forms: the positional (job_id, percent, message), and a table as
+		// the second argument carrying counts, a unit and metrics. The table is
+		// parsed after the ownership check, against the entry's last report.
+		var table *lua.LTable
+		percent, message := 0, ""
+		if tbl, ok := L.Get(2).(*lua.LTable); ok {
+			table = tbl
+		} else {
+			percent = clampPercent(L.CheckInt(2))
+			message = L.CheckString(3)
 		}
 
 		job, ok := pm.jobOwnedBy(jobID, *pluginNamePtr)
@@ -1588,12 +1591,28 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		}
 
 		job.mu.Lock()
-		job.Progress = percent
-		job.Message = message
-		shouldNotify := time.Since(job.lastNotified) >= 200*time.Millisecond || percent >= 100
+		next := HostProgress{Percent: percent, Message: message}
+		if table != nil {
+			parsed, err := parseJobProgressTable(table, job.hostProgressLocked())
+			if err != nil {
+				job.mu.Unlock()
+				L.ArgError(2, err.Error())
+				return 0
+			}
+			next = parsed
+		}
+		job.Progress = next.Percent
+		job.Message = next.Message
+		job.Completed, job.Total, job.Unit = next.Completed, next.Total, next.Unit
+		job.Metrics = next.Metrics
+		shouldNotify := time.Since(job.lastNotified) >= 200*time.Millisecond || next.Percent >= 100
 		if shouldNotify {
 			job.lastNotified = time.Now()
+			job.progressPending = false
+		} else {
+			job.progressPending = true
 		}
+		report := job.hostProgressLocked()
 		job.mu.Unlock()
 
 		if shouldNotify {
@@ -1602,8 +1621,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			// same reason: a plugin that reports every percent of a long loop must
 			// not turn one execution into thousands of database writes. Progress is
 			// a snapshot, not an event, so nothing is lost by replacing it less
-			// often — and the terminal report that follows is never throttled.
-			_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(percent, message); return nil })
+			// often: a held-back report is flushed by the next one that passes or
+			// by the settlement, and the terminal report is never throttled.
+			_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(report); return nil })
 		}
 		return 0
 	})

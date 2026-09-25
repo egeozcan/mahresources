@@ -219,6 +219,10 @@ type Progress interface {
 	SetPhase(string)
 	SetPhaseProgress(int64, int64)
 	SetAuthoritativeStatus(string)
+	// Report delivers one structured progress report the command printed on
+	// stdout (see ProgressLinePrefix), already parsed, validated and redacted.
+	// It is called from the stdout drain, so it must not block for long.
+	Report(ProgressReport)
 }
 
 type Outcome struct {

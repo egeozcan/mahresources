@@ -835,7 +835,7 @@ func validateProgress(progress Progress) error {
 	if progress.Total != nil && *progress.Total < 0 {
 		return invalid("total is negative")
 	}
-	return validateMetrics(progress.Metrics)
+	return ValidateMetrics(progress.Metrics)
 }
 
 // copyUint copies an optional user id so the caller's value can never be written

@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/models/jobmetrics"
 	"mahresources/plugin_commands"
 )
 
@@ -28,6 +30,9 @@ type commandLiveJobs struct {
 
 type commandProgress struct {
 	sink download_queue.ManagedProgressSink
+	// mirror publishes the command's own stdout reports to its durable Job, or
+	// is nil when this run has none.
+	mirror *commandProgressMirror
 }
 
 func (p commandProgress) SetPhase(phase string) { p.sink.SetPhase(phase) }
@@ -36,6 +41,152 @@ func (p commandProgress) SetPhaseProgress(current, total int64) {
 }
 func (p commandProgress) SetAuthoritativeStatus(status string) {
 	p.sink.SetAuthoritativeStatus(status)
+}
+
+// Report takes one progress line the command printed. The in-memory queue
+// entry gets the counts at once; the durable Job gets them through the mirror's
+// throttle.
+func (p commandProgress) Report(report plugin_commands.ProgressReport) {
+	if report.Completed != nil && report.Total != nil {
+		p.sink.SetPhaseProgress(*report.Completed, *report.Total)
+	}
+	if p.mirror != nil {
+		p.mirror.report(report)
+	}
+}
+
+// commandProgressInterval is the most often a command's reports are written to
+// its Job. A command can print a report per frame; the Job keeps a snapshot, so
+// the latest one written every quarter second loses nothing a reader could see.
+const commandProgressInterval = 250 * time.Millisecond
+
+// commandProgressMirror folds a command's reports into one snapshot and writes
+// it to the Job, latest-wins, at most once per interval. The write happens on a
+// timer rather than on the stdout drain, so a slow database never backs up the
+// command's pipe.
+type commandProgressMirror struct {
+	jobID  string
+	target progressWriter
+
+	mu        sync.Mutex
+	current   jobs.Progress
+	lastWrite time.Time
+	timer     *time.Timer
+	pending   bool
+	closed    bool
+}
+
+// progressWriter is the one call the mirror makes; jobs.Execution is the
+// production one, fenced by its execution token.
+type progressWriter interface {
+	Progress(jobs.Progress) (jobs.Snapshot, error)
+}
+
+func newCommandProgressMirror(ctx *MahresourcesContext, execution jobs.Execution, claimed bool) *commandProgressMirror {
+	if !claimed || execution.JobID == "" || ctx.JobService() == nil {
+		return nil
+	}
+	return &commandProgressMirror{jobID: execution.JobID, target: execution}
+}
+
+func (m *commandProgressMirror) report(report plugin_commands.ProgressReport) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	m.current = mergeCommandProgress(m.current, report)
+	m.pending = true
+	if m.timer != nil {
+		return
+	}
+	delay := commandProgressInterval - time.Since(m.lastWrite)
+	if delay < 0 {
+		delay = 0
+	}
+	m.timer = time.AfterFunc(delay, m.flush)
+}
+
+func (m *commandProgressMirror) flush() {
+	m.mu.Lock()
+	m.timer = nil
+	if !m.pending {
+		m.mu.Unlock()
+		return
+	}
+	progress := m.current
+	m.pending = false
+	m.lastWrite = time.Now()
+	m.mu.Unlock()
+	m.write(progress)
+}
+
+// close stops the throttle and writes whatever it was still holding, so the
+// Job finishes on the command's last report rather than on the one before it.
+func (m *commandProgressMirror) close() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.closed = true
+	if m.timer != nil {
+		m.timer.Stop()
+		m.timer = nil
+	}
+	pending := m.pending
+	progress := m.current
+	m.pending = false
+	m.mu.Unlock()
+	if pending {
+		m.write(progress)
+	}
+}
+
+func (m *commandProgressMirror) write(progress jobs.Progress) {
+	if _, err := m.target.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
+		log.Printf("warning: could not record command progress for job %s: %v", m.jobID, err)
+	}
+}
+
+// mergeCommandProgress folds one report into the running snapshot. A field the
+// report omits keeps its previous value, and metrics replace as a set, exactly
+// as the Lua table form does. A command that reports only a percent is recorded
+// as a count out of 100.
+func mergeCommandProgress(current jobs.Progress, report plugin_commands.ProgressReport) jobs.Progress {
+	next := current
+	next.Metrics = jobmetrics.Clone(current.Metrics)
+	if report.Message != nil {
+		next.Message = truncateTo(*report.Message, jobs.MaxProgressMessageBytes)
+	}
+	switch {
+	case report.Completed != nil || report.Total != nil || report.Unit != nil:
+		if next.Unit == "percent" {
+			next.Completed, next.Total, next.Unit = nil, nil, ""
+		}
+		if report.Completed != nil {
+			completed := *report.Completed
+			next.Completed = &completed
+		}
+		if report.Total != nil {
+			total := *report.Total
+			next.Total = &total
+		}
+		if report.Unit != nil {
+			next.Unit = truncateTo(*report.Unit, jobs.MaxProgressUnitBytes)
+		}
+	case report.Percent != nil && (next.Unit == "" || next.Unit == "percent"):
+		completed, total := int64(*report.Percent), int64(100)
+		next.Completed, next.Total, next.Unit = &completed, &total, "percent"
+	}
+	if report.Metrics != nil {
+		metrics := jobmetrics.Clone(*report.Metrics)
+		for i := range metrics {
+			metrics[i].Label = truncateTo(metrics[i].Label, jobs.MaxMetricLabelBytes)
+			metrics[i].Unit = truncateTo(metrics[i].Unit, jobs.MaxProgressUnitBytes)
+		}
+		next.Metrics = metrics
+	}
+	return next
 }
 
 func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cancel func(string) error, run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
@@ -60,7 +211,9 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
 		workCtx, stop := j.ctx.heartbeatManagedCommand(ctx, execution, claimed)
 		defer stop()
-		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress}))
+		mirror := newCommandProgressMirror(j.ctx, execution, claimed)
+		defer mirror.close()
+		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress, mirror: mirror}))
 	})
 	if err != nil {
 		if claimed {

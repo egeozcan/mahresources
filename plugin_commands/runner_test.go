@@ -197,6 +197,20 @@ func (s *runnerTestStore) HasNonterminalImports(string) (bool, error) { return f
 
 type recordingCommandProgress struct {
 	statuses []string
+	mu       sync.Mutex
+	reports  []ProgressReport
+}
+
+func (p *recordingCommandProgress) Report(report ProgressReport) {
+	p.mu.Lock()
+	p.reports = append(p.reports, report)
+	p.mu.Unlock()
+}
+
+func (p *recordingCommandProgress) reported() []ProgressReport {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]ProgressReport(nil), p.reports...)
 }
 
 func (*recordingCommandProgress) SetPhase(string)               {}
@@ -1137,4 +1151,33 @@ func seedRunnerRun(t *testing.T, executor Executor, store *runnerTestStore, sett
 		t.Fatal(err)
 	}
 	return run
+}
+
+func TestRunnerReportsStdoutProgressLinesAndKeepsThemOutOfTheTail(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "progress", []string{"mah-helper", helperProcessFlag, "progress"}, 5*time.Second)
+	progress := &recordingCommandProgress{}
+	run.progress = progress
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	reports := progress.reported()
+	if len(reports) != 2 {
+		t.Fatalf("reports = %+v; want the two stdout reports and not the stderr one", reports)
+	}
+	if reports[0].Completed == nil || *reports[0].Completed != 2 || reports[1].Metrics == nil || (*reports[1].Metrics)[0].Key != "fps" {
+		t.Fatalf("reports = %+v", reports)
+	}
+	_, output, _ := store.Run(run.RunID)
+	if strings.Count(output.OutputTail, ProgressLinePrefix) != 1 || !strings.Contains(output.OutputTail, `{"completed":99}`) {
+		t.Fatalf("tail = %q; want only the stderr report-shaped line kept", output.OutputTail)
+	}
+	if !strings.Contains(output.OutputTail, "encoding started") || !strings.Contains(output.OutputTail, "encoding finished") {
+		t.Fatalf("tail = %q; want the ordinary output kept", output.OutputTail)
+	}
 }

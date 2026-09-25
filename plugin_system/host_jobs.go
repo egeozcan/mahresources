@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mahresources/models/jobmetrics"
 	"mahresources/plugin_commands"
 )
 
@@ -50,13 +51,26 @@ import (
 // holding the deployment's capacity, unclassifiable by reconciliation, and hiding the
 // work from the person waiting for it. A non-nil answer means "not durable yet"; the
 // caller keeps the outcome and reports it again.
+// HostProgress is one progress report a plugin makes: always a percent, and,
+// when the plugin counts something, the count, its total and its unit, which
+// is what gives the Job a speed and an ETA. Metrics are the named figures it
+// reports beside that, already checked against jobmetrics.Validate.
+type HostProgress struct {
+	Percent   int
+	Completed *int64
+	Total     *int64
+	Unit      string
+	Message   string
+	Metrics   []jobmetrics.Metric
+}
+
 type HostJobSink interface {
 	// Started reports that the handler is about to be entered.
 	Started(message string)
 	// Progress replaces the Job's bounded progress snapshot. It is not an event:
 	// the caller throttles it, so a plugin that reports every percent of a long
 	// loop does not write a timeline.
-	Progress(percent int, message string)
+	Progress(progress HostProgress)
 	// Completed reports the action's own success, with its result table when the
 	// plugin returned one. A non-nil answer means the outcome was not durably
 	// recorded.

@@ -117,6 +117,16 @@ function leaky_work(ctx)
                  " at https://signed.example/x?token=" .. ctx.params.secret)
 end
 
+-- Counts, a unit and metrics through the table form. The second report lands
+-- inside the throttle window, so only the settlement can carry it to the Job.
+function metric_work(ctx)
+    mah.job_progress(ctx.job_id, { completed = 4, total = 10, unit = "items", message = "counting",
+        metrics = { { key = "rows", label = "Rows for " .. ctx.params.secret, value = 40, graph = true } } })
+    mah.job_progress(ctx.job_id, { completed = 9,
+        metrics = { { key = "rows", label = "Rows for " .. ctx.params.secret, value = 90, graph = true },
+                    { key = "skipped", label = "Skipped", value = 1, total = 10, unit = "items" } } })
+end
+
 function chatty_work(ctx)
     mah.job_progress(ctx.job_id, 50, "halfway through " .. ctx.params.secret)
     mah.job_complete(ctx.job_id, { message = "finished " .. ctx.params.secret })
@@ -193,6 +203,9 @@ function init()
     mah.action({ id = "leaky-work", label = "Leaky Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = leaky_work })
+    mah.action({ id = "metric-work", label = "Metric Work", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = metric_work })
     mah.action({ id = "chatty-work", label = "Chatty Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = chatty_work })
@@ -2099,5 +2112,45 @@ func TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot(t *testing.T) {
 	}
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the deployment budget still holds %d slots after a quarantined job settled", held)
+	}
+}
+
+func TestAPluginsCountsAndMetricsReachTheJobAndItsFinalProgress(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "metric-work", 4,
+		map[string]any{"secret": "hunter2"}, "")
+	if err != nil {
+		t.Fatalf("run the metric action: %v", err)
+	}
+	job := waitForJobState(t, ctx, canonical, "the metric action to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the metric action ended %s, want succeeded", job.State)
+	}
+	progress := job.Progress
+	if progress.Unit != "items" || progress.Completed == nil || *progress.Completed != 10 ||
+		progress.Total == nil || *progress.Total != 10 {
+		t.Fatalf("final progress = %+v; want the plugin's own unit brought to its total of 10", progress)
+	}
+	var rows, skipped *jobs.Metric
+	for i := range progress.Metrics {
+		switch progress.Metrics[i].Key {
+		case "rows":
+			rows = &progress.Metrics[i]
+		case "skipped":
+			skipped = &progress.Metrics[i]
+		}
+	}
+	if rows == nil || rows.Value != 90 || !rows.Graph || skipped == nil || skipped.Value != 1 {
+		t.Fatalf("final metrics = %+v; want the throttled last report, not the first one", progress.Metrics)
+	}
+	if strings.Contains(rows.Label, "hunter2") {
+		t.Fatalf("a metric label carried the parameter value: %q", rows.Label)
+	}
+	for _, point := range job.ProgressSeries.Points {
+		if _, ok := point.Values["rows"]; !ok {
+			t.Fatalf("series point %+v is missing the graphed metric", point)
+		}
 	}
 }

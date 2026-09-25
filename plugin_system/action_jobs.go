@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mahresources/models/jobmetrics"
 	"sync"
 	"time"
 
@@ -27,21 +28,31 @@ const (
 // — and without one this entry is the only lifecycle there is, which is what a
 // bare manager, the package's own tests and a programmatic embedder see.
 type ActionJob struct {
-	ID             string         `json:"id"`
-	CanonicalJobID string         `json:"canonicalJobId,omitempty"`
-	Source         string         `json:"source"` // always "plugin"
-	PluginName     string         `json:"pluginName"`
-	ActionID       string         `json:"actionId"`
-	Label          string         `json:"label"`
-	EntityID       uint           `json:"entityId"`
-	EntityType     string         `json:"entityType"`
-	Status         string         `json:"status"`   // pending, running, completed, failed
-	Progress       int            `json:"progress"` // 0-100
-	Message        string         `json:"message"`
-	Result         map[string]any `json:"result,omitempty"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	mu             sync.RWMutex
-	lastNotified   time.Time // tracks when the last SSE notification was sent for throttling
+	ID             string `json:"id"`
+	CanonicalJobID string `json:"canonicalJobId,omitempty"`
+	Source         string `json:"source"` // always "plugin"
+	PluginName     string `json:"pluginName"`
+	ActionID       string `json:"actionId"`
+	Label          string `json:"label"`
+	EntityID       uint   `json:"entityId"`
+	EntityType     string `json:"entityType"`
+	Status         string `json:"status"`   // pending, running, completed, failed
+	Progress       int    `json:"progress"` // 0-100
+	Message        string `json:"message"`
+	// Completed, Total and Unit are the count a plugin reported through the
+	// table form of mah.job_progress, and Metrics the figures beside it.
+	Completed    *int64              `json:"completed,omitempty"`
+	Total        *int64              `json:"total,omitempty"`
+	Unit         string              `json:"unit,omitempty"`
+	Metrics      []jobmetrics.Metric `json:"metrics,omitempty"`
+	Result       map[string]any      `json:"result,omitempty"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	mu           sync.RWMutex
+	lastNotified time.Time // tracks when the last SSE notification was sent for throttling
+	// progressPending records a report the throttle held back. The latest one
+	// is always on the entry; this says the durable Job has not seen it yet,
+	// so the next report or the settlement sends it rather than dropping it.
+	progressPending bool
 	// ownerUserID is the user that submitted the action (RBAC). It is never
 	// serialized to JSON; callers read it via Owner() to decide visibility so a
 	// non-admin only sees the jobs it created.
@@ -156,6 +167,24 @@ func (pm *PluginManager) reportLostCallbacks(reason string) {
 	}
 }
 
+// hostProgressLocked is the entry's latest report in the shape the durable Job
+// takes. The caller holds mu.
+func (j *ActionJob) hostProgressLocked() HostProgress {
+	return HostProgress{
+		Percent: j.Progress, Message: j.Message,
+		Completed: copyCount(j.Completed), Total: copyCount(j.Total), Unit: j.Unit,
+		Metrics: jobmetrics.Clone(j.Metrics),
+	}
+}
+
+func copyCount(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
+}
+
 // Snapshot returns a copy of the ActionJob safe for serialization.
 func (j *ActionJob) Snapshot() *ActionJob {
 	j.mu.RLock()
@@ -173,6 +202,10 @@ func (j *ActionJob) Snapshot() *ActionJob {
 		Status:         j.Status,
 		Progress:       j.Progress,
 		Message:        j.Message,
+		Completed:      copyCount(j.Completed),
+		Total:          copyCount(j.Total),
+		Unit:           j.Unit,
+		Metrics:        jobmetrics.Clone(j.Metrics),
 		CreatedAt:      j.CreatedAt,
 		ownerUserID:    j.ownerUserID,
 	}
@@ -438,6 +471,18 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 // own report is about work it declared finished, and a Go-level failure raised after
 // it says nothing about whether that work is done.
 func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workErr error) {
+	// A report the throttle held back is sent before the outcome, so the
+	// durable Job ends on the plugin's last counts and metrics rather than on
+	// whichever report happened to fall outside the throttle window.
+	job.mu.Lock()
+	pending := job.progressPending
+	progress := job.hostProgressLocked()
+	job.progressPending = false
+	job.mu.Unlock()
+	if pending {
+		_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(progress); return nil })
+	}
+
 	job.mu.Lock()
 	status := job.Status
 	message := job.Message

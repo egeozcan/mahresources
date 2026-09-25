@@ -1027,6 +1027,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			notifyMu.Unlock()
 			if due {
 				dm.notifyJob("updated", job)
+				dm.mirrorProgress(job)
 			}
 		})
 	if err != nil {
