@@ -192,7 +192,9 @@ func TestFailureReasonIsNotQuadraticInTheSubmittedURL(t *testing.T) {
 	submitted := "https://cdn.example.com" + path.String()
 	start := time.Now()
 	got := failureReason(submitted, nil, errors.New("HTTP 414 URI Too Long"))
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+	// The quadratic version took 6 s here and the linear one 0.03 s; the bound
+	// sits well between them, so a slow runner does not fail a correct build.
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("rendering took %s for a %d-byte URL", elapsed, len(submitted))
 	}
 	if got != "HTTP 414 URI Too Long" {
