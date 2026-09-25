@@ -6,6 +6,7 @@ import {
     classifyJobState,
     commandEndpoint,
     commandLabel,
+    failureText,
     jobCommands,
     advertisedOutputs,
     reduceJobStreamEvent,
@@ -643,6 +644,7 @@ export function jobPanel() {
         },
 
         stateLabel(job) { return stateLabel(job); },
+        failureText(job) { return failureText(job); },
         commandLabel(command) { return commandLabel(command); },
         phaseText(job) { return phaseText(job); },
         progressText(job) { return progressText(job); },

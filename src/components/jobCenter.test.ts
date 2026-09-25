@@ -6,6 +6,7 @@ import {
     advertisedOutputs,
     classifyJobState,
     commandEndpoint,
+    failureText,
     jobCenter,
     jobCommands,
     outputEndpoint,
@@ -447,5 +448,24 @@ describe('Job Center templates', () => {
         const baseTemplate = readFileSync(fileURLToPath(new URL('../../templates/layouts/base.tpl', import.meta.url)), 'utf8');
         expect(baseTemplate).toContain('{% include "/partials/jobPanel.tpl" %}');
         expect(baseTemplate).not.toContain('downloadCockpit.tpl');
+    });
+});
+
+describe('failure reason', () => {
+    test('a failed job says why in its own words, falling back to the code', () => {
+        expect(failureText({ state: 'failed', failure: { code: 'download-failed', class: 'internal', message: 'HTTP 403: 403 Forbidden' } }))
+            .toBe('HTTP 403: 403 Forbidden');
+        expect(failureText({ state: 'failed', failure: { code: 'runtime-unfinished', class: 'internal' } })).toBe('runtime-unfinished');
+        expect(failureText({ state: 'succeeded' })).toBe('');
+        expect(failureText(null)).toBe('');
+    });
+
+    test('a live transition to failed announces the reason with it', () => {
+        const previous = { id: 'dl', title: 'video.mp4', kind: 'download', state: 'running', version: 1 };
+        const result = reduceJobStreamEvent([previous], {
+            job: { ...previous, state: 'failed', version: 2, failure: { code: 'download-failed', class: 'internal', message: 'HTTP 404: 404 Not Found' } },
+            deliverySequence: 5,
+        }, 4);
+        expect(result.announcement).toBe('video.mp4 failed: HTTP 404: 404 Not Found.');
     });
 });

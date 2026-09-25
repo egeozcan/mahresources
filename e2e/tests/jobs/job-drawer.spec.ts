@@ -85,4 +85,39 @@ test.describe('Jobs drawer', () => {
       server.close();
     }
   });
+  test('a failed download says why, in the drawer and on /jobs, without its URL', async ({ page, request }) => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(403, { 'Content-Type': 'text/plain' });
+      response.end('no');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const name = `job-drawer-failed-${Date.now()}.bin`;
+      const response = await request.post('/v1/download/submit', {
+        data: { URL: `http://127.0.0.1:${port}/secret-path/${name}?signature=do-not-show`, Name: name, FileName: name },
+      });
+      expect(response.status(), await response.text()).toBe(202);
+      const id = (await response.json()).jobs?.[0]?.canonicalJobId as string;
+      await expect.poll(async () => (await readJob(request, id))?.state, { timeout: 30_000 }).toBe('failed');
+
+      await page.goto('/dashboard');
+      await page.keyboard.press('Control+Shift+D');
+      const drawer = page.getByRole('dialog', { name: 'Jobs' });
+      const row = drawer.locator(`article:has(a[href="/job?id=${id}"])`);
+      const reason = row.locator('[data-job-panel-failure]');
+      await expect(reason).toBeVisible({ timeout: 10_000 });
+      await expect(reason).toContainText('Reason:');
+      await expect(reason).toContainText('HTTP 403');
+      await expect(reason).not.toContainText('signature');
+      await expect(reason).not.toContainText('secret-path');
+
+      await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+      const card = page.locator(`article[data-job-id="${id}"]`);
+      await expect(card).toContainText('HTTP 403');
+      await expect(card).not.toContainText('signature');
+    } finally {
+      server.close();
+    }
+  });
 });

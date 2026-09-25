@@ -539,7 +539,12 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 		row.Phase = ""
 	}
 	if snapshot.Failure != nil {
+		// The code when the Kind gave no message, as the Jobs drawer does, so a
+		// failed card never stands without a reason.
 		row.FailureMessage = snapshot.Failure.Message
+		if row.FailureMessage == "" {
+			row.FailureMessage = snapshot.Failure.Code
+		}
 	}
 	if snapshot.State == jobs.StateSucceeded {
 		// A result link needs the outputs the viewer may open. One read per

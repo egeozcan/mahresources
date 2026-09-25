@@ -557,14 +557,15 @@ func hasCommand(commands []jobs.Command, key string) bool {
 	return false
 }
 
-// TestADownloadClassifiesItsFailureWithoutCarryingTheURL keeps the two halves of a
-// failure apart: the queue's own error text stays on the legacy surfaces, and the
-// Job records a bounded taxonomy — the queue's errors can name the URL, and a Job's
-// failure message is searchable text.
+// TestADownloadClassifiesItsFailureWithoutCarryingTheURL keeps the reason and the
+// URL apart: the Job records why the transfer failed, because that is the one thing
+// the person reading the Jobs drawer needs, but not the URL it failed on — the
+// queue's errors can name it, query included, and a Job's failure message is
+// searchable text.
 func TestADownloadClassifiesItsFailureWithoutCarryingTheURL(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	// A server that fails every request: the transfer fails for a reason only the
-	// queue can explain, and that explanation must not become the Job's text.
+	// queue can explain, and that explanation has to reach the Job.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no", http.StatusInternalServerError)
 	}))
@@ -585,6 +586,9 @@ func TestADownloadClassifiesItsFailureWithoutCarryingTheURL(t *testing.T) {
 	}
 	if strings.Contains(failed.Failure.Message, "signature") || strings.Contains(failed.Failure.Message, "secret-path") {
 		t.Fatalf("the failure message carries the URL: %q", failed.Failure.Message)
+	}
+	if !strings.Contains(failed.Failure.Message, "HTTP 500") {
+		t.Fatalf("the failure message does not say why the download failed: %q", failed.Failure.Message)
 	}
 	timeline, err := ctx.GetJobTimeline(submissions[0].CanonicalJobID, 0, 0)
 	if err != nil {

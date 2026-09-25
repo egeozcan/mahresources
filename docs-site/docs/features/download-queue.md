@@ -158,6 +158,14 @@ states:
 | `cancelled` | Cancelled by user |
 | `paused` | Paused by user (can be resumed) |
 
+A failed download's Job records why it failed, in the queue's own words: for
+example `HTTP 403: 403 Forbidden`, or the timeout that ended the transfer. The
+Jobs drawer shows it under the failed row as **Reason**, and `/jobs` and the Job
+detail page show the same text. Any URL inside that text is cut to its scheme
+and host, because a failure message is searchable and a URL's path and query
+can hold a signature or token. A failure that has no message shows its code
+instead.
+
 ## Job Operations
 
 - **Cancel, pause, resume, retry** -- The compatibility endpoints remain

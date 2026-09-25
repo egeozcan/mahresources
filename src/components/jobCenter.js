@@ -165,6 +165,15 @@ export function stateLabel(job) {
     return state.charAt(0).toUpperCase() + state.slice(1).replaceAll('-', ' ');
 }
 
+// Why a Job failed, in the words its Kind recorded: the message, or the code when
+// the Kind gave none, so a failed row never stands without a reason. Only a
+// failed Job carries a failure; the Service refuses one on any other transition.
+export function failureText(job) {
+    const failure = job?.failure;
+    if (!failure) return '';
+    return String(failure.message || failure.code || '').trim();
+}
+
 // The phase shown beside the state, or nothing when the state label already
 // says it: a partial success's label is its phase.
 export function phaseText(job) {
@@ -199,7 +208,8 @@ export function selectedBulkCommands(jobs, selectedIds) {
 
 function announcementFor(job, previous, replay) {
     if (replay || !previous || stateOf(job) === stateOf(previous)) return '';
-    return `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}.`;
+    const reason = failureText(job);
+    return `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}${reason ? `: ${reason}` : ''}.`;
 }
 
 function eventJob(message) {

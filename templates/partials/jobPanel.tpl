@@ -70,6 +70,9 @@
                                         </div>
                                     </div>
 
+                                    {# The reason a job failed, as its Kind recorded it; the /jobs detail page shows the same text. #}
+                                    <p x-show="failureText(job)" x-cloak class="mt-2 break-words rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-900" data-job-panel-failure><span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span></p>
+
                                     <template x-if="showsProgress(job)">
                                         <div class="mt-2" data-job-panel-progress>
                                             <div class="mb-1 flex justify-between gap-2 text-xs text-stone-700">
