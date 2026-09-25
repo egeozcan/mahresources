@@ -1040,13 +1040,12 @@ func TestAResumeQueuesWorkRatherThanStartingAnUnbudgetedTransfer(t *testing.T) {
 
 	// The slot frees, a runtime claims the queued Job with its capacity, and the paused
 	// entry is resumed inside that claim.
-	if _, err := ctx.JobService().ReleaseClaim(ctx.jobDeps(), jobs.ReleaseRequest{
-		ExecutionRef: jobs.ExecutionRef{JobID: holder.JobID, ExecutionToken: holder.ExecutionToken},
-		To:           jobs.StateQueued,
-		Reason:       "test released the budget",
-	}); err != nil {
-		t.Fatalf("release the budget holder: %v", err)
-	}
+	//
+	// The holder is ended rather than released back to the queue. This context's loop
+	// runs its Kind too, so a queued holder is work it may claim the moment the transfer
+	// frees the slot — and its adapter never finishes, so that claim would hold the slot
+	// through the budget assertion below. Under load it did, about one run in ten.
+	finishForTest(t, holder, jobs.StateSucceeded)
 
 	finished := waitForSnapshot(t, ctx, jobID, "the resumed transfer to finish", func(s jobs.Snapshot) bool {
 		return s.State.Terminal()
