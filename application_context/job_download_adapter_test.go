@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -598,6 +599,45 @@ func TestADownloadClassifiesItsFailureWithoutCarryingTheURL(t *testing.T) {
 		if strings.Contains(string(event.Detail), "signature") {
 			t.Fatalf("an event carries the URL's query: %s", event.Detail)
 		}
+	}
+}
+
+// TestARefusedConnectionSaysSoWithoutItsURL is the failure whose own text names
+// the URL: net/http reports a refused connection as `Get "<url>": dial tcp …`. The
+// Job gets the reason and the legacy entry keeps the text it always had.
+func TestARefusedConnectionSaysSoWithoutItsURL(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedPort := listener.Addr().String()
+	_ = listener.Close()
+
+	secret := "http://" + closedPort + "/secret-path.bin?signature=do-not-store"
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: secret}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	failed := waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the download to fail",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if failed.State != jobs.StateFailed || failed.Failure == nil {
+		t.Fatalf("the refused transfer ended %s (%+v)", failed.State, failed.Failure)
+	}
+	message := failed.Failure.Message
+	if !strings.Contains(message, "connection refused") {
+		t.Fatalf("the failure message does not say why the download failed: %q", message)
+	}
+	if strings.Contains(message, "signature") || strings.Contains(message, "secret-path") {
+		t.Fatalf("the failure message carries the URL: %q", message)
+	}
+
+	entry, found := ctx.downloadManager.GetJobByCanonicalJobID(submissions[0].CanonicalJobID)
+	if !found {
+		t.Fatal("the queue entry is gone")
+	}
+	if !strings.Contains(entry.GetError(), "secret-path") {
+		t.Fatalf("the legacy entry lost the error's own text: %q", entry.GetError())
 	}
 }
 

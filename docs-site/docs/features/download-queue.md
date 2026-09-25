@@ -158,13 +158,15 @@ states:
 | `cancelled` | Cancelled by user |
 | `paused` | Paused by user (can be resumed) |
 
-A failed download's Job records why it failed, in the queue's own words: for
-example `HTTP 403: 403 Forbidden`, or the timeout that ended the transfer. The
-Jobs drawer shows it under the failed row as **Reason**, and `/jobs` and the Job
-detail page show the same text. Any URL inside that text is cut to its scheme
-and host, because a failure message is searchable and a URL's path and query
-can hold a signature or token. A failure that has no message shows its code
-instead.
+A failed download's Job records why it failed: for example
+`HTTP 403 Forbidden`, `connect: connection refused`, or the timeout that ended
+the transfer. The Jobs drawer shows it under the failed row as **Reason**, and
+`/jobs` and the Job detail page show the same text. The reason names no URL
+beyond its scheme and host, because a Job's failure message is stored as plain,
+searchable text and a URL's path and query can hold a signature or token. An
+HTTP status is named by its code and standard meaning, not by the text the
+server sent with it. The legacy download endpoints still report the error's
+full text. A failure that has no message shows its code instead.
 
 ## Job Operations
 

@@ -479,7 +479,7 @@ func get(ctx context.Context, d Deps, t fetchTarget) (body io.ReadCloser, resp *
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = resp.Body.Close()
-		return nil, nil, false, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, nil, false, &StatusError{Code: resp.StatusCode, Status: resp.Status}
 	}
 
 	body = idleGuard(resp.Body, d.IdleTimeout)
@@ -816,4 +816,17 @@ func trimFloat(f float64) string {
 	s := strconv.FormatFloat(f, 'f', 6, 64)
 	s = strings.TrimRight(s, "0")
 	return strings.TrimSuffix(s, ".")
+}
+
+// StatusError is a playlist, key or segment request the server answered with a
+// status outside 2xx. Status is the server's own status line, which its text
+// keeps for the person reading it; a caller rendering the failure for somewhere
+// less private can say what Code means without repeating what the server wrote.
+type StatusError struct {
+	Code   int
+	Status string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.Code, e.Status)
 }

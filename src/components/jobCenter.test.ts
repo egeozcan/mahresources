@@ -456,6 +456,7 @@ describe('failure reason', () => {
         expect(failureText({ state: 'failed', failure: { code: 'download-failed', class: 'internal', message: 'HTTP 403: 403 Forbidden' } }))
             .toBe('HTTP 403: 403 Forbidden');
         expect(failureText({ state: 'failed', failure: { code: 'runtime-unfinished', class: 'internal' } })).toBe('runtime-unfinished');
+        expect(failureText({ state: 'failed', failure: { code: 'runtime-unfinished', class: 'internal', message: '   ' } })).toBe('runtime-unfinished');
         expect(failureText({ state: 'succeeded' })).toBe('');
         expect(failureText(null)).toBe('');
     });

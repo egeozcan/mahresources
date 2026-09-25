@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -486,7 +485,7 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 	case download_queue.JobStatusCancelled:
 		return a.finish(execution, jobs.StateCancelled, "")
 	default:
-		return a.finishFailed(execution, "download-failed", snap.Error)
+		return a.finishFailed(execution, "download-failed", snap.FailureReason)
 	}
 }
 
@@ -505,12 +504,18 @@ func (a *downloadJobAdapter) finish(execution jobs.Execution, outcome jobs.State
 	return a.ctx.finishQueueJob(execution, outcome, nil, []string{jobDownloadResourceOutput})
 }
 
-// finishFailed ends the Job as failed, saying why in the queue's own words.
-func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, queueError string) error {
+// finishFailed ends the Job as failed, saying why.
+//
+// The reason is the queue's FailureReason, never its Error: Error is the error's
+// own text, which can name the URL the transfer failed on, query and all, and a
+// Job's failure message is stored in the clear and searched. FailureReason is the
+// same reason with every URL cut to its origin, rendered by the queue while it
+// still held the error value.
+func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason string) error {
 	failure := &jobs.Failure{
 		Code:    code,
 		Class:   jobs.FailureClassInternal,
-		Message: downloadFailureMessage(queueError),
+		Message: downloadFailureMessage(reason),
 	}
 	return a.ctx.finishQueueJob(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput})
 }
@@ -518,31 +523,13 @@ func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, queueE
 // downloadFailureFallback is the message of a failure the queue gave no reason for.
 const downloadFailureFallback = "the download did not complete"
 
-// failureURLPattern finds a URL inside an error's text. Go's own errors quote the
-// URL they failed on (`Get "https://…": …`), so a quote ends a match.
-var failureURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
-
-// downloadFailureMessage turns the queue's error text into a Job's failure message.
-//
-// The reason is carried, because it is the whole of what a person opening the Jobs
-// drawer on a failed download wants to know: "HTTP 403: 403 Forbidden" and "idle
-// timeout after 1m0s" call for different next steps, and a fixed "did not complete"
-// answers neither. Every URL inside it is cut down to its origin, though. A Job's
-// failure message is searchable text, and the queue's errors can name the URL they
-// failed on — its path and query included, which is where a signed URL keeps its
-// signature. The origin still says which host refused, which matters when a
-// redirect or a playlist moved the transfer to one the person did not submit.
-func downloadFailureMessage(queueError string) string {
-	message := strings.ToValidUTF8(queueError, "")
+// downloadFailureMessage makes a rendered reason storable: valid text with no NUL,
+// which PostgreSQL refuses in a text column, and within the Service's ceiling,
+// cut on a rune boundary. A Finish the Service refused would leave the Job
+// running with nothing left to end it.
+func downloadFailureMessage(reason string) string {
+	message := strings.ToValidUTF8(reason, "")
 	message = strings.ReplaceAll(message, "\x00", "")
-	message = failureURLPattern.ReplaceAllStringFunc(message, func(raw string) string {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return "<url>"
-		}
-		// Host, not the whole authority: user info is a credential.
-		return parsed.Scheme + "://" + parsed.Host
-	})
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return downloadFailureFallback

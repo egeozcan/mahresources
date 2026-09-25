@@ -747,12 +747,12 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		domainLease.reportBackoff(err)
 	}
 
-	status, errMsg, resourceID := JobStatusCompleted, "", uint(0)
+	status, errMsg, reason, resourceID := JobStatusCompleted, "", "", uint(0)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Download cancelled"
 	case err != nil:
-		status, errMsg = JobStatusFailed, err.Error()
+		status, errMsg, reason = JobStatusFailed, err.Error(), failureReason(job.URL, err)
 	default:
 		// Deliberately not overridden by an accepted cancel: the resource exists and
 		// the version row is written, so reporting `cancelled` here would orphan a
@@ -765,7 +765,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// and then writing the terminal one is the same check-then-act the controls had:
 	// a Pause landing between the two was silently overwritten, and a Pause landing
 	// just before the read stranded the job (see DownloadJob.finish).
-	snap, stamped := job.finishSnapshot(runID, status, errMsg, resourceID, time.Now())
+	snap, stamped := job.finishSnapshotWithReason(runID, status, errMsg, reason, resourceID, time.Now())
 	if !stamped {
 		return
 	}

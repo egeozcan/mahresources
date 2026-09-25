@@ -171,7 +171,7 @@ export function stateLabel(job) {
 export function failureText(job) {
     const failure = job?.failure;
     if (!failure) return '';
-    return String(failure.message || failure.code || '').trim();
+    return String(failure.message ?? '').trim() || String(failure.code ?? '').trim();
 }
 
 // The phase shown beside the state, or nothing when the state label already

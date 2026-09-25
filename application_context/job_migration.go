@@ -1214,11 +1214,7 @@ func downloadHistoryJobOutcome(row models.DownloadHistoryEntry) (jobs.State, *jo
 	case models.DownloadHistoryStatusCancelled:
 		return jobs.StateCancelled, nil, nil
 	case models.DownloadHistoryStatusFailed:
-		message := "legacy download failed"
-		if row.Error != "" {
-			message = downloadFailureMessage(row.Error)
-		}
-		return jobs.StateFailed, &jobs.Failure{Code: "legacy-download-failed", Class: jobs.FailureClassInternal, Message: message}, nil
+		return jobs.StateFailed, &jobs.Failure{Code: "legacy-download-failed", Class: jobs.FailureClassInternal, Message: "legacy download failed"}, nil
 	default:
 		return "", nil, migrationBlocker(jobMigrationDownloadHistory, strconv.FormatUint(uint64(row.ID), 10), "outcome-unknown")
 	}
