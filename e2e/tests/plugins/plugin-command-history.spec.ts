@@ -59,7 +59,7 @@ async function enableCommandFixture(request: APIRequestContext) {
   expect(body).toContain('already enabled');
 }
 
-async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile-output'): Promise<string> {
+async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile-output' | 'progress'): Promise<string> {
   const response = await request.post('/v1/plugins/test-commands/run', {
     data: { mode },
     headers: { Accept: 'application/json' },
@@ -157,6 +157,43 @@ test.describe('administrator plugin command history', () => {
       headers: { Accept: 'application/json' },
     });
     expect(secondCancel.ok(), await secondCancel.text()).toBe(true);
+  });
+
+  test('a command reports ::mah-progress lines as live Job figures and a graph', async ({ page, request }) => {
+    await enableCommandFixture(request);
+    const runID = await submitFixture(request, 'progress');
+    let jobID = '';
+    await expect.poll(async () => {
+      jobID = (await commandRuns(request)).find(run => run.ID === runID)?.JobID || '';
+      return jobID;
+    }).not.toBe('');
+
+    await page.goto('/plugins/manage');
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    const row = panel.locator(`article:has(a[href="/job?id=${jobID}"])`);
+    // While it runs: the fixture's own figures, its counts on the bar, and the
+    // graph it asked for, all arriving over the live stream.
+    await expect(row.locator('[data-job-panel-metrics]')).toContainText('Frames per second', { timeout: 15_000 });
+    await expect(row.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(25|50|75|100)$/);
+    await expect(row.getByRole('img', { name: /^Frames per second/ })).toBeVisible();
+
+    await expect.poll(async () => (await commandRuns(request)).find(run => run.ID === runID)?.Status, { timeout: 30_000 })
+      .toBe('succeeded');
+    const job = await (await request.get(`/v1/jobs/${jobID}`)).json();
+    expect(job.progress).toMatchObject({ completed: 4, total: 4, unit: 'items', message: 'Encoding part 4' });
+    expect(job.progress.metrics).toEqual([{ key: 'fps', label: 'Frames per second', value: 60, graph: true }]);
+    expect(job.progress.series.points.length).toBeGreaterThanOrEqual(2);
+
+    // The reports were consumed, not kept in the output a person reads.
+    await page.goto(`/admin/plugin-command-runs?id=${runID}`);
+    const output = page.getByTestId('command-run-output');
+    await expect(output).toContainText('encoded part 4');
+    await expect(output).not.toContainText('::mah-progress');
+
+    await page.goto(`/job?id=${jobID}`);
+    await expect(page.locator('[data-job-metrics]')).toContainText('Frames per second');
+    await expect(page.getByRole('img', { name: /^Frames per second/ })).toBeVisible();
   });
 
   test('terminal and pruned output use the real escaped detail page', async ({ page, request, commandServer }) => {

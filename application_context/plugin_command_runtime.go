@@ -76,17 +76,34 @@ type commandProgressMirror struct {
 	closed    bool
 }
 
-// progressWriter is the one call the mirror makes; jobs.Execution is the
-// production one, fenced by its execution token.
+// progressWriter is the one call the mirror makes.
 type progressWriter interface {
 	Progress(jobs.Progress) (jobs.Snapshot, error)
+}
+
+// commandJobProgressWriter writes through the Job Service with a fresh handle,
+// fenced by the execution token. It does not use the claimed jobs.Execution's
+// own report: that was built inside the claim's transaction and carries its
+// handle, which is committed by the time the command prints anything.
+type commandJobProgressWriter struct {
+	ctx *MahresourcesContext
+	ref jobs.ExecutionRef
+}
+
+func (w commandJobProgressWriter) Progress(progress jobs.Progress) (jobs.Snapshot, error) {
+	service := w.ctx.JobService()
+	if service == nil {
+		return jobs.Snapshot{}, nil
+	}
+	return service.UpdateProgress(w.ctx.jobDeps(), w.ref, progress)
 }
 
 func newCommandProgressMirror(ctx *MahresourcesContext, execution jobs.Execution, claimed bool) *commandProgressMirror {
 	if !claimed || execution.JobID == "" || ctx.JobService() == nil {
 		return nil
 	}
-	return &commandProgressMirror{jobID: execution.JobID, target: execution}
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	return &commandProgressMirror{jobID: execution.JobID, target: commandJobProgressWriter{ctx: ctx, ref: ref}}
 }
 
 func (m *commandProgressMirror) report(report plugin_commands.ProgressReport) {

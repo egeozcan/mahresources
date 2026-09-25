@@ -9,6 +9,18 @@ case "$mode" in
   hostile-output)
     printf '\033[31m<script>window.commandFixtureSecret = true</script>\033[0m\n'
     ;;
+  progress)
+    # Structured progress on stdout, a second apart so the Job's series gets a
+    # point per report. Only printf and absolute paths: the spawned PATH is the
+    # plugin command path alone.
+    i=0
+    while [ "$i" -le 4 ]; do
+      printf '::mah-progress {"completed":%d,"total":4,"unit":"items","message":"Encoding part %d","metrics":[{"key":"fps","label":"Frames per second","value":%d,"graph":true}]}\n' "$i" "$i" "$((i * 10 + 20))"
+      printf 'encoded part %d\n' "$i"
+      if [ "$i" -lt 4 ]; then /bin/sleep 1; fi
+      i=$((i + 1))
+    done
+    ;;
   read-input)
     # Copy the input the host wrote into this run's working directory, so a test
     # can prove the program saw it without the contents reaching a record.
