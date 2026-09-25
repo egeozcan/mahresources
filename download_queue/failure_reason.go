@@ -42,9 +42,9 @@ import (
 //     unquoted scheme://… token.
 //
 // What this cannot promise is that text a server authored holds nothing it
-// chose to put there. A server that has the submitted URL can write a token
-// into any field, which layer 2 removes only when it is the submitted URL's
-// own; and whatever a server sends is stored anyway, as the downloaded file.
+// chose to put there. A server that received a token can repeat it in any form,
+// and layer 2 removes it only in the forms it was sent: whole, or split where a
+// URL or a header value is split, down to six characters.
 func failureReason(submitted string, headers map[string]string, err error) string {
 	if err == nil {
 		return ""
@@ -157,7 +157,7 @@ func submittedSecrets(submitted string, headers map[string]string) []string {
 			add(value)
 		}
 		for _, part := range strings.FieldsFunc(value, func(r rune) bool {
-			return r == ';' || r == '=' || r == ',' || r == ' ' || r == '\t'
+			return r == ';' || r == '=' || r == ',' || r == ':' || r == ' ' || r == '\t'
 		}) {
 			if len(part) >= minSecretPartLength {
 				add(part)

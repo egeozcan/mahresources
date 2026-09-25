@@ -38,6 +38,11 @@ func TestFailureReasonKeepsTheReasonAndNoURLBeyondItsOrigin(t *testing.T) {
 			want: []string{"fetch https://cdn.example.com failed"},
 		},
 		{
+			name: "an apostrophe does not end a URL other than the submitted one",
+			err:  fmt.Errorf("redirected to https://mirror.example.net/Ann's/secret-copy.mp4?sig=second-secret and failed"),
+			want: []string{"redirected to https://mirror.example.net and failed"},
+		},
+		{
 			name: "a playlist's relative reference is dropped with its parse error",
 			err:  fmt.Errorf("could not read the playlist URL: %w", relativeErr),
 			want: []string{"could not read the playlist URL: ", "invalid URL escape"},
@@ -134,7 +139,7 @@ func TestFailureReasonRemovesATokenInAPathSegment(t *testing.T) {
 func TestFailureReasonRemovesWhatTheSubmissionSent(t *testing.T) {
 	const submitted = "https://user:pa55w0rd-x@cdn.example.com/clip.mp4"
 	headers := map[string]string{
-		"Cookie":        "session=c00kie-value; theme=dark",
+		"Cookie":        "session=prefix123:c00kie-value; theme=dark",
 		"Authorization": "Bearer t0ken-value-xyz",
 	}
 	err := errors.New(`server said: bad key "pa55w0rd-x", cookie c00kie-value, token t0ken-value-xyz`)
