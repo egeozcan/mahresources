@@ -1038,6 +1038,14 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 		// and are written in arrival order once it passes.
 		var held []func()
 		var heldDeadline <-chan time.Time
+		// stillFresh answers whether the last check may decide the next frame. A
+		// check answers only for writes made within its interval: a client that
+		// stalls a flush would otherwise have the frames after it written on an
+		// answer that has aged past any bound. It reports false once the
+		// credential no longer authenticates.
+		stillFresh := func() bool {
+			return time.Since(lastCheck) < jobEventsCheckInterval || revalidate()
+		}
 		// deliver checks the credential and writes every held event, and reports
 		// false once the credential no longer authenticates.
 		deliver := func() bool {
@@ -1045,6 +1053,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				return false
 			}
 			for _, write := range held {
+				if !stillFresh() {
+					return false
+				}
 				write()
 			}
 			held = held[:0]
@@ -1134,6 +1145,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					if exists {
 						eventType = "updated"
 					}
+					if !stillFresh() {
+						return
+					}
 					data, _ := json.Marshal(map[string]any{"job": job})
 					fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
 					flusher.Flush()
@@ -1142,6 +1156,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				for id, previous := range actionRows {
 					if _, exists := current[id]; exists {
 						continue
+					}
+					if !stillFresh() {
+						return
 					}
 					data, _ := json.Marshal(map[string]any{"job": previous})
 					fmt.Fprintf(writer, "event: action_removed\ndata: %s\n\n", data)

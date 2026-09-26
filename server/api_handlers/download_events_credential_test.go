@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -226,5 +227,81 @@ func TestALegacyStreamChecksABurstOfEventsInBatches(t *testing.T) {
 	}
 	if reads := source.readCount() - before; reads > burst/4 {
 		t.Fatalf("delivering %d jobs' events read the credential %d times", burst, reads)
+	}
+}
+
+// stallingSSEWriter blocks the first write that carries a live frame until the
+// test releases it, the way a slow client holds a flush.
+type stallingSSEWriter struct {
+	*sseTestWriter
+	stalled  chan struct{}
+	release  chan struct{}
+	stallOne sync.Once
+}
+
+func (w *stallingSSEWriter) Write(data []byte) (int, error) {
+	if bytes.HasPrefix(data, []byte("event: added\n")) || bytes.HasPrefix(data, []byte("event: updated\n")) {
+		w.stallOne.Do(func() {
+			close(w.stalled)
+			<-w.release
+		})
+	}
+	return w.sseTestWriter.Write(data)
+}
+
+// One credential check answers for the frames written soon after it, not for
+// frames a stalled client holds back: once the check has aged past its interval,
+// the next held event is checked again before it is written.
+func TestAHeldBatchIsCheckedAgainAfterAStalledWrite(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	source := &changingJobEventsSource{}
+	source.set(&principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}})
+
+	writer := &stallingSSEWriter{sseTestWriter: newSSETestWriter(), stalled: make(chan struct{}), release: make(chan struct{})}
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events", nil).WithContext(requestCtx)
+	finished := make(chan struct{})
+	go func() {
+		GetDownloadEventsHandler(source)(writer, request)
+		close(finished)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-writer.release:
+		default:
+			close(writer.release)
+		}
+		<-finished
+	})
+	select {
+	case <-writer.initWritten:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the legacy stream did not send its initial state")
+	}
+
+	// Two events in one burst are held for the same check; the first frame's
+	// write stalls.
+	first := submitOwnedLegacyJob(t, manager, 8)
+	second := submitOwnedLegacyJob(t, manager, 8)
+	select {
+	case <-writer.stalled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no live frame was written")
+	}
+	source.set(nil)
+	time.Sleep(jobEventsCheckInterval + 50*time.Millisecond)
+	close(writer.release)
+
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the stream stayed open after its credential was revoked during a stalled write")
+	}
+	if strings.Contains(writer.String(), second) {
+		t.Fatalf("a held frame for %q was written on a check made before the stall (first was %q): %s",
+			second, first, writer.String())
 	}
 }
