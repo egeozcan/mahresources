@@ -575,6 +575,10 @@ func TestAScheduledOccurrenceMaterializesExactlyOneJob(t *testing.T) {
 		t.Fatalf("the schedule handler ran %q times, want once", got)
 	}
 
+	// The scheduler records the row after it has read the Job's outcome, so a
+	// terminal Job is not yet a recorded row: the row is read once the dispatch
+	// has returned.
+	scheduler.runs.Wait()
 	if err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "tick").First(&row).Error; err != nil {
 		t.Fatalf("reload the schedule row: %v", err)
 	}
