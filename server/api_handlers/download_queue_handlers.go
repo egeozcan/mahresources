@@ -92,11 +92,14 @@ func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
 // validateDownloadScope refuses a download whose targets fall outside a
 // group-limited principal's subtree.
 //
-// The download worker creates resources on the unscoped system context, so a
-// group-limited principal could otherwise plant data outside its subtree by
+// A group-limited principal could otherwise ask for data outside its subtree by
 // naming an out-of-scope owner/group (or creating a new top-level group via
-// GroupName). Fail-closed, and checked before enqueuing. GroupVisible is always
-// true for unscoped/admin/auth-off callers, so this is a no-op for them.
+// GroupName). Fail-closed, and checked before enqueuing, so the refusal comes
+// before the transfer is spent. The worker binds the submitter again when it
+// creates the resource, which is the check that sees scope as it is by then and
+// which existing resource holds the bytes; this one is the early answer.
+// GroupVisible is always true for unscoped/admin/auth-off callers, so this is a
+// no-op for them.
 //
 // Shared with the retry path in download_history_handlers.go, and that is the
 // reason it is a function: a stored payload is a record of what was once asked
@@ -493,8 +496,8 @@ func legacyIdempotencyKey(key, jobID, command string) string {
 // restartScopeDenied re-checks a job's stored payload against the principal
 // restarting it, and returns the refusal to answer with (nil when allowed).
 //
-// Retry and Resume both hand the original creator back to the *unscoped* worker,
-// which is the same replay the /downloads retry path re-validates: ownership is
+// Retry and Resume both hand the original creator back to the worker, which is
+// the same replay the /downloads retry path re-validates: ownership is
 // not scope, and a user whose confinement changed after submitting — or whose
 // scope group moved in the tree — must not be able to press a button and have the
 // old targets honoured. A job with no stored creator (every generic job: exports,
