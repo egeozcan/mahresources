@@ -351,3 +351,49 @@ func TestADownloadWhoseSubmitterWasDisabledMidTransferCreatesNothing(t *testing.
 		t.Fatalf("%d resources were created for a disabled account", count)
 	}
 }
+
+// A delete decides whether a file is still needed inside its transaction and
+// removes it after the commit. An upload of the same bytes that lands in between
+// finds no row, reuses the file still on disk, and must keep it.
+func TestAnUploadBetweenADeletesCommitAndItsRemovalKeepsItsFile(t *testing.T) {
+	const body = "bytes uploaded again while their last resource is deleted"
+	cases := map[string]func(ctx *MahresourcesContext, doomed *models.Resource) error{
+		"single delete": func(ctx *MahresourcesContext, doomed *models.Resource) error {
+			return ctx.DeleteResource(doomed.ID)
+		},
+		"bulk delete": func(ctx *MahresourcesContext, doomed *models.Resource) error {
+			return ctx.BulkDeleteResources(&query_models.BulkQuery{ID: []uint{doomed.ID}})
+		},
+	}
+	for name, deleteIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := setupSharedFileTestCtx(t)
+			owner := createGroupNamed(t, ctx, "delete-race-owner", nil)
+			doomed := uploadAs(t, ctx, body, "doomed.txt", owner.ID)
+
+			var arrived *models.Resource
+			resourceFileRemovalGap = func() {
+				resourceFileRemovalGap = nil
+				arrived = uploadAs(t, ctx, body, "arrived.txt", owner.ID)
+			}
+			t.Cleanup(func() { resourceFileRemovalGap = nil })
+
+			if err := deleteIt(ctx, doomed); err != nil {
+				t.Fatalf("delete: %v", err)
+			}
+			if arrived == nil {
+				t.Fatal("the upload between the commit and the removal never ran")
+			}
+			if arrived.ID == doomed.ID {
+				t.Fatalf("the upload was answered with the resource being deleted")
+			}
+			exists, err := afero.Exists(ctx.fs, arrived.GetCleanLocation())
+			if err != nil {
+				t.Fatalf("stat: %v", err)
+			}
+			if !exists {
+				t.Fatalf("the delete removed the file resource %d reused after the delete committed", arrived.ID)
+			}
+		})
+	}
+}

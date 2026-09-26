@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -262,5 +265,67 @@ func TestLegacyActionEventsFilterForADemotedAdministrator(t *testing.T) {
 	}
 	if strings.Contains(stream.writer.body(), hidden) || strings.Contains(stream.writer.body(), "hidden-after-demotion") {
 		t.Fatalf("the legacy action stream delivered another user's action %q to a demoted account: %s", hidden, stream.writer.body())
+	}
+}
+
+// Checking the credential is two point reads; binding a group-limited account
+// materializes its whole subtree. An open stream rechecks every second, so it
+// binds again only when the account's access has changed.
+func TestAnOpenJobEventStreamDoesNotRematerializeAnUnchangedSubtree(t *testing.T) {
+	for _, path := range []string{"/v1/jobs/events", "/v1/jobs/events?version=2"} {
+		t.Run(path, func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			installJobControlPlane(t, tc)
+			t.Cleanup(tc.AppCtx.DownloadManager().Shutdown)
+			root := &models.Group{Name: "stream-subtree-root"}
+			if err := tc.DB.Create(root).Error; err != nil {
+				t.Fatalf("create scope root: %v", err)
+			}
+			bearer := scopedUserBearer(t, tc, root.ID)
+
+			var mu sync.Mutex
+			subtreeReads := 0
+			if err := tc.DB.Callback().Row().Before("gorm:row").Register("test:count_subtree_reads", func(db *gorm.DB) {
+				if strings.Contains(db.Statement.SQL.String(), "WITH RECURSIVE tree") {
+					mu.Lock()
+					subtreeReads++
+					mu.Unlock()
+				}
+			}); err != nil {
+				t.Fatalf("register the subtree read counter: %v", err)
+			}
+			reads := func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return subtreeReads
+			}
+
+			streamCtx, cancel := context.WithCancel(context.Background())
+			request := httptest.NewRequest(http.MethodGet, path, nil).WithContext(streamCtx)
+			request.Header.Set("Authorization", bearer)
+			writer := newCanonicalSSEWriter()
+			finished := make(chan struct{})
+			go func() {
+				tc.Router.ServeHTTP(writer, request)
+				close(finished)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-finished:
+				case <-time.After(5 * time.Second):
+					t.Errorf("%s did not stop after the client disconnected", path)
+				}
+			})
+			if !writer.waitForText("event: ", 3*time.Second) {
+				t.Fatalf("%s sent nothing: %q", path, writer.body())
+			}
+
+			before := reads()
+			time.Sleep(3500 * time.Millisecond)
+			if extra := reads() - before; extra > 0 {
+				t.Fatalf("%s materialized an unchanged subtree %d more times in 3.5s", path, extra)
+			}
+		})
 	}
 }

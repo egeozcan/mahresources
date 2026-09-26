@@ -1060,6 +1060,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				// A single visibility-filtered join yields current rows. Diff by the
 				// stable legacy handle so a queued Retry is an update to that row,
 				// while new, hidden, cleared, and expired rows are handled safely.
+				// actionRows holds exactly what this connection was last sent, so a
+				// removal, including one for a row the viewer may no longer see after
+				// a demotion, repeats what the viewer already had and nothing newer.
 				projector := durableActionJobsProjector(ctx)
 				if projector == nil {
 					continue
@@ -1076,7 +1079,6 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					current[job.ID] = job
 					previous, exists := actionRows[job.ID]
 					if exists && sameLegacyActionProjection(previous, job) {
-						actionRows[job.ID] = job
 						continue
 					}
 					eventType := "added"

@@ -175,7 +175,9 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 	// File operations after successful commit (no DB lock held)
 	if refCount == 0 {
-		_ = fs.Remove(resource.GetCleanLocation())
+		ctx.removeIfUnreferenced(resource.Hash, resource.StorageLocation, func() {
+			_ = fs.Remove(resource.GetCleanLocation())
+		})
 	}
 
 	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name, "resource_category_id": float64(resource.ResourceCategoryId), "owner_id": hookID(resource.OwnerId)})
@@ -527,6 +529,10 @@ type FileCleanupAction struct {
 	BackupPath string
 	// ShouldRemoveSource indicates if the source file should be deleted (no other references)
 	ShouldRemoveSource bool
+	// Hash and StorageLocation identify the file for the count that is taken again
+	// before it is removed.
+	Hash            string
+	StorageLocation *string
 }
 
 // metaBackupsKey is the meta key holding snapshots of merged-away losers. Every
@@ -574,27 +580,32 @@ func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileClea
 		if !action.ShouldRemoveSource {
 			continue
 		}
+		ctx.removeIfUnreferenced(action.Hash, action.StorageLocation, func() {
+			ctx.backUpAndRemove(action)
+		})
+	}
+}
 
-		if err := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); err != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir", err.Error(), nil)
-			continue
-		}
+func (ctx *MahresourcesContext) backUpAndRemove(action *FileCleanupAction) {
+	if err := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); err != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir", err.Error(), nil)
+		return
+	}
 
-		backupOK := false
-		file, openErr := action.SourceFS.Open(action.SourcePath)
-		if openErr == nil {
-			backup, createErr := ctx.fs.Create(action.BackupPath)
-			if createErr == nil {
-				_, copyErr := io.Copy(backup, file)
-				backup.Close()
-				backupOK = copyErr == nil
-			}
-			file.Close()
+	backupOK := false
+	file, openErr := action.SourceFS.Open(action.SourcePath)
+	if openErr == nil {
+		backup, createErr := ctx.fs.Create(action.BackupPath)
+		if createErr == nil {
+			_, copyErr := io.Copy(backup, file)
+			backup.Close()
+			backupOK = copyErr == nil
 		}
+		file.Close()
+	}
 
-		if backupOK || openErr != nil {
-			_ = action.SourceFS.Remove(action.SourcePath)
-		}
+	if backupOK || openErr != nil {
+		_ = action.SourceFS.Remove(action.SourcePath)
 	}
 }
 
@@ -791,6 +802,8 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 		SourcePath:         resource.GetCleanLocation(),
 		BackupPath:         backupPath,
 		ShouldRemoveSource: refCount == 0,
+		Hash:               resource.Hash,
+		StorageLocation:    resource.StorageLocation,
 	}, effect, nil
 }
 

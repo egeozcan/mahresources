@@ -873,7 +873,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		current := currentJobEventsContext{appCtx: appContext, request: r}
+		current := newCurrentJobEventsContext(appContext, r)
 		legacyJobHandler(api_handlers.GetDownloadEventsHandler(current))(w, r)
 	})
 
@@ -887,7 +887,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Both wire formats read through the request's credential as it stands at
 		// each read, not as it stood when the connection opened.
-		current := currentJobEventsContext{appCtx: appContext, request: r}
+		current := newCurrentJobEventsContext(appContext, r)
 		handler := api_handlers.GetJobsEventsHandler(current, current, canonicalJobAPICutoverComplete)
 		if r.URL.Query().Get("version") == "2" {
 			handler(w, r)

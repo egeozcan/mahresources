@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"mahresources/application_context"
@@ -21,12 +22,26 @@ import (
 // middleware, so a context bound only when the connection opens would preserve
 // stale roles and scopes indefinitely. The canonical stream reads through it
 // before every durable-event poll; the legacy streams before every frame.
+//
+// Resolving the credential is a session or token lookup; binding a group-limited
+// principal also materializes its whole subtree. The binding is therefore kept
+// while the resolved access is unchanged and rebuilt when it changes. The subtree
+// it holds is a snapshot, which these streams never consult: a Job's visibility
+// is its owner or an administrator, not a group.
 type currentJobEventsContext struct {
 	appCtx  *application_context.MahresourcesContext
 	request *http.Request
+
+	mu      sync.Mutex
+	boundAs *auth.Principal
+	bound   *application_context.MahresourcesContext
 }
 
-func (ctx currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+func newCurrentJobEventsContext(appCtx *application_context.MahresourcesContext, request *http.Request) *currentJobEventsContext {
+	return &currentJobEventsContext{appCtx: appCtx, request: request}
+}
+
+func (ctx *currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
@@ -36,7 +51,7 @@ func (ctx currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, l
 
 // GetLiveJobProgress revalidates the credential exactly as the event poll does:
 // a live progress frame is as much a read of the Job as its events are.
-func (ctx currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+func (ctx *currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
@@ -45,7 +60,7 @@ func (ctx currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int
 }
 
 // CurrentJobEvents is the legacy streams' read of the same credential.
-func (ctx currentJobEventsContext) CurrentJobEvents() (api_handlers.JobEventsContext, error) {
+func (ctx *currentJobEventsContext) CurrentJobEvents() (api_handlers.JobEventsContext, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
@@ -53,7 +68,7 @@ func (ctx currentJobEventsContext) CurrentJobEvents() (api_handlers.JobEventsCon
 	return scoped, nil
 }
 
-func (ctx currentJobEventsContext) current() (*application_context.MahresourcesContext, error) {
+func (ctx *currentJobEventsContext) current() (*application_context.MahresourcesContext, error) {
 	principal := auth.PrincipalFromContext(ctx.request.Context())
 	if ctx.appCtx.AuthEnabled() {
 		principal, _, _ = resolvePrincipal(ctx.appCtx, ctx.request)
@@ -61,7 +76,28 @@ func (ctx currentJobEventsContext) current() (*application_context.MahresourcesC
 			return nil, errors.New("Job event stream authentication is no longer valid")
 		}
 	}
-	return ctx.appCtx.WithPrincipal(principal), nil
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	if ctx.bound == nil || !sameAccess(ctx.boundAs, principal) {
+		ctx.bound = ctx.appCtx.WithPrincipal(principal)
+		ctx.boundAs = principal
+	}
+	return ctx.bound, nil
+}
+
+// sameAccess reports whether two principals are the same account with the same
+// role and scope, which is everything a binding depends on.
+func sameAccess(a, b *auth.Principal) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.UserID != b.UserID || a.Role != b.Role || a.SuperUser != b.SuperUser {
+		return false
+	}
+	if a.ScopeGroupID == nil || b.ScopeGroupID == nil {
+		return a.ScopeGroupID == b.ScopeGroupID
+	}
+	return *a.ScopeGroupID == *b.ScopeGroupID
 }
 
 // scopedEditName / scopedEditDescription / scopedEditMeta build the per-entity

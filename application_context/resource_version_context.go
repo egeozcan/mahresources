@@ -70,6 +70,38 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation
 	return versionCount + resourceCount, nil
 }
 
+// resourceFileRemovalGap is a test seam for the gap between the commit that
+// deleted a file's last reference and the removal of the file. Production
+// leaves it nil.
+var resourceFileRemovalGap func()
+
+// removeIfUnreferenced runs remove, the removal of the file behind hash, only if
+// nothing on that storage location references hash any more, counted again under
+// the per-hash upload lock.
+//
+// The count that decided a delete was taken inside the delete's transaction, and
+// the file is removed after it commits. An upload of the same bytes in between
+// finds no row, finds the file still on disk, reuses it and commits a resource
+// pointing at it; removing on the earlier count takes that resource's file.
+// AddResource holds this lock from its existence check to its commit, so a count
+// taken under it sees either all of such an upload or none of it, and an upload
+// that starts after the removal writes the file again.
+func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, remove func()) {
+	if resourceFileRemovalGap != nil {
+		resourceFileRemovalGap()
+	}
+	ctx.locks.ResourceHashLock.Acquire(hash)
+	defer ctx.locks.ResourceHashLock.Release(hash)
+	refCount, err := ctx.CountHashReferences(hash, storageLocation)
+	if err != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to count hash references; keeping the file", err.Error(), nil)
+		return
+	}
+	if refCount == 0 {
+		remove()
+	}
+}
+
 // GetVersions returns all versions for a resource, ordered by version number descending
 // If no versions exist (resource not yet migrated), returns a virtual v1 based on current resource state
 func (ctx *MahresourcesContext) GetVersions(resourceID uint) ([]models.ResourceVersion, error) {
@@ -460,7 +492,7 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 	} else if refCount == 0 {
 		fs, _ := ctx.GetFsForStorageLocation(storageLocation)
 		if fs != nil {
-			_ = fs.Remove(location)
+			ctx.removeIfUnreferenced(hash, storageLocation, func() { _ = fs.Remove(location) })
 		}
 	}
 

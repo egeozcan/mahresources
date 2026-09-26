@@ -13,7 +13,9 @@ indexes the file. Optional `--tags` / `--groups` attach relationships at
 creation.
 
 Content is deduplicated by hash, so re-fetching bytes the server already holds
-never produces a second resource. With no `--owner-id` given, the request is
+in a resource you can see never produces a second resource. (For an account
+limited to a group subtree, bytes held only outside it become a resource of
+its own.) With no `--owner-id` given, the request is
 refused with HTTP 400 naming the existing one. The doctest below fetches the
 same asset on every run, so its cleanup has to run on *every* exit path -- a run
 that dies after the create leaves the row behind, and every later run of the
