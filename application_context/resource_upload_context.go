@@ -1257,8 +1257,14 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
 	// with the same hash both pass the "existing resource" check before either commits.
+	//
+	// It is held up to the commit and no further. Deletes take it too, to count a
+	// file's references (removeIfUnreferenced), and the after-create hooks below
+	// run synchronously on this goroutine: a hook that deletes a resource over
+	// these bytes, or uploads them again, would wait on this lock forever.
 	ctx.locks.ResourceHashLock.Acquire(hash)
-	defer ctx.locks.ResourceHashLock.Release(hash)
+	releaseHashLock := sync.OnceFunc(func() { ctx.locks.ResourceHashLock.Release(hash) })
+	defer releaseHashLock()
 
 	if opts.CanonicalJobID != "" {
 		opts.Hash = hash
@@ -1492,6 +1498,7 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	}); insertErr != nil {
 		return nil, insertErr
 	}
+	releaseHashLock()
 
 	ctx.syncMentionsForResource(res)
 

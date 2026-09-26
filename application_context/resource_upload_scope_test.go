@@ -446,3 +446,53 @@ func TestADeleteWhoseRequestIsCancelledAfterItsCommitStillRemovesTheFile(t *test
 		t.Fatalf("a delete whose request was cancelled after the commit left the file behind")
 	}
 }
+
+// AddResource's hash lock covers the upload up to its commit and no further. A
+// synchronous after-create hook that deletes what was just created goes through
+// the removal, which takes the same lock; held across the hooks, the upload
+// waited on itself forever.
+func TestAnAfterCreateHookCanDeleteTheResourceJustCreated(t *testing.T) {
+	ctx := newPluginHookTestContext(t, `
+plugin = { name = "hooktest", version = "1.0", description = "deletes what was just created" }
+function init()
+    mah.on("after_resource_create", function(data)
+        mah.db.delete_resource(data.id)
+        return data
+    end)
+end
+`)
+	owner := createGroupNamed(t, ctx, "hook-deletes-owner", nil)
+	type outcome struct {
+		created *models.Resource
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		created, err := ctx.AddResource(io.NopCloser(strings.NewReader("created and deleted by its own hook")), "fleeting.txt",
+			&query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{OwnerId: owner.ID}})
+		done <- outcome{created, err}
+	}()
+	var result outcome
+	select {
+	case result = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the upload never returned: its after-create hook's delete is waiting for the upload's own hash lock")
+	}
+	if result.err != nil {
+		t.Fatalf("upload: %v", result.err)
+	}
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Where("id = ?", result.created.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("the hook's delete did not take effect")
+	}
+	exists, err := afero.Exists(ctx.fs, result.created.GetCleanLocation())
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if exists {
+		t.Fatalf("the deleted resource's file was kept with nothing referencing it")
+	}
+}

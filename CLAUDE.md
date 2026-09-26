@@ -280,7 +280,9 @@ last two rows over one file each saw the other's row and both kept the file. A
 count outside the lock misses an upload of the same bytes that landed between the
 commit and the unlink and reused the file about to go. The four version writers
 (upload, rotate, crop, trim) do not take that lock, so the second gap stays open
-for them. `resource_upload_scope_test.go` and its `_pg` twin pin all of this.
+for them. `AddResource` releases the lock at its commit, before its synchronous
+after-create hooks: a hook that deletes a resource over those bytes, or uploads
+them again, would otherwise wait on its own upload forever. `resource_upload_scope_test.go` and its `_pg` twin pin all of this.
 
 **The collision branches validate their association ids *inside* their
 transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
