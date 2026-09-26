@@ -777,3 +777,30 @@ func TestAPanickingAdmissionGivesBackTheSlotAndTheVM(t *testing.T) {
 	})
 	waitUntil(t, "every job slot to be free", 5*time.Second, func() bool { return len(pm.actionSemaphore) == 0 })
 }
+
+// panickingStartSink panics when told the handler is about to be entered, which
+// is the last step before the VM is handed to the work.
+type panickingStartSink struct{ recordingSink }
+
+func (*panickingStartSink) Started(string) { panic("start report failed") }
+
+// TestAPanicJustBeforeTheHandlerReleasesTheVM pins the hand-over point: until the
+// work has the VM, the runner releases it, so a panic in the last report before
+// the handler cannot leave the plugin's VM locked for good.
+func TestAPanicJustBeforeTheHandlerReleasesTheVM(t *testing.T) {
+	pm := newLanePluginManager(t)
+	if _, err := pm.RunActionAsyncForHost(
+		&HostJobRef{JobID: "start-panics", Handle: "start-panics", Sink: &panickingStartSink{}},
+		nil, "idle", "work", 1, nil, ""); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	next := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "after-panic", Handle: "after-panic", Sink: next},
+		nil, "idle", "work", 2, nil, ""); err != nil {
+		t.Fatalf("submit the next: %v", err)
+	}
+	waitUntil(t, "the next work to run on the plugin's VM", 5*time.Second, func() bool {
+		_, completed, _, _ := next.counts()
+		return completed == 1
+	})
+}

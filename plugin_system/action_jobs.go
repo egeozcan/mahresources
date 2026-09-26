@@ -567,15 +567,13 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			return paused
 		}
 	}
-	mu := heldVM
-	heldVM = nil
-
 	started = true
 	if !work.live() {
 		// The plugin was disabled or reloaded while the claim was being asked
 		// for: the VM was revoked under the lock this execution holds. The claim
 		// was granted, so the Job ends here, as work whose plugin went away.
-		mu.Unlock()
+		heldVM.Unlock()
+		heldVM = nil
 		pm.settleActionJob(job, logLabel, fmt.Errorf("plugin %q is no longer available", job.PluginName))
 		return asyncRan
 	}
@@ -586,6 +584,10 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	pm.notifyActionJobSubscribers("updated", job)
 	_ = reportHostJob(job, func(sink HostJobSink) error { sink.Started("Running..."); return nil })
 
+	// The VM is handed to the work here and not before: the work releases it
+	// from now on, and until now the deferred hand-back does.
+	mu := heldVM
+	heldVM = nil
 	err := work.run(mu)
 
 	if errors.Is(err, errJobDidNotStart) {
@@ -771,15 +773,26 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 		},
 		live: func() bool { return pm.stillRegistered(L) },
 		run: func(mu *vmMutex) error {
+			// The VM is released once, by whichever comes first: the explicit
+			// release below, or this deferred one on a panic.
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					mu.Unlock()
+				}
+			}
+			defer release()
+
 			// Resolved again under the lock: the VM cannot be revoked while it is
 			// held, so this is the registration that will run.
 			action, resolved, err := pm.resolveQueuedAction(job, params, expectFilters)
 			if err != nil {
-				mu.Unlock()
+				release()
 				return err
 			}
 			if resolved != L {
-				mu.Unlock()
+				release()
 				return fmt.Errorf("plugin %q is no longer available", job.PluginName)
 			}
 			handler := action.Handler
@@ -819,7 +832,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 			cancel()
 
 			if err != nil {
-				mu.Unlock()
+				release()
 				return err
 			}
 
@@ -836,7 +849,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 			if isTable {
 				parsed = luaTableToGoMap(retTbl)
 			}
-			mu.Unlock()
+			release()
 
 			// If the handler returned a table, treat it as the result and mark completed.
 			if isTable {

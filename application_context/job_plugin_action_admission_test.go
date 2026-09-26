@@ -632,3 +632,30 @@ func TestARetriedOccurrenceThisProcessCannotRunIsLeftForOneThatCan(t *testing.T)
 		t.Fatalf("a retried occurrence whose plugin is enabled elsewhere is %s, want left queued", got)
 	}
 }
+
+// TestAnActionWhoseKindChangedIsNotRunOnTheWrongEntity pins the kind a Job was
+// accepted for. Its entity id names an entity of that kind; a registration that
+// now acts on another kind would be handed an id that means something else.
+func TestAnActionWhoseKindChangedIsNotRunOnTheWrongEntity(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.PluginManager().EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	raw, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "async-work",
+		EntityID: 4, EntityType: "note", Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Async Work", Replay: jobs.ReplayInput{Input: raw},
+	})
+
+	(&pluginActionAdapter{ctx: ctx}).AdoptWaiting(context.Background())
+	waitFor(t, "the job to be refused", func() bool { return jobStateForTest(t, ctx, job.ID) == jobs.StateBlocked })
+	if got := pluginKVForTest(t, ctx, "ran"); got != "" {
+		t.Fatalf("an action accepted for a note ran a handler for resources (%q)", got)
+	}
+}

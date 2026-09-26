@@ -739,14 +739,19 @@ func (ctx *MahresourcesContext) pluginActionRefusal(pm *plugin_system.PluginMana
 }
 
 // pluginActionRegistrationRefusal answers why the action a Job names cannot run
-// as it was accepted — the plugin or action is gone, its filters changed, or its
-// params no longer validate — or an empty string.
+// as it was accepted — the plugin or action is gone, it now acts on another kind
+// of entity, its filters changed, or its params no longer validate — or an empty
+// string. The kind is compared with the one sealed in the Job's input: the entity
+// id means nothing to a handler for another kind.
 func (ctx *MahresourcesContext) pluginActionRegistrationRefusal(pm *plugin_system.PluginManager, input *pluginActionJobInput) string {
 	action, _, err := pm.FindAction(input.Plugin, input.Action)
 	if err != nil {
 		// FindAction refuses for both "no such plugin" and "no such action", and
 		// the two are one answer here: neither can be run.
 		return "action-unavailable"
+	}
+	if input.EntityType != "" && action.Entity != input.EntityType {
+		return "registration-changed"
 	}
 	if input.Fingerprint != "" && plugin_system.ActionFiltersFingerprint(action.Filters) != input.Fingerprint {
 		return "registration-changed"
