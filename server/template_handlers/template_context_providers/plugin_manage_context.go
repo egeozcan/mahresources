@@ -173,10 +173,12 @@ func buildScheduledDownloadDisplays(appCtx PluginManagePageContext, name string)
 	out := make([]scheduledDownloadDisplay, 0, len(rows))
 	for _, row := range rows {
 		owned := row.CreatedByUserId != nil
+		// A due time is stored in UTC for a start_at and in the writer's zone for
+		// a delay. The page prints it without a zone, so it shows the server's.
 		out = append(out, scheduledDownloadDisplay{
 			ID:          row.ID,
 			URL:         row.URL,
-			DueAt:       row.DueAt,
+			DueAt:       row.DueAt.Local(),
 			Status:      row.Status,
 			StatusLabel: scheduledDownloadStatusLabel(row.Status, owned),
 			JobID:       row.JobID,

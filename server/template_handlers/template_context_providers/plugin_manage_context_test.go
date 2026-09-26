@@ -4,7 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"mahresources/models"
 	"mahresources/plugin_system"
 )
 
@@ -88,5 +90,29 @@ func TestScheduledDownloadStatusLabelOnlyStopsOwnerlessPending(t *testing.T) {
 				t.Fatalf("template status label = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+type scheduledDownloadListerStub struct {
+	PluginManagePageContext
+	rows []models.ScheduledDownload
+}
+
+func (s scheduledDownloadListerStub) PluginScheduledDownloadsFor(string) ([]models.ScheduledDownload, error) {
+	return s.rows, nil
+}
+
+// A start_at row is stored in UTC and a delay row in the server's zone; the page
+// prints the time without a zone, so both are shown in the server's zone.
+func TestScheduledDownloadDueTimesAreShownInTheServersZone(t *testing.T) {
+	due := time.Date(2026, 9, 26, 12, 53, 0, 0, time.UTC)
+	displays := buildScheduledDownloadDisplays(scheduledDownloadListerStub{rows: []models.ScheduledDownload{
+		{ID: 1, DueAt: due},
+		{ID: 2, DueAt: due.In(time.FixedZone("elsewhere", -5*60*60))},
+	}}, "feeds")
+	for _, display := range displays {
+		if display.DueAt.Location() != time.Local || !display.DueAt.Equal(due) {
+			t.Fatalf("row %d is shown as %v, want %v in the server's zone", display.ID, display.DueAt, due.Local())
+		}
 	}
 }

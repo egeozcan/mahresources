@@ -226,16 +226,42 @@ func (ctx *MahresourcesContext) DueScheduledDownloads(now time.Time, limit int) 
 	}
 	var rows []models.ScheduledDownload
 	err := ctx.db.
-		Where("due_at <= ?", now).
+		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), now).
 		Where("status = ?", models.ScheduledDownloadStatusPending).
 		Where("created_by_user_id IS NOT NULL").
 		Where("attempts < ?", scheduledDownloadMaxSubmitAttempts).
-		Where("COALESCE(claim_token, '') = '' OR claimed_at IS NULL OR claimed_at < ?",
-			now.Add(-ScheduledDownloadClaimTTL)).
-		Order("due_at asc").
+		Where(scheduledDownloadClaimFree(ctx.db), now.Add(-ScheduledDownloadClaimTTL)).
+		Order(scheduledDownloadInstant(ctx.db, "due_at") + " asc, id asc").
 		Limit(limit).
 		Find(&rows).Error
 	return rows, err
+}
+
+// scheduledDownloadInstant wraps a timestamp column or a bound parameter so the
+// database compares it as an instant.
+//
+// SQLite has no timestamp type. go-sqlite3 stores a time as text carrying the
+// offset of the value it was given, and compares text as text. A due time is
+// written in UTC when it came from `start_at` and in the server's zone when it
+// came from `delay`, and a scheduler in another zone compares it with its own
+// clock: `2026-09-26 12:53:13+00:00` sorts before `2026-09-26 14:43:13+02:00`
+// although it is ten minutes later, so a bare comparison fired such a row at
+// once east of UTC and hours late west of it. julianday() reads the offset and
+// yields the instant, whichever form a release wrote. PostgreSQL stores
+// timestamptz and compares instants already, so there the column stays bare and
+// its index usable.
+func scheduledDownloadInstant(db *gorm.DB, operand string) string {
+	if db.Dialector.Name() == "sqlite" {
+		return "julianday(" + operand + ")"
+	}
+	return operand
+}
+
+// scheduledDownloadClaimFree is the predicate for a row nobody holds: no claim,
+// or a claim older than the bound it is given, compared as an instant.
+func scheduledDownloadClaimFree(db *gorm.DB) string {
+	return "COALESCE(claim_token, '') = '' OR claimed_at IS NULL OR " +
+		scheduledDownloadInstant(db, "claimed_at") + " < " + scheduledDownloadInstant(db, "?")
 }
 
 // ClaimScheduledDownload takes the short-lived submit slot for one due row.
@@ -245,12 +271,11 @@ func (ctx *MahresourcesContext) ClaimScheduledDownload(id uint, claimToken strin
 	}
 	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ?", id).
-		Where("due_at <= ?", now).
+		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), now).
 		Where("status = ?", models.ScheduledDownloadStatusPending).
 		Where("created_by_user_id IS NOT NULL").
 		Where("attempts < ?", scheduledDownloadMaxSubmitAttempts).
-		Where("COALESCE(claim_token, '') = '' OR claimed_at IS NULL OR claimed_at < ?",
-			now.Add(-ScheduledDownloadClaimTTL)).
+		Where(scheduledDownloadClaimFree(ctx.db), now.Add(-ScheduledDownloadClaimTTL)).
 		Updates(map[string]any{"claim_token": claimToken, "claimed_at": now})
 	if res.Error != nil {
 		return false, res.Error
@@ -376,8 +401,7 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ?", id).
 		Where("status = ?", models.ScheduledDownloadStatusPending).
-		Where("COALESCE(claim_token, '') = '' OR claimed_at IS NULL OR claimed_at < ?",
-			now.Add(-ScheduledDownloadClaimTTL)).
+		Where(scheduledDownloadClaimFree(ctx.db), now.Add(-ScheduledDownloadClaimTTL)).
 		Updates(map[string]any{
 			"claim_token": "",
 			"claimed_at":  nil,
@@ -393,7 +417,8 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 // admin management surfaces.
 func (ctx *MahresourcesContext) PluginScheduledDownloadsFor(pluginName string) ([]models.ScheduledDownload, error) {
 	var rows []models.ScheduledDownload
-	err := ctx.db.Where("plugin_name = ?", pluginName).Order("due_at asc, id asc").Find(&rows).Error
+	err := ctx.db.Where("plugin_name = ?", pluginName).
+		Order(scheduledDownloadInstant(ctx.db, "due_at") + " asc, id asc").Find(&rows).Error
 	return rows, err
 }
 
