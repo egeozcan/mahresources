@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -708,7 +709,11 @@ func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time
 					}
 					return errors.New("job migration scheduled download source could not be rechecked")
 				}
-				if !retiredScheduledDownloadMatches(row, mapping.PostScrubHash) {
+				matches, err := retiredScheduledDownloadMatches(tx, row, mapping)
+				if err != nil {
+					return errors.New("job migration scheduled download lineage could not be read")
+				}
+				if !matches {
 					return nil
 				}
 				mapping.Status, mapping.BlockerCode = models.JobSourceMappingScrubbed, ""
@@ -1146,19 +1151,34 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 // deferred download is scrubbed at creation once the sources are retired, or by
 // the migration while it is still pending, and its JobID is written when it comes
 // due. A hash taken with an empty JobID therefore still describes the same row
-// after it fired. Everything the barrier exists for — the empty payload, the URL
-// reduced to its origin, the row's identity and plugin — must still be exactly
-// what was hashed.
-func retiredScheduledDownloadMatches(row models.ScheduledDownload, postScrubHash string) bool {
-	if hashRetiredScheduledDownload(row) == postScrubHash {
-		return true
+// after it fired, provided the JobID is one a fire can write: the Job the row's
+// handle named at the time, which is the Job the row was mapped to or a Retry
+// successor of it (a Retry moves the handle). Everything the barrier exists for —
+// the empty payload, the URL reduced to its origin, the row's identity and
+// plugin — must still be exactly what was hashed.
+func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, mapping models.JobSourceMapping) (bool, error) {
+	if hashRetiredScheduledDownload(row) == mapping.PostScrubHash {
+		return true, nil
 	}
 	if row.JobID == "" {
-		return false
+		return false, nil
 	}
 	beforeItFired := row
 	beforeItFired.JobID = ""
-	return hashRetiredScheduledDownload(beforeItFired) == postScrubHash
+	if hashRetiredScheduledDownload(beforeItFired) != mapping.PostScrubHash {
+		return false, nil
+	}
+	if mapping.JobID == "" {
+		return false, nil
+	}
+	if row.JobID == mapping.JobID {
+		return true, nil
+	}
+	ancestors, err := jobs.LineageAncestors(db, []string{row.JobID}, jobs.MaxStagingLineageHops)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(ancestors, mapping.JobID), nil
 }
 
 func hashJobMigrationProjection(value any) string {

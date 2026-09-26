@@ -1079,7 +1079,7 @@ func (a *downloadJobAdapter) ApplyHostTransition(_ context.Context, deps jobs.De
 	if a.kind != JobKindDeferredDownload || key != jobs.CommandCancel || to != jobs.StateCancelled {
 		return nil
 	}
-	return cancelDeferredDownloadRowTx(deps.DB, snapshot.ID, time.Now())
+	return cancelDeferredDownloadRowTx(deps.DB, snapshot, time.Now())
 }
 
 // ApplyRetrySuccessor returns a cancelled deferral's row to pending when its Retry
@@ -1091,5 +1091,5 @@ func (a *downloadJobAdapter) ApplyRetrySuccessor(_ context.Context, deps jobs.De
 	if a.kind != JobKindDeferredDownload || successor.State != jobs.StateScheduled || successor.ScheduledFor == nil {
 		return nil
 	}
-	return reopenDeferredDownloadRowTx(deps.DB, successor.ID, *successor.ScheduledFor, time.Now())
+	return reopenDeferredDownloadRowTx(deps.DB, successor, time.Now())
 }

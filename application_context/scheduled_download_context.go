@@ -504,22 +504,38 @@ var errScheduledDownloadNotCancellable = errors.New("the scheduled download is n
 
 // lockDeferredDownloadJobTx takes the row lock of the Job behind one scheduled
 // download, if it has one.
+//
+// The handle is read again once the lock is held. A Retry moves the handle to its
+// successor while holding its ancestor's lock, so the Job read first may no
+// longer be the one the row names; the lock is then taken on the Job it names
+// now. Once the Job the handle names is locked, no Retry can move it until this
+// transaction ends.
 func lockDeferredDownloadJobTx(tx *gorm.DB, rowID uint) error {
-	var handle models.JobLegacyHandle
-	err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(rowID), 10)).
-		First(&handle).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+	handle := strconv.FormatUint(uint64(rowID), 10)
+	locked := ""
+	for attempt := 0; attempt < 8; attempt++ {
+		var current models.JobLegacyHandle
+		err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).First(&current).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current.JobID == locked {
+			return nil
+		}
+		var job models.Job
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", current.JobID).First(&job).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		locked = current.JobID
 	}
-	if err != nil {
-		return err
-	}
-	var job models.Job
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", handle.JobID).First(&job).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	return err
+	return errors.New("the scheduled download's Job kept changing while it was being cancelled")
 }
 
 // cancelDeferredDownloadJobTx cancels the scheduled Job behind one row, inside
@@ -559,14 +575,18 @@ func (ctx *MahresourcesContext) cancelDeferredDownloadJobTx(tx *gorm.DB, rowID u
 	return err == nil, err
 }
 
-// cancelDeferredDownloadRowTx ends the pending row behind a deferred Job the host
-// cancelled before anything ran it, inside the transaction that cancelled it.
+// cancelDeferredDownloadRowTx ends the row behind a deferred Job the host
+// cancelled while nothing was running it, inside the transaction that cancelled
+// it. That is the pending row, and also a row the sweep has already marked
+// submitted naming this Job when the Job never started: the sweep queued it and
+// the dispatch loop had not claimed it yet, so nothing was downloaded.
+//
 // The row's claim is overridden rather than respected: the cancellation has
 // already won on the Job, and a sweep holding the claim reserves the row only
 // while it is still pending, so it finds nothing left to submit.
-func cancelDeferredDownloadRowTx(tx *gorm.DB, jobID string, at time.Time) error {
+func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) error {
 	var handle models.JobLegacyHandle
-	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, jobID).First(&handle).Error
+	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, job.ID).First(&handle).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -577,23 +597,36 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, jobID string, at time.Time) error 
 	if err != nil {
 		return nil
 	}
-	return tx.Model(&models.ScheduledDownload{}).
-		Where("id = ? AND status = ?", uint(rowID), models.ScheduledDownloadStatusPending).
-		Updates(map[string]any{
-			"claim_token": "",
-			"claimed_at":  nil,
-			"status":      models.ScheduledDownloadStatusCancelled,
-			"updated_at":  at,
-		}).Error
+	query := tx.Model(&models.ScheduledDownload{}).Where("id = ?", uint(rowID))
+	if job.StartedAt == nil {
+		query = query.Where("status = ? OR (status = ? AND job_id = ?)",
+			models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted, job.ID)
+	} else {
+		query = query.Where("status = ?", models.ScheduledDownloadStatusPending)
+	}
+	return query.Updates(map[string]any{
+		"claim_token": "",
+		"claimed_at":  nil,
+		"status":      models.ScheduledDownloadStatusCancelled,
+		"updated_at":  at,
+	}).Error
 }
 
 // reopenDeferredDownloadRowTx returns the cancelled row behind a rescheduled
 // deferred Job to pending, due at the Job's time, inside the transaction that
 // accepted the Job. The handle has already moved to that Job. Only a row that
 // was cancelled before it submitted anything is reopened.
-func reopenDeferredDownloadRowTx(tx *gorm.DB, jobID string, dueAt, at time.Time) error {
+//
+// The row's owner becomes the Job's actor. A Retry belongs to whoever asked for
+// it, the sweep re-validates the row as its owner, and the dispatch loop runs the
+// Job as its actor: the two must be one principal, or an administrator's Retry of
+// a deleted user's deferral would run while its row said it had stopped.
+func reopenDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) error {
+	if job.ScheduledFor == nil {
+		return nil
+	}
 	var handle models.JobLegacyHandle
-	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, jobID).First(&handle).Error
+	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, job.ID).First(&handle).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -607,13 +640,14 @@ func reopenDeferredDownloadRowTx(tx *gorm.DB, jobID string, dueAt, at time.Time)
 	return tx.Model(&models.ScheduledDownload{}).
 		Where("id = ? AND status = ? AND COALESCE(job_id, '') = ''", uint(rowID), models.ScheduledDownloadStatusCancelled).
 		Updates(map[string]any{
-			"status":      models.ScheduledDownloadStatusPending,
-			"due_at":      dueAt,
-			"attempts":    0,
-			"last_error":  "",
-			"claim_token": "",
-			"claimed_at":  nil,
-			"updated_at":  at,
+			"status":             models.ScheduledDownloadStatusPending,
+			"due_at":             *job.ScheduledFor,
+			"created_by_user_id": copyUintPtr(job.ActorUserID),
+			"attempts":           0,
+			"last_error":         "",
+			"claim_token":        "",
+			"claimed_at":         nil,
+			"updated_at":         at,
 		}).Error
 }
 

@@ -303,3 +303,30 @@ func dropScheduledDownloadBarriers(t *testing.T, ctx *MahresourcesContext) {
 		}
 	}
 }
+
+// TestAFiredDeferredRowMustNameItsOwnJob pins what the fire-time exception
+// accepts: the JobID a fire writes is the Job the row's handle named, which is
+// the Job it was mapped to or a Retry successor of it. A scrubbed row that names
+// some other Job is not the row that was scrubbed.
+func TestAFiredDeferredRowMustNameItsOwnJob(t *testing.T) {
+	ctx, _, actor, row := newRetiredDeferredDownloadContext(t)
+	if fired := fireDueDeferredDownloads(t, ctx, time.Now()); fired != 1 {
+		t.Fatalf("the sweep fired %d rows, want 1", fired)
+	}
+	other, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/other.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create another deferred download: %v", err)
+	}
+	unrelated := deferredDownloadJob(t, ctx, other.ID)
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Update("job_id", unrelated.ID).Error; err != nil {
+		t.Fatalf("point the fired row at another Job: %v", err)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/"+jobMigrationScheduledDownload] == 0 {
+		t.Fatalf("a fired row naming an unrelated Job was accepted as retired: %+v", readiness)
+	}
+}

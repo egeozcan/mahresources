@@ -151,7 +151,7 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 					} else if mapping.PostScrubHash == "" {
 						report.Blockers["source-scrub-hash-missing/"+safeJobMigrationKind(kind)]++
 					} else {
-						exists, matches, err := retiredSourceMatchesScrub(tx, kind, mapping.SourceID, mapping.PostScrubHash)
+						exists, matches, err := retiredSourceMatchesScrub(tx, mapping)
 						if err != nil {
 							return errors.New("job migration retired source could not be checked")
 						}
@@ -316,9 +316,11 @@ func countUnmappedJobMigrationSourceRows(tx *gorm.DB, source jobMigrationReadine
 }
 
 // retiredSourceMatchesScrub reports whether a scrubbed source row is still the row
-// its post-scrub hash was taken from. exists is false when the row is gone.
-func retiredSourceMatchesScrub(db *gorm.DB, kind, sourceID, postScrubHash string) (bool, bool, error) {
-	switch kind {
+// its mapping's post-scrub hash was taken from. exists is false when the row is
+// gone.
+func retiredSourceMatchesScrub(db *gorm.DB, mapping models.JobSourceMapping) (bool, bool, error) {
+	sourceID, postScrubHash := mapping.SourceID, mapping.PostScrubHash
+	switch mapping.SourceKind {
 	case jobMigrationDownloadHistory:
 		id, err := strconv.ParseUint(sourceID, 10, 64)
 		if err != nil {
@@ -340,7 +342,11 @@ func retiredSourceMatchesScrub(db *gorm.DB, kind, sourceID, postScrubHash string
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, false, nil
 		}
-		return err == nil, retiredScheduledDownloadMatches(row, postScrubHash), err
+		if err != nil {
+			return false, false, err
+		}
+		matches, err := retiredScheduledDownloadMatches(db, row, mapping)
+		return true, matches, err
 	case jobMigrationPluginCommandRun:
 		var row models.PluginCommandRun
 		err := db.Where("id = ?", sourceID).First(&row).Error
@@ -414,7 +420,7 @@ func (ctx *MahresourcesContext) rearmRestoredSources(now time.Time) (int, error)
 					needsRepair, _, err = retiredSourceNeedsScrub(ctx.db, kind, candidate.SourceID)
 				} else {
 					var exists, matches bool
-					exists, matches, err = retiredSourceMatchesScrub(ctx.db, kind, candidate.SourceID, candidate.PostScrubHash)
+					exists, matches, err = retiredSourceMatchesScrub(ctx.db, candidate)
 					needsRepair = exists && !matches
 				}
 				if err != nil {
@@ -447,7 +453,7 @@ func (ctx *MahresourcesContext) rearmRestoredSources(now time.Time) (int, error)
 						rearmed = true
 						return nil
 					}
-					exists, matches, err := retiredSourceMatchesScrub(tx, kind, mapping.SourceID, mapping.PostScrubHash)
+					exists, matches, err := retiredSourceMatchesScrub(tx, mapping)
 					if err != nil {
 						return errors.New("job migration restored source could not be rechecked")
 					}

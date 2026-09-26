@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -197,13 +198,24 @@ func TestRetryingACancelledDeferredDownloadSchedulesItAgain(t *testing.T) {
 	if !offered || command.Label != "Schedule again" {
 		t.Fatalf("the cancelled deferred download offers retry=%v labelled %q, want \"Schedule again\"", offered, command.Label)
 	}
-	successor := retryJob(t, ctx, cancelled)
+	// Retried by an administrator, who owns the successor: the row fires as the
+	// actor the successor runs as, so it is the row's owner from now on.
+	admin, err := ctx.CreateUser(&UserInput{Username: "deferred-admin", Password: "password1", Role: models.RoleAdmin})
+	if err != nil {
+		t.Fatalf("create the administrator: %v", err)
+	}
+	asAdmin := ctx.WithPrincipal(&auth.Principal{UserID: admin.ID, Username: admin.Username, Role: models.RoleAdmin})
+	successor := retryJob(t, asAdmin, cancelled)
 	if successor.State != jobs.StateScheduled || successor.ScheduledFor == nil || !successor.ScheduledFor.Equal(due) {
 		t.Fatalf("the successor is %s for %v, want scheduled for %v", successor.State, successor.ScheduledFor, due)
 	}
 	reopened := scheduledDownloadRow(t, ctx, row.ID)
 	if reopened.Status != models.ScheduledDownloadStatusPending || reopened.Attempts != 0 || reopened.JobID != "" {
 		t.Fatalf("the row is %s after %d attempts naming %q, want pending again", reopened.Status, reopened.Attempts, reopened.JobID)
+	}
+	if reopened.CreatedByUserId == nil || *reopened.CreatedByUserId != admin.ID || successor.ActorUserID == nil || *successor.ActorUserID != admin.ID {
+		t.Fatalf("the reopened row is owned by %v and the successor acts as %v, want both the administrator %d",
+			reopened.CreatedByUserId, successor.ActorUserID, admin.ID)
 	}
 
 	fireDueDeferredDownloads(t, ctx, time.Now())
@@ -245,5 +257,29 @@ func TestRetryingADeferredDownloadWhoseTimePassedStartsItNow(t *testing.T) {
 	}
 	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled {
 		t.Fatalf("the cancelled deferral's row is %s after an immediate retry, want still cancelled", got.Status)
+	}
+}
+
+// The sweep can reach a due row before the dispatch loop claims its Job: the row
+// is then submitted and the Job queued, and nothing has run. Cancelling the Job
+// in that interval still ends the row, rather than leaving it submitted naming a
+// cancelled Job.
+func TestCancellingADeferredJobTheSweepQueuedCancelsItsRow(t *testing.T) {
+	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/queued.bin"}, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	fireDueDeferredDownloads(t, ctx, time.Now())
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != job.ID ||
+		job.State != jobs.StateQueued || job.StartedAt != nil {
+		t.Fatalf("setup: row %s naming %q, Job %s started %v; want submitted naming a queued Job nothing ran",
+			got.Status, got.JobID, job.State, job.StartedAt)
+	}
+	cancelJobAsItsOwner(t, ctx, job)
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled {
+		t.Fatalf("the row is %s after its unstarted Job was cancelled, want cancelled", got.Status)
 	}
 }
