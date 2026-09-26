@@ -513,3 +513,57 @@ func TestCancellingADeferredJobWhileTheSweepRefusesItDoesNotStopTheSweep(t *test
 		t.Fatalf("the row behind is %s, want submitted", got.Status)
 	}
 }
+
+// Earlier releases left two kinds of row disagreeing with a Job cancelled before
+// anything ran it: one still pending, and one the sweep had marked submitted
+// naming that Job. Startup reconciles both, and leaves alone a row whose Job is
+// still waiting to run.
+func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	create := func(name string) (models.ScheduledDownload, jobs.Snapshot) {
+		t.Helper()
+		row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+			&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/" + name + ".bin"}, time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return *row, deferredDownloadJob(t, ctx, row.ID)
+	}
+	cancelAlone := func(job jobs.Snapshot) {
+		t.Helper()
+		if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+		}); err != nil {
+			t.Fatalf("cancel the Job alone: %v", err)
+		}
+	}
+	pendingRow, pendingJob := create("left-pending")
+	cancelAlone(pendingJob)
+	submittedRow, submittedJob := create("left-submitted")
+	cancelAlone(submittedJob)
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", submittedRow.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": submittedJob.ID, "attempts": 1}).Error; err != nil {
+		t.Fatalf("mark the row submitted as an earlier release did: %v", err)
+	}
+	waitingRow, waitingJob := create("still-waiting")
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", waitingRow.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": waitingJob.ID, "attempts": 1}).Error; err != nil {
+		t.Fatalf("mark the waiting row submitted: %v", err)
+	}
+
+	reconciled, err := ctx.ReconcileDeferredDownloadRows()
+	if err != nil || reconciled != 2 {
+		t.Fatalf("reconcile = %d, %v; want the 2 rows whose Job was cancelled", reconciled, err)
+	}
+	for _, id := range []uint{pendingRow.ID, submittedRow.ID} {
+		if got := scheduledDownloadRow(t, ctx, id); got.Status != models.ScheduledDownloadStatusCancelled || got.Attempts != 0 {
+			t.Fatalf("row %d is %s after %d attempts, want cancelled and never submitted", id, got.Status, got.Attempts)
+		}
+	}
+	if got := scheduledDownloadRow(t, ctx, waitingRow.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("the row whose Job is still waiting is %s, want submitted", got.Status)
+	}
+}

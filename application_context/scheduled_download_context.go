@@ -688,6 +688,83 @@ func reopenDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 		}).Error
 }
 
+// ReconcileDeferredDownloadRows brings rows earlier releases left behind into
+// line with a Job that was cancelled, or otherwise ended, before anything ran it:
+// a row still pending behind it, and one the sweep marked submitted naming it.
+// Both are recorded as the Job ended, with the submit attempt the sweep counted
+// taken back. A row whose Job started, or has not ended, is left alone. Startup
+// runs it once; it pages by row id, so a large table costs one bounded query per
+// page.
+func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
+	if ctx == nil || ctx.db == nil || ctx.JobService() == nil {
+		return 0, nil
+	}
+	ended := []string{string(jobs.StateCancelled), string(jobs.StateFailed), string(jobs.StateInterrupted), string(jobs.StateSucceeded)}
+	reconciled := 0
+	for _, source := range []struct {
+		status string
+		join   string
+		args   []any
+	}{
+		// A submitted row names the Job the sweep queued.
+		{models.ScheduledDownloadStatusSubmitted, "JOIN jobs ON jobs.id = scheduled_downloads.job_id", nil},
+		// A pending row is the Job its handle names.
+		{models.ScheduledDownloadStatusPending,
+			"JOIN job_legacy_handles AS handle ON handle.namespace = ? AND handle.handle = CAST(scheduled_downloads.id AS TEXT) JOIN jobs ON jobs.id = handle.job_id",
+			[]any{ScheduledDownloadHandleNamespace}},
+	} {
+		var after uint
+		for {
+			var candidates []struct {
+				ID    uint
+				JobID string
+				State string
+			}
+			if err := ctx.db.Table("scheduled_downloads").
+				Select("scheduled_downloads.id AS id, jobs.id AS job_id, jobs.state AS state").
+				Joins(source.join, source.args...).
+				Where("scheduled_downloads.status = ? AND scheduled_downloads.id > ?", source.status, after).
+				Where("jobs.started_at IS NULL AND jobs.state IN ?", ended).
+				Order("scheduled_downloads.id").Limit(jobMigrationReadinessBatchSize).
+				Scan(&candidates).Error; err != nil {
+				return reconciled, err
+			}
+			for _, candidate := range candidates {
+				updates := map[string]any{
+					"claim_token": "",
+					"claimed_at":  nil,
+					"status":      models.ScheduledDownloadStatusCancelled,
+					"last_error":  "",
+					"updated_at":  time.Now(),
+				}
+				if candidate.State != string(jobs.StateCancelled) {
+					updates["status"] = models.ScheduledDownloadStatusFailed
+					updates["last_error"] = (&deferredJobEndedError{state: jobs.State(candidate.State)}).Error()
+				}
+				query := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ? AND status = ?", candidate.ID, source.status)
+				if source.status == models.ScheduledDownloadStatusSubmitted {
+					updates["attempts"] = gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END")
+					query = query.Where("job_id = ?", candidate.JobID)
+				} else {
+					// A sweep holding the row decides it itself; the next start sees it
+					// if that sweep did not.
+					query = query.Where(scheduledDownloadClaimFree(ctx.db), time.Now().Add(-ScheduledDownloadClaimTTL))
+				}
+				res := query.Updates(updates)
+				if res.Error != nil {
+					return reconciled, res.Error
+				}
+				reconciled += int(res.RowsAffected)
+			}
+			if len(candidates) < jobMigrationReadinessBatchSize {
+				break
+			}
+			after = candidates[len(candidates)-1].ID
+		}
+	}
+	return reconciled, nil
+}
+
 // PluginScheduledDownloadsFor lists one plugin's scheduled downloads for the
 // admin management surfaces.
 func (ctx *MahresourcesContext) PluginScheduledDownloadsFor(pluginName string) ([]models.ScheduledDownload, error) {

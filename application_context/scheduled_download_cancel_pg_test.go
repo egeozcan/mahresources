@@ -5,6 +5,7 @@ package application_context
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -180,5 +181,47 @@ func TestCancellingADeferredRowFollowsAConcurrentRetry(t *testing.T) {
 	}
 	if got := deferredDownloadJob(t, ctx, row.ID); got.ID != successorID || got.State != jobs.StateCancelled {
 		t.Fatalf("the row's Job is %s (%s), want the successor %s cancelled", got.ID, got.State, successorID)
+	}
+}
+
+// The startup reconciliation's joins and casts, on PostgreSQL.
+func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRanPG(t *testing.T) {
+	ctx, _, _ := newPostgresOwnershipFixture(t, 2)
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
+	}
+	actor, err := ctx.CreateUser(&UserInput{Username: "pg-deferred-reconcile", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the acting user: %v", err)
+	}
+	ids := make([]uint, 0, 2)
+	for i, status := range []string{models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted} {
+		row, err := ctx.CreateScheduledDownload("planner-plugin", actor.ID,
+			&query_models.ResourceFromRemoteCreator{URL: fmt.Sprintf("https://example.invalid/reconcile-%d.bin", i)}, time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("create the deferred download: %v", err)
+		}
+		job := deferredDownloadJob(t, ctx, row.ID)
+		if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+		}); err != nil {
+			t.Fatalf("cancel the Job alone: %v", err)
+		}
+		if status == models.ScheduledDownloadStatusSubmitted {
+			if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+				Updates(map[string]any{"status": status, "job_id": job.ID, "attempts": 1}).Error; err != nil {
+				t.Fatalf("mark the row submitted: %v", err)
+			}
+		}
+		ids = append(ids, row.ID)
+	}
+	reconciled, err := ctx.ReconcileDeferredDownloadRows()
+	if err != nil || reconciled != 2 {
+		t.Fatalf("reconcile = %d, %v; want 2", reconciled, err)
+	}
+	for _, id := range ids {
+		if got := scheduledDownloadRow(t, ctx, id); got.Status != models.ScheduledDownloadStatusCancelled || got.Attempts != 0 {
+			t.Fatalf("row %d is %s after %d attempts, want cancelled", id, got.Status, got.Attempts)
+		}
 	}
 }
