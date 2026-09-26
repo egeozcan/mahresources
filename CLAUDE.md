@@ -271,7 +271,12 @@ as created. Two rows over one file make the reference count a question about
 every row: `CountHashReferences` counts through `unscopedDB()`. Bound to a scoped
 deleter it saw none of the other subtree's rows, and a resource with no version
 rows (from before versioning, or kept by `-skip-version-migration`) lost its file
-when the scoped copy was deleted. `resource_upload_scope_test.go` pins both.
+when the scoped copy was deleted. The removal itself goes through
+`removeIfUnreferenced`, which counts again under the per-hash upload lock: the
+delete's own count was taken before its commit, and an upload of the same bytes
+landing between that commit and the unlink reuses the file it is about to lose.
+The four version writers (upload, rotate, crop, trim) do not take that lock, so
+the gap stays open for them. `resource_upload_scope_test.go` pins all of this.
 
 **The collision branches validate their association ids *inside* their
 transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
