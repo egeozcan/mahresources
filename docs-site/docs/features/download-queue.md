@@ -24,6 +24,8 @@ When you submit a URL for download:
 3. Progress is tracked and broadcast via Server-Sent Events (SSE)
 4. On completion, a Resource is created from the downloaded file
 
+The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, no Resource is created.
+
 ## Queue Limits
 
 | Setting | Value |
