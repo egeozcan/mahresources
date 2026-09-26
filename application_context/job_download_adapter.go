@@ -1055,3 +1055,15 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 	})
 	return result
 }
+
+// ApplyHostTransition keeps a deferred download's row in step when the host
+// cancels its Job while nothing runs it. The row is the plugin's record of the
+// same deferral: left pending, the scheduler would reach it at the due time and
+// record a submission of a download that was cancelled. It runs in the command's
+// own transaction, so the Job and its row cannot disagree.
+func (a *downloadJobAdapter) ApplyHostTransition(_ context.Context, deps jobs.Deps, snapshot jobs.Snapshot, key string, to jobs.State) error {
+	if a.kind != JobKindDeferredDownload || key != jobs.CommandCancel || to != jobs.StateCancelled {
+		return nil
+	}
+	return cancelDeferredDownloadRowTx(deps.DB, snapshot.ID, time.Now())
+}
