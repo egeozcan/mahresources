@@ -128,14 +128,31 @@ test.describe('Bulk upload widget', () => {
       if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploadRequests.push(r.url());
     });
 
+    // Recorded by the page itself, from before the click. Eleven small files can
+    // all finish, and the page move on to the owner group, within a hundred
+    // milliseconds, sometimes before click() has returned: a locator polled
+    // afterwards (or even started before) can miss a panel that was shown.
+    let panelShown = false;
+    await page.exposeFunction('reportBulkUploadPanelShown', () => {
+      panelShown = true;
+    });
+    await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>('[data-testid="bulk-upload-panel"]');
+      if (!panel) return;
+      const report = () => {
+        if (getComputedStyle(panel).display !== 'none') {
+          (window as unknown as { reportBulkUploadPanelShown: () => void }).reportBulkUploadPanelShown();
+        }
+      };
+      new MutationObserver(report).observe(panel, { attributes: true, attributeFilter: ['style', 'class'] });
+    });
     await page.locator('button[type="submit"]:has-text("Save")').click();
-
-    await expect(page.getByTestId('bulk-upload-panel')).toBeVisible({ timeout: 10000 });
 
     // A full batch lands on the owner group, matching the server's own
     // multi-file redirect (without its /group?id=0 dead end for no owner).
     await page.waitForURL(new RegExp(`/group\\?id=${owner.ID}`), { timeout: 60000 });
 
+    expect(panelShown, 'the progress panel was shown while the batch uploaded').toBe(true);
     expect(uploadRequests).toHaveLength(11);
 
     // The payload actually arrived: name, description, owner and tag on each.
