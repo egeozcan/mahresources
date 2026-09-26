@@ -18,6 +18,7 @@ import (
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/plugin_commands"
 )
 
 // capacityBusyPlugin runs one piece of background work that holds its VM until the
@@ -409,4 +410,8 @@ func TestAPluginCommandWaitsForAFullBudgetInsteadOfFailing(t *testing.T) {
 			return capacityJob(t, tc, succeeded.JobID).State == jobs.StateSucceeded
 		})
 	}
+	// The fixture's completion callback imports the command's output. It has to
+	// land before the runtime stops, or the callback outlives the fence it writes
+	// under.
+	waitForImport(t, tc.AppCtx, succeeded.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
 }
