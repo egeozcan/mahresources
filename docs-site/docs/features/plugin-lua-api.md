@@ -677,7 +677,7 @@ To defer a host download, pass exactly one of:
 
 | Option | Meaning |
 |---|---|
-| `start_at` | Unix seconds; must be in the future. There is no upper bound on an absolute start time. |
+| `start_at` | Unix seconds; must be in the future and before the year 10000. |
 | `delay` | Duration string such as `"2h"`; must satisfy `0 <= delay <= 30 days`. |
 
 A deferred call stores a durable scheduled-download row and a `scheduled`
@@ -685,8 +685,9 @@ A deferred call stores a durable scheduled-download row and a `scheduled`
 `{ scheduled = true, scheduled_id = <row id>, start_at = <unix seconds> }`.
 The result deliberately uses `scheduled_id`, not `id`, because no queue job
 exists yet. At the time `start_at` or `delay` names, whatever the server's time
-zone, the Job is queued, the stored plugin's network policy and the stored
-user's write scope are re-checked, and the download runs. If the submitting
+zone, the Job becomes eligible to run: the stored plugin's network policy and
+the stored user's write scope are re-checked, and the download runs as soon as
+the job runtime has capacity for it. If the submitting
 user is deleted before a pending row fires, the row stops rather than falling
 back to an administrator. A pending row can be inspected on the plugin
 management page and cancelled through the admin-only
