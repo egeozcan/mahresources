@@ -1726,11 +1726,13 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 		Replay:      ReplayInput{Input: opened.Input},
 	}
 	// A Retry replays the work as it was accepted, and work accepted for a future
-	// time is part of that request. A claim takes scheduled work only once it is
-	// due, so a Job whose time is still ahead never ran: its successor waits for
-	// the same time. Once the time has passed the successor runs now, as a
-	// deferral that came due while nothing was running does.
-	if linkType == LinkRetryOf && job.ScheduledFor != nil && job.ScheduledFor.After(now) {
+	// time is part of that request: a successor of work that never started waits
+	// for the same time while it is still ahead. Once the time has passed it runs
+	// now, as a deferral that came due while nothing was running does. Work that
+	// started is retried now whatever time it was meant for (a Job can be queued
+	// early, which an earlier release's due-row sweep did), because what a Retry
+	// of it recovers from is what happened when it ran.
+	if linkType == LinkRetryOf && job.StartedAt == nil && job.ScheduledFor != nil && job.ScheduledFor.After(now) {
 		scheduledFor := *job.ScheduledFor
 		acceptance.State, acceptance.ScheduledFor = StateScheduled, &scheduledFor
 	}

@@ -633,6 +633,23 @@ func TestRetryKeepsTheStartTimeOfWorkThatNeverRan(t *testing.T) {
 		return jobRow(t, h.deps, result.SuccessorID)
 	}
 
+	// Work queued before its time (an earlier release's due-row sweep could) and
+	// run: a Retry of what ran is retried now, whatever time it was meant for.
+	ranEarly := acceptScheduled(h.clock.Add(time.Hour))
+	h.now()
+	if _, err := h.svc.Transition(h.deps, Transition{JobID: ranEarly.ID, ExpectedVersion: jobRow(t, h.deps, ranEarly.ID).Version, To: StateQueued}); err != nil {
+		t.Fatalf("queue the work early: %v", err)
+	}
+	h.fail(ranEarly.ID)
+	h.now()
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(ranEarly.ID, CommandRetry, "ran-early-retry", viewer))
+	if err != nil {
+		t.Fatalf("retry the work that ran early: %v", err)
+	}
+	if early := jobRow(t, h.deps, result.SuccessorID); early.State != string(StateQueued) || early.ScheduledFor != nil {
+		t.Fatalf("the successor of work that ran before its time is %s for %v, want queued now", early.State, early.ScheduledFor)
+	}
+
 	ahead := h.clock.Add(time.Hour)
 	successor := cancelAndRetry(acceptScheduled(ahead), "ahead")
 	if successor.State != string(StateScheduled) || successor.ScheduledFor == nil || !successor.ScheduledFor.Equal(ahead) {
