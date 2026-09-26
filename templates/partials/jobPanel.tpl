@@ -49,7 +49,7 @@
                 </div>
 
                 <p x-show="error" x-cloak role="alert" class="mx-3 mt-3 rounded border border-red-300 bg-red-50 p-2 text-sm text-red-800" x-text="error"></p>
-                <p x-show="notice" x-cloak class="mx-3 mt-3 rounded border border-stone-200 p-2 text-sm text-stone-800" x-text="notice"></p>
+                <p x-show="notice" x-cloak class="mx-3 mt-3 rounded border border-stone-200 p-2 text-sm text-stone-800" data-job-panel-notice x-text="notice"></p>
 
                 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-3" aria-label="Recent jobs">
                     <template x-for="group in groups" :key="group.key">

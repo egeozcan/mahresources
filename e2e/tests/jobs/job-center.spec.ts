@@ -537,7 +537,9 @@ test.describe('Job Center', () => {
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     await panel.getByRole('button', { name: 'Dismiss finished' }).click();
 
-    await expect(panel.getByText(/^\d+ finished jobs dismissed\.$/)).toBeVisible({ timeout: 10_000 });
+    // The notice, not the drawer's live region, which carries the same words for a
+    // moment and would make a text match ambiguous.
+    await expect(panel.locator('[data-job-panel-notice]')).toHaveText(/^\d+ finished jobs dismissed\.$/, { timeout: 10_000 });
     expect(await undismissedFinished()).toEqual([]);
     await expect(panel.getByRole('button', { name: 'Dismiss finished' })).toBeHidden();
     // The focused button went away, so focus moves to the next footer control
