@@ -53,6 +53,33 @@ func failureReason(submitted string, headers map[string]string, err error) strin
 	return scrubReasonText(submitted, headers, renderReason(err))
 }
 
+// attemptFailure is what the durable Job is told about one failed attempt.
+type attemptFailure struct {
+	reason string
+	// existingResourceID is the resource holding the downloaded bytes, when the
+	// attempt was refused because the library already had them.
+	existingResourceID uint
+}
+
+// describeFailure renders err for the durable Job.
+func describeFailure(submitted string, headers map[string]string, err error) attemptFailure {
+	failure := attemptFailure{reason: failureReason(submitted, headers, err)}
+	var existing existingResourceError
+	if errors.As(err, &existing) {
+		failure.existingResourceID = existing.ExistingResourceID()
+	}
+	return failure
+}
+
+// existingResourceError is the resource writer's refusal of bytes it already
+// holds (application_context.ResourceExistsError, which this package sits below).
+// It is the one failure whose remedy is somewhere to go rather than something to
+// fix, so the Job names where.
+type existingResourceError interface {
+	error
+	ExistingResourceID() uint
+}
+
 // renderReason is layer 1.
 func renderReason(err error) string {
 	switch e := err.(type) {

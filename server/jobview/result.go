@@ -94,6 +94,11 @@ func ResultLinkFor(job jobs.Snapshot, outputs []jobs.Output) ResultLink {
 		return label + " for " + context
 	}
 	for _, output := range outputs {
+		// The resource a download once collided with is not what the Job made; it
+		// survives a replay that went on to succeed (see the constant).
+		if output.Key == application_context.JobDownloadExistingResourceOutput {
+			continue
+		}
 		if output.Type == jobs.OutputTypeEntity && output.Availability == jobs.OutputAvailable {
 			name := strings.ToLower(strings.TrimSpace(output.Label))
 			if name == "" {

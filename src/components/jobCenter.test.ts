@@ -6,6 +6,7 @@ import {
     advertisedOutputs,
     classifyJobState,
     commandEndpoint,
+    failureOutput,
     failureText,
     jobCenter,
     jobCommands,
@@ -277,6 +278,57 @@ describe('canonical event reducer', () => {
         const summary = { key: 'result', type: 'summary', availability: 'available', destinationUrl: '/resource?id=1', url: '/v1/jobs/dl-1/outputs?key=result' };
         expect(resultOutput({ ...download, outputs: [summary] })).toBeNull();
         expect(resultOutput({ ...download, kind: 'plugin-action', outputs: [summary] })).toBe(summary);
+    });
+});
+
+describe('failure output', () => {
+    test('a failed job links to the entity its failure is about, and nothing else does', () => {
+        const existing = {
+            key: 'existing-resource', type: 'entity', label: 'Existing resource', availability: 'available',
+            url: '/v1/jobs/dl-2/outputs?key=existing-resource',
+        };
+        const duplicate = {
+            id: 'dl-2', kind: 'remote-download', state: 'failed', outputs: [existing],
+            failure: { code: 'resource-exists', class: 'conflict', message: 'a resource with identical content already exists (#1)' },
+        };
+        expect(failureOutput(duplicate)).toBe(existing);
+        expect(outputLinkLabel(existing, duplicate.outputs)).toBe('View existing resource');
+        // It is not what the job made, so it is never offered as the job's result.
+        expect(resultOutput(duplicate)).toBeNull();
+
+        expect(failureOutput({ ...duplicate, state: 'succeeded' })).toBeNull();
+        expect(failureOutput({ ...duplicate, outputs: [{ ...existing, availability: 'removed' }] })).toBeNull();
+        expect(failureOutput({ ...duplicate, outputs: [{ ...existing, url: 'https://example.com/x' }] })).toBeNull();
+        expect(failureOutput({ ...duplicate, outputs: [] })).toBeNull();
+        // Only the output the failure names: an entity a failed job published for
+        // some other reason is not what its failure is about.
+        const made = { ...existing, key: 'resource', label: 'Created resource', url: '/v1/jobs/dl-2/outputs?key=resource' };
+        expect(failureOutput({ ...duplicate, outputs: [made] })).toBeNull();
+        expect(failureOutput({ ...duplicate, outputs: [made, existing] })).toBe(existing);
+    });
+
+    test('a link left by an earlier attempt belongs to that failure only', () => {
+        // An output cannot be withdrawn, so a reconciled replay of the same Job keeps
+        // it. Only the failure that published it shows it, and it is never a result.
+        const existing = {
+            key: 'existing-resource', type: 'entity', label: 'Existing resource', availability: 'available',
+            url: '/v1/jobs/dl-3/outputs?key=existing-resource',
+        };
+        const made = { ...existing, key: 'resource', label: 'Created resource', url: '/v1/jobs/dl-3/outputs?key=resource' };
+        const replayed = { id: 'dl-3', kind: 'remote-download', state: 'failed', outputs: [existing] };
+        expect(failureOutput({ ...replayed, failure: { code: 'download-failed', class: 'internal', message: 'HTTP 404 Not Found' } })).toBeNull();
+        expect(failureOutput({ ...replayed, failure: { code: 'resource-exists', class: 'conflict', message: 'already exists (#1)' } })).toBe(existing);
+
+        const succeeded = { ...replayed, state: 'succeeded', outputs: [existing, made] };
+        expect(resultOutput(succeeded)).toBe(made);
+        expect(resultOutput({ ...succeeded, outputs: [existing] })).toBeNull();
+    });
+
+    test('the detail page renders it inside the failure section', () => {
+        const detailTemplate = readFileSync(fileURLToPath(new URL('../../templates/displayJob.tpl', import.meta.url)), 'utf8');
+        const failure = detailTemplate.split('id="job-failure-heading"')[1]?.split('</section>')[0] || '';
+        expect(failure).toContain('x-if="failureOutput(detail)"');
+        expect(failure).toContain(':href="outputLinkURL(failureOutput(detail), advertisedOutputs(detail))"');
     });
 });
 

@@ -117,9 +117,7 @@ function safeResultURL(value) {
 export function resultOutput(job) {
     if (job?.state !== 'succeeded') return null;
     const outputs = advertisedOutputs(job);
-    const entity = outputs.find(output => output?.type === 'entity' &&
-        output.availability === 'available' &&
-        safeResultURL(outputLinkURL(output, outputs)));
+    const entity = openableEntityOutput(outputs.filter(output => output?.key !== FAILURE_OUTPUT_KEY), outputs);
     if (entity) return entity;
     if (job.kind !== 'plugin-action') return null;
     return outputs.find(output => {
@@ -127,6 +125,30 @@ export function resultOutput(job) {
         const url = outputLinkURL(output, outputs);
         return url === output.destinationUrl && Boolean(safeResultURL(url));
     }) || null;
+}
+
+// The entity a failed job's failure is about: the resource a download collided
+// with, which the library already held. It is named by its key, never inferred
+// from "some entity output", because a job that published an entity and then
+// failed would otherwise present what it made as what its failure was about. It
+// is shown only while the failure is the collision itself: an output cannot be
+// withdrawn, so a replay of the same Job that failed differently, or succeeded,
+// still carries it, and it is never the job's result. The endpoint re-checks
+// that the viewer may open it, as a result link's does. Go names both in
+// application_context (JobDownloadExistingResourceOutput, JobDownloadResourceExistsCode).
+export const FAILURE_OUTPUT_KEY = 'existing-resource';
+const FAILURE_OUTPUT_CODE = 'resource-exists';
+
+export function failureOutput(job) {
+    if (job?.state !== 'failed' || job?.failure?.code !== FAILURE_OUTPUT_CODE) return null;
+    const outputs = advertisedOutputs(job);
+    return openableEntityOutput(outputs.filter(output => output?.key === FAILURE_OUTPUT_KEY), outputs);
+}
+
+function openableEntityOutput(candidates, outputs = candidates) {
+    return candidates.find(output => output?.type === 'entity' &&
+        output.availability === 'available' &&
+        safeResultURL(outputLinkURL(output, outputs))) || null;
 }
 
 export function resultURL(job) {
@@ -628,6 +650,7 @@ export function jobCenter(options = {}) {
         advertisedCommands(job) { return advertisedCommands(this.details[job.id] || job); },
         commandsFor(job) { return jobCommands(this.details[job.id] || job); },
         advertisedOutputs(job) { return advertisedOutputs(job); },
+        failureOutput(job) { return failureOutput(job); },
         warningEvents() { return warningEvents(this.timeline); },
         outputEndpoint(output) { return outputEndpoint(output); },
         outputLinkURL(output, outputs) { return outputLinkURL(output, outputs); },

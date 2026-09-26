@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/jobs"
@@ -640,6 +641,211 @@ func TestARefusedConnectionSaysSoWithoutItsURL(t *testing.T) {
 	if !strings.Contains(entry.GetError(), "secret-path") {
 		t.Fatalf("the legacy entry lost the error's own text: %q", entry.GetError())
 	}
+}
+
+// TestADuplicateDownloadIsAConflictThatPointsAtTheResourceItCollidedWith: bytes
+// the library already holds are not an internal fault, and the person reading the
+// failure needs the resource that holds them, not only its number in a sentence.
+// The Job is classed a conflict and publishes that resource as an output, which
+// the Job page renders as a link that re-checks the viewer may open it.
+func TestADuplicateDownloadIsAConflictThatPointsAtTheResourceItCollidedWith(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server := plainContentServer(t, "the same bytes twice")
+
+	var jobIDs []string
+	for i := 0; i < 2; i++ {
+		submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+			URL: server.URL + "/clip-" + strconv.Itoa(i) + ".mp4",
+		}, nil, "", "api")
+		if len(submissions) != 1 || submissions[0].Err != nil {
+			t.Fatalf("submit %d: %+v", i, submissions)
+		}
+		waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the download to finish",
+			func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+		jobIDs = append(jobIDs, submissions[0].CanonicalJobID)
+	}
+
+	firstOutputs, err := ctx.GetJobOutputs(jobIDs[0])
+	if err != nil {
+		t.Fatalf("outputs of the first download: %v", err)
+	}
+	original := outputResourceID(t, firstOutputs, jobDownloadResourceOutput)
+	if original == 0 {
+		t.Fatalf("the first download created nothing: %+v", firstOutputs)
+	}
+
+	duplicate, err := ctx.GetJob(jobIDs[1])
+	if err != nil {
+		t.Fatalf("read the duplicate: %v", err)
+	}
+	if duplicate.State != jobs.StateFailed || duplicate.Failure == nil {
+		t.Fatalf("the duplicate ended %s (%+v)", duplicate.State, duplicate.Failure)
+	}
+	if duplicate.Failure.Class != jobs.FailureClassConflict || duplicate.Failure.Code != "resource-exists" {
+		t.Fatalf("the duplicate is classed %q/%q, want %q/%q", duplicate.Failure.Code, duplicate.Failure.Class,
+			"resource-exists", jobs.FailureClassConflict)
+	}
+	if !strings.Contains(duplicate.Failure.Message, "already exists") {
+		t.Fatalf("the failure does not say why: %q", duplicate.Failure.Message)
+	}
+
+	outputs, err := ctx.GetJobOutputs(jobIDs[1])
+	if err != nil {
+		t.Fatalf("outputs of the duplicate: %v", err)
+	}
+	if got := outputResourceID(t, outputs, JobDownloadExistingResourceOutput); got != original {
+		t.Fatalf("the duplicate points at resource %d, want %d: %+v", got, original, outputs)
+	}
+	if got := outputResourceID(t, outputs, jobDownloadResourceOutput); got != 0 {
+		t.Fatalf("a failed download claims to have created resource %d", got)
+	}
+	for _, output := range outputs {
+		if output.Required {
+			t.Fatalf("the existing resource is published as required: %+v", output)
+		}
+	}
+}
+
+// TestARefusedLinkPublicationDoesNotEndTheDuplicateWithoutIt: a terminal Job takes
+// no more outputs, so a duplicate that ended while the link's write was refused
+// would never get the link. The refusal holds the outcome back, and the retried
+// publication ends the Job with both.
+func TestARefusedLinkPublicationDoesNotEndTheDuplicateWithoutIt(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server := plainContentServer(t, "the same bytes, the link refused once")
+
+	first := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/a.bin"}, nil, "", "api")
+	if len(first) != 1 || first[0].Err != nil {
+		t.Fatalf("submit the first: %+v", first)
+	}
+	waitForSnapshot(t, ctx, first[0].CanonicalJobID, "the first download to finish",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failOutputPublication.Store(true)
+	second := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/b.bin"}, nil, "", "api")
+	if len(second) != 1 || second[0].Err != nil {
+		t.Fatalf("submit the duplicate: %+v", second)
+	}
+	waitForQueueEntryTerminal(t, ctx, second[0].Job.ID)
+
+	// The queue stamps its own terminal state before the outcome is published, so
+	// the wait above does not mean a publication was attempted. Only a counted
+	// refusal does, and without one this test would pass having refused nothing.
+	deadline := time.Now().Add(15 * time.Second)
+	for ctx.jobFaults.outputPublicationsRefused.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the link's publication was never attempted")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, second[0].CanonicalJobID); snap.State.Terminal() {
+		t.Fatalf("the duplicate ended %s while its link could not be published (%+v)", snap.State, snap.Failure)
+	}
+
+	ctx.jobFaults.failOutputPublication.Store(false)
+	failed := waitForSnapshot(t, ctx, second[0].CanonicalJobID, "the duplicate to end",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if failed.State != jobs.StateFailed || failed.Failure == nil || failed.Failure.Class != jobs.FailureClassConflict {
+		t.Fatalf("the duplicate ended %s (%+v)", failed.State, failed.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(failed.ID)
+	if err != nil {
+		t.Fatalf("outputs: %v", err)
+	}
+	if outputResourceID(t, outputs, JobDownloadExistingResourceOutput) == 0 {
+		t.Fatalf("the duplicate ended without its link: %+v", outputs)
+	}
+}
+
+// TestTheCollisionLinkIsOfferedOnlyWithTheFailureItBelongsTo: an output cannot be
+// withdrawn, so a download whose claim expired after the link was published is
+// replayed with it still attached, and the replay may fail differently or succeed.
+// The link is then hidden from the listing the Job page reads and refused when
+// opened: it says what the collision was about, and the Job no longer reports a
+// collision. Driven through both public paths on a persisted Job, since the
+// policy is only as good as the two places that must consult it.
+func TestTheCollisionLinkIsOfferedOnlyWithTheFailureItBelongsTo(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server := plainContentServer(t, "the same bytes, then a replay")
+	var jobIDs []string
+	for _, name := range []string{"a.bin", "b.bin"} {
+		submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/" + name}, nil, "", "api")
+		if len(submissions) != 1 || submissions[0].Err != nil {
+			t.Fatalf("submit %s: %+v", name, submissions)
+		}
+		waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the download to finish",
+			func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+		jobIDs = append(jobIDs, submissions[0].CanonicalJobID)
+	}
+	duplicateID := jobIDs[1]
+	admin := ctx.WithPrincipal(&auth.Principal{UserID: 1, Role: models.RoleAdmin})
+
+	listed := func() bool {
+		t.Helper()
+		outputs, err := admin.GetOpenableJobOutputs(duplicateID)
+		if err != nil {
+			t.Fatalf("list the outputs: %v", err)
+		}
+		_, found := findJobOutput(outputs, JobDownloadExistingResourceOutput)
+		return found
+	}
+	open := func() error {
+		_, err := admin.OpenJobOutput(context.Background(), duplicateID, JobDownloadExistingResourceOutput)
+		return err
+	}
+
+	if !listed() {
+		t.Fatal("the collision's own failure does not list its link")
+	}
+	content, err := admin.OpenJobOutput(context.Background(), duplicateID, JobDownloadExistingResourceOutput)
+	if err != nil || !strings.HasPrefix(content.Location, "/resource?id=") {
+		t.Fatalf("the collision's own failure did not open its link: %+v, %v", content, err)
+	}
+
+	// What a replay leaves behind: the same output, under an outcome that is no
+	// longer the collision.
+	for _, outcome := range []map[string]any{
+		{"state": string(jobs.StateFailed), "failure_code": "download-failed", "failure_class": jobs.FailureClassInternal},
+		{"state": string(jobs.StateSucceeded), "failure_code": "", "failure_class": "", "failure_message": ""},
+	} {
+		if err := ctx.db.Model(&models.Job{}).Where("id = ?", duplicateID).Updates(outcome).Error; err != nil {
+			t.Fatalf("rewrite the outcome: %v", err)
+		}
+		if listed() {
+			t.Fatalf("a Job now %v still lists the collision's link", outcome)
+		}
+		if err := open(); !errors.Is(err, ErrJobOutputForbidden) {
+			t.Fatalf("a Job now %v still opens the collision's link: %v", outcome, err)
+		}
+	}
+
+	firstOutputs, err := admin.GetOpenableJobOutputs(jobIDs[0])
+	if err != nil {
+		t.Fatalf("list the first download's outputs: %v", err)
+	}
+	if _, found := findJobOutput(firstOutputs, jobDownloadResourceOutput); !found {
+		t.Fatalf("the created resource is no longer listed: %+v", firstOutputs)
+	}
+}
+
+// outputResourceID is the resource an entity output names, or zero when the Job
+// published no output under that key.
+func outputResourceID(t *testing.T, outputs []jobs.Output, key string) uint {
+	t.Helper()
+	for _, output := range outputs {
+		if output.Key != key {
+			continue
+		}
+		var reference struct {
+			ResourceID uint `json:"resourceId"`
+		}
+		if err := json.Unmarshal(output.Reference, &reference); err != nil {
+			t.Fatalf("output %q reference: %v", key, err)
+		}
+		return reference.ResourceID
+	}
+	return 0
 }
 
 // TestTheLegacyQueueStillRunsWithoutAControlPlane is the compatibility half: a

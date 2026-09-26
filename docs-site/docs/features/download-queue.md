@@ -168,6 +168,13 @@ HTTP status is named by its code and standard meaning, not by the text the
 server sent with it. The legacy download endpoints still report the error's
 full text. A failure that has no message shows its code instead.
 
+A download whose bytes are already in the library fails with the code
+`resource-exists` and the class `conflict`, and its message names the
+existing resource's ID. The Job publishes that resource as its
+`existing-resource` entity output, so the Failure section of the Job detail
+page links to it with **View existing resource**. The link checks access
+when opened, like every entity output.
+
 ## Job Operations
 
 - **Cancel, pause, resume, retry** -- The compatibility endpoints remain

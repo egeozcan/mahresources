@@ -485,14 +485,80 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 	case download_queue.JobStatusCancelled:
 		return a.finish(execution, jobs.StateCancelled, "")
 	default:
+		if snap.ExistingResourceID != nil && *snap.ExistingResourceID != 0 {
+			return a.finishExisting(execution, *snap.ExistingResourceID, snap.FailureReason)
+		}
 		return a.finishFailed(execution, "download-failed", snap.FailureReason)
 	}
+}
+
+// finishExisting ends a download the library refused because it already holds the
+// bytes. That is a conflict, not an internal fault, and the useful answer is the
+// resource holding them: it is published as an optional entity output, whose link
+// re-checks on every open that the viewer may see that resource.
+//
+// A publication that fails is returned rather than ended past, as the success
+// path's is: the outcome publication is retried, and ending the Job first would
+// leave the link unpublishable, since a terminal Job takes no more outputs.
+func (a *downloadJobAdapter) finishExisting(execution jobs.Execution, resourceID uint, reason string) error {
+	reference, err := json.Marshal(map[string]any{"resourceId": resourceID})
+	if err != nil {
+		return err
+	}
+	if err := a.ctx.jobFaults.outputPublication(); err != nil {
+		return err
+	}
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	if _, err := a.ctx.JobService().PublishOutput(a.ctx.jobDeps(), ref, jobs.OutputInput{
+		Key:       JobDownloadExistingResourceOutput,
+		Type:      jobs.OutputTypeEntity,
+		Label:     "Existing resource",
+		Reference: reference,
+	}); err != nil {
+		return err
+	}
+	failure := &jobs.Failure{
+		Code:    JobDownloadResourceExistsCode,
+		Class:   jobs.FailureClassConflict,
+		Message: downloadFailureMessage(reason),
+	}
+	return a.ctx.finishQueueJob(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput})
 }
 
 // jobDownloadResourceOutput is the output key a succeeded download publishes. §7
 // makes a success depend on it: a download that produced no Resource did not
 // succeed, whatever the queue's own status says.
 const jobDownloadResourceOutput = "resource"
+
+// JobDownloadExistingResourceOutput is the output a download that collided with
+// content the library already holds publishes: the resource holding those bytes.
+// It is never required and never a result. A Job whose claim expired after this
+// was published is replayed with the output still on it, since an output cannot
+// be withdrawn, so it may sit beside jobDownloadResourceOutput or under a later,
+// different failure: readers show it only while the Job's failure is
+// JobDownloadResourceExistsCode, and never offer it as what the Job made
+// (server/jobview ResultLinkFor, and FAILURE_OUTPUT_KEY in
+// src/components/jobCenter.js, which change with these two).
+const JobDownloadExistingResourceOutput = "existing-resource"
+
+// JobDownloadResourceExistsCode is the failure code of that collision.
+const JobDownloadResourceExistsCode = "resource-exists"
+
+// AuthorizeJobOutput hides the collision link from a Job that no longer reports
+// the collision. Listing and opening both ask this, so a reconciled replay that
+// failed differently or succeeded offers the stale link nowhere: not on the Job
+// page's Outputs list, not as a result, and not from a bookmarked output URL.
+// Every other output keeps the standard policy.
+func (a *downloadJobAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if request.Output.Key != JobDownloadExistingResourceOutput {
+		return nil
+	}
+	snap := request.Snapshot
+	if snap.State == jobs.StateFailed && snap.Failure != nil && snap.Failure.Code == JobDownloadResourceExistsCode {
+		return nil
+	}
+	return ErrJobOutputForbidden
+}
 
 // finish ends the Job with a bounded classification, through the same completion path
 // every queue-backed Kind uses: the read, the versioned retry and the "somebody else

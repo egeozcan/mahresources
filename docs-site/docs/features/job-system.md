@@ -237,7 +237,10 @@ navigating to the entity. The Jobs panel, the Job Center list, and the Job
 detail page link a succeeded Job's available entity output. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail
-still offers “View JSON result” for the stored summary.
+still offers “View JSON result” for the stored summary. A download that failed
+because the library already holds its bytes publishes the Resource holding them
+as its `existing-resource` entity output. The Job detail page links to it from
+the Failure section.
 
 Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
 `averageRate`, `eta` with `etaEstimated`, and `updatedAt`. The progress series

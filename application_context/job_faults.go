@@ -54,6 +54,10 @@ type jobDurabilityFaults struct {
 	// makes, until the test clears it: publishing a required artifact is a write, and a
 	// refused one must not be read as the artifact being absent.
 	failOutputPublication atomic.Bool
+	// outputPublicationsRefused counts the publications failOutputPublication
+	// refused, so a test can wait until a refusal has really happened instead of
+	// guessing how long one takes.
+	outputPublicationsRefused atomic.Int64
 }
 
 // progressWrite refuses one progress mirror, once.
@@ -96,6 +100,7 @@ func (f *jobDurabilityFaults) outputPublication() error {
 	if f == nil || !f.failOutputPublication.Load() {
 		return nil
 	}
+	f.outputPublicationsRefused.Add(1)
 	return errJobFaultInjected
 }
 

@@ -53,6 +53,10 @@ type DownloadJob struct {
 	// no URL beyond its origin (see failureReason). It is not part of the legacy
 	// representation, which keeps showing the submitter the error's own text.
 	FailureReason string `json:"-"`
+	// ExistingResourceID is set when the attempt failed because the library
+	// already holds the downloaded bytes: the resource that holds them. Like
+	// FailureReason it is for the durable Job, which links to it.
+	ExistingResourceID *uint `json:"-"`
 
 	Phase               string   `json:"phase,omitempty"`
 	PhaseCount          int64    `json:"phaseCount,omitempty"`
@@ -382,7 +386,7 @@ func (j *DownloadJob) claimPause() (JobStatus, bool) {
 	}
 	j.Status = JobStatusPaused
 	j.Error = "" // Clear any previous error
-	j.FailureReason = ""
+	j.FailureReason, j.ExistingResourceID = "", nil
 	j.cancelLocked()
 	return JobStatusPaused, true
 }
@@ -425,7 +429,7 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 	j.ctx, j.cancel = ctx, cancel
 	j.Status = JobStatusPending
 	j.Error = ""
-	j.FailureReason = ""
+	j.FailureReason, j.ExistingResourceID = "", nil
 	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
 	j.StartedAt, j.CompletedAt, j.ResourceID = nil, nil, nil
 	// The previous attempt's *reported* leftovers go too, which the counters and the
@@ -474,12 +478,12 @@ func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, reso
 // again, and the row would record a download that never finished and that no
 // retention window can expire.
 func (j *DownloadJob) finishSnapshot(runID uint64, status JobStatus, errMsg string, resourceID uint, completedAt time.Time) (*DownloadJob, bool) {
-	return j.finishSnapshotWithReason(runID, status, errMsg, "", resourceID, completedAt)
+	return j.finishSnapshotWithReason(runID, status, errMsg, attemptFailure{}, resourceID, completedAt)
 }
 
 // finishSnapshotWithReason is finishSnapshot for a failure whose error value is
-// known, so its rendering for the durable Job lands under the same lock.
-func (j *DownloadJob) finishSnapshotWithReason(runID uint64, status JobStatus, errMsg, reason string, resourceID uint, completedAt time.Time) (*DownloadJob, bool) {
+// known, so what the durable Job is told about it lands under the same lock.
+func (j *DownloadJob) finishSnapshotWithReason(runID uint64, status JobStatus, errMsg string, failure attemptFailure, resourceID uint, completedAt time.Time) (*DownloadJob, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
@@ -513,8 +517,12 @@ func (j *DownloadJob) finishSnapshotWithReason(runID uint64, status JobStatus, e
 	if errMsg != "" {
 		j.Error = errMsg
 	}
-	if reason != "" {
-		j.FailureReason = reason
+	if failure.reason != "" {
+		j.FailureReason = failure.reason
+	}
+	if failure.existingResourceID != 0 {
+		existing := failure.existingResourceID
+		j.ExistingResourceID = &existing
 	}
 	j.CompletedAt = &completedAt
 	if resourceID != 0 {
@@ -899,6 +907,7 @@ func (j *DownloadJob) snapshotLocked() *DownloadJob {
 		ProgressPercent:     j.ProgressPercent,
 		Error:               j.Error,
 		FailureReason:       j.FailureReason,
+		ExistingResourceID:  j.ExistingResourceID,
 		ResourceID:          j.ResourceID,
 		CreatedAt:           j.CreatedAt,
 		StartedAt:           j.StartedAt,

@@ -751,12 +751,12 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	if job.creator != nil {
 		sentHeaders = job.creator.Headers
 	}
-	status, errMsg, reason, resourceID := JobStatusCompleted, "", "", uint(0)
+	status, errMsg, failure, resourceID := JobStatusCompleted, "", attemptFailure{}, uint(0)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Download cancelled"
 	case err != nil:
-		status, errMsg, reason = JobStatusFailed, err.Error(), failureReason(job.URL, sentHeaders, err)
+		status, errMsg, failure = JobStatusFailed, err.Error(), describeFailure(job.URL, sentHeaders, err)
 	default:
 		// Deliberately not overridden by an accepted cancel: the resource exists and
 		// the version row is written, so reporting `cancelled` here would orphan a
@@ -769,7 +769,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// and then writing the terminal one is the same check-then-act the controls had:
 	// a Pause landing between the two was silently overwritten, and a Pause landing
 	// just before the read stranded the job (see DownloadJob.finish).
-	snap, stamped := job.finishSnapshotWithReason(runID, status, errMsg, reason, resourceID, time.Now())
+	snap, stamped := job.finishSnapshotWithReason(runID, status, errMsg, failure, resourceID, time.Now())
 	if !stamped {
 		return
 	}

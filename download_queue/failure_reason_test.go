@@ -159,7 +159,7 @@ func TestFailureReasonRemovesWhatTheSubmissionSent(t *testing.T) {
 func TestFailureReasonLeavesTheLegacyErrorAlone(t *testing.T) {
 	job := &DownloadJob{Status: JobStatusDownloading}
 	runID, _ := job.attempt()
-	snap, ok := job.finishSnapshotWithReason(runID, JobStatusFailed, "HTTP 403: 403 Forbidden", "HTTP 403 Forbidden", 0, time.Now())
+	snap, ok := job.finishSnapshotWithReason(runID, JobStatusFailed, "HTTP 403: 403 Forbidden", attemptFailure{reason: "HTTP 403 Forbidden"}, 0, time.Now())
 	if !ok {
 		t.Fatal("the finish was refused")
 	}

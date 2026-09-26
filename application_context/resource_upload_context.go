@@ -54,6 +54,13 @@ type ResourceExistsError struct {
 // what had happened nor reach the file it collided with. The id stays in the
 // sentence because API and CLI callers see only this string; the HTML form
 // additionally receives it as ResourceID and renders it as a link.
+// ExistingResourceID names the resource holding the bytes. The download queue
+// sits below this package and recognizes the collision by this method, not by
+// the type.
+func (e *ResourceExistsError) ExistingResourceID() uint {
+	return e.ResourceID
+}
+
 func (e *ResourceExistsError) Error() string {
 	switch e.Reason {
 	case ReasonSameRelation:

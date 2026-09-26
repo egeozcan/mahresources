@@ -85,6 +85,9 @@
                 <h2 id="job-failure-heading" class="font-mono text-sm font-semibold text-red-900">Failure</h2>
                 <p class="mt-2 whitespace-pre-wrap break-words text-sm text-red-900" x-text="detail.failure?.message"></p>
                 <p x-show="detail.failure?.class" class="mt-2 text-xs text-red-800" x-text="'Class: ' + detail.failure?.class"></p>
+                <template x-if="failureOutput(detail)">
+                    <p class="mt-3"><a :href="outputLinkURL(failureOutput(detail), advertisedOutputs(detail))" :aria-label="outputLinkAccessibleLabel(failureOutput(detail), advertisedOutputs(detail))" class="text-sm font-medium text-red-900 underline decoration-red-400 underline-offset-2 hover:decoration-red-900" x-text="outputLinkLabel(failureOutput(detail), advertisedOutputs(detail))"></a></p>
+                </template>
             </section>
 
             <section aria-labelledby="job-summary-heading" class="rounded border border-stone-200 bg-white p-4">

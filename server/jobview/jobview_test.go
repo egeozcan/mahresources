@@ -93,6 +93,24 @@ func TestResultLinkForPrefersTheEntityOutput(t *testing.T) {
 	}
 }
 
+// TestResultLinkForNeverOffersTheResourceADuplicateCollidedWith: a download Job
+// that once failed as a duplicate keeps that output when a reconciled replay of
+// it succeeds, since an output cannot be withdrawn. What the Job made is its
+// result; the resource it once collided with is not, and it sorts first.
+func TestResultLinkForNeverOffersTheResourceADuplicateCollidedWith(t *testing.T) {
+	job := jobs.Snapshot{ID: "j1", Kind: application_context.JobKindRemoteDownload, Title: "cat.jpg", State: jobs.StateSucceeded}
+	existing := jobs.Output{Key: application_context.JobDownloadExistingResourceOutput, Type: jobs.OutputTypeEntity,
+		Label: "Existing resource", Availability: jobs.OutputAvailable}
+	created := jobs.Output{Key: "resource", Type: jobs.OutputTypeEntity, Label: "Created resource", Availability: jobs.OutputAvailable}
+
+	if link := ResultLinkFor(job, []jobs.Output{existing, created}); link.URL != "/v1/jobs/j1/outputs?key=resource" {
+		t.Fatalf("the result link is %+v, want the created resource", link)
+	}
+	if link := ResultLinkFor(job, []jobs.Output{existing}); link != (ResultLink{}) {
+		t.Fatalf("the resource a duplicate collided with was offered as the result: %+v", link)
+	}
+}
+
 func TestResultLinkForFallsBackToAPluginActionDestination(t *testing.T) {
 	reference, _ := json.Marshal(map[string]string{"redirect": "/note?id=12"})
 	output := jobs.Output{Key: "result", Type: jobs.OutputTypeSummary, Availability: jobs.OutputAvailable, Reference: reference}

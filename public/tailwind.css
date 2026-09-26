@@ -3085,6 +3085,9 @@
   .decoration-indigo-300 {
     text-decoration-color: var(--color-indigo-300);
   }
+  .decoration-red-400 {
+    text-decoration-color: var(--color-red-400);
+  }
   .decoration-dotted {
     text-decoration-style: dotted;
   }
@@ -3898,6 +3901,13 @@
     &:hover {
       @media (hover: hover) {
         text-decoration-color: var(--color-amber-900);
+      }
+    }
+  }
+  .hover\:decoration-red-900 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-red-900);
       }
     }
   }
