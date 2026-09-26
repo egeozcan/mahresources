@@ -20,10 +20,10 @@ import (
 // another Kind is waiting for, and it reads as what it is: queued.
 //
 // The dispatch loop does not claim this Kind (RuntimeClaimEnabled). A loop claims
-// the oldest waiting Job whatever its plugin, and then waits for that plugin with
-// the claim held — which is exactly how one plugin's backlog used to occupy every
-// slot of the deployment. The loop's cadence is still used, to hand this process's
-// lanes the waiting Jobs nobody here holds (see AdoptWaiting).
+// the oldest waiting Job whatever its plugin and would then wait for that plugin
+// with the claim held, which turns one plugin's backlog into occupied slots of the
+// whole deployment. The loop's cadence is still used, to hand this process's lanes
+// the waiting Jobs nobody here holds (see AdoptWaiting).
 
 // pluginActionAdmission is the durable half of one queued plugin execution.
 //

@@ -343,9 +343,10 @@ func holdGlobalSlot(t *testing.T, tc *TestContext) func() {
 }
 
 // TestAPluginCommandWaitsForAFullBudgetInsteadOfFailing is the command runtime's
-// half. A command accepted while the deployment's budget is full was answered 202
-// and then failed for good, "not claimable", before it ever started. A full budget
-// is a wait: the run stays queued, and runs to completion once the slot frees.
+// half. A command accepted while the deployment's budget is full has not started
+// and has done nothing wrong, so failing it would end for good work that could run
+// a moment later. A full budget is a wait: the run stays queued, and runs to
+// completion once the slot frees.
 func TestAPluginCommandWaitsForAFullBudgetInsteadOfFailing(t *testing.T) {
 	pluginDir := t.TempDir()
 	commandDir := t.TempDir()

@@ -12,9 +12,9 @@ import (
 // A plugin's VM runs one Lua call at a time, so a plugin can make progress on
 // exactly one piece of background work at once. Everything else it has been
 // asked to do is waiting for that VM, and waiting is only harmless while it
-// holds nothing: an execution that took one of the process's job slots, or the
-// deployment's capacity, and *then* waited for its VM turned one plugin's
-// backlog into slots every other plugin and every other Kind was waiting for.
+// holds nothing: an execution that takes one of the process's job slots, or the
+// deployment's capacity, and *then* waits for its VM turns one plugin's backlog
+// into slots every other plugin and every other Kind is waiting for.
 //
 // So the order is fixed: the plugin's lane first (in arrival order, holding
 // nothing), then a job slot, then the host's admission — the durable claim that
