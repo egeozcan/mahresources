@@ -195,10 +195,14 @@ func TestAScopedUploadOfBytesHeldOutsideItsScopeSharesTheFile(t *testing.T) {
 // filesystem, whoever is deleting: a group-limited caller's count must include
 // rows it cannot see.
 func TestDeletingEitherResourceThatSharesAFileKeepsTheOthersFile(t *testing.T) {
+	runSharedFileDeletionCases(t, setupSharedFileTestCtx)
+}
+
+func runSharedFileDeletionCases(t *testing.T, newContext func(*testing.T) *MahresourcesContext) {
 	const body = "one file behind two resources in different subtrees"
 
 	arrange := func(t *testing.T) (*MahresourcesContext, *MahresourcesContext, *models.Resource, *models.Resource) {
-		ctx := setupSharedFileTestCtx(t)
+		ctx := newContext(t)
 		inside := createGroupNamed(t, ctx, "shared-file-inside", nil)
 		outside := createGroupNamed(t, ctx, "shared-file-outside", nil)
 		existing := uploadAs(t, ctx, body, "outside.txt", outside.ID)
