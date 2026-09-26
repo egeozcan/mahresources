@@ -329,4 +329,17 @@ func TestAFiredDeferredRowMustNameItsOwnJob(t *testing.T) {
 	if readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/"+jobMigrationScheduledDownload] == 0 {
 		t.Fatalf("a fired row naming an unrelated Job was accepted as retired: %+v", readiness)
 	}
+
+	// A Repeat of the row's own Job is a branch, not the Job its handle moves to.
+	mapped := scheduledDownloadMapping(t, ctx, row.ID)
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{Type: jobs.LinkRepeatOf, FromJobID: unrelated.ID, ToJobID: mapped.JobID}); err != nil {
+		t.Fatalf("link the other Job as a repeat of the row's Job: %v", err)
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/"+jobMigrationScheduledDownload] == 0 {
+		t.Fatalf("a fired row naming a repeat of its Job was accepted as retired: %+v", readiness)
+	}
 }

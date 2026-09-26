@@ -3,8 +3,11 @@ package application_context
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"mahresources/auth"
 	"mahresources/jobs"
@@ -281,5 +284,58 @@ func TestCancellingADeferredJobTheSweepQueuedCancelsItsRow(t *testing.T) {
 	cancelJobAsItsOwner(t, ctx, job)
 	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled {
 		t.Fatalf("the row is %s after its unstarted Job was cancelled, want cancelled", got.Status)
+	}
+}
+
+// The sweep reserves a due row, queues its Job, and only then records the Job's
+// id on the row. A cancel of the Job landing between the last two leaves nothing
+// to record: the row ends cancelled and the sweep reports no submission.
+func TestCancellingADeferredJobWhileTheSweepRecordsItCancelsItsRow(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	// Only the row under test is due, so the interleave lands on its sweep.
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/recording.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	var cancelledJob atomic.Bool
+	const name = "test:cancel-before-the-sweep-records-the-job"
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "scheduled_downloads" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if _, recordsJob := updates["job_id"]; !ok || !recordsJob || !cancelledJob.CompareAndSwap(false, true) {
+			return
+		}
+		cancelJobAsItsOwner(t, ctx, deferredDownloadJob(t, ctx, row.ID))
+	}); err != nil {
+		t.Fatalf("register the interleave: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
+
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now().Add(2 * time.Hour),
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatalf("a deferred row with a durable Job was submitted to the queue")
+			return "", nil
+		},
+	})
+	if !cancelledJob.Load() {
+		t.Fatalf("setup: the Job was never cancelled inside the sweep")
+	}
+	if err != nil {
+		t.Fatalf("the sweep failed when the Job it queued was cancelled: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("the sweep reported %d submissions of a download whose Job was cancelled, want none", fired)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" {
+		t.Fatalf("the row is %s naming %q after the sweep, want cancelled naming none", got.Status, got.JobID)
 	}
 }

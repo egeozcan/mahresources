@@ -275,7 +275,7 @@ func (ctx *MahresourcesContext) DueScheduledDownloads(now time.Time, limit int) 
 	}
 	var rows []models.ScheduledDownload
 	err := ctx.db.
-		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), now).
+		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), scheduledDownloadDueBound(now)).
 		Where("status = ?", models.ScheduledDownloadStatusPending).
 		Where("created_by_user_id IS NOT NULL").
 		Where("attempts < ?", scheduledDownloadMaxSubmitAttempts).
@@ -306,6 +306,15 @@ func scheduledDownloadInstant(db *gorm.DB, operand string) string {
 	return operand
 }
 
+// scheduledDownloadDueBound is the latest due time a sweep at now may treat as
+// come. julianday() resolves milliseconds, rounding, so a row due a fraction of a
+// millisecond after now would compare equal to it; one millisecond back is never
+// early. Firing a row queues its Job, bypassing the time the Job's own claim
+// waits for, so early is the direction that matters.
+func scheduledDownloadDueBound(now time.Time) time.Time {
+	return now.Add(-time.Millisecond)
+}
+
 // scheduledDownloadClaimFree is the predicate for a row nobody holds: no claim,
 // or a claim older than the bound it is given, compared as an instant.
 func scheduledDownloadClaimFree(db *gorm.DB) string {
@@ -320,7 +329,7 @@ func (ctx *MahresourcesContext) ClaimScheduledDownload(id uint, claimToken strin
 	}
 	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ?", id).
-		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), now).
+		Where(scheduledDownloadInstant(ctx.db, "due_at")+" <= "+scheduledDownloadInstant(ctx.db, "?"), scheduledDownloadDueBound(now)).
 		Where("status = ?", models.ScheduledDownloadStatusPending).
 		Where("created_by_user_id IS NOT NULL").
 		Where("attempts < ?", scheduledDownloadMaxSubmitAttempts).
@@ -407,8 +416,12 @@ func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimTok
 	if res.RowsAffected == 1 {
 		return nil
 	}
-	return fmt.Errorf("scheduled download %d no longer carries this submit claim", id)
+	return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
 }
+
+// errScheduledDownloadClaimLost reports a reserved row something else has since
+// ended: a cancel of its Job, which cancels the row it is recording.
+var errScheduledDownloadClaimLost = errors.New("the row no longer carries this submit claim")
 
 // MarkScheduledDownloadFailed records a terminal refusal/failure and releases
 // the claim. Failed scheduled downloads are not retried forever by the tick.
@@ -452,6 +465,16 @@ func (ctx *MahresourcesContext) markScheduledDownloadFailed(id uint, claimToken 
 // a download that started: the row is then left alone and false returned, and
 // the Job's own Cancel is what stops it.
 func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
+	for attempt := 0; ; attempt++ {
+		cancelled, err := ctx.cancelScheduledDownloadOnce(id)
+		if errors.Is(err, errDeferredDownloadHandleMoved) && attempt < 7 {
+			continue
+		}
+		return cancelled, err
+	}
+}
+
+func (ctx *MahresourcesContext) cancelScheduledDownloadOnce(id uint) (bool, error) {
 	now := time.Now()
 	errStarted := errors.New("the deferred download has started")
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -507,36 +530,41 @@ var errScheduledDownloadNotCancellable = errors.New("the scheduled download is n
 //
 // The handle is read again once the lock is held. A Retry moves the handle to its
 // successor while holding its ancestor's lock, so the Job read first may no
-// longer be the one the row names; the lock is then taken on the Job it names
-// now. Once the Job the handle names is locked, no Retry can move it until this
-// transaction ends.
+// longer be the one the row names. The transaction then rolls back and starts
+// over (errDeferredDownloadHandleMoved) rather than locking the successor too:
+// holding two Jobs' locks, in an order a concurrent Retry does not share, could
+// deadlock with it. Once the Job the handle names is locked, no Retry can move
+// it until this transaction ends.
 func lockDeferredDownloadJobTx(tx *gorm.DB, rowID uint) error {
 	handle := strconv.FormatUint(uint64(rowID), 10)
-	locked := ""
-	for attempt := 0; attempt < 8; attempt++ {
-		var current models.JobLegacyHandle
-		err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).First(&current).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if current.JobID == locked {
-			return nil
-		}
-		var job models.Job
-		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", current.JobID).First(&job).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		locked = current.JobID
+	var named models.JobLegacyHandle
+	err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).First(&named).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
 	}
-	return errors.New("the scheduled download's Job kept changing while it was being cancelled")
+	if err != nil {
+		return err
+	}
+	var job models.Job
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", named.JobID).First(&job).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	var current models.JobLegacyHandle
+	if err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).First(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if current.JobID != named.JobID {
+		return errDeferredDownloadHandleMoved
+	}
+	return nil
 }
+
+// errDeferredDownloadHandleMoved restarts a row cancel whose handle a Retry moved.
+var errDeferredDownloadHandleMoved = errors.New("the scheduled download's handle moved to another Job")
 
 // cancelDeferredDownloadJobTx cancels the scheduled Job behind one row, inside
 // the caller's transaction. stopped is false when the Job has started, which a
@@ -577,9 +605,9 @@ func (ctx *MahresourcesContext) cancelDeferredDownloadJobTx(tx *gorm.DB, rowID u
 
 // cancelDeferredDownloadRowTx ends the row behind a deferred Job the host
 // cancelled while nothing was running it, inside the transaction that cancelled
-// it. That is the pending row, and also a row the sweep has already marked
-// submitted naming this Job when the Job never started: the sweep queued it and
-// the dispatch loop had not claimed it yet, so nothing was downloaded.
+// it. That is the pending row, and also a row a sweep has already reserved or
+// marked submitted when the Job never started: the sweep queued it and the
+// dispatch loop had not claimed it yet, so nothing was downloaded.
 //
 // The row's claim is overridden rather than respected: the cancellation has
 // already won on the Job, and a sweep holding the claim reserves the row only
@@ -599,8 +627,10 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 	}
 	query := tx.Model(&models.ScheduledDownload{}).Where("id = ?", uint(rowID))
 	if job.StartedAt == nil {
-		query = query.Where("status = ? OR (status = ? AND job_id = ?)",
-			models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted, job.ID)
+		// A submitted row with no job id yet is one a sweep has reserved and is
+		// still recording; it loses its reservation (MarkScheduledDownloadSubmitted).
+		query = query.Where("status = ? OR (status = ? AND COALESCE(job_id, '') IN ?)",
+			models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted, []string{"", job.ID})
 	} else {
 		query = query.Where("status = ?", models.ScheduledDownloadStatusPending)
 	}
@@ -751,6 +781,9 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
 	} else if materialized {
 		if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
+			if errors.Is(err, errScheduledDownloadClaimLost) {
+				return false, nil
+			}
 			return false, err
 		}
 		return true, nil

@@ -1174,7 +1174,7 @@ func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, 
 	if row.JobID == mapping.JobID {
 		return true, nil
 	}
-	ancestors, err := jobs.LineageAncestors(db, []string{row.JobID}, jobs.MaxStagingLineageHops)
+	ancestors, err := jobs.RetryAncestors(db, row.JobID)
 	if err != nil {
 		return false, err
 	}

@@ -187,3 +187,22 @@ func TestADeferredDownloadClaimAgesByTheClockInEveryZone(t *testing.T) {
 		})
 	}
 }
+
+// A row due a fraction of a millisecond from now is not due yet. SQLite's
+// julianday resolves milliseconds, rounding, so a bare comparison would promote
+// the Job before the time its own claim waits for.
+func TestADeferredDownloadIsNotDueAFractionOfAMillisecondEarly(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	owner := createDownloadOwner(t, ctx)
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	row := seedScheduledDownload(t, ctx, now.Add(400*time.Microsecond), &owner.ID)
+	if fired := fireDeferredDueTimeRows(t, ctx, now); fired != 0 {
+		t.Fatalf("the sweep fired %d rows 0.4ms before their time, want none", fired)
+	}
+	if claimed, err := ctx.ClaimScheduledDownload(row.ID, "early", now); err != nil || claimed {
+		t.Fatalf("claim 0.4ms before the due time = %v, %v; want refused", claimed, err)
+	}
+	if fired := fireDeferredDueTimeRows(t, ctx, now.Add(2*time.Millisecond)); fired != 1 {
+		t.Fatalf("the sweep fired %d rows once they were due, want 1", fired)
+	}
+}
