@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
 	"time"
 
@@ -1174,11 +1173,35 @@ func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, 
 	if row.JobID == mapping.JobID {
 		return true, nil
 	}
-	ancestors, err := jobs.RetryAncestors(db, row.JobID)
-	if err != nil {
-		return false, err
+	return retriedFrom(db, row.JobID, mapping.JobID)
+}
+
+// retriedFrom reports whether a Job was reached from ancestor by Retries. The walk
+// follows retry-of links up the chain with no length cap, because a deferral can be
+// cancelled and rescheduled any number of times before it fires; the seen set ends
+// it on a cycle, which a Retry never makes.
+func retriedFrom(db *gorm.DB, jobID, ancestor string) (bool, error) {
+	seen := map[string]bool{}
+	for current := jobID; current != "" && !seen[current]; {
+		if current == ancestor {
+			return true, nil
+		}
+		seen[current] = true
+		var parents []string
+		if err := db.Model(&models.JobLink{}).
+			Where("type = ? AND from_job_id = ?", string(jobs.LinkRetryOf), current).
+			Order("to_job_id").Pluck("to_job_id", &parents).Error; err != nil {
+			return false, err
+		}
+		current = ""
+		for _, parent := range parents {
+			if !seen[parent] {
+				current = parent
+				break
+			}
+		}
 	}
-	return slices.Contains(ancestors, mapping.JobID), nil
+	return false, nil
 }
 
 func hashJobMigrationProjection(value any) string {

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -342,4 +343,29 @@ func TestAFiredDeferredRowMustNameItsOwnJob(t *testing.T) {
 	if readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/"+jobMigrationScheduledDownload] == 0 {
 		t.Fatalf("a fired row naming a repeat of its Job was accepted as retired: %+v", readiness)
 	}
+}
+
+// A deferral can be cancelled and rescheduled any number of times before it
+// fires, and its row then names the last Job of that chain. The retirement check
+// follows the whole chain back to the Job the row was mapped to.
+func TestAFiredDeferredRowAtTheEndOfALongRetryChainIsRetired(t *testing.T) {
+	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
+	if fired := fireDueDeferredDownloads(t, ctx, time.Now()); fired != 1 {
+		t.Fatalf("the sweep fired %d rows, want 1", fired)
+	}
+	mapped := scheduledDownloadMapping(t, ctx, row.ID)
+	previous := mapped.JobID
+	leaf := ""
+	for i := 0; i < 100; i++ {
+		leaf = fmt.Sprintf("retry-chain-%03d", i)
+		if err := ctx.db.Create(&models.JobLink{FromJobID: leaf, ToJobID: previous, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()}).Error; err != nil {
+			t.Fatalf("link retry %d: %v", i, err)
+		}
+		previous = leaf
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Update("job_id", leaf).Error; err != nil {
+		t.Fatalf("name the last Job of the chain: %v", err)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
 }

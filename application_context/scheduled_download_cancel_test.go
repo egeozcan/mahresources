@@ -339,3 +339,94 @@ func TestCancellingADeferredJobWhileTheSweepRecordsItCancelsItsRow(t *testing.T)
 		t.Fatalf("the row is %s naming %q after the sweep, want cancelled naming none", got.Status, got.JobID)
 	}
 }
+
+// A Job cancelled after the sweep reserved its row, and before the sweep asked the
+// Job service, ends the row itself; the sweep then finds the Job ended and its
+// reservation gone. That is not a failure, and the rows behind it still fire.
+func TestCancellingADeferredJobTheSweepJustReservedDoesNotStopTheSweep(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	first, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/reserved.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the first deferred download: %v", err)
+	}
+	behind, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/behind.bin"}, time.Now().Add(time.Hour+time.Minute))
+	if err != nil {
+		t.Fatalf("create the second deferred download: %v", err)
+	}
+	var cancelledJob atomic.Bool
+	const name = "test:cancel-after-the-sweep-reserves"
+	if err := ctx.db.Callback().Update().After("gorm:update").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "scheduled_downloads" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || updates["status"] != models.ScheduledDownloadStatusSubmitted || !cancelledJob.CompareAndSwap(false, true) {
+			return
+		}
+		cancelJobAsItsOwner(t, ctx, deferredDownloadJob(t, ctx, first.ID))
+	}); err != nil {
+		t.Fatalf("register the interleave: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
+
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now().Add(2 * time.Hour),
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatalf("a deferred row with a durable Job was submitted to the queue")
+			return "", nil
+		},
+	})
+	if !cancelledJob.Load() {
+		t.Fatalf("setup: the Job was never cancelled inside the sweep")
+	}
+	if err != nil {
+		t.Fatalf("the sweep failed when the Job it had reserved was cancelled: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("the sweep fired %d rows, want only the row behind the cancelled one", fired)
+	}
+	if got := scheduledDownloadRow(t, ctx, first.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.Attempts != 0 {
+		t.Fatalf("the cancelled row is %s after %d attempts, want cancelled and never submitted", got.Status, got.Attempts)
+	}
+	if got := scheduledDownloadRow(t, ctx, behind.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("the row behind the cancelled one is %s, want submitted", got.Status)
+	}
+}
+
+// An earlier release left a cancelled Job's row pending. A Retry that keeps the
+// time takes that row over as it would a cancelled one: due at the successor's
+// time and owned by the successor's actor.
+func TestRetryingADeferredJobWhoseRowWasLeftPendingRebindsTheRow(t *testing.T) {
+	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
+	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/left-pending.bin"}, due)
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	admin, err := ctx.CreateUser(&UserInput{Username: "pending-row-admin", Password: "password1", Role: models.RoleAdmin})
+	if err != nil {
+		t.Fatalf("create the administrator: %v", err)
+	}
+	asAdmin := ctx.WithPrincipal(&auth.Principal{UserID: admin.ID, Username: admin.Username, Role: models.RoleAdmin})
+	successor := retryJob(t, asAdmin, deferredDownloadJob(t, ctx, row.ID))
+	if successor.State != jobs.StateScheduled {
+		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusPending || got.CreatedByUserId == nil || *got.CreatedByUserId != admin.ID {
+		t.Fatalf("the row is %s owned by %v, want pending and owned by the administrator %d", got.Status, got.CreatedByUserId, admin.ID)
+	}
+}

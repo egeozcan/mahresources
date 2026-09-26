@@ -420,7 +420,8 @@ func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimTok
 }
 
 // errScheduledDownloadClaimLost reports a reserved row something else has since
-// ended: a cancel of its Job, which cancels the row it is recording.
+// ended: a cancel of its Job, which cancels the row a sweep reserved. The sweep
+// then has nothing left to record, and the rows behind it still fire.
 var errScheduledDownloadClaimLost = errors.New("the row no longer carries this submit claim")
 
 // MarkScheduledDownloadFailed records a terminal refusal/failure and releases
@@ -638,14 +639,19 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 		"claim_token": "",
 		"claimed_at":  nil,
 		"status":      models.ScheduledDownloadStatusCancelled,
-		"updated_at":  at,
+		// A reservation counted a submit attempt; one that recorded no Job made
+		// none, as markScheduledDownloadEnded also takes back.
+		"attempts": gorm.Expr("CASE WHEN status = ? AND COALESCE(job_id, '') = '' THEN attempts - 1 ELSE attempts END",
+			models.ScheduledDownloadStatusSubmitted),
+		"updated_at": at,
 	}).Error
 }
 
 // reopenDeferredDownloadRowTx returns the cancelled row behind a rescheduled
 // deferred Job to pending, due at the Job's time, inside the transaction that
 // accepted the Job. The handle has already moved to that Job. Only a row that
-// was cancelled before it submitted anything is reopened.
+// submitted nothing is taken over: a cancelled one, or a pending one an earlier
+// release left behind when it cancelled the Job alone.
 //
 // The row's owner becomes the Job's actor. A Retry belongs to whoever asked for
 // it, the sweep re-validates the row as its owner, and the dispatch loop runs the
@@ -668,7 +674,8 @@ func reopenDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 		return nil
 	}
 	return tx.Model(&models.ScheduledDownload{}).
-		Where("id = ? AND status = ? AND COALESCE(job_id, '') = ''", uint(rowID), models.ScheduledDownloadStatusCancelled).
+		Where("id = ? AND status IN ? AND COALESCE(job_id, '') = ''", uint(rowID),
+			[]string{models.ScheduledDownloadStatusCancelled, models.ScheduledDownloadStatusPending}).
 		Updates(map[string]any{
 			"status":             models.ScheduledDownloadStatusPending,
 			"due_at":             *job.ScheduledFor,
@@ -776,7 +783,10 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	// the design forbids.
 	var ended *deferredJobEndedError
 	if jobID, materialized, err := ctx.materializeDeferredDownloadJob(row.ID); errors.As(err, &ended) {
-		return false, ctx.markScheduledDownloadEnded(row.ID, claim, ended.state, now)
+		if err := ctx.markScheduledDownloadEnded(row.ID, claim, ended.state, now); err != nil && !errors.Is(err, errScheduledDownloadClaimLost) {
+			return false, err
+		}
+		return false, nil
 	} else if err != nil {
 		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
 	} else if materialized {
@@ -913,5 +923,5 @@ func (ctx *MahresourcesContext) markScheduledDownloadEnded(id uint, claimToken s
 	if res.RowsAffected == 1 {
 		return nil
 	}
-	return fmt.Errorf("scheduled download %d no longer carries this submit claim", id)
+	return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
 }

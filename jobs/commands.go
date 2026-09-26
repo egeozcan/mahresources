@@ -1880,12 +1880,6 @@ const maxRetryChainHops = 64
 
 // retryChain walks the Retry ancestors of one Job: the Jobs it directly retries,
 // then theirs, until the chain ends.
-// RetryAncestors lists the Jobs one Job was retried from, nearest first, over the
-// same bounded linear chain a Retry locks.
-func RetryAncestors(db *gorm.DB, jobID string) ([]string, error) {
-	return retryChain(db, jobID)
-}
-
 func retryChain(tx *gorm.DB, jobID string) ([]string, error) {
 	chain := make([]string, 0, 4)
 	seen := map[string]bool{jobID: true}
