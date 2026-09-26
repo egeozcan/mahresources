@@ -437,22 +437,15 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 	if refusal := ctx.pluginActionRegistrationRefusal(pm, input); refusal != "" {
 		return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
 	}
-	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) bool {
-		current := ctx.PluginManager()
-		if current == nil {
-			if err := ctx.blockPluginActionJob(execution, "plugins-unavailable"); err != nil {
-				log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
-			}
-			return false
+	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) func() error {
+		reason := "plugins-unavailable"
+		if current := ctx.PluginManager(); current != nil {
+			reason = ctx.pluginActionRefusal(current, execution, claimed)
 		}
-		refusal := ctx.pluginActionRefusal(current, execution, claimed)
-		if refusal == "" {
-			return true
+		if reason == "" {
+			return nil
 		}
-		if err := ctx.blockPluginActionJob(execution, refusal); err != nil {
-			log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
-		}
-		return false
+		return func() error { return ctx.blockPluginActionJob(execution, reason) }
 	})
 	if _, err := pm.RunActionAsyncForHost(admission.hostJobRef(handle, ""), owner, input.Plugin, input.Action,
 		input.EntityID, input.Params, input.Fingerprint); err != nil {
@@ -1861,15 +1854,12 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 	// materialized occurrence that may no longer run is blocked rather than failed
 	// — a person has to decide about it, and a broken schedule would be the wrong
 	// thing to report.
-	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) bool {
-		refusal := ctx.commandActorRefusal(ctx.jobDeps(), execution.Access, claimed.Plugin)
-		if refusal == "" {
-			return true
+	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) func() error {
+		reason := ctx.commandActorRefusal(ctx.jobDeps(), execution.Access, claimed.Plugin)
+		if reason == "" {
+			return nil
 		}
-		if err := ctx.blockPluginActionJob(execution, refusal); err != nil {
-			log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
-		}
-		return false
+		return func() error { return ctx.blockPluginActionJob(execution, reason) }
 	})
 	holdClaim := input.Overlap == plugin_system.ScheduleOverlapSkip
 	_, ran, runErr := pm.RunScheduleForHost(reg, actorUserID, wait, holdClaim,

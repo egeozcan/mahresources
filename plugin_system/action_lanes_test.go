@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,11 @@ end
 
 function init()
     mah.action({ id = "work", label = "Work", entity = "resource", async = true, handler = work })
+    mah.action({ id = "hold", label = "Hold", entity = "resource",
+                 handler = function(ctx)
+                     while not gate_open() do mah.sleep(0.01) end
+                     return { success = true }
+                 end })
     mah.action({ id = "needs-mode", label = "Needs Mode", entity = "resource", async = true,
                  params = { {name = "mode", type = "text", label = "Mode", required = true} },
                  handler = work })
@@ -342,16 +348,16 @@ func TestALaneHandsItselfOnInArrivalOrderAndSurvivesAGiveUp(t *testing.T) {
 	never := make(chan struct{})
 
 	first := lane.join()
-	if !first.wait(never, time.Time{}) {
+	if !first.wait(never, time.Time{}, nil) {
 		t.Fatal("the first ticket of a free lane did not get its turn")
 	}
 	quitter := lane.join()
 	second := lane.join()
-	if quitter.wait(never, time.Now().Add(10*time.Millisecond)) {
+	if quitter.wait(never, time.Now().Add(10*time.Millisecond), nil) {
 		t.Fatal("a ticket behind a held lane got its turn")
 	}
 	lane.release()
-	if !second.wait(never, time.Now().Add(time.Second)) {
+	if !second.wait(never, time.Now().Add(time.Second), nil) {
 		t.Fatal("the lane was not handed to the ticket behind one that gave up")
 	}
 
@@ -360,7 +366,7 @@ func TestALaneHandsItselfOnInArrivalOrderAndSurvivesAGiveUp(t *testing.T) {
 	lane.release()
 	late.leave()
 	after := lane.join()
-	if !after.wait(never, time.Now().Add(time.Second)) {
+	if !after.wait(never, time.Now().Add(time.Second), nil) {
 		t.Fatal("a lane handed to a ticket that then left was lost")
 	}
 	lane.release()
@@ -463,5 +469,158 @@ func TestAQueuedActionIsCheckedAgainstTheRegistrationItRuns(t *testing.T) {
 	gone := &ActionJob{PluginName: "busy", ActionID: "removed", EntityType: "resource"}
 	if _, _, err := pm.resolveQueuedAction(gone, nil, ""); err == nil {
 		t.Fatal("a queued action whose registration is gone was resolved")
+	}
+}
+
+// laterAdmission always finds the deployment's budget full, and records whether it
+// was ever asked while the plugin's VM was free to take.
+type laterAdmission struct{ asked atomic.Int64 }
+
+func (a *laterAdmission) Admit(time.Time) AdmitResult {
+	a.asked.Add(1)
+	return AdmitLater
+}
+
+// TestAQueuedPluginsWorkLeavesWhenThePluginIsDisabled pins the teardown: work
+// still waiting for its turn when its plugin is disabled leaves at once, without
+// starting, and tells the host its callback is lost — rather than holding the
+// disable, and the old VM, until the deployment's budget has room for work that
+// can never run.
+func TestAQueuedPluginsWorkLeavesWhenThePluginIsDisabled(t *testing.T) {
+	saved := hostAdmissionPollInterval
+	hostAdmissionPollInterval = 10 * time.Millisecond
+	defer func() { hostAdmissionPollInterval = saved }()
+
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	defer gate.open.Store(true)
+
+	if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", 1, nil, ""); err != nil {
+		t.Fatalf("submit the running work: %v", err)
+	}
+	waitUntil(t, "the running work to start", 5*time.Second, func() bool { return len(gate.order()) == 1 })
+
+	sinks := []*recordingSink{{}, {}}
+	for i, sink := range sinks {
+		ref := &HostJobRef{JobID: fmt.Sprintf("queued-%d", i), Handle: fmt.Sprintf("queued-handle-%d", i),
+			Sink: sink, Admission: &laterAdmission{}}
+		if _, err := pm.RunActionAsyncForHost(ref, nil, "busy", "work", uint(i+2), nil, ""); err != nil {
+			t.Fatalf("submit queued work %d: %v", i, err)
+		}
+	}
+
+	disabled := make(chan time.Duration, 1)
+	go func() {
+		began := time.Now()
+		_ = pm.DisablePlugin("busy")
+		disabled <- time.Since(began)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	gate.open.Store(true)
+
+	select {
+	case took := <-disabled:
+		if took >= retireDrainTimeout {
+			t.Fatalf("disabling took %s: it waited out the drain for work that could never run", took)
+		}
+	case <-time.After(retireDrainTimeout + 5*time.Second):
+		t.Fatal("disabling never returned")
+	}
+	for i, sink := range sinks {
+		waitUntil(t, "the queued work to report its lost callback", 5*time.Second, func() bool {
+			sink.mu.Lock()
+			defer sink.mu.Unlock()
+			return len(sink.lost) == 1
+		})
+		if started, completed, failed, _ := sink.counts(); started+completed+failed != 0 {
+			t.Fatalf("queued work %d reported started=%d completed=%d failed=%d", i, started, completed, failed)
+		}
+	}
+	if got := len(gate.order()); got != 1 {
+		t.Fatalf("%d handlers were entered, want only the one that was running", got)
+	}
+}
+
+// TestTheClaimIsOnlyAskedForWithThePluginsVMInHand pins the order at the head of
+// a lane. The durable claim occupies a slot of the deployment's budget, so it is
+// asked for only once the plugin's VM is held: an action behind a long synchronous
+// call into its plugin waits holding no slot at all.
+func TestTheClaimIsOnlyAskedForWithThePluginsVMInHand(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	defer gate.open.Store(true)
+
+	held := make(chan error, 1)
+	go func() {
+		_, err := pm.RunAction(context.Background(), "busy", "hold", 1, nil, "")
+		held <- err
+	}()
+	// The synchronous call is inside the VM once gate_open is being polled; a
+	// short wait is enough for it to have taken the lock.
+	time.Sleep(100 * time.Millisecond)
+
+	admission := &scriptedAdmission{}
+	sink := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "vm-job", Handle: "vm-handle", Sink: sink, Admission: admission},
+		nil, "busy", "work", 2, nil, ""); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := admission.askedCount(); got != 0 {
+		t.Fatalf("the claim was asked for %d times while the plugin's VM was held by another call", got)
+	}
+
+	gate.open.Store(true)
+	if err := <-held; err != nil {
+		t.Fatalf("the synchronous call: %v", err)
+	}
+	waitUntil(t, "the action to run once the VM was free", 5*time.Second, func() bool {
+		_, completed, _, _ := sink.counts()
+		return completed == 1
+	})
+	if got := admission.askedCount(); got != 1 {
+		t.Fatalf("the claim was asked for %d times, want once", got)
+	}
+}
+
+// TestTicksCannotKeepActionsOutOfTheirLane pins the bound on going ahead: while an
+// action is waiting, two ticks are never handed the lane in a row, so a schedule
+// that overruns its own interval cannot starve submitted work.
+func TestTicksCannotKeepActionsOutOfTheirLane(t *testing.T) {
+	lane := &pluginLane{}
+	never := make(chan struct{})
+	holder := lane.join()
+	if !holder.wait(never, time.Time{}, nil) {
+		t.Fatal("the first ticket of a free lane did not get its turn")
+	}
+	action := lane.join()
+	firstTick := lane.joinAhead()
+	secondTick := lane.joinAhead()
+
+	var order []string
+	next := func() {
+		t.Helper()
+		lane.release()
+		for name, ticket := range map[string]*laneTicket{"action": action, "tick-1": firstTick, "tick-2": secondTick} {
+			select {
+			case <-ticket.turn:
+				already := false
+				for _, seen := range order {
+					if seen == name {
+						already = true
+					}
+				}
+				if !already {
+					order = append(order, name)
+				}
+			default:
+			}
+		}
+	}
+	next()
+	next()
+	next()
+	if fmt.Sprint(order) != fmt.Sprint([]string{"tick-1", "action", "tick-2"}) {
+		t.Fatalf("the lane was handed on in the order %v, want a tick, then the waiting action, then the next tick", order)
 	}
 }

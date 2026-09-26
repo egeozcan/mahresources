@@ -46,11 +46,16 @@ var ErrHostJobHeld = errHostJobHeld
 //
 // A schedule's tick is the one exception to arrival order (joinAhead): it goes
 // ahead of the plugin's queued actions and waits only for the work already
-// running and for ticks that joined ahead before it.
+// running and for ticks that joined ahead before it. The exception is bounded:
+// two ticks are never handed the lane in a row while an action is waiting, so a
+// schedule that overruns its own interval cannot keep submitted work out.
 type pluginLane struct {
 	mu      sync.Mutex
 	held    bool
 	waiters []laneWaiter
+	// servedAhead records that the lane was last handed to a tick that joined
+	// ahead.
+	servedAhead bool
 }
 
 // laneWaiter is one place in a lane's queue.
@@ -89,6 +94,7 @@ func (l *pluginLane) enter(ahead bool) *laneTicket {
 	defer l.mu.Unlock()
 	if !l.held {
 		l.held = true
+		l.servedAhead = ahead
 		close(turn)
 		return &laneTicket{lane: l, turn: turn}
 	}
@@ -118,9 +124,9 @@ func (l *pluginLane) depth() int {
 }
 
 // wait waits for this ticket's turn. deadline bounds the wait (zero waits for as
-// long as it takes) and done abandons it; either way a false answer has given the
-// place up and holds nothing.
-func (t *laneTicket) wait(done <-chan struct{}, deadline time.Time) bool {
+// long as it takes), and done and revoked abandon it; either way a false answer
+// has given the place up and holds nothing.
+func (t *laneTicket) wait(done <-chan struct{}, deadline time.Time, revoked <-chan struct{}) bool {
 	select {
 	case <-t.turn:
 		return true
@@ -136,6 +142,7 @@ func (t *laneTicket) wait(done <-chan struct{}, deadline time.Time) bool {
 	case <-t.turn:
 		return true
 	case <-done:
+	case <-revoked:
 	case <-expired:
 	}
 	t.leave()
@@ -159,17 +166,30 @@ func (t *laneTicket) leave() {
 	l.release()
 }
 
-// release gives the lane to the oldest waiter, or frees it.
+// release gives the lane to the next waiter, or frees it. The next waiter is the
+// first in the queue, except that a tick is not handed the lane right after
+// another tick while an action is waiting: the oldest action goes first.
 func (l *pluginLane) release() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.waiters) > 0 {
-		next := l.waiters[0]
-		l.waiters = l.waiters[1:]
-		close(next.turn)
+	if len(l.waiters) == 0 {
+		l.held = false
+		l.servedAhead = false
 		return
 	}
-	l.held = false
+	at := 0
+	if l.waiters[0].ahead && l.servedAhead {
+		for i, waiter := range l.waiters {
+			if !waiter.ahead {
+				at = i
+				break
+			}
+		}
+	}
+	next := l.waiters[at]
+	l.waiters = append(l.waiters[:at], l.waiters[at+1:]...)
+	l.servedAhead = next.ahead
+	close(next.turn)
 }
 
 // laneFor returns the lane of one plugin, by name: a disabled and re-enabled
@@ -239,11 +259,16 @@ const (
 	asyncClosing
 	// asyncNotStarted means the work itself reported that it never began.
 	asyncNotStarted
+	// asyncRevoked means the VM the work belongs to was revoked — its plugin was
+	// disabled or reloaded — before the work was entered.
+	asyncRevoked
 )
 
 // asyncBounds are the waits one execution may spend before its work is entered.
 // A zero deadline waits for as long as it takes.
 type asyncBounds struct {
+	// revoked ends every wait when the VM the work belongs to is revoked.
+	revoked <-chan struct{}
 	// lane bounds the wait for the plugin's lane.
 	lane time.Time
 	// slotWait bounds the wait for a job slot and for the host's admission,
@@ -267,8 +292,9 @@ func (b asyncBounds) slotDeadline(now time.Time) time.Time {
 }
 
 // acquireJobSlotUntil takes one of the process's job slots, waiting until the
-// deadline (zero waits forever) or until the manager closes.
-func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time) asyncOutcome {
+// deadline (zero waits forever), until the manager closes, or until the VM the
+// work belongs to is revoked.
+func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time, revoked <-chan struct{}) asyncOutcome {
 	var expired <-chan time.Time
 	if !deadline.IsZero() {
 		timer := time.NewTimer(time.Until(deadline))
@@ -280,51 +306,66 @@ func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time) asyncOutcome {
 		return asyncRan
 	case <-pm.done:
 		return asyncClosing
+	case <-revoked:
+		return asyncRevoked
 	case <-expired:
 		return asyncGaveUp
 	}
 }
 
-// admitHostJob asks the host for the durable claim, asking again while the
-// deployment's budget is full, until the deadline (zero waits forever).
-func (pm *PluginManager) admitHostJob(job *ActionJob, deadline time.Time) asyncOutcome {
+// admitOnce asks the host for the durable claim once. It is asked with the
+// plugin's VM already held, so the claim is only ever taken by work that can
+// start at once: waiting for the VM with a claim held would hold a slot of the
+// deployment's budget for work that is doing nothing. retry reports a full
+// budget, which writes nothing and may be asked about again; otherwise outcome
+// is asyncRan when the work may start.
+func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (outcome asyncOutcome, retry bool) {
 	ref := job.hostJobRef()
 	if ref == nil || ref.Admission == nil {
-		return asyncRan
+		return asyncRan, false
 	}
-	for {
-		if pm.closed.Load() {
-			return asyncClosing
+	if pm.closed.Load() {
+		return asyncClosing, false
+	}
+	switch ref.Admission.Admit(deadline) {
+	case Admitted:
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			// Admitted too late: the caller that bounded this wait has stopped
+			// waiting, so the execution does not start. The host holds the claim
+			// it granted and settles it on the way out.
+			return asyncGaveUp, false
 		}
-		switch ref.Admission.Admit(deadline) {
-		case Admitted:
-			if !deadline.IsZero() && time.Now().After(deadline) {
-				// Admitted too late: the caller that bounded this wait has
-				// stopped waiting, so the execution does not start. The host
-				// holds the claim it granted and settles it on the way out.
-				return asyncGaveUp
-			}
-			return asyncRan
-		case AdmitWithdrawn:
-			return asyncWithdrawn
+		return asyncRan, false
+	case AdmitWithdrawn:
+		return asyncWithdrawn, false
+	default:
+		return asyncRan, true
+	}
+}
+
+// pauseBeforeAdmission waits before the head of a lane asks the host again,
+// bounded by the deadline and abandoned when the manager closes or the VM is
+// revoked.
+func (pm *PluginManager) pauseBeforeAdmission(deadline time.Time, revoked <-chan struct{}) asyncOutcome {
+	pause := hostAdmissionPollInterval
+	if !deadline.IsZero() {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return asyncGaveUp
 		}
-		pause := hostAdmissionPollInterval
-		if !deadline.IsZero() {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return asyncGaveUp
-			}
-			if remaining < pause {
-				pause = remaining
-			}
+		if remaining < pause {
+			pause = remaining
 		}
-		timer := time.NewTimer(pause)
-		select {
-		case <-pm.done:
-			timer.Stop()
-			return asyncClosing
-		case <-timer.C:
-		}
+	}
+	timer := time.NewTimer(pause)
+	defer timer.Stop()
+	select {
+	case <-pm.done:
+		return asyncClosing
+	case <-revoked:
+		return asyncRevoked
+	case <-timer.C:
+		return asyncRan
 	}
 }
 

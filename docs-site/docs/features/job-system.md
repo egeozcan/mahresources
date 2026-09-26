@@ -59,9 +59,9 @@ Every Kind's running Jobs count against one deployment budget,
 occurrence, which gives up after 10 seconds without a slot and is withdrawn; see
 [Timing you should not rely on](./plugin-lua-api.md#timing-you-should-not-rely-on).
 Plugin work also waits
-for its plugin: a plugin runs one of its async actions, `mah.start_job` jobs and
-schedule runs at a time, so a plugin's backlog is `queued` Jobs behind one running
-Job and occupies one slot of the budget.
+for its plugin: in each server process a plugin runs one of its async actions,
+`mah.start_job` jobs and schedule runs at a time, so a plugin's backlog is `queued`
+Jobs behind one running Job and occupies one slot of the budget per process.
 
 ## State and visibility
 

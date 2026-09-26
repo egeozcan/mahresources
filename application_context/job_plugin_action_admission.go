@@ -39,18 +39,19 @@ type pluginActionAdmission struct {
 	// closure's input is not replayable, so the claim opens nothing and the
 	// accepting call's own description stands in for it.
 	input *pluginActionJobInput
-	// mayRun re-checks, under the fresh claim, that the execution may still run
-	// as the principal it acts as. It records what stops it — a block or a
-	// failure — and answers false; nil means nothing is re-checked.
-	mayRun func(execution jobs.Execution, input *pluginActionJobInput) bool
+	// refusal re-checks, under the fresh claim, that the execution may still run
+	// as the principal it acts as. It answers nil when it may, and otherwise the
+	// write that records what stops it (a block or a failure); a nil refusal
+	// re-checks nothing.
+	refusal func(execution jobs.Execution, input *pluginActionJobInput) func() error
 
 	mu        sync.Mutex
 	execution jobs.Execution
 	sink      *pluginActionSink
 }
 
-func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pluginActionJobInput, mayRun func(jobs.Execution, *pluginActionJobInput) bool) *pluginActionAdmission {
-	return &pluginActionAdmission{ctx: ctx, jobID: jobID, subtype: input.Subtype, input: input, mayRun: mayRun}
+func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pluginActionJobInput, refusal func(jobs.Execution, *pluginActionJobInput) func() error) *pluginActionAdmission {
+	return &pluginActionAdmission{ctx: ctx, jobID: jobID, subtype: input.Subtype, input: input, refusal: refusal}
 }
 
 // hostJobRef is the reference plugin_system is handed for this execution.
@@ -89,14 +90,17 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) plugin_system.AdmitRes
 	}
 	input, err := a.inputOf(execution)
 	if err != nil {
-		if failErr := a.ctx.failPluginActionJob(execution, "plugin-action-unavailable",
-			"the plugin action could not be started"); failErr != nil {
-			log.Printf("warning: could not fail plugin job %s: %v", a.jobID, failErr)
-		}
+		a.ctx.settleRefusedPluginAction(execution, func() error {
+			return a.ctx.failPluginActionJob(execution, "plugin-action-unavailable",
+				"the plugin action could not be started")
+		})
 		return plugin_system.AdmitWithdrawn
 	}
-	if a.mayRun != nil && !a.mayRun(execution, input) {
-		return plugin_system.AdmitWithdrawn
+	if a.refusal != nil {
+		if record := a.refusal(execution, input); record != nil {
+			a.ctx.settleRefusedPluginAction(execution, record)
+			return plugin_system.AdmitWithdrawn
+		}
 	}
 	a.mu.Lock()
 	a.execution = execution
@@ -179,6 +183,35 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 		"the process that was going to run this job stopped first"); err != nil {
 		log.Printf("warning: could not withdraw plugin job %s: %v", a.jobID, err)
 	}
+}
+
+// settleRefusedPluginAction records why a Job this process has just claimed will
+// not run, and keeps trying until the record lands.
+//
+// The execution has already been given up, so a refusal that was not recorded
+// would leave the Job running, heartbeated and owned by nothing — holding a slot
+// of the deployment's budget and hiding the work from the person waiting for it.
+// It is retried the way a refused outcome is (retainUnsettled), and it stops once
+// the Job has left running, whoever moved it.
+func (ctx *MahresourcesContext) settleRefusedPluginAction(execution jobs.Execution, record func() error) {
+	err := record()
+	if err == nil {
+		return
+	}
+	log.Printf("warning: could not record why plugin job %s will not run; retrying: %v", execution.JobID, err)
+	go func() {
+		ticker := time.NewTicker(pluginActionSettlementRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := record(); err == nil {
+				return
+			}
+			snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
+			if err == nil && snap.State != jobs.StateRunning {
+				return
+			}
+		}
+	}()
 }
 
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process

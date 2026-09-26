@@ -3,8 +3,12 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"mahresources/jobs"
 	"mahresources/models"
@@ -338,5 +342,68 @@ func TestAnOccurrenceAdmittedUnderADeadlinePublishesAfterIt(t *testing.T) {
 	}
 	if len(outputs) != 1 || outputs[0].Key != "result" {
 		t.Fatalf("the occurrence published %+v, want its result", outputs)
+	}
+}
+
+// TestARefusalThatCannotBeRecordedAtOnceIsRecordedLater pins the one write that
+// comes after this process has given up an execution it claimed. A refusal made
+// under the claim — here an acting account that was disabled while the action
+// waited — ends the execution before anything runs; if recording the block were
+// dropped on a transient failure, the Job would stay running, heartbeated, with
+// nothing to run it and a slot of the budget held for good.
+func TestARefusalThatCannotBeRecordedAtOnceIsRecordedLater(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	actor := models.User{Username: "disabled-actor", Role: models.RoleUser, PasswordHash: "x", Disabled: true}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+
+	var failures atomic.Int64
+	failures.Store(2)
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("fail-first-blocks", func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(jobs.StateBlocked) {
+			return
+		}
+		if failures.Add(-1) >= 0 {
+			_ = db.AddError(errors.New("database is locked"))
+		}
+	}); err != nil {
+		t.Fatalf("register the failing callback: %v", err)
+	}
+
+	input := &pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "async-work",
+		EntityType: "resource", Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("encode the input: %v", err)
+	}
+	owner := actor.ID
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Async Work", OwnerUserID: &owner, ActorUserID: &owner,
+		Replay: jobs.ReplayInput{Input: raw},
+	})
+	if err := ctx.queueRegisteredPluginAction(pm, accepted.ID, "refused-handle", &owner, input); err != nil {
+		t.Fatalf("queue the action: %v", err)
+	}
+
+	waitFor(t, "the refusal to be recorded", func() bool {
+		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateBlocked
+	})
+	if failures.Load() >= 0 {
+		t.Fatalf("the injected failures were not all consumed (%d left): the test did not reach the retry", failures.Load())
+	}
+	if got := pluginKVForTest(t, ctx, "ran"); got != "" {
+		t.Fatalf("a refused action ran its handler (%q)", got)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("a blocked action still holds %d slots of the budget", held)
 	}
 }

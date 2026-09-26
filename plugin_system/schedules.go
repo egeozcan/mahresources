@@ -343,41 +343,45 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	// the TTL the row reads as unclaimed again and the next tick starts a second
 	// run of a schedule that has not begun its first.
 	deadline := time.Now().Add(wait)
-	bounds := asyncBounds{lane: deadline, slot: deadline}
+	bounds := asyncBounds{lane: deadline, slot: deadline, revoked: pm.stateRevoked(state)}
 	if !holdClaim {
-		bounds = asyncBounds{slotWait: wait}
+		bounds = asyncBounds{slotWait: wait, revoked: bounds.revoked}
 	}
 
 	// A tick goes ahead of the plugin's queued actions: see joinAhead.
 	ticket := pm.laneFor(reg.PluginName).joinAhead()
-	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, func() error {
-		mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
-		if mu == nil {
+	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, asyncWork{
+		lock: func() (*vmMutex, error) {
+			mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
+			if mu != nil {
+				return mu, nil
+			}
 			if !busy {
-				return fmt.Errorf("plugin %q is no longer available", reg.PluginName)
+				return nil, errPluginGone
 			}
 			// Busy, and the budget is spent. The handler was never called, so
 			// this is "not this tick" rather than a failed run — the same answer
 			// a full job budget gives, and the dispatcher already knows how to
-			// hand the claim back for it. errJobDidNotStart is what keeps the
-			// job runner from recording it as a failure on the way out.
-			return errScheduleVMBusy
-		}
-		defer mu.Unlock()
+			// hand the claim back for it.
+			return nil, errScheduleVMBusy
+		},
+		run: func(mu *vmMutex) error {
+			defer mu.Unlock()
 
-		timeoutCtx, cancel := context.WithTimeout(
-			withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
-		state.SetContext(timeoutCtx)
-		defer func() {
-			state.RemoveContext()
-			cancel()
-		}()
+			timeoutCtx, cancel := context.WithTimeout(
+				withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
+			state.SetContext(timeoutCtx)
+			defer func() {
+				state.RemoveContext()
+				cancel()
+			}()
 
-		return state.CallByParam(lua.P{
-			Fn:      fn,
-			NRet:    0,
-			Protect: true,
-		}, lua.LString(jobID))
+			return state.CallByParam(lua.P{
+				Fn:      fn,
+				NRet:    0,
+				Protect: true,
+			}, lua.LString(jobID))
+		},
 	})
 
 	if !ran {

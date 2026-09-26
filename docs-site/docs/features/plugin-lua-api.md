@@ -1311,7 +1311,7 @@ end)
 The job appears in the job system and is tracked via SSE events. Three limits apply:
 
 - The callback runs under a 5 minute deadline, after which its context is cancelled. The same bound applies to a `mah.schedule` run.
-- The job waits `queued` until its turn comes: a plugin runs one of its async actions, `mah.start_job` jobs and schedule runs at a time, its actions and jobs start in the order they were submitted, and the job also needs one of the process's 3 plugin job slots and room in the deployment's job budget (`-max-job-concurrency`). A job started from inside an action or another job of the same plugin therefore starts after that handler returns. A full budget never makes the call raise: it returns the job id at once, and the callback runs when a slot frees.
+- The job waits `queued` until its turn comes: in each server process a plugin runs one of its async actions, `mah.start_job` jobs and schedule runs at a time, its actions and jobs start in the order they were submitted, and the job also needs one of the process's 3 plugin job slots and room in the deployment's job budget (`-max-job-concurrency`). A job whose plugin is disabled before its turn comes never runs, and ends as cancelled. A job started from inside an action or another job of the same plugin therefore starts after that handler returns. A full budget never makes the call raise: it returns the job id at once, and the callback runs when a slot frees.
 - The call raises `plugin has been disabled` instead of returning a job id when the plugin was disabled between the call and the registration.
 
 ## mah.schedule -- Recurring Work

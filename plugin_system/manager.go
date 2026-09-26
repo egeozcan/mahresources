@@ -252,6 +252,8 @@ type PluginManager struct {
 	// lanes serialize each plugin's async executions (see action_lanes.go).
 	lanes   map[string]*pluginLane
 	lanesMu sync.Mutex
+	// revocations are closed when their VM is revoked, under mu (stateRevoked).
+	revocations map[*lua.LState]chan struct{}
 
 	// hostJobs is the host's durable Job control plane, installed after
 	// construction (see SetHostJobs). Nil leaves plugin background work with its
@@ -1802,6 +1804,8 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			switch pm.runStartJobGoroutine(job, ticket, mainState(L), fn, jobID) {
 			case asyncGaveUp, asyncWithdrawn:
 				pm.dropUnstartedJob(job)
+			case asyncRevoked:
+				pm.abandonUnstartedJob(job)
 			}
 		}()
 
@@ -2271,7 +2275,35 @@ func (pm *PluginManager) revokeLocked(state *lua.LState) (*vmMutex, bool) {
 	mu, owned := pm.vmLocks[state]
 	delete(pm.vmLocks, state)
 	delete(pm.generations, state)
+	if revoked, ok := pm.revocations[state]; ok {
+		close(revoked)
+		delete(pm.revocations, state)
+	}
 	return mu, owned
+}
+
+// stateRevoked answers a channel that is closed once L's VM is revoked — at
+// once, for a VM that already is. It is what async work waiting for its turn
+// selects on, so a disabled plugin's queued work leaves instead of holding the
+// teardown open until it reaches the head of a lane.
+func (pm *PluginManager) stateRevoked(L *lua.LState) <-chan struct{} {
+	root := mainState(L)
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if _, live := pm.vmLocks[root]; !live {
+		gone := make(chan struct{})
+		close(gone)
+		return gone
+	}
+	if pm.revocations == nil {
+		pm.revocations = make(map[*lua.LState]chan struct{})
+	}
+	revoked, ok := pm.revocations[root]
+	if !ok {
+		revoked = make(chan struct{})
+		pm.revocations[root] = revoked
+	}
+	return revoked
 }
 
 // finishTeardown waits for a revoked plugin's in-flight async work, closes its
