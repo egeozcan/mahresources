@@ -174,3 +174,22 @@ func TestALegacyStreamRefusesACredentialThatNoLongerAuthenticatesAtConnect(t *te
 		t.Fatalf("a refused stream sent its initial state: %s", recorder.Body.String())
 	}
 }
+
+// A promotion counts from the next frame too: an event the viewer could not see
+// under the last check is not dropped on that stale answer.
+func TestALegacyStreamDeliversToAPromotedViewerBeforeTheNextTick(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	const viewer, other = uint(7), uint(8)
+	source := &changingJobEventsSource{}
+	source.set(&principalJobEventsContext{stub, &auth.Principal{UserID: viewer, Role: models.RoleUser}})
+	response, _ := startLegacyEventsHandler(t, source)
+
+	source.set(&principalJobEventsContext{stub, &auth.Principal{UserID: viewer, Role: models.RoleAdmin}})
+	promoted := submitOwnedLegacyJob(t, manager, other)
+	if !waitForBody(response, promoted, 2*time.Second) {
+		t.Fatalf("a viewer promoted to administrator did not receive another user's job %q: %s",
+			promoted, response.String())
+	}
+}

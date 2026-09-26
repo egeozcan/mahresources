@@ -970,12 +970,6 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				if !ok {
 					return
 				}
-				// Checked against the last answer first, so an event this viewer could
-				// not see then costs no credential read; a promotion since is picked
-				// up by the next check.
-				if !jobVisibleToPrincipal(ctx.Principal(), event.Job.GetOwnerUserID()) {
-					continue
-				}
 				if !revalidate() {
 					return
 				}
