@@ -624,3 +624,82 @@ func TestTicksCannotKeepActionsOutOfTheirLane(t *testing.T) {
 		t.Fatalf("the lane was handed on in the order %v, want a tick, then the waiting action, then the next tick", order)
 	}
 }
+
+// TestWorkWaitingForItsVMHoldsNoJobSlot pins the other half of taking the slot
+// and the VM together: an action whose plugin is busy with a synchronous call
+// waits for that VM holding none of the process's job slots, which other
+// plugins' work needs.
+func TestWorkWaitingForItsVMHoldsNoJobSlot(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	defer gate.open.Store(true)
+
+	held := make(chan error, 1)
+	go func() {
+		_, err := pm.RunAction(context.Background(), "busy", "hold", 1, nil, "")
+		held <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", 2, nil, ""); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := len(pm.actionSemaphore); got != 0 {
+		t.Fatalf("an action waiting for its busy VM holds %d job slots, want none", got)
+	}
+
+	gate.open.Store(true)
+	if err := <-held; err != nil {
+		t.Fatalf("the synchronous call: %v", err)
+	}
+	waitUntil(t, "the action to run once its VM was free", 5*time.Second, func() bool {
+		return jobStatuses(pm, "busy")["completed"] == 1
+	})
+}
+
+// revokingAdmission disables its plugin while the claim is being taken, which is
+// the window between locking the VM and entering the handler.
+type revokingAdmission struct {
+	pm     *PluginManager
+	plugin string
+}
+
+func (a *revokingAdmission) Admit(time.Time) AdmitResult {
+	_, L, err := a.pm.FindAction(a.plugin, "work")
+	if err != nil {
+		return AdmitWithdrawn
+	}
+	go func() { _ = a.pm.DisablePlugin(a.plugin) }()
+	for a.pm.stillRegistered(L) {
+		time.Sleep(time.Millisecond)
+	}
+	return Admitted
+}
+
+// TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler pins the re-check
+// after the claim. The VM is locked before the claim is asked for, and a disable
+// revokes the VM without waiting for that lock; a claim granted meanwhile must
+// end the Job as work whose plugin went away rather than enter a revoked VM. A
+// scheduled tick is the case to pin, because it runs the handler it captured
+// rather than resolving the registration again.
+func TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	gate.open.Store(true)
+
+	regs := pm.DeclaredSchedules("busy")
+	sink := &recordingSink{}
+	_, ran, err := pm.RunScheduleForHost(regs[0], 1, 5*time.Second, true,
+		&HostJobRef{JobID: "revoked-job", Handle: "revoked-handle", Sink: sink,
+			Admission: &revokingAdmission{pm: pm, plugin: "busy"}})
+	if !ran || err == nil {
+		t.Fatalf("a tick whose plugin was disabled during admission answered ran=%v err=%v, want a failed run", ran, err)
+	}
+	if got := gate.order(); len(got) != 0 {
+		t.Fatalf("the handler was entered (%v) after its VM was revoked", got)
+	}
+	if _, completed, failed, _ := sink.counts(); completed != 0 || failed != 1 {
+		t.Fatalf("the host was told completed=%d failed=%d, want one failure", completed, failed)
+	}
+}

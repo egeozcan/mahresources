@@ -171,3 +171,48 @@ func TestAClaimAgainstAFullBudgetWritesNothingAtAll(t *testing.T) {
 		t.Fatalf("three refused claims issued %d updates, want none", got)
 	}
 }
+
+// TestAClaimsDeadlineDoesNotReachTheReadsAfterItsCommit pins where a claim's
+// deadline stops. A caller may bound the claim's own queries; once the claim has
+// committed, the execution is loaded on the caller's context, because a read
+// that ran into the deadline there would leave the Job running with no
+// execution to run it or settle it.
+func TestAClaimsDeadlineDoesNotReachTheReadsAfterItsCommit(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-deadline.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	waiting := acceptQueued(t, svc, deps, nil)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	var committed atomic.Bool
+	// The started event is the claim transaction's last write, so every read
+	// after it is a read after the commit.
+	if err := deps.DB.Callback().Create().After("gorm:create").Register("mark-claim-committed", func(db *gorm.DB) {
+		if db.Statement.Table == "job_events" {
+			committed.Store(true)
+		}
+	}); err != nil {
+		t.Fatalf("register the commit marker: %v", err)
+	}
+	if err := deps.DB.Callback().Query().Before("gorm:query").Register("outlast-the-deadline", func(db *gorm.DB) {
+		if committed.Load() {
+			time.Sleep(time.Until(deadline) + 50*time.Millisecond)
+		}
+	}); err != nil {
+		t.Fatalf("register the slow read: %v", err)
+	}
+
+	bounded := deps
+	claimCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	bounded.DB = deps.DB.WithContext(claimCtx)
+	execution, err := svc.ClaimJob(context.Background(), bounded, ClaimRequest{
+		Kind: testKind, KindVersion: 1, JobID: waiting.ID, Claimant: "bounded-runtime",
+	})
+	if err != nil {
+		t.Fatalf("a claim that committed before its deadline failed loading its execution: %v", err)
+	}
+	if execution.ExecutionToken == "" || jobRow(t, deps, waiting.ID).ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the execution does not own the claimed job")
+	}
+}

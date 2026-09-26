@@ -179,10 +179,10 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 	if a.subtype == pluginActionSubtypeRegistered {
 		return
 	}
-	if err := a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: a.jobID}, "not-started",
-		"the process that was going to run this job stopped first"); err != nil {
-		log.Printf("warning: could not withdraw plugin job %s: %v", a.jobID, err)
-	}
+	a.ctx.settlePluginActionWhile(a.jobID, jobs.StateQueued, func() error {
+		return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: a.jobID}, "not-started",
+			"the process that was going to run this job stopped first")
+	})
 }
 
 // settleRefusedPluginAction records why a Job this process has just claimed will
@@ -194,11 +194,20 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 // It is retried the way a refused outcome is (retainUnsettled), and it stops once
 // the Job has left running, whoever moved it.
 func (ctx *MahresourcesContext) settleRefusedPluginAction(execution jobs.Execution, record func() error) {
+	ctx.settlePluginActionWhile(execution.JobID, jobs.StateRunning, record)
+}
+
+// settlePluginActionWhile makes one write that ends a Job this process has given
+// up, and retries it until it lands or the Job has left the state it was in —
+// whoever moved it owns it then. Nothing else would ever end it: no execution in
+// this process holds it any more, and while this process is alive no other one
+// can prove its work is gone.
+func (ctx *MahresourcesContext) settlePluginActionWhile(jobID string, state jobs.State, record func() error) {
 	err := record()
 	if err == nil {
 		return
 	}
-	log.Printf("warning: could not record why plugin job %s will not run; retrying: %v", execution.JobID, err)
+	log.Printf("warning: could not end plugin job %s; retrying: %v", jobID, err)
 	go func() {
 		ticker := time.NewTicker(pluginActionSettlementRetryInterval)
 		defer ticker.Stop()
@@ -206,8 +215,8 @@ func (ctx *MahresourcesContext) settleRefusedPluginAction(execution jobs.Executi
 			if err := record(); err == nil {
 				return
 			}
-			snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
-			if err == nil && snap.State != jobs.StateRunning {
+			snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+			if err == nil && snap.State != state {
 				return
 			}
 		}
@@ -223,8 +232,9 @@ func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string, deadline
 		return jobs.Execution{}, errors.New("this context has no job control plane installed")
 	}
 	// The deadline rides on the handle the claim's own queries run on, and not on
-	// the context ClaimJob is given: that one is what the execution publishes
-	// through for the rest of its life, long after this deadline has passed.
+	// the context ClaimJob is given: that one is what the execution is loaded
+	// with after the commit and publishes through for the rest of its life, long
+	// after this deadline has passed.
 	deps := ctx.jobDeps()
 	if !deadline.IsZero() && deps.DB != nil {
 		claimCtx, cancel := context.WithDeadline(context.Background(), deadline)

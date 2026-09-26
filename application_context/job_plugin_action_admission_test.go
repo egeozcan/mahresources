@@ -407,3 +407,37 @@ func TestARefusalThatCannotBeRecordedAtOnceIsRecordedLater(t *testing.T) {
 		t.Fatalf("a blocked action still holds %d slots of the budget", held)
 	}
 }
+
+// TestAWithdrawalThatCannotBeRecordedAtOnceIsRecordedLater pins the lost callback
+// before the claim. A closure whose VM went away can never run, and no other
+// process will withdraw it while this one is alive; a withdrawal dropped on a
+// transient failure would leave it queued for good.
+func TestAWithdrawalThatCannotBeRecordedAtOnceIsRecordedLater(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	closure := acceptClosureJobForTest(t, ctx, plugin_system.CurrentRuntimeIdentity().String())
+
+	var failures atomic.Int64
+	failures.Store(2)
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("fail-first-withdrawals", func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(jobs.StateCancelled) {
+			return
+		}
+		if failures.Add(-1) >= 0 {
+			_ = db.AddError(errors.New("database is locked"))
+		}
+	}); err != nil {
+		t.Fatalf("register the failing callback: %v", err)
+	}
+
+	admission := ctx.newPluginActionAdmission(closure.ID,
+		&pluginActionJobInput{Subtype: pluginActionSubtypeClosure, Plugin: pluginActionTestPlugin}, nil)
+	admission.CallbackLost("plugin-unavailable")
+
+	waitFor(t, "the withdrawal to be recorded", func() bool {
+		return jobStateForTest(t, ctx, closure.ID) == jobs.StateCancelled
+	})
+	if failures.Load() >= 0 {
+		t.Fatalf("the injected failures were not all consumed (%d left): the test did not reach the retry", failures.Load())
+	}
+}

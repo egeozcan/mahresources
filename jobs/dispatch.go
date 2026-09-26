@@ -200,7 +200,11 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	if err != nil {
 		return Execution{}, err
 	}
-	return s.executionFor(ctx, deps, claimed, claim, State(job.State), claimFromWaiting)
+	// The execution is built on ctx, not on whatever bound the claim's own
+	// queries: a caller may give the claim a deadline, and a read after the
+	// commit that ran into it would leave the Job running with no execution to
+	// run or settle it.
+	return s.executionFor(ctx, deps.withContext(ctx), claimed, claim, State(job.State), claimFromWaiting)
 }
 
 // validateClaimRequest checks a claim and normalizes the budgets it occupies.

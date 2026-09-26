@@ -351,7 +351,10 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	// A tick goes ahead of the plugin's queued actions: see joinAhead.
 	ticket := pm.laneFor(reg.PluginName).joinAhead()
 	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, asyncWork{
-		lock: func() (*vmMutex, error) {
+		lock: func(wait bool) (*vmMutex, error) {
+			if !wait {
+				return pm.lockVMFor(state, false)
+			}
 			mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
 			if mu != nil {
 				return mu, nil
@@ -365,6 +368,7 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 			// hand the claim back for it.
 			return nil, errScheduleVMBusy
 		},
+		live: func() bool { return pm.stillRegistered(state) },
 		run: func(mu *vmMutex) error {
 			defer mu.Unlock()
 

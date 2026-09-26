@@ -17,9 +17,12 @@ import (
 // into slots every other plugin and every other Kind is waiting for.
 //
 // So the order is fixed: the plugin's lane first (in arrival order, holding
-// nothing), then a job slot, then the host's admission — the durable claim that
-// occupies deployment capacity — and only then the VM. The execution at the head
-// of a lane is the only one of its plugin that competes for anything shared.
+// nothing), then a job slot and the VM, taken together (acquireSlotAndVM), and
+// only then the host's admission — the durable claim that occupies deployment
+// capacity — asked for with the VM in hand, so the claim is only ever taken by
+// work that starts at once. A full budget gives the slot and the VM back before
+// waiting. The execution at the head of a lane is the only one of its plugin
+// that competes for anything shared.
 
 // hostAdmissionPollInterval is how long the head of a lane waits before asking
 // the host again after the deployment's budget refused it. A refusal writes
@@ -295,6 +298,13 @@ func (b asyncBounds) slotDeadline(now time.Time) time.Time {
 // deadline (zero waits forever), until the manager closes, or until the VM the
 // work belongs to is revoked.
 func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time, revoked <-chan struct{}) asyncOutcome {
+	// A free slot is taken even when the deadline has passed: a select with a
+	// free slot and an expired timer both ready picks either.
+	select {
+	case pm.actionSemaphore <- struct{}{}:
+		return asyncRan
+	default:
+	}
 	var expired <-chan time.Time
 	if !deadline.IsZero() {
 		timer := time.NewTimer(time.Until(deadline))

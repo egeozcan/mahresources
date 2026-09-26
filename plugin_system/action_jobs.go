@@ -389,18 +389,47 @@ func (pm *PluginManager) FillJobBudgetForTest() func() {
 
 // asyncWork is one execution's Lua side.
 //
-// lock takes the plugin's VM for the execution and answers it held. It answers
-// errPluginGone when the plugin is no longer there to run it, or an error
-// wrapping errJobDidNotStart when a bounded wait for the VM ran out. run enters
-// the handler with the VM held, and releases it before returning.
+// lock takes the plugin's VM for the execution and answers it held: waiting for
+// it when wait is set, and otherwise answering errVMBusy at once when it is
+// taken. It answers errPluginGone when the plugin is no longer there to run it,
+// or an error wrapping errJobDidNotStart when a bounded wait for the VM ran out.
+// live reports, with the VM held, whether the VM lock answered for is still the
+// plugin's. run enters the handler with the VM held, and releases it before
+// returning.
 type asyncWork struct {
-	lock func() (*vmMutex, error)
+	lock func(wait bool) (*vmMutex, error)
+	live func() bool
 	run  func(mu *vmMutex) error
 }
 
 // errPluginGone is asyncWork.lock's answer for a plugin that was disabled or
 // reloaded: its VM is gone, and nothing was entered.
 var errPluginGone = errors.New("the plugin is no longer available")
+
+// errVMBusy is asyncWork.lock's answer, without waiting, for a VM somebody else
+// holds.
+var errVMBusy = errors.New("the plugin's VM is busy")
+
+// lockVMFor is asyncWork.lock for a VM that is always waited for when asked to
+// wait.
+func (pm *PluginManager) lockVMFor(L *lua.LState, wait bool) (*vmMutex, error) {
+	if wait {
+		mu := pm.LockVM(L)
+		if mu == nil {
+			return nil, errPluginGone
+		}
+		return mu, nil
+	}
+	mu, busy := pm.TryLockVMWithin(context.Background(), L, 0)
+	switch {
+	case mu != nil:
+		return mu, nil
+	case busy:
+		return nil, errVMBusy
+	default:
+		return nil, errPluginGone
+	}
+}
 
 // executeAsyncJob is the common scaffold for running an async job goroutine:
 // the plugin's lane, a job slot, the VM, the host's admission, panic recovery,
@@ -489,19 +518,11 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	defer ticket.lane.release()
 
 	slotDeadline := bounds.slotDeadline(time.Now())
-	if got := pm.acquireJobSlotUntil(slotDeadline, bounds.revoked); got != asyncRan {
-		return got
-	}
-	defer func() { <-pm.actionSemaphore }()
-
 	var mu *vmMutex
 	for {
-		held, err := work.lock()
-		switch {
-		case errors.Is(err, errJobDidNotStart):
-			return asyncGaveUp
-		case err != nil:
-			return asyncRevoked
+		held, got := pm.acquireSlotAndVM(work, slotDeadline, bounds.revoked)
+		if got != asyncRan {
+			return got
 		}
 		got, retry := pm.admitOnce(job, slotDeadline)
 		if !retry && got == asyncRan {
@@ -509,6 +530,7 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			break
 		}
 		held.Unlock()
+		<-pm.actionSemaphore
 		if !retry {
 			return got
 		}
@@ -516,8 +538,17 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			return paused
 		}
 	}
+	defer func() { <-pm.actionSemaphore }()
 
 	started = true
+	if !work.live() {
+		// The plugin was disabled or reloaded while the claim was being asked
+		// for: the VM was revoked under the lock this execution holds. The claim
+		// was granted, so the Job ends here, as work whose plugin went away.
+		mu.Unlock()
+		pm.settleActionJob(job, logLabel, fmt.Errorf("plugin %q is no longer available", job.PluginName))
+		return asyncRan
+	}
 	job.mu.Lock()
 	job.Status = "running"
 	job.Message = "Running..."
@@ -536,6 +567,45 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 
 	pm.settleActionJob(job, logLabel, err)
 	return asyncRan
+}
+
+// acquireSlotAndVM takes one of the process's job slots and the plugin's VM
+// together, and never waits for one while holding the other: a slot held while
+// the VM is busy with a synchronous call is a slot no other plugin can use, and
+// the VM held while waiting for a slot holds the plugin's hooks and pages behind
+// other plugins' work. It waits for the VM, takes a slot if one is free, and
+// otherwise gives the VM back, waits for a slot, and takes the VM only if it is
+// free, until both come together.
+func (pm *PluginManager) acquireSlotAndVM(work asyncWork, deadline time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
+	outcomeOf := func(err error) asyncOutcome {
+		if errors.Is(err, errJobDidNotStart) {
+			return asyncGaveUp
+		}
+		return asyncRevoked
+	}
+	for {
+		mu, err := work.lock(true)
+		if err != nil {
+			return nil, outcomeOf(err)
+		}
+		select {
+		case pm.actionSemaphore <- struct{}{}:
+			return mu, asyncRan
+		default:
+		}
+		mu.Unlock()
+		if got := pm.acquireJobSlotUntil(deadline, revoked); got != asyncRan {
+			return nil, got
+		}
+		mu, err = work.lock(false)
+		if err == nil {
+			return mu, asyncRan
+		}
+		<-pm.actionSemaphore
+		if !errors.Is(err, errVMBusy) {
+			return nil, outcomeOf(err)
+		}
+	}
 }
 
 // isClosed reports whether a channel is closed, without waiting.
@@ -657,18 +727,19 @@ func (pm *PluginManager) resolveQueuedAction(job *ActionJob, params map[string]a
 func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTicket, revoked <-chan struct{}, entityID uint, params map[string]any, expectFilters string) asyncOutcome {
 	var L *lua.LState
 	return pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), ticket, revoked, asyncWork{
-		lock: func() (*vmMutex, error) {
+		lock: func(wait bool) (*vmMutex, error) {
 			_, current, err := pm.FindAction(job.PluginName, job.ActionID)
 			if err != nil {
 				return nil, errPluginGone
 			}
-			mu := pm.LockVM(current)
-			if mu == nil {
-				return nil, errPluginGone
+			mu, err := pm.lockVMFor(current, wait)
+			if err != nil {
+				return nil, err
 			}
 			L = current
 			return mu, nil
 		},
+		live: func() bool { return pm.stillRegistered(L) },
 		run: func(mu *vmMutex) error {
 			// Resolved again under the lock: the VM cannot be revoked while it is
 			// held, so this is the registration that will run.
@@ -776,13 +847,8 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 // runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
 func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, ticket *laneTicket, L *lua.LState, fn *lua.LFunction, jobID string) asyncOutcome {
 	return pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), ticket, pm.stateRevoked(L), asyncWork{
-		lock: func() (*vmMutex, error) {
-			mu := pm.LockVM(L)
-			if mu == nil {
-				return nil, errPluginGone
-			}
-			return mu, nil
-		},
+		lock: func(wait bool) (*vmMutex, error) { return pm.lockVMFor(L, wait) },
+		live: func() bool { return pm.stillRegistered(L) },
 		run: func(mu *vmMutex) error {
 			defer mu.Unlock()
 
