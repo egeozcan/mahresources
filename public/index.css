@@ -1641,7 +1641,10 @@ html {
 .plugin-action-modal-input:focus,
 .plugin-action-modal-textarea:focus,
 .plugin-action-modal-select:focus {
-    outline: none;
+    /* Transparent rather than none: forced colors drops the box-shadow and
+       repaints the border, and paints this outline instead. */
+    outline: 2px solid transparent;
+    outline-offset: 2px;
     border-color: var(--nav-hover);
     box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.2);
 }
@@ -1714,7 +1717,8 @@ html {
 }
 
 .mass-edit-select:focus {
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
     border-color: #b45309;
     box-shadow: 0 0 0 1px #b45309;
 }
@@ -2085,7 +2089,8 @@ html {
 }
 
 .cm-editor.cm-focused {
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
     box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.5);
     border-radius: var(--radius-md);
 }

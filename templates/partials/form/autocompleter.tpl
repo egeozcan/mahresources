@@ -79,7 +79,7 @@
                     type="button"
                     class="
                     border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700
-                    hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600
+                    hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600
                     inline-flex justify-center items-center py-1 px-2"
                     x-text="'Add ' + addModeForTag + '?'"
                     x-init="setTimeout(() => $el.focus(), 1)"
@@ -92,7 +92,7 @@
                     type="button"
                     class="
                     border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700
-                    hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600
+                    hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600
                     inline-flex justify-center items-center py-1 px-2"
                     x-ref="cancelAdd"
                     @click="exitAdd"

@@ -17,7 +17,7 @@
             :aria-expanded="open ? 'true' : 'false'"
             aria-controls="{{ panelId }}"
             @click="toggle()"
-            class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600{% endif %}">
+            class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600{% endif %}">
         {% if reductionOwnerId %}Reduce{% else %}Resource Reduction{% endif %}
     </button>
 
@@ -83,7 +83,7 @@
                 data-testid="bulk-reduction-submit"
                 :disabled="busy || !hasSelection()"
                 @click="submit()"
-                class="mt-2 inline-flex justify-center py-1.5 px-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                class="mt-2 inline-flex justify-center py-1.5 px-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
             <span x-text="mode === 'existing' ? 'Add' : 'Create'"></span>
         </button>
     </div>

@@ -61,7 +61,7 @@
             px-4 py-2
             border border-stone-300 rounded-md
             shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+            focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             {{ action.Name }}
         </a>
         {% endif %}
@@ -72,7 +72,7 @@
             px-4 py-2
             border border-stone-300 rounded-md
             shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+            focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             {{ secondaryAction.Name }}
         </a>
         {% endif %}

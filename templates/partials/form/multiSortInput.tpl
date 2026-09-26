@@ -44,7 +44,7 @@
             <button
                 type="button"
                 @click="sort.direction = sort.direction === 'asc' ? 'desc' : 'asc'"
-                class="w-6 h-6 flex items-center justify-center border border-stone-300 rounded text-xs font-mono bg-white hover:bg-stone-50 focus:outline-none focus:ring-1 focus:ring-amber-600 shrink-0"
+                class="w-6 h-6 flex items-center justify-center border border-stone-300 rounded text-xs font-mono bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-1 focus:ring-amber-600 shrink-0"
                 :aria-label="'Sort direction: ' + (sort.direction === 'asc' ? 'ascending' : 'descending')"
                 :title="sort.direction === 'asc' ? 'Ascending' : 'Descending'"
             >
@@ -69,7 +69,7 @@
                 type="button"
                 @click="moveUp(index)"
                 :disabled="index === 0"
-                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700 shrink-0"
+                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-hidden focus:text-amber-700 shrink-0"
                 :aria-label="'Move sort ' + (index + 1) + ' up'"
                 title="Move up"
             >
@@ -79,7 +79,7 @@
                 type="button"
                 @click="moveDown(index)"
                 :disabled="index === sortColumns.length - 1"
-                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700 shrink-0"
+                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-hidden focus:text-amber-700 shrink-0"
                 :aria-label="'Move sort ' + (index + 1) + ' down'"
                 title="Move down"
             >
@@ -89,7 +89,7 @@
             <button
                 type="button"
                 @click="removeSort(index)"
-                class="w-6 h-6 flex items-center justify-center text-stone-300 hover:text-red-600 focus:outline-none focus:text-red-600 shrink-0 transition-colors duration-100"
+                class="w-6 h-6 flex items-center justify-center text-stone-300 hover:text-red-600 focus:outline-hidden focus:text-red-600 shrink-0 transition-colors duration-100"
                 :aria-label="'Remove sort ' + (index + 1)"
                 title="Remove"
             >
@@ -102,7 +102,7 @@
         type="button"
         @click="addSort()"
         :disabled="sortColumns.length >= availableColumns.length + 5"
-        class="mt-1 inline-flex items-center gap-0.5 text-xs font-mono font-medium text-stone-500 hover:text-amber-700 focus:outline-none focus:text-amber-700 disabled:opacity-40 transition-colors duration-100"
+        class="mt-1 inline-flex items-center gap-0.5 text-xs font-mono font-medium text-stone-500 hover:text-amber-700 focus:outline-hidden focus:text-amber-700 disabled:opacity-40 transition-colors duration-100"
         aria-label="Add another sort criteria"
     >
         + Add Sort

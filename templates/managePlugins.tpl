@@ -12,7 +12,7 @@
     </p>
     {% endif %}
     <p class="mb-4 text-sm">
-        <a href="/admin/plugin-command-runs" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Plugin command history</a>
+        <a href="/admin/plugin-command-runs" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600">Plugin command history</a>
     </p>
 
     {# A manual run is asynchronous, so the table below still says "never run" #}
@@ -54,7 +54,7 @@
             <input type="hidden" name="name" value="{{ commandConfirmation.Name }}">
             <input type="hidden" name="confirm_commands" value="1">
             <button type="submit"
-                    class="inline-flex justify-center rounded-md border border-transparent bg-red-700 px-4 py-2 font-mono text-sm font-medium text-white shadow-sm hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2">
+                    class="inline-flex justify-center rounded-md border border-transparent bg-red-700 px-4 py-2 font-mono text-sm font-medium text-white shadow-sm hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-red-600 focus:ring-offset-2">
                 Confirm and enable
             </button>
         </form>
@@ -96,7 +96,7 @@
                           action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
-                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 {% if plugin.Enabled %}border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600{% else %}border-transparent text-white bg-amber-700 hover:bg-amber-800 focus:ring-amber-600{% endif %}"
+                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 {% if plugin.Enabled %}border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600{% else %}border-transparent text-white bg-amber-700 hover:bg-amber-800 focus:ring-amber-600{% endif %}"
                                 data-testid="plugin-toggle-{{ plugin.Name }}">
                             {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
                         </button>
@@ -107,7 +107,7 @@
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <input type="hidden" name="allowed" value="{% if plugin.AllowScopedPrincipals %}0{% else %}1{% endif %}">
                         <button type="submit"
-                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600"
+                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600"
                                 data-testid="plugin-scoped-access-{{ plugin.Name }}"
                                 title="Group-limited users and guests are refused this plugin's pages, endpoints and shortcodes unless this is on. It does not widen what the plugin may do on their behalf.">
                             {% if plugin.AllowScopedPrincipals %}Hide from limited users{% else %}Allow limited users{% endif %}
@@ -120,7 +120,7 @@
                           data-confirm-message="Purge all stored data for {{ plugin.Name }}? This cannot be undone.">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
-                                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                                 data-testid="plugin-purge-{{ plugin.Name }}">
                             Purge Data
                         </button>
@@ -333,7 +333,7 @@
                 {% endfor %}
 
                 <button type="submit"
-                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
                         data-testid="save-settings-{{ plugin.Name }}">
                     Save Settings
                 </button>
@@ -421,7 +421,7 @@
                                     {# The visible text leads the accessible name, so "Run now" #}
                                     {# stays a contiguous substring of it — WCAG 2.5.3. #}
                                     <button type="submit"
-                                            class="inline-flex justify-center py-1 px-3 border border-stone-300 shadow-sm text-xs font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+                                            class="inline-flex justify-center py-1 px-3 border border-stone-300 shadow-sm text-xs font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
                                             aria-label="Run now: {{ schedule.ScheduleID }}"
                                             :disabled="busy"
                                             data-testid="plugin-schedule-run-{{ plugin.Name }}-{{ schedule.ScheduleID }}">

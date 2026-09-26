@@ -17,7 +17,7 @@
         <div class="flex items-center justify-end mb-1">
             <button type="button"
                     @click="formatContent()"
-                    class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-600 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer"
+                    class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-600 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer"
                     aria-label="Format {{ mode|upper }} content">
                 Format {{ mode|upper }}
             </button>

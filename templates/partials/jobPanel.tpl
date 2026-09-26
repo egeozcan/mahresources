@@ -1,5 +1,5 @@
 <div x-data="jobPanel()" data-testid="job-panel-root" class="relative">
-    <button type="button" class="job-panel-trigger inline-flex items-center gap-2 rounded border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-amber-700"
+    <button type="button" class="job-panel-trigger inline-flex items-center gap-2 rounded border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-amber-700"
             @click="toggle($event)" aria-label="Open Jobs panel" :aria-controls="isOpen ? 'job-center-panel' : null"
             :aria-expanded="isOpen.toString()" aria-describedby="job-panel-trigger-counts" title="Jobs (Control or Command + Shift + D)">
         <svg aria-hidden="true" class="h-5 w-5 text-stone-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -40,7 +40,7 @@
                             <span role="status" aria-live="polite" x-text="connectionStatus === 'connected' ? 'Live updates connected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : 'Connecting to live updates'"></span>
                         </p>
                     </div>
-                    <button type="button" @click="close()" class="rounded p-1 text-stone-500 hover:text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-700" aria-label="Close Jobs panel">
+                    <button type="button" @click="close()" class="rounded p-1 text-stone-500 hover:text-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" aria-label="Close Jobs panel">
                         <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" /></svg>
                     </button>
                 </header>
@@ -86,7 +86,7 @@
                                     <div class="min-w-0 flex-1">
                                         <div class="flex items-start justify-between gap-2">
                                             <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || job.kind || job.id"
-                                               class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+                                               class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
                                                x-text="job.title || job.kind || job.id"></a>
                                             <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
                                                   :class="{
@@ -157,23 +157,23 @@
                                         {# so they wait under More; opened, it takes a line of its own. #}
                                         <div x-show="resultOutput(job) || commandsFor(job).length > 0" class="-ml-1.5 mt-1 flex flex-wrap items-center gap-x-1" role="group" aria-label="Advertised controls">
                                             <template x-if="resultOutput(job)">
-                                                <a :href="resultURL(job)" :aria-label="resultAccessibleLabel(job)" class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"><span x-text="resultLinkLabel(job)"></span>&nbsp;<span aria-hidden="true">&rarr;</span></a>
+                                                <a :href="resultURL(job)" :aria-label="resultAccessibleLabel(job)" class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"><span x-text="resultLinkLabel(job)"></span>&nbsp;<span aria-hidden="true">&rarr;</span></a>
                                             </template>
                                             <template x-for="command in primaryCommandsFor(job)" :key="command.key">
                                                 <button type="button" @click="runCommand(job, command)" :data-command-key="command.key"
-                                                        class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+                                                        class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
                                                         :class="command.key === 'cancel' || command.destructive ? 'text-red-700' : command.key === 'dismiss' ? 'text-stone-600' : 'text-amber-800'"
                                                         x-text="command.label || command.key"></button>
                                             </template>
                                             <details x-show="moreCommandsFor(job).length > 0" class="group open:basis-full">
-                                                <summary class="inline-flex min-h-6 cursor-pointer list-none items-center gap-1 rounded px-1.5 text-xs font-medium text-stone-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 [&::-webkit-details-marker]:hidden">
+                                                <summary class="inline-flex min-h-6 cursor-pointer list-none items-center gap-1 rounded px-1.5 text-xs font-medium text-stone-600 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700 [&::-webkit-details-marker]:hidden">
                                                     More
                                                     <svg aria-hidden="true" class="h-3 w-3 transition-transform group-open:rotate-180 motion-reduce:transition-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
                                                 </summary>
                                                 <div class="flex flex-wrap items-center gap-x-1">
                                                     <template x-for="command in moreCommandsFor(job)" :key="command.key">
                                                         <button type="button" @click="runCommand(job, command)" :data-command-key="command.key"
-                                                                class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-stone-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+                                                                class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-stone-700 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
                                                                 x-text="command.label || command.key"></button>
                                                     </template>
                                                 </div>
@@ -196,8 +196,8 @@
 
                 <footer class="border-t border-stone-200 text-xs text-stone-600">
                     <div class="flex items-center justify-between gap-2 px-4 py-2">
-                        <button type="button" data-job-panel-dismiss-finished x-show="finishedCount > 0 || busy" @click="dismissFinished()" :aria-disabled="busy.toString()" x-text="busy ? 'Dismissing…' : 'Dismiss finished'" class="inline-flex min-h-6 items-center rounded text-stone-700 underline decoration-stone-300 underline-offset-2 hover:decoration-stone-700 focus:outline-none focus:ring-2 focus:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50">Dismiss finished</button>
-                        <a href="/jobs" data-job-panel-all-jobs class="ml-auto inline-flex min-h-6 items-center rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-700">All jobs</a>
+                        <button type="button" data-job-panel-dismiss-finished x-show="finishedCount > 0 || busy" @click="dismissFinished()" :aria-disabled="busy.toString()" x-text="busy ? 'Dismissing…' : 'Dismiss finished'" class="inline-flex min-h-6 items-center rounded text-stone-700 underline decoration-stone-300 underline-offset-2 hover:decoration-stone-700 focus:outline-hidden focus:ring-2 focus:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50">Dismiss finished</button>
+                        <a href="/jobs" data-job-panel-all-jobs class="ml-auto inline-flex min-h-6 items-center rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">All jobs</a>
                     </div>
                     <p class="hidden border-t border-stone-200 bg-stone-50 px-4 py-2 text-center sm:block">
                         Press <kbd class="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono">Esc</kbd> to close

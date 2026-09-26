@@ -77,7 +77,7 @@ export class SchemaTreePanel extends LitElement {
         color: #374151;
       }
       .context-menu-item:hover { background: #f3f4f6; }
-      .context-menu-item:focus-visible { background: #eef2ff; outline: none; }
+      .context-menu-item:focus-visible { background: #eef2ff; outline: 2px solid transparent; outline-offset: -2px; }
       .context-menu-separator {
         height: 1px;
         background: #e5e7eb;

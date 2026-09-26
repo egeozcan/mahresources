@@ -772,6 +772,7 @@ Bulk operations available: `addTags`, `removeTags`, `addMeta`, `delete`, `merge`
 - **Alpine.js** - Lightweight reactive framework for UI components
 - **Tailwind CSS** - Utility-first CSS framework
 - Keep the two corners touching a thick colored accent border square. Other corners may remain rounded.
+- Hide a focus outline with `focus:outline-hidden` (or `outline: 2px solid transparent` in CSS), never with `outline-none` / `outline: none`. In Tailwind v4 `outline-none` is `outline-style: none`, and forced colors (Windows High Contrast) drops the `ring` box-shadow and repaints focus colours, so a control relying on a ring shows no focus there; the transparent outline is the one indicator forced colors paints. Only a `:focus:not(:focus-visible)` rule whose `:focus-visible` draws a real outline may remove it. `internal/arch/forced_colors_focus_test.go` enforces this.
 - **baguetteBox.js** - Image gallery lightbox
 - **Web Components** - Custom elements for expandable text and inline editing
 

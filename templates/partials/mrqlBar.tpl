@@ -48,7 +48,7 @@
                 autocapitalize="off"
                 autocorrect="off"
                 spellcheck="false"
-                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring focus:border-blue-400"
+                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-hidden focus:ring focus:border-blue-400"
             >
             <ul
                 x-show="open"

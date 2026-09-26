@@ -25,7 +25,7 @@
       </div>
       <button @click="upload()"
               :disabled="!selectedFile || uploading"
-              class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+              class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
               data-testid="import-upload-button">
         <span x-show="!uploading">Upload &amp; Parse</span>
         <span x-show="uploading">Uploading...</span>
@@ -378,7 +378,7 @@
         <div x-show="!applyJobId && !applyResult">
           <button @click="apply()"
                   :disabled="hasIncompleteDecisions() || applying"
-                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
                   data-testid="import-apply-button">
             <span x-show="!applying">Apply Import</span>
             <span x-show="applying">Submitting...</span>
@@ -399,7 +399,7 @@
             </div>
           </div>
           <button @click="cancelApply()"
-                  class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                  class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Cancel
           </button>
         </div>

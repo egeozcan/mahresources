@@ -184,7 +184,7 @@
                     @click="submit()"
                     :disabled="decodeFailed || !hasSelection() || isSubmitting"
                     data-testid="crop-submit-button"
-                    class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+                    class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-400 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
                 >
                     <span x-show="!isSubmitting" x-text="submitLabel()">Crop</span>
                     <span x-show="isSubmitting">Cropping…</span>

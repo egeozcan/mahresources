@@ -67,6 +67,10 @@ div[class*=' announcementBar_'] code {
 
 .local-search__input:focus {
   border-color: var(--ifm-color-primary);
+  /* Transparent rather than none: forced colors drops the box-shadow and
+     repaints the border, and paints this outline instead. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ifm-color-primary) 24%, transparent);
 }
 

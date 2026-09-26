@@ -295,7 +295,7 @@
                         data-testid="mrql-generate-button"
                         :disabled="generating"
                         :aria-busy="generating.toString()"
-                        class="inline-flex items-center px-3 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                        class="inline-flex items-center px-3 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                     <span x-text="generating ? 'Generating...' : 'Generate'"></span>
                 </button>
                 <template x-if="generatedQuery && (!generatedValid || getQuery() !== generatedQuery)">
@@ -365,7 +365,7 @@
             <button type="button"
                     @click="execute()"
                     :disabled="executing"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                 <template x-if="executing">
                     <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -380,7 +380,7 @@
                     @click="explain()"
                     :disabled="explaining"
                     data-testid="mrql-explain-button"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                 <span x-text="explaining ? 'Explaining...' : 'Explain'"></span>
                 <kbd class="ml-2 text-xs" aria-hidden="true" x-text="navigator.platform.indexOf('Mac') > -1 ? '⌘⇧↵' : 'Ctrl+Shift+Enter'"></kbd>
             </button>
@@ -390,14 +390,14 @@
                     @click="updateQuery()"
                     data-testid="mrql-update-button"
                     :aria-label="'Update saved query ' + loadedSavedQueryName"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                 Update "<span x-text="loadedSavedQueryName"></span>"
             </button>
             {# BH-012: Save button — labels "Save as new" when a saved query is loaded. #}
             <button type="button"
                     @click="showSaveDialog = true"
                     data-testid="mrql-save-as-new-button"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                 <span x-text="canUpdate ? 'Save as new' : 'Save'"></span>
             </button>
         </div>
@@ -432,7 +432,7 @@
                     <button type="button" @click="saveQuery()"
                             :disabled="!saveName.trim()"
                             data-testid="mrql-save-confirm-button"
-                            class="px-4 py-2 text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
+                            class="px-4 py-2 text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                         Save
                     </button>
                 </div>
@@ -531,14 +531,14 @@
                                 @click="exportResults('csv')"
                                 :disabled="exporting"
                                 data-testid="mrql-export-csv"
-                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                             Export CSV
                         </button>
                         <button type="button"
                                 @click="exportResults('json')"
                                 :disabled="exporting"
                                 data-testid="mrql-export-json"
-                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                             Export JSON
                         </button>
                         <span class="text-xs text-stone-500 font-mono"

@@ -207,7 +207,7 @@
                 data-testid="reduction-apply"
                 :disabled="$store.reductionReview.busy"
                 @click="$store.reductionReview.apply()"
-                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
             Apply checked Clusters
         </button>
         <p class="text-xs text-stone-600 mt-2" data-testid="reduction-checked-summary"
@@ -265,7 +265,7 @@
             <button type="submit"
                     data-testid="reduction-compute"
                     {% if reduction.StatusEffective == "computing" %}disabled{% endif %}
-                    class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                    class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
                 {% if raw.ComputedAt %}Recompute{% else %}Compute Clusters{% endif %}
             </button>
         </form>

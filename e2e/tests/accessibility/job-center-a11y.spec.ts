@@ -176,3 +176,90 @@ test.describe('Job Center list accessibility', () => {
     await checkA11y();
   });
 });
+
+// Forced colors (Windows High Contrast) repaints colours with the user's system
+// palette and drops box-shadow, which is all a focus ring is. A control that
+// hid its outline behind a ring therefore shows no focus at all there. The
+// check is on pixels: the control's surroundings must look different focused
+// than not, whatever property draws the difference.
+test.describe('Job Center focus in forced colors', () => {
+  async function paintedFocus(page: import('@playwright/test').Page, control: import('@playwright/test').Locator) {
+    await control.scrollIntoViewIfNeeded();
+    const box = await control.boundingBox();
+    expect(box, 'the control must be rendered').not.toBeNull();
+    const viewport = page.viewportSize()!;
+    const x = Math.max(0, Math.floor(box!.x) - 6);
+    const y = Math.max(0, Math.floor(box!.y) - 6);
+    const clip = {
+      x, y,
+      width: Math.min(viewport.width - x, Math.ceil(box!.width) + 12),
+      height: Math.min(viewport.height - y, Math.ceil(box!.height) + 12),
+    };
+    const shot = () => page.screenshot({ clip, animations: 'disabled', caret: 'hide' });
+    await control.focus();
+    await expect(control).toBeFocused();
+    const focused = await shot();
+    const style = await control.evaluate(element => {
+      const computed = getComputedStyle(element);
+      return `outline=${computed.outlineStyle} ${computed.outlineWidth} shadow=${computed.boxShadow}`;
+    });
+    await control.evaluate(element => (element as HTMLElement).blur());
+    const blurred = await shot();
+    return { painted: !focused.equals(blurred), style };
+  }
+
+  async function expectPaintedFocus(page: import('@playwright/test').Page, control: import('@playwright/test').Locator, what: string) {
+    const { painted, style } = await paintedFocus(page, control);
+    // Soft, so one run names every control that has lost its indicator.
+    expect.soft(painted, `${what} shows no focus in forced colors (${style})`).toBe(true);
+  }
+
+  test('the trigger, drawer, confirmation and bulk commands show focus', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `forced-colors-${stamp}.bin`;
+    const submitted = await request.post('/v1/download/submit', {
+      data: { URL: `http://127.0.0.1:9/${name}`, Name: name, FileName: name },
+    });
+    expect(submitted.status(), await submitted.text()).toBe(202);
+    const jobId = (await submitted.json()).jobs[0].canonicalJobId as string;
+    await expect.poll(async () => (await (await request.get(`/v1/jobs/${jobId}`)).json()).state, { timeout: 20_000 })
+      .toBe('failed');
+
+    await page.emulateMedia({ forcedColors: 'active' });
+    await page.goto('/dashboard');
+    const trigger = page.getByRole('button', { name: 'Open Jobs panel' });
+    await expectPaintedFocus(page, trigger, 'the Jobs button');
+
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    await expect(drawer).toBeVisible();
+    await drawer.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+    const row = drawer.locator(`article[data-job-id="${jobId}"]`);
+    await expect(row.getByRole('button', { name: 'Dismiss' })).toBeVisible({ timeout: 10_000 });
+
+    await expectPaintedFocus(page, drawer.getByRole('button', { name: 'Close Jobs panel' }), 'the drawer\'s Close button');
+    await expectPaintedFocus(page, row.getByRole('link', { name }), 'a row\'s title link');
+    await expectPaintedFocus(page, row.getByRole('button', { name: 'Dismiss' }), 'a row\'s Dismiss');
+    await expectPaintedFocus(page, row.locator('summary'), 'a row\'s More');
+    await expectPaintedFocus(page, drawer.getByRole('link', { name: 'All jobs' }), 'the All jobs link');
+
+    await row.getByRole('button', { name: 'Dismiss' }).focus();
+    await page.keyboard.press('Enter');
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm).toBeVisible();
+    const buttons = confirm.getByRole('button');
+    await expect(buttons).toHaveCount(2);
+    await expectPaintedFocus(page, buttons.nth(0), 'the confirmation\'s safe button');
+    await expectPaintedFocus(page, buttons.nth(1), 'the confirmation\'s confirming button');
+    await page.keyboard.press('Escape');
+    await expect(confirm).toBeHidden();
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    const card = page.locator(`[data-job-id="${jobId}"]`);
+    await card.getByRole('checkbox').check();
+    const bulk = page.getByRole('group', { name: 'Commands for the selected jobs' });
+    await expect(bulk.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+    await expectPaintedFocus(page, bulk.getByRole('button').first(), 'the first bulk command');
+  });
+});

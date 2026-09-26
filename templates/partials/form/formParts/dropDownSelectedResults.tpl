@@ -10,7 +10,7 @@
                 :aria-label="'Remove ' + getItemDisplayName(result)"
                 class="
                         flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
-                        text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-none
+                        text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-hidden
                         focus:bg-amber-700 focus:text-white"
                 tabindex="0"
                 @keydown.enter.prevent="let root = $el.closest('[x-data]'); removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())"

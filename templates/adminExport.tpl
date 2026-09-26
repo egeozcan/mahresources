@@ -107,7 +107,7 @@
   <section aria-label="Estimate" class="border-t border-stone-200 pt-5 space-y-3">
     <h2 class="text-sm font-medium font-mono text-stone-700">Estimate</h2>
     <button type="button" @click="estimate()" :disabled="selectedGroups.length === 0"
-            class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+            class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
             data-testid="export-estimate-button">
       Compute estimate
     </button>
@@ -139,7 +139,7 @@
 
   <section aria-label="Run export" class="border-t border-stone-200 pt-5">
     <button type="button" @click="submit()" :disabled="selectedGroups.length === 0 || jobInProgress"
-            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
             data-testid="export-submit-button">
       Start export
     </button>
@@ -176,7 +176,7 @@
         <button type="button"
                 x-show="canCancel()"
                 @click="cancel()"
-                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                 data-testid="export-cancel-button">
           Cancel
         </button>

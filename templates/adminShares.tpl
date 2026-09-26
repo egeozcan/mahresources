@@ -45,7 +45,7 @@
     <div class="flex items-center justify-between mb-2">
       <span class="text-xs text-stone-500" data-testid="admin-shares-count">{{ shares|length }} shared note{% if shares|length != 1 %}s{% endif %}</span>
       <button type="submit"
-              class="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium font-mono text-red-700 border border-red-300 rounded hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-red-600"
+              class="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium font-mono text-red-700 border border-red-300 rounded hover:bg-red-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-red-600"
               data-testid="admin-shares-bulk-revoke">
         Revoke Selected
       </button>

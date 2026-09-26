@@ -7,7 +7,7 @@
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Commands for the selected jobs">
         <template x-for="command in commands()" :key="command.key">
             <button type="button" @click="run(command)" :aria-disabled="busy || loading"
-                    class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed"
+                    class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed"
                     x-text="commandLabel(command)"></button>
         </template>
         <p x-show="loading" role="status" class="mt-3 text-xs text-stone-600">Reading the selected jobs’ commands…</p>

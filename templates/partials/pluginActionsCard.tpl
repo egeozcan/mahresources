@@ -3,7 +3,7 @@
     <button type="button" x-ref="trigger" @click="toggle()"
             @keydown.arrow-down.prevent="openAndFocus('first')"
             @keydown.arrow-up.prevent="openAndFocus('last')"
-            class="card-badge card-badge--action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
+            class="card-badge card-badge--action focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
             aria-label="Plugin actions for {{ entity.Name }}" aria-haspopup="menu" :aria-expanded="open" :aria-controls="$id('plugin-actions-menu')">
         &#x22EF;
     </button>
@@ -13,7 +13,7 @@
          role="menu" aria-label="Plugin actions">
         {% for action in pluginCardActions %}
         <button type="button" @click="runAction({{ action|json }}, {{ entity.ID }}, '{{ entityType }}')"
-                class="block w-full text-left px-4 py-2 text-sm font-mono text-stone-900 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-700 focus-visible:outline-none focus-visible:bg-amber-100 focus-visible:text-stone-950 dark:focus-visible:bg-amber-300 dark:focus-visible:text-stone-950"
+                class="block w-full text-left px-4 py-2 text-sm font-mono text-stone-900 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-700 focus-visible:outline-hidden focus-visible:bg-amber-100 focus-visible:text-stone-950 dark:focus-visible:bg-amber-300 dark:focus-visible:text-stone-950"
                 role="menuitem">
             {{ action.Label }}
         </button>

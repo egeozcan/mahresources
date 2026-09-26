@@ -344,11 +344,11 @@
         <input type="file" x-ref="fileInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" @change="onFileChosen">
         <div class="flex flex-wrap gap-2">
             <button type="button" @click="triggerFilePick" :disabled="isBusy"
-                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
                 Upload Image
             </button>
             <button type="button" @click="regenerate" :disabled="isBusy"
-                class="inline-flex justify-center py-2 px-4 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
+                class="inline-flex justify-center py-2 px-4 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
                 Regenerate from Source
             </button>
         </div>
@@ -376,19 +376,19 @@
         {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
         <form action="/v1/resource/recalculateDimensions?redirect={{ url|urlencode }}" method="post" class="mb-3">
             <input type="hidden" name="id" value="{{ resource.ID }}">
-            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Recalculate Dimensions</button>
+            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Recalculate Dimensions</button>
         </form>
         {% include "/partials/sideTitle.tpl" with title="Rotate 90 Degrees" %}
         <form action="/v1/resources/rotate" method="post">
             <input type="hidden" name="id" value="{{ resource.ID }}">
             <input type="hidden" name="degrees" value="90">
-            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Rotate</button>
+            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Rotate</button>
         </form>
         {% include "/partials/sideTitle.tpl" with title="Crop" %}
         <button
             type="button"
             id="crop-open-{{ resource.ID }}"
-            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
             onclick="document.getElementById('crop-modal-{{ resource.ID }}').showModal()"
         >Crop…</button>
     </div>
@@ -458,7 +458,7 @@
         </div>
         <p x-show="validationError" x-text="validationError" class="text-xs text-amber-700 mt-2" role="alert"></p>
         <button type="button" @click="submit" :disabled="isSubmitting || !hasTimes()"
-            class="mt-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+            class="mt-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
             <span x-show="!isSubmitting">Trim Video</span>
             <span x-show="isSubmitting">Trimming…</span>
         </button>

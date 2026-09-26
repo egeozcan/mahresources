@@ -18,7 +18,7 @@
                 </select>
                 <button type="button" @click="applyPreset()" :disabled="!presetChoice"
                         data-testid="tb-apply-preset"
-                        class="shrink-0 inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Apply</button>
+                        class="shrink-0 inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Apply</button>
             </div>
         </div>
 
@@ -37,7 +37,7 @@
                     </template>
                 </select>
                 <button type="button" @click="copyFrom()" :disabled="!copyChoice"
-                        class="shrink-0 inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Copy</button>
+                        class="shrink-0 inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Copy</button>
             </div>
         </div>
     </div>
@@ -53,7 +53,7 @@
             <button type="button" @click="generateBundle()" :disabled="generating"
                     data-testid="template-bundle-generate-button"
                     :aria-busy="generating.toString()"
-                    class="shrink-0 self-start inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                    class="shrink-0 self-start inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
                 <span x-text="generating ? 'Generating…' : 'Generate'"></span>
             </button>
         </div>
@@ -61,7 +61,7 @@
 
     <div class="flex flex-wrap items-center gap-3 pt-1">
         <button type="button" @click="exportBundle()"
-                class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">
+                class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">
             Export bundle
         </button>
         <label class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus-within:ring-2 focus-within:ring-offset-1 focus-within:ring-amber-600 cursor-pointer">

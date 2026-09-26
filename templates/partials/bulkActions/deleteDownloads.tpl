@@ -9,7 +9,7 @@
                 :aria-disabled="$store.downloads.busy"
                 aria-label="Delete selected downloads"
                 data-testid="downloads-bulk-delete"
-                class="inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center text-sm font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+                class="inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center text-sm font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
             Delete
         </button>
     </div>

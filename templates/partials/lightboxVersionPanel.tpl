@@ -25,7 +25,7 @@
                     :aria-label="'View version ' + version.versionNumber + (version.id === $store.lightbox.currentVersionId() ? ', current' : '') + (!$store.lightbox.isVersionDisplayable(version) ? ', ' + version.contentType + ', unavailable in viewer' : '')"
                     :title="version.comment || version.contentType"
                     :class="$store.lightbox.displayedVersionId() === version.id ? 'border-amber-400 bg-stone-800' : 'border-stone-600'"
-                    class="shrink-0 rounded border-2 p-1 text-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white">
+                    class="shrink-0 rounded border-2 p-1 text-center disabled:opacity-50 focus:outline-hidden focus:ring-2 focus:ring-white">
                 <template x-if="version.contentType?.startsWith('image/')">
                     <picture>
                         <source media="(min-width: 768px)" :srcset="$store.lightbox.versionThumbnailUrl(version, 96)">

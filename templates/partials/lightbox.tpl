@@ -250,7 +250,7 @@
             {# >= / <= rather than ===: an out-of-range index would otherwise leave the #}
             {# button looking enabled while doing nothing.                              #}
             :disabled="$store.lightbox.pageLoading || ($store.lightbox.currentIndex <= 0 && !$store.lightbox.hasPrevPage)"
-            class="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-10"
+            class="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 z-10"
             aria-label="Previous"
         >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -262,7 +262,7 @@
         <button
             @click.stop="$store.lightbox.next()"
             :disabled="$store.lightbox.pageLoading || ($store.lightbox.currentIndex >= $store.lightbox.items.length - 1 && !$store.lightbox.hasNextPage)"
-            class="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-10"
+            class="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 z-10"
             aria-label="Next"
         >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -273,7 +273,7 @@
         <!-- Close button -->
         <button
             @click.stop="$store.lightbox.close()"
-            class="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-20"
+            class="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 z-20"
             aria-label="Close"
         >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -288,7 +288,7 @@
         <button
             x-show="!$store.lightbox.quickTagPanelOpen"
             @click.stop="$store.lightbox.openQuickTagPanel()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Edit tags"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -324,7 +324,7 @@
         <div x-show="$store.lightbox.nativeZoomPercent()">
             <button
                 @click.stop="$store.lightbox.showZoomPresets($el)"
-                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50"
                 x-text="$store.lightbox.nativeZoomPercent()"
                 title="Choose zoom level"
             ></button>
@@ -334,7 +334,7 @@
         <button
             x-show="$store.lightbox.fullscreenSupported()"
             @click.stop="$store.lightbox.toggleFullscreen()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
             :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
         >
@@ -355,7 +355,7 @@
             @click.stop="$store.lightbox.rotateCurrent(90)"
             :disabled="$store.lightbox.rotating || $store.lightbox.isHistoricalVersion()"
             :aria-busy="$store.lightbox.rotating"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             :title="$store.lightbox.isHistoricalVersion() ? 'Back to current to rotate this Resource' : 'Rotate 90° clockwise'"
             :aria-describedby="$store.lightbox.isHistoricalVersion() ? 'historical-edit-reason' : null"
             aria-label="Rotate 90 degrees clockwise"
@@ -371,7 +371,7 @@
         <button
             x-show="$store.lightbox.isHistoricalVersion() || $store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
             @click.stop="$store.lightbox.openCrop()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             :disabled="$store.lightbox.isHistoricalVersion()"
             :title="$store.lightbox.isHistoricalVersion() ? 'Back to current to crop this Resource' : 'Crop image'"
             :aria-describedby="$store.lightbox.isHistoricalVersion() ? 'historical-edit-reason' : null"
@@ -404,7 +404,7 @@
         <button
             x-show="!$store.lightbox.editPanelOpen"
             @click.stop="$store.lightbox.openEditPanel()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Resource info"
             aria-label="Resource info"
         >
@@ -439,7 +439,7 @@
                 <h2 class="text-lg font-semibold">Edit Tags</h2>
                 <button
                     @click="$store.lightbox.closeQuickTagPanel()"
-                    class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                    class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50"
                     aria-label="Close edit tags panel"
                 >
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -451,7 +451,7 @@
             <div class="px-4 pb-3 flex items-center gap-2 text-xs">
                 <button
                     @click="$store.lightbox.repeatPreviousTags()"
-                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Repeat previous image's tags"
                     title="Apply the previous image's tags to this one"
                 >
@@ -460,7 +460,7 @@
                 </button>
                 <button
                     @click="$store.lightbox.undoLastTagAction()"
-                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Undo last tag change"
                     title="Undo the last tag change"
                 >
@@ -473,7 +473,7 @@
                     :aria-pressed="$store.lightbox.flowModeEnabled ? 'true' : 'false'"
                     aria-label="Auto-advance after tagging (flow mode)"
                     title="Auto-advance to the next image after tagging"
-                    class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded focus:outline-none focus:ring-2 focus:ring-stone-400 transition-colors"
+                    class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded focus:outline-hidden focus:ring-2 focus:ring-stone-400 transition-colors"
                     :class="$store.lightbox.flowModeEnabled ? 'bg-green-800 text-green-100' : 'bg-stone-800 text-stone-300 hover:bg-stone-700'"
                 >
                     <span>Flow</span>
@@ -506,7 +506,7 @@
                             data-tag-editor-input
                             type="text"
                             x-bind="inputEvents"
-                            class="w-full min-w-0 px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
+                            class="w-full min-w-0 px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Search or add tags..."
                             aria-label="Search or add tags"
                             autocomplete="off"
@@ -569,7 +569,7 @@
                     <div data-tag-confirm-ui class="flex gap-2 items-stretch justify-between mb-3">
                         <button
                             type="button"
-                            class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"
+                            class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"
                             x-text="'Add ' + addModeForTag + '?'"
                             x-init="setTimeout(() => $el.focus(), 1)"
                             @keydown.escape.prevent="exitAdd"
@@ -578,7 +578,7 @@
                         ></button>
                         <button
                             type="button"
-                            class="border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 py-2 px-3"
+                            class="border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600 py-2 px-3"
                             @click="exitAdd"
                             @keydown.escape.prevent="exitAdd"
                         >Cancel</button>
@@ -597,7 +597,7 @@
                             <button
                                 @click="removeItem(tag)"
                                 type="button"
-                                class="hover:bg-amber-800 rounded-full p-0.5 focus:outline-none focus:ring-1 focus:ring-white"
+                                class="hover:bg-amber-800 rounded-full p-0.5 focus:outline-hidden focus:ring-1 focus:ring-white"
                                 :aria-label="'Remove tag ' + tag.Name"
                             >
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -621,7 +621,7 @@
                         <button
                             type="button"
                             @click="$store.lightbox.retryDetails()"
-                            class="mt-1.5 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                            class="mt-1.5 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                         >Retry</button>
                     </div>
                 </div>
@@ -641,7 +641,7 @@
                                     type="button"
                                     data-suggested-tag
                                     @click="$store.lightbox.applySuggestedTag(tag)"
-                                    class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-800 hover:bg-amber-700 border border-stone-700 hover:border-amber-600 text-stone-200 hover:text-white text-sm rounded-full font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-800 hover:bg-amber-700 border border-stone-700 hover:border-amber-600 text-stone-200 hover:text-white text-sm rounded-full font-mono transition-colors focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                                     :aria-label="'Apply suggested tag ' + tag.Name"
                                 >
                                     <span x-text="tag.Name"></span>
@@ -664,7 +664,7 @@
                         @click="$store.lightbox.switchTab(tIdx)"
                         role="tab"
                         :aria-selected="$store.lightbox.activeTab === tIdx"
-                        class="flex-1 flex flex-col items-center py-1.5 rounded-lg text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                        class="flex-1 flex flex-col items-center py-1.5 rounded-lg text-xs font-mono transition-colors focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                         :class="$store.lightbox.activeTab === tIdx
                             ? 'bg-stone-700 text-white'
                             : 'text-stone-400 hover:bg-stone-800 hover:text-stone-300'"
@@ -679,7 +679,7 @@
               <div class="flex items-center gap-2 py-1.5">
                 <button
                   @click="$store.lightbox.collapseExpanded()"
-                  class="px-2 py-1 bg-stone-700 hover:bg-stone-600 text-stone-200 rounded-md text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                  class="px-2 py-1 bg-stone-700 hover:bg-stone-600 text-stone-200 rounded-md text-xs font-mono transition-colors focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                   aria-label="Back to quick slots"
                 >&larr; Back</button>
                 <span class="text-xs text-stone-400" x-text="'Slot ' + $store.lightbox.quickTagKeyLabel($store.lightbox.expandedSlotIndex) + ' tags'"></span>
@@ -720,7 +720,7 @@
                                             <span x-text="t.name" class="truncate max-w-[6rem]"></span>
                                             <button
                                                 @click.stop="$store.lightbox.removeTagFromSlot(idx, t.id)"
-                                                class="remove-target hover:text-red-400 focus:outline-none focus:text-red-400"
+                                                class="remove-target hover:text-red-400 focus:outline-hidden focus:text-red-400"
                                                 :aria-label="'Remove ' + t.name + ' from slot'"
                                             >&times;</button>
                                         </span>
@@ -741,7 +741,7 @@
                                             type="text"
                                             x-bind="inputEvents"
                                             x-init="$nextTick(() => $el.focus())"
-                                            class="w-full min-w-0 px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            class="w-full min-w-0 px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-hidden focus:ring-1 focus:ring-stone-400"
                                             placeholder="Add tag..."
                                             :aria-label="'Add tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                             autocomplete="off"
@@ -786,7 +786,7 @@
                                     @mousedown="tags.length > 1 && $store.lightbox.handleSlotMousedown(idx)"
                                     @mouseup="tags.length > 1 && $store.lightbox.handleSlotMouseup(idx)"
                                     @mouseleave="tags.length > 1 && $store.lightbox.handleSlotMouseleave(idx)"
-                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                                     :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
                                     :aria-description="tags.length > 1 ? 'Hold to expand individual tags' : null"
                                 >
@@ -801,7 +801,7 @@
                                 <template x-if="$store.lightbox.isQuickTab()">
                                     <button
                                         @click.stop="$store.lightbox.editingSlotIndex = idx"
-                                        class="touch-reachable absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-none focus:ring-1 focus:ring-white"
+                                        class="touch-reachable absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-hidden focus:ring-1 focus:ring-white"
                                         :aria-label="'Add tags to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     >
                                         <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -815,7 +815,7 @@
                                 <template x-if="$store.lightbox.isQuickTab()">
                                     <button
                                         @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
-                                        class="touch-reachable absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-none focus:ring-1 focus:ring-white"
+                                        class="touch-reachable absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-hidden focus:ring-1 focus:ring-white"
                                         :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     >
                                         <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -871,7 +871,7 @@
                       >
                         <button
                           @click="$store.lightbox.toggleExpandedTag(idx)"
-                          class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                          class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                           :aria-label="(isOn ? 'Remove ' : 'Add ') + tagName()"
                         >
                           <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
@@ -910,7 +910,7 @@
             <h2 class="text-lg font-semibold">Info</h2>
             <button
                 @click="$store.lightbox.closeEditPanel()"
-                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50"
                 aria-label="Close info panel"
             >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -939,7 +939,7 @@
                     <button
                         type="button"
                         @click="$store.lightbox.retryDetails()"
-                        class="px-3 py-1.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-400"
+                        class="px-3 py-1.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     >Retry</button>
                 </div>
             </template>
@@ -974,7 +974,7 @@
                             @blur="$store.lightbox.updateName($event.target.value)"
                             @keydown.enter="$event.target.blur()"
                             @keydown.escape.stop="$event.target.blur()"
-                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
                         >
                     </div>
@@ -988,7 +988,7 @@
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.blur()"
                             rows="4"
-                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."
                         ></textarea>
                     </div>
@@ -1088,7 +1088,7 @@
 
                     <!-- Technical section (collapsible) -->
                     <details class="border-t border-stone-700 pt-4 group">
-                        <summary class="cursor-pointer list-none flex items-center gap-2 text-sm font-medium font-mono text-stone-300 hover:text-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 rounded">
+                        <summary class="cursor-pointer list-none flex items-center gap-2 text-sm font-medium font-mono text-stone-300 hover:text-stone-100 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-stone-400 rounded">
                             <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                             </svg>
@@ -1172,7 +1172,7 @@
                     <h2 id="lightbox-crop-title" class="text-lg font-semibold">Crop image</h2>
                     <button
                         type="button"
-                        class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                        class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50"
                         aria-label="Close crop dialog"
                         @click="$store.lightbox.closeCrop()"
                     >
@@ -1248,7 +1248,7 @@
                                     id="lightbox-crop-aspect"
                                     x-model="aspect"
                                     @change="applyAspect()"
-                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                 >
                                     <option value="free">Free</option>
                                     <option value="1:1">1 : 1 (Square)</option>
@@ -1265,7 +1265,7 @@
                                         <label for="lightbox-crop-x" class="block text-xs text-stone-400">X</label>
                                         <input id="lightbox-crop-x" type="number" min="0" step="1"
                                             x-model.number="rect.x" @input="clampRect()"
-                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                             aria-describedby="lightbox-crop-x-hint">
                                         <span id="lightbox-crop-x-hint" class="sr-only">Pixels from the left edge of the image</span>
                                     </div>
@@ -1273,7 +1273,7 @@
                                         <label for="lightbox-crop-y" class="block text-xs text-stone-400">Y</label>
                                         <input id="lightbox-crop-y" type="number" min="0" step="1"
                                             x-model.number="rect.y" @input="clampRect()"
-                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                             aria-describedby="lightbox-crop-y-hint">
                                         <span id="lightbox-crop-y-hint" class="sr-only">Pixels from the top edge of the image</span>
                                     </div>
@@ -1281,13 +1281,13 @@
                                         <label for="lightbox-crop-w" class="block text-xs text-stone-400">Width</label>
                                         <input id="lightbox-crop-w" type="number" min="1" step="1"
                                             x-model.number="rect.width" @input="clampRect('w')"
-                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
                                     </div>
                                     <div>
                                         <label for="lightbox-crop-h" class="block text-xs text-stone-400">Height</label>
                                         <input id="lightbox-crop-h" type="number" min="1" step="1"
                                             x-model.number="rect.height" @input="clampRect('h')"
-                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
                                     </div>
                                 </div>
                             </fieldset>
@@ -1295,7 +1295,7 @@
                             <div>
                                 <label for="lightbox-crop-comment" class="block text-xs font-medium text-stone-300 mb-1">Comment (optional)</label>
                                 <input id="lightbox-crop-comment" type="text" x-model="comment"
-                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                                     placeholder="e.g. Headshot crop">
                             </div>
 
@@ -1332,14 +1332,14 @@
                     <button
                         type="button"
                         @click="$store.lightbox.closeCrop()"
-                        class="inline-flex justify-center py-2 px-4 border border-stone-600 bg-stone-800 text-sm font-medium font-mono rounded-md text-stone-200 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-stone-400"
+                        class="inline-flex justify-center py-2 px-4 border border-stone-600 bg-stone-800 text-sm font-medium font-mono rounded-md text-stone-200 hover:bg-stone-700 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-stone-400"
                     >Cancel</button>
                     <button
                         type="button"
                         @click="submit()"
                         :disabled="decodeFailed || !hasSelection() || isSubmitting"
                         data-testid="lightbox-crop-submit-button"
-                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-amber-600"
+                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-600 disabled:cursor-not-allowed focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-amber-600"
                     >
                         <span x-show="!isSubmitting" x-text="submitLabel()">Crop</span>
                         <span x-show="isSubmitting">Cropping…</span>
