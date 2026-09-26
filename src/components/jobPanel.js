@@ -480,10 +480,21 @@ export function jobPanel() {
         // intermediate state: what is said is the state the read found, which
         // the job is still in (currentNews), said once. The intermediate state
         // was superseded before anyone could hear it.
-        // A job with no entry is recorded without being said: the first sight
-        // of a job is not news. Every path that puts a row on screen hears it;
-        // a row set on screen some other way counts as heard in its shown state
-        // on the first stream generation, before any stream was connected.
+        // The first sight of a job (no entry) is news only when the job has
+        // already reached an outcome, a state the drawer lists under Needs
+        // attention or Finished, and a live lifecycle event shows it got there
+        // after this page connected. A job's whole life can fit in one publish
+        // tick, so its first read is often its outcome, and nothing after it
+        // would say anything. Work still open at its first sight stays unsaid,
+        // since its outcome will be said as a change when it comes.
+        // The proof works as it does for a change: a live event before the read
+        // marks the version (provenLive), and a read before the live event
+        // withholds the outcome over every version up to its own, for the event
+        // to release. What finished before the page connected has no live event
+        // and stays silent.
+        // Every path that puts a row on screen hears it; a row set on screen
+        // some other way counts as heard in its shown state on the first stream
+        // generation, before any stream was connected.
         // A read is heard under the generation it began on, even when it answers
         // after a catch-up: what it saw is history to the stream that followed.
         // `proofOnly` is for a command's answer: the reader asked for the change
@@ -497,14 +508,15 @@ export function jobPanel() {
                 (shown ? { state: shown.state, version: Number(shown.version || 0), stateSince: Number(shown.version || 0), generation: 0 } : null);
             if (entry && version > 0 && version < entry.version) return '';
             const changed = !!entry && entry.state !== job.state;
+            const firstSeenOutcome = !entry && ['attention', 'finished'].includes(classifyJobState(job));
             const liveFrom = this._liveVersions.get(job.id);
             const provenLive = liveFrom !== undefined && version >= liveFrom;
             // Only an observation that could speak uses the proof up; a stale
             // read must leave it for the live one that follows.
             if (provenLive && (live || proofOnly)) this._liveVersions.delete(job.id);
-            let said = this.streamCaughtUp && changed && (
+            let said = this.streamCaughtUp && (changed || firstSeenOutcome) && (
                 proofOnly ? provenLive
-                    : live && (!sameGenerationOnly || entry.generation === generation || provenLive)
+                    : live && (!sameGenerationOnly || (changed && entry.generation === generation) || provenLive)
             ) ? lifecycleAnnouncement(job) : '';
             // A withheld change happened somewhere after the version heard
             // before it (withheldFrom) and at or before the version the read saw
@@ -521,7 +533,9 @@ export function jobPanel() {
             // of state, retires it.
             let withheld = !said && withheldIn
                 ? { text: withheldIn.withheld, from: withheldIn.withheldFrom, to: withheldIn.withheldVersion } : null;
-            if (sameGenerationOnly && changed && !said) withheld = { text: lifecycleAnnouncement(job), from: entry.version, to: version };
+            if (sameGenerationOnly && (changed || firstSeenOutcome) && !said) {
+                withheld = { text: lifecycleAnnouncement(job), from: entry?.version ?? 0, to: version };
+            }
             this._heard.delete(job.id);
             this._heard.set(job.id, {
                 state: job.state, version: Math.max(version, entry?.version || 0), generation,

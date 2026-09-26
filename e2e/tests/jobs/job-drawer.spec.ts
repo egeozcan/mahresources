@@ -36,6 +36,122 @@ async function readJob(request: import('@playwright/test').APIRequestContext, id
   return response.ok() ? response.json() : null;
 }
 
+// Answers at once: /missing/* with a 404, anything else with a few fresh bytes,
+// so a download's whole life fits inside one publish tick of the job runtime.
+async function startInstantServer() {
+  const server = http.createServer((request, response) => {
+    if (request.url?.startsWith('/missing/')) {
+      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.end('gone');
+      return;
+    }
+    const body = randomBytes(2048);
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) });
+    response.end(body);
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+}
+
+type Announcement = { text: string; inDrawer: boolean };
+
+// Every text a live region takes, and whether that region sits in the drawer.
+// Regions replace their text, so reading one at the end would miss all but the
+// last message.
+async function recordAnnouncements(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    const said: { text: string; inDrawer: boolean }[] = [];
+    (window as any).__announced = said;
+    const last = new WeakMap<Element, string>();
+    const isRegion = (element: Element) => element.hasAttribute('aria-live') || ['status', 'alert'].includes(element.getAttribute('role') || '');
+    const regionOf = (node: Node | null) => {
+      let element = node && node.nodeType === 1 ? node as Element : node?.parentElement || null;
+      while (element && !isRegion(element)) element = element.parentElement;
+      return element;
+    };
+    const check = (region: Element) => {
+      const text = (region.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text === last.get(region)) return;
+      last.set(region, text);
+      if (text) said.push({ text, inDrawer: !!region.closest('#job-center-panel') });
+    };
+    const start = () => new MutationObserver(mutations => {
+      const regions = new Set<Element>();
+      for (const mutation of mutations) {
+        const region = regionOf(mutation.target);
+        if (region) regions.add(region);
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType !== 1) return;
+          if (isRegion(node as Element)) regions.add(node as Element);
+          (node as Element).querySelectorAll('[aria-live],[role=status],[role=alert]').forEach(element => regions.add(element));
+        });
+      }
+      regions.forEach(check);
+    }).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+    if (document.documentElement) start();
+    else document.addEventListener('DOMContentLoaded', start);
+  });
+}
+
+function announcements(page: import('@playwright/test').Page): Promise<Announcement[]> {
+  return page.evaluate(() => (window as any).__announced.slice());
+}
+
+function mentions(said: Announcement[], name: string) {
+  return said.filter(entry => entry.text.includes(name));
+}
+
+// The panel's own word on whether the stream is live: after its catch-up, a
+// lifecycle event is news; before it, replay.
+async function waitUntilLive(page: import('@playwright/test').Page) {
+  await expect.poll(() => page.evaluate(() => {
+    const root = document.querySelector('[data-testid="job-panel-root"]');
+    const panel = root && (window as any).Alpine?.$data(root);
+    return !!panel?.streamCaughtUp && panel.connectionStatus === 'connected';
+  }), { timeout: 15_000 }).toBe(true);
+}
+
+async function submitDownload(
+  from: import('@playwright/test').APIRequestContext | import('@playwright/test').Page,
+  url: string,
+  name: string,
+): Promise<string> {
+  const data = { URL: url, Name: name, FileName: name };
+  let status: number;
+  let body: any;
+  if ('evaluate' in from) {
+    // From the page itself, as a script in this tab would submit it.
+    ({ status, body } = await from.evaluate(async payload => {
+      const response = await fetch('/v1/download/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return { status: response.status, body: await response.json() };
+    }, data));
+  } else {
+    const response = await from.post('/v1/download/submit', { data });
+    status = response.status();
+    body = await response.json();
+  }
+  expect(status, JSON.stringify(body)).toBe(202);
+  const id = body.jobs?.[0]?.canonicalJobId as string;
+  expect(id).toEqual(expect.any(String));
+  return id;
+}
+
+// Settled: terminal, with every event given a delivery sequence, so the stream
+// has either delivered it or will replay it.
+async function waitUntilPublished(request: import('@playwright/test').APIRequestContext, id: string, state: string) {
+  await expect.poll(async () => (await readJob(request, id))?.state, { timeout: 30_000 }).toBe(state);
+  await expect.poll(async () => {
+    const response = await request.get(`/v1/jobs/${encodeURIComponent(id)}/events`);
+    if (!response.ok()) return false;
+    const events = (await response.json()).events || [];
+    return events.length > 0 && events.every((event: any) => Number(event.deliverySequence) > 0);
+  }, { timeout: 30_000 }).toBe(true);
+}
+
 test.describe('Jobs drawer', () => {
   test('record-keeping commands wait under More, open by keyboard, and still work after the row updates', async ({ page }) => {
     const id = 'drawer-more-disclosure';
@@ -374,6 +490,108 @@ test.describe('Jobs drawer', () => {
       await expect(announcer).toContainText(`${name} failed: HTTP 403 Forbidden`, { timeout: 15_000 });
     } finally {
       release();
+      server.close();
+    }
+  });
+});
+
+// A download that fails on a 404, or succeeds on a few bytes, is accepted,
+// started and finished inside one publish tick, so the drawer's first read of it
+// already finds the outcome. That outcome is news to someone who was connected
+// when it happened, and history to a page that connected after.
+test.describe('Jobs drawer announcements of jobs that finish at once', () => {
+  for (const drawerOpen of [false, true]) {
+    const where = drawerOpen ? 'from inside the open drawer' : 'from the page while the drawer is closed';
+    test(`are said once, with the reason, ${where}`, async ({ page, request }) => {
+      const { server, base } = await startInstantServer();
+      try {
+        const stamp = Date.now();
+        // Finished and published before the page connects: history.
+        const oldName = `instant-old-${stamp}.bin`;
+        const oldId = await submitDownload(request, `${base}/missing/${oldName}`, oldName);
+        await waitUntilPublished(request, oldId, 'failed');
+
+        await recordAnnouncements(page);
+        await page.goto('/dashboard');
+        if (drawerOpen) {
+          await page.keyboard.press('Control+Shift+D');
+          await expect(page.getByRole('dialog', { name: 'Jobs' })).toBeVisible();
+        }
+        await waitUntilLive(page);
+
+        // One from another client, one from this tab; one failure, one success,
+        // swapped between the two runs.
+        const failedName = `instant-failed-${stamp}.bin`;
+        const succeededName = `instant-succeeded-${stamp}.bin`;
+        await submitDownload(drawerOpen ? page : request, `${base}/missing/${failedName}`, failedName);
+        await submitDownload(drawerOpen ? request : page, `${base}/ok/${succeededName}`, succeededName);
+
+        await expect.poll(async () => mentions(await announcements(page), failedName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
+          .toContain(`${failedName} failed: HTTP 404 Not Found.`);
+        await expect.poll(async () => mentions(await announcements(page), succeededName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
+          .toContain(`${succeededName} succeeded.`);
+
+        // A later job's announcement comes from a refresh that re-reads both:
+        // anything said twice would have been said by then.
+        const laterName = `instant-later-${stamp}.bin`;
+        await submitDownload(request, `${base}/missing/${laterName}`, laterName);
+        await expect.poll(async () => mentions(await announcements(page), laterName).length, { timeout: 20_000 }).toBe(1);
+
+        const said = await announcements(page);
+        expect(mentions(said, failedName)).toHaveLength(1);
+        expect(mentions(said, succeededName)).toHaveLength(1);
+        expect(mentions(said, oldName)).toEqual([]);
+        for (const entry of [...mentions(said, failedName), ...mentions(said, succeededName)]) {
+          expect(entry.inDrawer, entry.text).toBe(drawerOpen);
+        }
+      } finally {
+        server.close();
+      }
+    });
+  }
+
+  test('a job that finished while the stream was down stays silent after the reconnect, and the next one is said', async ({ page, request }) => {
+    const { server, base } = await startInstantServer();
+    try {
+      const stamp = Date.now();
+      await recordAnnouncements(page);
+      await page.goto('/dashboard');
+      await waitUntilLive(page);
+
+      // Chromium's offline emulation leaves a stream that is already open
+      // alone, so the drop is made the way the browser reports one: the stream
+      // closes and fires error. The panel's own connect() then reconnects, and
+      // everything published meanwhile arrives as replay before its catch-up.
+      await page.evaluate(() => {
+        const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
+        panel.eventSource.close();
+        panel.eventSource.dispatchEvent(new Event('error'));
+      });
+      const missedName = `instant-missed-${stamp}.bin`;
+      const missedId = await submitDownload(request, `${base}/missing/${missedName}`, missedName);
+      await waitUntilPublished(request, missedId, 'failed');
+      await page.evaluate(() => {
+        const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
+        if (panel.streamCaughtUp) throw new Error('the dropped stream still reads as live');
+        panel.eventSource = null;
+        panel.connect();
+      });
+      await waitUntilLive(page);
+      // The catch-up refresh has read the missed job before the next one is submitted.
+      await expect.poll(() => page.evaluate(id => {
+        const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
+        return panel.jobs.some((job: any) => job.id === id);
+      }, missedId), { timeout: 15_000 }).toBe(true);
+
+      const afterName = `instant-after-${stamp}.bin`;
+      await submitDownload(request, `${base}/missing/${afterName}`, afterName);
+      await expect.poll(async () => mentions(await announcements(page), afterName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
+        .toContain(`${afterName} failed: HTTP 404 Not Found.`);
+
+      const said = await announcements(page);
+      expect(mentions(said, afterName)).toHaveLength(1);
+      expect(mentions(said, missedName)).toEqual([]);
+    } finally {
       server.close();
     }
   });

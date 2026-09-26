@@ -1340,6 +1340,165 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
+    // A job's whole life can fit inside one publish tick: its accepted, started
+    // and failed events arrive together, with no snapshot, so the first read of
+    // it already finds the outcome. That read is its first sight.
+    async function deliverLive(panel: any, jobId: string, events: [string, number][], firstSequence: number) {
+        let sequence = firstSequence;
+        for (const [type, jobVersion] of events) {
+            await panel.handleStreamMessage({
+                data: JSON.stringify({ id: `e-${jobId}-${jobVersion}`, jobId, jobVersion, type, deliverySequence: sequence }),
+                lastEventId: `v2:${sequence}`,
+            });
+            sequence += 1;
+        }
+    }
+    const fastLife: [string, number][] = [['accepted', 1], ['started', 2], ['failed', 3]];
+
+    test('a job accepted and failed within one tick is announced once, with its reason', async () => {
+        const failed = { id: 'dl-40', title: 'fast.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', failure: { code: 'http-status', message: 'HTTP 404 Not Found' } };
+        const panel = refreshingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-40', fastLife, 11);
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('fast.bin failed: HTTP 404 Not Found.');
+        await panel.refresh();
+        await deliverLive(panel, 'dl-40', fastLife, 11);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+    });
+
+    test('a job a read first finds finished is announced when its live events follow the read', async () => {
+        const succeeded = { id: 'dl-41', title: 'instant.png', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([succeeded]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        // Another job's event scheduled this refresh; this job's own events
+        // are published on the next tick.
+        await panel.refresh();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        await deliverLive(panel, 'dl-41', [['accepted', 1], ['started', 2], ['succeeded', 3]], 11);
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('instant.png succeeded.');
+        await panel.refresh();
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+    });
+
+    test('the arrival of work is not news; its outcome is', async () => {
+        const base = { id: 'dl-42', title: 'slow.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([{ ...base, state: 'running', version: 2 }]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-42', [['accepted', 1], ['started', 2]], 11);
+        await panel.refresh();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        panel.requestJSON = vi.fn(async raw => {
+            const states = new URL(String(raw), 'http://localhost').searchParams.getAll('state');
+            return { jobs: states.includes('succeeded') ? [{ ...base, state: 'succeeded', version: 3 }] : [] };
+        });
+        await deliverLive(panel, 'dl-42', [['succeeded', 3]], 13);
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('slow.bin succeeded.');
+    });
+
+    test('a job that finished before the stream caught up is history, and one that finishes after is news', async () => {
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const old = { id: 'dl-43', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T09:00:00Z', failure: { message: 'HTTP 500' } };
+        const fresh = { id: 'dl-44', title: 'fresh.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', failure: { message: 'HTTP 403 Forbidden' } };
+        let listed = [old];
+        const panel = refreshingPanel([]);
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url.startsWith('/v1/jobs?')) {
+                const states = new URL(url, 'http://localhost').searchParams.getAll('state');
+                return { jobs: listed.filter(job => states.includes(job.state)) };
+            }
+            return { ...listed.find(job => url.endsWith(job.id)), commands: [] };
+        });
+        panel.connect();
+        const stream = panel.eventSource as unknown as FakeEventSource;
+        const send = (message: object, sequence: number) => stream.listeners.get('job')?.({ data: JSON.stringify({ ...message, deliverySequence: sequence }), lastEventId: `v2:${sequence}` });
+
+        // The page loads: the first read and the replay both see a job that
+        // finished before it connected.
+        await panel.refresh();
+        await send({ id: 'e-1', jobId: 'dl-43', jobVersion: 1, type: 'accepted' }, 1);
+        await send({ id: 'e-2', jobId: 'dl-43', jobVersion: 3, type: 'failed' }, 2);
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:2' }) });
+        await panel.refresh();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        // Disconnected while a second job ran and failed; the replay brings it.
+        stream.listeners.get('error')?.({});
+        listed = [fresh, old];
+        await send({ id: 'e-3', jobId: 'dl-44', jobVersion: 1, type: 'accepted' }, 3);
+        await send({ id: 'e-4', jobId: 'dl-44', jobVersion: 3, type: 'failed' }, 4);
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:4' }) });
+        await panel.refresh();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        // A third job accepted and failed after catch-up is news.
+        const late = { ...fresh, id: 'dl-45', title: 'late.bin', acceptedAt: '2026-09-26T11:00:00Z' };
+        listed = [late, fresh, old];
+        await send({ id: 'e-5', jobId: 'dl-45', jobVersion: 1, type: 'accepted' }, 5);
+        await send({ id: 'e-6', jobId: 'dl-45', jobVersion: 3, type: 'failed' }, 6);
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('late.bin failed: HTTP 403 Forbidden.');
+        panel.destroy();
+    });
+
+    test('a read that began before catch-up withholds a first-seen outcome for its live event', async () => {
+        const failed = { id: 'dl-46', title: 'straddle.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+        const staleGeneration = panel._streamGeneration;
+        panel._streamGeneration += 1;
+        const spoken: any[] = [];
+        panel.hearFromRead(failed, staleGeneration, spoken);
+        expect(spoken).toEqual([]);
+
+        await deliverLive(panel, 'dl-46', [['failed', 3]], 11);
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('straddle.bin failed.');
+    });
+
+    test('a live snapshot of a job first seen at its outcome is said, and one of new work is not', async () => {
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ job: { id: 'dl-47', title: 'queued.bin', kind: 'remote-download', state: 'queued', version: 1 }, deliverySequence: 11 }),
+            lastEventId: 'v2:11',
+        });
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ job: { id: 'dl-48', title: 'done.bin', kind: 'remote-download', state: 'succeeded', version: 3 }, deliverySequence: 12 }),
+            lastEventId: 'v2:12',
+        });
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('done.bin succeeded.');
+    });
+
     test('announces a canonical event-only state change after its bounded refresh', async () => {
         vi.useFakeTimers();
         const panel = jobPanel();

@@ -144,7 +144,14 @@ for each graphed metric. A finished Job shows its average speed.
 Work that is running, waiting or needs attention is listed up to 50 Jobs per
 group. Finished Jobs are limited by the `download_cockpit_limit` setting
 (default 10); older ones stay on the All jobs page. Progress updates arrive over
-the live stream. They are not announced to screen readers; state changes are.
+the live stream. They are not announced to screen readers; state changes are,
+once each, with the reason when a Job fails. That includes a Job accepted and
+finished within a moment of each other, such as a download refused with a 404:
+its outcome is announced even though the drawer never showed it running. A Job
+whose outcome the live stream had already published when the page connected,
+or published while the stream was reconnecting, is shown but not announced. The
+stream publishes about every two seconds, so an outcome from the moment before
+a page connected can still be announced.
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
 shows the speed and time left under each running Job's bar.
