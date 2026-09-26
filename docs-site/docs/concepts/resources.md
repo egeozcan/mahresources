@@ -133,7 +133,7 @@ Upload deduplication is hash-based (SHA1). If a file with the same hash already 
 - **Different owner, already related**: if the requested owner is already a related Group of the existing Resource, a `ResourceExistsError` is returned with no re-attach.
 - **Different owner, not yet related**: the requested owner is attached as a related Group on the existing Resource, and the existing Resource is returned (no error).
 
-Only Resources the uploader can see take part. For a user limited to a group subtree, content held only by Resources outside that subtree counts as new: the upload creates a Resource of its own inside the subtree, stored over the same file, and the Resources outside are neither changed nor reported. This applies to file uploads, URL imports, background downloads and plugin uploads alike. A background download is checked against the submitter's account as it is when the download finishes.
+Only Resources the uploader can see take part. For a user limited to a group subtree, content held only by Resources outside that subtree counts as new: the upload creates a Resource of its own inside the subtree, stored over the same file when both are on the same storage location, and the Resources outside are neither changed nor reported. This applies to file uploads, URL imports, background downloads and plugin uploads alike. A background download is checked against the submitter's account as it is when the download finishes.
 
 ## Deletion Behavior
 

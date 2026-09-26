@@ -259,7 +259,8 @@ guarantee under the production SQLite configuration.
 on the caller's handle, so for a group-limited principal the scope callback
 confines it to their subtree. Content held only by resources outside it is new
 content to them: they get a resource of their own, inside their subtree, over the
-same file (the path is content-addressed, so the `Stat` branch reuses it). The
+same file when both are on one storage location (the path is content-addressed,
+so the `Stat` branch reuses it; another alternative filesystem gets its own copy). The
 collision branches can therefore only write to, or report, a resource the caller
 may see; anything else is a write outside the subtree plus an answer about what
 the library holds there. Background downloads get the same rule because the

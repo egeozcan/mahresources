@@ -369,9 +369,10 @@ func TestADownloadWhoseSubmitterLostWriteAccessMidTransferCreatesNothing(t *test
 	}
 }
 
-// A delete decides whether a file is still needed inside its transaction and
-// removes it after the commit. An upload of the same bytes that lands in between
-// finds no row, reuses the file still on disk, and must keep it.
+// A delete removes its file after the commit. An upload of the same bytes that
+// lands in between finds no row, reuses the file still on disk, and must keep
+// it: the count that decides the removal is taken after the commit, under the
+// per-hash upload lock.
 func TestAnUploadBetweenADeletesCommitAndItsRemovalKeepsItsFile(t *testing.T) {
 	const body = "bytes uploaded again while their last resource is deleted"
 	cases := map[string]func(ctx *MahresourcesContext, doomed *models.Resource) error{
