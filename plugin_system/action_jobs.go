@@ -533,19 +533,33 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	}()
 
 	slotDeadline := bounds.slotDeadline(time.Now())
-	var mu *vmMutex
+	// What this execution holds is given back on every way out, a panic in the
+	// host's admission included. The VM is handed to the work, which releases it
+	// itself, so it is dropped from here once handed over.
+	var heldVM *vmMutex
+	slotHeld := false
+	defer func() {
+		if heldVM != nil {
+			heldVM.Unlock()
+		}
+		if slotHeld {
+			<-pm.actionSemaphore
+		}
+	}()
 	for {
 		held, got := pm.acquireSlotAndVM(waitCtx, work, slotDeadline, bounds.revoked)
 		if got != asyncRan {
 			return got
 		}
+		heldVM, slotHeld = held, true
 		got, retry := pm.admitOnce(job, slotDeadline)
 		if !retry && got == asyncRan {
-			mu = held
 			break
 		}
-		held.Unlock()
+		heldVM.Unlock()
+		heldVM = nil
 		<-pm.actionSemaphore
+		slotHeld = false
 		if !retry {
 			return got
 		}
@@ -553,7 +567,8 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			return paused
 		}
 	}
-	defer func() { <-pm.actionSemaphore }()
+	mu := heldVM
+	heldVM = nil
 
 	started = true
 	if !work.live() {

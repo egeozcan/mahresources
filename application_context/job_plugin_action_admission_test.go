@@ -577,3 +577,58 @@ func TestAnActionThisProcessCannotRunIsLeftForOneThatCan(t *testing.T) {
 		t.Fatalf("an action whose plugin the deployment has disabled is %s, want blocked", got)
 	}
 }
+
+// TestAPanicAfterTheClaimEndsTheJob pins the host's half of a panicking
+// admission: once the claim is taken, the Job is ended rather than left running
+// with nothing to run it.
+func TestAPanicAfterTheClaimEndsTheJob(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	occurrence := acceptOccurrenceForTest(t, ctx)
+	admission := ctx.newPluginActionAdmission(occurrence.ID,
+		&pluginActionJobInput{Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin},
+		func(jobs.Execution, *pluginActionJobInput) func() error { panic("refusal check failed") })
+
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+		t.Fatalf("a panic after the claim answered %v, want withdrawn", got)
+	}
+	waitFor(t, "the claimed job to end", func() bool {
+		return jobStateForTest(t, ctx, occurrence.ID) == jobs.StateFailed
+	})
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the ended job still holds %d slots", held)
+	}
+}
+
+// TestARetriedOccurrenceThisProcessCannotRunIsLeftForOneThatCan is adoption's
+// deference for scheduled work: a Retry's successor whose plugin is not loaded
+// here, but is enabled in the deployment, stays queued for a process that has it.
+func TestARetriedOccurrenceThisProcessCannotRunIsLeftForOneThatCan(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.Create(&models.PluginState{PluginName: "elsewhere-plugin", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed the plugin state: %v", err)
+	}
+	raw, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeScheduled, Plugin: "elsewhere-plugin", ScheduleID: "tick",
+		Overlap: plugin_system.ScheduleOverlapSkip, Runtime: "another-host/boot/1",
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	accept := func() jobs.Snapshot {
+		return acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+			Origin: "schedule", Title: "tick", Replay: jobs.ReplayInput{Input: raw},
+		})
+	}
+	ancestor, successor := accept(), accept()
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkRetryOf, FromJobID: successor.ID, ToJobID: ancestor.ID,
+	}); err != nil {
+		t.Fatalf("link the retry: %v", err)
+	}
+
+	(&pluginActionAdapter{ctx: ctx}).AdoptWaiting(context.Background())
+	if got := jobStateForTest(t, ctx, successor.ID); got != jobs.StateQueued {
+		t.Fatalf("a retried occurrence whose plugin is enabled elsewhere is %s, want left queued", got)
+	}
+}

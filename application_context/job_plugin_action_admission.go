@@ -71,10 +71,31 @@ func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_s
 // this process's lane without a word, because whoever moved it owns what happens
 // to it now. A deadline bounds the claim's own database work, so a claim waiting
 // on a lock cannot carry a bounded caller past its budget.
-func (a *pluginActionAdmission) Admit(deadline time.Time) plugin_system.AdmitResult {
+//
+// A panic here is contained: before the claim the execution asks again later,
+// and after it the Job is ended, since the claim would otherwise leave it running
+// with nothing to run it.
+func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.AdmitResult) {
 	if _, admitted := a.admitted(); admitted {
 		return plugin_system.Admitted
 	}
+	var claimed *jobs.Execution
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		log.Printf("warning: admitting plugin job %s panicked: %v", a.jobID, r)
+		result = plugin_system.AdmitLater
+		if claimed != nil {
+			execution := *claimed
+			a.ctx.settleRefusedPluginAction(execution, func() error {
+				return a.ctx.failPluginActionJob(execution, "plugin-action-unavailable",
+					"the plugin action could not be started")
+			})
+			result = plugin_system.AdmitWithdrawn
+		}
+	}()
 	execution, err := a.ctx.claimPluginActionJobNamed(a.jobID, deadline)
 	switch {
 	case err == nil:
@@ -90,6 +111,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) plugin_system.AdmitRes
 		log.Printf("warning: could not claim plugin job %s: %v", a.jobID, err)
 		return plugin_system.AdmitLater
 	}
+	claimed = &execution
 	input, err := a.inputOf(execution)
 	if err != nil {
 		a.ctx.settleRefusedPluginAction(execution, func() error {
@@ -316,9 +338,10 @@ const pluginActionAdoptDepth = 8
 // interval again. Either kind whose process is provably gone can never start, and
 // is withdrawn as never started.
 //
-// A registered action this process cannot run is left for a process that can,
-// unless the deployment has its plugin disabled: not having the plugin loaded
-// here proves nothing about the others.
+// Work for a plugin this process does not have loaded is left for a process
+// that does, unless the deployment has the plugin disabled: not having it loaded
+// here proves nothing about the others. With the plugin loaded here, this
+// process's registration is the one it answers from.
 func (ctx *MahresourcesContext) adoptWaitingPluginActions(runCtx context.Context, after jobs.Cursor) jobs.Cursor {
 	service := ctx.JobService()
 	pm := ctx.PluginManager()
@@ -393,10 +416,9 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 		}
 		return false
 	}
-	if summary.Subtype == pluginActionSubtypeRegistered {
-		if _, _, err := pm.FindAction(summary.Plugin, summary.Action); err != nil && !ctx.pluginDisabledEverywhere(summary.Plugin) {
-			return false
-		}
+	if !pm.IsEnabled(summary.Plugin) && !ctx.pluginDisabledEverywhere(summary.Plugin) {
+		// Another process may be the one with this plugin loaded.
+		return false
 	}
 
 	opened, err := ctx.JobService().OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)

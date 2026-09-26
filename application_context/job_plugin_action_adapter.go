@@ -449,12 +449,12 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 	})
 	if _, err := pm.RunActionAsyncForHost(admission.hostJobRef(handle, ""), owner, input.Plugin, input.Action,
 		input.EntityID, input.Params, input.Fingerprint); err != nil {
-		// The manager refused before anything ran — the plugin stopped in the
-		// instant since the check above. Nothing will ever take the Job from this
-		// lane, so it ends here rather than waiting for nobody; a Retry
-		// re-validates.
-		return ctx.failPluginActionJob(jobs.Execution{JobID: jobID}, "plugin-action-unavailable",
-			"the plugin action could not be started")
+		// This process could not take the Job — its plugin stopped, or the
+		// manager is closing, in the instant since the check above. That is a
+		// fact about this process, so the Job stays queued: adoption hands it to
+		// a process that can run it, or blocks it once the deployment has the
+		// plugin disabled.
+		log.Printf("warning: plugin job %s stays queued: this process cannot run it now: %v", jobID, err)
 	}
 	return nil
 }

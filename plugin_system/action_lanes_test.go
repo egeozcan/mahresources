@@ -748,3 +748,32 @@ func TestAHeadWaitingOnARevokedVMLetsTheNextVMRun(t *testing.T) {
 	default:
 	}
 }
+
+// panickingAdmission panics while being asked, which is the host's code failing
+// with the slot and the VM in this execution's hands.
+type panickingAdmission struct{}
+
+func (panickingAdmission) Admit(time.Time) AdmitResult { panic("admission failed") }
+
+// TestAPanickingAdmissionGivesBackTheSlotAndTheVM pins the hand-back on an
+// unexpected way out: the job slot and the VM held for the claim are released,
+// and the plugin's next work runs.
+func TestAPanickingAdmissionGivesBackTheSlotAndTheVM(t *testing.T) {
+	pm := newLanePluginManager(t)
+	if _, err := pm.RunActionAsyncForHost(
+		&HostJobRef{JobID: "panicking-job", Handle: "panicking-handle", Sink: &recordingSink{}, Admission: panickingAdmission{}},
+		nil, "idle", "work", 1, nil, ""); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	next := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(
+		&HostJobRef{JobID: "next-job", Handle: "next-handle", Sink: next, Admission: &scriptedAdmission{}},
+		nil, "idle", "work", 2, nil, ""); err != nil {
+		t.Fatalf("submit the next: %v", err)
+	}
+	waitUntil(t, "the work behind the panicking admission to run", 5*time.Second, func() bool {
+		_, completed, _, _ := next.counts()
+		return completed == 1
+	})
+	waitUntil(t, "every job slot to be free", 5*time.Second, func() bool { return len(pm.actionSemaphore) == 0 })
+}
