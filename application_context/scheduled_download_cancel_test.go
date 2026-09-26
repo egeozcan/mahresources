@@ -430,3 +430,86 @@ func TestRetryingADeferredJobWhoseRowWasLeftPendingRebindsTheRow(t *testing.T) {
 		t.Fatalf("the row is %s owned by %v, want pending and owned by the administrator %d", got.Status, got.CreatedByUserId, admin.ID)
 	}
 }
+
+// A pending row an earlier release left behind a cancelled Job is recorded
+// cancelled when it comes due, before anything about its plugin or owner is
+// checked: the deferral ended when its Job did, and a refusal found afterwards
+// would record a failure of something that was never going to run.
+func TestADueRowWhoseJobWasCancelledIsCancelledEvenWhenItsPluginIsGone(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/plugin-gone.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	if _, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now().Add(2 * time.Hour),
+		PluginAvailable: func(string) bool { return false },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatalf("a row whose Job was cancelled was submitted")
+			return "", nil
+		},
+	}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.Attempts != 0 {
+		t.Fatalf("the row is %s after %d attempts, want cancelled and never submitted", got.Status, got.Attempts)
+	}
+}
+
+// A Job cancelled while the sweep is refusing its row (here, while it asks
+// whether the plugin is available) ends the row first. The refusal then has no
+// row left to record, which is no reason to stop the sweep before the rows
+// behind it.
+func TestCancellingADeferredJobWhileTheSweepRefusesItDoesNotStopTheSweep(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	first, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/refused.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the first deferred download: %v", err)
+	}
+	behind, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/behind-refused.bin"}, time.Now().Add(time.Hour+time.Minute))
+	if err != nil {
+		t.Fatalf("create the second deferred download: %v", err)
+	}
+	var asked atomic.Bool
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now: time.Now().Add(2 * time.Hour),
+		PluginAvailable: func(string) bool {
+			if asked.CompareAndSwap(false, true) {
+				cancelJobAsItsOwner(t, ctx, deferredDownloadJob(t, ctx, first.ID))
+				return false
+			}
+			return true
+		},
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatalf("a deferred row with a durable Job was submitted to the queue")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("the sweep failed when a Job was cancelled while its row was refused: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("the sweep fired %d rows, want only the row behind", fired)
+	}
+	if got := scheduledDownloadRow(t, ctx, first.ID); got.Status != models.ScheduledDownloadStatusCancelled {
+		t.Fatalf("the first row is %s, want cancelled", got.Status)
+	}
+	if got := scheduledDownloadRow(t, ctx, behind.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("the row behind is %s, want submitted", got.Status)
+	}
+}

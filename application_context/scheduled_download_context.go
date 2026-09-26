@@ -419,9 +419,9 @@ func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimTok
 	return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
 }
 
-// errScheduledDownloadClaimLost reports a reserved row something else has since
-// ended: a cancel of its Job, which cancels the row a sweep reserved. The sweep
-// then has nothing left to record, and the rows behind it still fire.
+// errScheduledDownloadClaimLost reports a claimed or reserved row something else
+// has since ended: a cancel of its Job, which cancels the row a sweep holds. The
+// sweep then has nothing left to record, and the rows behind it still fire.
 var errScheduledDownloadClaimLost = errors.New("the row no longer carries this submit claim")
 
 // MarkScheduledDownloadFailed records a terminal refusal/failure and releases
@@ -454,7 +454,7 @@ func (ctx *MahresourcesContext) markScheduledDownloadFailed(id uint, claimToken 
 	if res.RowsAffected == 1 {
 		return nil
 	}
-	return fmt.Errorf("scheduled download %d no longer carries this failure claim", id)
+	return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
 }
 
 // CancelScheduledDownload cancels a pending scheduled download before it is
@@ -730,6 +730,11 @@ func (ctx *MahresourcesContext) FireDueScheduledDownloads(cfg ScheduledDownloadF
 			continue
 		}
 		ok, err := ctx.fireClaimedScheduledDownload(row, claim, cfg, now)
+		if errors.Is(err, errScheduledDownloadClaimLost) {
+			// A cancel of the row's Job ended the row while this sweep held it;
+			// there is nothing left to record, and the rows behind it still fire.
+			continue
+		}
 		if err != nil {
 			return fired, err
 		}
@@ -741,6 +746,15 @@ func (ctx *MahresourcesContext) FireDueScheduledDownloads(cfg ScheduledDownloadF
 }
 
 func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.ScheduledDownload, claim string, cfg ScheduledDownloadFireConfig, now time.Time) (bool, error) {
+	// A row whose Job already ended without running, as an earlier release left a
+	// pending row behind a cancelled Job, records that end before anything else is
+	// checked: a refusal found now would record the failure of a deferral that was
+	// never going to run.
+	if state, ended, err := ctx.deferredJobEndedUnrun(row.ID); err != nil {
+		return false, err
+	} else if ended {
+		return false, ctx.markScheduledDownloadEnded(row.ID, claim, state, now)
+	}
 	if !ctx.scheduledDownloadPluginAvailable(row.PluginName, cfg.PluginAvailable) {
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim,
 			fmt.Errorf("refusing to submit scheduled download: plugin %q is not enabled or its network policy is unavailable", row.PluginName), now)
@@ -783,17 +797,11 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	// the design forbids.
 	var ended *deferredJobEndedError
 	if jobID, materialized, err := ctx.materializeDeferredDownloadJob(row.ID); errors.As(err, &ended) {
-		if err := ctx.markScheduledDownloadEnded(row.ID, claim, ended.state, now); err != nil && !errors.Is(err, errScheduledDownloadClaimLost) {
-			return false, err
-		}
-		return false, nil
+		return false, ctx.markScheduledDownloadEnded(row.ID, claim, ended.state, now)
 	} else if err != nil {
 		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
 	} else if materialized {
 		if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
-			if errors.Is(err, errScheduledDownloadClaimLost) {
-				return false, nil
-			}
 			return false, err
 		}
 		return true, nil
@@ -888,6 +896,30 @@ func movedOnDeferredJob(job jobs.Snapshot) (string, bool, error) {
 	return job.ID, true, nil
 }
 
+// deferredJobEndedUnrun reports the end state of a row's deferred Job when it
+// ended before anything ran it. A row with no durable Job has none.
+func (ctx *MahresourcesContext) deferredJobEndedUnrun(rowID uint) (jobs.State, bool, error) {
+	service := ctx.JobService()
+	if service == nil {
+		return "", false, nil
+	}
+	jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ScheduledDownloadHandleNamespace, fmt.Sprintf("%d", rowID))
+	if errors.Is(err, jobs.ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	if err != nil {
+		return "", false, err
+	}
+	if job.State.Terminal() && job.StartedAt == nil {
+		return job.State, true, nil
+	}
+	return "", false, nil
+}
+
 // deferredJobEndedError reports a deferred Job that ended before anything ran it.
 type deferredJobEndedError struct {
 	state jobs.State
@@ -897,17 +929,19 @@ func (e *deferredJobEndedError) Error() string {
 	return fmt.Sprintf("the deferred download's Job ended %s before it started", e.state)
 }
 
-// markScheduledDownloadEnded records, on a reserved row, that its Job ended before
-// anything ran it: cancelled when it was cancelled, failed otherwise. The
-// reservation counted a submit attempt the row never made, so it is taken back.
+// markScheduledDownloadEnded records, on a row this sweep holds, that its Job
+// ended before anything ran it: cancelled when it was cancelled, failed
+// otherwise. A reservation counted a submit attempt the row never made, so it is
+// taken back.
 func (ctx *MahresourcesContext) markScheduledDownloadEnded(id uint, claimToken string, state jobs.State, at time.Time) error {
 	updates := map[string]any{
 		"claim_token": "",
 		"claimed_at":  nil,
 		"status":      models.ScheduledDownloadStatusCancelled,
 		"last_error":  "",
-		"attempts":    gorm.Expr("attempts - 1"),
-		"updated_at":  at,
+		"attempts": gorm.Expr("CASE WHEN status = ? THEN attempts - 1 ELSE attempts END",
+			models.ScheduledDownloadStatusSubmitted),
+		"updated_at": at,
 	}
 	if state != jobs.StateCancelled {
 		updates["status"] = models.ScheduledDownloadStatusFailed
@@ -915,7 +949,7 @@ func (ctx *MahresourcesContext) markScheduledDownloadEnded(id uint, claimToken s
 	}
 	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ? AND claim_token = ?", id, claimToken).
-		Where("status = ?", models.ScheduledDownloadStatusSubmitted).
+		Where("status IN ?", []string{models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted}).
 		Updates(updates)
 	if res.Error != nil {
 		return res.Error
