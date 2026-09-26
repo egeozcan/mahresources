@@ -285,7 +285,7 @@ curl "http://localhost:8181/v1/plugin/scheduled-downloads?name=image-processor"
 Rows are one-shot deferred host downloads created by `mah.download.submit` with
 `delay` or `start_at`. `status` is `pending`, `submitted`, `failed` or
 `cancelled`. A `submitted` row normally carries the `jobId` of the Job it
-started; the accepted fail-closed exception is a crash between reserving the
+queued; the accepted fail-closed exception is a crash between reserving the
 row and queueing its Job, which can strand a `submitted` row without a job id
 until operational reconciliation. A row whose Job ended before it ran, because
 it was cancelled while it waited, is `cancelled` rather than `submitted`. `claimedAt` appears briefly while a scheduler tick holds the

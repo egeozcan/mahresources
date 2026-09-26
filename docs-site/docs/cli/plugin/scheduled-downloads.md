@@ -9,7 +9,7 @@ sidebar_label: scheduled-downloads
 List the one-shot downloads a plugin deferred with `mah.download.submit`.
 A deferred download is stored durably, with a scheduled Job of Kind
 `deferred-download`, until its due time queues that Job. Pending rows have
-not started yet; submitted rows carry the `jobId` of the Job they started;
+not started yet; submitted rows carry the `jobId` of the Job they queued;
 failed and cancelled rows are terminal. Cancelling the Job before it starts
 cancels its row.
 
