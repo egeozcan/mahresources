@@ -39,9 +39,16 @@ import (
 // A nil storage location and a pointer to the empty string both mean the main
 // store; that is the same normalisation deleteResourceDBOnly applies when it picks
 // the backup folder.
+//
+// The count ignores the caller's subtree. A group-limited caller's upload of
+// content held only outside its subtree gets a resource of its own over the same
+// file, so the rows a caller cannot see are exactly the ones that may still need
+// the file. A count bound to the caller's scope saw none of them and removed a
+// file another subtree's resource still pointed at.
 func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation *string) (int64, error) {
 	var versionCount int64
 	var resourceCount int64
+	db := ctx.unscopedDB()
 
 	scopeToStore := func(db *gorm.DB) *gorm.DB {
 		if storageLocation == nil || *storageLocation == "" {
@@ -50,12 +57,12 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation
 		return db.Where("storage_location = ?", *storageLocation)
 	}
 
-	if err := scopeToStore(ctx.db.Model(&models.ResourceVersion{}).Where("hash = ?", hash)).
+	if err := scopeToStore(db.Model(&models.ResourceVersion{}).Where("hash = ?", hash)).
 		Count(&versionCount).Error; err != nil {
 		return 0, err
 	}
 
-	if err := scopeToStore(ctx.db.Model(&models.Resource{}).Where("hash = ?", hash)).
+	if err := scopeToStore(db.Model(&models.Resource{}).Where("hash = ?", hash)).
 		Count(&resourceCount).Error; err != nil {
 		return 0, err
 	}

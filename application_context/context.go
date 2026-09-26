@@ -1355,20 +1355,30 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	return &ctxCopy
 }
 
-// WithActorUserID returns a ResourceCreator that stamps CreatedByUserId with the
-// given user id (a background download's submitter) while running UNSCOPED. The
-// download submit handlers validate scope targets at enqueue time, so the worker
-// intentionally creates on the unscoped context; this only restores the creator
-// attribution the singleton context would otherwise drop under auth-on. A
-// principal carrying just the UserID applies no scope filter (it is neither
-// scoped nor a scope-requiring role), so behaviour is unchanged apart from the
-// stamp. Returns the receiver for id 0. Consumed via the download_queue
-// actorResourceCreator capability.
+// WithActorUserID returns a ResourceCreator bound to a background download's
+// submitter as their account stands now: CreatedByUserId is stamped with them,
+// and a group-limited submitter's resource is created inside their subtree the
+// way their own upload would be. Returns the receiver for id 0. Consumed via the
+// download_queue actorResourceCreator capability.
+//
+// The scope is what the targets validated at enqueue cannot give. The resource
+// that already holds the downloaded bytes is only found when the transfer ends,
+// and content-hash deduplication decides the outcome by it: an unscoped worker
+// found one outside the submitter's subtree, attached the submitter's group to
+// it and reported it as the download's result, a write outside the subtree and
+// an answer about what the library holds there. Bound to the submitter, the
+// lookup sees only what they can see, and content held elsewhere becomes their
+// own resource over the same file. The owner and groups are also re-checked
+// against the subtree as it is now, rather than as it was at enqueue.
+//
+// The account is resolved as principalForPluginActor resolves an actor, so a
+// deleted or disabled account, or one that cannot be read, binds deny-all rather
+// than unscoped, and the create is refused.
 func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.ResourceCreator {
 	if userID == 0 {
 		return ctx
 	}
-	return ctx.WithPrincipal(&auth.Principal{UserID: userID})
+	return ctx.WithPrincipal(ctx.principalForPluginActor(userID))
 }
 
 // SetHashQueue sets the channel for queueing resources for hash processing.

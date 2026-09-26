@@ -248,7 +248,10 @@ stored the same safe redirect before entity outputs were published. Job detail
 still offers “View JSON result” for the stored summary. A download that failed
 because the library already holds its bytes publishes the Resource holding them
 as its `existing-resource` entity output. The Job detail page links to it from
-the Failure section.
+the Failure section. Only a Resource the submitter can see counts as already
+holding the bytes; for a user limited to a group subtree, content held only
+outside it becomes a new Resource of their own (see
+[Duplicate Detection](../concepts/resources.md#duplicate-detection)).
 
 Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
 `averageRate`, `eta` with `etaEstimated`, and `updatedAt`. The progress series
