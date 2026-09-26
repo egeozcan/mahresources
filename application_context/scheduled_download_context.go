@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"mahresources/auth"
 	"mahresources/jobs"
@@ -454,8 +455,17 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 	now := time.Now()
 	errStarted := errors.New("the deferred download has started")
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		// The conditional update is the transaction's first statement, so SQLite
-		// takes the writer lock before anything is read.
+		// PostgreSQL: the Job is locked before the row, the order a cancel of the
+		// Job takes them in (the Job, then this row through ApplyHostTransition).
+		// The reverse order deadlocks two cancels of one deferral. SQLite has one
+		// writer and no row locks, and there the conditional update stays the
+		// transaction's first statement, so it takes the writer lock before
+		// anything is read.
+		if tx.Dialector.Name() == "postgres" {
+			if err := lockDeferredDownloadJobTx(tx, id); err != nil {
+				return err
+			}
+		}
 		res := tx.Model(&models.ScheduledDownload{}).
 			Where("id = ?", id).
 			Where("status = ?", models.ScheduledDownloadStatusPending).
@@ -491,6 +501,26 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 }
 
 var errScheduledDownloadNotCancellable = errors.New("the scheduled download is not pending")
+
+// lockDeferredDownloadJobTx takes the row lock of the Job behind one scheduled
+// download, if it has one.
+func lockDeferredDownloadJobTx(tx *gorm.DB, rowID uint) error {
+	var handle models.JobLegacyHandle
+	err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(rowID), 10)).
+		First(&handle).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var job models.Job
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", handle.JobID).First(&job).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
 
 // cancelDeferredDownloadJobTx cancels the scheduled Job behind one row, inside
 // the caller's transaction. stopped is false when the Job has started, which a
