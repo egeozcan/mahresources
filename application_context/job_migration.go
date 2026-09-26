@@ -314,6 +314,17 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 	if err != nil {
 		return JobMigrationResult{}, err
 	}
+	reinstated, err := ctx.reinstateScrubbedDeferredDownloads(now())
+	if err != nil {
+		return JobMigrationResult{}, err
+	}
+	if reinstated > 0 && checkpoint.LastError != "" {
+		// The drain fence writes this again if any other quarantine remains.
+		checkpoint.LastError = ""
+		if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+			return JobMigrationResult{}, err
+		}
+	}
 	if checkpoint.Phase == models.JobMigrationPhaseDrainFence {
 		sourceKind, _, rearmed, err := ctx.rearmOneFixedQuarantine()
 		if err != nil {
@@ -467,11 +478,11 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 				}
 				return result, nil
 			}
-			_, rearmed, err := ctx.rearmOneRestoredSource(now())
+			rearmed, err := ctx.rearmRestoredSources(now())
 			if err != nil {
 				return result, err
 			}
-			if rearmed {
+			if rearmed > 0 {
 				result.Batches++
 				checkpoint.Phase, checkpoint.SourceKind, checkpoint.CursorID = models.JobMigrationPhaseCopy, jobMigrationSourceKinds[0], ""
 				checkpoint.CompletedAt = nil
@@ -642,6 +653,84 @@ func (ctx *MahresourcesContext) rearmOneFixedQuarantine() (string, string, bool,
 		}
 	}
 	return "", "", false, nil
+}
+
+// reinstateScrubbedDeferredDownloads returns to scrubbed the scheduled-download
+// sources an earlier release quarantined when a deferred download came due.
+//
+// That release read the JobID written at fire time as a source restored from a
+// backup, could not prove the scrubbed URL against the canonical input, and
+// quarantined the mapping, which then stopped every later start at the drain
+// fence. The quarantine kept the scrub marker and post-scrub hash. A row that
+// still matches them (retiredScheduledDownloadMatches) carries no plaintext and is
+// the row that was scrubbed, so there is nothing left for anybody to decide, and
+// the marker is reinstated with a hash of the row as it now is. A row that does
+// not match stays quarantined: that is the barrier doing its job.
+func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time) (int, error) {
+	codes := []string{"restored-source-not-proven", "source-canonical-replay-mismatch"}
+	reinstated := 0
+	var cursor string
+	for {
+		var candidates []models.JobSourceMapping
+		query := ctx.db.Where("source_kind = ? AND status = ? AND blocker_code IN ? AND scrubbed_at IS NOT NULL AND post_scrub_hash <> ''",
+			jobMigrationScheduledDownload, models.JobSourceMappingQuarantined, codes).
+			Order("source_id ASC").Limit(jobMigrationReadinessBatchSize)
+		if cursor != "" {
+			query = query.Where("source_id > ?", cursor)
+		}
+		if err := query.Find(&candidates).Error; err != nil {
+			return reinstated, errors.New("job migration could not read its scheduled download quarantines")
+		}
+		for _, candidate := range candidates {
+			var restored bool
+			err := ctx.db.Transaction(func(tx *gorm.DB) error {
+				var mapping models.JobSourceMapping
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, candidate.SourceID).
+					First(&mapping).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return errors.New("job migration scheduled download quarantine could not be rechecked")
+				}
+				if mapping.Status != models.JobSourceMappingQuarantined || mapping.ScrubbedAt == nil || mapping.PostScrubHash == "" ||
+					(mapping.BlockerCode != codes[0] && mapping.BlockerCode != codes[1]) {
+					return nil
+				}
+				id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
+				if err != nil {
+					return nil
+				}
+				var row models.ScheduledDownload
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return errors.New("job migration scheduled download source could not be rechecked")
+				}
+				if !retiredScheduledDownloadMatches(row, mapping.PostScrubHash) {
+					return nil
+				}
+				mapping.Status, mapping.BlockerCode = models.JobSourceMappingScrubbed, ""
+				mapping.PostScrubHash, mapping.UpdatedAt = hashRetiredScheduledDownload(row), now
+				if err := tx.Save(&mapping).Error; err != nil {
+					return errors.New("job migration scheduled download scrub marker could not be reinstated")
+				}
+				restored = true
+				return nil
+			})
+			if err != nil {
+				return reinstated, err
+			}
+			if restored {
+				reinstated++
+			}
+		}
+		if len(candidates) < jobMigrationReadinessBatchSize {
+			return reinstated, nil
+		}
+		cursor = candidates[len(candidates)-1].SourceID
+	}
 }
 
 func (ctx *MahresourcesContext) migrationRetryableSourceHash(db *gorm.DB, kind, sourceID string) (string, bool, error) {
@@ -1048,6 +1137,28 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 		URL        string
 		Payload    []byte
 	}{row.ID, row.PluginName, row.JobID, row.URL, append([]byte(nil), row.Payload...)})
+}
+
+// retiredScheduledDownloadMatches reports whether a scrubbed scheduled download is
+// still the row its post-scrub hash was taken from.
+//
+// JobID is the one projected field a live row writes after it was scrubbed. A
+// deferred download is scrubbed at creation once the sources are retired, or by
+// the migration while it is still pending, and its JobID is written when it comes
+// due. A hash taken with an empty JobID therefore still describes the same row
+// after it fired. Everything the barrier exists for — the empty payload, the URL
+// reduced to its origin, the row's identity and plugin — must still be exactly
+// what was hashed.
+func retiredScheduledDownloadMatches(row models.ScheduledDownload, postScrubHash string) bool {
+	if hashRetiredScheduledDownload(row) == postScrubHash {
+		return true
+	}
+	if row.JobID == "" {
+		return false
+	}
+	beforeItFired := row
+	beforeItFired.JobID = ""
+	return hashRetiredScheduledDownload(beforeItFired) == postScrubHash
 }
 
 func hashJobMigrationProjection(value any) string {
