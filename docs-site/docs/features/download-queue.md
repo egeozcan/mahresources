@@ -93,8 +93,9 @@ and as a `scheduled` Job of Kind `deferred-download`, which the Job Center
 shows. Both are durable and survive a restart, but neither is a resident queue
 job until it is due; keeping future work out of the in-memory queue avoids the
 100-job cap and pending-job eviction rules. When the due time comes, the Job is
-queued, the plugin and submitting user are re-validated, and the row is marked
-`submitted` with the Job's id. The download becomes eligible to start at the
+queued, the plugin and submitting user are re-validated, and the plugin
+scheduler's next tick marks the row `submitted` with the Job's id; until then
+the row reads `pending` even if the Job has started. The download becomes eligible to start at the
 time a `start_at` or a `delay` names, whatever time zone the server runs in; it
 then runs as soon as the job runtime has capacity for it. If the submitting user is
 deleted before a pending row fires, the row becomes ownerless and is never
