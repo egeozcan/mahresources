@@ -156,6 +156,18 @@ export function panelFocusSuccessorKeys(key) {
     return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
 }
 
+// Commands whose result the row shows at once: it leaves, or gains or loses
+// its pin. They succeed without a box; a screen reader hears the row and what
+// happened to it. Every other command keeps the server's words in the box:
+// Cancel, Pause and Resume are requests the row may not reflect until the
+// executor acts, and lineage pins, forgetting replay input and a plugin's own
+// commands have results the row cannot show, partial ones included.
+const ROW_SHOWN_COMMANDS = { dismiss: 'dismissed', pin: 'pinned', unpin: 'unpinned' };
+
+function commandDoneText(job, command) {
+    return `${job?.title || job?.kind || 'Job'} ${ROW_SHOWN_COMMANDS[command?.key]}.`;
+}
+
 function commandKey() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
     return `job-panel-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -865,10 +877,14 @@ export function jobPanel() {
 
         async runCommand(job, command) {
             const watch = this.watchReaderFocus();
+            this._commandRefresh = null;
             try {
                 return await this.runCommandUnfocused(job, command);
             } finally {
-                this.keepFocusOnRow(job.id, command, watch);
+                // A Dismiss's refresh may reveal the job that takes the freed
+                // place; focus is placed once it has.
+                this.keepFocusOnRow(job.id, command, watch, this._commandRefresh);
+                this._commandRefresh = null;
             }
         },
 
@@ -882,7 +898,9 @@ export function jobPanel() {
             if (typeof document === 'undefined') return null;
             const opener = focusedElement();
             if (!opener) return null;
-            const watch = { opener, movedByReader: false, stop: () => {} };
+            // The rows in order, for when the command removes its own row.
+            const rows = [...document.querySelectorAll('#job-center-panel article[data-job-id]')].map(row => row.dataset.jobId);
+            const watch = { opener, rows, movedByReader: false, stop: () => {} };
             const onFocusIn = event => {
                 if (event.target === opener || !event.relatedTarget) return;
                 if (event.target?.closest?.('#job-center-panel')) watch.movedByReader = true;
@@ -898,16 +916,32 @@ export function jobPanel() {
         // nearest control on the same row instead, once the trap has acted. It is
         // left alone when the control survived, when the reader moved focus
         // themselves while the command ran, or when focus left the drawer.
-        keepFocusOnRow(jobId, command, watch) {
+        keepFocusOnRow(jobId, command, watch, settled = null) {
             if (!watch) return;
-            this.$nextTick?.(() => setTimeout(() => {
+            Promise.resolve(settled).catch(() => {}).then(() => this.$nextTick?.(() => setTimeout(() => {
                 watch.stop();
                 if (watch.opener.isConnected || watch.movedByReader || !this.isOpen) return;
                 const panel = document.querySelector('#job-center-panel');
                 const active = document.activeElement;
                 if (active && active !== document.body && !panel?.contains(active)) return;
-                const row = panel?.querySelector(`article[data-job-id="${CSS.escape(String(jobId))}"]`);
-                if (!row) return;
+                const rowFor = id => panel?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
+                const row = rowFor(jobId);
+                if (!row) {
+                    // The command took its row away (Dismiss): the row that took
+                    // its place, else the one before it, else All jobs.
+                    const at = watch.rows.indexOf(String(jobId));
+                    const neighbours = [...watch.rows.slice(at + 1), ...watch.rows.slice(0, Math.max(at, 0)).reverse()];
+                    const links = [
+                        ...neighbours.map(id => rowFor(id)?.querySelector('a[href]')),
+                        // One the refresh revealed, when no neighbour is left.
+                        panel?.querySelector('article[data-job-id] a[href]'),
+                        panel?.querySelector('[data-job-panel-all-jobs]'),
+                    ];
+                    for (const link of links) {
+                        if (link && isRendered(link) && focusOn(link)) return;
+                    }
+                    return;
+                }
                 const candidates = [
                     ...panelFocusSuccessorKeys(command?.key).map(key => row.querySelector(`button[data-command-key="${CSS.escape(key)}"]`)),
                     row.querySelector('details[open] summary'),
@@ -917,7 +951,7 @@ export function jobPanel() {
                 for (const candidate of candidates) {
                     if (candidate && isRendered(candidate) && focusOn(candidate)) return;
                 }
-            }, 0));
+            }, 0)));
         },
 
         async runCommandUnfocused(job, command) {
@@ -952,12 +986,21 @@ export function jobPanel() {
                     try { await this.refreshJobPreference(job.id, proved); }
                     catch { preferenceRefreshFailed = true; }
                 }
+                // Dismissing records a preference and emits no job event, so no
+                // refresh would take the row away: it leaves now, and a fresh
+                // refresh supersedes any that read the lists before the dismissal
+                // and brings in whatever the freed place makes room for.
+                if (command?.key === 'dismiss') {
+                    this.jobs = this.jobs.filter(row => row.id !== job.id);
+                    this._commandRefresh = this.refresh();
+                }
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
                 if (successorId) globalThis.location?.assign?.(`/job?id=${encodeURIComponent(successorId)}`);
+                const rowShowsIt = Object.hasOwn(ROW_SHOWN_COMMANDS, command?.key);
                 this.notice = preferenceRefreshFailed
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
-                    : outcome.message || `${commandLabel(command)} requested.`;
-                sayNotice();
+                    : rowShowsIt ? '' : outcome.message || `${commandLabel(command)} requested.`;
+                this.announceNotice(this.notice || commandDoneText(job, command), proved);
                 return outcome;
             } catch (error) {
                 const freshJob = error.payload?.job;
@@ -1020,10 +1063,11 @@ export function jobPanel() {
                     cursor = page.nextCursor || '';
                 } while (cursor);
                 const plural = total === 1 ? '' : 's';
+                // Full success shows no box: the rows leaving say it.
                 this.notice = dismissed === total
-                    ? `${dismissed} finished job${plural} dismissed.`
+                    ? ''
                     : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
-                this.announceNotice(this.notice);
+                this.announceNotice(this.notice || `${dismissed} finished job${plural} dismissed.`);
             } catch (error) {
                 const reason = error.message || 'Could not dismiss finished jobs.';
                 this.notice = dismissed > 0

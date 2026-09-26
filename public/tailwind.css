@@ -443,8 +443,14 @@
   .col-span-2 {
     grid-column: span 2 / span 2;
   }
+  .row-1 {
+    grid-row: 1;
+  }
   .row-2 {
     grid-row: 2;
+  }
+  .row-3 {
+    grid-row: 3;
   }
   .container {
     width: 100%;

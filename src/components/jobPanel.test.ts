@@ -171,6 +171,7 @@ describe('Job Center panel', () => {
 
     function dismissAllHarness(pages: Array<{ ids: string[]; nextCursor?: string }>, failIds: string[] = []) {
         const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
         panel.jobs = [{
             id: 'shown-1', state: 'succeeded', version: 7,
             commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 7, bulk: true }],
@@ -222,13 +223,112 @@ describe('Job Center panel', () => {
         const keys = posts.map(post => post.init.headers['Idempotency-Key']);
         expect(new Set(keys).size).toBe(2);
         expect(outcome).toEqual({ dismissed: 203, total: 203 });
-        expect(panel.notice).toBe('203 finished jobs dismissed.');
+        // A full success needs no box: the rows leaving say it. It is spoken.
+        expect(panel.notice).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('203 finished jobs dismissed.');
         // The refresh that replaces the stale rows runs while the run still owns
         // the button, so a second click cannot start over the finished one.
         expect(busyDuringRefresh.length).toBeGreaterThan(0);
         expect(busyDuringRefresh.every(Boolean)).toBe(true);
         expect(panel.busy).toBe(false);
         await expect(panel.dismissFinished()).resolves.toEqual({ dismissed: 0, total: 0 });
+    });
+
+    function rowCommandPanel(answer: (url: string, init: any) => any) {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.jobs = [
+            { id: 'row-1', title: 'first.bin', kind: 'remote-download', state: 'failed', version: 4, acceptedAt: '2026-09-26T10:00:02Z', commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 4 }] },
+            { id: 'row-2', title: 'second.bin', kind: 'remote-download', state: 'failed', version: 2, acceptedAt: '2026-09-26T10:00:01Z', commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 2 }] },
+        ];
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => answer(String(url), init));
+        // Dismiss asks first; the reader accepts.
+        vi.stubGlobal('Alpine', { store: () => ({ ask: async () => true }) });
+        return panel;
+    }
+
+    test('a row\'s Dismiss removes the row at once and shows no box', async () => {
+        // The server records a preference and emits no job event, so nothing
+        // else would refresh the row away.
+        let second: any;
+        const heldLists: Array<() => void> = [];
+        const panel = rowCommandPanel((url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'applied', message: 'dismissed' } }
+            // The server's lists leave the dismissed job out, but answer slowly.
+            : new Promise(resolve => heldLists.push(() => resolve({
+                jobs: new URL(url, 'http://localhost').searchParams.getAll('state').includes('failed') ? [second] : [],
+            }))));
+        second = panel.jobs[1];
+
+        await panel.runCommand(panel.jobs[0], panel.jobs[0].commands[0]);
+
+        // Gone before the refresh answers, not because of it.
+        expect(heldLists.length).toBeGreaterThan(0);
+        expect(panel.jobs.map(job => job.id)).toEqual(['row-2']);
+        heldLists.forEach(release => release());
+        await vi.waitFor(() => expect(panel.requestJSON).toHaveBeenCalledTimes(4));
+        expect(panel.jobs.map(job => job.id)).toEqual(['row-2']);
+        expect(panel.notice).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin dismissed.');
+    });
+
+    test('a refresh that left before the Dismiss answered does not bring the row back', async () => {
+        const pendingLists: Array<(value: any) => void> = [];
+        const panel = rowCommandPanel((url, init) => init.method === 'POST'
+            ? { result: { message: 'dismissed' } }
+            : new Promise(resolve => { pendingLists.push(resolve); }));
+        const row = panel.jobs[0];
+        const stale = panel.refresh();
+        const staleReads = pendingLists.length;
+        await panel.runCommand(row, row.commands[0]);
+        // The first lists were read before the dismissal and still hold the row;
+        // the refresh the Dismiss starts reads them without it.
+        pendingLists.forEach((answer, index) => answer({ jobs: index < staleReads ? [row] : [] }));
+        await stale;
+        await vi.waitFor(() => expect(panel.requestJSON).toHaveBeenCalledTimes(staleReads * 2 + 1));
+
+        expect(panel.jobs.map(job => job.id)).not.toContain('row-1');
+    });
+
+    test('a Dismiss refreshes, so a job beyond the shown limit takes the freed place', async () => {
+        const older = { id: 'row-3', title: 'third.bin', kind: 'remote-download', state: 'failed', version: 1, acceptedAt: '2026-09-26T10:00:00Z', commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 1 }] };
+        let dismissed = false;
+        const panel = rowCommandPanel((url, init) => {
+            if (init.method === 'POST') { dismissed = true; return { result: { message: 'dismissed' } }; }
+            const states = new URL(url, 'http://localhost').searchParams.getAll('state');
+            const rows = [...panel.jobs.filter(job => job.id !== 'row-1' || !dismissed), older];
+            return { jobs: states.includes('failed') ? rows.filter((row, index, all) => all.findIndex(other => other.id === row.id) === index) : [] };
+        });
+
+        await panel.runCommand(panel.jobs[0], panel.jobs[0].commands[0]);
+        await vi.waitFor(() => expect(panel.jobs.map(job => job.id)).toEqual(['row-2', 'row-3']));
+    });
+
+    test('a command whose result the row cannot show keeps the server\'s words in the box', async () => {
+        const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'pinned 2 of 3 visible related jobs' } }));
+
+        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin visible lineage', jobVersion: 4 });
+
+        expect(panel.notice).toBe('pinned 2 of 3 visible related jobs');
+    });
+
+    for (const key of ['cancel', 'pause', 'resume']) {
+        test(`a ${key} request keeps its acknowledgement in the box, since the row may not change yet`, async () => {
+            const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'requested', message: `${key} requested` } }));
+
+            await panel.runCommand(panel.jobs[0], { key, label: key, jobVersion: 4 });
+
+            expect(panel.notice).toBe(`${key} requested`);
+        });
+    }
+
+    test('a row command that fails still says why in the box', async () => {
+        const panel = rowCommandPanel(() => { throw new Error('Request failed (500)'); });
+
+        await panel.runCommand(panel.jobs[0], panel.jobs[0].commands[0]);
+
+        expect(panel.jobs.map(job => job.id)).toEqual(['row-1', 'row-2']);
+        expect(panel.notice).toBe('Request failed (500)');
     });
 
     test('reports a partial dismissal as a count, not a list of ids', async () => {
@@ -252,7 +352,9 @@ describe('Job Center panel', () => {
 
         await panel.dismissFinished();
 
-        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        // A full success needs no box: the rows leaving say it. It is spoken.
+        expect(panel.notice).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('2 finished jobs dismissed.');
         expect(panel.jobs.map(job => job.id)).not.toContain('shown-1');
         expect(panel.finishedCount).toBe(0);
         expect(panel.busy).toBe(false);
@@ -275,7 +377,9 @@ describe('Job Center panel', () => {
 
         await panel.dismissFinished();
 
-        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        // A full success needs no box: the rows leaving say it. It is spoken.
+        expect(panel.notice).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('2 finished jobs dismissed.');
         expect(panel.jobs).toEqual([]);
         expect(panel.finishedCount).toBe(0);
     });
@@ -309,7 +413,9 @@ describe('Job Center panel', () => {
         await panel.dismissFinished();
         await staleRefresh;
 
-        expect(panel.notice).toBe('2 finished jobs dismissed.');
+        // A full success needs no box: the rows leaving say it. It is spoken.
+        expect(panel.notice).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('2 finished jobs dismissed.');
         expect(panel.jobs).toEqual([]);
     });
 
@@ -1072,7 +1178,7 @@ describe('Job Center panel accessibility hooks', () => {
         const last = panel._liveRegion.announce.mock.calls.at(-1)[0];
         expect(last).not.toContain('paused');
         expect(last).toContain('stale.bin running.');
-        expect(last).toContain('Pin requested.');
+        expect(last).toContain('stale.bin pinned.');
     });
 
     test('a command notice is kept when another job\'s news follows within the window', async () => {
@@ -1091,7 +1197,7 @@ describe('Job Center panel accessibility hooks', () => {
 
         const last = panel._liveRegion.announce.mock.calls.at(-1)[0];
         expect(last).toContain('other.bin failed.');
-        expect(last).toContain('Dismissed.');
+        expect(last).toContain('mine.bin dismissed.');
     });
 
     test('a withheld transition survives a later same-state version and is said by its late live event', async () => {
@@ -1196,7 +1302,7 @@ describe('Job Center panel accessibility hooks', () => {
 
         const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
         expect(said.join(' | ')).toContain('pinned.bin failed: disk full.');
-        expect(said.at(-1)).toContain('Pin requested.');
+        expect(said.at(-1)).toContain('pinned.bin pinned.');
     });
 
     test('several transitions one refresh reads are said together, not overwritten', async () => {

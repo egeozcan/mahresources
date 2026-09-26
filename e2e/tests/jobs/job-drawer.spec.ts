@@ -186,6 +186,74 @@ test.describe('Jobs drawer', () => {
     await expect(allJobs).toBeFocused();
   });
 
+  test('a row\'s Dismiss takes the row away, shows no box, and hands focus to the next row', async ({ page }) => {
+    const rows = [
+      { id: 'drawer-dismiss-a', title: 'Dismiss me', acceptedAt: '2026-09-26T10:00:02Z' },
+      { id: 'drawer-dismiss-b', title: 'Keep me', acceptedAt: '2026-09-26T10:00:01Z' },
+    ].map(row => ({
+      ...row, kind: 'remote-download', state: 'failed', version: 2, failure: { message: 'connection refused' },
+      commands: [{ key: 'dismiss', label: 'Dismiss', endpoint: `/v1/jobs/${row.id}/commands/dismiss`, jobVersion: 2 }],
+      outputs: [], lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    }));
+    const dismissed = new Set<string>();
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: states.includes('failed') ? rows.filter(row => !dismissed.has(row.id)) : [], nextCursor: null } });
+    });
+    for (const row of rows) {
+      await page.route(`**/v1/jobs/${row.id}`, route => route.fulfill({ json: row }));
+      // As the server answers: a preference is recorded and no job event follows.
+      await page.route(`**/v1/jobs/${row.id}/commands/dismiss`, route => {
+        dismissed.add(row.id);
+        return route.fulfill({ json: { result: { status: 'succeeded', code: 'applied', message: 'dismissed' } } });
+      });
+    }
+
+    await page.goto('/dashboard');
+    await page.keyboard.press('Control+Shift+D');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    const first = drawer.locator('article[data-job-id="drawer-dismiss-a"]');
+    await first.getByRole('button', { name: 'Dismiss', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss', exact: true }).click();
+
+    await expect(first).toHaveCount(0);
+    await expect(drawer.locator('[data-job-panel-notice]')).toBeHidden();
+    await expect(drawer.locator('[data-job-panel-announcer]')).toHaveText('Dismiss me dismissed.');
+    await expect(drawer.getByRole('link', { name: 'Keep me', exact: true })).toBeFocused();
+  });
+
+  test('dismissing the only row hands focus to the job the refresh reveals', async ({ page }) => {
+    const rows = [
+      { id: 'drawer-reveal-a', title: 'Only shown' },
+      { id: 'drawer-reveal-b', title: 'Revealed next' },
+    ].map(row => ({
+      ...row, kind: 'remote-download', state: 'failed', version: 2, acceptedAt: '2026-09-26T10:00:00Z',
+      commands: [{ key: 'dismiss', label: 'Dismiss', endpoint: `/v1/jobs/${row.id}/commands/dismiss`, jobVersion: 2 }],
+      outputs: [], lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    }));
+    let dismissed = false;
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      // Only one job fits until the first is dismissed.
+      return route.fulfill({ json: { jobs: states.includes('failed') ? [dismissed ? rows[1] : rows[0]] : [], nextCursor: null } });
+    });
+    for (const row of rows) await page.route(`**/v1/jobs/${row.id}`, route => route.fulfill({ json: row }));
+    await page.route('**/v1/jobs/drawer-reveal-a/commands/dismiss', route => {
+      dismissed = true;
+      return route.fulfill({ json: { result: { status: 'succeeded', code: 'applied', message: 'dismissed' } } });
+    });
+
+    await page.goto('/dashboard');
+    await page.keyboard.press('Control+Shift+D');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    await drawer.locator('article[data-job-id="drawer-reveal-a"]').getByRole('button', { name: 'Dismiss', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss', exact: true }).click();
+
+    await expect(drawer.getByRole('link', { name: 'Revealed next', exact: true })).toBeFocused();
+  });
+
   test('a running download shows its bar, speed, time left and a speed graph, live', async ({ page, request }) => {
     const { server, port } = await startSlowServer();
     try {
