@@ -61,7 +61,10 @@ end
 
 function init()
     mah.action({ id = "work", label = "Work", entity = "resource", async = true, handler = work })
-    mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id) end })
+    mah.action({ id = "needs-mode", label = "Needs Mode", entity = "resource", async = true,
+                 params = { {name = "mode", type = "text", label = "Mode", required = true} },
+                 handler = work })
+    mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id) started(0) end })
 end
 `
 
@@ -237,7 +240,7 @@ type scriptedAdmission struct {
 	asked   int
 }
 
-func (a *scriptedAdmission) Admit() AdmitResult {
+func (a *scriptedAdmission) Admit(time.Time) AdmitResult {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.asked++
@@ -361,4 +364,104 @@ func TestALaneHandsItselfOnInArrivalOrderAndSurvivesAGiveUp(t *testing.T) {
 		t.Fatal("a lane handed to a ticket that then left was lost")
 	}
 	lane.release()
+}
+
+// TestAScheduleTickGoesAheadOfItsPluginsQueuedActions pins the one exception to
+// arrival order. A tick's wait is bounded and it recurs; behind the plugin's whole
+// backlog of actions it would give up at every tick until the backlog drained.
+// It waits for the handler that is running and then runs, ahead of the actions
+// that were queued before it.
+func TestAScheduleTickGoesAheadOfItsPluginsQueuedActions(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	defer gate.open.Store(true)
+
+	for entity := 1; entity <= 3; entity++ {
+		if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", uint(entity), nil, ""); err != nil {
+			t.Fatalf("submit busy work %d: %v", entity, err)
+		}
+	}
+	waitUntil(t, "the first busy action to start", 5*time.Second, func() bool { return len(gate.order()) == 1 })
+
+	regs := pm.DeclaredSchedules("busy")
+	result := make(chan bool, 1)
+	go func() {
+		_, ran, _ := pm.RunSchedule(regs[0], 1, 5*time.Second, true)
+		result <- ran
+	}()
+	// The tick is waiting in the lane; let the running action finish.
+	time.Sleep(100 * time.Millisecond)
+	gate.open.Store(true)
+	select {
+	case ran := <-result:
+		if !ran {
+			t.Fatal("the tick gave up although only one handler was ahead of it")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the tick never ran")
+	}
+	waitUntil(t, "the backlog to drain", 10*time.Second, func() bool { return len(gate.order()) == 4 })
+	if got := fmt.Sprint(gate.order()); got != fmt.Sprint([]int{1, 0, 2, 3}) {
+		t.Fatalf("handlers were entered in the order %s, want the running action, then the tick (0), then the queued actions", got)
+	}
+}
+
+// lateAdmission admits only after its caller's deadline has passed.
+type lateAdmission struct{ asked atomic.Int64 }
+
+func (a *lateAdmission) Admit(deadline time.Time) AdmitResult {
+	a.asked.Add(1)
+	if !deadline.IsZero() {
+		time.Sleep(time.Until(deadline) + 20*time.Millisecond)
+	}
+	return Admitted
+}
+
+// TestAnAdmissionThatArrivesAfterTheDeadlineIsNotRun pins the bound through the
+// admission: a claim the host grants after a bounded caller stopped waiting is
+// given back rather than run, so the caller's own claim cannot be outlived.
+func TestAnAdmissionThatArrivesAfterTheDeadlineIsNotRun(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	gate.open.Store(true)
+
+	regs := pm.DeclaredSchedules("busy")
+	admission := &lateAdmission{}
+	sink := &recordingSink{}
+	_, ran, err := pm.RunScheduleForHost(regs[0], 1, 100*time.Millisecond, true,
+		&HostJobRef{JobID: "late-job", Handle: "late-handle", Sink: sink, Admission: admission})
+	if err != nil || ran {
+		t.Fatalf("a late admission answered ran=%v err=%v, want not run", ran, err)
+	}
+	if admission.asked.Load() != 1 {
+		t.Fatalf("the host was asked %d times, want once", admission.asked.Load())
+	}
+	if started, completed, failed, _ := sink.counts(); started+completed+failed != 0 || len(gate.order()) != 0 {
+		t.Fatalf("a run admitted too late reported started=%d completed=%d failed=%d and entered %v",
+			started, completed, failed, gate.order())
+	}
+}
+
+// TestAQueuedActionIsCheckedAgainstTheRegistrationItRuns pins the check made when
+// a queued action finally starts: it runs the handler registered then, so that
+// registration must still accept the payload validated at submission — the same
+// kind of entity and params that still validate.
+func TestAQueuedActionIsCheckedAgainstTheRegistrationItRuns(t *testing.T) {
+	pm := newLanePluginManager(t)
+
+	valid := &ActionJob{PluginName: "busy", ActionID: "needs-mode", EntityType: "resource"}
+	if _, _, err := pm.resolveQueuedAction(valid, map[string]any{"mode": "fast"}, ""); err != nil {
+		t.Fatalf("a payload the registration accepts was refused: %v", err)
+	}
+	if _, _, err := pm.resolveQueuedAction(valid, map[string]any{}, ""); err == nil {
+		t.Fatal("a payload missing a param the registration now requires was accepted")
+	}
+	wrongEntity := &ActionJob{PluginName: "busy", ActionID: "needs-mode", EntityType: "note"}
+	if _, _, err := pm.resolveQueuedAction(wrongEntity, map[string]any{"mode": "fast"}, ""); err == nil {
+		t.Fatal("a queued action for a note ran a registration that now acts on resources")
+	}
+	gone := &ActionJob{PluginName: "busy", ActionID: "removed", EntityType: "resource"}
+	if _, _, err := pm.resolveQueuedAction(gone, nil, ""); err == nil {
+		t.Fatal("a queued action whose registration is gone was resolved")
+	}
 }

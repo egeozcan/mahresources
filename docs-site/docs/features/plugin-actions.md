@@ -290,10 +290,10 @@ Async actions (`async = true`) run in a background goroutine via the job system.
 
 **Timeout**: 5 minutes.
 
-A plugin runs one piece of background work at a time. Its async actions, its
-`mah.start_job` jobs and its schedule runs wait in one queue per plugin and start
-in the order they were submitted. A job waiting its turn is `queued` in the Job
-Center and holds nothing. The job at the head of the queue starts once one of the
+A plugin runs one piece of background work at a time. Its async actions and its
+`mah.start_job` jobs wait in one queue per plugin and start in the order they were
+submitted; a schedule run goes ahead of them and waits only for the work already
+running. A job waiting its turn is `queued` in the Job Center and holds nothing. The job at the head of the queue starts once one of the
 process's 3 plugin job slots is free and the deployment's job budget
 (`-max-job-concurrency`, shared with downloads, exports and every other kind of
 Job) has room. A bulk run over 50 resources is therefore one running Job and 49

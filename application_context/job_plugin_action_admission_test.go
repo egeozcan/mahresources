@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -197,5 +198,145 @@ func TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack(t *testing.T) {
 	scheduler.Stop()
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "1" {
 		t.Fatalf("the handler ran %q times once the budget freed, want once", got)
+	}
+}
+
+// TestAnOccurrenceSomebodyElseWithdrewIsNotReportedAsRun pins what a waiter reads
+// from a Job it did not run. An occurrence another runtime claimed and then gave
+// back unstarted ends cancelled with a not-started event; reading "it ended" as
+// "it ran" would record a completed run for a tick that never ran, and advance
+// the schedule's row past it.
+func TestAnOccurrenceSomebodyElseWithdrewIsNotReportedAsRun(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	for _, claimFirst := range []bool{false, true} {
+		accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+			Origin: "schedule", Title: "occurrence", Replay: jobs.ReplayInput{NonReplayable: true},
+		})
+		execution := jobs.Execution{JobID: accepted.ID}
+		if claimFirst {
+			claimed, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+				Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: accepted.ID,
+				Claimant: "another-runtime",
+			})
+			if err != nil {
+				t.Fatalf("claim: %v", err)
+			}
+			execution = claimed
+		}
+		if err := ctx.withdrawPluginActionJob(execution, "not-started", "busy"); err != nil {
+			t.Fatalf("withdraw: %v", err)
+		}
+		run, err := ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: accepted.ID})
+		if err != nil {
+			t.Fatalf("await: %v", err)
+		}
+		if run.Started || run.Failed {
+			t.Fatalf("claimed first=%v: a withdrawn occurrence was reported as started=%v failed=%v",
+				claimFirst, run.Started, run.Failed)
+		}
+	}
+}
+
+// TestAdoptionFillsALaneOnlyAsDeepAsItCanDrain pins the bound on what this process
+// holds in memory for work it cannot run yet. With the job slots full, a pass over a
+// long waiting queue hands a plugin's lane a bounded number of Jobs, and the rest
+// stay durable and waiting.
+func TestAdoptionFillsALaneOnlyAsDeepAsItCanDrain(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	release := pm.FillJobBudgetForTest()
+	defer release()
+
+	input, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "async-work",
+		EntityType: "resource", Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("encode the input: %v", err)
+	}
+	const waiting = 3 * pluginActionAdoptDepth
+	ids := make([]string, 0, waiting)
+	for i := 0; i < waiting; i++ {
+		ids = append(ids, acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+			Origin: "api", Title: "Async Work", Replay: jobs.ReplayInput{Input: input},
+		}).ID)
+	}
+
+	adapter := &pluginActionAdapter{ctx: ctx}
+	adapter.AdoptWaiting(context.Background())
+	adapter.AdoptWaiting(context.Background())
+
+	held := 0
+	for _, id := range ids {
+		if pm.HostJobHeld(id) {
+			held++
+		}
+		if state := jobStateForTest(t, ctx, id); state != jobs.StateQueued {
+			t.Fatalf("job %s is %s while no job slot is free, want queued", id, state)
+		}
+	}
+	if held != pluginActionAdoptDepth || pm.LaneDepth(pluginActionTestPlugin) != pluginActionAdoptDepth {
+		t.Fatalf("adoption holds %d of %d waiting jobs in a lane %d deep, want %d",
+			held, waiting, pm.LaneDepth(pluginActionTestPlugin), pluginActionAdoptDepth)
+	}
+
+	// Once the lane can drain, later passes hand over the rest.
+	release()
+	adapter.AdoptWaiting(context.Background())
+	waitFor(t, "every waiting job to run", func() bool {
+		adapter.AdoptWaiting(context.Background())
+		for _, id := range ids {
+			if !jobStateForTest(t, ctx, id).Terminal() {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// TestAnOccurrenceAdmittedUnderADeadlinePublishesAfterIt pins where the admission's
+// deadline lives: on the claim's own queries, never on the handle the execution
+// publishes through for the rest of its run. A handler that finishes after the
+// dispatch budget is spent still records its result.
+func TestAnOccurrenceAdmittedUnderADeadlinePublishesAfterIt(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	operator := models.User{Username: "schedule-operator", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&operator).Error; err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	if err := ctx.SyncPluginSchedules(pluginActionTestPlugin, pm.DeclaredSchedules(pluginActionTestPlugin)); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	if err := ctx.db.Model(&models.PluginSchedule{}).
+		Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "slow-tick").
+		Update("next_due_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatalf("make the schedule due: %v", err)
+	}
+
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.dispatchWait = 150 * time.Millisecond
+	scheduler.Tick(time.Now())
+	scheduler.Stop()
+
+	occurrence := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
+	if occurrence.State != jobs.StateSucceeded {
+		t.Fatalf("the slow occurrence ended %s (%+v), want succeeded", occurrence.State, occurrence.Failure)
+	}
+	outputs, err := ctx.JobService().Outputs(ctx.jobDeps(), jobs.Access{Administrator: true}, occurrence.ID)
+	if err != nil {
+		t.Fatalf("read the outputs: %v", err)
+	}
+	if len(outputs) != 1 || outputs[0].Key != "result" {
+		t.Fatalf("the occurrence published %+v, want its result", outputs)
 	}
 }

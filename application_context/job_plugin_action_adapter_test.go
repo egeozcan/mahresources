@@ -218,6 +218,12 @@ function init()
     end })
     mah.schedule({ id = "retryable-tick", every = "1m", overlap = "skip", retry = true,
                    handler = function(job_id) bump("retryable-scheduled") end })
+    -- Runs for longer than the short dispatch budget a test gives it, and
+    -- publishes a result after that budget is spent.
+    mah.schedule({ id = "slow-tick", every = "1m", overlap = "skip", handler = function(job_id)
+        mah.sleep(0.4)
+        mah.job_complete(job_id, { message = "slow done", rows = 3 })
+    end })
     mah.on("after_job_completed", follow_up)
 end
 `

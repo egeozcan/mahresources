@@ -135,6 +135,9 @@ const (
 	// pluginActionWaitPollInterval is how often a dispatched execution looks at its
 	// Job while waiting for the plugin manager's report.
 	pluginActionWaitPollInterval = 25 * time.Millisecond
+	// pluginActionNotStartedEvent is the terminal event of a Job withdrawn before
+	// its handler was entered.
+	pluginActionNotStartedEvent = "not-started"
 )
 
 // pluginActionJobInput is what a plugin-action Job is accepted with.
@@ -651,7 +654,7 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 		} else if snap.State.Terminal() {
 			run := pluginActionRun{
 				JobID:   execution.JobID,
-				Started: true,
+				Started: !ctx.pluginActionNeverStarted(snap),
 				Failed:  snap.State == jobs.StateFailed || snap.State == jobs.StateInterrupted,
 			}
 			if snap.Failure != nil {
@@ -667,6 +670,28 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 		case <-time.After(pluginActionWaitPollInterval):
 		}
 	}
+}
+
+// pluginActionNeverStarted reports whether a terminal Job ended without its
+// handler being entered: it was withdrawn, which leaves a not-started event on its
+// timeline. Whoever waited for the Job's outcome must not read "it ended" as "it
+// ran" — a scheduler would record a tick that never ran as a completed one, and
+// advance its row past it.
+func (ctx *MahresourcesContext) pluginActionNeverStarted(snap jobs.Snapshot) bool {
+	if snap.State != jobs.StateCancelled {
+		return false
+	}
+	events, err := ctx.JobService().Timeline(ctx.jobDeps(), jobs.Access{Administrator: true}, snap.ID, 0, 0)
+	if err != nil {
+		log.Printf("warning: could not read the timeline of plugin job %s: %v", snap.ID, err)
+		return false
+	}
+	for _, event := range events {
+		if event.Type == pluginActionNotStartedEvent {
+			return true
+		}
+	}
+	return false
 }
 
 // pluginActionRefusal answers why this execution may not run as the principal it
@@ -2034,7 +2059,7 @@ func (ctx *MahresourcesContext) withdrawPluginActionJob(execution jobs.Execution
 		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateCancelled,
-		Event:           jobs.EventInput{Type: "not-started", Detail: detail},
+		Event:           jobs.EventInput{Type: pluginActionNotStartedEvent, Detail: detail},
 	})
 	if err != nil && mirrorRefusalIsSilent(err) {
 		return nil

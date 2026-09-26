@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
 
 	"mahresources/jobs"
 	"mahresources/plugin_system"
@@ -65,18 +66,21 @@ func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_s
 // A full deployment budget is "later" and writes nothing. A Job that is no longer
 // waiting — cancelled, blocked, or claimed by another runtime — is withdrawn from
 // this process's lane without a word, because whoever moved it owns what happens
-// to it now.
-func (a *pluginActionAdmission) Admit() plugin_system.AdmitResult {
+// to it now. A deadline bounds the claim's own database work, so a claim waiting
+// on a lock cannot carry a bounded caller past its budget.
+func (a *pluginActionAdmission) Admit(deadline time.Time) plugin_system.AdmitResult {
 	if _, admitted := a.admitted(); admitted {
 		return plugin_system.Admitted
 	}
-	execution, err := a.ctx.claimPluginActionJobNamed(a.jobID)
+	execution, err := a.ctx.claimPluginActionJobNamed(a.jobID, deadline)
 	switch {
 	case err == nil:
 	case errors.Is(err, jobs.ErrCapacityExhausted):
 		return plugin_system.AdmitLater
 	case errors.Is(err, jobs.ErrJobNotWaiting):
 		return plugin_system.AdmitWithdrawn
+	case errors.Is(err, context.DeadlineExceeded):
+		return plugin_system.AdmitLater
 	default:
 		// A claim that failed for any other reason may have blocked the Job
 		// itself (an input that cannot be opened); the next question finds out.
@@ -178,13 +182,23 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 }
 
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
-// against the deployment's budget, and keeps the claim alive.
-func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string) (jobs.Execution, error) {
+// against the deployment's budget, and keeps the claim alive. A non-zero
+// deadline bounds the claim's database work.
+func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string, deadline time.Time) (jobs.Execution, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return jobs.Execution{}, errors.New("this context has no job control plane installed")
 	}
-	execution, err := service.ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+	// The deadline rides on the handle the claim's own queries run on, and not on
+	// the context ClaimJob is given: that one is what the execution publishes
+	// through for the rest of its life, long after this deadline has passed.
+	deps := ctx.jobDeps()
+	if !deadline.IsZero() && deps.DB != nil {
+		claimCtx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		deps.DB = deps.DB.WithContext(claimCtx)
+	}
+	execution, err := service.ClaimJob(context.Background(), deps, jobs.ClaimRequest{
 		Kind:        JobKindPluginAction,
 		KindVersion: jobPluginActionKindVersion,
 		JobID:       jobID,
@@ -204,6 +218,14 @@ func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string) (jobs.Ex
 // pluginActionAdoptBatch bounds how many waiting Jobs one adoption pass reads. A
 // longer queue is walked over several passes, from where the last one stopped.
 const pluginActionAdoptBatch = 100
+
+// pluginActionAdoptDepth bounds how deep adoption fills one plugin's lane in this
+// process. A waiting Job needs a lane only when it is about to run, and every
+// process of the deployment adopts from the same queue: filling lanes with the
+// whole backlog would hold a goroutine and an in-memory entry per waiting Job in
+// every process while none of them can run. The rest stay durable and waiting,
+// and later passes hand them over as the lane drains.
+const pluginActionAdoptDepth = 8
 
 // adoptWaitingPluginActions hands this process's plugin lanes the waiting
 // plugin-action Jobs no execution here holds, and answers where the next pass
@@ -240,21 +262,38 @@ func (ctx *MahresourcesContext) adoptWaitingPluginActions(runCtx context.Context
 		last := waiting[len(waiting)-1]
 		next = jobs.Cursor{AcceptedAt: last.AcceptedAt, ID: last.ID}
 	}
+	// A lane's depth is read once per plugin per pass: an adopted occurrence
+	// joins its lane from its own goroutine, so a depth read after handing it
+	// over would not count it yet.
+	depth := map[string]int{}
 	for _, job := range waiting {
 		if pm.HostJobHeld(job.ID) {
 			continue
 		}
-		ctx.adoptWaitingPluginAction(pm, job)
+		plugin := ""
+		if summary, ok := pluginActionSummaryDecoded(job.Summary); ok {
+			plugin = summary.Plugin
+		}
+		if _, read := depth[plugin]; !read {
+			depth[plugin] = pm.LaneDepth(plugin)
+		}
+		if depth[plugin] >= pluginActionAdoptDepth {
+			continue
+		}
+		if ctx.adoptWaitingPluginAction(pm, job) {
+			depth[plugin]++
+		}
 	}
 	return next
 }
 
 // adoptWaitingPluginAction hands one waiting Job to its plugin's lane here, or
-// resolves it when it can never run.
-func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.PluginManager, job jobs.Snapshot) {
+// resolves it when it can never run, and reports whether it now waits in a lane
+// of this process.
+func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.PluginManager, job jobs.Snapshot) bool {
 	summary, ok := pluginActionSummaryDecoded(job.Summary)
 	if !ok {
-		return
+		return false
 	}
 	if summary.Subtype == pluginActionSubtypeClosure {
 		identity, ok := plugin_system.ParseRuntimeIdentity(summary.Runtime)
@@ -264,7 +303,7 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 				log.Printf("warning: could not withdraw plugin job %s: %v", job.ID, err)
 			}
 		}
-		return
+		return false
 	}
 
 	opened, err := ctx.JobService().OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)
@@ -275,10 +314,10 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 			if blockErr := ctx.blockPluginActionJob(jobs.Execution{JobID: job.ID}, "input-unavailable"); blockErr != nil {
 				log.Printf("warning: could not block plugin job %s: %v", job.ID, blockErr)
 			}
-			return
+			return false
 		}
 		log.Printf("warning: could not open waiting plugin job %s: %v", job.ID, err)
-		return
+		return false
 	}
 	input, err := pluginActionInputOf(opened.Input)
 	if err != nil {
@@ -286,14 +325,16 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 			"the plugin action could not be started"); failErr != nil {
 			log.Printf("warning: could not fail plugin job %s: %v", job.ID, failErr)
 		}
-		return
+		return false
 	}
 
 	switch input.Subtype {
 	case pluginActionSubtypeRegistered:
 		if err := ctx.queueRegisteredPluginAction(pm, job.ID, ctx.pluginActionHandleFor(job.ID), job.ActorUserID, input); err != nil {
 			log.Printf("warning: could not queue plugin job %s: %v", job.ID, err)
+			return false
 		}
+		return pm.HostJobHeld(job.ID)
 	case pluginActionSubtypeScheduled:
 		reg, found := ctx.pluginScheduleRegistration(pm, input.Plugin, input.ScheduleID)
 		if !found {
@@ -305,7 +346,7 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 				"the schedule is no longer declared by its plugin"); err != nil {
 				log.Printf("warning: could not fail plugin job %s: %v", job.ID, err)
 			}
-			return
+			return false
 		}
 		var actor uint
 		if job.ActorUserID != nil {
@@ -316,5 +357,7 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 				log.Printf("warning: adopted plugin job %s: %v", job.ID, err)
 			}
 		}()
+		return true
 	}
+	return false
 }

@@ -43,10 +43,20 @@ var ErrHostJobHeld = errHostJobHeld
 // its goroutine first runs: goroutines start in no particular order, and a
 // plugin's work should start in the order it was asked for. Release hands the
 // lane straight to the oldest waiter rather than letting the waiters race for it.
+//
+// A schedule's tick is the one exception to arrival order (joinAhead): it goes
+// ahead of the plugin's queued actions and waits only for the work already
+// running and for ticks that joined ahead before it.
 type pluginLane struct {
 	mu      sync.Mutex
 	held    bool
-	waiters []chan struct{}
+	waiters []laneWaiter
+}
+
+// laneWaiter is one place in a lane's queue.
+type laneWaiter struct {
+	turn  chan struct{}
+	ahead bool
 }
 
 // laneTicket is one execution's place in its plugin's lane.
@@ -58,16 +68,53 @@ type laneTicket struct {
 // join takes a place at the back of the lane. The ticket's turn has already come
 // when the lane was free.
 func (l *pluginLane) join() *laneTicket {
+	return l.enter(false)
+}
+
+// joinAhead takes a place ahead of every waiter that joined at the back, behind
+// the ones that joined ahead before it.
+//
+// It is for a schedule's tick, whose wait is bounded by the dispatch budget and
+// which comes back at the next tick if it gives up. Behind a plugin's whole
+// backlog of actions it would give up at every tick until the backlog drained;
+// ahead of it, it waits for the handler that is running, which is what it always
+// had to wait for.
+func (l *pluginLane) joinAhead() *laneTicket {
+	return l.enter(true)
+}
+
+func (l *pluginLane) enter(ahead bool) *laneTicket {
 	turn := make(chan struct{})
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.held {
 		l.held = true
 		close(turn)
-	} else {
-		l.waiters = append(l.waiters, turn)
+		return &laneTicket{lane: l, turn: turn}
 	}
+	waiter := laneWaiter{turn: turn, ahead: ahead}
+	if !ahead {
+		l.waiters = append(l.waiters, waiter)
+		return &laneTicket{lane: l, turn: turn}
+	}
+	at := 0
+	for at < len(l.waiters) && l.waiters[at].ahead {
+		at++
+	}
+	l.waiters = append(l.waiters, laneWaiter{})
+	copy(l.waiters[at+1:], l.waiters[at:])
+	l.waiters[at] = waiter
 	return &laneTicket{lane: l, turn: turn}
+}
+
+// depth is how many executions hold or wait for the lane.
+func (l *pluginLane) depth() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.held {
+		return 0
+	}
+	return 1 + len(l.waiters)
 }
 
 // wait waits for this ticket's turn. deadline bounds the wait (zero waits for as
@@ -102,7 +149,7 @@ func (t *laneTicket) leave() {
 	l := t.lane
 	l.mu.Lock()
 	for i, waiter := range l.waiters {
-		if waiter == t.turn {
+		if waiter.turn == t.turn {
 			l.waiters = append(l.waiters[:i], l.waiters[i+1:]...)
 			l.mu.Unlock()
 			return
@@ -119,7 +166,7 @@ func (l *pluginLane) release() {
 	if len(l.waiters) > 0 {
 		next := l.waiters[0]
 		l.waiters = l.waiters[1:]
-		close(next)
+		close(next.turn)
 		return
 	}
 	l.held = false
@@ -139,6 +186,12 @@ func (pm *PluginManager) laneFor(pluginName string) *pluginLane {
 		pm.lanes[pluginName] = lane
 	}
 	return lane
+}
+
+// LaneDepth is how many async executions of one plugin hold or wait for its
+// lane in this process.
+func (pm *PluginManager) LaneDepth(pluginName string) int {
+	return pm.laneFor(pluginName).depth()
 }
 
 // AdmitResult is the host's answer when the head of a lane asks to start.
@@ -163,8 +216,12 @@ const (
 // It is optional on a HostJobRef. Without one the reference is already admitted
 // — the host claimed the Job before handing it over — and its Sink is live from
 // the start.
+//
+// deadline is when the asking execution stops waiting, or zero for never. The
+// host bounds its own work by it, because an admission that returns after it is
+// one the execution gives back rather than runs.
 type HostAdmission interface {
-	Admit() AdmitResult
+	Admit(deadline time.Time) AdmitResult
 }
 
 // asyncOutcome is what one attempt to run an async execution came to.
@@ -239,8 +296,14 @@ func (pm *PluginManager) admitHostJob(job *ActionJob, deadline time.Time) asyncO
 		if pm.closed.Load() {
 			return asyncClosing
 		}
-		switch ref.Admission.Admit() {
+		switch ref.Admission.Admit(deadline) {
 		case Admitted:
+			if !deadline.IsZero() && time.Now().After(deadline) {
+				// Admitted too late: the caller that bounded this wait has
+				// stopped waiting, so the execution does not start. The host
+				// holds the claim it granted and settles it on the way out.
+				return asyncGaveUp
+			}
 			return asyncRan
 		case AdmitWithdrawn:
 			return asyncWithdrawn

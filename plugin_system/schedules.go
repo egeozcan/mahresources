@@ -348,7 +348,9 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 		bounds = asyncBounds{slotWait: wait}
 	}
 
-	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, func() error {
+	// A tick goes ahead of the plugin's queued actions: see joinAhead.
+	ticket := pm.laneFor(reg.PluginName).joinAhead()
+	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, func() error {
 		mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
 		if mu == nil {
 			if !busy {

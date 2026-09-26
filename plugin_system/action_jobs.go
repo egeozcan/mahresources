@@ -408,8 +408,8 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, ticket
 // Returning false means the work was never entered: no outcome was recorded and
 // no failure was announced. That is what lets a caller holding a resource treat a
 // full budget as "not now" and give the resource back.
-func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, bounds asyncBounds, work func() error) (ran bool) {
-	return pm.runAsyncJob(job, logLabel, bounds, nil, work) == asyncRan
+func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, bounds asyncBounds, ticket *laneTicket, work func() error) (ran bool) {
+	return pm.runAsyncJob(job, logLabel, bounds, ticket, work) == asyncRan
 }
 
 // errJobDidNotStart is a work function's way of saying it never began.
@@ -555,19 +555,38 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 	reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Completed(message, result) })
 }
 
+// resolveQueuedAction finds the registration a queued action runs, once it has
+// reached the head of its lane rather than when it was queued: a plugin can be
+// reloaded while work waits for it, and the handler to run is the one registered
+// now. It is refused unless it is still the action the submission was checked
+// against — the same filters, the same kind of entity, and params that still
+// validate — because a replacement that changed any of them would receive a
+// payload nobody validated for it.
+func (pm *PluginManager) resolveQueuedAction(job *ActionJob, params map[string]any, expectFilters string) (ActionRegistration, *lua.LState, error) {
+	action, L, err := pm.FindAction(job.PluginName, job.ActionID)
+	if err != nil {
+		return ActionRegistration{}, nil, fmt.Errorf("plugin %q is no longer available", job.PluginName)
+	}
+	if err := checkActionUnchanged(action, expectFilters); err != nil {
+		return ActionRegistration{}, nil, err
+	}
+	if action.Entity != job.EntityType {
+		return ActionRegistration{}, nil, fmt.Errorf("%w: it now acts on %s, not %s", errActionChanged, action.Entity, job.EntityType)
+	}
+	if validationErrs := ValidateActionParams(action, params); len(validationErrs) > 0 {
+		return ActionRegistration{}, nil, fmt.Errorf("%w: validation failed: %s: %s",
+			errActionChanged, validationErrs[0].Field, validationErrs[0].Message)
+	}
+	return action, L, nil
+}
+
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.
-//
-// The action is resolved again once the execution reaches the head of its lane,
-// not when it was queued: a plugin can be reloaded while work waits for it, and
-// the handler to run is the one registered now, provided its registration still
-// matches the one the caller validated against. The settings are read then too.
+// The action is resolved when the execution starts (resolveQueuedAction), and
+// the settings are read then too.
 func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTicket, entityID uint, params map[string]any, expectFilters string) asyncOutcome {
 	return pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), ticket, func() error {
-		action, L, err := pm.FindAction(job.PluginName, job.ActionID)
+		action, L, err := pm.resolveQueuedAction(job, params, expectFilters)
 		if err != nil {
-			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
-		}
-		if err := checkActionUnchanged(action, expectFilters); err != nil {
 			return err
 		}
 		handler := action.Handler
