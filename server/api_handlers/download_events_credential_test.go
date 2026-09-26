@@ -13,7 +13,9 @@ import (
 
 	"mahresources/auth"
 	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/plugin_system"
 )
 
 // principalJobEventsContext is the legacy stub reading as a fixed principal.
@@ -237,10 +239,20 @@ type stallingSSEWriter struct {
 	stalled  chan struct{}
 	release  chan struct{}
 	stallOne sync.Once
+	// frames are the event prefixes that stall; nil means download frames.
+	frames []string
 }
 
 func (w *stallingSSEWriter) Write(data []byte) (int, error) {
-	if bytes.HasPrefix(data, []byte("event: added\n")) || bytes.HasPrefix(data, []byte("event: updated\n")) {
+	frames := w.frames
+	if frames == nil {
+		frames = []string{"event: added\n", "event: updated\n"}
+	}
+	live := false
+	for _, frame := range frames {
+		live = live || bytes.HasPrefix(data, []byte(frame))
+	}
+	if live {
 		w.stallOne.Do(func() {
 			close(w.stalled)
 			<-w.release
@@ -303,5 +315,84 @@ func TestAHeldBatchIsCheckedAgainAfterAStalledWrite(t *testing.T) {
 	if strings.Contains(writer.String(), second) {
 		t.Fatalf("a held frame for %q was written on a check made before the stall (first was %q): %s",
 			second, first, writer.String())
+	}
+}
+
+// durableActionEventsContext is the legacy stub with a durable action
+// projection, so the handler runs its periodic poll.
+type durableActionEventsContext struct {
+	*principalJobEventsContext
+	mu   sync.Mutex
+	rows []*plugin_system.ActionJob
+}
+
+func (c *durableActionEventsContext) JobService() *jobs.Service { return jobs.NewService() }
+
+func (c *durableActionEventsContext) ProjectActionJobs() ([]*plugin_system.ActionJob, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*plugin_system.ActionJob(nil), c.rows...), nil
+}
+
+// The durable poll's rows were projected for the principal of the check before
+// them. When a stalled write ages that check and the next one finds the account
+// demoted, the rows left in the poll are filtered for the account as it is now.
+func TestAStalledDurablePollFiltersItsRemainingRowsForADemotedViewer(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	other := uint(8)
+	row := func(handle string) *plugin_system.ActionJob {
+		return plugin_system.ProjectedActionJob{
+			Handle: handle, CanonicalJobID: "job-" + handle, Plugin: "p", ActionID: "a",
+			Status: "running", Owner: &other,
+		}.ActionJob()
+	}
+	admin := &durableActionEventsContext{principalJobEventsContext: &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}}}
+	demoted := &durableActionEventsContext{principalJobEventsContext: &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleUser}}}
+	source := &changingJobEventsSource{}
+	source.set(admin)
+
+	writer := &stallingSSEWriter{sseTestWriter: newSSETestWriter(), stalled: make(chan struct{}), release: make(chan struct{}),
+		frames: []string{"event: action_added\n"}}
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events", nil).WithContext(requestCtx)
+	finished := make(chan struct{})
+	go func() {
+		GetDownloadEventsHandler(source)(writer, request)
+		close(finished)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-writer.release:
+		default:
+			close(writer.release)
+		}
+		<-finished
+	})
+	select {
+	case <-writer.initWritten:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the legacy stream did not send its initial state")
+	}
+
+	// Both rows appear in one poll, projected for the administrator.
+	admin.mu.Lock()
+	admin.rows = []*plugin_system.ActionJob{row("first"), row("second")}
+	admin.mu.Unlock()
+	select {
+	case <-writer.stalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the durable poll wrote no row")
+	}
+	source.set(demoted)
+	time.Sleep(jobEventsCheckInterval + 50*time.Millisecond)
+	close(writer.release)
+
+	// Long enough for the stalled poll to finish its loop.
+	time.Sleep(500 * time.Millisecond)
+	if strings.Contains(writer.String(), `"id":"second"`) {
+		t.Fatalf("a row projected for the administrator was written after the account was demoted: %s", writer.String())
 	}
 }

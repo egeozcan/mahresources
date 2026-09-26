@@ -1133,6 +1133,12 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				}
 				current := make(map[string]*plugin_system.ActionJob, len(projected))
 				for _, job := range projected {
+					// The rows were projected for the principal of an earlier check.
+					// Refreshed first, so a check retaken after a stalled write
+					// filters the rows still to come for the account as it is now.
+					if !stillFresh() {
+						return
+					}
 					if !jobVisibleToPrincipal(ctx.Principal(), job.Owner()) {
 						continue
 					}
@@ -1144,9 +1150,6 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					eventType := "added"
 					if exists {
 						eventType = "updated"
-					}
-					if !stillFresh() {
-						return
 					}
 					data, _ := json.Marshal(map[string]any{"job": job})
 					fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
