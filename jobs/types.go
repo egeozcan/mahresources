@@ -1291,6 +1291,10 @@ var (
 	// Nothing is written: a Job is never left running without the capacity that
 	// admitted it.
 	ErrCapacityExhausted = errors.New("jobs: the capacity budget is full")
+	// ErrJobNotWaiting means a claim named a Job that is not waiting to run: it
+	// ended, another runtime owns it, it is blocked, or it does not exist. It is
+	// ClaimJob's answer, and it is final for that Job in a way capacity is not.
+	ErrJobNotWaiting = errors.New("jobs: the job is not waiting to run")
 	// ErrInvalidReconcileDecision is a reconciliation answer outside the
 	// vocabulary, or one this Kind may not be given.
 	ErrInvalidReconcileDecision = errors.New("jobs: invalid reconciliation decision")

@@ -107,6 +107,11 @@ type HostJobRef struct {
 	// was started outside any Job.
 	ParentJobID string
 	Sink        HostJobSink
+	// Admission, when set, is the claim this execution must be granted before it
+	// starts: the host accepted the Job as waiting and has not claimed it, so the
+	// execution asks from the head of its plugin's lane. Nil means the host
+	// already claimed the Job and Sink is live from the start.
+	Admission HostAdmission
 }
 
 // HostJobs is the host's half of plugin background work: it accepts the durable

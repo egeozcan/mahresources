@@ -242,6 +242,9 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
 	}
 	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommand, spec.RunID)
+	if errors.Is(err, jobs.ErrCapacityExhausted) {
+		return "", fmt.Errorf("%w: %v", plugin_commands.ErrJobCapacityFull, err)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -277,6 +280,9 @@ func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
 	}
 	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommandImport, spec.ImportID)
+	if errors.Is(err, jobs.ErrCapacityExhausted) {
+		return "", fmt.Errorf("%w: %v", plugin_commands.ErrJobCapacityFull, err)
+	}
 	if err != nil {
 		return "", err
 	}

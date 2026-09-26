@@ -2,6 +2,7 @@ package plugin_commands
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"mahresources/models"
@@ -244,6 +245,12 @@ type LiveJobs interface {
 	SubmitCommandJob(RunJobSpec, func(string) error, func(context.Context, Progress) Outcome) (string, error)
 	SubmitImportJob(ImportJobSpec, func(context.Context, Progress) Outcome) (string, error)
 }
+
+// ErrJobCapacityFull is a LiveJobs refusal that is not a failure: the
+// deployment's job budget is full, nothing was started or written, and the same
+// submission can succeed once another Job ends. The dispatcher keeps the run or
+// import at the head of its plugin's queue and offers it again.
+var ErrJobCapacityFull = errors.New("the deployment's job budget is full")
 
 type Result struct {
 	OK       bool

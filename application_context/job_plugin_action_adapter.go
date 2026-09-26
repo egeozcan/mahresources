@@ -52,10 +52,11 @@ import (
 //     process that cannot know what the first one did.
 //
 //   - **Its lifecycle is owned here, not by plugin_system.** The plugin manager
-//     keeps its VM semaphore, its VM lock and its in-memory ActionJob projection
-//     for the compatibility window; identity, state, progress, outcomes and
-//     fencing are the control plane's, and the manager reports through the
-//     HostJobSink seam in plugin_system/host_jobs.go.
+//     keeps its per-plugin lanes, its job slots, its VM lock and its in-memory
+//     ActionJob projection for the compatibility window; identity, state,
+//     progress, outcomes and fencing are the control plane's, and the manager
+//     asks for the claim and reports through the HostAdmission and HostJobSink
+//     seams in plugin_system.
 //
 // The commands are deliberately narrow. A Retry of an unsuccessful registered
 // action is offered because the design's matrix offers it and because the input
@@ -276,6 +277,11 @@ func pluginActionInputOf(input json.RawMessage) (*pluginActionJobInput, error) {
 // pluginActionAdapter runs one plugin-action Job.
 type pluginActionAdapter struct {
 	ctx *MahresourcesContext
+
+	// adoptMu guards adoptAfter, the position AdoptWaiting continues from, so one
+	// pass reads a bounded page and a long queue is walked over several ticks.
+	adoptMu    sync.Mutex
+	adoptAfter jobs.Cursor
 }
 
 // Definition declares the Kind non-restorable, and it is the *Kind* that decides
@@ -289,6 +295,22 @@ func (a *pluginActionAdapter) Definition() jobs.Definition {
 		Restorable:  false,
 		Visibility:  jobs.VisibilityOwner,
 	}
+}
+
+// RuntimeClaimEnabled is false: a plugin-action Job is claimed by the head of its
+// plugin's lane in the process that holds it, never by a loop that takes the
+// oldest waiting Job whatever its plugin. See job_plugin_action_admission.go.
+func (a *pluginActionAdapter) RuntimeClaimEnabled() bool { return false }
+
+// AdoptWaiting hands this process the waiting plugin-action Jobs no execution in
+// it holds, on the dispatch loop's cadence. See adoptWaitingPluginActions.
+func (a *pluginActionAdapter) AdoptWaiting(runCtx context.Context) {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	a.adoptMu.Lock()
+	defer a.adoptMu.Unlock()
+	a.adoptAfter = a.ctx.adoptWaitingPluginActions(runCtx, a.adoptAfter)
 }
 
 // Dispatch runs one claimed plugin-action execution.
@@ -326,16 +348,17 @@ func (a *pluginActionAdapter) Dispatch(ctx context.Context, execution jobs.Execu
 // through: the HTTP layer hands it the plugin, the action, the entity and the
 // params, and it answers the ids the client and the Job Center use.
 //
-// The order is the design's and it is not negotiable: the durable Job is accepted
-// *and claimed* before the handler's goroutine exists, so the work is durable
-// before anything runs and one execution owns exactly one Job under one fencing
-// token. Re-validation happens on the execution path rather than here, so a
-// request and a Retry are checked the same way.
+// The durable Job is accepted before the handler's goroutine exists, so the work
+// is durable before anything runs, and it is accepted `queued`: it is claimed only
+// when it reaches the head of its plugin's lane (job_plugin_action_admission.go),
+// so a plugin with a backlog holds one slot of the deployment's budget rather than
+// one per waiting action. Re-validation happens at that claim rather than here, so
+// a request and a Retry are checked the same way, and checked when they run.
 //
-// It returns as soon as the work has started — an async action exists precisely so
-// a person is not held to the VM's schedule — and answers (legacy id, canonical
-// job id, error): the legacy id is what the panel and GET /v1/jobs/action/job
-// resolve, the canonical id is what the Job Center lists.
+// It returns as soon as the work is queued — an async action exists precisely so a
+// person is not held to the VM's schedule — and answers (legacy id, canonical job
+// id, error): the legacy id is what the panel and GET /v1/jobs/action/job resolve,
+// the canonical id is what the Job Center lists.
 func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, string, error) {
 	pm := ctx.PluginManager()
 	if pm == nil {
@@ -389,37 +412,55 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 		return "", "", err
 	}
 
-	claim, err := ctx.claimPluginActionJobForHost(accepted.ID)
-	if err != nil {
-		return "", "", err
-	}
-	if !claim.Owned {
-		// This process does not own the Job, and nothing is started here.
-		//
-		// Two facts look alike from here: another runtime of the deployment claimed
-		// the Job in the window between acceptance and this call, and the claim was
-		// refused because the deployment's concurrency budget is full. Both answer
-		// the same way, and neither is a failure: the Job is one the dispatch loop
-		// owns — queued, visible, and a registered action is exactly what a loop
-		// with the plugin loaded can run — so the client gets the ids it polls and
-		// the work runs when a slot is free. §3 asks each runtime to run its share
-		// of durable work; it does not require the process that touched the request
-		// to be the one that runs it.
-		//
-		// Withdrawing it here instead — which is what this did before the budget was
-		// asked for — would report a full deployment as a broken plugin and destroy
-		// work acceptance had already promised.
-		return handle, accepted.ID, nil
-	}
-
 	decoded, err := pluginActionInputOf(input)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := ctx.runPluginActionExecution(context.Background(), claim.execution, decoded); err != nil {
+	if err := ctx.queueRegisteredPluginAction(pm, accepted.ID, handle, owner, decoded); err != nil {
 		return "", "", err
 	}
 	return handle, accepted.ID, nil
+}
+
+// queueRegisteredPluginAction hands one waiting registered-action Job to its
+// plugin's lane in this process.
+//
+// A registration that no longer matches what the Job was accepted with is refused
+// here, before the Job waits for anything, with the reason the claim would have
+// recorded: the Job is blocked, visibly, for a person to decide about. What the
+// acting principal may do is asked at the claim instead, because that is the
+// moment the work runs as it.
+func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.PluginManager, jobID, handle string, owner *uint, input *pluginActionJobInput) error {
+	if refusal := ctx.pluginActionRegistrationRefusal(pm, input); refusal != "" {
+		return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
+	}
+	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) bool {
+		current := ctx.PluginManager()
+		if current == nil {
+			if err := ctx.blockPluginActionJob(execution, "plugins-unavailable"); err != nil {
+				log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
+			}
+			return false
+		}
+		refusal := ctx.pluginActionRefusal(current, execution, claimed)
+		if refusal == "" {
+			return true
+		}
+		if err := ctx.blockPluginActionJob(execution, refusal); err != nil {
+			log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
+		}
+		return false
+	})
+	if _, err := pm.RunActionAsyncForHost(admission.hostJobRef(handle, ""), owner, input.Plugin, input.Action,
+		input.EntityID, input.Params, input.Fingerprint); err != nil {
+		// The manager refused before anything ran — the plugin stopped in the
+		// instant since the check above. Nothing will ever take the Job from this
+		// lane, so it ends here rather than waiting for nobody; a Retry
+		// re-validates.
+		return ctx.failPluginActionJob(jobs.Execution{JobID: jobID}, "plugin-action-unavailable",
+			"the plugin action could not be started")
+	}
+	return nil
 }
 
 // pluginActionRun is what running one execution produced, for callers that need
@@ -638,17 +679,12 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 // identity rather than to an unscoped one, which is what makes the scope question
 // below answer "no" instead of "everywhere".
 func (ctx *MahresourcesContext) pluginActionRefusal(pm *plugin_system.PluginManager, execution jobs.Execution, input *pluginActionJobInput) string {
+	if refusal := ctx.pluginActionRegistrationRefusal(pm, input); refusal != "" {
+		return refusal
+	}
 	action, _, err := pm.FindAction(input.Plugin, input.Action)
 	if err != nil {
-		// FindAction refuses for both "no such plugin" and "no such action", and
-		// the two are one answer here: neither can be run.
 		return "action-unavailable"
-	}
-	if input.Fingerprint != "" && plugin_system.ActionFiltersFingerprint(action.Filters) != input.Fingerprint {
-		return "registration-changed"
-	}
-	if validationErrs := plugin_system.ValidateActionParams(action, input.Params); len(validationErrs) > 0 {
-		return "params-changed"
 	}
 
 	actorID := accessUserID(execution.Access)
@@ -680,6 +716,25 @@ func (ctx *MahresourcesContext) pluginActionRefusal(pm *plugin_system.PluginMana
 				return "target-out-of-scope"
 			}
 		}
+	}
+	return ""
+}
+
+// pluginActionRegistrationRefusal answers why the action a Job names cannot run
+// as it was accepted — the plugin or action is gone, its filters changed, or its
+// params no longer validate — or an empty string.
+func (ctx *MahresourcesContext) pluginActionRegistrationRefusal(pm *plugin_system.PluginManager, input *pluginActionJobInput) string {
+	action, _, err := pm.FindAction(input.Plugin, input.Action)
+	if err != nil {
+		// FindAction refuses for both "no such plugin" and "no such action", and
+		// the two are one answer here: neither can be run.
+		return "action-unavailable"
+	}
+	if input.Fingerprint != "" && plugin_system.ActionFiltersFingerprint(action.Filters) != input.Fingerprint {
+		return "registration-changed"
+	}
+	if validationErrs := plugin_system.ValidateActionParams(action, input.Params); len(validationErrs) > 0 {
+		return "params-changed"
 	}
 	return ""
 }
@@ -1606,24 +1661,21 @@ type pluginActionHostJobs struct {
 	ctx *MahresourcesContext
 }
 
-// StartClosureJob accepts and claims the Job one closure-backed mah.start_job
-// stands for.
+// StartClosureJob accepts the Job one closure-backed mah.start_job stands for.
 //
-// The Job is accepted *and claimed* in one transaction, before the Lua goroutine
-// exists: the work is durable before anything runs — the design's acceptance
-// boundary — and it is never visible as waiting work. That second half is what
-// makes it correct rather than merely tidy. The callback is a *lua.LFunction in
-// this process's VM, so nothing but this process can run the Job, and a Job left
-// queued for it is a Job the control plane's dispatch loop is entitled to claim —
-// which it does, in the window between acceptance and the host's own claim, only
-// to find no callback to run. Accept-and-claim removes that window instead of
-// arbitrating it: the Job is born running under this process's token, and another
-// runtime has no instant at which it can see the work at all.
+// The Job is accepted before the Lua goroutine exists — the work is durable before
+// anything runs, the design's acceptance boundary — and it is accepted `queued`,
+// so a start_job made while the deployment's budget is full is work that waits for
+// a slot rather than a call that raises. It is claimed when it reaches the head of
+// its plugin's lane, by this process and by nothing else: the callback is a
+// *lua.LFunction in this process's VM, the dispatch loop does not claim this Kind,
+// and another process only ever touches a waiting closure to withdraw it once the
+// process that started it is provably gone (AdoptWaiting).
 //
 // The Job is non-replayable: its input is a label and a provenance, not something
 // that could be replayed, and recording it as replayable would advertise a Retry
 // whose execution could not exist. It records the originating runtime identity, so
-// a Job this process leaves running can be reconciled by the next one with proof
+// a Job this process leaves behind can be resolved by the next one with proof
 // rather than with a guess.
 func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobRequest) (*plugin_system.HostJobRef, error) {
 	service := h.ctx.JobService()
@@ -1645,13 +1697,14 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 	noTerminalHook := request.JobEventDispatch || h.ctx.pluginActionJobIsQuiet(request.ParentJobID)
 
 	handle := download_queue.NewJobID()
-	input, err := json.Marshal(pluginActionJobInput{
+	closure := pluginActionJobInput{
 		Subtype:        pluginActionSubtypeClosure,
 		Plugin:         request.PluginName,
 		Label:          truncateTo(label, jobs.MaxTitleBytes),
 		Runtime:        plugin_system.CurrentRuntimeIdentity().String(),
 		NoTerminalHook: noTerminalHook,
-	})
+	}
+	input, err := json.Marshal(closure)
 	if err != nil {
 		return nil, err
 	}
@@ -1661,7 +1714,7 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 		id := request.ActorUserID
 		owner = &id
 	}
-	execution, _, err := service.AcceptClaimed(context.Background(), h.ctx.jobDeps(), jobs.Acceptance{
+	accepted, err := service.Accept(h.ctx.jobDeps(), jobs.Acceptance{
 		Kind:        JobKindPluginAction,
 		KindVersion: jobPluginActionKindVersion,
 		State:       jobs.StateQueued,
@@ -1676,16 +1729,10 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 		// through the same codec, so it is still one description of one Job and
 		// still carries no value the plugin supplied.
 		Summary: pluginActionSummaryOf(input),
-	}, jobs.ClaimRequest{
-		Kind:        JobKindPluginAction,
-		KindVersion: jobPluginActionKindVersion,
-		Claimant:    plugin_system.CurrentRuntimeIdentity().String(),
-		Capacity:    h.ctx.hostClaimCapacityBudget(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("accept the plugin job: %w", err)
 	}
-	h.ctx.startPluginActionHeartbeat(execution)
 
 	if request.ParentJobID != "" {
 		// A child link is how the Job Center shows what started what. It is a
@@ -1693,23 +1740,15 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 		// reconciled away, or it is not visible to this handle — must not stop
 		// the work the plugin asked for.
 		if err := service.Link(h.ctx.jobDeps(), jobs.LinkRequest{
-			Type: jobs.LinkParentChild, FromJobID: request.ParentJobID, ToJobID: execution.JobID,
+			Type: jobs.LinkParentChild, FromJobID: request.ParentJobID, ToJobID: accepted.ID,
 		}); err != nil {
 			log.Printf("warning: could not link plugin job %s to its parent %s: %v",
-				execution.JobID, request.ParentJobID, err)
+				accepted.ID, request.ParentJobID, err)
 		}
 	}
 
-	return &plugin_system.HostJobRef{
-		JobID:       execution.JobID,
-		Handle:      handle,
-		ParentJobID: request.ParentJobID,
-		Sink: newPluginActionSink(h.ctx, execution, &pluginActionJobInput{
-			Subtype:        pluginActionSubtypeClosure,
-			Plugin:         request.PluginName,
-			NoTerminalHook: noTerminalHook,
-		}),
-	}, nil
+	admission := h.ctx.newPluginActionAdmission(accepted.ID, &closure, nil)
+	return admission.hostJobRef(handle, request.ParentJobID), nil
 }
 
 // runScheduledOccurrenceJob materializes one occurrence of a schedule as a
@@ -1718,10 +1757,9 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 // It is the scheduler's door, and it is deliberately synchronous: the scheduler
 // holds the schedule row's claim for the whole run under the "skip" policy, and
 // what that claim is protecting is that one occurrence is in flight at a time.
-// Handing the occurrence to the control plane's dispatch loop instead would make
-// the row's claim and the execution's lifetime two different things — the claim
-// would be released while the work it protects was still queued — so the Job is
-// claimed by the process that is about to run it, and the heartbeat keeps it.
+// The occurrence waits in its plugin's lane like any other plugin work, and is
+// claimed by this process when it reaches the head — within the dispatch wait, so
+// the row's claim never outlives the budget it was derived from.
 //
 // Started=false means the handler was never entered: the Job was withdrawn, the
 // row keeps its claim (the caller releases it), and no outcome is recorded. That
@@ -1768,111 +1806,86 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 		return pluginActionRun{}, err
 	}
 
-	claim, err := ctx.claimPluginActionJobForHost(accepted.ID)
-	if err != nil {
-		return pluginActionRun{JobID: accepted.ID}, err
-	}
-	if claim.Elsewhere {
-		// The dispatch loop claimed this occurrence in the window between its
-		// acceptance and this call. It will run — with the same input, through
-		// the same adapter — so this waits for the outcome it produces rather
-		// than running a second copy of one tick.
-		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: accepted.ID})
-	}
-	if !claim.Owned {
-		if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: accepted.ID},
-			"not-started", "the occurrence could not be claimed"); err != nil {
-			log.Printf("warning: could not withdraw the unclaimed occurrence %s: %v", accepted.ID, err)
-		}
-		return pluginActionRun{JobID: accepted.ID}, nil
-	}
-
 	pm := ctx.PluginManager()
 	if pm == nil {
-		if err := ctx.blockPluginActionJob(claim.execution, "plugins-unavailable"); err != nil {
+		if err := ctx.blockPluginActionJob(jobs.Execution{JobID: accepted.ID}, "plugins-unavailable"); err != nil {
 			return pluginActionRun{JobID: accepted.ID}, err
 		}
 		return pluginActionRun{JobID: accepted.ID}, nil
 	}
-	inputDecoded, err := pluginActionInputOf(input)
+	decoded, err := pluginActionInputOf(input)
 	if err != nil {
 		return pluginActionRun{JobID: accepted.ID}, err
 	}
-	return ctx.runScheduledPluginOccurrence(pm, claim.execution, inputDecoded, wait)
+	return ctx.runQueuedScheduledOccurrence(pm, accepted.ID, reg, actorUserID, decoded, wait)
 }
 
-// claimPluginActionJob claims one already-accepted Job for this process and
-// starts the heartbeat that keeps its claim alive.
+// runQueuedScheduledOccurrence runs one waiting occurrence through its plugin's
+// lane and answers what became of it.
 //
-// Claiming by id is what makes a host-side execution a real one: a Job owned by
-// nobody has no lease to reconcile, no token to fence a stale publish with, and no
-// release anybody frees. The heartbeat is what keeps a five-minute Lua call from
-// outliving its own claim.
-func (ctx *MahresourcesContext) claimPluginActionJob(jobID string) (jobs.Execution, bool, error) {
-	service := ctx.JobService()
-	if service == nil {
-		return jobs.Execution{}, false, errors.New("this context has no job control plane installed")
-	}
-	execution, claimed, err := service.Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
-		Kind:        JobKindPluginAction,
-		KindVersion: jobPluginActionKindVersion,
-		JobID:       jobID,
-		Claimant:    plugin_system.CurrentRuntimeIdentity().String(),
-		// The deployment-wide budget, exactly as the dispatch loop asks for it: a
-		// plugin execution is one of the executions `max-job-concurrency` counts,
-		// and a claim that skipped it would let a submitting process run work the
-		// deployment's own budget had refused.
-		Capacity: ctx.hostClaimCapacityBudget(),
+// holdClaim mirrors the row's overlap policy, exactly as the scheduler's own
+// inline run does: under "skip" the occurrence holds its row for the whole run, so
+// every wait before the handler shares the dispatch budget; under "allow" the row
+// was advanced before the run, and the waits for this plugin's own work are what
+// queue the next occurrence behind this one.
+func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.PluginManager, jobID string, reg plugin_system.ScheduleRegistration, actorUserID uint, input *pluginActionJobInput, wait time.Duration) (pluginActionRun, error) {
+	// The operator's authority is rechecked under the claim, immediately before
+	// the handler runs, for the same reason a registered action's is: the row was
+	// claimed by a scheduler that carries no request, and the operator who enabled
+	// the plugin may have been demoted or may have lost access to it since. A
+	// materialized occurrence that may no longer run is blocked rather than failed
+	// — a person has to decide about it, and a broken schedule would be the wrong
+	// thing to report.
+	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) bool {
+		refusal := ctx.commandActorRefusal(ctx.jobDeps(), execution.Access, claimed.Plugin)
+		if refusal == "" {
+			return true
+		}
+		if err := ctx.blockPluginActionJob(execution, refusal); err != nil {
+			log.Printf("warning: could not block plugin job %s: %v", execution.JobID, err)
+		}
+		return false
 	})
-	if err != nil || !claimed {
-		return execution, claimed, err
+	holdClaim := input.Overlap == plugin_system.ScheduleOverlapSkip
+	_, ran, runErr := pm.RunScheduleForHost(reg, actorUserID, wait, holdClaim,
+		admission.hostJobRef(ctx.pluginActionHandleFor(jobID), ""))
+	if ran || errors.Is(runErr, plugin_system.ErrHostJobHeld) {
+		// Either the handler ran here — RunScheduleForHost blocks until it has
+		// finished, so this is the confirmation that its outcome is recorded — or
+		// this process was already running the occurrence on another goroutine,
+		// whose outcome is the one to report.
+		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: jobID})
 	}
-	ctx.startPluginActionHeartbeat(execution)
-	return execution, true, nil
+	return ctx.settleUnstartedOccurrence(admission)
 }
 
-// pluginActionClaim is the answer to "who is going to run this Job?" for a host
-// that has just accepted it.
-type pluginActionClaim struct {
-	// Execution is the claim this process took, valid only when Owned.
-	execution jobs.Execution
-	// Owned reports that this process claimed the Job and must run it now.
-	Owned bool
-	// Elsewhere reports that another runtime of this deployment claimed it in the
-	// window between acceptance and this claim. The work will run — the dispatch
-	// loop is looking at the same queue — so the caller waits for it rather than
-	// withdrawing work somebody else owns.
-	Elsewhere bool
-}
-
-// claimPluginActionJobForHost claims one freshly accepted Job for a host-side
-// execution and says who owns it.
+// settleUnstartedOccurrence ends an occurrence whose handler was never entered.
 //
-// The window this exists for is real rather than theoretical: the control plane's
-// dispatch loop claims waiting Jobs of every registered Kind, so a Job accepted a
-// microsecond ago can be claimed by it before the host that accepted it asks.
-// That is not a failure — one of the two wins and the other must not run the work
-// a second time — so the loser is told which of the three situations it is in.
-func (ctx *MahresourcesContext) claimPluginActionJobForHost(jobID string) (pluginActionClaim, error) {
-	service := ctx.JobService()
-	if service == nil {
-		return pluginActionClaim{}, errors.New("this context has no job control plane installed")
+// The Job is withdrawn rather than failed: errJobDidNotStart's doctrine is that a
+// full budget or a busy VM is not a plugin's failure, and a Job that ended
+// `failed` here would put a failure on the timeline of work that never began. It
+// ends `cancelled` with a bounded not-started event, which is what tells the
+// scheduler that its row gets its claim back and no outcome is recorded. An
+// occurrence another runtime claimed meanwhile is that runtime's, and its outcome
+// is waited for instead; one the claim blocked or ended stays as it was left.
+func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActionAdmission) (pluginActionRun, error) {
+	run := pluginActionRun{JobID: admission.jobID}
+	if execution, admitted := admission.admitted(); admitted {
+		return run, ctx.withdrawPluginActionJob(execution, "not-started", "the plugin's execution budget or VM stayed busy")
 	}
-	execution, claimed, err := ctx.claimPluginActionJob(jobID)
+	snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, admission.jobID)
 	if err != nil {
-		return pluginActionClaim{}, err
+		return run, err
 	}
-	if claimed {
-		return pluginActionClaim{execution: execution, Owned: true}, nil
+	switch snap.State {
+	case jobs.StateQueued:
+		return run, ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
+			"the plugin's execution budget or VM stayed busy")
+	case jobs.StateRunning:
+		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: admission.jobID})
+	default:
+		return run, nil
 	}
-	snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
-	if err != nil {
-		return pluginActionClaim{}, err
-	}
-	if snap.State == jobs.StateRunning || snap.State.Terminal() {
-		return pluginActionClaim{Elsewhere: true}, nil
-	}
-	return pluginActionClaim{}, nil
 }
 
 // startPluginActionHeartbeat keeps one host-side execution's claim alive for as

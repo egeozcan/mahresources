@@ -294,12 +294,16 @@ func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, a
 // one is given: the id the client was answered with, the id the panel renders and
 // the id the legacy action-job endpoint resolves all have to be the same string,
 // or one execution would be two rows seen two ways.
+//
+// A host Job this process already has an execution for is not given a second
+// one: the existing entry's id is answered, so handing a waiting Job to this
+// process twice results in one execution.
 func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
 
-	action, L, err := pm.FindAction(pluginName, actionID)
+	action, _, err := pm.FindAction(pluginName, actionID)
 	if err != nil {
 		return "", err
 	}
@@ -333,50 +337,30 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	}
 
 	pm.actionJobsMu.Lock()
+	if !pm.holdHostJobLocked(host) {
+		pm.actionJobsMu.Unlock()
+		return jobID, nil
+	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
 
 	pm.notifyActionJobSubscribers("added", job)
 
-	// Capture the handler and settings before spawning goroutine.
-	handler := action.Handler
-	settings := pm.GetPluginSettings(pluginName)
-
 	// Track in-flight async actions so DisablePlugin can wait for completion.
 	wg := pm.actionWaitGroup(pluginName)
 	wg.Add(1)
+	ticket := pm.laneFor(pluginName).join()
 
 	go func() {
 		defer wg.Done()
-		pm.runAsyncActionGoroutine(job, L, handler, entityID, params, settings)
+		defer pm.releaseHostJob(host)
+		switch pm.runAsyncActionGoroutine(job, ticket, entityID, params, expectFilters) {
+		case asyncGaveUp, asyncWithdrawn:
+			pm.dropUnstartedJob(job)
+		}
 	}()
 
 	return jobID, nil
-}
-
-// acquireJobSlot takes one of the concurrent-async-job slots.
-//
-// A non-positive wait waits forever, which is what an action or a start_job
-// wants: a user asked for that work and nothing else will ask again.
-//
-// A positive wait is for a caller that must not block indefinitely because it is
-// holding something while it waits. The scheduler is the only such caller today,
-// and what it holds is a database claim on the schedule row; a claim of
-// unbounded lifetime cannot have a meaningful expiry, and its expiry is the only
-// thing stopping a second process running the same schedule.
-func (pm *PluginManager) acquireJobSlot(wait time.Duration) bool {
-	if wait <= 0 {
-		pm.actionSemaphore <- struct{}{}
-		return true
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case pm.actionSemaphore <- struct{}{}:
-		return true
-	case <-timer.C:
-		return false
-	}
 }
 
 // FillJobBudgetForTest saturates the async job budget and returns a release
@@ -400,25 +384,39 @@ func (pm *PluginManager) FillJobBudgetForTest() func() {
 	}
 }
 
-// executeAsyncJob is the common scaffold for running an async job goroutine.
-// It handles panic recovery, semaphore, status transitions, error handling, and default completion.
-// The work function performs the actual Lua call and returns its error.
-func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work func() error) {
-	pm.executeAsyncJobWithin(job, logLabel, 0, work)
+// executeAsyncJob is the common scaffold for running an async job goroutine:
+// the plugin's lane, a job slot, the host's admission, panic recovery, status
+// transitions, error handling and default completion. The work function performs
+// the actual Lua call and returns its error.
+//
+// Every wait here is unbounded, which is what an action or a start_job wants: a
+// user asked for that work and nothing else will ask again. None of them holds
+// anything another plugin needs — see action_lanes.go for the order.
+func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, ticket *laneTicket, work func() error) asyncOutcome {
+	return pm.runAsyncJob(job, logLabel, asyncBounds{}, ticket, work)
 }
 
-// executeAsyncJobWithin is executeAsyncJob with a bound on how long it will wait
-// for a free slot, and it reports whether the job ran at all.
+// executeAsyncJobWithin is executeAsyncJob with bounds on the waits before the
+// work, and it reports whether the job ran at all.
 //
-// Returning false means nothing was touched: no status transition, no
-// notification, no work. That is what lets a caller holding a resource treat a
-// full budget as "not now" and give the resource back, rather than parking on
-// the semaphore while it holds it.
+// The bounds are for a caller that must not block indefinitely because it is
+// holding something while it waits. The scheduler is the only such caller today,
+// and what it holds is a database claim on the schedule row; a claim of unbounded
+// lifetime cannot have a meaningful expiry, and its expiry is the only thing
+// stopping a second process running the same schedule.
+//
+// Returning false means the work was never entered: no outcome was recorded and
+// no failure was announced. That is what lets a caller holding a resource treat a
+// full budget as "not now" and give the resource back.
+func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, bounds asyncBounds, work func() error) (ran bool) {
+	return pm.runAsyncJob(job, logLabel, bounds, nil, work) == asyncRan
+}
+
 // errJobDidNotStart is a work function's way of saying it never began.
 //
-// executeAsyncJobWithin's contract is "ran means the job entered its work", and
-// a work function that spends its own bounded wait on something it could not get
-// — today, a schedule waiting on the plugin's VM lock — has not. Without this it
+// The runner's contract is "ran means the job entered its work", and a work
+// function that spends its own bounded wait on something it could not get —
+// today, a schedule waiting on the plugin's VM lock — has not. Without this it
 // looked identical to a job that ran and failed: the panel announced "Action
 // failed" to a screen reader, kept a failed row for a handler that was never
 // entered, and the application log blamed the plugin for it. The alternative was
@@ -426,9 +424,23 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 // left two mechanisms for one condition and still emitted the failure event.
 var errJobDidNotStart = errors.New("the job never entered its work")
 
-func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, wait time.Duration, work func() error) (ran bool) {
+// runAsyncJob takes, in order, the plugin's lane, a job slot and the host's
+// admission, and only then enters the work. See action_lanes.go for why that
+// order is the whole design: an execution that is waiting holds nothing shared.
+//
+// ticket is the place in the lane the caller took when the work was submitted,
+// or nil to take one now.
+func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asyncBounds, ticket *laneTicket, work func() error) (outcome asyncOutcome) {
+	started := false
 	defer func() {
 		if r := recover(); r != nil {
+			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			if !started {
+				// Nothing was admitted, so there is no Job of this execution's to
+				// fail: the host still holds it waiting.
+				outcome = asyncGaveUp
+				return
+			}
 			message := fmt.Sprintf("panic: %v", r)
 			job.mu.Lock()
 			job.Status = "failed"
@@ -437,20 +449,33 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 			pm.notifyActionJobSubscribers("updated", job)
 			flushHeldProgress(job)
 			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
-			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			// It ran, and it failed, which is a different thing from never starting.
+			outcome = asyncRan
 		}
 	}()
 
-	// Acquire semaphore slot (limits concurrent async actions).
-	if !pm.acquireJobSlot(wait) {
-		return false
+	if ticket == nil {
+		ticket = pm.laneFor(job.PluginName).join()
 	}
-	// Set before any work, so a panic recovered above still reports that the job
-	// ran: it did, and it failed, which is a different thing from never starting.
-	ran = true
+	if !ticket.wait(pm.done, bounds.lane) {
+		if pm.closed.Load() {
+			return asyncClosing
+		}
+		return asyncGaveUp
+	}
+	defer ticket.lane.release()
+
+	slotDeadline := bounds.slotDeadline(time.Now())
+	if got := pm.acquireJobSlotUntil(slotDeadline); got != asyncRan {
+		return got
+	}
 	defer func() { <-pm.actionSemaphore }()
 
-	// Mark as running.
+	if got := pm.admitHostJob(job, slotDeadline); got != asyncRan {
+		return got
+	}
+
+	started = true
 	job.mu.Lock()
 	job.Status = "running"
 	job.Message = "Running..."
@@ -469,11 +494,11 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 		// an outcome a Job records — the same reason the in-memory entry goes away
 		// — and the caller that owns the Job decides what leaving it undone means
 		// (for a schedule, that the tick gave the row back).
-		return false
+		return asyncNotStarted
 	}
 
 	pm.settleActionJob(job, logLabel, err)
-	return true
+	return asyncRan
 }
 
 // settleActionJob records one execution's outcome once its callback has returned,
@@ -531,8 +556,23 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 }
 
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.
-func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, handler *lua.LFunction, entityID uint, params map[string]any, settings map[string]any) {
-	pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), func() error {
+//
+// The action is resolved again once the execution reaches the head of its lane,
+// not when it was queued: a plugin can be reloaded while work waits for it, and
+// the handler to run is the one registered now, provided its registration still
+// matches the one the caller validated against. The settings are read then too.
+func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTicket, entityID uint, params map[string]any, expectFilters string) asyncOutcome {
+	return pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), ticket, func() error {
+		action, L, err := pm.FindAction(job.PluginName, job.ActionID)
+		if err != nil {
+			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
+		}
+		if err := checkActionUnchanged(action, expectFilters); err != nil {
+			return err
+		}
+		handler := action.Handler
+		settings := pm.GetPluginSettings(job.PluginName)
+
 		// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
 		ctxData := map[string]any{
 			"entity_id": entityID,
@@ -562,7 +602,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 		timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
 		L.SetContext(timeoutCtx)
 
-		err := L.CallByParam(lua.P{
+		err = L.CallByParam(lua.P{
 			Fn:      handler,
 			NRet:    1,
 			Protect: true,
@@ -627,8 +667,8 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 }
 
 // runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
-func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
-	pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), func() error {
+func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, ticket *laneTicket, L *lua.LState, fn *lua.LFunction, jobID string) asyncOutcome {
+	return pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), ticket, func() error {
 		mu := pm.LockVM(L)
 		if mu == nil {
 			return fmt.Errorf("plugin %q is no longer available", job.PluginName)

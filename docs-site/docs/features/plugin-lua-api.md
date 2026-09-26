@@ -103,6 +103,10 @@ the five-minute async callback budget. It should only call `mah.fs.list`, queue
 queueing; the byte transfer runs on the host import pool outside the VM lock, so
 plugin pages remain responsive.
 
+A run whose turn comes while the deployment's job budget (`-max-job-concurrency`)
+is full stays `queued`, keeps its place, and starts when a slot frees; so does a
+queued import.
+
 Command run statuses are exactly `queued`, `running`, `succeeded`, `failed`,
 `cancelled` and `interrupted`. Timeout, a nonzero exit, spawn failure and quota
 failure are `failed`; operator or plugin-disable cancellation is `cancelled`;
@@ -1307,7 +1311,7 @@ end)
 The job appears in the job system and is tracked via SSE events. Three limits apply:
 
 - The callback runs under a 5 minute deadline, after which its context is cancelled. The same bound applies to a `mah.schedule` run.
-- At most 3 plugin async jobs run at a time across the whole process, so a submitted job may sit waiting behind other plugins' work.
+- The job waits `queued` until its turn comes: a plugin runs one of its async actions, `mah.start_job` jobs and schedule runs at a time, in the order they were submitted, and the job also needs one of the process's 3 plugin job slots and room in the deployment's job budget (`-max-job-concurrency`). A job started from inside an action or another job of the same plugin therefore starts after that handler returns. A full budget never makes the call raise: it returns the job id at once, and the callback runs when a slot frees.
 - The call raises `plugin has been disabled` instead of returning a job id when the plugin was disabled between the call and the registration.
 
 ## mah.schedule -- Recurring Work
@@ -1391,6 +1395,13 @@ Two consequences worth knowing before relying on a schedule:
 - **`overlap = "allow"` buys queueing, not parallelism.** A plugin still runs one
   thing at a time, so a second run waits for the first to release the plugin's VM.
   What it buys is that an overrunning run does not cause the next one to be skipped.
+- **A run waits its turn behind the plugin's other background work.** Schedule runs
+  share one queue with the plugin's async actions and `mah.start_job` jobs. Under
+  `"skip"`, a run that cannot start within 10 seconds (the plugin is busy, or the
+  job budget is full) is not started, and the schedule stays due for the next tick.
+  Under `"allow"` a run waits for the plugin's earlier work for as long as it takes,
+  and is dropped only if no job slot or budget room frees within 10 seconds after
+  that.
 - **In a multi-process deployment each schedule still runs once.** Processes
   compete for each due run and exactly one wins.
 

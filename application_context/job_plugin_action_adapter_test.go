@@ -13,7 +13,6 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
-	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
 
@@ -2001,30 +2000,36 @@ func TestATerminalReportIsRetriedUntilTheDurablePlaneHasIt(t *testing.T) {
 // for the async plugin surface: the id the server answered with has to keep resolving,
 // even though nothing in this process is running the work.
 //
-// The plugin manager's registry is one process's memory. A submission the deployment had
-// no capacity for is accepted durably and started nowhere, so the registry the legacy
-// route reads holds nothing for it — and the client polling that id was told 404 for work
-// the server itself had just accepted.
+// The plugin manager's registry is one process's memory. Work another process of the
+// deployment accepted, and has not started, is durable and waiting while this process's
+// registry holds nothing for it — and the client polling that id through this process
+// was told 404 for work the deployment had just accepted.
 func TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry(t *testing.T) {
-	ctx := newPluginActionJobContext(t)
-	ctx.Config.MaxJobConcurrency = 1
-
-	server, _, unblock := heldTransferServer(t)
-	holder := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
-	if len(holder) != 1 || holder[0].Err != nil || holder[0].Job == nil {
-		t.Fatalf("the holding transfer: %+v", holder)
+	// No dispatch loop: its cadence would hand this waiting Job to this process,
+	// and the point is a Job this process is not holding.
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.PluginManager().EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
 	}
-	waitForSnapshot(t, ctx, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
-		return s.State == jobs.StateRunning
+
+	input, err := json.Marshal(pluginActionJobInput{
+		Subtype:  pluginActionSubtypeRegistered,
+		Plugin:   pluginActionTestPlugin,
+		Action:   "async-work",
+		Label:    "Async work",
+		EntityID: 0,
+		Runtime:  "another-host/boot/4242",
 	})
-
-	handle, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 0, nil, "")
 	if err != nil {
-		t.Fatalf("run the action: %v", err)
+		t.Fatalf("encode the input: %v", err)
 	}
-	if canonical == "" {
-		t.Fatalf("the accepted action has no durable job")
-	}
+	handle := download_queue.NewJobID()
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
+		State: jobs.StateQueued, Origin: "api", Title: "Async work",
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: PluginActionHandleNamespace, Handle: handle}},
+	})
 	if ctx.PluginManager().GetActionJob(handle) != nil {
 		t.Fatalf("the in-memory registry holds this execution, so the projection is not what is being measured")
 	}
@@ -2036,8 +2041,9 @@ func TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry(t *testing.T) {
 	if projected == nil {
 		t.Fatalf("no row answers for the handle the server handed out")
 	}
-	if projected.ID != handle {
-		t.Fatalf("the projected row answers to %q, want the handle %q", projected.ID, handle)
+	if projected.ID != handle || projected.CanonicalJobID != accepted.ID {
+		t.Fatalf("the projected row answers to %q/%q, want the handle %q and job %q",
+			projected.ID, projected.CanonicalJobID, handle, accepted.ID)
 	}
 	if projected.Status != "pending" {
 		t.Fatalf("the waiting action is %q, want pending", projected.Status)
@@ -2046,7 +2052,6 @@ func TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry(t *testing.T) {
 		t.Fatalf("the projected row names %s/%s, want %s/async-work",
 			projected.PluginName, projected.ActionID, pluginActionTestPlugin)
 	}
-	unblock()
 }
 
 // TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot is the plugin half of the

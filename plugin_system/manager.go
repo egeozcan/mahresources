@@ -245,6 +245,13 @@ type PluginManager struct {
 	actionSubs      map[chan ActionJobEvent]struct{}
 	actionSubsMu    sync.RWMutex
 	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
+	// hostHeld names the durable Jobs this process already has an execution
+	// for, under actionJobsMu (see holdHostJobLocked).
+	hostHeld map[string]struct{}
+
+	// lanes serialize each plugin's async executions (see action_lanes.go).
+	lanes   map[string]*pluginLane
+	lanesMu sync.Mutex
 
 	// hostJobs is the host's durable Job control plane, installed after
 	// construction (see SetHostJobs). Nil leaves plugin background work with its
@@ -293,6 +300,8 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionSemaphore:        make(chan struct{}, maxConcurrentActions),
 		actionSubs:             make(map[chan ActionJobEvent]struct{}),
 		actionInFlight:         make(map[string]*sync.WaitGroup),
+		hostHeld:               make(map[string]struct{}),
+		lanes:                  make(map[string]*pluginLane),
 		loading:                make(map[string]chan struct{}),
 		fallbackConsent:        newMemoryConsentStore(),
 		closedCommandAdmission: make(map[commandAdmissionKey]uint),
@@ -1783,13 +1792,17 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 
 		wg := pm.actionWaitGroup(*pluginNamePtr)
 		wg.Add(1)
+		ticket := pm.laneFor(*pluginNamePtr).join()
 
 		go func() {
 			defer wg.Done()
 			// mainState: start_job is callable from a coroutine, whose LState is
 			// not in vmLocks — the worker would fail the job it just created with
 			// "plugin is no longer available".
-			pm.runStartJobGoroutine(job, mainState(L), fn, jobID)
+			switch pm.runStartJobGoroutine(job, ticket, mainState(L), fn, jobID) {
+			case asyncGaveUp, asyncWithdrawn:
+				pm.dropUnstartedJob(job)
+			}
 		}()
 
 		L.Push(lua.LString(jobID))

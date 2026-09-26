@@ -53,18 +53,65 @@ var errClaimContended = errors.New("jobs: the job was claimed by another runtime
 // no error: a runtime cannot act differently on either answer, and the queue is
 // re-read on the next pass.
 func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (Execution, bool, error) {
-	_, definition, err := s.adapterFor(request.Kind, request.KindVersion)
-	if err != nil {
+	execution, err := s.claimWaiting(ctx, deps, request)
+	switch {
+	case err == nil:
+		return execution, true, nil
+	case errors.Is(err, errNothingWaiting), errors.Is(err, errClaimContended), errors.Is(err, ErrCapacityExhausted):
+		return Execution{}, false, nil
+	default:
 		return Execution{}, false, err
 	}
+}
+
+// ClaimJob claims one named Job and says why when it cannot.
+//
+// It is Claim for an executor that already knows which Job it is going to run
+// and has to act differently on the two refusals Claim folds together. A full
+// budget (ErrCapacityExhausted, naming the budget) is "not yet": the Job is still
+// waiting, nothing was written, and the same claim can succeed once a slot frees.
+// A Job that is not waiting (ErrJobNotWaiting) is final for this executor: it
+// ended, it is blocked, or another runtime owns it, and asking again changes
+// nothing. A polling runtime cannot use the distinction, which is why Claim keeps
+// its own contract; an executor holding work in memory for one Job can.
+func (s *Service) ClaimJob(ctx context.Context, deps Deps, request ClaimRequest) (Execution, error) {
+	if strings.TrimSpace(request.JobID) == "" {
+		return Execution{}, fmt.Errorf("%w: ClaimJob names the job it claims", ErrInvalidClaim)
+	}
+	execution, err := s.claimWaiting(ctx, deps, request)
+	switch {
+	case err == nil:
+		return execution, nil
+	case errors.Is(err, errNothingWaiting), errors.Is(err, errClaimContended):
+		return Execution{}, fmt.Errorf("%w: job %s", ErrJobNotWaiting, request.JobID)
+	default:
+		return Execution{}, err
+	}
+}
+
+// errNothingWaiting is claimWaiting's answer when no Job matched: an empty queue,
+// or a named Job that is not waiting.
+var errNothingWaiting = errors.New("jobs: no job is waiting")
+
+// claimWaiting is the one claim body. Its refusals are errors — nothing waiting,
+// lost to another runtime, a full budget — and each public entry point decides
+// which of them its callers can act on.
+func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequest) (Execution, error) {
+	_, definition, err := s.adapterFor(request.Kind, request.KindVersion)
+	if err != nil {
+		return Execution{}, err
+	}
 	if err := validateClaimRequest(&request, definition); err != nil {
-		return Execution{}, false, err
+		return Execution{}, err
 	}
 
 	now := deps.now()
 	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, now)
-	if err != nil || !found {
-		return Execution{}, false, err
+	if err != nil {
+		return Execution{}, err
+	}
+	if !found {
+		return Execution{}, errNothingWaiting
 	}
 
 	lease := request.Lease
@@ -143,18 +190,10 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 		claimed = next
 		return nil
 	})
-	switch {
-	case errors.Is(err, errClaimContended), errors.Is(err, ErrCapacityExhausted):
-		return Execution{}, false, nil
-	case err != nil:
-		return Execution{}, false, err
-	}
-
-	execution, err := s.executionFor(ctx, deps, claimed, claim, State(job.State), claimFromWaiting)
 	if err != nil {
-		return Execution{}, false, err
+		return Execution{}, err
 	}
-	return execution, true, nil
+	return s.executionFor(ctx, deps, claimed, claim, State(job.State), claimFromWaiting)
 }
 
 // validateClaimRequest checks a claim and normalizes the budgets it occupies.
@@ -232,11 +271,7 @@ func strictestCapacityLimit(a, b int) int {
 // it a moment ago — takes it under a claim rather than taking whatever happens to
 // be oldest.
 func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, now time.Time) (models.Job, bool, error) {
-	query := db.Where(
-		"kind = ? AND kind_version = ? AND (execution_token IS NULL OR execution_token = '') "+
-			"AND (state = ? OR (state = ? AND scheduled_for IS NOT NULL AND scheduled_for <= ?))",
-		kind, version, string(StateQueued), string(StateScheduled), now,
-	)
+	query := waitingJobs(db, kind, version, now)
 	if jobID != "" {
 		// Predicated on the Kind as well the id: a claim that named a Job of
 		// another Kind would hand it to an adapter that does not own its input
@@ -252,6 +287,49 @@ func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, now tim
 		return models.Job{}, false, fmt.Errorf("jobs: select claimable job: %w", err)
 	}
 	return job, true, nil
+}
+
+// waitingJobs narrows a query to the Jobs of one Kind that are waiting to run:
+// queued work, and scheduled work whose time has come, that no claim owns. It is
+// the one definition of "waiting", shared by the claim and by the listing an
+// executor reads its candidates from, so the two cannot disagree about which Jobs
+// a claim would take.
+func waitingJobs(db *gorm.DB, kind string, version uint, now time.Time) *gorm.DB {
+	return db.Where(
+		"kind = ? AND kind_version = ? AND (execution_token IS NULL OR execution_token = '') "+
+			"AND (state = ? OR (state = ? AND scheduled_for IS NOT NULL AND scheduled_for <= ?))",
+		kind, version, string(StateQueued), string(StateScheduled), now,
+	)
+}
+
+// WaitingJobs lists the Jobs of one Kind that are waiting to run, oldest first,
+// after a keyset position, so an executor that admits its own work can choose
+// which of them to claim rather than taking whichever is oldest.
+//
+// It is a read, and it promises nothing: a Job listed here can be claimed,
+// cancelled or blocked a moment later, and ClaimJob is what decides. It is not
+// filtered by any viewer, because its reader is an executor, never a person.
+func (s *Service) WaitingJobs(deps Deps, kind string, version uint, after Cursor, limit int) ([]Snapshot, error) {
+	if err := validateCursor(after); err != nil {
+		return nil, err
+	}
+	size, err := pageSize(limit)
+	if err != nil {
+		return nil, err
+	}
+	query := waitingJobs(deps.DB.Model(&models.Job{}), kind, version, deps.now())
+	if after.ID != "" {
+		query = continueBefore(query, after)
+	}
+	var rows []models.Job
+	if err := query.Order("accepted_at, jobs.id").Limit(size).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("jobs: list waiting jobs: %w", err)
+	}
+	waiting := make([]Snapshot, 0, len(rows))
+	for _, row := range rows {
+		waiting = append(waiting, snapshot(row))
+	}
+	return waiting, nil
 }
 
 // acquireCapacityTx occupies one slot in every budget the claim draws on.
