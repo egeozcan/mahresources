@@ -494,9 +494,6 @@
   .mx-1 {
     margin-inline: var(--spacing);
   }
-  .mx-3 {
-    margin-inline: calc(var(--spacing) * 3);
-  }
   .mx-4 {
     margin-inline: calc(var(--spacing) * 4);
   }
@@ -1216,6 +1213,9 @@
   .-ml-1 {
     margin-left: calc(var(--spacing) * -1);
   }
+  .-ml-1\.5 {
+    margin-left: calc(var(--spacing) * -1.5);
+  }
   .-ml-px {
     margin-left: -1px;
   }
@@ -1536,6 +1536,9 @@
   }
   .min-h-0 {
     min-height: 0;
+  }
+  .min-h-6 {
+    min-height: calc(var(--spacing) * 6);
   }
   .min-h-7 {
     min-height: calc(var(--spacing) * 7);
@@ -2014,6 +2017,9 @@
       margin-block-start: calc(calc(var(--spacing) * 8) * var(--tw-space-y-reverse));
       margin-block-end: calc(calc(var(--spacing) * 8) * calc(1 - var(--tw-space-y-reverse)));
     }
+  }
+  .gap-x-1 {
+    column-gap: var(--spacing);
   }
   .gap-x-2 {
     column-gap: calc(var(--spacing) * 2);
@@ -3088,6 +3094,9 @@
   .decoration-red-400 {
     text-decoration-color: var(--color-red-400);
   }
+  .decoration-stone-300 {
+    text-decoration-color: var(--color-stone-300);
+  }
   .decoration-dotted {
     text-decoration-style: dotted;
   }
@@ -3226,6 +3235,11 @@
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
     transition-duration: var(--tw-duration, var(--default-transition-duration));
   }
+  .transition-\[width\] {
+    transition-property: width;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
   .transition-all {
     transition-property: all;
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
@@ -3306,6 +3320,11 @@
   .group-open\:rotate-90 {
     &:is(:where(.group):is([open], :popover-open, :open) *) {
       rotate: 90deg;
+    }
+  }
+  .group-open\:rotate-180 {
+    &:is(:where(.group):is([open], :popover-open, :open) *) {
+      rotate: 180deg;
     }
   }
   .group-hover\:text-stone-700 {
@@ -3403,6 +3422,11 @@
     &:last-child {
       border-top-right-radius: var(--radius-md);
       border-bottom-right-radius: var(--radius-md);
+    }
+  }
+  .open\:basis-full {
+    &:is([open], :popover-open, :open) {
+      flex-basis: 100%;
     }
   }
   .focus-within\:ring-2 {
@@ -3678,24 +3702,10 @@
       }
     }
   }
-  .hover\:bg-stone-900 {
-    &:hover {
-      @media (hover: hover) {
-        background-color: var(--color-stone-900);
-      }
-    }
-  }
   .hover\:bg-teal-900 {
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-teal-900);
-      }
-    }
-  }
-  .hover\:bg-white {
-    &:hover {
-      @media (hover: hover) {
-        background-color: var(--color-white);
       }
     }
   }
@@ -3897,6 +3907,13 @@
       }
     }
   }
+  .hover\:decoration-amber-800 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-amber-800);
+      }
+    }
+  }
   .hover\:decoration-amber-900 {
     &:hover {
       @media (hover: hover) {
@@ -3908,6 +3925,13 @@
     &:hover {
       @media (hover: hover) {
         text-decoration-color: var(--color-red-900);
+      }
+    }
+  }
+  .hover\:decoration-stone-700 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-stone-700);
       }
     }
   }
@@ -4175,6 +4199,11 @@
       --tw-ring-color: var(--color-amber-600);
     }
   }
+  .focus-visible\:ring-amber-700 {
+    &:focus-visible {
+      --tw-ring-color: var(--color-amber-700);
+    }
+  }
   .focus-visible\:ring-stone-400 {
     &:focus-visible {
       --tw-ring-color: var(--color-stone-400);
@@ -4269,6 +4298,11 @@
       animation: var(--animate-pulse);
     }
   }
+  .motion-reduce\:transition-none {
+    @media (prefers-reduced-motion: reduce) {
+      transition-property: none;
+    }
+  }
   .sm\:col-span-2 {
     @media (width >= 40rem) {
       grid-column: span 2 / span 2;
@@ -4287,6 +4321,11 @@
   .sm\:mt-px {
     @media (width >= 40rem) {
       margin-top: 1px;
+    }
+  }
+  .sm\:block {
+    @media (width >= 40rem) {
+      display: block;
     }
   }
   .sm\:grid {
@@ -4817,6 +4856,11 @@
       &:focus-visible {
         color: var(--color-stone-950);
       }
+    }
+  }
+  .\[\&\:\:-webkit-details-marker\]\:hidden {
+    &::-webkit-details-marker {
+      display: none;
     }
   }
 }

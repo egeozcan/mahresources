@@ -230,11 +230,17 @@ export function selectedBulkCommands(jobs, selectedIds) {
 
 function announcementFor(job, previous, replay) {
     if (replay || !previous || stateOf(job) === stateOf(previous)) return '';
+    return lifecycleAnnouncement(job);
+}
+
+// What is said when a Job reaches its current state.
+export function lifecycleAnnouncement(job) {
     const reason = failureText(job);
     return `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}${reason ? `: ${reason}` : ''}.`;
 }
 
-function eventJob(message) {
+// The Job a stream message carries, if it carries one.
+export function eventJob(message) {
     if (message?.job && typeof message.job === 'object') return message.job;
     if (message?.snapshot && typeof message.snapshot === 'object') return message.snapshot;
     if (message?.id && message?.state) return message;

@@ -5,6 +5,9 @@ import {
     advertisedCommands,
     classifyJobState,
     commandEndpoint,
+    eventJob,
+    isPartialSuccess,
+    lifecycleAnnouncement,
     commandLabel,
     failureText,
     jobCommands,
@@ -93,6 +96,66 @@ export function panelCommandConfirmation(command) {
     return '';
 }
 
+// Commands that keep a job's record rather than act on its work. They sit
+// behind a row's "More" disclosure so the inline controls stay the ones a
+// person reaches for: Retry, Cancel, Pause, Dismiss.
+const RECORD_COMMANDS = new Set(['pin', 'unpin', 'pin-lineage', 'forget']);
+
+export function panelCommandSplit(commands) {
+    const primary = [];
+    const more = [];
+    for (const command of commands || []) (RECORD_COMMANDS.has(command?.key) ? more : primary).push(command);
+    return { primary, more };
+}
+
+// One word per state for the row's icon and pill colour. The pill's text is
+// the state label, so the colour never carries the meaning alone.
+export function panelStateTone(job) {
+    switch (job?.state) {
+    case 'running': return 'working';
+    case 'queued':
+    case 'scheduled': return 'waiting';
+    case 'paused': return 'paused';
+    case 'succeeded': return isPartialSuccess(job) ? 'warning' : 'done';
+    case 'blocked': return 'warning';
+    case 'failed':
+    case 'interrupted': return 'failed';
+    default: return 'neutral';
+    }
+}
+
+// The trigger's accessible description: its badges are hidden from assistive
+// technology because the button's aria-label replaces them as its name.
+export function panelCountsText({ active = 0, attention = 0 } = {}) {
+    // "Showing": each group is capped, so these count rows shown, not every job.
+    const activeText = `${active} active or scheduled job${active === 1 ? '' : 's'}`;
+    return `Showing ${activeText} and ${attention} needing attention`;
+}
+
+// How many jobs the announcement ledger remembers. A job older than this that
+// changes is recorded again without being said, which is the safe side.
+const HEARD_LIMIT = 1000;
+// Event types a Job's state transitions are recorded under: the lifecycle
+// constants in jobs/types.go, plus the one type an executor passes of its own
+// (a plugin action cancelled before it started). Delivered live, after
+// catch-up, one is proof that the transition at its version happened live.
+// jobPanel.test.ts reads the Go sources to keep this complete.
+export const panelLifecycleEvents = new Set([
+    'accepted', 'scheduled', 'queued', 'started', 'resumed', 'paused', 'blocked',
+    'succeeded', 'failed', 'cancelled', 'interrupted', 'not-started',
+]);
+// Both live regions replace a message that has not landed within 50 ms. News
+// made that close together is said together rather than cancelled.
+const NEWS_COALESCE_MS = 50;
+
+// Where focus goes when the command control that had it leaves the row: its
+// counterpart first, since Pin becomes Unpin, then the same command re-rendered.
+const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause' };
+
+export function panelFocusSuccessorKeys(key) {
+    return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
+}
+
 function commandKey() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
     return `job-panel-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -109,7 +172,6 @@ export function jobPanel() {
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
-        _pendingLiveJobUpdates: new Map(),
         _resourceRefreshNotified: new Set(),
         busy: false,
         finishedLimit: DEFAULT_FINISHED_LIMIT,
@@ -131,6 +193,22 @@ export function jobPanel() {
         _panelRefreshPromise: null,
         _refreshGeneration: 0,
         _streamGeneration: 0,
+        // What the reader has been told about each job: its state and version,
+        // and the stream generation that was current when it was recorded. See
+        // hearJob.
+        _heard: new Map(),
+        // Versions a live lifecycle event proved news before any read saw them.
+        _liveVersions: new Map(),
+        // What was said within the last NEWS_COALESCE_MS, which may not have
+        // landed: news, and at most one notice (the newest notice wins).
+        _recentNews: [],
+        _recentNotice: '',
+        _newsAt: 0,
+        // Which rows a stream snapshot changed, and when, by a counter a refresh
+        // reads at its start: a row changed after that may be missing from the
+        // group lists, which are read one after another.
+        _streamTouchSeq: 0,
+        _streamTouched: new Map(),
 
         init() {
             this.finishedLimit = panelFinishedLimit();
@@ -202,6 +280,7 @@ export function jobPanel() {
         },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
+        get countsText() { return panelCountsText(this.counts); },
         get finishedCount() {
             return this.jobs.filter(job => classifyJobState(job) === 'finished' &&
                 this.commandsFor(job).some(command => command.key === 'dismiss')).length;
@@ -221,7 +300,7 @@ export function jobPanel() {
         openFromEvent(detail = null) {
             if (!this.isOpen) {
                 if (this.blockingModal()) {
-                    this.announce('A dialog is open. Close it before opening Jobs.');
+                    this.announceNotice('A dialog is open. Close it before opening Jobs.');
                     return;
                 }
                 const requested = detail?.returnFocusTo;
@@ -232,7 +311,7 @@ export function jobPanel() {
 
         toggle(event = null) {
             if (!this.isOpen && this.blockingModal()) {
-                this.announce('A dialog is open. Close it before opening Jobs.');
+                this.announceNotice('A dialog is open. Close it before opening Jobs.');
                 return;
             }
             if (!this.isOpen) this._lastTrigger = captureTrigger(event) ?? focusedElement() ?? this._trigger;
@@ -312,10 +391,8 @@ export function jobPanel() {
 
         async refreshAtGeneration(generation) {
             this.error = '';
-            const pendingLiveUpdates = new Map([...this._pendingLiveJobUpdates.entries()].map(([jobId, update]) => [
-                jobId,
-                { generation: update.generation, previous: update.previous },
-            ]));
+            const streamGeneration = this._streamGeneration;
+            const touchedFrom = this._streamTouchSeq;
             try {
                 const groups = panelGroups(this.finishedLimit);
                 const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group))));
@@ -325,37 +402,220 @@ export function jobPanel() {
                     if (groups[index].key === 'finished') this.finishedHasMore = !!payload.nextCursor;
                     for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
                 });
-                const nextJobs = this.bounded([...byId.values()]);
-                this.announceRefreshedLiveTransitions(nextJobs, pendingLiveUpdates);
+                // A list read before a stream snapshot the panel has since
+                // applied is older than the row it would replace; the newer row
+                // stays, rather than the row rolling back.
+                const shown = new Map(this.jobs.map(job => [job.id, job]));
+                const listed = [...byId.values()].map(job => {
+                    const held = shown.get(job.id);
+                    return held && Number(held.version || 0) > Number(job.version || 0) ? held : job;
+                });
+                // A row the stream changed during the reads can fall between two
+                // groups' lists, read before and after its move. It stays; a job
+                // that is really gone leaves on the next refresh, which that
+                // stream change scheduled.
+                for (const [jobId, touchedAt] of this._streamTouched) {
+                    if (touchedAt > touchedFrom && !byId.has(jobId) && shown.has(jobId)) listed.push(shown.get(jobId));
+                    if (touchedAt <= touchedFrom) this._streamTouched.delete(jobId);
+                }
+                // One announcement for everything this refresh finds, its detail
+                // reads included: two made in a row would each cancel the one
+                // before it. It is said even if a newer refresh supersedes this
+                // one, since what it heard is already recorded and nothing else
+                // would say it.
+                const spoken = [];
+                for (const job of listed) this.hearFromRead(job, streamGeneration, spoken);
+                const nextJobs = this.bounded(listed);
                 nextJobs.forEach(job => this.trackResourceCompletion(job));
                 this.jobs = nextJobs;
-                await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation).catch(() => null)));
+                try {
+                    await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation, spoken).catch(() => null)));
+                } finally {
+                    this.announceHeld(spoken, streamGeneration);
+                }
             } catch (error) {
                 if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
             }
         },
 
-        queueLiveJobUpdate(jobId) {
-            const previous = this.jobs.find(job => job.id === jobId);
-            if (!previous) return;
-            const pending = this._pendingLiveJobUpdates.get(jobId);
-            if (pending) pending.generation += 1;
-            else this._pendingLiveJobUpdates.set(jobId, { generation: 1, previous });
+        // Announcements are made against what the reader has been told, not
+        // against the rows on screen. Rows are dropped, rolled back and re-read
+        // (three group lists read one after another, detail reads after them,
+        // stream messages in between), so a change measured against the rows can
+        // be applied silently by one path and then found unchanged by the path
+        // that should have said it. The ledger records each job's last heard
+        // state and version whichever path heard it:
+        //   - an older version than the one recorded is old news, and ignored;
+        //   - a live stream message says any change of state;
+        //   - a list or detail read says a change only against an entry recorded
+        //     on the same stream generation, so what changed while disconnected
+        //     is recorded, not announced, as the stream's replay is not either;
+        //   - replays and command answers are recorded without being said.
+        // A read cannot tell a change made while disconnected from one made just
+        // after catch-up; the stream can, since only the latter arrives as a live
+        // lifecycle event. So reads defer to it both ways: a live event first
+        // marks its version as news for the read that follows (_liveVersions),
+        // and a read first records the change it withheld, for the live event
+        // that follows to say (withheld).
+        // The boundary is exact to within one publish tick: catch-up replays
+        // only events already given a delivery sequence, and the runtime assigns
+        // those on its tick (application_context/job_runtime.go, 2 s). A change
+        // committed within that tick before catch-up arrives after it, and is
+        // said. That is a real change the reader had not heard; the silence for
+        // history exists to spare a reader a flood after a long disconnect,
+        // which one tick's worth cannot be.
+        // A proof anywhere in a withheld change's range releases it, even for an
+        // intermediate state: what is said is the state the read found, which
+        // the job is still in (currentNews), said once. The intermediate state
+        // was superseded before anyone could hear it.
+        // A job with no entry is recorded without being said: the first sight
+        // of a job is not news. Every path that puts a row on screen hears it;
+        // a row set on screen some other way counts as heard in its shown state
+        // on the first stream generation, before any stream was connected.
+        // A read is heard under the generation it began on, even when it answers
+        // after a catch-up: what it saw is history to the stream that followed.
+        // `proofOnly` is for a command's answer: the reader asked for the change
+        // and hears the command's notice, so it speaks only for a change a live
+        // event already proved happened on its own.
+        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false } = {}) {
+            if (!job?.id || !job.state) return '';
+            const version = Number(job.version || 0);
+            const shown = this._heard.has(job.id) ? null : this.jobs.find(row => row.id === job.id);
+            const entry = this._heard.get(job.id) ||
+                (shown ? { state: shown.state, version: Number(shown.version || 0), stateSince: Number(shown.version || 0), generation: 0 } : null);
+            if (entry && version > 0 && version < entry.version) return '';
+            const changed = !!entry && entry.state !== job.state;
+            const liveFrom = this._liveVersions.get(job.id);
+            const provenLive = liveFrom !== undefined && version >= liveFrom;
+            // Only an observation that could speak uses the proof up; a stale
+            // read must leave it for the live one that follows.
+            if (provenLive && (live || proofOnly)) this._liveVersions.delete(job.id);
+            let said = this.streamCaughtUp && changed && (
+                proofOnly ? provenLive
+                    : live && (!sameGenerationOnly || entry.generation === generation || provenLive)
+            ) ? lifecycleAnnouncement(job) : '';
+            // A withheld change happened somewhere after the version heard
+            // before it (withheldFrom) and at or before the version the read saw
+            // (withheldVersion). A live message or proof inside that range says
+            // it now.
+            const withheldIn = entry?.withheld && entry.state === job.state ? entry : null;
+            const inRange = at => withheldIn && at > withheldIn.withheldFrom && at <= withheldIn.withheldVersion;
+            if (!said && this.streamCaughtUp && withheldIn &&
+                ((live && !sameGenerationOnly && inRange(version)) || (inRange(liveFrom) && (live || proofOnly)))) {
+                said = withheldIn.withheld;
+            }
+            // It stays while the job is still in that state, whatever versions a
+            // same-state change (a control request) adds; saying it, or a change
+            // of state, retires it.
+            let withheld = !said && withheldIn
+                ? { text: withheldIn.withheld, from: withheldIn.withheldFrom, to: withheldIn.withheldVersion } : null;
+            if (sameGenerationOnly && changed && !said) withheld = { text: lifecycleAnnouncement(job), from: entry.version, to: version };
+            this._heard.delete(job.id);
+            this._heard.set(job.id, {
+                state: job.state, version: Math.max(version, entry?.version || 0), generation,
+                // The version the current state began at: news about it stays
+                // true through same-state versions (a control request).
+                stateSince: entry && entry.state === job.state ? entry.stateSince : version,
+                withheld: withheld?.text || '', withheldFrom: withheld?.from, withheldVersion: withheld?.to,
+            });
+            if (this._heard.size > HEARD_LIMIT) this._heard.delete(this._heard.keys().next().value);
+            return said;
         },
 
-        announceRefreshedLiveTransitions(nextJobs, capturedUpdates) {
-            const refreshed = new Map(nextJobs.map(job => [job.id, job]));
-            for (const [jobId, captured] of capturedUpdates) {
-                const currentPending = this._pendingLiveJobUpdates.get(jobId);
-                if (!currentPending) continue;
-                const next = refreshed.get(jobId);
-                if (next) {
-                    const result = reduceJobStreamEvent([captured.previous], { job: next }, this.lastSequence, { allowInsert: true });
-                    if (result.announcement) this.announce(result.announcement);
-                }
-                if (currentPending.generation === captured.generation) this._pendingLiveJobUpdates.delete(jobId);
-                else if (next) currentPending.previous = next;
+        // A live lifecycle event with no snapshot: says a change a read withheld
+        // at exactly its version, or marks its version as news for the next read.
+        hearLiveEvent(message) {
+            const jobId = message?.jobId || message?.jobID;
+            const version = Number(message?.jobVersion || 0);
+            if (!jobId || !version || message.replay || !this.streamCaughtUp || !panelLifecycleEvents.has(message.type)) return '';
+            const entry = this._heard.get(jobId);
+            if (entry?.withheld && version > entry.withheldFrom && version <= entry.withheldVersion) {
+                const said = entry.withheld;
+                entry.withheld = '';
+                entry.withheldFrom = undefined;
+                entry.withheldVersion = undefined;
+                return said;
             }
+            if (entry && version < entry.version) return '';
+            if (entry && entry.version === version) return '';
+            this._liveVersions.delete(jobId);
+            this._liveVersions.set(jobId, Math.max(version, this._liveVersions.get(jobId) || 0));
+            if (this._liveVersions.size > HEARD_LIMIT) this._liveVersions.delete(this._liveVersions.keys().next().value);
+            return '';
+        },
+
+        // A list or detail read, which may speak only if no reconnect happened
+        // since the read began; what it says is held for the refresh to say.
+        hearFromRead(job, streamGeneration, spoken) {
+            const said = this.hearJob(job, {
+                live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration,
+            });
+            if (said) spoken.push(this.newsEntry(job.id, said));
+        },
+
+        // Says what a refresh held back while its detail reads ran, less
+        // anything the ledger has since moved past: the stream will have said
+        // the newer news already, and older news must not be the last word, even
+        // when the job has come back to the same state. Nothing is said once the
+        // stream has dropped since the refresh began: that is no longer live.
+        announceHeld(spoken, streamGeneration) {
+            if (streamGeneration !== this._streamGeneration) return;
+            this.announceNews(spoken);
+        },
+
+        // A piece of news about a job, as the ledger holds it now.
+        newsEntry(jobId, text) {
+            const heard = this._heard.get(jobId);
+            return { jobId, state: heard?.state, version: heard?.version, text };
+        },
+
+        // The news still true: the job is still in the state it announced, that
+        // state has not been left and re-entered since (stateSince), and no live
+        // lifecycle event has marked a later transition (it records no state,
+        // but supersedes all the same). Same-state versions, such as a control
+        // request, leave it true. One entry per job, the latest.
+        currentNews(entries) {
+            const byJob = new Map();
+            for (const entry of entries) {
+                const heard = this._heard.get(entry.jobId);
+                const newer = this._liveVersions.get(entry.jobId);
+                if (heard?.state !== entry.state || !(heard.stateSince <= entry.version)) continue;
+                if (newer !== undefined && newer > entry.version) continue;
+                byJob.delete(entry.jobId);
+                byJob.set(entry.jobId, entry);
+            }
+            return [...byJob.values()];
+        },
+
+        // News said so recently it may not have landed, still true.
+        pendingNews() {
+            return Date.now() - this._newsAt < NEWS_COALESCE_MS ? this.currentNews(this._recentNews) : [];
+        },
+
+        pendingNotice() {
+            return Date.now() - this._newsAt < NEWS_COALESCE_MS ? this._recentNotice : '';
+        },
+
+        // Every panel message goes through here: news, a notice, or both. What
+        // was said within the window and may not have landed is said again with
+        // it, since the region would otherwise replace it. A new notice replaces
+        // a pending one; news accumulates, less anything superseded.
+        say(entries = [], notice = '') {
+            const news = this.currentNews([...this.pendingNews(), ...entries]);
+            const text = notice || this.pendingNotice();
+            this._recentNews = news;
+            this._recentNotice = text;
+            this._newsAt = Date.now();
+            const message = [...news.map(entry => entry.text), text].filter(Boolean).join(' ');
+            if (message) this.announce(message);
+        },
+
+        announceNews(entries) {
+            if (this.currentNews(entries).length) this.say(entries);
+        },
+
+        announceNotice(notice, news = []) {
+            this.say(news, notice);
         },
 
         schedulePanelRefresh() {
@@ -394,7 +654,9 @@ export function jobPanel() {
                 });
         },
 
-        async loadAdvertisedCommands(job, generation = this._refreshGeneration) {
+        // A detail read after the list can find the job already moved on; it is
+        // heard like the list, and what it says joins the refresh's `spoken`.
+        async loadAdvertisedCommands(job, generation = this._refreshGeneration, spoken = null) {
             if (advertisedCommands(job).length) {
                 this.details[job.id] = job;
                 return job;
@@ -406,6 +668,8 @@ export function jobPanel() {
             const current = this.jobs.find(currentJob => currentJob.id === job.id);
             if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
+            if (spoken) this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
+            else this.hearJob({ ...current, ...detail });
             this.jobs = this.bounded(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
             return detail;
         },
@@ -415,18 +679,7 @@ export function jobPanel() {
             this.connectionStatus = 'connecting';
             this.eventSource = new EventSource('/v1/jobs/events?version=2');
             this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => {
-                this.connectionStatus = 'reconnecting';
-                this.streamCaughtUp = false;
-                this._refreshGeneration += 1;
-                this._streamGeneration += 1;
-                if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
-                if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
-                this._panelRefreshTimer = null;
-                this._panelRefreshMaxTimer = null;
-                this._panelRefreshRequested = false;
-                this._pendingLiveJobUpdates.clear();
-            });
+            this.eventSource.addEventListener('error', () => this.dropStream());
             this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
             this.eventSource.addEventListener('job-progress', event => this.handleProgressFrame(event));
             for (const eventName of ['message', 'job']) {
@@ -459,6 +712,25 @@ export function jobPanel() {
             return boundedPanelJobs((jobs || []).map(job => mergeFetchedProgress(job, held.get(job?.id))), this.finishedLimit);
         },
 
+        // The stream dropped. What it proved live does not carry across: what
+        // happens before it catches up again arrives as replay.
+        dropStream() {
+            this.connectionStatus = 'reconnecting';
+            this.streamCaughtUp = false;
+            this._refreshGeneration += 1;
+            this._streamGeneration += 1;
+            this._liveVersions.clear();
+            // News said just before the drop must not be said again with the
+            // next message as if it were new.
+            this._recentNews = [];
+            this._recentNotice = '';
+            if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+            if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
+            this._panelRefreshTimer = null;
+            this._panelRefreshMaxTimer = null;
+            this._panelRefreshRequested = false;
+        },
+
         markStreamCaughtUp(event) {
             let boundary;
             try { boundary = JSON.parse(event.data); }
@@ -469,7 +741,6 @@ export function jobPanel() {
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
-            this._pendingLiveJobUpdates.clear();
             if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
@@ -479,22 +750,28 @@ export function jobPanel() {
             catch { return; }
             message.lastEventId = event.lastEventId;
             message.replay = message.replay === true || !this.streamCaughtUp;
-            const announceSnapshot = !message.replay;
             const previousSequence = this.lastSequence;
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: false });
             this.lastSequence = result.lastSequence;
             if (this.lastSequence > previousSequence && this.streamCaughtUp) this.schedulePanelRefresh();
-            if (!result.changed) return;
-            const jobId = result.jobId || message.job?.id || message.snapshot?.id ||
-                (message.id && message.state ? message.id : '') || message.jobId || message.jobID || '';
-            if (result.needsSnapshot) {
-                if (!message.replay) this.queueLiveJobUpdate(result.jobId);
-                return;
+            // Heard whether or not the row is on screen: a row a refresh dropped
+            // between two group reads still has news the reader must get. An
+            // event with no snapshot says nothing; the refresh it scheduled
+            // reads the job and hears it.
+            // A redelivered message carries no newer version, so hearing it again
+            // says nothing.
+            const incoming = eventJob(message);
+            const said = incoming
+                ? this.hearJob({ ...this.jobs.find(job => job.id === incoming.id), ...incoming }, { live: !message.replay })
+                : this.hearLiveEvent(message);
+            const saidAbout = incoming?.id || message.jobId || message.jobID;
+            if (result.changed && !result.needsSnapshot) {
+                const jobId = result.jobId || incoming?.id || '';
+                this.jobs = this.bounded(result.jobs);
+                this.touchFromStream(jobId);
+                this.jobs.forEach(job => this.trackResourceCompletion(job));
             }
-            this._pendingLiveJobUpdates.delete(jobId);
-            this.jobs = this.bounded(result.jobs);
-            this.jobs.forEach(job => this.trackResourceCompletion(job));
-            if (result.announcement) this.announce(result.announcement);
+            if (said) this.announceNews([this.newsEntry(saidAbout, said)]);
         },
 
         trackResourceCompletion(job) {
@@ -514,13 +791,38 @@ export function jobPanel() {
         // already had. A row gone by the time the answer lands was removed on
         // purpose — dismissed, or refreshed out — so the answer updates rows
         // and never resurrects one.
-        applyStreamSnapshot(job, announce = false, allowInsert = false) {
+        // A proved change goes to `spoken` when the caller will say it with its
+        // own notice: two messages in a row would cancel the first.
+        // `asRead` is for an answer that reports someone else's change, such as a
+        // 409: it is heard as a read would be, said on the same live stream and
+        // withheld for the job's live event otherwise.
+        applyStreamSnapshot(job, announce = false, allowInsert = false, spoken = null, { asRead = false } = {}) {
             const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert });
             if (!result.changed) return;
+            // The reader asked for this change and is told by the command's own
+            // notice; it is recorded so no later read says it again, unless a
+            // live event proved it happened on its own.
+            const heard = { ...this.jobs.find(row => row.id === job.id), ...job };
+            const news = [];
+            if (asRead) this.hearFromRead(heard, this._streamGeneration, news);
+            else {
+                const said = this.hearJob(heard, { proofOnly: true });
+                if (said) news.push(this.newsEntry(job.id, said));
+            }
+            if (news.length && spoken) spoken.push(...news);
+            else if (news.length) this.announceNews(news);
             this.jobs = this.bounded(result.jobs);
             this.trackResourceCompletion(job);
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
-            if (announce && result.announcement) this.announce(result.announcement);
+            if (announce && result.announcement) this.announceNews([this.newsEntry(job.id, result.announcement)]);
+        },
+
+        // Only stream messages mark a row, never a command's answer: every
+        // stream message schedules the refresh that settles the row, while a
+        // command such as Dismiss may schedule none, and a row kept for it would
+        // outlive its dismissal.
+        touchFromStream(jobId) {
+            if (jobId) this._streamTouched.set(jobId, ++this._streamTouchSeq);
         },
 
         upsert(job) {
@@ -546,18 +848,79 @@ export function jobPanel() {
         commandsFor(job) {
             return jobCommands(this.details[job.id] || job);
         },
+        primaryCommandsFor(job) { return panelCommandSplit(this.commandsFor(job)).primary; },
+        moreCommandsFor(job) { return panelCommandSplit(this.commandsFor(job)).more; },
+        stateTone(job) { return panelStateTone(job); },
 
-        async refreshJobPreference(id) {
+        async refreshJobPreference(id, spoken = null) {
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
             if (freshJob?.id) {
                 this.details[id] = freshJob;
-                this.applyStreamSnapshot(freshJob);
+                // A read: any change of state in it is someone else's.
+                this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
             }
             return freshJob;
         },
 
         async runCommand(job, command) {
+            const watch = this.watchReaderFocus();
+            try {
+                return await this.runCommandUnfocused(job, command);
+            } finally {
+                this.keepFocusOnRow(job.id, command, watch);
+            }
+        },
+
+        // Records whether the reader moved focus inside the drawer while a
+        // command ran. A move the reader makes, by key, click or script, comes
+        // from the element losing focus, so it has a relatedTarget. The trap's
+        // rescue after the focused control is removed comes from nowhere, and
+        // has none. That holds even if the row re-rendered the control first,
+        // which a check on the opener still being attached did not survive.
+        watchReaderFocus() {
+            if (typeof document === 'undefined') return null;
+            const opener = focusedElement();
+            if (!opener) return null;
+            const watch = { opener, movedByReader: false, stop: () => {} };
+            const onFocusIn = event => {
+                if (event.target === opener || !event.relatedTarget) return;
+                if (event.target?.closest?.('#job-center-panel')) watch.movedByReader = true;
+            };
+            document.addEventListener('focusin', onFocusIn, true);
+            watch.stop = () => document.removeEventListener('focusin', onFocusIn, true);
+            return watch;
+        },
+
+        // A command that changes the row replaces the control that ran it: the
+        // pinned snapshot swaps Pin for Unpin, and the focus trap then drops focus
+        // on the drawer's first control, the Close button. Focus is moved to the
+        // nearest control on the same row instead, once the trap has acted. It is
+        // left alone when the control survived, when the reader moved focus
+        // themselves while the command ran, or when focus left the drawer.
+        keepFocusOnRow(jobId, command, watch) {
+            if (!watch) return;
+            this.$nextTick?.(() => setTimeout(() => {
+                watch.stop();
+                if (watch.opener.isConnected || watch.movedByReader || !this.isOpen) return;
+                const panel = document.querySelector('#job-center-panel');
+                const active = document.activeElement;
+                if (active && active !== document.body && !panel?.contains(active)) return;
+                const row = panel?.querySelector(`article[data-job-id="${CSS.escape(String(jobId))}"]`);
+                if (!row) return;
+                const candidates = [
+                    ...panelFocusSuccessorKeys(command?.key).map(key => row.querySelector(`button[data-command-key="${CSS.escape(key)}"]`)),
+                    row.querySelector('details[open] summary'),
+                    row.querySelector('[role="group"] button, [role="group"] summary'),
+                    row.querySelector('a[href]'),
+                ];
+                for (const candidate of candidates) {
+                    if (candidate && isRendered(candidate) && focusOn(candidate)) return;
+                }
+            }, 0));
+        },
+
+        async runCommandUnfocused(job, command) {
             const confirmation = panelCommandConfirmation(command);
             if (confirmation) {
                 const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
@@ -566,6 +929,11 @@ export function jobPanel() {
                 if (!accepted) return null;
             }
             const key = commandKey();
+            // Changes a live event proved, said with the command's notice.
+            const proved = [];
+            // The notice is said with the proved changes, less any a newer
+            // change has superseded while the command ran.
+            const sayNotice = () => this.announceNotice(this.notice, proved);
             try {
                 const result = await this.requestJSON(commandEndpoint(job, command), {
                     method: 'POST',
@@ -574,10 +942,14 @@ export function jobPanel() {
                 });
                 const outcome = result.result || result;
                 const freshJob = outcome.job || result.job;
-                if (freshJob?.id) this.applyStreamSnapshot(freshJob);
+                // A command that keeps the record (pin, forget, dismiss) changes no
+                // state, so a change of state in its answer is someone else's and
+                // is heard as a read; a lifecycle command's answer is the reader's.
+                const keepsRecord = RECORD_COMMANDS.has(command?.key) || command?.key === 'dismiss';
+                if (freshJob?.id) this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
                 let preferenceRefreshFailed = false;
                 if (command?.key === 'pin' || command?.key === 'unpin') {
-                    try { await this.refreshJobPreference(job.id); }
+                    try { await this.refreshJobPreference(job.id, proved); }
                     catch { preferenceRefreshFailed = true; }
                 }
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
@@ -585,18 +957,18 @@ export function jobPanel() {
                 this.notice = preferenceRefreshFailed
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
                     : outcome.message || `${commandLabel(command)} requested.`;
-                this.announce(this.notice);
+                sayNotice();
                 return outcome;
             } catch (error) {
                 const freshJob = error.payload?.job;
                 if (error.status === 409 && freshJob?.id) {
-                    this.applyStreamSnapshot(freshJob);
+                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
                     this.notice = 'This job changed. The latest details are shown.';
-                    this.announce(this.notice);
+                    sayNotice();
                     return null;
                 }
                 this.notice = error.message || 'The command could not be completed.';
-                this.announce(this.notice);
+                sayNotice();
                 return null;
             }
         },
@@ -651,14 +1023,14 @@ export function jobPanel() {
                 this.notice = dismissed === total
                     ? `${dismissed} finished job${plural} dismissed.`
                     : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
-                this.announce(this.notice);
+                this.announceNotice(this.notice);
             } catch (error) {
                 const reason = error.message || 'Could not dismiss finished jobs.';
                 this.notice = dismissed > 0
                     ? `${dismissed} finished job${dismissed === 1 ? '' : 's'} dismissed before an error: ${reason}`
                     : reason;
                 if (refusal) this.notice = `${this.notice.replace(/\.$/, '')}. Not dismissed: ${refusal}`;
-                this.announce(this.notice);
+                this.announceNotice(this.notice);
             }
             // Busy lasts through the refresh, which brings in whatever the
             // cleared rows made room for.

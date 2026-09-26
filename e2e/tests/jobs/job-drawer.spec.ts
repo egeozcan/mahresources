@@ -37,6 +37,155 @@ async function readJob(request: import('@playwright/test').APIRequestContext, id
 }
 
 test.describe('Jobs drawer', () => {
+  test('record-keeping commands wait under More, open by keyboard, and still work after the row updates', async ({ page }) => {
+    const id = 'drawer-more-disclosure';
+    let pinned = false;
+    const pinRequests: string[] = [];
+    const job = () => ({
+      id, kind: 'remote-download', state: 'failed', version: pinned ? 2 : 1, pinned,
+      title: 'More disclosure job', acceptedAt: new Date().toISOString(),
+      failure: { message: 'connection refused' },
+      commands: [
+        { key: 'retry', label: 'Retry', endpoint: `/v1/jobs/${id}/commands/retry`, jobVersion: pinned ? 2 : 1 },
+        { key: 'pin', label: 'Pin', endpoint: `/v1/jobs/${id}/commands/pin`, jobVersion: 1 },
+        { key: 'unpin', label: 'Unpin', endpoint: `/v1/jobs/${id}/commands/unpin`, jobVersion: 2 },
+        { key: 'forget', label: 'Forget replay input', endpoint: `/v1/jobs/${id}/commands/forget`, jobVersion: pinned ? 2 : 1 },
+      ],
+      outputs: [],
+      lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: states.includes('failed') ? [job()] : [], nextCursor: null } });
+    });
+    await page.route(`**/v1/jobs/${id}`, route => route.fulfill({ json: job() }));
+    let releaseUnpin = () => {};
+    let unpinArrived = () => {};
+    const unpinPending = new Promise<void>(resolve => { unpinArrived = resolve; });
+    await page.route(`**/v1/jobs/${id}/commands/unpin`, async route => {
+      const held = new Promise<void>(resolve => { releaseUnpin = resolve; });
+      unpinArrived();
+      await held;
+      pinned = false;
+      return route.fulfill({ json: { result: { job: job(), message: 'Unpin requested.' } } });
+    });
+    await page.route(`**/v1/jobs/${id}/commands/pin`, route => {
+      pinRequests.push(route.request().method());
+      pinned = true;
+      return route.fulfill({ json: { result: { job: job(), message: 'Pin requested.' } } });
+    });
+
+    await page.goto('/dashboard');
+    await page.keyboard.press('Control+Shift+D');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    const row = drawer.locator(`article[data-job-id="${id}"]`);
+    const controls = row.getByRole('group', { name: 'Advertised controls' });
+    // The counts the trigger describes are said inside the modal too, zeroes included.
+    await expect(drawer).toHaveAccessibleDescription('Showing 0 active or scheduled jobs and 1 needing attention');
+
+    // Acting on the work stays inline; keeping the record waits under More.
+    await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+    const pin = controls.getByRole('button', { name: 'Pin', exact: true });
+    await expect(pin).toBeHidden();
+    await expect(controls.getByRole('button', { name: 'Forget replay input' })).toBeHidden();
+
+    const more = controls.locator('summary', { hasText: 'More' });
+    await more.focus();
+    await page.keyboard.press('Enter');
+    await expect(pin).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Forget replay input' })).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expect(pin).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    const confirmation = page.getByRole('alertdialog');
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Pin', exact: true }).click();
+    await expect.poll(() => pinRequests).toEqual(['POST']);
+
+    // The updated row swaps Pin for Unpin under the same disclosure, which
+    // stays usable rather than being rebuilt shut.
+    await expect(row.getByText('Pinned by you', { exact: true })).toBeVisible();
+    await expect(pin).toHaveCount(0);
+    const unpin = controls.getByRole('button', { name: 'Unpin', exact: true });
+    await expect(unpin).toBeVisible();
+    // Pin left the row with focus on it; the reader lands on what replaced it,
+    // not on the drawer's Close button.
+    await expect(unpin).toBeFocused();
+
+    // Focus the reader moves while a command is pending is theirs: when Unpin's
+    // answer replaces it, focus stays where they put it. The target is not the
+    // Close button, which is where the trap parks focus on its own.
+    await page.keyboard.press('Enter');
+    await unpinPending;
+    const allJobs = drawer.getByRole('link', { name: 'All jobs', exact: true });
+    await allJobs.focus();
+    releaseUnpin();
+    await expect(controls.getByRole('button', { name: 'Pin', exact: true })).toBeVisible();
+    await expect(unpin).toHaveCount(0);
+    // A restore would land a macrotask after the row re-renders; give it that long.
+    await page.waitForTimeout(100);
+    await expect(allJobs).toBeFocused();
+  });
+
+  test('a focus move the reader makes after the row re-rendered the command is still theirs', async ({ page }) => {
+    const id = 'drawer-focus-after-rerender';
+    let pinned = true;
+    const job = () => ({
+      id, kind: 'remote-download', state: 'failed', version: pinned ? 2 : 3, pinned,
+      title: 'Re-render focus job', acceptedAt: new Date().toISOString(),
+      failure: { message: 'connection refused' },
+      commands: [
+        { key: 'retry', label: 'Retry', endpoint: `/v1/jobs/${id}/commands/retry`, jobVersion: pinned ? 2 : 3 },
+        { key: 'pin', label: 'Pin', endpoint: `/v1/jobs/${id}/commands/pin`, jobVersion: 3 },
+        { key: 'unpin', label: 'Unpin', endpoint: `/v1/jobs/${id}/commands/unpin`, jobVersion: 2 },
+      ],
+      outputs: [],
+      lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: states.includes('failed') ? [job()] : [], nextCursor: null } });
+    });
+    await page.route(`**/v1/jobs/${id}`, route => route.fulfill({ json: job() }));
+    let releaseUnpin = () => {};
+    let unpinArrived = () => {};
+    const unpinPending = new Promise<void>(resolve => { unpinArrived = resolve; });
+    await page.route(`**/v1/jobs/${id}/commands/unpin`, async route => {
+      const held = new Promise<void>(resolve => { releaseUnpin = resolve; });
+      unpinArrived();
+      await held;
+      return route.fulfill({ json: { result: { job: job(), message: 'Unpin requested.' } } });
+    });
+
+    await page.goto('/dashboard');
+    await page.keyboard.press('Control+Shift+D');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    const row = drawer.locator(`article[data-job-id="${id}"]`);
+    const controls = row.getByRole('group', { name: 'Advertised controls' });
+    await controls.locator('summary', { hasText: 'More' }).click();
+    const unpin = controls.getByRole('button', { name: 'Unpin', exact: true });
+    await unpin.focus();
+    await page.keyboard.press('Enter');
+    await unpinPending;
+
+    // An update lands while the command is pending and replaces the control.
+    pinned = false;
+    await page.evaluate(snapshot => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      (window as any).Alpine.$data(root).applyStreamSnapshot(snapshot);
+    }, job());
+    await expect(unpin).toHaveCount(0);
+
+    // Then the reader goes somewhere of their own.
+    const allJobs = drawer.getByRole('link', { name: 'All jobs', exact: true });
+    await allJobs.focus();
+    releaseUnpin();
+    // A restore would land a macrotask after the command settles; give it that long.
+    await page.waitForTimeout(300);
+    await expect(allJobs).toBeFocused();
+  });
+
   test('a running download shows its bar, speed, time left and a speed graph, live', async ({ page, request }) => {
     const { server, port } = await startSlowServer();
     try {

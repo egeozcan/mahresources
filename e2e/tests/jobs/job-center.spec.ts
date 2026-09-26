@@ -577,8 +577,10 @@ test.describe('Job Center', () => {
 
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     await expect(panel.getByRole('link', { name: 'Older active job', exact: true })).toBeVisible();
-    await expect(panel.getByText('Active and scheduled jobs shown')).toBeVisible();
-    await expect(panel.getByText('Active and scheduled jobs shown').locator('..').getByText('1', { exact: true })).toBeVisible();
+    // The counts live on the trigger's badges; the drawer no longer repeats them.
+    const trigger = page.locator('.job-panel-trigger');
+    await expect(trigger.locator('[data-job-panel-active-badge]')).toHaveText('1');
+    await expect(trigger).toHaveAccessibleDescription('Showing 1 active or scheduled job and 0 needing attention');
     expect(listURLs.length).toBeGreaterThanOrEqual(3);
     expect(listURLs.length % 3).toBe(0);
     expect(listURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
