@@ -1874,7 +1874,8 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 	return ctx.settleUnstartedOccurrence(admission)
 }
 
-// settleUnstartedOccurrence ends an occurrence whose handler was never entered.
+// settleUnstartedOccurrence ends an occurrence whose handler was never entered
+// here.
 //
 // The Job is withdrawn rather than failed: errJobDidNotStart's doctrine is that a
 // full budget or a busy VM is not a plugin's failure, and a Job that ended
@@ -1882,7 +1883,9 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 // ends `cancelled` with a bounded not-started event, which is what tells the
 // scheduler that its row gets its claim back and no outcome is recorded. An
 // occurrence another runtime claimed meanwhile is that runtime's, and its outcome
-// is waited for instead; one the claim blocked or ended stays as it was left.
+// is what this answers — whether it is still running or already over, because a
+// run that happened elsewhere is still this row's run. One the claim blocked
+// stays as it was left.
 func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActionAdmission) (pluginActionRun, error) {
 	run := pluginActionRun{JobID: admission.jobID}
 	if execution, admitted := admission.admitted(); admitted {
@@ -1892,11 +1895,11 @@ func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActio
 	if err != nil {
 		return run, err
 	}
-	switch snap.State {
-	case jobs.StateQueued:
+	switch {
+	case snap.State == jobs.StateQueued:
 		return run, ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
 			"the plugin's execution budget or VM stayed busy")
-	case jobs.StateRunning:
+	case snap.State == jobs.StateRunning, snap.State.Terminal():
 		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: admission.jobID})
 	default:
 		return run, nil

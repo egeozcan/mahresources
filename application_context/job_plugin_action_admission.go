@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"gorm.io/gorm"
+
 	"mahresources/jobs"
 	"mahresources/plugin_system"
 )
@@ -223,6 +225,33 @@ func (ctx *MahresourcesContext) settlePluginActionWhile(jobID string, state jobs
 	}()
 }
 
+// pluginActionIsSuccessor reports whether a Job was made by a Retry, a Continue
+// or a Repeat of another, rather than by its own origin.
+func (ctx *MahresourcesContext) pluginActionIsSuccessor(jobID string) (bool, error) {
+	lineage, err := ctx.JobService().Lineage(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	if err != nil {
+		return false, err
+	}
+	return len(lineage.Ancestors) > 0, nil
+}
+
+// pluginDisabledEverywhere reports whether the deployment has a plugin disabled —
+// the durable state every process loads from — rather than merely not loaded in
+// this one.
+func (ctx *MahresourcesContext) pluginDisabledEverywhere(pluginName string) bool {
+	state, err := ctx.GetPluginState(pluginName)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// Never enabled in this deployment.
+		return true
+	case err != nil:
+		// A read that failed proves nothing either way.
+		return false
+	default:
+		return !state.Enabled
+	}
+}
+
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
 // against the deployment's budget, and keeps the claim alive. A non-zero
 // deadline bounds the claim's database work.
@@ -281,8 +310,15 @@ const pluginActionAdoptDepth = 8
 // what decides who runs it.
 //
 // A closure-backed Job is never adopted: its callback lives only in the process
-// that started it. One whose process is provably gone can never start, and is
-// withdrawn as never started.
+// that started it. A scheduled occurrence is adopted only when it is a Retry's
+// successor: a fresh one belongs to the scheduler that holds its row's claim and
+// records its outcome, and a run elsewhere would leave that row to fire the same
+// interval again. Either kind whose process is provably gone can never start, and
+// is withdrawn as never started.
+//
+// A registered action this process cannot run is left for a process that can,
+// unless the deployment has its plugin disabled: not having the plugin loaded
+// here proves nothing about the others.
 func (ctx *MahresourcesContext) adoptWaitingPluginActions(runCtx context.Context, after jobs.Cursor) jobs.Cursor {
 	service := ctx.JobService()
 	pm := ctx.PluginManager()
@@ -338,7 +374,16 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 	if !ok {
 		return false
 	}
-	if summary.Subtype == pluginActionSubtypeClosure {
+	ownedByItsProcess := summary.Subtype == pluginActionSubtypeClosure
+	if summary.Subtype == pluginActionSubtypeScheduled {
+		successor, err := ctx.pluginActionIsSuccessor(job.ID)
+		if err != nil {
+			log.Printf("warning: could not read the lineage of plugin job %s: %v", job.ID, err)
+			return false
+		}
+		ownedByItsProcess = !successor
+	}
+	if ownedByItsProcess {
 		identity, ok := plugin_system.ParseRuntimeIdentity(summary.Runtime)
 		if ok && identity.Liveness() == plugin_system.RuntimeGone {
 			if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: job.ID}, "not-started",
@@ -347,6 +392,11 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 			}
 		}
 		return false
+	}
+	if summary.Subtype == pluginActionSubtypeRegistered {
+		if _, _, err := pm.FindAction(summary.Plugin, summary.Action); err != nil && !ctx.pluginDisabledEverywhere(summary.Plugin) {
+			return false
+		}
 	}
 
 	opened, err := ctx.JobService().OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)

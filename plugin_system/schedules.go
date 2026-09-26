@@ -253,11 +253,15 @@ var errScheduleVMBusy = fmt.Errorf(
 // The busy report is therefore only ever true for a bounded wait. An unbounded
 // one that comes back empty-handed means the plugin is gone, which is the same
 // answer LockVM has always given and every caller already handles.
-func (pm *PluginManager) acquireScheduleVM(state *lua.LState, holdClaim bool, deadline time.Time) (*vmMutex, bool) {
+//
+// ctx ends either wait early, as a revocation or a closing manager does; the
+// answer is then the plugin gone rather than busy.
+func (pm *PluginManager) acquireScheduleVM(ctx context.Context, state *lua.LState, holdClaim bool, deadline time.Time) (*vmMutex, bool) {
 	if holdClaim {
-		return pm.TryLockVMWithin(context.Background(), state, time.Until(deadline))
+		mu, busy := pm.TryLockVMWithin(ctx, state, time.Until(deadline))
+		return mu, busy && ctx.Err() == nil
 	}
-	mu, _ := pm.LockVMWithContext(context.Background(), state)
+	mu, _ := pm.LockVMWithContext(ctx, state)
 	return mu, false
 }
 
@@ -351,11 +355,11 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	// A tick goes ahead of the plugin's queued actions: see joinAhead.
 	ticket := pm.laneFor(reg.PluginName).joinAhead()
 	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, asyncWork{
-		lock: func(wait bool) (*vmMutex, error) {
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) {
 			if !wait {
-				return pm.lockVMFor(state, false)
+				return pm.lockVMFor(waitCtx, state, false)
 			}
-			mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
+			mu, busy := pm.acquireScheduleVM(waitCtx, state, holdClaim, deadline)
 			if mu != nil {
 				return mu, nil
 			}

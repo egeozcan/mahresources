@@ -703,3 +703,48 @@ func TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler(t *testing.T) {
 		t.Fatalf("the host was told completed=%d failed=%d, want one failure", completed, failed)
 	}
 }
+
+// TestAHeadWaitingOnARevokedVMLetsTheNextVMRun pins the VM wait's end. A disable
+// revokes the old VM while a long synchronous call still holds it; work queued for
+// that VM must leave its lane then, not when the call ends, or the plugin's
+// re-enabled VM sits idle behind it.
+func TestAHeadWaitingOnARevokedVMLetsTheNextVMRun(t *testing.T) {
+	pm := newLanePluginManager(t)
+	oldGate := installLaneGate(t, pm, "busy", "work")
+	defer oldGate.open.Store(true)
+	_, oldVM, err := pm.FindAction("busy", "work")
+	if err != nil {
+		t.Fatalf("find the old VM: %v", err)
+	}
+
+	held := make(chan struct{})
+	go func() {
+		_, _ = pm.RunAction(context.Background(), "busy", "hold", 1, nil, "")
+		close(held)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", 2, nil, ""); err != nil {
+		t.Fatalf("submit work for the old VM: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	go func() { _ = pm.DisablePlugin("busy") }()
+	waitUntil(t, "the old VM to be revoked", 5*time.Second, func() bool { return !pm.stillRegistered(oldVM) })
+	if err := pm.EnablePlugin("busy"); err != nil {
+		t.Fatalf("enable the plugin again: %v", err)
+	}
+	newGate := installLaneGate(t, pm, "busy", "work")
+	newGate.open.Store(true)
+
+	if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", 3, nil, ""); err != nil {
+		t.Fatalf("submit work for the new VM: %v", err)
+	}
+	waitUntil(t, "the new VM's work to run while the old call still holds the old VM", 5*time.Second, func() bool {
+		return len(newGate.order()) == 1
+	})
+	select {
+	case <-held:
+		t.Fatal("the new VM's work did not run until the old synchronous call had ended")
+	default:
+	}
+}

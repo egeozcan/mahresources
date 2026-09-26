@@ -441,3 +441,139 @@ func TestAWithdrawalThatCannotBeRecordedAtOnceIsRecordedLater(t *testing.T) {
 		t.Fatalf("the injected failures were not all consumed (%d left): the test did not reach the retry", failures.Load())
 	}
 }
+
+// acceptOccurrenceForTest accepts one queued occurrence of the fixture's retryable
+// schedule, recording this process as the one that accepted it.
+func acceptOccurrenceForTest(t *testing.T, ctx *MahresourcesContext) jobs.Snapshot {
+	t.Helper()
+	raw, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin, ScheduleID: "retryable-tick",
+		Overlap: plugin_system.ScheduleOverlapSkip, Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("encode the occurrence: %v", err)
+	}
+	return acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "schedule", Title: "retryable-tick", Replay: jobs.ReplayInput{Input: raw},
+	})
+}
+
+// TestAnOccurrenceThatRanElsewhereIsReportedAsRun pins the scheduler's answer
+// when its occurrence was run by another runtime while it waited: that run is
+// this row's run, and reporting it as not started would leave the row due and
+// fire the same interval again.
+func TestAnOccurrenceThatRanElsewhereIsReportedAsRun(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	occurrence := acceptOccurrenceForTest(t, ctx)
+	execution, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: occurrence.ID,
+		Claimant: "another-runtime",
+	})
+	if err != nil {
+		t.Fatalf("claim elsewhere: %v", err)
+	}
+	if _, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: execution.Version, Outcome: jobs.StateSucceeded,
+	}); err != nil {
+		t.Fatalf("finish elsewhere: %v", err)
+	}
+
+	admission := ctx.newPluginActionAdmission(occurrence.ID,
+		&pluginActionJobInput{Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin}, nil)
+	run, err := ctx.settleUnstartedOccurrence(admission)
+	if err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	if !run.Started || run.Failed {
+		t.Fatalf("an occurrence another runtime ran to success was reported started=%v failed=%v", run.Started, run.Failed)
+	}
+}
+
+// TestAFreshOccurrenceIsLeftToItsSchedulerAndARetryIsAdopted pins which scheduled
+// occurrences adoption may take. A fresh one belongs to the scheduler holding its
+// row, which records its outcome; a Retry's successor has no row waiting on it and
+// nothing else would run it.
+func TestAFreshOccurrenceIsLeftToItsSchedulerAndARetryIsAdopted(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	adapter := &pluginActionAdapter{ctx: ctx}
+
+	fresh := acceptOccurrenceForTest(t, ctx)
+	adapter.AdoptWaiting(context.Background())
+	time.Sleep(200 * time.Millisecond)
+	if pm.HostJobHeld(fresh.ID) || jobStateForTest(t, ctx, fresh.ID) != jobs.StateQueued {
+		t.Fatalf("a fresh occurrence was adopted (held=%v, %s)", pm.HostJobHeld(fresh.ID), jobStateForTest(t, ctx, fresh.ID))
+	}
+
+	// Fail the occurrence under a claim and retry it: the successor is adoptable.
+	execution, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: fresh.ID, Claimant: "test",
+	})
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	failed, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: execution.Version, Outcome: jobs.StateFailed,
+		Failure: &jobs.Failure{Code: "test", Class: jobs.FailureClassInternal, Message: "failed for the test"},
+	})
+	if err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	result, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: fresh.ID, Key: jobs.CommandRetry, IdempotencyKey: "retry-occurrence",
+		ExpectedVersion: failed.Version, Actor: jobs.Access{Administrator: true},
+	})
+	if err != nil || result.SuccessorID == "" {
+		t.Fatalf("retry: %+v %v", result, err)
+	}
+	waitFor(t, "the retried occurrence to run", func() bool {
+		adapter.AdoptWaiting(context.Background())
+		return jobStateForTest(t, ctx, result.SuccessorID) == jobs.StateSucceeded
+	})
+	if got := pluginKVForTest(t, ctx, "retryable-scheduled"); got != "1" {
+		t.Fatalf("the retried occurrence's handler ran %q times, want once", got)
+	}
+}
+
+// TestAnActionThisProcessCannotRunIsLeftForOneThatCan pins what adoption may
+// conclude from a plugin that is not loaded here: nothing, unless the deployment
+// has it disabled. Another process may have it loaded and run the action.
+func TestAnActionThisProcessCannotRunIsLeftForOneThatCan(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	adapter := &pluginActionAdapter{ctx: ctx}
+	state := models.PluginState{PluginName: "elsewhere-plugin", Enabled: true}
+	if err := ctx.db.Create(&state).Error; err != nil {
+		t.Fatalf("seed the plugin state: %v", err)
+	}
+	raw, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: "elsewhere-plugin", Action: "work",
+		EntityType: "resource", Runtime: "another-host/boot/1",
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Work", Replay: jobs.ReplayInput{Input: raw},
+	})
+
+	adapter.AdoptWaiting(context.Background())
+	if got := jobStateForTest(t, ctx, job.ID); got != jobs.StateQueued {
+		t.Fatalf("an action whose plugin is enabled in the deployment but not loaded here is %s, want left queued", got)
+	}
+
+	if err := ctx.db.Model(&models.PluginState{}).Where("plugin_name = ?", "elsewhere-plugin").
+		Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable the plugin: %v", err)
+	}
+	adapter.AdoptWaiting(context.Background())
+	if got := jobStateForTest(t, ctx, job.ID); got != jobs.StateBlocked {
+		t.Fatalf("an action whose plugin the deployment has disabled is %s, want blocked", got)
+	}
+}

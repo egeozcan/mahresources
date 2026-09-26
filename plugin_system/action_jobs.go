@@ -390,14 +390,15 @@ func (pm *PluginManager) FillJobBudgetForTest() func() {
 // asyncWork is one execution's Lua side.
 //
 // lock takes the plugin's VM for the execution and answers it held: waiting for
-// it when wait is set, and otherwise answering errVMBusy at once when it is
-// taken. It answers errPluginGone when the plugin is no longer there to run it,
-// or an error wrapping errJobDidNotStart when a bounded wait for the VM ran out.
+// it when wait is set, for no longer than ctx lasts, and otherwise answering
+// errVMBusy at once when it is taken. It answers errPluginGone when the plugin is
+// no longer there to run it or ctx ended, or an error wrapping errJobDidNotStart
+// when a bounded wait for the VM ran out.
 // live reports, with the VM held, whether the VM lock answered for is still the
 // plugin's. run enters the handler with the VM held, and releases it before
 // returning.
 type asyncWork struct {
-	lock func(wait bool) (*vmMutex, error)
+	lock func(ctx context.Context, wait bool) (*vmMutex, error)
 	live func() bool
 	run  func(mu *vmMutex) error
 }
@@ -410,11 +411,11 @@ var errPluginGone = errors.New("the plugin is no longer available")
 // holds.
 var errVMBusy = errors.New("the plugin's VM is busy")
 
-// lockVMFor is asyncWork.lock for a VM that is always waited for when asked to
-// wait.
-func (pm *PluginManager) lockVMFor(L *lua.LState, wait bool) (*vmMutex, error) {
+// lockVMFor is asyncWork.lock for a VM that is waited for, when asked to wait,
+// for as long as ctx lasts.
+func (pm *PluginManager) lockVMFor(ctx context.Context, L *lua.LState, wait bool) (*vmMutex, error) {
 	if wait {
-		mu := pm.LockVM(L)
+		mu, _ := pm.LockVMWithContext(ctx, L)
 		if mu == nil {
 			return nil, errPluginGone
 		}
@@ -517,10 +518,24 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	}
 	defer ticket.lane.release()
 
+	// The VM wait ends when the VM it waits for is revoked or the manager
+	// closes: a head waiting on a revoked VM behind a long synchronous call would
+	// otherwise hold the lane from the plugin's next VM.
+	waitCtx, stopWaiting := context.WithCancel(context.Background())
+	defer stopWaiting()
+	go func() {
+		select {
+		case <-bounds.revoked:
+		case <-pm.done:
+		case <-waitCtx.Done():
+		}
+		stopWaiting()
+	}()
+
 	slotDeadline := bounds.slotDeadline(time.Now())
 	var mu *vmMutex
 	for {
-		held, got := pm.acquireSlotAndVM(work, slotDeadline, bounds.revoked)
+		held, got := pm.acquireSlotAndVM(waitCtx, work, slotDeadline, bounds.revoked)
 		if got != asyncRan {
 			return got
 		}
@@ -576,7 +591,7 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 // other plugins' work. It waits for the VM, takes a slot if one is free, and
 // otherwise gives the VM back, waits for a slot, and takes the VM only if it is
 // free, until both come together.
-func (pm *PluginManager) acquireSlotAndVM(work asyncWork, deadline time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
+func (pm *PluginManager) acquireSlotAndVM(ctx context.Context, work asyncWork, deadline time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
 	outcomeOf := func(err error) asyncOutcome {
 		if errors.Is(err, errJobDidNotStart) {
 			return asyncGaveUp
@@ -584,7 +599,7 @@ func (pm *PluginManager) acquireSlotAndVM(work asyncWork, deadline time.Time, re
 		return asyncRevoked
 	}
 	for {
-		mu, err := work.lock(true)
+		mu, err := work.lock(ctx, true)
 		if err != nil {
 			return nil, outcomeOf(err)
 		}
@@ -597,7 +612,7 @@ func (pm *PluginManager) acquireSlotAndVM(work asyncWork, deadline time.Time, re
 		if got := pm.acquireJobSlotUntil(deadline, revoked); got != asyncRan {
 			return nil, got
 		}
-		mu, err = work.lock(false)
+		mu, err = work.lock(ctx, false)
 		if err == nil {
 			return mu, asyncRan
 		}
@@ -727,12 +742,12 @@ func (pm *PluginManager) resolveQueuedAction(job *ActionJob, params map[string]a
 func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTicket, revoked <-chan struct{}, entityID uint, params map[string]any, expectFilters string) asyncOutcome {
 	var L *lua.LState
 	return pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), ticket, revoked, asyncWork{
-		lock: func(wait bool) (*vmMutex, error) {
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) {
 			_, current, err := pm.FindAction(job.PluginName, job.ActionID)
 			if err != nil {
 				return nil, errPluginGone
 			}
-			mu, err := pm.lockVMFor(current, wait)
+			mu, err := pm.lockVMFor(waitCtx, current, wait)
 			if err != nil {
 				return nil, err
 			}
@@ -847,7 +862,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 // runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
 func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, ticket *laneTicket, L *lua.LState, fn *lua.LFunction, jobID string) asyncOutcome {
 	return pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), ticket, pm.stateRevoked(L), asyncWork{
-		lock: func(wait bool) (*vmMutex, error) { return pm.lockVMFor(L, wait) },
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) { return pm.lockVMFor(waitCtx, L, wait) },
 		live: func() bool { return pm.stillRegistered(L) },
 		run: func(mu *vmMutex) error {
 			defer mu.Unlock()
