@@ -375,3 +375,5 @@ Download progress updates are throttled to one event per 500ms per job.
 :::note
 The `/v1/download/events` and `/v1/jobs/events` endpoints serve identical streams. Both merge download job events and plugin action job events into a single SSE connection.
 :::
+
+Each frame is filtered for the account as it is when the frame is sent, not as it was when the connection opened. A stream whose session or token stops authenticating closes, and one whose account changes role or scope goes on with what the account may see now. See [Job System](./job-system.md#state-and-visibility).

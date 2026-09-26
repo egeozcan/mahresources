@@ -295,7 +295,7 @@ func parseVersionedJobEventCursor(raw string) (uint64, error) {
 // GetJobsEventsHandler preserves the legacy unversioned stream while reserving
 // version=2 for the canonical durable event cursor. The caller keeps the
 // canonical route disabled until the complete-kind cutover gate is satisfied.
-func GetJobsEventsHandler(legacy JobEventsContext, canonical CanonicalJobEventContext, canonicalEnabled bool) func(http.ResponseWriter, *http.Request) {
+func GetJobsEventsHandler(legacy JobEventsSource, canonical CanonicalJobEventContext, canonicalEnabled bool) func(http.ResponseWriter, *http.Request) {
 	legacyHandler := GetDownloadEventsHandler(legacy)
 	canonicalHandler := GetCanonicalJobEventsHandler(canonical)
 	return func(w http.ResponseWriter, r *http.Request) {

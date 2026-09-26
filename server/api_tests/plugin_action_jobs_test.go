@@ -367,6 +367,11 @@ type actionContextWithoutPluginManager struct {
 
 func (actionContextWithoutPluginManager) PluginManager() *plugin_system.PluginManager { return nil }
 
+// CurrentJobEvents answers with the fixed principal the test bound.
+func (ctx actionContextWithoutPluginManager) CurrentJobEvents() (api_handlers.JobEventsContext, error) {
+	return ctx, nil
+}
+
 func TestLegacyActionJobGetUsesDurableHandleWithoutPluginManager(t *testing.T) {
 	tc, owner, _, _ := setupRetryableActionProjectionEnv(t)
 	handle, _ := runRetryableActionToFailure(t, tc, owner, "no plugin manager")

@@ -814,7 +814,27 @@ type JobEventsContext interface {
 	// that changed, and a Retry moves the handle onto its successor.
 	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
 	PluginManager() *plugin_system.PluginManager
+	// Principal is who the stream reads as. The handler's own visibility checks and
+	// the projections it reads through both answer for this one principal.
+	Principal() *auth.Principal
 }
+
+// JobEventsSource yields a legacy job event stream's context, bound to the
+// stream's credential as it stands at the moment of the call. An error means the
+// credential no longer authenticates, and the stream ends.
+//
+// A stream outlives the request middleware that authenticated it, so a context
+// bound once at connect would keep delivering at the access level the account had
+// then: after a logout, after the account was disabled, after an administrator was
+// demoted.
+type JobEventsSource interface {
+	CurrentJobEvents() (JobEventsContext, error)
+}
+
+// jobEventsRevalidateInterval is how often an idle legacy stream rechecks its
+// credential, so a revoked one is closed rather than held open with nothing sent.
+// Every frame is also preceded by a check of its own.
+const jobEventsRevalidateInterval = time.Second
 
 // pluginActionJobsProjector supplies the current visible rows for legacy action
 // handles. Like the single-row projection, it is optional so a context without
@@ -837,24 +857,43 @@ type durablePluginActionJobsClearer interface {
 
 // GetDownloadEventsHandler handles GET /v1/download/events and GET /v1/jobs/events
 // Server-Sent Events stream for real-time updates on both download and action jobs.
-func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWriter, request *http.Request) {
+//
+// The stream reads its credential again through source before every frame it
+// writes and on an idle tick, and ends as soon as the credential no longer
+// authenticates. A frame therefore answers to the account as it is when the frame
+// is written: a demoted account keeps its stream and sees only what it may see
+// now, and a logged-out or disabled one loses the stream.
+func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		// Set SSE headers
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writer.Header().Set("Cache-Control", "no-cache")
-		writer.Header().Set("Connection", "keep-alive")
-		writer.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
-
 		flusher, ok := writer.(http.Flusher)
 		if !ok {
 			http.Error(writer, "SSE not supported", http.StatusInternalServerError)
 			return
 		}
-
 		// Background jobs are per-user: a non-admin only receives the jobs it
 		// created, so it can't observe other users' download URLs, import/export
 		// progress, or action targets.
-		p := auth.PrincipalFromContext(request.Context())
+		ctx, err := source.CurrentJobEvents()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusUnauthorized)
+			return
+		}
+		// revalidate rebinds ctx to the credential as it stands now, and reports
+		// false once it no longer authenticates.
+		revalidate := func() bool {
+			current, err := source.CurrentJobEvents()
+			if err != nil {
+				return false
+			}
+			ctx = current
+			return true
+		}
+
+		// Set SSE headers
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.Header().Set("Cache-Control", "no-cache")
+		writer.Header().Set("Connection", "keep-alive")
+		writer.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
 
 		// Subscribe to download events
 		downloadEvents, unsubscribeDownload := ctx.DownloadManager().Subscribe()
@@ -883,27 +922,21 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 		}
 		initData := map[string]any{"jobs": visibleDownloads}
 		visibleActions := make([]*plugin_system.ActionJob, 0)
-		projectedActions := false
-		var durableActionProjector pluginActionJobsProjector
-		if projector, ok := ctx.(pluginActionJobsProjector); ok {
-			if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
-				projected, err := projector.ProjectActionJobs()
-				if err != nil {
-					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-					return
-				}
+		durableActions := durableActionJobsProjector(ctx)
+		if durableActions != nil {
+			projected, err := durableActions.ProjectActionJobs()
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
+			}
+			if projected != nil {
 				visibleActions = projected
-				if visibleActions == nil {
-					visibleActions = make([]*plugin_system.ActionJob, 0)
-				}
-				projectedActions = true
-				durableActionProjector = projector
 			}
 		}
-		if pm != nil && !projectedActions {
+		if pm != nil && durableActions == nil {
 			allActions := pm.GetAllActionJobs()
 			for i := range allActions {
-				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
+				if jobVisibleToPrincipal(ctx.Principal(), allActions[i].Owner()) {
 					visibleActions = append(visibleActions, allActions[i])
 				}
 			}
@@ -921,12 +954,13 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 		flusher.Flush()
 
 		var actionProjectionPoll <-chan time.Time
-		var actionProjectionTicker *time.Ticker
-		if durableActionProjector != nil {
-			actionProjectionTicker = time.NewTicker(2 * time.Second)
+		if durableActions != nil {
+			actionProjectionTicker := time.NewTicker(2 * time.Second)
 			actionProjectionPoll = actionProjectionTicker.C
 			defer actionProjectionTicker.Stop()
 		}
+		revalidateTicker := time.NewTicker(jobEventsRevalidateInterval)
+		defer revalidateTicker.Stop()
 
 		// Stream events from both sources, plus a bounded-frequency durable
 		// snapshot diff for handle movements committed by another process.
@@ -936,7 +970,16 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					return
 				}
-				if !jobVisibleToPrincipal(p, event.Job.GetOwnerUserID()) {
+				// Checked against the last answer first, so an event this viewer could
+				// not see then costs no credential read; a promotion since is picked
+				// up by the next check.
+				if !jobVisibleToPrincipal(ctx.Principal(), event.Job.GetOwnerUserID()) {
+					continue
+				}
+				if !revalidate() {
+					return
+				}
+				if !jobVisibleToPrincipal(ctx.Principal(), event.Job.GetOwnerUserID()) {
 					continue
 				}
 				// Re-projected rather than forwarded: an event names the entry that
@@ -964,6 +1007,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 					actionEvents = nil
 					continue
 				}
+				if !revalidate() {
+					return
+				}
 				job := event.Job
 				eventType := event.Type
 				if projector, ok := ctx.(pluginActionJobProjector); ok {
@@ -985,7 +1031,7 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 						}
 					}
 				}
-				if !jobVisibleToPrincipal(p, job.Owner()) {
+				if !jobVisibleToPrincipal(ctx.Principal(), job.Owner()) {
 					continue
 				}
 				if previous, exists := actionRows[job.ID]; exists {
@@ -1008,16 +1054,23 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				flusher.Flush()
 
 			case <-actionProjectionPoll:
+				if !revalidate() {
+					return
+				}
 				// A single visibility-filtered join yields current rows. Diff by the
 				// stable legacy handle so a queued Retry is an update to that row,
 				// while new, hidden, cleared, and expired rows are handled safely.
-				projected, err := durableActionProjector.ProjectActionJobs()
+				projector := durableActionJobsProjector(ctx)
+				if projector == nil {
+					continue
+				}
+				projected, err := projector.ProjectActionJobs()
 				if err != nil {
 					continue
 				}
 				current := make(map[string]*plugin_system.ActionJob, len(projected))
 				for _, job := range projected {
-					if !jobVisibleToPrincipal(p, job.Owner()) {
+					if !jobVisibleToPrincipal(ctx.Principal(), job.Owner()) {
 						continue
 					}
 					current[job.ID] = job
@@ -1045,11 +1098,30 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 					delete(actionRows, id)
 				}
 
+			case <-revalidateTicker.C:
+				if !revalidate() {
+					return
+				}
+
 			case <-request.Context().Done():
 				return
 			}
 		}
 	}
+}
+
+// durableActionJobsProjector returns the durable legacy action projection when
+// the context has a Job control plane, or nil for one that serves its plugin
+// manager's in-memory rows.
+func durableActionJobsProjector(ctx JobEventsContext) pluginActionJobsProjector {
+	projector, ok := ctx.(pluginActionJobsProjector)
+	if !ok {
+		return nil
+	}
+	if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); !ok || serviceProvider.JobService() == nil {
+		return nil
+	}
+	return projector
 }
 
 func sameLegacyActionProjection(left, right *plugin_system.ActionJob) bool {

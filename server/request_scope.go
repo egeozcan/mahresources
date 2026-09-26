@@ -16,16 +16,17 @@ import (
 	"mahresources/server/api_handlers"
 )
 
-// currentCanonicalJobEventsContext revalidates the stream's original credential
-// before every durable-event poll. SSE connections outlive ordinary request auth
+// currentJobEventsContext revalidates a job event stream's original credential
+// each time the stream reads. SSE connections outlive ordinary request auth
 // middleware, so a context bound only when the connection opens would preserve
-// stale roles and scopes indefinitely.
-type currentCanonicalJobEventsContext struct {
+// stale roles and scopes indefinitely. The canonical stream reads through it
+// before every durable-event poll; the legacy streams before every frame.
+type currentJobEventsContext struct {
 	appCtx  *application_context.MahresourcesContext
 	request *http.Request
 }
 
-func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+func (ctx currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
@@ -35,7 +36,7 @@ func (ctx currentCanonicalJobEventsContext) GetPublishedJobEvents(afterDelivery 
 
 // GetLiveJobProgress revalidates the credential exactly as the event poll does:
 // a live progress frame is as much a read of the Job as its events are.
-func (ctx currentCanonicalJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+func (ctx currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
@@ -43,7 +44,16 @@ func (ctx currentCanonicalJobEventsContext) GetLiveJobProgress(since time.Time, 
 	return scoped.GetLiveJobProgress(since, limit)
 }
 
-func (ctx currentCanonicalJobEventsContext) current() (*application_context.MahresourcesContext, error) {
+// CurrentJobEvents is the legacy streams' read of the same credential.
+func (ctx currentJobEventsContext) CurrentJobEvents() (api_handlers.JobEventsContext, error) {
+	scoped, err := ctx.current()
+	if err != nil {
+		return nil, err
+	}
+	return scoped, nil
+}
+
+func (ctx currentJobEventsContext) current() (*application_context.MahresourcesContext, error) {
 	principal := auth.PrincipalFromContext(ctx.request.Context())
 	if ctx.appCtx.AuthEnabled() {
 		principal, _, _ = resolvePrincipal(ctx.appCtx, ctx.request)

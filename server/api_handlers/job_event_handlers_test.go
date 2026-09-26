@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/plugin_system"
@@ -241,6 +242,10 @@ func (s *legacyJobEventsContextStub) ProjectDownloadJob(id string) (download_que
 	return download_queue.DownloadProjection{ID: id, Row: job.Snapshot()}, nil
 }
 func (*legacyJobEventsContextStub) PluginManager() *plugin_system.PluginManager { return nil }
+func (*legacyJobEventsContextStub) Principal() *auth.Principal                  { return nil }
+
+// CurrentJobEvents answers with the stub itself: its principal never changes.
+func (s *legacyJobEventsContextStub) CurrentJobEvents() (JobEventsContext, error) { return s, nil }
 
 func TestJobsEventsWithoutVersionKeepsLegacyWireFormat(t *testing.T) {
 	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
