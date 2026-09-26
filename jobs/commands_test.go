@@ -600,6 +600,54 @@ func TestRetryCreatesOneLinkedSuccessorFromTheSealedInput(t *testing.T) {
 	}
 }
 
+// TestRetryKeepsTheStartTimeOfWorkThatNeverRan pins what a Retry replays for work
+// accepted for a future time: the request included its time, so a successor of
+// work cancelled while it waited is scheduled for that same time while it is
+// still ahead, and runs now once it has passed.
+func TestRetryKeepsTheStartTimeOfWorkThatNeverRan(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	acceptScheduled := func(at time.Time) Snapshot {
+		t.Helper()
+		h.now()
+		return acceptFor(t, h.svc, h.deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateScheduled, ScheduledFor: &at, Origin: "api",
+			OwnerUserID: &owner, ActorUserID: &owner, Title: "clip.mp4",
+			Replay: ReplayInput{Input: json.RawMessage(commandKindInput)},
+		})
+	}
+	cancelAndRetry := func(job Snapshot, key string) models.Job {
+		t.Helper()
+		h.now()
+		if _, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(job.ID, CommandCancel, key+"-cancel", viewer)); err != nil {
+			t.Fatalf("cancel the waiting job: %v", err)
+		}
+		h.now()
+		result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(job.ID, CommandRetry, key+"-retry", viewer))
+		if err != nil {
+			t.Fatalf("retry the cancelled job: %v", err)
+		}
+		requireResult(t, "a retry", result, CommandStatusSucceeded, CommandCodeApplied)
+		return jobRow(t, h.deps, result.SuccessorID)
+	}
+
+	ahead := h.clock.Add(time.Hour)
+	successor := cancelAndRetry(acceptScheduled(ahead), "ahead")
+	if successor.State != string(StateScheduled) || successor.ScheduledFor == nil || !successor.ScheduledFor.Equal(ahead) {
+		t.Fatalf("the successor of work whose time is ahead is %s for %v, want scheduled for %v",
+			successor.State, successor.ScheduledFor, ahead)
+	}
+
+	passed := acceptScheduled(h.clock.Add(10 * time.Second))
+	h.clock = h.clock.Add(time.Minute)
+	successor = cancelAndRetry(passed, "passed")
+	if successor.State != string(StateQueued) || successor.ScheduledFor != nil {
+		t.Fatalf("the successor of work whose time has passed is %s for %v, want queued now", successor.State, successor.ScheduledFor)
+	}
+}
+
 // TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput collects §4's retry
 // eligibility rules at the seam a client meets them: Retry is for unsuccessful
 // finished work that is the quiescent leaf of its chain and whose input this

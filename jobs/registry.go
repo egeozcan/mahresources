@@ -59,6 +59,14 @@ type HostTransitionAdapter interface {
 	ApplyHostTransition(context.Context, Deps, Snapshot, string, State) error
 }
 
+// RetrySuccessorAdapter lets a Kind keep its durable source row in step when a
+// Retry accepts a successor, which takes over the ancestor's legacy handles. It
+// runs inside the same transaction as the successor's acceptance, after the
+// handles moved.
+type RetrySuccessorAdapter interface {
+	ApplyRetrySuccessor(ctx context.Context, deps Deps, ancestor, successor Snapshot) error
+}
+
 // HostTransitionCompletion lets a Kind release its in-memory admission after a
 // host-applied waiting-work transition has committed.
 type HostTransitionCompletion interface {

@@ -557,6 +557,36 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, jobID string, at time.Time) error 
 		}).Error
 }
 
+// reopenDeferredDownloadRowTx returns the cancelled row behind a rescheduled
+// deferred Job to pending, due at the Job's time, inside the transaction that
+// accepted the Job. The handle has already moved to that Job. Only a row that
+// was cancelled before it submitted anything is reopened.
+func reopenDeferredDownloadRowTx(tx *gorm.DB, jobID string, dueAt, at time.Time) error {
+	var handle models.JobLegacyHandle
+	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, jobID).First(&handle).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rowID, err := strconv.ParseUint(handle.Handle, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return tx.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND status = ? AND COALESCE(job_id, '') = ''", uint(rowID), models.ScheduledDownloadStatusCancelled).
+		Updates(map[string]any{
+			"status":      models.ScheduledDownloadStatusPending,
+			"due_at":      dueAt,
+			"attempts":    0,
+			"last_error":  "",
+			"claim_token": "",
+			"claimed_at":  nil,
+			"updated_at":  at,
+		}).Error
+}
+
 // PluginScheduledDownloadsFor lists one plugin's scheduled downloads for the
 // admin management surfaces.
 func (ctx *MahresourcesContext) PluginScheduledDownloadsFor(pluginName string) ([]models.ScheduledDownload, error) {
