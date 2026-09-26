@@ -382,12 +382,12 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 
 		if background {
 			if queueCtx, ok := effectiveCtx.(DownloadSubmitter); ok {
-				// The background download worker creates resources on the unscoped
-				// system context (the attribution path binds only the actor id, not a
-				// scope filter), so a group-limited principal could otherwise plant
-				// data outside its subtree by naming an out-of-scope owner/group (or a
-				// new top-level group via GroupName). Validate the target here, before
-				// enqueuing, fail-closed — mirroring /v1/download/submit. GroupVisible
+				// A group-limited principal could otherwise ask for data outside its
+				// subtree by naming an out-of-scope owner/group (or a new top-level
+				// group via GroupName). The worker binds the submitter when it creates
+				// the resource and would refuse it then, after the transfer; validate
+				// the target here, before enqueuing, fail-closed — mirroring
+				// /v1/download/submit. GroupVisible
 				// is always true for unscoped/admin/auth-off callers, so this is a
 				// no-op for them. (The synchronous path below runs on the scoped ctx,
 				// where the scope create callback already rejects out-of-subtree owners.)

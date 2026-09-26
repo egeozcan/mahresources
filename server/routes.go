@@ -862,10 +862,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Download Queue (background remote downloads)
 	// Submit runs on a request-scoped context so a group-limited principal can
-	// only target groups inside its subtree (the worker itself runs unscoped).
-	// Retry and resume run scoped for the same reason: both hand the original
-	// payload back to that unscoped worker, so both re-check it against the
-	// principal pressing the button rather than trusting what was allowed once.
+	// only target groups inside its subtree, refused before the transfer rather
+	// than when the worker creates the resource as the submitter. Retry and
+	// resume run scoped for the same reason: both hand the original payload back
+	// to the worker, so both re-check it against the principal pressing the
+	// button rather than trusting what was allowed once.
 	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler)))
 	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler)))
