@@ -113,6 +113,13 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	if !found {
 		return Execution{}, errNothingWaiting
 	}
+	// A budget that is already full is read before the transaction opens, so a
+	// caller asking again while it waits for a slot does not take the writer's
+	// lock only to roll it back. The read decides nothing: the count inside the
+	// transaction is still the admission.
+	if err := capacityAvailable(deps.DB, request.Capacity); err != nil {
+		return Execution{}, err
+	}
 
 	lease := request.Lease
 	if lease <= 0 {
@@ -414,6 +421,27 @@ func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, no
 		}
 	}
 	return capacityExhausted(budget)
+}
+
+// capacityAvailable reports a budget that is already full, outside any
+// transaction. It can be stale in either direction, which is why it only ever
+// saves a claim that would be refused: a slot freed a moment ago is found on the
+// next ask, and one taken a moment ago is refused by the claim's own count.
+func capacityAvailable(db *gorm.DB, budgets []CapacityRef) error {
+	for _, budget := range budgets {
+		if budget.Limit <= 0 {
+			continue
+		}
+		var occupied int64
+		if err := db.Model(&models.JobCapacityLease{}).
+			Where("capacity_group = ?", budget.Group).Count(&occupied).Error; err != nil {
+			return fmt.Errorf("jobs: count capacity in %s: %w", budget.Group, err)
+		}
+		if occupied >= int64(budget.Limit) {
+			return capacityExhausted(budget)
+		}
+	}
+	return nil
 }
 
 // capacityExhausted is the refusal every full budget reports, with the group and

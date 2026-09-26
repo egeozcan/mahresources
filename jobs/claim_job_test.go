@@ -3,10 +3,13 @@ package jobs
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // claimNamed claims one named Job of the test Kind through ClaimJob.
@@ -135,4 +138,36 @@ func snapshotIDs(snaps []Snapshot) []string {
 		ids = append(ids, snap.ID)
 	}
 	return ids
+}
+
+// TestAClaimAgainstAFullBudgetWritesNothingAtAll pins the read that spares a
+// waiting caller the writer's lock: an executor asking again and again while the
+// budget is full must not open a write — here, the guarded update that moves the
+// Job to running — only to roll it back.
+func TestAClaimAgainstAFullBudgetWritesNothingAtAll(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-no-write.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	budget := CapacityRef{Group: CapacityGroupGlobal, Limit: 1}
+
+	holder := acceptQueued(t, svc, deps, nil)
+	waiting := acceptQueued(t, svc, deps, nil)
+	if _, err := claimNamed(svc, deps, holder.ID, budget); err != nil {
+		t.Fatalf("claim the holder: %v", err)
+	}
+
+	var updates atomic.Int64
+	if err := deps.DB.Callback().Update().Before("gorm:update").Register("count-claim-updates", func(*gorm.DB) {
+		updates.Add(1)
+	}); err != nil {
+		t.Fatalf("register the update counter: %v", err)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := claimNamed(svc, deps, waiting.ID, budget); !errors.Is(err, ErrCapacityExhausted) {
+			t.Fatalf("attempt %d answered %v, want ErrCapacityExhausted", attempt, err)
+		}
+	}
+	if got := updates.Load(); got != 0 {
+		t.Fatalf("three refused claims issued %d updates, want none", got)
+	}
 }
