@@ -430,11 +430,17 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 //
 // A registration that no longer matches what the Job was accepted with is refused
 // here, before the Job waits for anything, with the reason the claim would have
-// recorded: the Job is blocked, visibly, for a person to decide about. What the
-// acting principal may do is asked at the claim instead, because that is the
-// moment the work runs as it.
+// recorded: the Job is blocked, visibly, for a person to decide about. A plugin
+// that is merely not loaded in this process is not such a refusal — another
+// process may have it — so the Job stays queued unless the deployment has the
+// plugin disabled. What the acting principal may do is asked at the claim
+// instead, because that is the moment the work runs as it.
 func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.PluginManager, jobID, handle string, owner *uint, input *pluginActionJobInput) error {
 	if refusal := ctx.pluginActionRegistrationRefusal(pm, input); refusal != "" {
+		if !pm.IsEnabled(input.Plugin) && !ctx.pluginDisabledEverywhere(input.Plugin) {
+			log.Printf("warning: plugin job %s stays queued: %s is not loaded in this process", jobID, input.Plugin)
+			return nil
+		}
 		return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
 	}
 	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) func() error {

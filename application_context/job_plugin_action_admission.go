@@ -274,20 +274,31 @@ func (ctx *MahresourcesContext) pluginDisabledEverywhere(pluginName string) bool
 	}
 }
 
+// pluginActionAdmissionAttempt bounds one claim attempt's database work. The
+// claim is asked for with the plugin's VM held, so a claim stuck on a lock or an
+// exhausted pool would otherwise hold that plugin's hooks and pages — and a
+// shutdown closing its VM — for as long as the stall lasts. An attempt that runs
+// out is "later", and the VM is given back before asking again.
+var pluginActionAdmissionAttempt = 10 * time.Second
+
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
-// against the deployment's budget, and keeps the claim alive. A non-zero
-// deadline bounds the claim's database work.
+// against the deployment's budget, and keeps the claim alive. The claim's
+// database work is bounded by the caller's deadline and by one attempt's bound,
+// whichever comes first.
 func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string, deadline time.Time) (jobs.Execution, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return jobs.Execution{}, errors.New("this context has no job control plane installed")
+	}
+	if attempt := time.Now().Add(pluginActionAdmissionAttempt); deadline.IsZero() || attempt.Before(deadline) {
+		deadline = attempt
 	}
 	// The deadline rides on the handle the claim's own queries run on, and not on
 	// the context ClaimJob is given: that one is what the execution is loaded
 	// with after the commit and publishes through for the rest of its life, long
 	// after this deadline has passed.
 	deps := ctx.jobDeps()
-	if !deadline.IsZero() && deps.DB != nil {
+	if deps.DB != nil {
 		claimCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
 		deps.DB = deps.DB.WithContext(claimCtx)

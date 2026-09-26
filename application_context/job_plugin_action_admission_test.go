@@ -659,3 +659,78 @@ func TestAnActionWhoseKindChangedIsNotRunOnTheWrongEntity(t *testing.T) {
 		t.Fatalf("an action accepted for a note ran a handler for resources (%q)", got)
 	}
 }
+
+// TestAClaimStuckOnTheDatabaseGivesUpItsAttempt pins the bound on one claim
+// attempt. The claim is asked for with the plugin's VM held, so a claim waiting on
+// an exhausted pool must give the attempt up — and the VM with it — rather than
+// hold the plugin for as long as the stall lasts.
+func TestAClaimStuckOnTheDatabaseGivesUpItsAttempt(t *testing.T) {
+	saved := pluginActionAdmissionAttempt
+	pluginActionAdmissionAttempt = 100 * time.Millisecond
+	defer func() { pluginActionAdmissionAttempt = saved }()
+
+	ctx := newJobHarnessContext(t, false)
+	occurrence := acceptOccurrenceForTest(t, ctx)
+	admission := ctx.newPluginActionAdmission(occurrence.ID,
+		&pluginActionJobInput{Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin}, nil)
+
+	sqlDB, err := ctx.db.DB()
+	if err != nil {
+		t.Fatalf("underlying database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	defer sqlDB.SetMaxOpenConns(4)
+	holder := ctx.db.Begin()
+	if holder.Error != nil {
+		t.Fatalf("hold the only connection: %v", holder.Error)
+	}
+	var one int
+	if err := holder.Raw("SELECT 1").Scan(&one).Error; err != nil {
+		t.Fatalf("use the held connection: %v", err)
+	}
+
+	answered := make(chan plugin_system.AdmitResult, 1)
+	go func() { answered <- admission.Admit(time.Time{}) }()
+	select {
+	case got := <-answered:
+		if got != plugin_system.AdmitLater {
+			t.Fatalf("a claim that could not reach the database answered %v, want later", got)
+		}
+	case <-time.After(5 * time.Second):
+		holder.Rollback()
+		t.Fatal("a claim stuck on an exhausted pool never gave its attempt up")
+	}
+	holder.Rollback()
+
+	if got := admission.Admit(time.Time{}); got != plugin_system.Admitted {
+		t.Fatalf("the claim once the pool had room answered %v, want admitted", got)
+	}
+}
+
+// TestAJobThisProcessCannotHandOffStaysQueued pins the request path's own
+// deference: a Job accepted here whose plugin this process lost before handing it
+// to a lane is not refused while the deployment still has the plugin enabled.
+func TestAJobThisProcessCannotHandOffStaysQueued(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.Create(&models.PluginState{PluginName: "elsewhere-plugin", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed the plugin state: %v", err)
+	}
+	input := &pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: "elsewhere-plugin", Action: "work",
+		EntityType: "resource", Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Work", Replay: jobs.ReplayInput{Input: raw},
+	})
+	if err := ctx.queueRegisteredPluginAction(ctx.PluginManager(), job.ID, "handle", nil, input); err != nil {
+		t.Fatalf("hand off: %v", err)
+	}
+	if got := jobStateForTest(t, ctx, job.ID); got != jobs.StateQueued {
+		t.Fatalf("a Job whose plugin this process lost is %s, want queued for a process that has it", got)
+	}
+}
