@@ -1087,9 +1087,9 @@ func (a *downloadJobAdapter) ApplyHostTransition(_ context.Context, deps jobs.De
 // the plugin's record of the deferral, which the management surfaces list and the
 // scheduler sweeps. A successor that runs now is an immediate download, and the
 // deferral it replaces stays cancelled.
-func (a *downloadJobAdapter) ApplyRetrySuccessor(_ context.Context, deps jobs.Deps, _ jobs.Snapshot, successor jobs.Snapshot) error {
+func (a *downloadJobAdapter) ApplyRetrySuccessor(_ context.Context, deps jobs.Deps, ancestor, successor jobs.Snapshot) error {
 	if a.kind != JobKindDeferredDownload || successor.State != jobs.StateScheduled || successor.ScheduledFor == nil {
 		return nil
 	}
-	return reopenDeferredDownloadRowTx(deps.DB, successor, time.Now())
+	return reopenDeferredDownloadRowTx(deps.DB, ancestor, successor, time.Now())
 }

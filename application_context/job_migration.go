@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -1146,62 +1147,69 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 // retiredScheduledDownloadMatches reports whether a scrubbed scheduled download is
 // still the row its post-scrub hash was taken from.
 //
-// JobID is the one projected field a live row writes after it was scrubbed. A
+// JobID is the one projected field a live row changes after it was scrubbed: a
 // deferred download is scrubbed at creation once the sources are retired, or by
-// the migration while it is still pending, and its JobID is written when it comes
-// due. A hash taken with an empty JobID therefore still describes the same row
-// after it fired, provided the JobID is one a fire can write: the Job the row's
-// handle named at the time, which is the Job the row was mapped to or a Retry
-// successor of it (a Retry moves the handle). Everything the barrier exists for —
-// the empty payload, the URL reduced to its origin, the row's identity and
-// plugin — must still be exactly what was hashed.
+// the migration while it is still pending; its JobID is written when it comes
+// due, and cleared again when a Retry that keeps the time takes a cancelled row
+// over. A scrub marker may have been recorded while the row named any of those
+// Jobs, or none. So the JobID may be any Job in the row's own retry lineage — the
+// Job it was mapped to and the successors a Retry moved its handle to — or empty,
+// and the hash may have been recorded under any of them. Everything the barrier
+// exists for — the empty payload, the URL reduced to its origin, the row's
+// identity and plugin — must still be exactly what was hashed.
 func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, mapping models.JobSourceMapping) (bool, error) {
 	if hashRetiredScheduledDownload(row) == mapping.PostScrubHash {
 		return true, nil
 	}
-	if row.JobID == "" {
-		return false, nil
-	}
-	beforeItFired := row
-	beforeItFired.JobID = ""
-	if hashRetiredScheduledDownload(beforeItFired) != mapping.PostScrubHash {
-		return false, nil
-	}
 	if mapping.JobID == "" {
 		return false, nil
 	}
-	if row.JobID == mapping.JobID {
-		return true, nil
+	lineage, err := retryLineageFrom(db, mapping.JobID)
+	if err != nil {
+		return false, err
 	}
-	return retriedFrom(db, row.JobID, mapping.JobID)
-}
-
-// retriedFrom reports whether a Job was reached from ancestor by Retries. The walk
-// follows retry-of links up the chain with no length cap, because a deferral can be
-// cancelled and rescheduled any number of times before it fires; the seen set ends
-// it on a cycle, which a Retry never makes.
-func retriedFrom(db *gorm.DB, jobID, ancestor string) (bool, error) {
-	seen := map[string]bool{}
-	for current := jobID; current != "" && !seen[current]; {
-		if current == ancestor {
+	named := append([]string{""}, lineage...)
+	if !slices.Contains(named, row.JobID) {
+		return false, nil
+	}
+	for _, jobID := range named {
+		recorded := row
+		recorded.JobID = jobID
+		if hashRetiredScheduledDownload(recorded) == mapping.PostScrubHash {
 			return true, nil
-		}
-		seen[current] = true
-		var parents []string
-		if err := db.Model(&models.JobLink{}).
-			Where("type = ? AND from_job_id = ?", string(jobs.LinkRetryOf), current).
-			Order("to_job_id").Pluck("to_job_id", &parents).Error; err != nil {
-			return false, err
-		}
-		current = ""
-		for _, parent := range parents {
-			if !seen[parent] {
-				current = parent
-				break
-			}
 		}
 	}
 	return false, nil
+}
+
+// retryLineageFrom lists a Job and the successors Retries made from it, in order.
+// A Retry chain is linear, and it has no length limit: a deferral can be
+// cancelled and rescheduled any number of times. The seen set ends the walk on a
+// cycle, which a Retry never makes.
+func retryLineageFrom(db *gorm.DB, root string) ([]string, error) {
+	lineage := []string{root}
+	seen := map[string]bool{root: true}
+	for current := root; ; {
+		var successors []string
+		if err := db.Model(&models.JobLink{}).
+			Where("type = ? AND to_job_id = ?", string(jobs.LinkRetryOf), current).
+			Order("from_job_id").Pluck("from_job_id", &successors).Error; err != nil {
+			return nil, err
+		}
+		next := ""
+		for _, successor := range successors {
+			if !seen[successor] {
+				next = successor
+				break
+			}
+		}
+		if next == "" {
+			return lineage, nil
+		}
+		seen[next] = true
+		lineage = append(lineage, next)
+		current = next
+	}
 }
 
 func hashJobMigrationProjection(value any) string {

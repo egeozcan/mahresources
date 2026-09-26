@@ -649,15 +649,19 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 
 // reopenDeferredDownloadRowTx returns the cancelled row behind a rescheduled
 // deferred Job to pending, due at the Job's time, inside the transaction that
-// accepted the Job. The handle has already moved to that Job. Only a row that
-// submitted nothing is taken over: a cancelled one, or a pending one an earlier
-// release left behind when it cancelled the Job alone.
+// accepted the Job. The handle has already moved to that Job. Only a row whose
+// deferral never ran is taken over: a cancelled one, a pending one an earlier
+// release left behind when it cancelled the Job alone, or a cancelled one still
+// naming the ancestor, which an earlier release's sweep marked submitted before
+// its time. A Retry keeps the time only while it is ahead, so that ancestor never
+// started either. The row's job id is cleared; the next fire records the
+// successor's.
 //
 // The row's owner becomes the Job's actor. A Retry belongs to whoever asked for
 // it, the sweep re-validates the row as its owner, and the dispatch loop runs the
 // Job as its actor: the two must be one principal, or an administrator's Retry of
 // a deleted user's deferral would run while its row said it had stopped.
-func reopenDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) error {
+func reopenDeferredDownloadRowTx(tx *gorm.DB, ancestor, job jobs.Snapshot, at time.Time) error {
 	if job.ScheduledFor == nil {
 		return nil
 	}
@@ -674,12 +678,15 @@ func reopenDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 		return nil
 	}
 	return tx.Model(&models.ScheduledDownload{}).
-		Where("id = ? AND status IN ? AND COALESCE(job_id, '') = ''", uint(rowID),
-			[]string{models.ScheduledDownloadStatusCancelled, models.ScheduledDownloadStatusPending}).
+		Where("id = ?", uint(rowID)).
+		Where("(status IN ? AND COALESCE(job_id, '') = '') OR (status = ? AND job_id = ?)",
+			[]string{models.ScheduledDownloadStatusCancelled, models.ScheduledDownloadStatusPending},
+			models.ScheduledDownloadStatusCancelled, ancestor.ID).
 		Updates(map[string]any{
 			"status":             models.ScheduledDownloadStatusPending,
 			"due_at":             *job.ScheduledFor,
 			"created_by_user_id": copyUintPtr(job.ActorUserID),
+			"job_id":             "",
 			"attempts":           0,
 			"last_error":         "",
 			"claim_token":        "",
@@ -730,31 +737,13 @@ func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 				return reconciled, err
 			}
 			for _, candidate := range candidates {
-				updates := map[string]any{
-					"claim_token": "",
-					"claimed_at":  nil,
-					"status":      models.ScheduledDownloadStatusCancelled,
-					"last_error":  "",
-					"updated_at":  time.Now(),
+				recorded, err := ctx.reconcileDeferredDownloadRow(candidate.ID, candidate.JobID, source.status, jobs.State(candidate.State), ended)
+				if err != nil {
+					return reconciled, err
 				}
-				if candidate.State != string(jobs.StateCancelled) {
-					updates["status"] = models.ScheduledDownloadStatusFailed
-					updates["last_error"] = (&deferredJobEndedError{state: jobs.State(candidate.State)}).Error()
+				if recorded {
+					reconciled++
 				}
-				query := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ? AND status = ?", candidate.ID, source.status)
-				if source.status == models.ScheduledDownloadStatusSubmitted {
-					updates["attempts"] = gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END")
-					query = query.Where("job_id = ?", candidate.JobID)
-				} else {
-					// A sweep holding the row decides it itself; the next start sees it
-					// if that sweep did not.
-					query = query.Where(scheduledDownloadClaimFree(ctx.db), time.Now().Add(-ScheduledDownloadClaimTTL))
-				}
-				res := query.Updates(updates)
-				if res.Error != nil {
-					return reconciled, res.Error
-				}
-				reconciled += int(res.RowsAffected)
 			}
 			if len(candidates) < jobMigrationReadinessBatchSize {
 				break
@@ -763,6 +752,61 @@ func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 		}
 	}
 	return reconciled, nil
+}
+
+// reconcileDeferredDownloadRow records one row as its Job ended, if that is still
+// true when it is written. Between the page read and this write a Retry, from
+// another process, can move a pending row's handle to a scheduled successor and
+// take the row over, and a cancel can end it; so the update re-asserts that the
+// Job has ended unrun and, for a pending row, that its handle still names that
+// Job. On PostgreSQL the Job is locked first, the order a Retry and a cancel take
+// it in, so a Retry already under way finishes before the handle is re-read. On
+// SQLite the conditional update is the transaction's first statement.
+func (ctx *MahresourcesContext) reconcileDeferredDownloadRow(rowID uint, jobID, status string, state jobs.State, ended []string) (bool, error) {
+	var recorded bool
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			var job models.Job
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", jobID).First(&job).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+		}
+		updates := map[string]any{
+			"claim_token": "",
+			"claimed_at":  nil,
+			"status":      models.ScheduledDownloadStatusCancelled,
+			"last_error":  "",
+			"updated_at":  time.Now(),
+		}
+		if state != jobs.StateCancelled {
+			updates["status"] = models.ScheduledDownloadStatusFailed
+			updates["last_error"] = (&deferredJobEndedError{state: state}).Error()
+		}
+		query := tx.Model(&models.ScheduledDownload{}).
+			Where("id = ? AND status = ?", rowID, status).
+			Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = ? AND jobs.started_at IS NULL AND jobs.state IN ?)", jobID, ended)
+		if status == models.ScheduledDownloadStatusSubmitted {
+			updates["attempts"] = gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END")
+			query = query.Where("job_id = ?", jobID)
+		} else {
+			// A sweep holding the row decides it itself; the next start sees it if
+			// that sweep did not.
+			query = query.Where(scheduledDownloadClaimFree(tx), time.Now().Add(-ScheduledDownloadClaimTTL)).
+				Where("EXISTS (SELECT 1 FROM job_legacy_handles AS handle WHERE handle.namespace = ? AND handle.handle = CAST(scheduled_downloads.id AS TEXT) AND handle.job_id = ?)",
+					ScheduledDownloadHandleNamespace, jobID)
+		}
+		res := query.Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		recorded = res.RowsAffected == 1
+		return nil
+	})
+	return recorded, err
 }
 
 // PluginScheduledDownloadsFor lists one plugin's scheduled downloads for the

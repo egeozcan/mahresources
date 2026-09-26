@@ -567,3 +567,113 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 		t.Fatalf("the row whose Job is still waiting is %s, want submitted", got.Status)
 	}
 }
+
+// Startup reconciliation reads a pending row's Job, then records the row. A Retry
+// landing in between (from another process) moves the row's handle to a
+// scheduled successor and takes the row over; the reconciliation must then leave
+// the row pending for that successor rather than cancel it.
+func TestStartupReconciliationYieldsToARetryThatTookTheRowOver(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/reconcile-retry.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	var retried atomic.Bool
+	var successor jobs.Snapshot
+	const name = "test:retry-before-the-reconciliation-records-the-row"
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "scheduled_downloads" || !retried.CompareAndSwap(false, true) {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			successor = retryJob(t, ctx, deferredDownloadJob(t, ctx, row.ID))
+		}()
+		select {
+		case <-done:
+		case <-time.After(1500 * time.Millisecond):
+		}
+	}); err != nil {
+		t.Fatalf("register the interleave: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
+
+	if _, err := ctx.ReconcileDeferredDownloadRows(); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !retried.Load() || successor.ID == "" {
+		t.Fatalf("setup: the Retry never landed inside the reconciliation")
+	}
+	if successor.State != jobs.StateScheduled {
+		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending {
+		t.Fatalf("the row a Retry took over is %s after the reconciliation, want pending for the successor", got.Status)
+	}
+}
+
+// An earlier release could mark a row submitted before its time. Cancelling that
+// unstarted Job cancels the row with the Job still named on it; a Retry that
+// keeps the time must still take the row over, even when the post-scrub hash was
+// last recorded naming that Job.
+func TestRetryingADeferredJobAnEarlierReleaseSubmittedEarlyTakesTheRowOver(t *testing.T) {
+	ctx, key, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/submitted-early.bin"}, due)
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	// What the earlier release's early sweep left: the Job queued before its
+	// time, the row submitted naming it.
+	job := deferredDownloadJob(t, ctx, row.ID)
+	queued, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateQueued})
+	if err != nil {
+		t.Fatalf("queue the Job early: %v", err)
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": job.ID, "attempts": 1}).Error; err != nil {
+		t.Fatalf("mark the row submitted early: %v", err)
+	}
+	cancelJobAsItsOwner(t, ctx, queued)
+	cancelledRow := scheduledDownloadRow(t, ctx, row.ID)
+	if cancelledRow.Status != models.ScheduledDownloadStatusCancelled || cancelledRow.JobID != job.ID {
+		t.Fatalf("setup: the row is %s naming %q, want cancelled naming the Job", cancelledRow.Status, cancelledRow.JobID)
+	}
+	// A reinstated quarantine records the post-scrub hash of the row as it is.
+	if err := ctx.db.Model(&models.JobSourceMapping{}).
+		Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, strconv.FormatUint(uint64(row.ID), 10)).
+		Update("post_scrub_hash", hashRetiredScheduledDownload(cancelledRow)).Error; err != nil {
+		t.Fatalf("record the post-scrub hash naming the Job: %v", err)
+	}
+
+	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
+	successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
+	if successor.State != jobs.StateScheduled {
+		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
+	}
+	reopened := scheduledDownloadRow(t, ctx, row.ID)
+	if reopened.Status != models.ScheduledDownloadStatusPending || reopened.JobID != "" || reopened.Attempts != 0 {
+		t.Fatalf("the row is %s naming %q after %d attempts, want pending again, naming none", reopened.Status, reopened.JobID, reopened.Attempts)
+	}
+	fireDueDeferredDownloads(t, ctx, due.Add(time.Minute))
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != successor.ID {
+		t.Fatalf("the row is %s naming %q at its time, want submitted naming the successor", got.Status, got.JobID)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+}
