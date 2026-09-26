@@ -680,16 +680,18 @@ To defer a host download, pass exactly one of:
 | `start_at` | Unix seconds; must be in the future. There is no upper bound on an absolute start time. |
 | `delay` | Duration string such as `"2h"`; must satisfy `0 <= delay <= 30 days`. |
 
-A deferred call stores a durable scheduled-download row instead of creating a
-queue job immediately, and returns
+A deferred call stores a durable scheduled-download row and a `scheduled`
+`deferred-download` Job instead of creating a queue job immediately, and returns
 `{ scheduled = true, scheduled_id = <row id>, start_at = <unix seconds> }`.
 The result deliberately uses `scheduled_id`, not `id`, because no queue job
-exists yet. The plugin scheduler tick later claims the row, re-checks the
-stored plugin's network policy and the stored user's write scope, and then
-submits the ordinary download. If the submitting user is deleted before a
-pending row fires, the row stops rather than falling back to an administrator.
-A pending row can be inspected on the plugin management page and cancelled through
-the admin-only `POST /v1/plugin/scheduled-downloads/cancel` endpoint.
+exists yet. At the time `start_at` or `delay` names, whatever the server's time
+zone, the Job is queued, the stored plugin's network policy and the stored
+user's write scope are re-checked, and the download runs. If the submitting
+user is deleted before a pending row fires, the row stops rather than falling
+back to an administrator. A pending row can be inspected on the plugin
+management page and cancelled through the admin-only
+`POST /v1/plugin/scheduled-downloads/cancel` endpoint, which cancels its Job
+too; cancelling the Job from the Job Center before it starts cancels the row.
 
 ```lua
 local scheduled, err = mah.download.submit(

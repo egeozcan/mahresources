@@ -87,13 +87,27 @@ while durable permissions and download history remain in the database.
 `mah.download.submit` can also defer a single host download with `{ delay =
 "2h" }` or `{ start_at = <unix seconds> }`, one or the other. A delay must
 satisfy `0 <= delay <= 30 days`; an absolute `start_at` must be in the
-future and has no upper bound. The row is durable and survives a restart, but
-it is not a resident queue job until it is due; keeping future work out of the
-in-memory queue avoids the 100-job cap and pending-job eviction rules. The
-plugin scheduler tick claims due rows, re-validates the plugin and submitting
-user, and submits the ordinary queue job. If the submitting user is deleted before a pending row fires, the
-row becomes ownerless and is never claimed. Pending rows can be inspected with `mr plugin scheduled-downloads <name>` and
-cancelled through the admin-only `POST /v1/plugin/scheduled-downloads/cancel` endpoint.
+future and has no upper bound. The deferral is stored as a scheduled-download
+row, which the plugin management page and `mr plugin scheduled-downloads` list,
+and as a `scheduled` Job of Kind `deferred-download`, which the Job Center
+shows. Both are durable and survive a restart, but neither is a resident queue
+job until it is due; keeping future work out of the in-memory queue avoids the
+100-job cap and pending-job eviction rules. When the due time comes, the Job is
+queued, the plugin and submitting user are re-validated, and the row is marked
+`submitted` with the Job's id. The time a `start_at` or a `delay` names is the
+time it starts, whatever time zone the server runs in. If the submitting user is
+deleted before a pending row fires, the row becomes ownerless and is never
+claimed.
+
+Cancelling either record before the download starts cancels both. The Job's
+**Cancel** ends the row as `cancelled`, and the admin-only
+`POST /v1/plugin/scheduled-downloads/cancel` endpoint cancels the Job; that
+endpoint refuses a row whose Job has already started, which the Job's own
+Cancel stops instead. **Retry** on a deferred
+download that was cancelled before it ran keeps its start time while that is
+still ahead: the control reads **Schedule again**, the new Job is scheduled for
+the same time, and the row returns to `pending`. Once the time has passed, the
+control reads **Download now** and the new Job starts at once.
 
 ## Streaming playlists (HLS)
 

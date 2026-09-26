@@ -316,6 +316,16 @@ writer epoch. Then inspect `GET /v1/admin/jobs/migration-readiness` as an
 administrator and confirm `ready` is true and `blockers` is empty. A previous
 completion marker is not proof for the restored copy.
 
+Every start compares each scrubbed source row with the projection recorded when
+it was scrubbed. A row that no longer matches is treated as restored: every such
+row is re-examined in the same start, one whose input matches its canonical Job
+is scrubbed again, and one that does not is quarantined and reported as a
+`source-quarantined` blocker until it is resolved. A deferred download records
+the Job it started on its row when it comes due, which can be after it was
+scrubbed; that change alone is not a restored source. A deferred-download
+source that was quarantined for it, and whose row still matches its scrubbed
+projection, is returned to scrubbed at the next start.
+
 ## Plugin Command Runtime Ownership
 
 Plugin command runs and command imports use an exclusive staging-root lease and
