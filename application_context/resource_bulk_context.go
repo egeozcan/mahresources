@@ -26,6 +26,11 @@ import (
 // leaves it nil.
 var deleteResourceAfterBackup func()
 
+// deleteResourceBeforeCommit is a test seam for the end of the delete's
+// transaction, where its row is gone but not yet committed. Production leaves
+// it nil.
+var deleteResourceBeforeCommit func()
+
 func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	_, hookErr := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceId)})
 	if hookErr != nil {
@@ -54,7 +59,6 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	// holds Resource while waiting to auto-delete Series. The membership snapshot
 	// was read before this transaction; if it changed while we waited for its old
 	// Series lock, roll back and retry from the freshly locked Resource snapshot.
-	var refCount int64
 	for attempt := 0; attempt < 5; attempt++ {
 		err = ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
 			if resource.SeriesID != nil {
@@ -129,18 +133,16 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 				}
 			}
 
-			// Check if any other resources or versions reference this hash
-			var countErr error
-			refCount, countErr = txCtx.CountHashReferences(resource.Hash, resource.StorageLocation)
-			if countErr != nil {
-				txCtx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
-				refCount = 1 // Assume referenced to be safe
-			}
-
 			txCtx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 
 			// BH-020: scrub dangling references from note_blocks
-			return ScrubResourceFromBlocks(txCtx.db, resourceId)
+			if err := ScrubResourceFromBlocks(txCtx.db, resourceId); err != nil {
+				return err
+			}
+			if deleteResourceBeforeCommit != nil {
+				deleteResourceBeforeCommit()
+			}
+			return nil
 		})
 		if errors.Is(err, errResourceContentChanged) {
 			if backupPath != "" {
@@ -173,12 +175,12 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	// File operations after successful commit (no DB lock held)
-	if refCount == 0 {
-		ctx.removeIfUnreferenced(resource.Hash, resource.StorageLocation, func() {
-			_ = fs.Remove(resource.GetCleanLocation())
-		})
-	}
+	// File operations after successful commit (no DB lock held). Whether the
+	// file is still needed is counted then, not inside the transaction: see
+	// removeIfUnreferenced.
+	ctx.removeIfUnreferenced(resource.Hash, resource.StorageLocation, func() {
+		_ = fs.Remove(resource.GetCleanLocation())
+	})
 
 	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name, "resource_category_id": float64(resource.ResourceCategoryId), "owner_id": hookID(resource.OwnerId)})
 
@@ -527,10 +529,8 @@ type FileCleanupAction struct {
 	SourcePath string
 	// BackupPath is the path to write the backup copy (in /deleted/)
 	BackupPath string
-	// ShouldRemoveSource indicates if the source file should be deleted (no other references)
-	ShouldRemoveSource bool
-	// Hash and StorageLocation identify the file for the count that is taken again
-	// before it is removed.
+	// Hash and StorageLocation identify the file for the reference count taken
+	// after the commit, which decides whether it is removed.
 	Hash            string
 	StorageLocation *string
 }
@@ -577,9 +577,6 @@ func metaWithoutBackups(meta types.JSON) types.JSON {
 // thing worse than a redundant backup.
 func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileCleanupAction) {
 	for _, action := range cleanupActions {
-		if !action.ShouldRemoveSource {
-			continue
-		}
 		ctx.removeIfUnreferenced(action.Hash, action.StorageLocation, func() {
 			ctx.backUpAndRemove(action)
 		})
@@ -782,13 +779,6 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 		}
 	}
 
-	// Check hash references for file deletion decision
-	refCount, countErr := ctx.CountHashReferences(resource.Hash, resource.StorageLocation)
-	if countErr != nil {
-		ctx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
-		refCount = 1 // Assume referenced to be safe
-	}
-
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 
 	// NOTE: block-reference scrubbing is NOT done here. The single-item
@@ -798,12 +788,11 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	// O(resources × blocks).
 
 	return &FileCleanupAction{
-		SourceFS:           fs,
-		SourcePath:         resource.GetCleanLocation(),
-		BackupPath:         backupPath,
-		ShouldRemoveSource: refCount == 0,
-		Hash:               resource.Hash,
-		StorageLocation:    resource.StorageLocation,
+		SourceFS:        fs,
+		SourcePath:      resource.GetCleanLocation(),
+		BackupPath:      backupPath,
+		Hash:            resource.Hash,
+		StorageLocation: resource.StorageLocation,
 	}, effect, nil
 }
 
@@ -847,10 +836,9 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	ctx.runFileCleanupActions(cleanupActions)
 
 	// After the files, not before: single-item DeleteResource has always
-	// bracketed its hook this way, and the ordering is load-bearing. The
-	// ShouldRemoveSource decision above was taken inside the transaction; a hook
-	// that runs first and stores content with the same hash can have the file it
-	// just wrote removed by that stale decision.
+	// bracketed its hook this way, so a hook observes a delete that is finished,
+	// files included. A hook that stores content with the same hash is safe in
+	// either order now, because the removal recounts under the upload lock.
 	ctx.emitResourceDeleteEffects(deleteEffects)
 
 	return nil

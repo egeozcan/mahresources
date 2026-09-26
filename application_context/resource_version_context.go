@@ -76,16 +76,19 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation
 var resourceFileRemovalGap func()
 
 // removeIfUnreferenced runs remove, the removal of the file behind hash, only if
-// nothing on that storage location references hash any more, counted again under
-// the per-hash upload lock.
+// nothing on that storage location references hash any more. Every delete calls
+// it after its commit; the count is taken here, under the per-hash upload lock,
+// and never inside the delete's transaction.
 //
-// The count that decided a delete was taken inside the delete's transaction, and
-// the file is removed after it commits. An upload of the same bytes in between
-// finds no row, finds the file still on disk, reuses it and commits a resource
-// pointing at it; removing on the earlier count takes that resource's file.
-// AddResource holds this lock from its existence check to its commit, so a count
-// taken under it sees either all of such an upload or none of it, and an upload
-// that starts after the removal writes the file again.
+// Both halves are needed. A count inside the transaction misses whatever commits
+// after it: on Postgres two transactions deleting the last two rows over one
+// file each still see the other's row, both keep the file, and nothing points at
+// it any more. And a count taken outside the lock misses an upload of the same
+// bytes that found no row, found the file still on disk and reused it; removing
+// then takes that resource's file. AddResource holds this lock from its
+// existence check to its commit, so a count taken under it sees either all of
+// such an upload or none of it, and an upload that starts after the removal
+// writes the file again.
 func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, remove func()) {
 	if resourceFileRemovalGap != nil {
 		resourceFileRemovalGap()
@@ -486,14 +489,8 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 		return fmt.Errorf("failed to delete version: %w", err)
 	}
 
-	refCount, err := ctx.CountHashReferences(hash, storageLocation)
-	if err != nil {
-		ctx.Logger().Warning(models.LogActionDelete, "resource_version", &versionID, "Failed to count hash references", err.Error(), nil)
-	} else if refCount == 0 {
-		fs, _ := ctx.GetFsForStorageLocation(storageLocation)
-		if fs != nil {
-			ctx.removeIfUnreferenced(hash, storageLocation, func() { _ = fs.Remove(location) })
-		}
+	if fs, _ := ctx.GetFsForStorageLocation(storageLocation); fs != nil {
+		ctx.removeIfUnreferenced(hash, storageLocation, func() { _ = fs.Remove(location) })
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource_version", &versionID, fmt.Sprintf("v%d of resource %d", version.VersionNumber, resourceID), "", nil)
