@@ -83,6 +83,48 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	if err != nil {
 		return nil, err
 	}
+	for attempt := 0; ; attempt++ {
+		// Read outside the transaction, so that the transaction's first statement
+		// is its insert. On SQLite in WAL mode a transaction that reads first
+		// holds a snapshot it cannot promote once another connection commits, and
+		// that failure skips busy_timeout: under download traffic a deferred
+		// submit failed with "database is locked" at once.
+		retired, err := ctx.legacyJobInputsRetired()
+		if err != nil {
+			return nil, err
+		}
+		row, err := ctx.createScheduledDownloadOnce(pluginName, actorUserID, creator, payload, dueAt, retired)
+		if err == nil {
+			return row, nil
+		}
+		if attempt >= scheduledDownloadCreateAttempts-1 {
+			return nil, err
+		}
+		if !errors.Is(err, errWriterEpochMoved) && !isLockContentionError(err) && !isDeadlockError(err) {
+			// A retirement barrier refuses a plaintext row: the epoch advanced
+			// after it was read, and the next attempt reads it again.
+			if current, readErr := ctx.legacyJobInputsRetired(); readErr != nil || current == retired {
+				return nil, err
+			}
+		}
+		time.Sleep(scheduledDownloadCreateBackoff * time.Duration(attempt+1))
+	}
+}
+
+// scheduledDownloadCreateAttempts bounds CreateScheduledDownload's retry of its
+// transaction, and scheduledDownloadCreateBackoff is multiplied by the attempt
+// number between tries. A failed attempt rolled back, so nothing partial
+// persisted and the next one inserts the row exactly once.
+const (
+	scheduledDownloadCreateAttempts = 4
+	scheduledDownloadCreateBackoff  = 25 * time.Millisecond
+)
+
+// errWriterEpochMoved rolls back an insert made under a writer epoch that
+// changed before the transaction could commit.
+var errWriterEpochMoved = errors.New("job writer epoch changed while the deferred download was being stored")
+
+func (ctx *MahresourcesContext) createScheduledDownloadOnce(pluginName string, actorUserID uint, creator *query_models.ResourceFromRemoteCreator, payload types.JSON, dueAt time.Time, retired bool) (*models.ScheduledDownload, error) {
 	owner := actorUserID
 	row := models.ScheduledDownload{
 		PluginName: truncateRunes(pluginName, maxHistoryPluginNameLength),
@@ -95,18 +137,23 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 		Status:          models.ScheduledDownloadStatusPending,
 		CreatedByUserId: &owner,
 	}
+	if retired {
+		row.URL = downloadURLProjection(creator.URL)
+		row.Payload = nil
+	}
 	db := ctx.WithPrincipal(&auth.Principal{UserID: actorUserID}).db
-	err = db.Transaction(func(tx *gorm.DB) error {
-		retired, err := legacyJobInputsRetiredOn(tx)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		// Read again now that the insert holds the writer lock: the row must have
+		// been written under the epoch that is current when it commits.
+		stillRetired, err := legacyJobInputsRetiredOn(tx)
 		if err != nil {
 			return err
 		}
-		if retired {
-			row.URL = downloadURLProjection(creator.URL)
-			row.Payload = nil
-		}
-		if err := tx.Create(&row).Error; err != nil {
-			return err
+		if stillRetired != retired {
+			return errWriterEpochMoved
 		}
 		// Keep the compatibility row, accepted Job and migration ledger together.
 		// Startup can then neither mistake a crash-limbo row for completed copy nor
