@@ -1,11 +1,13 @@
 package application_context
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -365,6 +367,71 @@ func TestAFiredDeferredRowAtTheEndOfALongRetryChainIsRetired(t *testing.T) {
 	}
 	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Update("job_id", leaf).Error; err != nil {
 		t.Fatalf("name the last Job of the chain: %v", err)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+}
+
+// Retention prunes an expired Job's lineage links. A deferral cancelled and
+// rescheduled twice, then fired, names the last successor; once the Job between
+// them expires, nothing links that successor back to the Job the row was mapped
+// to. The next start must not depend on those links.
+func TestAFiredDeferredRowStaysRetiredAfterRetentionPrunesItsLineage(t *testing.T) {
+	ctx, key, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/twice-rescheduled.bin"}, due)
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
+	var middle string
+	for i := 0; i < 2; i++ {
+		job := deferredDownloadJob(t, ctx, row.ID)
+		result, err := asOwner.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+			JobID: job.ID, Key: jobs.CommandCancel, IdempotencyKey: fmt.Sprintf("cancel-%d", i), ExpectedVersion: job.Version,
+		})
+		if err != nil || result.Status != jobs.CommandStatusSucceeded {
+			t.Fatalf("cancel %d = %+v, %v", i, result, err)
+		}
+		successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
+		if i == 0 {
+			middle = successor.ID
+		}
+	}
+	fireDueDeferredDownloads(t, ctx, due.Add(time.Minute))
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("setup: the row is %s at its time, want submitted", got.Status)
+	}
+	if err := ctx.db.Where("from_job_id = ? OR to_job_id = ?", middle, middle).Delete(&models.JobLink{}).Error; err != nil {
+		t.Fatalf("prune the middle Job's lineage: %v", err)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+}
+
+// A row an earlier release fired names a Retry successor, and its marker still
+// describes the row before it fired. The first start of this release verifies
+// that through the lineage and moves the marker; a later prune of the lineage
+// then leaves nothing to verify and nothing that needs it.
+func TestAStartCarriesAnEarlierReleasesFiredRowMarkerBeforeItsLineageIsPruned(t *testing.T) {
+	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
+	mapped := scheduledDownloadMapping(t, ctx, row.ID)
+	successor := "earlier-release-successor"
+	if err := ctx.db.Create(&models.JobLink{FromJobID: successor, ToJobID: mapped.JobID, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()}).Error; err != nil {
+		t.Fatalf("link the successor: %v", err)
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": successor, "attempts": 1}).Error; err != nil {
+		t.Fatalf("fire the row as an earlier release did: %v", err)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+	if err := ctx.db.Where("from_job_id = ?", successor).Delete(&models.JobLink{}).Error; err != nil {
+		t.Fatalf("prune the lineage: %v", err)
 	}
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)

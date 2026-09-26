@@ -319,6 +319,9 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 	if err != nil {
 		return JobMigrationResult{}, err
 	}
+	if err := ctx.carryFiredDeferredDownloadHashes(now()); err != nil {
+		return JobMigrationResult{}, err
+	}
 	if reinstated > 0 && checkpoint.LastError != "" {
 		// The drain fence writes this again if any other quarantine remains.
 		checkpoint.LastError = ""
@@ -735,6 +738,66 @@ func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time
 			return reinstated, nil
 		}
 		cursor = candidates[len(candidates)-1].SourceID
+	}
+}
+
+// carryFiredDeferredDownloadHashes moves the post-scrub hash of a scrubbed row
+// whose JobID changed after the scrub, as rows earlier releases fired did, to the
+// row as it now is, once retiredScheduledDownloadMatches has verified the change
+// through the row's retry lineage. From then on the row matches its marker
+// exactly, so retention pruning that lineage later cannot turn it into a
+// mismatch. This release moves the marker with the JobID itself
+// (refreshRetiredScheduledDownloadHashTx); this is for the rows it did not write.
+func (ctx *MahresourcesContext) carryFiredDeferredDownloadHashes(now time.Time) error {
+	var cursor string
+	for {
+		var mappings []models.JobSourceMapping
+		query := ctx.db.Where("source_kind = ? AND status = ? AND post_scrub_hash <> ''",
+			jobMigrationScheduledDownload, models.JobSourceMappingScrubbed).
+			Order("source_id ASC").Limit(jobMigrationReadinessBatchSize)
+		if cursor != "" {
+			query = query.Where("source_id > ?", cursor)
+		}
+		if err := query.Find(&mappings).Error; err != nil {
+			return errors.New("job migration could not read its scheduled download markers")
+		}
+		for _, mapping := range mappings {
+			id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
+			if err != nil {
+				continue
+			}
+			var row models.ScheduledDownload
+			if err := ctx.db.First(&row, uint(id)).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return errors.New("job migration could not read a scheduled download source")
+			}
+			current := hashRetiredScheduledDownload(row)
+			if current == mapping.PostScrubHash {
+				continue
+			}
+			matches, err := retiredScheduledDownloadMatches(ctx.db, row, mapping)
+			if err != nil {
+				return errors.New("job migration scheduled download lineage could not be read")
+			}
+			if !matches {
+				continue
+			}
+			// Conditional on the marker and the row both being what was checked, so
+			// a concurrent fire or scrub is not overwritten.
+			if err := ctx.db.Model(&models.JobSourceMapping{}).
+				Where("source_kind = ? AND source_id = ? AND status = ? AND post_scrub_hash = ?",
+					mapping.SourceKind, mapping.SourceID, models.JobSourceMappingScrubbed, mapping.PostScrubHash).
+				Where("EXISTS (SELECT 1 FROM scheduled_downloads WHERE scheduled_downloads.id = ? AND COALESCE(scheduled_downloads.job_id, '') = ?)", row.ID, row.JobID).
+				Updates(map[string]any{"post_scrub_hash": current, "updated_at": now}).Error; err != nil {
+				return errors.New("job migration could not carry a scheduled download marker")
+			}
+		}
+		if len(mappings) < jobMigrationReadinessBatchSize {
+			return nil
+		}
+		cursor = mappings[len(mappings)-1].SourceID
 	}
 }
 

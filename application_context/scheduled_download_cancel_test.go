@@ -677,3 +677,43 @@ func TestRetryingADeferredJobAnEarlierReleaseSubmittedEarlyTakesTheRowOver(t *te
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)
 }
+
+// An earlier release could queue a deferred Job before its time, mark its row
+// submitted, and then cancel the Job without touching the row. A Retry that keeps
+// the time takes that row over too, and startup reconciliation leaves it to the
+// successor.
+func TestRetryingAnEarlySubmittedJobCancelledAloneTakesTheRowOver(t *testing.T) {
+	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
+	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
+		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/early-cancelled-alone.bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	queued, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateQueued})
+	if err != nil {
+		t.Fatalf("queue the Job early: %v", err)
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": job.ID, "attempts": 1}).Error; err != nil {
+		t.Fatalf("mark the row submitted early: %v", err)
+	}
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: queued.Version, To: jobs.StateCancelled}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
+	successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
+	if successor.State != jobs.StateScheduled {
+		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
+	}
+	if _, err := ctx.ReconcileDeferredDownloadRows(); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusPending || got.JobID != "" || got.Attempts != 0 {
+		t.Fatalf("the row is %s naming %q after %d attempts, want pending for the successor", got.Status, got.JobID, got.Attempts)
+	}
+}
