@@ -833,8 +833,18 @@ type JobEventsSource interface {
 
 // jobEventsRevalidateInterval is how often an idle legacy stream rechecks its
 // credential, so a revoked one is closed rather than held open with nothing sent.
-// Every frame is also preceded by a check of its own.
 const jobEventsRevalidateInterval = time.Second
+
+// jobEventsCheckInterval is the least time between two credential checks made
+// for live events. An event that arrives sooner waits, at most this long, for
+// the next check rather than being written on the last one, so every frame is
+// still decided by a check made after its event arrived while a burst costs one
+// credential read per interval instead of one per event.
+const jobEventsCheckInterval = 250 * time.Millisecond
+
+// maxHeldJobEvents bounds how many live events wait for that check; reaching it
+// runs the check at once.
+const maxHeldJobEvents = 256
 
 // pluginActionJobsProjector supplies the current visible rows for legacy action
 // handles. Like the single-row projection, it is optional so a context without
@@ -858,11 +868,11 @@ type durablePluginActionJobsClearer interface {
 // GetDownloadEventsHandler handles GET /v1/download/events and GET /v1/jobs/events
 // Server-Sent Events stream for real-time updates on both download and action jobs.
 //
-// The stream reads its credential again through source before every frame it
-// writes and on an idle tick, and ends as soon as the credential no longer
-// authenticates. A frame therefore answers to the account as it is when the frame
-// is written: a demoted account keeps its stream and sees only what it may see
-// now, and a logged-out or disabled one loses the stream.
+// The stream reads its credential again through source before it writes the
+// frames for any event, and on an idle tick, and ends as soon as the credential
+// no longer authenticates. A frame therefore answers to the account as it is when
+// the frame is written: a demoted account keeps its stream and sees only what it
+// may see now, and a logged-out or disabled one loses the stream.
 func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		flusher, ok := writer.(http.Flusher)
@@ -878,6 +888,7 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 			http_utils.HandleError(err, writer, request, http.StatusUnauthorized)
 			return
 		}
+		lastCheck := time.Now()
 		// revalidate rebinds ctx to the credential as it stands now, and reports
 		// false once it no longer authenticates.
 		revalidate := func() bool {
@@ -886,6 +897,7 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				return false
 			}
 			ctx = current
+			lastCheck = time.Now()
 			return true
 		}
 
@@ -953,6 +965,101 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
 		flusher.Flush()
 
+		writeDownloadEvent := func(event download_queue.JobEvent) {
+			if !jobVisibleToPrincipal(ctx.Principal(), event.Job.GetOwnerUserID()) {
+				return
+			}
+			// Re-projected rather than forwarded: an event names the entry that
+			// changed, and after a Retry that entry is the *ancestor* whose id now
+			// belongs to its successor — so forwarding it would publish a finished
+			// attempt under live work's name. The projection is what makes the
+			// stream say what the handle currently means.
+			row, err := ctx.ProjectDownloadJob(event.Job.ID)
+			if err != nil || row.Row == nil {
+				// A handle that resolves to nothing visible is one this viewer may
+				// not see any more; the same answer a poll of that id gets.
+				return
+			}
+			projected := download_queue.JobEvent{Type: event.Type, Job: row.Row}
+			data, _ := json.Marshal(projected)
+			fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", projected.Type, data)
+			flusher.Flush()
+		}
+
+		writeActionEvent := func(event plugin_system.ActionJobEvent) {
+			job := event.Job
+			eventType := event.Type
+			if projector, ok := ctx.(pluginActionJobProjector); ok {
+				if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
+					projected, err := projector.ProjectActionJob(event.Job.ID)
+					if err != nil || projected == nil {
+						// A hidden or moved handle has no visible current target. The
+						// in-memory event may name its old ancestor, but that row no
+						// longer answers this id and must not be forwarded.
+						return
+					}
+					job = projected
+					if event.Type == "removed" && projected.CanonicalJobID != event.Job.CanonicalJobID {
+						// Clear/retention removed the process-local ancestor, but the
+						// legacy handle already names a different durable execution.
+						// Send the current row as an update so old clients cannot erase
+						// a live retry successor from their panel.
+						eventType = "updated"
+					}
+				}
+			}
+			if !jobVisibleToPrincipal(ctx.Principal(), job.Owner()) {
+				return
+			}
+			if previous, exists := actionRows[job.ID]; exists {
+				if eventType != "removed" && sameLegacyActionProjection(previous, job) {
+					return
+				}
+				if eventType == "added" {
+					eventType = "updated"
+				}
+			} else if eventType == "updated" {
+				eventType = "added"
+			}
+			if eventType == "removed" {
+				delete(actionRows, job.ID)
+			} else {
+				actionRows[job.ID] = job
+			}
+			data, _ := json.Marshal(map[string]any{"job": job})
+			fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
+			flusher.Flush()
+		}
+
+		// Live events wait here for a credential check made after they arrived,
+		// and are written in arrival order once it passes.
+		var held []func()
+		var heldDeadline <-chan time.Time
+		// deliver checks the credential and writes every held event, and reports
+		// false once the credential no longer authenticates.
+		deliver := func() bool {
+			if !revalidate() {
+				return false
+			}
+			for _, write := range held {
+				write()
+			}
+			held = held[:0]
+			heldDeadline = nil
+			return true
+		}
+		hold := func(write func()) bool {
+			held = append(held, write)
+			wait := jobEventsCheckInterval - time.Since(lastCheck)
+			if wait <= 0 || len(held) >= maxHeldJobEvents {
+				return deliver()
+			}
+			if heldDeadline == nil {
+				heldDeadline = time.After(wait)
+			}
+			return true
+		}
+
 		var actionProjectionPoll <-chan time.Time
 		if durableActions != nil {
 			actionProjectionTicker := time.NewTicker(2 * time.Second)
@@ -970,28 +1077,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				if !ok {
 					return
 				}
-				if !revalidate() {
+				if !hold(func() { writeDownloadEvent(event) }) {
 					return
 				}
-				if !jobVisibleToPrincipal(ctx.Principal(), event.Job.GetOwnerUserID()) {
-					continue
-				}
-				// Re-projected rather than forwarded: an event names the entry that
-				// changed, and after a Retry that entry is the *ancestor* whose id now
-				// belongs to its successor — so forwarding it would publish a finished
-				// attempt under live work's name. The projection is what makes the
-				// stream say what the handle currently means.
-				projected := event
-				if row, err := ctx.ProjectDownloadJob(event.Job.ID); err == nil && row.Row != nil {
-					projected = download_queue.JobEvent{Type: event.Type, Job: row.Row}
-				} else {
-					// A handle that resolves to nothing visible is one this viewer may
-					// not see any more; the same answer a poll of that id gets.
-					continue
-				}
-				data, _ := json.Marshal(projected)
-				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", projected.Type, data)
-				flusher.Flush()
 
 			// actionEvents is nil when the plugin system is unavailable.
 			// A nil channel is never selected in Go, so this case is simply skipped.
@@ -1001,54 +1089,18 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					actionEvents = nil
 					continue
 				}
-				if !revalidate() {
+				if !hold(func() { writeActionEvent(event) }) {
 					return
 				}
-				job := event.Job
-				eventType := event.Type
-				if projector, ok := ctx.(pluginActionJobProjector); ok {
-					if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
-						projected, err := projector.ProjectActionJob(event.Job.ID)
-						if err != nil || projected == nil {
-							// A hidden or moved handle has no visible current target. The
-							// in-memory event may name its old ancestor, but that row no
-							// longer answers this id and must not be forwarded.
-							continue
-						}
-						job = projected
-						if event.Type == "removed" && projected.CanonicalJobID != event.Job.CanonicalJobID {
-							// Clear/retention removed the process-local ancestor, but the
-							// legacy handle already names a different durable execution.
-							// Send the current row as an update so old clients cannot erase
-							// a live retry successor from their panel.
-							eventType = "updated"
-						}
-					}
+
+			case <-heldDeadline:
+				if !deliver() {
+					return
 				}
-				if !jobVisibleToPrincipal(ctx.Principal(), job.Owner()) {
-					continue
-				}
-				if previous, exists := actionRows[job.ID]; exists {
-					if eventType != "removed" && sameLegacyActionProjection(previous, job) {
-						continue
-					}
-					if eventType == "added" {
-						eventType = "updated"
-					}
-				} else if eventType == "updated" {
-					eventType = "added"
-				}
-				if eventType == "removed" {
-					delete(actionRows, job.ID)
-				} else {
-					actionRows[job.ID] = job
-				}
-				data, _ := json.Marshal(map[string]any{"job": job})
-				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
-				flusher.Flush()
 
 			case <-actionProjectionPoll:
-				if !revalidate() {
+				// Held live events go first, so the poll's diff follows them.
+				if !deliver() {
 					return
 				}
 				// A single visibility-filtered join yields current rows. Diff by the
@@ -1095,7 +1147,7 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				}
 
 			case <-revalidateTicker.C:
-				if !revalidate() {
+				if !deliver() {
 					return
 				}
 

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -292,63 +293,79 @@ func runSharedFileDeletionCases(t *testing.T, newContext func(*testing.T) *Mahre
 	})
 }
 
-// The scope a download is created under is the submitter's account when the
-// transfer ends. One that was disabled while its bytes were in flight is not
-// unscoped by that: it creates nothing.
-func TestADownloadWhoseSubmitterWasDisabledMidTransferCreatesNothing(t *testing.T) {
-	ctx := newDownloadJobContext(t)
-	release := make(chan struct{})
-	started := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-		<-release
-		_, _ = w.Write([]byte("bytes that arrive after the account was disabled"))
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
+// The account a download is created under is the submitter's when the transfer
+// ends. One that was disabled, or demoted to a role that cannot write, while its
+// bytes were in flight creates nothing: not unscoped, and not inside a subtree it
+// can still read.
+func TestADownloadWhoseSubmitterLostWriteAccessMidTransferCreatesNothing(t *testing.T) {
+	changes := map[string]func(owner *models.Group) *UserUpdate{
+		"disabled": func(*models.Group) *UserUpdate {
+			return &UserUpdate{Disabled: UserField[bool]{Set: true, Value: true}}
+		},
+		"demoted to a guest of the target group": func(owner *models.Group) *UserUpdate {
+			return &UserUpdate{
+				Role:         UserField[models.Role]{Set: true, Value: models.RoleGuest},
+				ScopeGroupID: UserField[*uint]{Set: true, Value: &owner.ID},
+			}
+		},
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			ctx := newDownloadJobContext(t)
+			release := make(chan struct{})
+			started := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				<-release
+				_, _ = w.Write([]byte("bytes that arrive after the account changed: " + name))
+			}))
+			t.Cleanup(server.Close)
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			owner := createGroupNamed(t, ctx, "lost-write-mid-transfer", nil)
+			user, err := ctx.CreateUser(&UserInput{Username: "lost-write-mid-transfer", Password: "password1", Role: models.RoleUser})
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
+			submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+				URL:               server.URL + "/late.txt",
+				ResourceQueryBase: query_models.ResourceQueryBase{OwnerId: owner.ID},
+			}, &user.ID, "", "api")
+			if len(submissions) != 1 || submissions[0].Err != nil {
+				t.Fatalf("submit: %+v", submissions)
+			}
+			select {
+			case <-started:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the transfer never started")
+			}
+
+			if _, err := ctx.UpdateUser(user.ID, change(owner)); err != nil {
+				t.Fatalf("change the submitter: %v", err)
+			}
 			close(release)
-		}
-	})
-	owner := createGroupNamed(t, ctx, "disabled-mid-transfer", nil)
-	user, err := ctx.CreateUser(&UserInput{Username: "disabled-mid-transfer", Password: "password1", Role: models.RoleUser})
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
-		URL:               server.URL + "/late.txt",
-		ResourceQueryBase: query_models.ResourceQueryBase{OwnerId: owner.ID},
-	}, &user.ID, "", "api")
-	if len(submissions) != 1 || submissions[0].Err != nil {
-		t.Fatalf("submit: %+v", submissions)
-	}
-	select {
-	case <-started:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the transfer never started")
-	}
 
-	if _, err := ctx.UpdateUser(user.ID, &UserUpdate{Disabled: UserField[bool]{Set: true, Value: true}}); err != nil {
-		t.Fatalf("disable the submitter: %v", err)
-	}
-	close(release)
-
-	finished := waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the download to finish",
-		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
-	if finished.State == jobs.StateSucceeded {
-		t.Fatalf("a download completed for an account disabled before its resource was created")
-	}
-	var count int64
-	if err := ctx.db.Model(&models.Resource{}).Where("created_by_user_id = ?", user.ID).Count(&count).Error; err != nil {
-		t.Fatalf("count resources: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("%d resources were created for a disabled account", count)
+			finished := waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the download to finish",
+				func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+			if finished.State == jobs.StateSucceeded {
+				t.Fatalf("a download completed for an account that lost write access before its resource was created")
+			}
+			var count int64
+			if err := ctx.db.Model(&models.Resource{}).Where("created_by_user_id = ?", user.ID).Count(&count).Error; err != nil {
+				t.Fatalf("count resources: %v", err)
+			}
+			if count != 0 {
+				t.Fatalf("%d resources were created for an account that lost write access", count)
+			}
+		})
 	}
 }
 
@@ -395,5 +412,36 @@ func TestAnUploadBetweenADeletesCommitAndItsRemovalKeepsItsFile(t *testing.T) {
 				t.Fatalf("the delete removed the file resource %d reused after the delete committed", arrived.ID)
 			}
 		})
+	}
+}
+
+// The removal is decided after the delete has committed, so it has to finish
+// even when the request that asked for the delete has gone away; a count that
+// failed on the cancelled request kept the file with no row pointing at it.
+func TestADeleteWhoseRequestIsCancelledAfterItsCommitStillRemovesTheFile(t *testing.T) {
+	const body = "bytes whose deleting request disconnects after the commit"
+	ctx := setupSharedFileTestCtx(t)
+	owner := createGroupNamed(t, ctx, "cancelled-delete-owner", nil)
+	doomed := uploadAs(t, ctx, body, "doomed.txt", owner.ID)
+
+	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodPost, "/v1/resource/delete", nil).WithContext(requestCtx)
+	bound := ctx.WithRequest(request).(*MahresourcesContext)
+	resourceFileRemovalGap = func() {
+		resourceFileRemovalGap = nil
+		cancel()
+	}
+	t.Cleanup(func() { resourceFileRemovalGap = nil })
+
+	if err := bound.DeleteResource(doomed.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	exists, err := afero.Exists(ctx.fs, doomed.GetCleanLocation())
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if exists {
+		t.Fatalf("a delete whose request was cancelled after the commit left the file behind")
 	}
 }

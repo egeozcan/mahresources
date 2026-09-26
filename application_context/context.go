@@ -1373,12 +1373,18 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 //
 // The account is resolved as principalForPluginActor resolves an actor, so a
 // deleted or disabled account, or one that cannot be read, binds deny-all rather
-// than unscoped, and the create is refused.
+// than unscoped, and the create is refused. So does an account whose role no
+// longer writes: a guest keeps a subtree it can read, and scope alone would let
+// the create land there.
 func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.ResourceCreator {
 	if userID == 0 {
 		return ctx
 	}
-	return ctx.WithPrincipal(ctx.principalForPluginActor(userID))
+	principal := ctx.principalForPluginActor(userID)
+	if !principal.CanWrite() {
+		principal = deniedPluginPrincipal(userID)
+	}
+	return ctx.WithPrincipal(principal)
 }
 
 // SetHashQueue sets the channel for queueing resources for hash processing.

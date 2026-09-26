@@ -137,7 +137,7 @@ Only Resources the uploader can see take part. For a user limited to a group sub
 
 ## Deletion Behavior
 
-Deleted files are backed up before the database record is removed, to `/deleted/<storage-location>/{hash}__{id}__{ownerId}___{basename}`, which prevents collisions and preserves context. `<storage-location>` is the resource's alternative-filesystem key, or the literal `deleted` for the default filesystem, and `{ownerId}` is `nil` when the resource had no owner. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash on the same storage location. The count covers every Resource, including ones the deleting user cannot see, so deleting one of two Resources that share a file never removes the file from the other.
+Deleted files are backed up before the database record is removed, to `/deleted/<storage-location>/{hash}__{id}__{ownerId}___{basename}`, which prevents collisions and preserves context. `<storage-location>` is the resource's alternative-filesystem key, or the literal `deleted` for the default filesystem, and `{ownerId}` is `nil` when the resource had no owner. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash on the same storage location. The count covers every Resource, including ones the deleting user cannot see, so deleting one of two Resources that share a file never removes the file from the other. The count is taken after the delete commits and in step with uploads of the same content in the same server process; two processes sharing one database and storage do not coordinate this, just as they do not coordinate [upload deduplication](../troubleshooting.md#can-i-run-multiple-instances).
 
 ## Relationships
 

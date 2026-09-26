@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -46,9 +47,12 @@ import (
 // the file. A count bound to the caller's scope saw none of them and removed a
 // file another subtree's resource still pointed at.
 func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation *string) (int64, error) {
+	return countHashReferences(ctx.unscopedDB(), hash, storageLocation)
+}
+
+func countHashReferences(db *gorm.DB, hash string, storageLocation *string) (int64, error) {
 	var versionCount int64
 	var resourceCount int64
-	db := ctx.unscopedDB()
 
 	scopeToStore := func(db *gorm.DB) *gorm.DB {
 		if storageLocation == nil || *storageLocation == "" {
@@ -70,6 +74,10 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation
 	return versionCount + resourceCount, nil
 }
 
+// fileRemovalCountTimeout bounds the count that decides a removal, which runs
+// detached from the caller's cancellation.
+const fileRemovalCountTimeout = 30 * time.Second
+
 // resourceFileRemovalGap is a test seam for the gap between the commit that
 // deleted a file's last reference and the removal of the file. Production
 // leaves it nil.
@@ -89,13 +97,24 @@ var resourceFileRemovalGap func()
 // existence check to its commit, so a count taken under it sees either all of
 // such an upload or none of it, and an upload that starts after the removal
 // writes the file again.
+//
+// The count does not inherit the caller's cancellation. The delete has already
+// committed; a request that disconnects now would otherwise fail the count, keep
+// the file, and leave it with no row pointing at it and nothing to retry.
 func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, remove func()) {
 	if resourceFileRemovalGap != nil {
 		resourceFileRemovalGap()
 	}
 	ctx.locks.ResourceHashLock.Acquire(hash)
 	defer ctx.locks.ResourceHashLock.Release(hash)
-	refCount, err := ctx.CountHashReferences(hash, storageLocation)
+	db := ctx.unscopedDB()
+	parent := context.Background()
+	if db.Statement != nil && db.Statement.Context != nil {
+		parent = db.Statement.Context
+	}
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), fileRemovalCountTimeout)
+	defer cancel()
+	refCount, err := countHashReferences(db.WithContext(countCtx), hash, storageLocation)
 	if err != nil {
 		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to count hash references; keeping the file", err.Error(), nil)
 		return

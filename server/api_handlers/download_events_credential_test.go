@@ -28,11 +28,13 @@ func (ctx *principalJobEventsContext) Principal() *auth.Principal { return ctx.p
 type changingJobEventsSource struct {
 	mu      sync.Mutex
 	current JobEventsContext
+	reads   int
 }
 
 func (s *changingJobEventsSource) CurrentJobEvents() (JobEventsContext, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	if s.current == nil {
 		return nil, errors.New("the credential no longer authenticates")
 	}
@@ -191,5 +193,38 @@ func TestALegacyStreamDeliversToAPromotedViewerBeforeTheNextTick(t *testing.T) {
 	if !waitForBody(response, promoted, 2*time.Second) {
 		t.Fatalf("a viewer promoted to administrator did not receive another user's job %q: %s",
 			promoted, response.String())
+	}
+}
+
+func (s *changingJobEventsSource) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+// A burst of events is checked in batches, not once per event: every open
+// stream reads the credential for every event on the queue, whoever it belongs
+// to, and a per-event read multiplies by both.
+func TestALegacyStreamChecksABurstOfEventsInBatches(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	source := &changingJobEventsSource{}
+	source.set(&principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}})
+	response, _ := startLegacyEventsHandler(t, source)
+
+	before := source.readCount()
+	const burst = 40
+	ids := make([]string, 0, burst)
+	for i := 0; i < burst; i++ {
+		ids = append(ids, submitOwnedLegacyJob(t, manager, 8))
+	}
+	for _, id := range ids {
+		if !waitForBody(response, id, 3*time.Second) {
+			t.Fatalf("job %q from the burst was never delivered: %s", id, response.String())
+		}
+	}
+	if reads := source.readCount() - before; reads > burst/4 {
+		t.Fatalf("delivering %d jobs' events read the credential %d times", burst, reads)
 	}
 }
