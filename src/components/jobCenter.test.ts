@@ -306,7 +306,7 @@ describe('Job detail commands', () => {
         id: 'job-1', title: 'photo.jpg', kind: 'remote-download', state: 'failed', version: 3,
         commands: [
             { key: 'retry', label: 'Retry', jobVersion: 3 },
-            { key: 'forget', label: 'Forget retry data', jobVersion: 3, destructive: true },
+            { key: 'forget', label: 'Forget saved input', jobVersion: 3, destructive: true },
             { key: 'dismiss', label: 'Dismiss', jobVersion: 3, bulk: true },
             { key: 'undismiss', label: 'Undismiss', jobVersion: 3, bulk: true },
         ],
@@ -314,13 +314,13 @@ describe('Job detail commands', () => {
 
     test('a command that moves no version still has its controls read again', async () => {
         const center = detailCenter({ ...failed }, (_url, init) => init.method === 'POST'
-            ? { result: { status: 'succeeded', code: 'applied', message: 'retry data forgotten', job: { ...failed, commands: undefined } } }
+            ? { result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten', job: { ...failed, commands: undefined } } }
             : { ...failed, commands: [failed.commands[2], failed.commands[3]] });
 
         await center.runCommand(center.detail, failed.commands[1]);
 
         expect(center.commandsFor(center.detail).map(command => command.key)).toEqual(['dismiss']);
-        expect(center.notice).toBe('photo.jpg: retry data forgotten.');
+        expect(center.notice).toBe('photo.jpg: saved input forgotten.');
     });
 
     test('a refused command says why in this Job\'s terms and reads its controls again', async () => {

@@ -528,7 +528,7 @@ func TestJobCommandOptionsKeepEveryFilterableKey(t *testing.T) {
 	// The select shows words, not keys: what a Job card's button says.
 	for key, label := range map[string]string{
 		"retry": "Retry", "continue": "Continue", "inspect": "Inspect command history",
-		"retry-import": "Retry import", "pin-lineage": "Pin with related jobs", "forget": "Forget retry data",
+		"retry-import": "Retry import", "pin-lineage": "Pin with related jobs", "forget": "Forget saved input",
 	} {
 		if labels[key] != label {
 			t.Errorf("the command filter offers %q as %q, want %q", key, labels[key], label)

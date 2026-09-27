@@ -418,7 +418,7 @@ you are on and offers **Open the new job**; the retried failure leaves **Needs
 attention**. Dismiss hides a finished Job from your view: in the panel the
 notice offers **Undo**, and a dismissed Job's page reads **Dismissed by you**
 and offers **Undismiss**. **Dismiss finished** asks first, saying how many Jobs
-it dismisses. **Forget retry data** removes the input a Job saved for Retry,
+it dismisses. **Forget saved input** removes the input a Job saved for Retry,
 Continue and Repeat and cannot be undone, so it asks for confirmation. A pin keeps Job metadata and its event history from
 ordinary retention, while linked Jobs and output artifacts keep their own
 retention rules. Pinned Jobs show **Pinned by you** in the list, detail page,

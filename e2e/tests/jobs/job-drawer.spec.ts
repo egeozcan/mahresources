@@ -224,7 +224,7 @@ test.describe('Jobs drawer', () => {
         { key: 'retry', label: 'Retry', endpoint: `/v1/jobs/${id}/commands/retry`, jobVersion: 1 },
         { key: 'pin', label: 'Pin', endpoint: `/v1/jobs/${id}/commands/pin`, jobVersion: 1 },
         { key: 'unpin', label: 'Unpin', endpoint: `/v1/jobs/${id}/commands/unpin`, jobVersion: 1 },
-        { key: 'forget', label: 'Forget retry data', endpoint: `/v1/jobs/${id}/commands/forget`, jobVersion: 1 },
+        { key: 'forget', label: 'Forget saved input', endpoint: `/v1/jobs/${id}/commands/forget`, jobVersion: 1 },
       ],
       outputs: [],
       lineage: { ancestors: [], successors: [], parents: [], children: [] },
@@ -262,13 +262,13 @@ test.describe('Jobs drawer', () => {
     await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
     const pin = controls.getByRole('button', { name: 'Pin', exact: true });
     await expect(pin).toBeHidden();
-    await expect(controls.getByRole('button', { name: 'Forget retry data' })).toBeHidden();
+    await expect(controls.getByRole('button', { name: 'Forget saved input' })).toBeHidden();
 
     const more = controls.locator('summary', { hasText: 'More' });
     await more.focus();
     await page.keyboard.press('Enter');
     await expect(pin).toBeVisible();
-    await expect(controls.getByRole('button', { name: 'Forget retry data' })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Forget saved input' })).toBeVisible();
     await page.keyboard.press('Tab');
     await expect(pin).toBeFocused();
 

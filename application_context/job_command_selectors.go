@@ -365,7 +365,7 @@ func JobCommandFilterOptions() []JobCommandFilterOption {
 		{jobs.CommandPin, "Pin"},
 		{jobs.CommandUnpin, "Unpin"},
 		{jobs.CommandPinLineage, "Pin with related jobs"},
-		{jobs.CommandForget, "Forget retry data"},
+		{jobs.CommandForget, "Forget saved input"},
 	}
 }
 

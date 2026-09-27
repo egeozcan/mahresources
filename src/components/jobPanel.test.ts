@@ -710,9 +710,9 @@ describe('Job Center panel', () => {
     });
 
     test('closing the drawer takes the box away', async () => {
-        const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'retry data forgotten' } }));
-        await panel.runCommand(panel.jobs[0], { key: 'forget', label: 'Forget retry data', jobVersion: 4 });
-        expect(panel.notice).toBe('first.bin: retry data forgotten.');
+        const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } }));
+        await panel.runCommand(panel.jobs[0], { key: 'forget', label: 'Forget saved input', jobVersion: 4 });
+        expect(panel.notice).toBe('first.bin: saved input forgotten.');
 
         panel.onDrawerClosed();
 
@@ -731,12 +731,12 @@ describe('Job Center panel', () => {
     test('a command that moves no version still has its row\'s controls read again', async () => {
         const commands = [
             { key: 'retry', label: 'Retry', jobVersion: 4 },
-            { key: 'forget', label: 'Forget retry data', jobVersion: 4 },
+            { key: 'forget', label: 'Forget saved input', jobVersion: 4 },
             { key: 'pin', label: 'Pin', jobVersion: 4 },
         ];
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'
             // The answer's snapshot carries no commands.
-            ? { result: { status: 'succeeded', code: 'applied', message: 'retry data forgotten', job: { ...panel.jobs[0], commands: undefined } } }
+            ? { result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten', job: { ...panel.jobs[0], commands: undefined } } }
             : { ...panel.jobs[0], commands: [commands[2]] });
         panel.jobs[0] = { ...panel.jobs[0], commands };
         panel.details[panel.jobs[0].id] = panel.jobs[0];
@@ -748,9 +748,9 @@ describe('Job Center panel', () => {
 
     test('a reread answered after the row moved on keeps the newer row\'s controls', async () => {
         let answerRead: (value: any) => void = () => {};
-        const commands = [{ key: 'forget', label: 'Forget retry data', jobVersion: 4 }, { key: 'retry', label: 'Retry', jobVersion: 4 }];
+        const commands = [{ key: 'forget', label: 'Forget saved input', jobVersion: 4 }, { key: 'retry', label: 'Retry', jobVersion: 4 }];
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'
-            ? { result: { status: 'succeeded', code: 'applied', message: 'retry data forgotten' } }
+            ? { result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } }
             : new Promise(resolve => { answerRead = resolve; }));
         panel.jobs[0] = { ...panel.jobs[0], commands };
         panel.details[panel.jobs[0].id] = panel.jobs[0];
@@ -1340,7 +1340,7 @@ describe('Job Center panel accessibility hooks', () => {
         panel.requestJSON = vi.fn(async () => ({ result: {} }));
         const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 };
 
-        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget retry data', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
+        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget saved input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
         answerConfirmation(true);
         await running;

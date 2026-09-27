@@ -269,7 +269,7 @@ test.describe('Job Center focus in forced colors', () => {
 
     // Forget cannot be undone, so it asks first.
     await row.locator('summary').click();
-    await row.getByRole('button', { name: 'Forget retry data' }).focus();
+    await row.getByRole('button', { name: 'Forget saved input' }).focus();
     await page.keyboard.press('Enter');
     const confirm = page.getByRole('alertdialog');
     await expect(confirm).toBeVisible();

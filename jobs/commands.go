@@ -384,7 +384,7 @@ func (s *Service) hostCommands(deps Deps, access Access, job models.Job) []Comma
 		commands = append(commands, hostCommand(job, CommandPinLineage, "Pin with related jobs", false, false, ""))
 	}
 	if terminal && s.commandReplayAvailable(deps, job) {
-		commands = append(commands, hostCommand(job, CommandForget, "Forget retry data", true, false,
+		commands = append(commands, hostCommand(job, CommandForget, "Forget saved input", true, false,
 			"Forget the data this job saved for Retry, Continue and Repeat? They will no longer be possible."))
 	}
 	return commands
@@ -1599,7 +1599,7 @@ func (s *Service) applyHostCommand(_ context.Context, deps Deps, request Command
 		if _, err := s.ForgetReplay(deps, request.Actor, job.ID); err != nil {
 			return commandOutcome{}, err
 		}
-		return appliedOutcome("retry data forgotten", nil), nil
+		return appliedOutcome("saved input forgotten", nil), nil
 	default:
 		return commandOutcome{}, fmt.Errorf("%w: %s is not a host-owned command", ErrInvalidCommand, request.Key)
 	}

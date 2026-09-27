@@ -320,8 +320,8 @@ only their own Jobs and are offered no choice.
 
 A command asks for confirmation only when it stops work or cannot be undone:
 Cancel and any other command marked destructive, a command whose Kind gives a
-confirmation (a deferred download's **Download now**), and **Forget retry
-data**. Its confirming button is red only for a destructive command. Dismiss,
+confirmation (a deferred download's **Download now**), and **Forget saved
+input**. Its confirming button is red only for a destructive command. Dismiss,
 Undismiss, Pin, Unpin and **Pin with related jobs** run at once, because each only
 changes the viewer's own list or retention and can be reversed. A dismissed
 Job's page reads **Dismissed by you** and offers **Undismiss**, and a row
