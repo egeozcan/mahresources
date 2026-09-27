@@ -1168,6 +1168,12 @@ func (ctx *MahresourcesContext) SubmitRemoteDownloads(creator *query_models.Reso
 		if url == "" {
 			continue
 		}
+		// Refused here, before a Job is accepted, and per line: the lines around it
+		// are still submitted, and the caller is told which one was not a download.
+		if err := download_queue.ValidateDownloadURL(url); err != nil {
+			submissions = append(submissions, download_queue.RemoteDownloadSubmission{URL: url, Err: err})
+			continue
+		}
 		single := *creator
 		single.URL = url
 		single.Headers = hostfetch.CopyHeaders(creator.Headers)

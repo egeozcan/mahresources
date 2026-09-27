@@ -586,6 +586,9 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 	if err := hostfetch.ValidateHeaders(creator.Headers); err != nil {
 		return nil, err
 	}
+	if err := ValidateDownloadURL(creator.URL); err != nil {
+		return nil, err
+	}
 	// The job takes its own creator, not the caller's. The struct is the
 	// caller's to keep, and its Headers map is reachable from there for as long
 	// as the caller holds it -- so a submitter could edit the headers after the

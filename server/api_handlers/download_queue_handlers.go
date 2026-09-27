@@ -218,7 +218,8 @@ func submitRemoteDownloadBatch(ctx DownloadSubmitter, creator *query_models.Reso
 			firstErr = fmt.Errorf("no valid URLs provided")
 		}
 		status := http.StatusServiceUnavailable
-		if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) {
+		if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) ||
+			errors.Is(firstErr, download_queue.ErrInvalidDownloadURL) {
 			status = http.StatusBadRequest
 		}
 		return nil, status, firstErr

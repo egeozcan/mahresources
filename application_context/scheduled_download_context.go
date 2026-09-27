@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"mahresources/auth"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -79,6 +80,9 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	}
 	if creator == nil {
 		return nil, errors.New("scheduled download needs a payload")
+	}
+	if err := download_queue.ValidateDownloadURL(creator.URL); err != nil {
+		return nil, err
 	}
 	payload, err := scheduledDownloadPayload(creator)
 	if err != nil {
