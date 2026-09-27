@@ -24,4 +24,3 @@ is the last one.
 
   # mr-doctest: the timeline command documents its sequence cursor
   mr jobs timeline --help | grep -- '--after-sequence' >/dev/null
-

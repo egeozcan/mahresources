@@ -18,6 +18,11 @@ new URLs, `cancel` an active job, `pause` / `resume` an in-flight
 transfer, or `retry` a failed one. `cancel`, `pause`, `resume` and
 `retry` take either the Job id that `jobs list` prints or the legacy
 handle `job submit` returns as `id`. A legacy handle follows the
-current Retry of its Job; a Job id always names the one Job. Use
-`jobs list` to discover Job ids and their current `state`, and
-`job command` for any other command a Job advertises.
+current Retry of its Job; a Job id always names the one Job. Downloads,
+exports, imports, Resource Reduction computation and similarity
+recomputes go through the legacy download controls. Any other Job, such
+as a plugin command run, is sent the command of the same name that it
+advertises, and the verb is refused when the Job does not offer it.
+Either way the answer has the same shape. Use `jobs list` to discover
+Job ids and their current `state`, and `job command` for any other
+command a Job advertises.

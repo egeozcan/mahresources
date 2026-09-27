@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,10 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// names what it refuses, so a refusal is this command's failure even
 			// though the request succeeded.
 			var answer struct {
-				Jobs    []json.RawMessage `json:"jobs"`
+				Jobs []struct {
+					ID             string `json:"id"`
+					CanonicalJobID string `json:"canonicalJobId"`
+				} `json:"jobs"`
 				Refused []struct {
 					URL    string `json:"url"`
 					Reason string `json:"reason"`
@@ -110,7 +114,16 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			} else if len(answer.Refused) == 0 {
 				output.PrintMessage("Download job submitted successfully.")
 			} else if len(answer.Jobs) > 0 {
-				output.PrintMessage(fmt.Sprintf("Queued %d download job(s).", len(answer.Jobs)))
+				// A partly refused batch is resubmitted by hand, so the Jobs that
+				// were queued are named: resubmitting them would fetch them twice.
+				output.PrintMessage(fmt.Sprintf("Queued %d download job(s):", len(answer.Jobs)))
+				for _, job := range answer.Jobs {
+					id := job.CanonicalJobID
+					if id == "" {
+						id = job.ID
+					}
+					output.PrintMessage("  " + id)
+				}
 			}
 			if len(answer.Refused) > 0 {
 				lines := make([]string, 0, len(answer.Refused))
@@ -171,67 +184,38 @@ func startsHTTPURL(text string) bool {
 	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
 }
 
+// jobControlVerb is one of the singular control verbs: the legacy route it posts
+// to, which is also the command key a Job advertises for it, the status that
+// route answers with, and what the command prints on success.
+type jobControlVerb struct {
+	action, status, done string
+}
+
 func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_cancel.md")
-	return &cobra.Command{
-		Use:         "cancel <id>",
-		Short:       "Cancel a job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
-
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/cancel", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job cancelled successfully.")
-			}
-			return nil
-		},
-	}
+	return newJobControlCmd(c, opts, "jobs_help/job_cancel.md", "cancel <id>", "Cancel a job",
+		jobControlVerb{action: "cancel", status: "cancelled", done: "Job cancelled successfully."})
 }
 
 func newJobPauseCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_pause.md")
-	return &cobra.Command{
-		Use:         "pause <id>",
-		Short:       "Pause a job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
-
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/pause", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job paused successfully.")
-			}
-			return nil
-		},
-	}
+	return newJobControlCmd(c, opts, "jobs_help/job_pause.md", "pause <id>", "Pause a job",
+		jobControlVerb{action: "pause", status: "paused", done: "Job paused successfully."})
 }
 
 func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_resume.md")
+	return newJobControlCmd(c, opts, "jobs_help/job_resume.md", "resume <id>", "Resume a job",
+		jobControlVerb{action: "resume", status: "resumed", done: "Job resumed successfully."})
+}
+
+func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return newJobControlCmd(c, opts, "jobs_help/job_retry.md", "retry <id>", "Retry a failed job",
+		jobControlVerb{action: "retry", status: "retrying", done: "Job retried successfully."})
+}
+
+func newJobControlCmd(c *client.Client, opts *output.Options, helpFile, use, short string, verb jobControlVerb) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, helpFile)
 	return &cobra.Command{
-		Use:         "resume <id>",
-		Short:       "Resume a job",
+		Use:         use,
+		Short:       short,
 		Long:        help.Long,
 		Example:     help.Example,
 		Annotations: help.Annotations,
@@ -241,46 +225,77 @@ func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			q.Set("id", args[0])
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/resume", q, nil, &raw); err != nil {
-				return err
+			if err := c.Post("/v1/jobs/"+verb.action, q, nil, &raw); err != nil {
+				// The legacy route projects downloads and the other queue-backed
+				// Kinds. A Job id it does not know may still name a Job of another
+				// Kind, which is controlled by the command it advertises.
+				var apiErr *client.APIError
+				if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || !canonicalJobIDPattern.MatchString(args[0]) {
+					return err
+				}
+				if raw, err = runAdvertisedJobControl(c, args[0], verb, err); err != nil {
+					return err
+				}
 			}
 
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
 			} else {
-				output.PrintMessage("Job resumed successfully.")
+				output.PrintMessage(verb.done)
 			}
 			return nil
 		},
 	}
 }
 
-func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_retry.md")
-	return &cobra.Command{
-		Use:         "retry <id>",
-		Short:       "Retry a failed job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+// canonicalJobIDPattern matches a canonical Job id, the UUID `jobs list` prints.
+// A legacy handle is never one.
+var canonicalJobIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/retry", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job retried successfully.")
-			}
-			return nil
-		},
+// runAdvertisedJobControl runs a control verb as the command a Job advertises, and
+// answers in the shape the legacy route would have. The verb names the command,
+// so it needs no --confirm. A Job the viewer cannot see answers the legacy
+// route's own not-found, and one that does not offer the command says so.
+func runAdvertisedJobControl(c *client.Client, jobID string, verb jobControlVerb, notFound error) (json.RawMessage, error) {
+	job, err := getCLIJobDetail(c, jobID)
+	if err != nil {
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return nil, notFound
+		}
+		return nil, err
 	}
+	advertised, found := findCLIJobCommand(job, verb.action)
+	if !found {
+		return nil, fmt.Errorf("Job %s does not offer %s", jobID, verb.action)
+	}
+	endpoint, err := validateCLIJobCommandEndpoint(advertised.Endpoint, job.ID, advertised.Key)
+	if err != nil {
+		return nil, err
+	}
+	expectedVersion := advertised.JobVersion
+	if expectedVersion == 0 {
+		expectedVersion = job.Version
+	}
+	key, err := commandIdempotencyKey("")
+	if err != nil {
+		return nil, err
+	}
+	var result json.RawMessage
+	body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
+	if err := c.Post(endpoint, nil, body, &result); err != nil {
+		return nil, commandRequestFailed(err, key)
+	}
+	var outcome struct {
+		JobID       string `json:"jobId"`
+		SuccessorID string `json:"successorId"`
+	}
+	_ = json.Unmarshal(result, &outcome)
+	canonicalJobID := outcome.SuccessorID
+	if canonicalJobID == "" {
+		canonicalJobID = job.ID
+	}
+	return json.Marshal(map[string]any{"status": verb.status, "canonicalJobId": canonicalJobID, "result": result})
 }
 
 // NewJobsCmd returns the canonical plural Job Center commands.

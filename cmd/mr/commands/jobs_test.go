@@ -538,7 +538,7 @@ func TestJobSubmitFailsWhenTheServerRefusesAURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = io.WriteString(w, `{"queued":true,"jobs":[{"id":"a1"}],"refused":[{"url":"b.txt","reason":"not an absolute http or https URL"}]}`)
+		_, _ = io.WriteString(w, `{"queued":true,"jobs":[{"id":"a1","canonicalJobId":"01a0e1d9-d508-7c6d-a6f8-abaff30a92a9"}],"refused":[{"url":"b.txt","reason":"not an absolute http or https URL"}]}`)
 	}))
 	defer server.Close()
 
@@ -547,7 +547,11 @@ func TestJobSubmitFailsWhenTheServerRefusesAURL(t *testing.T) {
 		root.SetOut(io.Discard)
 		root.SetErr(io.Discard)
 		root.SetArgs([]string{"submit", "--url", "https://a.example/a", "--url", "b.txt"})
-		err := root.Execute()
+		var err error
+		stdout := captureStdout(t, func() { err = root.Execute() })
+		if !strings.Contains(stdout, "01a0e1d9-d508-7c6d-a6f8-abaff30a92a9") {
+			t.Fatalf("json=%v: the output %q does not name the Job that was queued", jsonOut, stdout)
+		}
 		if err == nil {
 			t.Fatalf("json=%v: a batch with a refused URL reported success", jsonOut)
 		}
@@ -636,5 +640,95 @@ func TestJobsListPassesAnyPreferenceThrough(t *testing.T) {
 	}
 	if err := runJobCLI(t, server.URL, false, "list", "--dismissed", "maybe"); err == nil || !strings.Contains(err.Error(), "true, false or any") {
 		t.Fatalf("--dismissed maybe = %v, want a refusal naming the choices", err)
+	}
+}
+
+// TestJobControlVerbsRunTheCommandOfAJobTheLegacyRoutesDoNotProject covers a Job
+// id from `jobs list` whose Kind the legacy control routes do not project, such
+// as a plugin command run. The legacy route answers 404 for it; the verb then
+// runs the command the Job itself advertises, answering in the legacy shape.
+func TestJobControlVerbsRunTheCommandOfAJobTheLegacyRoutesDoNotProject(t *testing.T) {
+	const jobID = "01a0e1d9-d508-7c6d-a6f8-abaff30a92a9"
+	for _, tt := range []struct{ verb, status, successor string }{
+		{"cancel", "cancelled", ""},
+		{"pause", "paused", ""},
+		{"resume", "resumed", ""},
+		{"retry", "retrying", "01a0e1d9-ffff-7c6d-a6f8-abaff30a92a9"},
+	} {
+		t.Run(tt.verb, func(t *testing.T) {
+			var posted map[string]any
+			var paths []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.Method+" "+r.URL.Path)
+				switch {
+				case r.URL.Path == "/v1/jobs/"+tt.verb:
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"error":"job not found"}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/jobs/"+jobID:
+					writeJobJSON(w, `{"id":"`+jobID+`","version":7,"commands":[{"key":"`+tt.verb+`","endpoint":"/v1/jobs/`+jobID+`/commands/`+tt.verb+`","jobVersion":7,"destructive":true}]}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/jobs/"+jobID+"/commands/"+tt.verb:
+					if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+						t.Errorf("decode command: %v", err)
+					}
+					writeJobJSON(w, `{"jobId":"`+jobID+`","key":"`+tt.verb+`","status":"succeeded","code":"applied","successorId":"`+tt.successor+`"}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			var err error
+			stdout := captureStdout(t, func() { err = runJobCLI(t, server.URL, true, tt.verb, jobID) })
+			if err != nil {
+				t.Fatalf("job %s: %v", tt.verb, err)
+			}
+			if posted["expectedVersion"] != float64(7) || posted["origin"] != "cli" || posted["idempotencyKey"] == "" {
+				t.Fatalf("command body = %v", posted)
+			}
+			var answer struct {
+				Status         string `json:"status"`
+				CanonicalJobID string `json:"canonicalJobId"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &answer); err != nil {
+				t.Fatalf("decode answer %q: %v", stdout, err)
+			}
+			wantJob := jobID
+			if tt.successor != "" {
+				wantJob = tt.successor
+			}
+			if answer.Status != tt.status || answer.CanonicalJobID != wantJob {
+				t.Fatalf("answer = %+v, want status %s for %s", answer, tt.status, wantJob)
+			}
+		})
+	}
+}
+
+// TestJobControlVerbsKeepALegacyNotFound pins that only a canonical Job id falls
+// back: a legacy handle the route does not know is still the route's 404, and a
+// canonical id whose Job does not offer the verb says so.
+func TestJobControlVerbsKeepALegacyNotFound(t *testing.T) {
+	const jobID = "01a0e1d9-d508-7c6d-a6f8-abaff30a92a9"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/jobs/cancel":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"job not found"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/jobs/"+jobID:
+			writeJobJSON(w, `{"id":"`+jobID+`","version":7,"commands":[]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := runJobCLI(t, server.URL, true, "cancel", "38c8bd8500fbcd9f"); err == nil || !strings.Contains(err.Error(), "job not found") {
+		t.Fatalf("an unknown legacy handle = %v, want the route's not found", err)
+	}
+	if err := runJobCLI(t, server.URL, true, "cancel", jobID); err == nil || !strings.Contains(err.Error(), "does not offer cancel") {
+		t.Fatalf("a Job without cancel = %v, want a refusal naming the command", err)
 	}
 }

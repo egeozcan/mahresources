@@ -225,8 +225,9 @@ error when the request fails.
 The singular `mr job submit`, `cancel`, `pause`, `resume`, and `retry` commands
 remain compatibility aliases for existing download scripts. `cancel`, `pause`,
 `resume`, and `retry` accept the Job id `mr jobs list` prints as well as the
-legacy handle `mr job submit` returns. `mr jobs queue` returns the legacy queue
-response explicitly.
+legacy handle `mr job submit` returns. A Job of a Kind the legacy routes do not
+project, such as a plugin command run, is sent the advertised command of the same
+name instead. `mr jobs queue` returns the legacy queue response explicitly.
 
 ## Summary analytics and exports
 
