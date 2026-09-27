@@ -367,129 +367,22 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
     });
 
-    test('a reset boundary drops a cursor this database never issued and reads the Job again', () => {
+    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+        const reload = vi.fn();
+        vi.stubGlobal('location', { reload });
         const center = jobCenter();
-        center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
-        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        center.load = vi.fn();
+        const close = vi.fn();
+        center.eventSource = { close } as any;
         center.lastSequence = 5000;
+        center.load = vi.fn();
 
         center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
-        expect(center.lastSequence).toBe(875);
-        expect(center.load).toHaveBeenCalledTimes(1);
-        expect(center.jobs).toEqual([]);
 
-        // The read again finds the Job as the new database has it, and the next
-        // event is applied rather than dropped under the old cursor.
-        center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
-        center.handleStreamMessage({
-            data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 2, deliverySequence: 876 }),
-            lastEventId: 'v2:876',
-        });
-        expect(center.jobs[0].state).toBe('failed');
-    });
-
-    test('a reset whose Job is gone from the database shows no trace of it', async () => {
-        const center = jobCenter({ detailId: 'gone-job' });
-        center.detail = { id: 'gone-job', title: 'Private export', kind: 'group-export', state: 'failed', version: 10 };
-        center.jobs = [center.detail];
-        center.details = { 'gone-job': center.detail };
-        center.timeline = [{ id: 'e-1', type: 'failed' }];
-        center.fetchJSON = vi.fn(async () => {
-            const error: any = new Error('job not found');
-            error.status = 404;
-            throw error;
-        });
-
-        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:0', reset: true }) });
-        await vi.waitFor(() => expect(center.loading).toBe(false));
-
-        expect(center.detail).toBeNull();
-        expect(center.jobs).toEqual([]);
-        expect(center.details).toEqual({});
-        expect(center.timeline).toEqual([]);
-        expect(center.error).toBe('job not found');
-    });
-
-    test('a detail read begun before a reset cannot bring the old Job back', async () => {
-        const center = jobCenter({ detailId: 'gone-job' });
-        let answerOld: (value: unknown) => void = () => {};
-        const oldRead = new Promise(resolve => { answerOld = resolve; });
-        center.fetchJSON = vi.fn()
-            .mockImplementationOnce(() => oldRead)
-            .mockImplementationOnce(async () => {
-                const error: any = new Error('job not found');
-                error.status = 404;
-                throw error;
-            });
-
-        const first = center.load();
-        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:0', reset: true }) });
-        await vi.waitFor(() => expect(center.error).toBe('job not found'));
-        answerOld({ id: 'gone-job', title: 'Private export', kind: 'group-export', state: 'failed', version: 10 });
-        await first;
-
-        expect(center.detail).toBeNull();
-        expect(center.jobs).toEqual([]);
-        expect(center.error).toBe('job not found');
-        expect(center.loading).toBe(false);
-    });
-
-    test('a snapshot read a stream event began before a reset cannot bring the old Job back', async () => {
-        const center = jobCenter({ detailId: 'live-job' });
-        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'running', version: 9 }];
-        center.streamCaughtUp = true;
-        let answerOld: (value: unknown) => void = () => {};
-        const oldRead = new Promise(resolve => { answerOld = resolve; });
-        const restored = { id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 2 };
-        center.fetchJSON = vi.fn()
-            .mockImplementationOnce(() => oldRead)
-            .mockImplementation(async (url: string) => (url.includes('/events') ? { events: [] } : restored));
-
-        center.handleStreamMessage({
-            data: JSON.stringify({ id: 'e-10', jobId: 'live-job', type: 'failed', sequence: 10, deliverySequence: 40 }),
-            lastEventId: 'v2:40',
-        });
-        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:3', reset: true }) });
-        await vi.waitFor(() => expect(center.detail).toMatchObject({ version: 2 }));
-        answerOld({ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 10 });
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(center.detail).toMatchObject({ state: 'queued', version: 2 });
-        expect(center.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
-    });
-
-    test('a command answered after a reset does not replace the reloaded Job', async () => {
-        const center = jobCenter({ detailId: 'live-job' });
-        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        const held = { id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 10 };
-        center.jobs = [held];
-        center.detail = held;
-        let answerCommand: (value: unknown) => void = () => {};
-        const commandAnswer = new Promise(resolve => { answerCommand = resolve; });
-        const restored = { id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 2 };
-        center.fetchJSON = vi.fn()
-            .mockImplementationOnce(() => commandAnswer)
-            .mockImplementation(async (url: string) => (url.includes('/events') ? { events: [] } : restored));
-
-        const running = center.runCommand(held, { key: 'retry', label: 'Retry', endpoint: '/v1/jobs/live-job/commands/retry', jobVersion: 10 });
-        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:3', reset: true }) });
-        await vi.waitFor(() => expect(center.detail).toMatchObject({ version: 2 }));
-        answerCommand({ result: { job: { ...held, version: 11 } } });
-        await running;
-
-        expect(center.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
-    });
-
-    test('an ordinary boundary never moves the cursor back', () => {
-        const center = jobCenter();
-        center.load = vi.fn();
-        center.lastSequence = 20;
-        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:12' }) });
-        expect(center.lastSequence).toBe(20);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(center.lastSequence).toBe(5000);
         expect(center.load).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
     });
 
     test('does not announce a replay snapshot that finishes loading after the catch-up boundary', async () => {

@@ -19,6 +19,7 @@ import {
     resultURL,
     stateLabel,
     streamCursorSequence,
+    reloadAfterStreamReset,
     progressAccessibleText,
     progressIndeterminate,
     progressText,
@@ -217,8 +218,6 @@ export function jobPanel() {
         _panelRefreshPromise: null,
         _refreshGeneration: 0,
         _streamGeneration: 0,
-        // Bumped when a stream reset drops everything the panel held.
-        _resetGeneration: 0,
         // What the reader has been told about each job: its state and version,
         // and the stream generation that was current when it was recorded. See
         // hearJob.
@@ -887,36 +886,12 @@ export function jobPanel() {
             catch { return; }
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
+            if (reloadAfterStreamReset(boundary, this.eventSource)) return;
             const wasCaughtUp = this.streamCaughtUp;
-            // A reset means the cursor this panel held was never issued by the
-            // database now serving it (a restore or a wipe): the sequences, rows
-            // and versions it holds were numbered by another database, so they
-            // are dropped rather than compared, and the panel reads again.
-            if (boundary.reset === true) this.forgetHeldState();
-            this.lastSequence = boundary.reset === true ? sequence : Math.max(this.lastSequence, sequence);
+            this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
-            if (!wasCaughtUp || boundary.reset === true) this.schedulePanelRefresh();
-        },
-
-        // Drops everything the panel holds about Jobs, including what the reader
-        // was told, and any read still in flight: all of it was numbered by the
-        // database a reset stream no longer speaks for. A restored Job at an
-        // older version would otherwise stay hidden behind the newer row held
-        // for it, and one the database no longer has would stay on screen.
-        //
-        // A read or command answer begun before the reset is dropped when it
-        // lands: loadAdvertisedCommands by the refresh generation, and the
-        // command and preference answers by _resetGeneration, which is noted
-        // before each waits.
-        forgetHeldState() {
-            this._resetGeneration += 1;
-            this._refreshGeneration += 1;
-            this.jobs = [];
-            this.details = {};
-            this._heard = new Map();
-            this._liveVersions = new Map();
-            this._streamTouched = new Map();
+            if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
         async handleStreamMessage(event) {
@@ -1028,10 +1003,9 @@ export function jobPanel() {
         stateTone(job) { return panelStateTone(job); },
 
         async refreshJobPreference(id, spoken = null) {
-            const resetGeneration = this._resetGeneration;
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id && resetGeneration === this._resetGeneration) {
+            if (freshJob?.id) {
                 this.details[id] = freshJob;
                 // A read: any change of state in it is someone else's.
                 this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
@@ -1127,7 +1101,6 @@ export function jobPanel() {
                 if (!accepted) return null;
             }
             const key = commandKey();
-            const resetGeneration = this._resetGeneration;
             // Changes a live event proved, said with the command's notice.
             const proved = [];
             // The notice is said with the proved changes, less any a newer
@@ -1145,9 +1118,7 @@ export function jobPanel() {
                 // state, so a change of state in its answer is someone else's and
                 // is heard as a read; a lifecycle command's answer is the reader's.
                 const keepsRecord = RECORD_COMMANDS.has(command?.key) || command?.key === 'dismiss';
-                if (freshJob?.id && resetGeneration === this._resetGeneration) {
-                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
-                }
+                if (freshJob?.id) this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
                 let preferenceRefreshFailed = false;
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try { await this.refreshJobPreference(job.id, proved); }
@@ -1172,9 +1143,7 @@ export function jobPanel() {
             } catch (error) {
                 const freshJob = error.payload?.job;
                 if (error.status === 409 && freshJob?.id) {
-                    if (resetGeneration === this._resetGeneration) {
-                        this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
-                    }
+                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
                     this.notice = 'This job changed. The latest details are shown.';
                     sayNotice();
                     return null;

@@ -308,7 +308,9 @@ stream then resumes at the viewer's last published event and adds
 cursor as its SSE `id`, so a browser that reconnects before the next event
 resumes from it. Nothing the client missed is replayed, so on a reset it
 discards the sequences it holds, takes the new cursor, and reads its Jobs
-again. An account whose visibility has narrowed since it received its
+again. A page with the Jobs panel, the Job Center or a Job's detail open
+reloads itself on a reset, since everything it shows came from the other
+database. An account whose visibility has narrowed since it received its
 cursor can be reset too; that costs one re-read.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a

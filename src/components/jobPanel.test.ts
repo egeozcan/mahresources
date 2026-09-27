@@ -652,64 +652,6 @@ describe('Job Center panel accessibility hooks', () => {
         });
     });
 
-    test('a reset drops rows held from the old database, so a restored older version is shown', async () => {
-        vi.useFakeTimers();
-        const restored = { id: 'dl-7', title: 'restored.bin', kind: 'remote-download', state: 'queued', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
-        const panel = refreshingPanel([restored]);
-        panel.jobs = [{ ...restored, state: 'failed', version: 10 }];
-        panel.lastSequence = 5000;
-        panel.streamCaughtUp = true;
-        showHeard(panel, panel.jobs);
-
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
-        await vi.advanceTimersByTimeAsync(1000);
-
-        expect(panel.jobs).toHaveLength(1);
-        expect(panel.jobs[0]).toMatchObject({ id: 'dl-7', state: 'queued', version: 2 });
-        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
-        panel.destroy();
-        vi.useRealTimers();
-    });
-
-    test('a command answered after a reset does not replace the row the new database gave', async () => {
-        vi.useFakeTimers();
-        const restored = { id: 'dl-8', title: 'restored.bin', kind: 'remote-download', state: 'queued', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
-        const panel = refreshingPanel([restored]);
-        const held = { ...restored, state: 'failed', version: 10 };
-        panel.jobs = [held];
-        panel.streamCaughtUp = true;
-        let answerCommand: (value: unknown) => void = () => {};
-        const listRead = panel.requestJSON;
-        panel.requestJSON = vi.fn(async (raw: string, init?: any) => {
-            if (init?.method === 'POST') return new Promise(resolve => { answerCommand = resolve; });
-            return listRead(raw);
-        });
-
-        const running = panel.runCommandUnfocused(held, { key: 'retry', label: 'Retry', endpoint: '/v1/jobs/dl-8/commands/retry', jobVersion: 10 });
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:3', reset: true }) });
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(panel.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
-        answerCommand({ result: { job: { ...held, version: 11 } } });
-        await running;
-
-        expect(panel.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
-        panel.destroy();
-        vi.useRealTimers();
-    });
-
-    test('a reset boundary drops a cursor this database never issued and reads the panel again', () => {
-        const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        panel.schedulePanelRefresh = vi.fn();
-        panel.lastSequence = 5000;
-        panel.streamCaughtUp = true;
-
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
-
-        expect(panel.lastSequence).toBe(875);
-        expect(panel.schedulePanelRefresh).toHaveBeenCalledTimes(1);
-    });
-
     // A refresh another job's event triggered can read this job's new state
     // before this job's own event arrives; that event then finds nothing to
     // announce. The refresh has to say it, or the change is never heard.
@@ -734,6 +676,24 @@ describe('Job Center panel accessibility hooks', () => {
         });
         return panel;
     }
+
+    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+        const reload = vi.fn();
+        vi.stubGlobal('location', { reload });
+        const panel = jobPanel();
+        const close = vi.fn();
+        panel.eventSource = { close } as any;
+        panel.lastSequence = 5000;
+        panel.schedulePanelRefresh = vi.fn();
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(panel.lastSequence).toBe(5000);
+        expect(panel.schedulePanelRefresh).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
 
     test('announces a transition a refresh reads before the job\'s own event arrives', async () => {
         const panel = refreshingPanel([{ id: 'dl-1', title: 'clip.mp4', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' }]);

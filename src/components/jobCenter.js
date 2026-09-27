@@ -333,6 +333,19 @@ export function streamCursorSequence(value) {
     return Number.isFinite(sequence) ? sequence : null;
 }
 
+// Answers a `job-caught-up` whose `reset` says the cursor this page resumed from
+// was never issued by the database now serving it: one restored from an older
+// backup, or wiped. Everything the page holds, every answer still on its way
+// and every dialog still open belongs to the database that did, so the page is
+// loaded again rather than repaired in place, and the stream is closed first so
+// nothing it says in the meantime is applied. Returns whether it reloaded.
+export function reloadAfterStreamReset(boundary, eventSource) {
+    if (boundary?.reset !== true) return false;
+    eventSource?.close?.();
+    globalThis.location?.reload?.();
+    return true;
+}
+
 // A succeeded job is complete whatever its last progress row says. Producers
 // publish progress while they work and none rewrites it on the way out, so a
 // finished job keeps whatever was current when the work ended: a plugin action's
@@ -423,7 +436,6 @@ export function jobCenter(options = {}) {
         lastSequence: 0,
         streamCaughtUp: false,
         now: Date.now(),
-        _loadGeneration: 0,
         _clockTimer: null,
         _liveRegion: null,
 
@@ -459,49 +471,31 @@ export function jobCenter(options = {}) {
             return payload;
         },
 
-        // Each load supersedes the ones before it: a read that answers after a
-        // newer one began, such as one begun before a stream reset, is dropped
-        // rather than put back on the page. The rule holds for every read that
-        // applies a Job to the page (this load, a stream event's snapshot read,
-        // a command's answer and a preference refresh): each notes
-        // _loadGeneration before it waits and applies nothing if it moved.
         async load() {
-            const generation = ++this._loadGeneration;
             this.loading = true;
             this.error = '';
             try {
-                await this.loadDetail(this.detailId, generation);
+                await this.loadDetail(this.detailId);
             } catch (error) {
-                if (generation !== this._loadGeneration) return;
-                // A Job that is not there any more, or no longer this viewer's,
-                // leaves nothing of itself on the page.
-                if (error.status === 404) {
-                    this.detail = null;
-                    this.jobs = [];
-                    this.details = {};
-                    this.timeline = [];
-                }
                 this.error = error.message || 'Could not load this job.';
             } finally {
-                if (generation === this._loadGeneration) this.loading = false;
+                this.loading = false;
             }
         },
 
-        async loadDetail(id, generation = this._loadGeneration) {
+        async loadDetail(id) {
             if (!id) throw new Error('A job ID is required.');
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
-            if (generation !== this._loadGeneration) return this.detail;
             this.detail = payload.job || payload;
             this.timelineError = '';
             this.timeline = [];
             if (this.detail?.id) {
                 try {
                     const timelinePayload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/events?limit=100`);
-                    if (generation === this._loadGeneration) this.timeline = timelinePayload.events || [];
+                    this.timeline = timelinePayload.events || [];
                 } catch (error) {
-                    if (generation === this._loadGeneration) this.timelineError = error.message || 'Timeline is unavailable.';
+                    this.timelineError = error.message || 'Timeline is unavailable.';
                 }
-                if (generation !== this._loadGeneration) return this.detail;
             }
             this.details[id] = this.detail;
             this.jobs = this.detail ? [this.detail] : [];
@@ -509,10 +503,9 @@ export function jobCenter(options = {}) {
         },
 
         async refreshJobPreference(id) {
-            const generation = this._loadGeneration;
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id && generation === this._loadGeneration) this.updateJob(freshJob);
+            if (freshJob?.id) this.updateJob(freshJob);
             return freshJob;
         },
 
@@ -530,7 +523,6 @@ export function jobCenter(options = {}) {
                 if (!accepted) return null;
             }
             const key = idempotencyKey();
-            const generation = this._loadGeneration;
             this.notice = '';
             try {
                 const payload = await this.fetchJSON(commandEndpoint(job, command), {
@@ -540,7 +532,7 @@ export function jobCenter(options = {}) {
                 });
                 const outcome = payload.result || payload;
                 const freshJob = outcome.job || payload.job;
-                if (freshJob?.id && generation === this._loadGeneration) this.updateJob(freshJob);
+                if (freshJob?.id) this.updateJob(freshJob);
                 let preferenceRefreshFailed = false;
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try {
@@ -559,7 +551,7 @@ export function jobCenter(options = {}) {
             } catch (error) {
                 if (error.status === 409) {
                     const fresh = error.payload?.job || error.payload?.snapshot;
-                    if (fresh?.id && generation === this._loadGeneration) this.updateJob(fresh);
+                    if (fresh?.id) this.updateJob(fresh);
                     this.notice = error.message || 'This job changed. The latest details are shown.';
                 } else this.notice = error.message || 'The command could not be completed.';
                 this._liveRegion?.announce(this.notice);
@@ -604,21 +596,7 @@ export function jobCenter(options = {}) {
             catch { return; }
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
-            // A reset means the cursor this page held was never issued by the
-            // database now serving it (a restore or a wipe): it starts from the
-            // server's cursor and reads the Job again.
-            if (boundary.reset === true) {
-                // What this page holds was numbered by another database, so it
-                // is dropped rather than compared with what the new one says.
-                this.jobs = [];
-                this.details = {};
-                this.detail = null;
-                this.timeline = [];
-                this.lastSequence = sequence;
-                this.streamCaughtUp = true;
-                this.load();
-                return;
-            }
+            if (reloadAfterStreamReset(boundary, this.eventSource)) return;
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
         },
@@ -637,13 +615,9 @@ export function jobCenter(options = {}) {
             }
             if (result.needsSnapshot) {
                 if (!this.jobs.some(job => job.id === result.jobId)) return;
-                // Like a detail load, a snapshot read that a newer load has
-                // superseded (one a reset began) is dropped when it answers.
-                const generation = this._loadGeneration;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
                         const snapshot = payload.job || payload;
-                        if (generation !== this._loadGeneration) return;
                         if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
                     .catch(() => {});

@@ -475,10 +475,17 @@ describe('job list stream', () => {
         expect(list._refresher.request).toHaveBeenCalledTimes(2);
     });
 
-    test('a stream that reset its cursor reconciles the page even with nothing replayed', () => {
-        const { list, send } = connected();
+    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+        const reload = vi.fn();
+        const { list, stream, send } = connected();
+        vi.stubGlobal('location', { reload });
+        const close = vi.fn();
+        (stream as any).close = close;
         send('job-caught-up', { cursor: 'v2:875', reset: true });
-        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(list._refresher.request).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
     });
 
     test('a reconnect that replays what it missed reconciles the page', () => {
