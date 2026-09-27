@@ -205,7 +205,7 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 	}
 	bound, err := a.forExecution(execution)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a = bound
 	a.ctx.dispatchChecksAnswered(execution.JobID)

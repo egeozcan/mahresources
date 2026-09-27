@@ -580,12 +580,12 @@ func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	// then stream a tree the check would have refused.
 	bound, err := a.forExecution(execution)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a = bound
 	reason, err := a.refusalReason(execution, input)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if reason != "" {

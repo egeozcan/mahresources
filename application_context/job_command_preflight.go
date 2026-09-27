@@ -80,17 +80,25 @@ func (a *downloadJobAdapter) PreflightCommand(_ context.Context, command jobs.Co
 // preflight reports the error instead of refusing a command the account did not
 // earn a refusal for.
 func (ctx *MahresourcesContext) downloadPrincipalRefusal(principalID uint, creator *query_models.ResourceFromRemoteCreator) (jobs.CommandRefusal, error) {
-	roleRefused := jobs.CommandRefusal{Reason: "role-refused",
-		Message: "The account this download would run as can no longer create resources."}
-	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, roleRefused,
+	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, downloadRoleRefused,
 		jobs.CommandRefusal{Reason: "scope-refused", Message: "Download target group is outside your permitted scope."})
 	if scoped == nil || refusal.Reason != "" || err != nil {
 		return refusal, err
 	}
-	if err := scoped.requireWriteRole("run a download"); err != nil {
-		return roleRefused, nil
+	return scoped.downloadRefusalAsBound(creator)
+}
+
+var downloadRoleRefused = jobs.CommandRefusal{Reason: "role-refused",
+	Message: "The account this download would run as can no longer create resources."}
+
+// downloadRefusalAsBound is downloadPrincipalRefusal's check made against the
+// principal this context is already bound to, which is how a dispatch asks it
+// (dispatchBinding bound it, and told a deleted account apart first).
+func (ctx *MahresourcesContext) downloadRefusalAsBound(creator *query_models.ResourceFromRemoteCreator) (jobs.CommandRefusal, error) {
+	if err := ctx.requireWriteRole("run a download"); err != nil {
+		return downloadRoleRefused, nil
 	}
-	outOfScope, err := scoped.downloadTargetsScopeRefusal(creator)
+	outOfScope, err := ctx.downloadTargetsScopeRefusal(creator)
 	if outOfScope != nil {
 		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(outOfScope.Error())}, err
 	}

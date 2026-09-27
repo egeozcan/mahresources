@@ -126,23 +126,32 @@ func commandActorOn(db *gorm.DB, actorID uint) *auth.Principal {
 // too, with the read's error, so a caller that can ask again can tell it was not
 // an answer.
 func commandActorLookup(db *gorm.DB, actorID uint) (*auth.Principal, error) {
+	principal, _, err := accountLookup(db, actorID)
+	return principal, err
+}
+
+// accountLookup is commandActorLookup that also says whether the account is gone:
+// no row with that id. A deletion is permanent, where a disabled account can be
+// enabled again, and a caller deciding whether work can ever run needs to tell the
+// two apart; both still bind the deny-all identity.
+func accountLookup(db *gorm.DB, actorID uint) (*auth.Principal, bool, error) {
 	if actorID == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	if db == nil {
-		return deniedPluginPrincipal(actorID), nil
+		return deniedPluginPrincipal(actorID), false, nil
 	}
 	var user models.User
 	if err := db.Where("id = ?", actorID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return deniedPluginPrincipal(actorID), nil
+			return deniedPluginPrincipal(actorID), true, nil
 		}
-		return deniedPluginPrincipal(actorID), err
+		return deniedPluginPrincipal(actorID), false, err
 	}
 	if user.Disabled {
-		return deniedPluginPrincipal(actorID), nil
+		return deniedPluginPrincipal(actorID), false, nil
 	}
-	return auth.FromUser(&user), nil
+	return auth.FromUser(&user), false, nil
 }
 
 // jobCommandSummaryPlugin answers the plugin name a Job's sanitized summary records,

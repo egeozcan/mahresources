@@ -663,11 +663,11 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 	access, err := executionAccess(job)
 	if err != nil {
 		settled := s.unrunnableClaim(settle, origin, job, claim,
-			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, principalMissingFailure(), err)
+			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, PrincipalMissingFailure(), err)
 		if errors.Is(settled, errUnrunnableUnrecorded) {
 			unrunnable := &UnrunnableClaimError{Reason: blockedReasonPrincipalMissing, Cause: settled}
 			if origin != claimFromExpired {
-				unrunnable.Failure = principalMissingFailure()
+				unrunnable.Failure = PrincipalMissingFailure()
 			}
 			return newExecution(ctx, settle, s, job, claim, Access{}, nil, claimedFrom), unrunnable
 		}
@@ -708,11 +708,12 @@ func (s *Service) unrunnableClaim(deps Deps, origin claimOrigin, job models.Job,
 	return s.blockUnrunnableJob(deps, job, claim, blockReason, cause)
 }
 
-// principalMissingFailure is the outcome of waiting work whose recorded principal
-// was deleted. Deletion is permanent and ids are not reused, so no Resume and no
+// PrincipalMissingFailure is the outcome of waiting work whose recorded principal
+// was deleted, whichever check finds it: the claim's, or a Kind's dispatch that
+// finds the account gone after the claim. Deletion is permanent and ids are not reused, so no Resume and no
 // later pass could ever run it; blocking it only offered a Resume that queued it to
 // block again.
-func principalMissingFailure() *Failure {
+func PrincipalMissingFailure() *Failure {
 	return &Failure{
 		Code:    blockedReasonPrincipalMissing,
 		Class:   FailureClassPolicy,

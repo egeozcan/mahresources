@@ -132,7 +132,7 @@ func (a *similarityRecomputeAdapter) Dispatch(ctx context.Context, execution job
 	}
 	reason, err := a.refusalReason(execution)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if reason != "" {

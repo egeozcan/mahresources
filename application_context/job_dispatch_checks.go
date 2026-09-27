@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sort"
 	"sync"
@@ -98,11 +99,24 @@ func (d *dispatchCheckDeferrals) passOver(kind string, now time.Time) []string {
 	return waiting
 }
 
-// deferDispatch hands a claimed execution whose account or scope read failed back
-// to the queue, and keeps this process from claiming it again until its deferral
-// runs out. A cancellation already recorded against the Job ends it instead
-// (requeueDownloadExecution).
-func (ctx *MahresourcesContext) deferDispatch(execution jobs.Execution, readErr error) error {
+// errDispatchAccountDeleted is dispatchBinding's answer when the account a
+// claimed execution acts as no longer exists.
+var errDispatchAccountDeleted = errors.New("the account this job runs as was deleted")
+
+// answerDispatchCheck settles a claimed execution whose account check did not
+// clear it to run, by what the check found. An account that was deleted after the
+// claim (the claim's own check saw it) can never run the work, so the Job ends
+// failed as the claim would have ended it (jobs.PrincipalMissingFailure), never
+// blocked with a Resume that could not help. A read that failed answered
+// nothing: the execution goes back to the queue, and this process does not claim
+// it again until its deferral runs out. A cancellation already recorded against
+// the Job ends it instead (requeueDownloadExecution). A disabled or demoted
+// account is an answer the caller blocks on; it does not reach here.
+func (ctx *MahresourcesContext) answerDispatchCheck(execution jobs.Execution, readErr error) error {
+	if errors.Is(readErr, errDispatchAccountDeleted) {
+		ctx.dispatchChecksAnswered(execution.JobID)
+		return ctx.finishQueueJob(execution, jobs.StateFailed, jobs.PrincipalMissingFailure(), nil)
+	}
 	wait := ctx.dispatchChecks.deferJob(execution.JobID, execution.Kind, time.Now())
 	log.Printf("warning: the account Job %s acts as could not be checked (%v); it waits in the queue and is asked again in %s",
 		execution.JobID, readErr, wait)
@@ -116,19 +130,22 @@ func (ctx *MahresourcesContext) dispatchChecksAnswered(jobID string) {
 }
 
 // dispatchBinding binds the account a claimed execution acts as, for the checks a
-// dispatch makes and the work it then runs. It is the same resolution
-// principalForPluginActor makes (a deleted or disabled account binds deny-all,
-// which is an answer), except that a read which failed — the account's, or the
-// scope subtree's — is returned rather than bound as deny-all, so the caller can
-// defer the Job instead of refusing it. Work the host runs as itself (no account)
-// gets this context unchanged.
+// dispatch makes and the work it then runs. It is the resolution
+// principalForPluginActor makes (a disabled account binds deny-all, which is an
+// answer), except in two ways, each settled by answerDispatchCheck: an account
+// that no longer exists answers errDispatchAccountDeleted, and a read which failed
+// (the account's, or the scope subtree's) is returned rather than bound as
+// deny-all. Work the host runs as itself (no account) gets this context unchanged.
 func (ctx *MahresourcesContext) dispatchBinding(userID uint) (*MahresourcesContext, error) {
 	if userID == 0 {
 		return ctx, nil
 	}
-	principal, err := commandActorLookup(ctx.db, userID)
+	principal, deleted, err := accountLookup(ctx.db, userID)
 	if err != nil {
 		return nil, err
+	}
+	if deleted {
+		return nil, errDispatchAccountDeleted
 	}
 	bound, err := ctx.withPrincipalWithin(context.Background(), principal)
 	if err != nil {

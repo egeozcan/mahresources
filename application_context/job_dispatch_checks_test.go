@@ -165,3 +165,94 @@ func TestADispatchDeferralDoublesAndForgetsAnAnsweredJob(t *testing.T) {
 		t.Fatalf("a lapsed streak deferred %s, want a fresh second", got)
 	}
 }
+
+// TestADispatchWhoseAccountWasDeletedAfterItsClaimFails pins the three answers a
+// dispatch's account check can give, at the moment the claim-time check cannot
+// see: the account is deleted after the Job was claimed and before its dispatch
+// checks it. Deletion is permanent, so the Job ends failed with the same
+// principal-missing failure the claim path records, never blocked with a Resume
+// that could not run it. A disabled account is still a block (an administrator
+// can enable it again), and a read that fails still sends the Job back to the
+// queue.
+func TestADispatchWhoseAccountWasDeletedAfterItsClaimFails(t *testing.T) {
+	for _, kind := range []string{JobKindRemoteDownload, JobKindGroupExport} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := newJobHarnessContext(t, false)
+			group := createGroupNamed(t, ctx, "dispatch-deleted-"+kind, nil)
+			claimFor := func(name string, disable bool) (jobs.Execution, *models.User) {
+				t.Helper()
+				user, err := ctx.CreateUser(&UserInput{Username: "dispatch-" + name + "-" + kind, Password: "password1", Role: models.RoleUser})
+				if err != nil {
+					t.Fatalf("create user: %v", err)
+				}
+				var input json.RawMessage
+				if kind == JobKindRemoteDownload {
+					creator := &query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/" + name + ".bin"}
+					creator.OwnerId = group.ID
+					input, err = remoteDownloadInputJSON(creator, "")
+				} else {
+					input, err = json.Marshal(exportJobInput{Request: *exportRequestForTest(group.ID)})
+				}
+				if err != nil {
+					t.Fatalf("input: %v", err)
+				}
+				accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+					Kind: kind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+					OwnerUserID: &user.ID, ActorUserID: &user.ID,
+					Replay: jobs.ReplayInput{Input: input},
+				})
+				execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+					Kind: kind, KindVersion: 1, JobID: accepted.ID, Claimant: "dispatch-deleted-test", Lease: time.Minute,
+				})
+				if err != nil || !claimed {
+					t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+				}
+				if disable {
+					if err := ctx.db.Model(&models.User{}).Where("id = ?", user.ID).Update("disabled", true).Error; err != nil {
+						t.Fatalf("disable the account: %v", err)
+					}
+				}
+				return execution, user
+			}
+			dispatch := func(execution jobs.Execution) {
+				t.Helper()
+				adapter, ok := ctx.JobService().AdapterFor(kind, 1)
+				if !ok {
+					t.Fatalf("no adapter for %s", kind)
+				}
+				_ = adapter.Dispatch(context.Background(), execution)
+			}
+
+			// Deleted between the claim and the dispatch's check.
+			deleted, user := claimFor("deleted", false)
+			if err := ctx.DeleteUser(user.ID); err != nil {
+				t.Fatalf("delete the account: %v", err)
+			}
+			dispatch(deleted)
+			ended := jobSnapshot(t, ctx.JobService(), ctx, deleted.JobID)
+			if ended.State != jobs.StateFailed || ended.Failure == nil || ended.Failure.Code != "principal-missing" {
+				t.Fatalf("a Job whose account was deleted after its claim is %s (%+v), want failed as principal-missing", ended.State, ended.Failure)
+			}
+			if blocked := blockedEvents(t, ctx, deleted.JobID); blocked != 0 {
+				t.Fatalf("the Job was blocked %d times on its way to failing", blocked)
+			}
+
+			// Disabled between the claim and the dispatch's check: a block.
+			disabled, _ := claimFor("disabled", true)
+			dispatch(disabled)
+			if snap := jobSnapshot(t, ctx.JobService(), ctx, disabled.JobID); snap.State != jobs.StateBlocked {
+				t.Fatalf("a Job whose account was disabled after its claim is %s, want blocked", snap.State)
+			}
+
+			// A read that fails: back to the queue.
+			unread, _ := claimFor("unread", false)
+			failing := failReadsOf(t, ctx, "users")
+			failing.Store(true)
+			dispatch(unread)
+			failing.Store(false)
+			if snap := jobSnapshot(t, ctx.JobService(), ctx, unread.JobID); snap.State != jobs.StateQueued {
+				t.Fatalf("a Job whose account could not be read is %s, want queued", snap.State)
+			}
+		})
+	}
+}

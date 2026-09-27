@@ -255,7 +255,7 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 
 	reason, err := a.refusalReason(execution, &decoded)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if reason != "" {
@@ -568,12 +568,22 @@ func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobI
 // scope may have narrowed, and a retry or a dispatch after a restart runs on a
 // worker with no request behind it at all. A read that failed is not an answer: it
 // comes back as the error, and dispatch neither runs the work nor blocks it.
+//
+// The account is asked first: one deleted since the claim can never run the work,
+// whatever else would stop it now (answerDispatchCheck).
 func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *downloadJobInput) (string, error) {
+	var bound *MahresourcesContext
+	if execution.Access.UserID != 0 {
+		var err error
+		if bound, err = a.ctx.dispatchBinding(execution.Access.UserID); err != nil {
+			return "", err
+		}
+	}
 	if input.Plugin != "" && !a.ctx.scheduledDownloadPluginAvailable(input.Plugin, nil) {
 		return "plugin-unavailable", nil
 	}
-	if execution.Access.UserID != 0 {
-		refusal, err := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator)
+	if bound != nil {
+		refusal, err := bound.downloadRefusalAsBound(input.Creator)
 		if err != nil {
 			return "", err
 		}

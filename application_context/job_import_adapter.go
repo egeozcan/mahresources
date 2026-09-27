@@ -426,7 +426,7 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	// (dispatchBinding answers this context for it).
 	parsePrincipal, err := a.ctx.dispatchBinding(execution.Access.UserID)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if refusal := importWriteRefusal(parsePrincipal, "parse an import"); refusal != "" {
@@ -770,7 +770,7 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	}
 	bound, err := a.ctx.dispatchBinding(execution.Access.UserID)
 	if err != nil {
-		return a.ctx.deferDispatch(execution, err)
+		return a.ctx.answerDispatchCheck(execution, err)
 	}
 	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if refusal := importWriteRefusal(bound, "apply an import"); refusal != "" {

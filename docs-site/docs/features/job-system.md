@@ -142,8 +142,11 @@ in the API), and `ownerDeleted=true`, **A deleted account** in the Job Center's
 Owner filter, lists them. Work that was still waiting to act as the deleted account never
 runs as anyone else: when its turn comes it ends failed with the code
 `principal-missing`, and a Job that an earlier release blocked for the same
-reason is not offered Resume. A Job claimed or accepted in the same moment as
-the deletion can instead end up blocked as `role-refused`; it still never runs.
+reason is not offered Resume. A download, export, import, Job summary export,
+clustering run or similarity recompute whose account is deleted after its turn
+came, before it checks the account, ends failed the same way. A Job of another
+Kind claimed or accepted in the same moment as the deletion can instead end up
+blocked as `role-refused`; it still never runs.
 Work already running when the account was deleted may still finish. The delete confirmation on `/admin/users` says how
 many of the account's jobs have not finished.
 
