@@ -475,6 +475,12 @@ describe('job list stream', () => {
         expect(list._refresher.request).toHaveBeenCalledTimes(2);
     });
 
+    test('a stream that reset its cursor reconciles the page even with nothing replayed', () => {
+        const { list, send } = connected();
+        send('job-caught-up', { cursor: 'v2:875', reset: true });
+        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+    });
+
     test('a reconnect that replays what it missed reconciles the page', () => {
         const { list, stream, send } = connected();
         send('job-caught-up', { cursor: 'v2:4' });

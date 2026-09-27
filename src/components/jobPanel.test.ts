@@ -651,6 +651,19 @@ describe('Job Center panel accessibility hooks', () => {
         });
     });
 
+    test('a reset boundary drops a cursor this database never issued and reads the panel again', () => {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.schedulePanelRefresh = vi.fn();
+        panel.lastSequence = 5000;
+        panel.streamCaughtUp = true;
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+
+        expect(panel.lastSequence).toBe(875);
+        expect(panel.schedulePanelRefresh).toHaveBeenCalledTimes(1);
+    });
+
     // A refresh another job's event triggered can read this job's new state
     // before this job's own event arrives; that event then finds nothing to
     // announce. The refresh has to say it, or the change is never heard.

@@ -583,6 +583,15 @@ export function jobCenter(options = {}) {
             catch { return; }
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
+            // A reset means the cursor this page held was never issued by the
+            // database now serving it (a restore or a wipe): it starts from the
+            // server's cursor and reads the Job again.
+            if (boundary.reset === true) {
+                this.lastSequence = sequence;
+                this.streamCaughtUp = true;
+                this.load();
+                return;
+            }
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
         },

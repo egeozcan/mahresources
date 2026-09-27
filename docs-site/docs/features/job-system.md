@@ -290,6 +290,21 @@ unit each graphed key was reported in; a key that comes back in another unit
 starts a fresh history. A tick that reports no measure at all, such as an HLS
 stream while it muxes, leaves the history as it was.
 
+Each durable event on the canonical stream carries an SSE `id` of the form
+`v2:<n>`, where `n` is its delivery sequence: the order events were published,
+which keeps each Job's own events in their own sequence. A reconnect resumes
+after the cursor in `Last-Event-ID`, or in the `cursor` query parameter when
+that header is absent, and first replays what was published since. The stream
+then sends `job-caught-up` with the cursor it reached, as
+`{"cursor":"v2:<n>"}`. A resume cursor above the last event the viewer could
+have been handed was issued by a different database, for example one since
+restored from an older backup, or an ephemeral server that restarted. The
+stream then resumes at the viewer's last published event and adds
+`"reset": true` to `job-caught-up`. Nothing the client missed is replayed, so on
+a reset it discards the sequences it holds, takes the new cursor, and reads its
+Jobs again. An account whose visibility has narrowed since it received its
+cursor can be reset too; that costs one re-read.
+
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
 `job-progress` event for every visible Job whose progress changed in the last
 30 seconds and whose current snapshot this connection has not sent yet, up to

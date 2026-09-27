@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -32,6 +33,16 @@ type jobEventContextStub struct {
 	progressErr   error
 	progressSince []time.Time
 	progressMu    sync.Mutex
+	// head is the published head the stream checks a resume cursor against;
+	// nil means every cursor is within it.
+	head *uint64
+}
+
+func (s *jobEventContextStub) GetPublishedJobEventHead() (uint64, error) {
+	if s.head == nil {
+		return math.MaxUint64, nil
+	}
+	return *s.head, nil
 }
 
 func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
@@ -534,5 +545,53 @@ func TestJobTimelineOffersANextPageOnlyWhenOneExists(t *testing.T) {
 		if page.NextSequence != tt.want {
 			t.Fatalf("%s: nextSequence = %d, want %d", tt.query, page.NextSequence, tt.want)
 		}
+	}
+}
+
+// TestCanonicalJobSSEResetsACursorBeyondTheHead covers a tab that outlived a
+// restore or a wipe: it reconnects with a cursor this database never issued.
+// Resuming from it delivers nothing until the new sequence passes the old one,
+// so the stream resumes at the viewer's real head and says it reset.
+func TestCanonicalJobSSEResetsACursorBeyondTheHead(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		lastID     string
+		head       uint64
+		wantAfter  uint64
+		wantMarker string
+	}{
+		{"a cursor beyond the head", "v2:5000", 875, 875, `{"cursor":"v2:875","reset":true}`},
+		{"a cursor beyond an empty stream", "v2:12", 0, 0, `{"cursor":"v2:0","reset":true}`},
+		{"a cursor at the head", "v2:875", 875, 875, `{"cursor":"v2:875"}`},
+		{"a cursor below the head", "v2:874", 875, 874, `{"cursor":"v2:874"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			head := tt.head
+			ctx := &jobEventContextStub{head: &head}
+			response := newSSETestWriter()
+			requestCtx, cancel := context.WithCancel(context.Background())
+			request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(requestCtx)
+			request.Header.Set("Last-Event-ID", tt.lastID)
+			finished := make(chan struct{})
+			go func() {
+				GetCanonicalJobEventsHandler(ctx)(response, request)
+				close(finished)
+			}()
+			select {
+			case <-response.caughtUpWritten:
+			case <-time.After(2 * time.Second):
+				cancel()
+				t.Fatal("SSE did not announce the catch-up boundary")
+			}
+			cancel()
+			<-finished
+
+			if len(ctx.after) == 0 || ctx.after[0] != tt.wantAfter {
+				t.Fatalf("catch-up read from %v, want %d", ctx.after, tt.wantAfter)
+			}
+			if want := "event: job-caught-up\ndata: " + tt.wantMarker + "\n\n"; !strings.Contains(response.String(), want) {
+				t.Fatalf("SSE body = %q, want the marker %q", response.String(), want)
+			}
+		})
 	}
 }

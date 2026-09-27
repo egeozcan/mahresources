@@ -49,6 +49,16 @@ func (ctx *currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, 
 	return scoped.GetPublishedJobEvents(afterDelivery, limit)
 }
 
+// GetPublishedJobEventHead revalidates the credential as the event poll does: the
+// head is read as the principal the stream is delivering to.
+func (ctx *currentJobEventsContext) GetPublishedJobEventHead() (uint64, error) {
+	scoped, err := ctx.current()
+	if err != nil {
+		return 0, err
+	}
+	return scoped.GetPublishedJobEventHead()
+}
+
 // GetLiveJobProgress revalidates the credential exactly as the event poll does:
 // a live progress frame is as much a read of the Job as its events are.
 func (ctx *currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {

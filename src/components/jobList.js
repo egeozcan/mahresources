@@ -237,7 +237,9 @@ export function jobList() {
                 try { boundary = JSON.parse(event.data); } catch { return; }
                 if (streamCursorSequence(boundary?.cursor) === null) return;
                 this.streamCaughtUp = true;
-                if (this._missedWhileCatchingUp) {
+                // A reset stream replays nothing, however much the page missed:
+                // the cursor it resumed from was never issued by this database.
+                if (this._missedWhileCatchingUp || boundary.reset === true) {
                     this._missedWhileCatchingUp = false;
                     this._refresher.request();
                 }

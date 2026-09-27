@@ -73,6 +73,58 @@ func TestCanonicalJobSSEPublishesHTTPSubmission(t *testing.T) {
 	}
 }
 
+// TestCanonicalJobSSEResetsACursorThisDatabaseNeverIssued drives the reconnect a
+// tab makes after the database behind it was restored or wiped: its
+// Last-Event-ID is beyond anything this database published. The stream must say
+// it reset and then deliver the next Job, rather than filtering everything up to
+// a sequence this database has not reached.
+func TestCanonicalJobSSEResetsACursorThisDatabaseNeverIssued(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	response := newCanonicalSSEWriter()
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(streamCtx)
+	request.Header.Set("Last-Event-ID", "v2:999999")
+	finished := make(chan struct{})
+	go func() {
+		tc.Router.ServeHTTP(response, request)
+		close(finished)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("canonical Job SSE did not stop after the client disconnected")
+		}
+	}()
+
+	if !response.waitForText(`"reset":true`, 2*time.Second) {
+		t.Fatalf("a cursor beyond the head was resumed without a reset; stream was %s", response.body())
+	}
+
+	from := time.Now().UTC().Add(-181 * 24 * time.Hour)
+	submitted := tc.MakeRequest(http.MethodPost, "/v1/jobs/summary/export", map[string]any{
+		"from": from, "to": time.Now().UTC(), "format": "json",
+	})
+	if submitted.Code != http.StatusAccepted {
+		t.Fatalf("submit Job answered %d: %s", submitted.Code, submitted.Body.String())
+	}
+	var body struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &body); err != nil || body.Job.ID == "" {
+		t.Fatalf("decode accepted Job %s: %v", submitted.Body.String(), err)
+	}
+	if _, ok := response.waitForAcceptedEvent(t, body.Job.ID, 5*time.Second); !ok {
+		t.Fatalf("the reset stream never delivered the next Job's accepted event; stream was %s", response.body())
+	}
+}
+
 func TestCanonicalJobSSERevalidatesAdminAfterDemotion(t *testing.T) {
 	tc := setupAuthEnv(t)
 	installJobControlPlane(t, tc)

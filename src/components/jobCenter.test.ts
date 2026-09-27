@@ -367,6 +367,33 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
     });
 
+    test('a reset boundary drops a cursor this database never issued and reads the Job again', () => {
+        const center = jobCenter();
+        center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.load = vi.fn();
+        center.lastSequence = 5000;
+
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        expect(center.lastSequence).toBe(875);
+        expect(center.load).toHaveBeenCalledTimes(1);
+
+        center.handleStreamMessage({
+            data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 2, deliverySequence: 876 }),
+            lastEventId: 'v2:876',
+        });
+        expect(center.jobs[0].state).toBe('failed');
+    });
+
+    test('an ordinary boundary never moves the cursor back', () => {
+        const center = jobCenter();
+        center.load = vi.fn();
+        center.lastSequence = 20;
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:12' }) });
+        expect(center.lastSequence).toBe(20);
+        expect(center.load).not.toHaveBeenCalled();
+    });
+
     test('does not announce a replay snapshot that finishes loading after the catch-up boundary', async () => {
         let resolveDetail: (value: unknown) => void = () => {};
         const detailRequest = new Promise(resolve => { resolveDetail = resolve; });

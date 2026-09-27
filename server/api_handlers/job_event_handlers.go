@@ -18,6 +18,7 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
+	GetPublishedJobEventHead() (uint64, error)
 	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
 }
 
@@ -173,6 +174,24 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 
+		// A resume cursor above the last event this viewer could have been handed
+		// was issued by a database this one is not: a tab that outlived a restore
+		// from an older backup, or an ephemeral restart. Waiting for the sequence to
+		// catch up would deliver nothing until it did, so the stream resumes at the
+		// real head and its caught-up marker says it reset, which tells the client
+		// to drop what it holds and read again. A failed read closes the stream, as
+		// a failed poll does, and the client reconnects.
+		reset := false
+		if cursor > 0 {
+			head, err := ctx.GetPublishedJobEventHead()
+			if err != nil {
+				return
+			}
+			if cursor > head {
+				cursor, reset = head, true
+			}
+		}
+
 		const catchupPageSize = jobs.DefaultEventPageSize
 		// The progress snapshot this connection last sent for each Job.
 		sentProgress := map[string]time.Time{}
@@ -209,7 +228,8 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			if !caughtUp {
 				data, err := json.Marshal(struct {
 					Cursor string `json:"cursor"`
-				}{Cursor: fmt.Sprintf("v2:%d", cursor)})
+					Reset  bool   `json:"reset,omitempty"`
+				}{Cursor: fmt.Sprintf("v2:%d", cursor), Reset: reset})
 				if err != nil {
 					return
 				}

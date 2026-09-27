@@ -1107,6 +1107,29 @@ func (s *Service) PublishedEvents(deps Deps, access Access, afterDelivery uint64
 	return eventsOf(rows), nil
 }
 
+// PublishedEventHead returns the delivery sequence of the last published event
+// the asker may see, or zero when there is none: the highest cursor this asker's
+// stream could have handed out. A resume cursor above it was issued by a database
+// this one is not, such as one since restored from an older backup or wiped, and
+// the stream answers it as a reset rather than waiting for the sequence to catch
+// up. It is the asker's own head rather than the allocator's, which would tell an
+// account how much work every other account has done.
+func (s *Service) PublishedEventHead(deps Deps, access Access) (uint64, error) {
+	var heads []uint64
+	err := deps.DB.Model(&models.JobEvent{}).
+		Where("delivery_sequence IS NOT NULL").
+		Where("job_id IN (?)", visibleJobIDs(deps.DB, access)).
+		Order("delivery_sequence DESC").Limit(1).
+		Pluck("delivery_sequence", &heads).Error
+	if err != nil {
+		return 0, fmt.Errorf("jobs: read published event head: %w", err)
+	}
+	if len(heads) == 0 {
+		return 0, nil
+	}
+	return heads[0], nil
+}
+
 // Outputs returns one visible Job's typed outputs.
 //
 // The Job's visibility is the gate and the output is then authorized on its own:

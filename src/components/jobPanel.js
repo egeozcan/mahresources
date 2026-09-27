@@ -886,10 +886,14 @@ export function jobPanel() {
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
             const wasCaughtUp = this.streamCaughtUp;
-            this.lastSequence = Math.max(this.lastSequence, sequence);
+            // A reset means the cursor this panel held was never issued by the
+            // database now serving it (a restore or a wipe): every sequence it
+            // remembers is meaningless, so it starts from the server's and reads
+            // the panel again.
+            this.lastSequence = boundary.reset === true ? sequence : Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
-            if (!wasCaughtUp) this.schedulePanelRefresh();
+            if (!wasCaughtUp || boundary.reset === true) this.schedulePanelRefresh();
         },
 
         async handleStreamMessage(event) {
