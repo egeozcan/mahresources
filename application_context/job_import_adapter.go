@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"mahresources/download_queue"
 	"mahresources/groupio"
@@ -292,25 +291,15 @@ func importUploadName(raw string) string {
 	return truncateUTF8(name, importUploadNameBytes)
 }
 
-// importJobTitle names an import's Job by the archive it was uploaded as, bounded
-// to a title's ceiling, or answers the Kind's own title when there is no name.
+// importJobTitle names an import's Job by the archive it was uploaded as (see
+// job_titles.go for what a title may carry), or answers the Kind's own title when
+// there is no name.
 func importJobTitle(prefix, fileName, untitled string) string {
-	if fileName == "" {
+	name := jobTitleName(fileName)
+	if name == "" {
 		return untitled
 	}
-	return truncateUTF8(prefix+fileName, jobs.MaxTitleBytes)
-}
-
-// truncateUTF8 cuts value to at most limit bytes without splitting a character.
-func truncateUTF8(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	value = value[:limit]
-	for !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value
+	return boundedJobTitle(prefix + name)
 }
 
 func encodeImportParseInput(input json.RawMessage) (json.RawMessage, error) {

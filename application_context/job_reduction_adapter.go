@@ -70,11 +70,22 @@ func reductionComputeJobCodec() jobs.ReplayCodec {
 }
 
 // reductionComputeSummary is the bounded, searchable half of a clustering run's
-// input: which Reduction, and which version of it. A Reduction's name is its
-// owner's own text and stays out of a summary a different reader may search.
+// input: which Reduction, and which version of it. The Reduction's name is in the
+// Job's title instead (reductionComputeJobTitle), which its readers, the owner and
+// the administrators, could already read when the Job was accepted.
 type reductionComputeSummary struct {
 	ReductionID uint `json:"reductionId"`
 	Version     uint `json:"version,omitempty"`
+}
+
+// reductionComputeJobTitle names a clustering run by its Resource Reduction, as a
+// snapshot taken at acceptance (job_titles.go): a later rename does not reach it.
+func reductionComputeJobTitle(reductionName string) string {
+	name := jobTitleName(reductionName)
+	if name == "" {
+		return "Cluster a Resource Reduction"
+	}
+	return boundedJobTitle("Clusters for " + name)
 }
 
 func sanitizeReductionComputeInput(input json.RawMessage) (json.RawMessage, error) {
