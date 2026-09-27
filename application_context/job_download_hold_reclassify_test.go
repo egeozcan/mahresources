@@ -2,10 +2,13 @@ package application_context
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"mahresources/jobs"
 	"mahresources/models/query_models"
+
+	"gorm.io/gorm"
 )
 
 // blockDownloadForTest accepts one download Job and blocks it with the given
@@ -117,5 +120,50 @@ func assertHoldsAreReclassified(t *testing.T, ctx *MahresourcesContext) {
 	// A second start finds nothing left to move.
 	if again, err := ctx.ReclassifyDownloadHolds(); err != nil || again != 0 {
 		t.Fatalf("a second pass reclassified %d (%v), want none", again, err)
+	}
+}
+
+// A hold resumed and blocked again for a refusal after the reclassification read
+// its block is that refusal, and stays blocked: the pass judges the Job at the
+// version it read with the candidate.
+func TestAHoldReclassificationDoesNotRelabelANewerBlock(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	held := blockDownloadForTest(t, ctx, "paused", `{"reason":"paused"}`)
+
+	var once sync.Once
+	const name = "test:reblock-after-the-event-read"
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(name, func(db *gorm.DB) {
+		if db.Statement.Table != "job_events" {
+			return
+		}
+		once.Do(func() {
+			resumed, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+				JobID: held.ID, ExpectedVersion: held.Version, To: jobs.StateQueued,
+			})
+			if err != nil {
+				t.Errorf("resume: %v", err)
+				return
+			}
+			if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+				JobID: held.ID, ExpectedVersion: resumed.Version, To: jobs.StateBlocked,
+				Event: jobs.EventInput{Type: jobs.EventBlocked, Detail: json.RawMessage(`{"reason":"role-refused"}`)},
+			}); err != nil {
+				t.Errorf("block again: %v", err)
+			}
+		})
+	}); err != nil {
+		t.Fatalf("register the interleave: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
+
+	moved, err := ctx.ReclassifyDownloadHolds()
+	if err != nil {
+		t.Fatalf("reclassify: %v", err)
+	}
+	if moved != 0 {
+		t.Fatalf("%d Jobs were reclassified, want none", moved)
+	}
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, held.ID); snap.State != jobs.StateBlocked {
+		t.Fatalf("a Job blocked again for a refusal reads %s, want blocked", snap.State)
 	}
 }

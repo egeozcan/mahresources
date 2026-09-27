@@ -101,6 +101,11 @@ type DownloadJob struct {
 	// did not stop that one.
 	stoppedForShutdown    bool
 	stoppedForShutdownRun uint64
+	// heldSettledRun names the attempt a pause stopped once that attempt's worker
+	// has exited, so nothing of it can write any more (settleHeldAttempt).
+	// heldSettled says it is set: run ids start at zero.
+	heldSettled    bool
+	heldSettledRun uint64
 	// discarded records that the user deleted this job's history row, so a terminal
 	// write still in flight does not re-insert it. See markDiscarded.
 	discarded bool
@@ -232,6 +237,50 @@ func (j *DownloadJob) stoppedForShutdownBy(runID uint64) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	return j.stoppedForShutdown && j.stoppedForShutdownRun == runID
+}
+
+// settleHeldAttempt is what an attempt's worker records as it exits: whether a
+// pause that still stands stopped it. It is the moment the hold may be confirmed
+// to the durable Job, because the attempt's last write (AddResource's included)
+// is behind it; confirming at Pause released the Job's claim while the attempt
+// could still be saving a file. An attempt a Resume has replaced, or one that ended
+// any other way, is not held.
+func (j *DownloadJob) settleHeldAttempt(runID uint64) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.runID != runID || j.Status != JobStatusPaused {
+		return false
+	}
+	j.heldSettled, j.heldSettledRun = true, runID
+	return true
+}
+
+// HoldSettled reports whether the job is paused and the attempt the pause stopped
+// has exited, so no write of that attempt is still to come.
+func (j *DownloadJob) HoldSettled() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.Status == JobStatusPaused && j.heldSettled && j.heldSettledRun == j.runID
+}
+
+// completeLatePause stamps completed a paused job whose attempt saved its file
+// before the pause could stop it. The pause landed too late: the download is done,
+// and a job left paused beside the file it created would restart the transfer on
+// Resume only to find the bytes already in the library. A cancel is different, and
+// outranks the success (finishSnapshotWithReason); a cancelled job is not paused.
+func (j *DownloadJob) completeLatePause(runID uint64, resourceID uint, completedAt time.Time) (*DownloadJob, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.runID != runID || j.Status != JobStatusPaused || j.cancelRequested || resourceID == 0 {
+		return nil, false
+	}
+	j.Status = JobStatusCompleted
+	j.Error = ""
+	j.FailureReason, j.FailureCode, j.ExistingResourceID = "", "", nil
+	j.CompletedAt = &completedAt
+	id := resourceID
+	j.ResourceID = &id
+	return j.snapshotLocked(), true
 }
 
 // canonicalForRun answers the durable execution an attempt publishes under, read

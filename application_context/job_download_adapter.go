@@ -297,11 +297,9 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	// durable rather than a call into this process: a resume queues the Job, so a
 	// paused entry reached by a *dispatch* is one whose hold the person released —
 	// whereas a Job that is still running under a paused entry is a hold nobody
-	// released, and restarting it would undo what its owner deliberately stopped.
-	if entry.GetStatus() == download_queue.JobStatusPaused {
-		if !a.queuedForDispatch(execution) {
-			return a.ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, entry.Snapshot())
-		}
+	// released, and restarting it would undo what its owner deliberately stopped:
+	// the wait below records it once the attempt the pause stopped has unwound.
+	if entry.GetStatus() == download_queue.JobStatusPaused && a.queuedForDispatch(execution) {
 		if err := a.ctx.downloadManager.ResumeExclusive(entry.ID); err != nil {
 			var busy *download_queue.URLActiveError
 			if errors.As(err, &busy) {
@@ -321,10 +319,20 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		return err
 	}
 	if snap.Status == download_queue.JobStatusPaused {
-		// The executor holds the transfer. The queue's own mirror normally records
-		// that at once; this is the same record, for a mirror whose write did not
-		// land, so the Job does not stay running over a transfer nobody is fetching.
-		return a.ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, snap)
+		// The executor holds the transfer and the attempt it stopped has exited. The
+		// queue's own mirror records that as the attempt exits; this is the same
+		// record, for a mirror whose write did not land, so the Job does not stay
+		// running over a transfer nobody is fetching. One that still cannot be
+		// written is an unfinished publication, never the dispatch's failure: the
+		// Job keeps its claim, and reconciliation brings it back here.
+		if err := a.ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, snap); err != nil {
+			if mirrorRefusalIsSilent(err) {
+				return nil
+			}
+			log.Printf("warning: the pause of download Job %s could not be recorded (%v); its lease settles it", execution.JobID, err)
+			return errQueuePublicationUnfinished
+		}
+		return nil
 	}
 	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
 		return a.publishOutcome(execution, finished)
@@ -622,8 +630,9 @@ func (a *downloadJobAdapter) block(execution jobs.Execution, reason string) erro
 }
 
 // waitForTerminal blocks until the queue entry reaches a terminal status or is
-// paused, the context is cancelled, or the entry disappears from this process's
-// queue.
+// held with the attempt the pause stopped gone, the context is cancelled, or the
+// entry disappears from this process's queue. A pause answered while its attempt
+// is still saving a file is not yet a hold: that attempt may still complete it.
 func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, execution jobs.Execution, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, error) {
 	// One read before the loop: a transfer that finished while the Job was being
 	// claimed needs no wait at all.
@@ -639,7 +648,7 @@ func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, execution jobs
 			return nil, ctx.Err()
 		case <-ticker.C:
 			snap := entry.Snapshot()
-			if downloadTerminal(snap.Status) || snap.Status == download_queue.JobStatusPaused {
+			if downloadTerminal(snap.Status) || (snap.Status == download_queue.JobStatusPaused && entry.HoldSettled()) {
 				return snap, nil
 			}
 			// A cancellation or a pause recorded against this Job by anybody — another
@@ -1102,11 +1111,12 @@ func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.Co
 			}
 			return jobs.CommandOutcome{}, err
 		}
-		// The queue's mirror records the hold as it confirms it. Only a Job that
-		// reached paused is reported paused: a mirror write that did not land
-		// leaves the request standing, which the wait for the transfer settles.
-		if current, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID); err == nil &&
-			current.State == jobs.StatePaused {
+		// The Job is paused once the attempt this stopped has exited, which is
+		// normally at once; a file being saved when the pause landed can take
+		// longer, or complete the download instead. Only a Job that reached paused
+		// within jobDownloadPauseAnswerWait is reported paused, and the request
+		// stands otherwise.
+		if a.awaitDownloadPaused(execution.JobID) {
 			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPausedMessage}, nil
 		}
 		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
@@ -1156,6 +1166,30 @@ func (s *jobDownloadSink) DownloadHeld(ref download_queue.CanonicalRef, snap *do
 
 // jobDownloadPauseConfirmation is what Pause asks before it holds a download.
 const jobDownloadPauseConfirmation = "Pause this download? The bytes received so far are discarded, and Resume starts it again from the beginning."
+
+// jobDownloadPauseAnswerWait bounds how long a Pause answered in the process
+// running the transfer waits to say "Paused" rather than "Pause requested".
+const jobDownloadPauseAnswerWait = 2 * time.Second
+
+// awaitDownloadPaused reports whether a Job reaches paused within
+// jobDownloadPauseAnswerWait. A read that fails is not an answer, and reads as not
+// paused yet.
+func (a *downloadJobAdapter) awaitDownloadPaused(jobID string) bool {
+	deadline := time.Now().Add(jobDownloadPauseAnswerWait)
+	for {
+		current, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err == nil && current.State == jobs.StatePaused {
+			return true
+		}
+		if err == nil && current.State != jobs.StateRunning {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
 
 // jobDownloadPauseRequestedMessage answers a pause the transfer has not
 // confirmed yet: the process fetching the file holds it when it next reads the Job.

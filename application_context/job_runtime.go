@@ -286,16 +286,11 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		}
 		// A Kind can name waiting Jobs that cannot start yet, so they stay waiting
 		// and hold nothing instead of being claimed only to be handed back.
-		var passOver []string
-		if excluder, ok := registration.Adapter.(interface{ ClaimExclusions() []string }); ok {
-			passOver = excluder.ClaimExclusions()
-		}
-		// And every Kind's waiting Jobs whose last dispatch could not check the
-		// account they act as, until their deferral runs out.
-		if r.ctx != nil {
-			passOver = append(passOver, r.ctx.dispatchChecks.passOver(registration.Definition.Kind, time.Now())...)
-		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
+			// Asked before every claim rather than once per pass: an execution this
+			// pass started can hand its Job back and name it here before the next
+			// claim, and a list read once would claim it again at once.
+			passOver := r.claimPassOver(registration)
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:          registration.Definition.Kind,
 				KindVersion:   registration.Definition.KindVersion,
@@ -316,6 +311,21 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			r.startExecution(registration.Adapter, execution, r.executionLeaseFor(registration.Adapter))
 		}
 	}
+}
+
+// claimPassOver names the waiting Jobs of one Kind that cannot start yet, which the
+// claim passes over so they wait holding nothing: the Kind's own (ClaimExclusions),
+// and every Kind's whose last dispatch could not check the account it acts as,
+// until its deferral runs out.
+func (r *JobRuntime) claimPassOver(registration jobs.AdapterRegistration) []string {
+	var passOver []string
+	if excluder, ok := registration.Adapter.(interface{ ClaimExclusions() []string }); ok {
+		passOver = excluder.ClaimExclusions()
+	}
+	if r.ctx != nil {
+		passOver = append(passOver, r.ctx.dispatchChecks.passOver(registration.Definition.Kind, time.Now())...)
+	}
+	return passOver
 }
 
 // executionLeaseFor is the lease this runtime heartbeats one execution at: the

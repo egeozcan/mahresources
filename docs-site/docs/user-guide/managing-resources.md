@@ -369,8 +369,8 @@ Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
 groups work needing attention, active and scheduled work, and recently finished
 work that needs nothing more (**Finished, no attention needed**: succeeded and
 cancelled Jobs, since failed ones are under **Needs attention**). A scheduled Job says when it
-starts, and how long that is from now, in the panel, on the Job Center card and
-on its page. Only running work shows a moving progress bar; a Job that is
+starts on the Job Center card, and in the panel and on its page also how long
+that is from now. Only running work shows a moving progress bar; a Job that is
 waiting, paused or stopped shows only what it reported. A running
 Job shows its progress bar, speed, time left, any figures it reports and a graph
 of its speed; see [Progress, metrics and graphs](../features/job-system.md#progress-metrics-and-graphs). The Job Center lists every Job you can see: downloads, exports,

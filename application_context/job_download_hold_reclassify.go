@@ -43,6 +43,10 @@ func (ctx *MahresourcesContext) ReclassifyDownloadHolds() (int, error) {
 			return moved, fmt.Errorf("read blocked downloads: %w", err)
 		}
 		for _, candidate := range candidates {
+			// The version read with the candidate is the one the checked block is
+			// judged at: a Resume and a new block landing after it move the version,
+			// and the guarded write then refuses rather than relabelling the newer
+			// block as a pause.
 			held, err := ctx.downloadBlockIsHold(candidate.ID)
 			if err != nil {
 				return moved, err
@@ -54,11 +58,11 @@ func (ctx *MahresourcesContext) ReclassifyDownloadHolds() (int, error) {
 			if err != nil {
 				return moved, err
 			}
-			progress := snap.Progress
-			progress.Phase = ""
-			progress.Message = jobDownloadPausedMessage
-			progress.ETA = nil
-			_, err = service.PauseBlockedHold(ctx.jobDeps(), candidate.ID, snap.Version, jobDownloadPausedDetail, &progress)
+			if snap.Version != candidate.Version {
+				continue
+			}
+			progress := pausedDownloadProgress(snap.Progress)
+			_, err = service.PauseBlockedHold(ctx.jobDeps(), candidate.ID, candidate.Version, jobDownloadPausedDetail, &progress)
 			switch {
 			case err == nil:
 				moved++

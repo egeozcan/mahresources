@@ -250,8 +250,10 @@ deployment's policy and limits.
   version when the command runs.
 - **Pause** -- A running download offers **Pause** in the Jobs panel, on its Job
   page and as the `pause` command. The server process fetching the file stops
-  the transfer, and the Job becomes `paused`, whether the pause came from the
-  Job Center, from another server process or from the compatibility endpoints.
+  the transfer, and once the transfer has stopped writing, the Job becomes
+  `paused`, whether the pause came from the Job Center, from another server
+  process or from the compatibility endpoints. A pause that lands after the file
+  was saved is too late: the download completes with its resource.
   The queue keeps no partial bytes, so **Resume** starts the download again
   from the beginning. Pause asks for confirmation and says so before it acts,
   and the paused row says it again. When the request reaches a server process

@@ -781,6 +781,9 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// against a *later* attempt's live context — and report `failed` for a download
 	// its own pause had cancelled.
 	runID, ctx := job.attempt()
+	// Registered first, so it runs last: after the semaphore slot is given back and
+	// after every write this attempt makes, a pause that stopped it is confirmed.
+	defer dm.confirmHeldAttempt(job, runID)
 
 	domainLease, ok := dm.acquireDomainGate(ctx, job)
 	if !ok {
@@ -843,6 +846,11 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// a Pause landing between the two was silently overwritten, and a Pause landing
 	// just before the read stranded the job (see DownloadJob.finish).
 	snap, stamped := job.finishSnapshotWithReason(runID, status, errMsg, failure, resourceID, time.Now())
+	if !stamped && resourceID != 0 {
+		// A pause stopped the attempt after its file was saved: that pause was too
+		// late, and the download completes (completeLatePause).
+		snap, stamped = job.completeLatePause(runID, resourceID, time.Now())
+	}
 	if !stamped {
 		return
 	}
@@ -1538,12 +1546,22 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	}
 
 	dm.notifyJob("updated", job)
-	// The durable Job records the hold this call confirmed: it is paused, and its
-	// Resume starts the transfer again from the beginning, since the queue keeps no
-	// partial bytes. How the hold is recorded is the mirror's decision.
-	dm.mirrorHeld(job)
+	// The durable Job is told when the attempt this stopped has exited
+	// (confirmHeldAttempt), not here: until then the attempt may still be saving a
+	// file, and the Job keeps its claim while it can.
 
 	return nil
+}
+
+// confirmHeldAttempt confirms a pause to the durable Job once the attempt it
+// stopped has exited. The Job is then paused, and its Resume starts the transfer
+// again from the beginning, since the queue keeps no partial bytes; how the hold is
+// recorded is the mirror's decision.
+func (dm *DownloadManager) confirmHeldAttempt(job *DownloadJob, runID uint64) {
+	if !job.settleHeldAttempt(runID) {
+		return
+	}
+	dm.mirrorHeld(job)
 }
 
 // Resume resumes a paused download job by ID
