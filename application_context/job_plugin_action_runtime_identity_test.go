@@ -131,3 +131,40 @@ func exerciseTheRuntimeIdentityScrub(t *testing.T, ctx *MahresourcesContext) {
 		t.Fatalf("a second scrub = %d, %v; want nothing left to do", again, err)
 	}
 }
+
+// The identity is stored as its own string and read back unchanged, whatever
+// fields it carries, so a later release that adds one to it (a per-process
+// nonce) does not lose it here and turn a live process's own work into work of
+// an unknown one.
+func TestTheOriginRuntimeIsStoredOpaque(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	identity := "a-rather-long-host-name.internal.example/45D21A7C-39C3-4CBC-B5B9-F3C23F9680DC/4242/8d3c1f0e9b7a6d5c"
+	accepted := acceptClosureJobForTest(t, ctx, identity)
+	recorded, err := ctx.JobService().OriginRuntime(ctx.jobDeps(), accepted.ID)
+	if err != nil || recorded != identity {
+		t.Fatalf("the origin runtime read back as %q, %v; want %q", recorded, err, identity)
+	}
+}
+
+// A closure accepted by an older process running beside this one still carries
+// its identity in the summary until the next start scrubs it; adoption reads it
+// there rather than treating the closure as one nobody can account for.
+func TestAdoptionReadsTheRuntimeOfARowTheScrubHasNotReached(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	gone := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4243"
+	accepted, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "plugin", Title: "written by an older process", Replay: jobs.ReplayInput{NonReplayable: true},
+		Summary: json.RawMessage(`{"subtype":"closure-start-job","plugin":"` + pluginActionTestPlugin + `","runtime":"` + gone + `"}`),
+	})
+	if err != nil {
+		t.Fatalf("accept the older process's closure: %v", err)
+	}
+	withdrawn := waitForJobState(t, ctx, accepted.ID, "the orphaned closure to be withdrawn", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if withdrawn.State != jobs.StateCancelled || lastEventType(t, ctx, accepted.ID) != "not-started" {
+		t.Fatalf("an older process's orphaned closure ended %s (last event %q), want withdrawn as never started",
+			withdrawn.State, lastEventType(t, ctx, accepted.ID))
+	}
+}

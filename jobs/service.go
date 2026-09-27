@@ -386,8 +386,8 @@ func validateAcceptance(a *Acceptance) error {
 	} else {
 		a.Summary = nil
 	}
-	if len(a.OriginRuntime) > MaxClaimantBytes {
-		return invalid("origin runtime is %d bytes, over the %d-byte ceiling", len(a.OriginRuntime), MaxClaimantBytes)
+	if len(a.OriginRuntime) > MaxOriginRuntimeBytes {
+		return invalid("origin runtime is %d bytes, over the %d-byte ceiling", len(a.OriginRuntime), MaxOriginRuntimeBytes)
 	}
 	if a.OwnerUserID != nil && *a.OwnerUserID == 0 {
 		return invalid("owner user id 0 is not an identity")

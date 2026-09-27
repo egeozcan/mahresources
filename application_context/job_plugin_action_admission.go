@@ -639,6 +639,9 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 			log.Printf("warning: could not read the origin runtime of plugin job %s: %v", job.ID, err)
 			return false
 		}
+		if recorded == "" {
+			recorded = legacySummaryRuntime(job.Summary)
+		}
 		identity, ok := plugin_system.ParseRuntimeIdentity(recorded)
 		if ok && identity.Liveness() == plugin_system.RuntimeGone {
 			if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: job.ID}, "not-started",

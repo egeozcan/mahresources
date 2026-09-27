@@ -59,7 +59,7 @@ func (ctx *MahresourcesContext) ScrubPluginActionRuntimeFromSummaries() (int, er
 			updates := map[string]any{"summary": types.JSON(cleaned)}
 			var runtime string
 			if json.Unmarshal(raw, &runtime) == nil && row.OriginRuntime == "" &&
-				runtime != "" && len(runtime) <= jobs.MaxClaimantBytes {
+				runtime != "" && len(runtime) <= jobs.MaxOriginRuntimeBytes {
 				updates["origin_runtime"] = runtime
 			}
 			if err := ctx.db.Model(&models.Job{}).Where("id = ?", row.ID).UpdateColumns(updates).Error; err != nil {
@@ -71,4 +71,18 @@ func (ctx *MahresourcesContext) ScrubPluginActionRuntimeFromSummaries() (int, er
 			return scrubbed, nil
 		}
 	}
+}
+
+// legacySummaryRuntime reads the runtime identity from a summary written before
+// the identity moved to the Job's OriginRuntime, for a row the scrub has not
+// rewritten yet: one written by an older process still running beside this one.
+// An unreadable summary yields an empty identity, which proves nothing.
+func legacySummaryRuntime(summary json.RawMessage) string {
+	var legacy struct {
+		Runtime string `json:"runtime"`
+	}
+	if len(summary) == 0 || json.Unmarshal(summary, &legacy) != nil {
+		return ""
+	}
+	return legacy.Runtime
 }

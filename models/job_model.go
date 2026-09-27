@@ -103,11 +103,12 @@ type Job struct {
 	ExecutionToken string `gorm:"size:36" json:"-"`
 
 	// OriginRuntime names the process whose memory a non-restorable Job's work
-	// lives in (host, boot session and pid), so reconciliation can prove that
-	// process gone. It is host-internal like ExecutionToken: it belongs to no
-	// summary, no public projection and no search. Empty for every Kind that
-	// does not record one.
-	OriginRuntime string `gorm:"size:120;not null;default:''" json:"-"`
+	// lives in, so reconciliation can prove that process gone. It is stored as
+	// the identity's own string form and never parsed on the way in, so a field
+	// the identity gains later survives. It is host-internal like
+	// ExecutionToken: it belongs to no summary, no public projection and no
+	// search. Empty for every Kind that does not record one.
+	OriginRuntime string `gorm:"size:512;not null;default:''" json:"-"`
 
 	// ControlIntent is durable control intent that has been requested but not
 	// yet reached its outcome state: "" or "cancel" or "pause".

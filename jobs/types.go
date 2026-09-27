@@ -1393,6 +1393,10 @@ const (
 	DefaultClaimBatch = 8
 	// MaxClaimantBytes bounds the claimant identity a claim records.
 	MaxClaimantBytes = 120
+	// MaxOriginRuntimeBytes bounds the runtime identity an acceptance records.
+	// It is wider than a claimant because the identity carries a host name, which
+	// may be long, and it is stored opaque: a field added to it later must fit.
+	MaxOriginRuntimeBytes = 512
 	// MaxCapacityGroupBytes bounds a concurrency budget's name, which is stored
 	// on every capacity row that occupies it and on nothing else.
 	MaxCapacityGroupBytes = 120
