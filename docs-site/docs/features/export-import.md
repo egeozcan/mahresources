@@ -143,11 +143,11 @@ Groups, notes, and resources each carry a stable GUID assigned on create and wri
 | `skip` | Leave the existing row untouched, including its many-to-many links |
 | `replace` | Replace the existing row's content from the archive payload |
 
-GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item and `guid_conflict` per schema mapping. The CLI flag is `--guid-collision-policy`.
+GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item, `guid_conflict` per schema mapping, and `conflicts.resource_guid_matches` for the resources this policy decides. The CLI flag is `--guid-collision-policy`.
 
 ### Resource Collision Policy
 
-When a resource in the archive has the same SHA1 hash as an existing resource on the destination:
+When a resource in the archive has the same SHA1 hash as an existing resource on the destination, and no resource there carries its GUID (a GUID match is decided by the GUID collision policy above, whatever the content). The plan counts these resources as `conflicts.resource_hash_matches`:
 
 | Policy | Behavior |
 |--------|----------|

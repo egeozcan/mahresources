@@ -114,9 +114,18 @@ type DanglingRefPlan struct {
 	RelationTypeName string `json:"relation_type_name,omitempty"`
 }
 
+// ConflictSummary counts what the archive shares with this instance, split the
+// way the apply decides it.
 type ConflictSummary struct {
+	// ResourceHashMatches counts the resources whose content already exists here
+	// and whose GUID matches nothing: the resource collision policy decides them.
 	ResourceHashMatches int `json:"resource_hash_matches"`
-	GUIDMatches         int `json:"guid_matches"`
+	// ResourceGUIDMatches counts the resources whose GUID already exists here. The
+	// GUID policy decides them before their content is looked at.
+	ResourceGUIDMatches int `json:"resource_guid_matches"`
+	// GUIDMatches counts every group, note and resource whose GUID already exists
+	// here.
+	GUIDMatches int `json:"guid_matches"`
 }
 
 // ImportDecisions holds all user decisions from the review screen.

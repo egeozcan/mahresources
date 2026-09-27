@@ -21,7 +21,10 @@ Use `--dry-run` to inspect the plan without mutating state. Use
 `--parent-group <id>` to graft imported top-level groups under an
 existing parent. Use `--on-resource-conflict=skip|duplicate` and
 `--guid-collision-policy=merge|skip|replace` to steer conflict
-resolution. For full manual control over every mapping/dangling/shell
+resolution. A resource whose GUID already exists here is decided by the
+GUID policy and never reaches the content check, so the plan counts the
+two apart: `conflicts.resource_guid_matches` for the GUID policy and
+`conflicts.resource_hash_matches` for the resource conflict policy. For full manual control over every mapping/dangling/shell
 decision, pass `--decisions <json-file>` produced from a prior dry-run.
 Mappings are otherwise resolved from the plan's own suggestions, which is
 what `--auto-map` (on by default) does, falling back to `create` where

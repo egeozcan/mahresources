@@ -134,7 +134,8 @@ cat plan.json | python3 -m json.tool | less
 Key fields to check:
 - `counts` -- groups, resources, notes, blobs to be processed
 - `mappings` -- categories, tags, note types, resource categories, group relation types and their suggested actions (`create`, `map`, or ambiguous)
-- `conflicts.resource_hash_matches` -- resources already present on destination
+- `conflicts.resource_guid_matches` -- resources whose GUID already exists on the destination; the GUID collision policy decides them
+- `conflicts.resource_hash_matches` -- resources whose content already exists on the destination and whose GUID matches nothing there; the resource collision policy decides them
 - `dangling_refs` -- references to entities outside the export scope
 
 **Step 3: Create a decisions file**
@@ -176,7 +177,7 @@ This re-uploads the tar, parses it, and applies using your explicit decisions. T
 
 ### Resource hash collisions
 
-When a resource in the tar has the same hash as one already on the destination, the default policy is `skip` -- the existing resource is kept and the import moves on.
+When a resource in the tar has the same hash as one already on the destination, and no resource there carries its GUID, the default policy is `skip` -- the existing resource is kept and the import moves on. A resource whose GUID matches is decided by the GUID collision policy below instead, whatever its content.
 
 To create duplicate records instead (separate resource entries pointing to the same content):
 
