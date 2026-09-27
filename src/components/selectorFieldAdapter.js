@@ -30,6 +30,12 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
     // Chip-input: when true, a space also commits the current token. Off by default so
     // multi-word tag names stay typeable in every existing form (comma always commits).
     const { commitOnSpace } = profile.interaction;
+    // The frame that re-checks where the combobox is while the dropdown is open, and the box
+    // the dropdown was last placed against. Closure state rather than component data: it
+    // changes every frame and nothing renders from it, so it must not go through Alpine's
+    // reactive proxy.
+    let anchorFrame = 0;
+    let anchorBox = '';
 
     return {
         max,
@@ -309,6 +315,8 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             this._form = null;
             this._formSubmitHandler = null;
             this._formResetHandler = null;
+            if (anchorFrame) cancelAnimationFrame(anchorFrame);
+            anchorFrame = 0;
             if (this._repositionHandler) {
                 window.removeEventListener('scroll', this._repositionHandler, true);
                 window.removeEventListener('resize', this._repositionHandler);
@@ -339,6 +347,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             if (shouldShow) {
                 if (!popover.matches(':popover-open')) popover.showPopover();
                 this.positionDropdown();
+                this._followAnchor();
             } else {
                 // `matches(':popover-open')` can lag a core-driven close by one Alpine tick.
                 // hidePopover is idempotent for an already-hidden manual popover.
@@ -350,12 +359,38 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             }
         },
 
+        // The dropdown is a top-layer popover, so it does not move with its combobox, and the
+        // scroll and resize listeners do not see the combobox move when content above it
+        // changes height: a results list reloading above a picker filter, a message appearing
+        // over a form field. Left alone the list stays where the combobox used to be, detached
+        // from it and lying over whatever moved in underneath. While the dropdown is open each
+        // frame compares the combobox's box with the one it was placed against, which costs
+        // one layout read per frame and only while a list is showing.
+        _followAnchor() {
+            if (anchorFrame) return;
+            const follow = () => {
+                anchorFrame = 0;
+                const popover = this._refEl('dropdown');
+                const input = this._refEl('autocompleter');
+                if (this._destroyed || !input || !popover?.matches?.(':popover-open')) {
+                    anchorBox = '';
+                    return;
+                }
+                const box = input.getBoundingClientRect();
+                const key = `${box.left},${box.top},${box.width},${box.height}`;
+                if (key !== anchorBox) this.positionDropdown();
+                anchorFrame = requestAnimationFrame(follow);
+            };
+            anchorFrame = requestAnimationFrame(follow);
+        },
+
         positionDropdown() {
             const popover = this._refEl('dropdown');
             const input = this._refEl('autocompleter');
             if (!popover || !input) return;
 
             const inputRect = input.getBoundingClientRect();
+            anchorBox = `${inputRect.left},${inputRect.top},${inputRect.width},${inputRect.height}`;
             const popoverHeight = popover.offsetHeight;
             const spaceBelow = window.innerHeight - inputRect.bottom;
             const spaceAbove = inputRect.top;
