@@ -255,6 +255,12 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	entry, found := a.ctx.downloadManager.GetJobByCanonicalJobID(execution.JobID)
 	if !found {
 		ended, err := a.whenTheURLIsFree(ctx, execution, func() error {
+			// Asked of the queue's memory first, so a waiting Job reads nothing from
+			// the database until the URL is free; the start itself decides again,
+			// under the queue's lock.
+			if live := a.ctx.downloadManager.OtherActiveTransfer(decoded.Creator.URL, execution.JobID); live != "" {
+				return &download_queue.URLActiveError{JobID: live}
+			}
 			started, err := a.start(execution, &decoded)
 			entry = started
 			return err

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,18 @@ import (
 // is the reader's own, which is already a sentence the uploader can act on.
 type ArchiveError struct {
 	Err error
+}
+
+// archiveContentError marks err as the archive's own when it is, and returns it
+// unchanged when the staged file could not be read at all: a read that failed is
+// the server's failure, and its text names where the file is staged.
+func archiveContentError(err error) error {
+	var pathErr *fs.PathError
+	var syscallErr *os.SyscallError
+	if errors.As(err, &pathErr) || errors.As(err, &syscallErr) {
+		return err
+	}
+	return &ArchiveError{Err: err}
 }
 
 func (e *ArchiveError) Error() string { return e.Err.Error() }
@@ -52,13 +65,13 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 	if err != nil {
 		// Finding 106: archive.NewReader/ReadManifest already return a sentence a
 		// reader can act on. Re-wrapping turned it back into a call chain.
-		return nil, &ArchiveError{Err: err}
+		return nil, archiveContentError(err)
 	}
 	defer r.Close()
 
 	manifest, err := r.ReadManifest()
 	if err != nil {
-		return nil, &ArchiveError{Err: err}
+		return nil, archiveContentError(err)
 	}
 
 	collector := &importDataCollector{
@@ -72,7 +85,7 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 		return nil, err
 	}
 	if err := r.Walk(collector); err != nil {
-		return nil, &ArchiveError{Err: fmt.Errorf("walk archive: %w", err)}
+		return nil, archiveContentError(fmt.Errorf("walk archive: %w", err))
 	}
 
 	if err := cancelCtx.Err(); err != nil {
