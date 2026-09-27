@@ -152,6 +152,32 @@ func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snaps
 	return nil, "", "", false, nil
 }
 
+// resolveQueueBackedJobID answers the Job a canonical id names, when that Job is one
+// the legacy routes project: the id `/v1/jobs` and `mr jobs list` print, handed to a
+// route that has always taken a handle.
+//
+// A canonical id is the Job's immutable identity, so it names exactly that Job and
+// never follows a Retry the way a handle does. The read is the visibility-checked
+// one, and a Job of a Kind the legacy routes do not project is answered as absent,
+// as it would be under any handle.
+func (ctx *MahresourcesContext) resolveQueueBackedJobID(id string) (*jobs.Snapshot, string, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, "", err
+	}
+	snap, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), id)
+	if errors.Is(err, jobs.ErrNotFound) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if namespaceForKind(snap.Kind) == "" {
+		return nil, "", nil
+	}
+	return &snap, sourceForKind(snap.Kind), nil
+}
+
 // ProjectDownloadJob answers the legacy row one download identifier currently names.
 //
 // It resolves in the order the compatibility contract implies, and each step is
@@ -159,8 +185,9 @@ func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snaps
 //
 //  1. the durable handle table, which is what makes an unchanged legacy id follow
 //     successive retries to the execution it now means;
-//  2. the queue entry this process holds for that Job, if it holds one;
-//  3. otherwise a projection of the durable Job itself, so a client polling after a
+//  2. a canonical Job id, which names exactly that Job;
+//  3. the queue entry this process holds for that Job, if it holds one;
+//  4. otherwise a projection of the durable Job itself, so a client polling after a
 //     restart — or before the transfer was dispatched — still gets a row rather
 //     than a 404 for work that is plainly still going to happen.
 //
@@ -194,6 +221,14 @@ func (ctx *MahresourcesContext) ProjectDownloadJobForRetry(id string) (download_
 		case resolved != nil:
 			canonical, source = resolved, resolvedSource
 			legacyNamespace = resolvedNamespace
+		default:
+			byID, byIDSource, err := ctx.resolveQueueBackedJobID(id)
+			if err != nil {
+				return projection, false, err
+			}
+			if byID != nil {
+				canonical, source = byID, byIDSource
+			}
 		}
 	}
 

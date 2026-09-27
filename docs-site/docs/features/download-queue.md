@@ -340,6 +340,15 @@ These routes preserve their existing download queue and handle shapes. They
 remain available during the documented compatibility window; they are not the
 canonical Job Center API.
 
+The `id` of a control or of `/v1/jobs/get`, here and on the download aliases
+above, is either a legacy handle or the canonical Job id that `/v1/jobs` lists,
+for downloads, group exports and imports, Resource Reduction computation and
+similarity recomputes. A legacy handle names the current Retry leaf; a
+canonical id names exactly that Job and never follows a Retry, so a control sent
+to an ancestor's id acts on the ancestor, and a Retry of an ancestor that
+already has a successor is refused. Either id resolves only to a Job the caller
+can see, and answers 404 otherwise.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
