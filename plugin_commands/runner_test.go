@@ -857,8 +857,9 @@ func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
 		t.Fatal("stuck command warning was not emitted")
 	}
 	// Leave the group alive across more slow polls to prove both the backoff and
-	// the one-shot warning behavior.
-	time.Sleep(110 * time.Millisecond)
+	// the one-shot warning behavior. The span is long enough that a poll even a
+	// quarter faster than the backoff shows in the count below.
+	time.Sleep(330 * time.Millisecond)
 	kills, inspections, killTimes := inspector.snapshot()
 	observedAt := time.Now()
 	if kills != 2 || len(killTimes) != 2 {
@@ -884,7 +885,7 @@ func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
 	// period over any span. One interval between two inspections can still look
 	// short when the receive of the earlier tick was late under load, so the
 	// bound is on the count over the span, not on each gap.
-	if span := observedAt.Sub(killTimes[1]); len(afterForced) > int(span/(40*time.Millisecond))+2 {
+	if span := observedAt.Sub(killTimes[1]); len(afterForced) > int(span/(40*time.Millisecond))+1 {
 		t.Errorf("post-cleanup inspections = %d over %s, want at most one per 40ms backoff period", len(afterForced), span)
 	}
 	warningMu.Lock()
