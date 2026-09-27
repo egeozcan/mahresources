@@ -487,6 +487,7 @@ export function jobCenter(options = {}) {
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
         _reconcileOnCatchUp: true,
+        _reconcileAfterLoad: false,
         now: Date.now(),
         _clockTimer: null,
         _liveRegion: null,
@@ -536,6 +537,10 @@ export function jobCenter(options = {}) {
                 this.error = error.message || 'Could not load this job.';
             } finally {
                 this.loading = false;
+                if (this._reconcileAfterLoad) {
+                    this._reconcileAfterLoad = false;
+                    this.reconcileDetail();
+                }
             }
         },
 
@@ -670,18 +675,22 @@ export function jobCenter(options = {}) {
             this._streamRetryDelay = 0;
             // The page read its Job while the stream was connecting at the
             // head, so a change made between the two is in neither: it is read
-            // again once, now.
+            // again once, now, or once the page's own read has finished.
             if (this._reconcileOnCatchUp) {
                 this._reconcileOnCatchUp = false;
-                if (this.detailId) {
-                    this.fetchJSON(`/v1/jobs/${encodeURIComponent(this.detailId)}`)
-                        .then(payload => {
-                            const snapshot = payload.job || payload;
-                            if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, false);
-                        })
-                        .catch(() => {});
-                }
+                if (this.loading) this._reconcileAfterLoad = true;
+                else this.reconcileDetail();
             }
+        },
+
+        reconcileDetail() {
+            if (!this.detailId) return;
+            this.fetchJSON(`/v1/jobs/${encodeURIComponent(this.detailId)}`)
+                .then(payload => {
+                    const snapshot = payload.job || payload;
+                    if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, false);
+                })
+                .catch(() => {});
         },
 
         handleStreamMessage(event) {

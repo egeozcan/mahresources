@@ -456,8 +456,10 @@ describe('Job detail stream connection', () => {
         vi.stubGlobal('EventSource', ClosingEventSource);
         const center = jobCenter({ detailId: 'job-3' });
         center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        // The page has read its Job.
         center.jobs = [{ id: 'job-3', title: 'Export', state: 'running', version: 2 }];
         center.detail = center.jobs[0];
+        center.loading = false;
         center.fetchJSON = vi.fn(async () => ({ id: 'job-3', title: 'Export', state: 'succeeded', version: 3 }));
         center.connect();
         expect(ClosingEventSource.made[0].url).toBe('/v1/jobs/events?version=2&start=head');
@@ -470,6 +472,35 @@ describe('Job detail stream connection', () => {
         // A later catch-up, after a reconnect that replayed nothing, reads nothing.
         ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:30' }) });
         expect(center.fetchJSON).toHaveBeenCalledTimes(1);
+    });
+
+    test('a catch-up while the page is still reading its Job reads it again once that read finishes', async () => {
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter({ detailId: 'job-4' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        let version = 1;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        const reads: number[] = [];
+        center.fetchJSON = vi.fn(async (url: string) => {
+            if (url.includes('/events')) return { events: [] };
+            const answer = { id: 'job-4', title: 'Export', state: version === 1 ? 'running' : 'succeeded', version };
+            reads.push(version);
+            if (reads.length === 1) await firstHeld;
+            return answer;
+        });
+        center.connect();
+        const loading = center.load();
+        await vi.waitFor(() => expect(reads).toEqual([1]));
+        // The Job moves on, and the stream catches up at a head past it,
+        // while the page's first read is still on its way.
+        version = 2;
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:40' }) });
+        releaseFirst();
+        await loading;
+        await vi.waitFor(() => expect(center.detail.state).toBe('succeeded'));
+        expect(reads).toEqual([1, 2]);
     });
 
     test('a stream the browser gave up on is opened again from its cursor, after a growing delay', () => {
