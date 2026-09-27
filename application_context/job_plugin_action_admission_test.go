@@ -55,7 +55,7 @@ func TestAWaitingClosureIsOnlyEverWithdrawnWhenItsProcessIsGone(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 
 	foreign := acceptClosureJobForTest(t, ctx, "another-host/boot-1/4242")
-	gone := acceptClosureJobForTest(t, ctx, plugin_system.CurrentRuntimeIdentity().Host+"/boot-that-ended/4243")
+	gone := acceptClosureJobForTest(t, ctx, goneRuntimeIdentityForTest())
 
 	withdrawn := waitForJobState(t, ctx, gone.ID, "the orphaned closure to be withdrawn", func(s jobs.Snapshot) bool {
 		return s.State.Terminal()

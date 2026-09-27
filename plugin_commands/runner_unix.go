@@ -451,6 +451,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	var waitErr error
 	parentDone, pipesDone, processGroupRecorded := false, false, false
 	status, reason := "", ""
+	// cause is what set a failed status, when it is a limit or outcome the Job
+	// classes; it is read only while status is failed.
+	var cause RunCause
 	ctxDone := ctx.Done()
 	timerDone := timer.C
 	outputUnverified := false
@@ -513,6 +516,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			inspectionDue = true
 		case <-timerDone:
 			timerDone = nil
+			if status == "" {
+				cause = RunCauseTimeout
+			}
 			terminate(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout), false)
 			inspectionDue = true
 		case <-quotaTicker.C:
@@ -521,6 +527,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 				terminate(RunStatusFailed, usageErr.Error(), false)
 				inspectionDue = true
 			} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
+				if status == "" {
+					cause = RunCauseQuota
+				}
 				terminate(RunStatusFailed, fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit), false)
 				inspectionDue = true
 			}
@@ -669,6 +678,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
 			status = RunStatusFailed
 			reason = fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit)
+			cause = RunCauseQuota
 		}
 	}
 	if record, _, readErr := e.deps.Store.Run(run.RunID); readErr == nil && record.CancelRequested {
@@ -680,6 +690,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	finish := RunFinish{OutputTail: tail.String(), OutputUnverified: outputUnverified, FinishedAt: time.Now().UTC()}
 	if status != "" {
 		finish.Status, finish.Error = status, reason
+		if status == RunStatusFailed {
+			finish.Cause = cause
+		}
 	} else {
 		finish.ExitCode = exitCode(cmd)
 		if waitErr == nil && finish.ExitCode != nil && *finish.ExitCode == 0 {
@@ -687,6 +700,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		} else {
 			finish.Status = RunStatusFailed
 			finish.Error = commandExitError(waitErr, finish.ExitCode)
+			if finish.ExitCode != nil {
+				finish.Cause = RunCauseExitStatus
+			}
 		}
 	}
 	if forcedCleanup && finish.Error == "" {

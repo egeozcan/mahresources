@@ -21,6 +21,12 @@ case "$mode" in
       i=$((i + 1))
     done
     ;;
+  fail)
+    # A program failing on its input: the reason goes to stderr, then a
+    # nonzero status.
+    printf 'ffmpeg: Invalid data found when processing input\n' >&2
+    exit 3
+    ;;
   read-input)
     # Copy the input the host wrote into this run's working directory, so a test
     # can prove the program saw it without the contents reaching a record.

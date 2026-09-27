@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
+	"mahresources/plugin_system"
 )
 
 func TestPluginCommandDatabaseFenceIsBoundToOneStagingRootAndToken(t *testing.T) {
@@ -31,6 +36,209 @@ func TestPluginCommandDatabaseFenceIsBoundToOneStagingRootAndToken(t *testing.T)
 	_, err = ctx.acquirePluginCommandDBFence("/staging/b")
 	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot,
 		"a graceful release must preserve the database-to-staging-root binding")
+}
+
+// TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner pins the one case in
+// which the database fence moves to another staging root. A durable root keeps
+// the database's retained outputs and import sources, so its binding outlives
+// every restart; a process-private root (the MemoryFS default) is deleted with
+// its process, so its binding ends once that process has released the fence or
+// is proved gone. Proof is what the recorded owner allows: a process in this
+// process table that no longer exists. An owner still running, from another
+// boot (which may be another machine with this hostname), or on a host this
+// process cannot inspect keeps the binding.
+func TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	current := plugin_system.CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host cannot prove a recorded runtime gone")
+	}
+	setOwner := func(owner string) {
+		t.Helper()
+		require.NoError(t, ctx.db.Model(&models.JobRuntimeFence{}).
+			Where("key = ?", pluginCommandRuntimeFenceKey).Update("owner", owner).Error)
+	}
+	boundRoot := func() models.JobRuntimeFence {
+		t.Helper()
+		var row models.JobRuntimeFence
+		require.NoError(t, ctx.db.Where("key = ?", pluginCommandRuntimeFenceKey).First(&row).Error)
+		return row
+	}
+
+	first, err := ctx.acquirePluginCommandDBFenceFor("/private/a", true)
+	require.NoError(t, err)
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/b", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "a live owner keeps its private root")
+
+	require.NoError(t, ctx.releasePluginCommandDBFence(first))
+	second, err := ctx.acquirePluginCommandDBFenceFor("/private/b", true)
+	require.NoError(t, err, "a released private root ends with its owner")
+	require.NotEmpty(t, second)
+	require.Equal(t, "/private/b", boundRoot().StagingRoot)
+
+	gone := current
+	gone.PID = 1 << 30
+	setOwner(gone.String())
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/c", true)
+	require.NoError(t, err, "an owner whose process no longer exists is gone, so its private root is too")
+	require.Equal(t, "/private/c", boundRoot().StagingRoot)
+
+	anotherBoot := current
+	anotherBoot.BootSession = "00000000-0000-4000-8000-000000000000"
+	setOwner(anotherBoot.String())
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "an owner from another boot may be another machine with this hostname")
+
+	setOwner(current.Host + "-elsewhere/" + current.BootSession + "/4242/0badc0de")
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "an owner on another host cannot be proved gone")
+
+	setOwner("")
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "an unrecorded owner cannot be proved gone")
+
+	setOwner(gone.String())
+	_, err = ctx.acquirePluginCommandDBFenceFor("/durable/e", false)
+	require.NoError(t, err, "a durable root may follow a private one on the same terms")
+	row := boundRoot()
+	require.Equal(t, "/durable/e", row.StagingRoot)
+	require.False(t, row.StagingTemporary)
+	require.Equal(t, current.String(), row.Owner)
+}
+
+// TestPluginCommandFenceOnAPrivateRootIsReleasedByStartingOnIt is the way out
+// when the owner of a private root cannot be proved gone, as after a host
+// reboot that skipped the clean stop: one server started with that root as its
+// staging path takes the fence over on the root's own lease, keeps the binding
+// private, and on its clean stop leaves it free for the next private root.
+func TestPluginCommandFenceOnAPrivateRootIsReleasedByStartingOnIt(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	_, err := ctx.acquirePluginCommandDBFenceFor("/private/before-reboot", true)
+	require.NoError(t, err)
+	anotherBoot := plugin_system.CurrentRuntimeIdentity()
+	anotherBoot.BootSession = "00000000-0000-4000-8000-000000000000"
+	require.NoError(t, ctx.db.Model(&models.JobRuntimeFence{}).
+		Where("key = ?", pluginCommandRuntimeFenceKey).Update("owner", anotherBoot.String()).Error)
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/after-reboot", true)
+	require.ErrorIs(t, err, errPluginCommandFenceOwnerNotStopped)
+
+	token, err := ctx.acquirePluginCommandDBFenceFor("/private/before-reboot", false)
+	require.NoError(t, err, "a server started on the bound root takes it over on the root's own lease")
+	var row models.JobRuntimeFence
+	require.NoError(t, ctx.db.Where("key = ?", pluginCommandRuntimeFenceKey).First(&row).Error)
+	require.True(t, row.StagingTemporary, "starting on a private root by name keeps it private")
+	require.NoError(t, ctx.releasePluginCommandDBFence(token))
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/after-reboot", true)
+	require.NoError(t, err)
+}
+
+// TestPluginCommandFenceRecordedBeforeOwnersIsKeptAsDurable covers a binding
+// written before the fence recorded its owner and whether its root is private:
+// nothing proves that root expendable, so it is kept, and a server started on
+// that root by name takes it over as the /logs refusal says.
+func TestPluginCommandFenceRecordedBeforeOwnersIsKeptAsDurable(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	require.NoError(t, ctx.db.Create(&models.JobRuntimeFence{
+		Key: pluginCommandRuntimeFenceKey, Token: "left-by-an-earlier-release",
+		StagingRoot: "/tmp/mahresources-plugin-commands-181321493", AcquiredAt: time.Now().UTC(),
+	}).Error)
+	_, err := ctx.acquirePluginCommandDBFenceFor("/tmp/mahresources-plugin-commands-new", true)
+	require.ErrorIs(t, err, errPluginCommandFenceRootIsDurable)
+	require.Contains(t, err.Error(), "/tmp/mahresources-plugin-commands-181321493")
+	_, err = ctx.acquirePluginCommandDBFenceFor("/tmp/mahresources-plugin-commands-181321493", false)
+	require.NoError(t, err)
+}
+
+// TestPluginCommandFenceOnADurableRootNamesTheRootToRestartWith pins the
+// refusal a durable binding gives: it names the bound root and the flag that
+// selects it, because no retry can change a binding that outlives restarts.
+func TestPluginCommandFenceOnADurableRootNamesTheRootToRestartWith(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	token, err := ctx.acquirePluginCommandDBFenceFor("/durable/a", false)
+	require.NoError(t, err)
+	require.NoError(t, ctx.releasePluginCommandDBFence(token))
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/b", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot)
+	require.ErrorIs(t, err, errPluginCommandFenceRootIsDurable)
+	require.Contains(t, err.Error(), `"/durable/a"`)
+}
+
+// TestPluginCommandRuntimeOnAPrivateRootStartsAfterItsPredecessorStopped is the
+// MemoryFS deployment with a persistent database: every process gets a new
+// private staging root, and the next process must be able to run commands.
+func TestPluginCommandRuntimeOnAPrivateRootStartsAfterItsPredecessorStopped(t *testing.T) {
+	first := newPluginCommandStoreTestContext(t)
+	require.NoError(t, first.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(), temporary: true,
+	}))
+	_, err := first.pluginCommandActive()
+	require.NoError(t, err)
+	require.NoError(t, first.StopPluginCommands())
+
+	second := newPluginCommandContextOnSameDatabase(t, first)
+	require.NoError(t, second.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(), temporary: true,
+	}))
+	t.Cleanup(func() { _ = second.StopPluginCommands() })
+	_, err = second.pluginCommandActive()
+	require.NoError(t, err, "a process-private staging root ends with the process that owned it")
+}
+
+// TestPluginCommandRuntimeOnAMovedDurableRootSaysWhichRootToUse covers the
+// refusal an operator sees after changing -plugin-command-staging-path. No retry
+// can move a binding meant to outlive restarts, so the runtime does not retry:
+// /logs names the configured and the bound root and the flag, callers are told
+// commands are unavailable with no time to try again, and the fence is asked
+// once.
+func TestPluginCommandRuntimeOnAMovedDurableRootSaysWhichRootToUse(t *testing.T) {
+	first := newPluginCommandStoreTestContext(t)
+	boundRoot := t.TempDir()
+	require.NoError(t, first.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: boundRoot, commandPath: t.TempDir(),
+	}))
+	require.NoError(t, first.StopPluginCommands())
+
+	second := newPluginCommandContextOnSameDatabase(t, first)
+	configuredRoot := t.TempDir()
+	var fenceAttempts atomic.Int32
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.acquireBackoff = []time.Duration{5 * time.Millisecond}
+	cfg.acquireDBFence = func(root string) (string, error) {
+		fenceAttempts.Add(1)
+		return second.acquirePluginCommandDBFenceFor(root, false)
+	}
+	require.NoError(t, second.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: configuredRoot, commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = second.StopPluginCommands() })
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, int32(1), fenceAttempts.Load(), "a durable binding to another root is not retried")
+
+	_, err := second.pluginCommandActive()
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	require.ErrorAs(t, err, &quarantined)
+	require.Zero(t, quarantined.RetryAfter(), "no retry is scheduled, so none is promised")
+
+	var logs []models.LogEntry
+	require.NoError(t, second.db.Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelWarning).
+		Order("id asc").Find(&logs).Error)
+	require.Len(t, logs, 1)
+	message := logs[0].Message
+	require.Contains(t, message, boundRoot)
+	require.Contains(t, message, configuredRoot)
+	require.Contains(t, message, "-plugin-command-staging-path")
+	require.NotContains(t, message, "automatic retry is active")
+}
+
+func newPluginCommandContextOnSameDatabase(t *testing.T, first *MahresourcesContext) *MahresourcesContext {
+	t.Helper()
+	sqlDB, err := first.db.DB()
+	require.NoError(t, err)
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), first.db, sqlx.NewDb(sqlDB, "sqlite3"), first.Config)
+	keyring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
+	require.NoError(t, err)
+	ctx.SetJobReplayKeyring(keyring)
+	return ctx
 }
 
 func TestPluginCommandControllerAcquiresStagingLeaseBeforeDatabaseFence(t *testing.T) {
@@ -457,4 +665,27 @@ func TestPluginCommandHeartbeatKeepsLongRunningCanonicalClaimAlive(t *testing.T)
 	}))
 	require.Error(t, ctx.heartbeatPluginCommandJob(execution))
 	require.NotEmpty(t, oldToken)
+}
+
+// TestPluginCommandStoreNamesAReleasedFenceAsLost pins the error the store's
+// fenced writes give once this process no longer holds the fence: the import
+// terminal writer stops retrying on exactly this, so it must survive wrapping.
+func TestPluginCommandStoreNamesAReleasedFenceAsLost(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}))
+	require.NoError(t, ctx.StopPluginCommands())
+	_, err := ctx.FinishImport("released-fence-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusFailed, FinishedAt: time.Now().UTC(),
+	})
+	require.ErrorIs(t, err, plugin_commands.ErrRuntimeFenceLost)
+}
+
+func TestPluginCommandSettingsReportAPrivateStagingRoot(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	require.False(t, pluginCommandStagingTemporary(ctx.PluginCommandSettings()))
+	ctx.Config.PluginCommandStagingTemporary = true
+	require.True(t, pluginCommandStagingTemporary(ctx.PluginCommandSettings()),
+		"the MemoryFS default root must reach the fence as private to this process")
 }

@@ -641,7 +641,11 @@ func TestPluginCommandLifecycleDisabledLeavesHostUnavailable(t *testing.T) {
 type testPluginCommandSettings struct {
 	root        string
 	commandPath string
+	// temporary marks root as private to this process, as the MemoryFS default is.
+	temporary bool
 }
+
+func (s testPluginCommandSettings) StagingTemporary() bool { return s.temporary }
 
 func (s testPluginCommandSettings) StagingRoot() string        { return s.root }
 func (s testPluginCommandSettings) PendingPerPluginLimit() int { return 100 }

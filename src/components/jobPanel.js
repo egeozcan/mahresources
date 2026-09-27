@@ -5,6 +5,7 @@ import {
     advertisedCommands,
     classifyJobState,
     commandEndpoint,
+    commandLocation,
     eventJob,
     isPartialSuccess,
     lifecycleAnnouncement,
@@ -1131,7 +1132,8 @@ export function jobPanel() {
                     this._commandRefresh = this.refresh();
                 }
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
-                if (successorId) globalThis.location?.assign?.(`/job?id=${encodeURIComponent(successorId)}`);
+                const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
+                if (location) globalThis.location?.assign?.(location);
                 const rowShowsIt = Object.hasOwn(ROW_SHOWN_COMMANDS, command?.key);
                 this.notice = preferenceRefreshFailed
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`

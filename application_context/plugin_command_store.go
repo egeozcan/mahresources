@@ -411,7 +411,7 @@ func (ctx *MahresourcesContext) FinishRun(id string, finish plugin_commands.RunF
 				return fmt.Errorf("plugin command run %q has no output row", id)
 			}
 			if prior.JobID != "" && ctx.JobService() != nil {
-				if err := ctx.finishPluginCommandJobTx(tx, prior.JobID, prior.JobExecutionToken, finish.Status, prior.ID); err != nil {
+				if err := ctx.finishPluginCommandJobTx(tx, prior.JobID, prior.JobExecutionToken, prior.ID, finish); err != nil {
 					return err
 				}
 			}
@@ -880,7 +880,7 @@ func (ctx *MahresourcesContext) CancelPendingImport(importID, reason string, fin
 			return fmt.Errorf("plugin command import %q has no pending map entry", importID)
 		}
 		if prior.JobID != "" && ctx.JobService() != nil {
-			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, plugin_commands.ImportStatusCancelled, prior.ID, nil); err != nil {
+			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, plugin_commands.ImportStatusCancelled, "", prior.ID, nil); err != nil {
 				return err
 			}
 		}
@@ -939,7 +939,7 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 			return fmt.Errorf("plugin command import %q has no active map entry", importID)
 		}
 		if prior.JobID != "" && ctx.JobService() != nil {
-			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, finish.Status, prior.ID, finish.ResourceID); err != nil {
+			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, finish.Status, finish.Error, prior.ID, finish.ResourceID); err != nil {
 				return err
 			}
 		}
@@ -1010,7 +1010,7 @@ func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) 
 		if ctx.JobService() != nil {
 			for _, row := range rows {
 				if row.JobID != "" {
-					if err := ctx.finishPluginCommandImportJobTx(tx, row.JobID, row.JobExecutionToken, plugin_commands.ImportStatusInterrupted, row.ID, nil); err != nil {
+					if err := ctx.finishPluginCommandImportJobTx(tx, row.JobID, row.JobExecutionToken, plugin_commands.ImportStatusInterrupted, "", row.ID, nil); err != nil {
 						return err
 					}
 				}

@@ -234,6 +234,24 @@ describe('Job Center panel', () => {
         await expect(panel.dismissFinished()).resolves.toEqual({ dismissed: 0, total: 0 });
     });
 
+    test('a row command whose outcome names a page on this site opens it', async () => {
+        const assign = vi.fn();
+        vi.stubGlobal('location', { origin: 'http://localhost', assign });
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const row = { id: 'cmd-1', title: 'encode', kind: 'plugin-command', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:02Z',
+            commands: [{ key: 'inspect', label: 'Inspect command history', jobVersion: 3 }] };
+        panel.jobs = [row];
+        panel.requestJSON = vi.fn(async () => ({ result: {
+            status: 'succeeded', code: 'applied', message: 'Opening the command history.',
+            detail: { runId: 'abc', location: '/admin/plugin-command-runs?id=abc' },
+        } })) as any;
+
+        await panel.runCommand(row, row.commands[0]);
+
+        expect(assign).toHaveBeenCalledWith('/admin/plugin-command-runs?id=abc');
+    });
+
     function rowCommandPanel(answer: (url: string, init: any) => any) {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;

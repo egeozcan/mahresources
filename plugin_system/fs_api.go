@@ -142,7 +142,7 @@ func (pm *PluginManager) exchangeCall(L *lua.LState) (ExchangeMediator, liveExch
 	host := pm.exchangeHost()
 	if host == nil {
 		admission.release()
-		return nil, liveExchangeAccess{}, fmt.Errorf("%s", commandRuntimeUnavailableMessage)
+		return nil, liveExchangeAccess{}, errCommandRuntimeUnavailable
 	}
 	return host, liveExchangeAccess{Access: plugin_commands.Access{
 		PluginName:  admission.pluginName,

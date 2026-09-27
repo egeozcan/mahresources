@@ -371,6 +371,104 @@ func TestJobRetentionRuntimeKeepsFenceWhileCleanupIgnoresShutdown(t *testing.T) 
 	}
 }
 
+// TestJobRetentionRuntimeKeepsRenewingAfterASlowRenewal pins that a renewal
+// which runs out of time is not a lost lease. Its UPDATE may still have landed,
+// and until the lease duration has passed nobody else can claim it, so the
+// heartbeat keeps renewing; giving up after one slow write let the lease expire
+// under a cleanup that ignores cancellation and a second runtime run the same
+// cleanup beside it.
+func TestJobRetentionRuntimeKeepsRenewingAfterASlowRenewal(t *testing.T) {
+	first := newJobContext(t)
+	if err := first.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
+		t.Fatalf("migrate runtime fence: %v", err)
+	}
+	service := first.JobService()
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = retentionRuntimeTestKind
+	if err := service.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register retention test Kind: %v", err)
+	}
+	second := newSecondRetentionRuntimeContext(t, first)
+
+	cleanupEntered := make(chan struct{})
+	secondCleanupEntered := make(chan struct{}, 1)
+	releaseCleanup := make(chan struct{})
+	var calls atomic.Int32
+	adapter.cleanup = func(_ context.Context, request jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error) {
+		if calls.Add(1) == 1 {
+			close(cleanupEntered)
+			<-releaseCleanup // A filesystem adapter that ignores cancellation.
+		} else {
+			select {
+			case secondCleanupEntered <- struct{}{}:
+			default:
+			}
+		}
+		removed := make([]string, 0, len(request.Artifacts))
+		for _, artifact := range request.Artifacts {
+			removed = append(removed, artifact.Key)
+		}
+		return jobs.ArtifactCleanupResult{Removed: removed}, nil
+	}
+	createExpiredArtifactJob(t, first)
+
+	// The first fence update on this handle is the claim; the second is the
+	// first renewal, which is held past its timeout.
+	slowRenewal := make(chan struct{})
+	var fenceUpdates atomic.Int32
+	if err := first.db.Callback().Update().Before("gorm:update").Register("test:slow-retention-renewal", func(tx *gorm.DB) {
+		if tx.Statement.Table != "job_runtime_fences" || fenceUpdates.Add(1) != 2 {
+			return
+		}
+		<-tx.Statement.Context.Done()
+		close(slowRenewal)
+		tx.AddError(tx.Statement.Context.Err())
+	}); err != nil {
+		t.Fatalf("register slow renewal: %v", err)
+	}
+
+	config := JobRetentionRuntimeConfig{
+		Interval: time.Hour, ContinuationInterval: 10 * time.Millisecond,
+		LeaseDuration: 300 * time.Millisecond, LeaseRefreshInterval: 40 * time.Millisecond,
+		LeaseRefreshTimeout: 20 * time.Millisecond, QuiesceTimeout: 100 * time.Millisecond, BatchSize: 1,
+	}
+	firstRuntime := NewJobRetentionRuntime(first, service, config)
+	config.Interval = 50 * time.Millisecond
+	secondRuntime := NewJobRetentionRuntime(second, second.JobService(), config)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(releaseCleanup)
+		}
+	}
+	defer func() {
+		release()
+		firstRuntime.Stop()
+		secondRuntime.Stop()
+	}()
+
+	firstRuntime.Start()
+	select {
+	case <-cleanupEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup sweep did not enter artifact cleanup")
+	}
+	select {
+	case <-slowRenewal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the held renewal was never attempted")
+	}
+	secondRuntime.Start()
+	// Three lease durations: a heartbeat that stopped after the slow renewal
+	// lets the lease expire well inside this window.
+	select {
+	case <-secondCleanupEntered:
+		t.Fatal("a second runtime entered artifact cleanup while the first still held the lease")
+	case <-time.After(900 * time.Millisecond):
+	}
+}
+
 func TestJobRetentionRuntimeCancelsSweepWhenLeaseTokenIsReplaced(t *testing.T) {
 	ctx := newJobContext(t)
 	if err := ctx.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {

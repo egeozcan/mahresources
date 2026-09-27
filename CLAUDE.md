@@ -586,7 +586,9 @@ so staging peaks near twice the source; the global sample is refreshed outside
 admission at startup and after sweeps, and a failed refresh preserves the last
 complete sample. Exactly one process may own a staging root. Busy lease
 acquisition uses short capped backoff; recovery blockers retain the lease and
-retry every five minutes.
+retry every five minutes, and a blocker waiting for a live or uninspectable
+process group is re-checked every five seconds and recovered as soon as that
+group is provably dead. Callers are told the time to that next check.
 Quarantine keeps rows nonterminal, withholds command mutations, reports to
 `/logs`, and may be healed by terminating the named abandoned process group.
 
@@ -712,7 +714,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many **finished jobs** the Jobs drawer shows, newest first (default: 10), published to the page as `<meta name="x-jobs-panel-finished-limit">`; older ones stay on `/jobs`. Running, waiting and failed work is listed up to 50 per group regardless. Runtime-editable. |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work (default: `30s`). It bounds the resolution of every plugin schedule: a plugin may not declare an interval shorter than `plugin_system.MinScheduleInterval` (30s), and a tick slower than a schedule's interval simply runs it at the tick's resolution. |
 | `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | Trusted executable search path for plugin commands. Defaults to one startup snapshot of the server `PATH`; every entry must be a nonempty absolute directory. Pin the minimal trusted directories in production. |
-| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | Private command exchange/import root. Defaults to `<file-save-path>/_plugin_commands`, or a private process temp root with MemoryFS. Relative values resolve once against the startup working directory. One active server process may own a root. |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | Private command exchange/import root. Defaults to `<file-save-path>/_plugin_commands`, or a private process temp root with MemoryFS. Relative values resolve once against the startup working directory. One active server process may own a root. The database stays bound to a durable root across restarts (a different root keeps commands unavailable); a private temp root's binding ends once its process has released it or is proved gone (this process table only; after an unclean reboot, once the operator knows that server is not running, start once with the flag set to the root `/logs` names). |
 | `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | Sampled per-run staging limit (default: `8589934592`, 8 GiB). Size for merge peak, roughly 2× final output when separate audio/video and mux coexist. |
 | `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | Sampled deployment-wide staging limit (default: `53687091200`, 50 GiB). |
 | `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | Retention for terminal, unleased command exchange folders (default: `168h`). |

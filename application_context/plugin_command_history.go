@@ -5,6 +5,30 @@ import (
 	"mahresources/plugin_commands"
 )
 
+// PresentJobIDs reports which of the named Jobs still exist. Command history
+// outlives the Jobs retention deletes, so a run's stored Job id is not by
+// itself a Job to link to. The ids come from one bounded history page.
+func (ctx *MahresourcesContext) PresentJobIDs(ids []string) (map[string]bool, error) {
+	wanted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			wanted = append(wanted, id)
+		}
+	}
+	present := make(map[string]bool, len(wanted))
+	if len(wanted) == 0 {
+		return present, nil
+	}
+	var found []string
+	if err := ctx.db.Model(&models.Job{}).Where("id IN ?", wanted).Pluck("id", &found).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range found {
+		present[id] = true
+	}
+	return present, nil
+}
+
 // GetPluginCommandRuns returns one bounded, newest-first administrator page.
 // Output and import rows are deliberately excluded from the list query; detail
 // is the only surface that loads them.

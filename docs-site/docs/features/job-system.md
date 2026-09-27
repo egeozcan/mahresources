@@ -48,10 +48,17 @@ available commands. Current adapters include:
 | `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |
 | `plugin-action@1` | Run an asynchronous plugin action, a scheduled occurrence, or a `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart; an unsuccessful declared action offers Retry, and a successful one whose handler reported `continue = true` offers Continue |
 | `job-summary-export@1` | Export a filtered Job summary as CSV or JSON | Replayable; owner-visible; artifact expires by export retention |
-| `plugin-command@1` | Run a plugin command | Non-restorable; administrator-visible; protected by the command runtime fence |
+| `plugin-command@1` | Run a plugin command | Non-restorable; administrator-visible; protected by the command runtime fence; a failed Job names the run's recorded reason (its exit status, its timeout, a quota) with a matching failure class |
 | `plugin-command-import@1` | Import an admitted plugin command output | Non-restorable; administrator-visible; retry requires current importer and file proof |
 
 Plugin command runs and imports use their separate fenced command runtime.
+A command Job that started keeps a "Command history and output" output whatever
+its outcome, and its **Inspect command history** command opens the run's page at
+`/admin/plugin-command-runs?id={runId}` (for an import, the run that produced
+the file), which shows the exit code, the terminal reason and the redacted
+program output and links back to the Job. A command's outcome names such a page
+as `detail.location`, a path on the same site; the Job Center opens it after the
+command succeeds and ignores any other value.
 
 Every Kind's running Jobs count against one deployment budget,
 `-max-job-concurrency`. A Job whose turn comes while the budget is full waits

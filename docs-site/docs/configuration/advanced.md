@@ -488,6 +488,29 @@ five-minute sweep interval. A durable command database and its staging root are
 one runtime domain; do not run multiple command-enabled server processes against
 one such domain.
 
+The database records which staging root it is bound to. A root chosen by the
+flag, or `<file-save-path>/_plugin_commands`, keeps the database's retained
+command outputs and import sources, so that binding survives every restart: a
+server started with a different root keeps plugin commands unavailable without
+retrying, and `/logs` names its own root and the bound root to restart with. The private temporary root used
+with MemoryFS is deleted when its process exits, so its binding ends with that
+process: the next server takes the database over with its own private root once
+the previous one has stopped cleanly, or can be shown to have exited because it
+ran in this process table (same hostname, boot and PID namespace) and its
+process no longer exists. A previous server on another host, or one from before
+a reboot that skipped the clean stop, cannot be shown to have exited, since
+another machine can share a hostname. Releasing its binding is then an operator
+decision: once you know that server is not running (a reboot of its host ended
+it, or you stopped it), start one server with `-plugin-command-staging-path` set
+to the root `/logs` names (it is recreated if missing). That server takes the
+fence over on the root's own lease, which excludes only processes on its own
+host, and once it stops cleanly the next MemoryFS server takes the database over
+as usual. Doing this while the previous server still runs on another host puts
+two command runtimes on one database. Files a crashed MemoryFS server left in its private root are not carried
+over; like the MemoryFS library, they lived as long as that process. A binding
+recorded by a release that did not mark private roots is kept as durable; keep
+that root pinned with the flag.
+
 The path is used both to resolve a declaration's executable basename and as the
 child's `PATH`, so include required helpers too. A yt-dlp command using a
 separate-video/audio format needs trusted `ffmpeg` on that path. Child processes
@@ -521,7 +544,13 @@ command runtime. Command and exchange calls return an unavailable error,
 administrator cancellation is disabled and returns HTTP 503 without setting the
 durable cancellation latch, and recovery continues automatically. Lease
 contention follows the short capped schedule above. A recovery blocker retains
-the staging lease and retries every five minutes. Recovery-blocker warnings in
+the staging lease and retries every five minutes; a blocker waiting for a
+process group that is alive or could not be inspected is also checked every
+five seconds, and recovery runs again as soon as that group has exited, so an
+orphan that dies with its crashed server's pipes holds commands back for
+seconds rather than minutes. A blocker with no recorded group, or a group from
+another boot, is changed by no exit and waits for the five-minute scan.
+Recovery-blocker warnings in
 `/logs` enumerate every blocked run ID, PGID, and reason. Lease warnings name
 the staging root. Retry failures record their failure reason. Healing is also
 logged. If an operator has independently decided that the named group is

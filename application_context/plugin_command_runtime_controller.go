@@ -21,6 +21,10 @@ const (
 	pluginCommandRuntimeQuarantined
 	pluginCommandRuntimeActive
 	pluginCommandRuntimeStopping
+	// pluginCommandRuntimeRefused is a start no retry can complete: the
+	// database is bound to a durable staging root other than the configured one,
+	// and only a restart with that root changes it.
+	pluginCommandRuntimeRefused
 )
 
 type pluginCommandActiveRuntime struct {
@@ -56,23 +60,41 @@ type pluginCommandControllerConfig struct {
 	bootSessionID    func() (string, error)
 	acquireBackoff   []time.Duration
 	recoveryInterval time.Duration
-	inspector        plugin_commands.ProcessInspector
-	buildRuntime     func() (*pluginCommandActiveRuntime, error)
-	beforeAcquire    func(int)
-	beforeQuarantine func(pluginCommandRuntimeState)
-	beforePublish    func()
+	// blockerPollInterval is how often the process groups recovery is waiting
+	// for are inspected between recovery scans.
+	blockerPollInterval time.Duration
+	inspector           plugin_commands.ProcessInspector
+	buildRuntime        func() (*pluginCommandActiveRuntime, error)
+	beforeAcquire       func(int)
+	beforeQuarantine    func(pluginCommandRuntimeState)
+	beforePublish       func()
 }
 
 func defaultPluginCommandControllerConfig() pluginCommandControllerConfig {
 	return pluginCommandControllerConfig{
-		acquireLease:     plugin_commands.AcquireRuntimeLease,
-		bootSessionID:    plugin_commands.CurrentBootSessionID,
-		acquireBackoff:   []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute},
-		recoveryInterval: 5 * time.Minute,
+		acquireLease:        plugin_commands.AcquireRuntimeLease,
+		bootSessionID:       plugin_commands.CurrentBootSessionID,
+		acquireBackoff:      []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute},
+		recoveryInterval:    5 * time.Minute,
+		blockerPollInterval: pluginCommandBlockerPollInterval,
 	}
 }
 
+// pluginCommandBlockerPollInterval is how often a recovery blocker's process
+// group is checked for exit. A crashed server's command is usually gone within
+// seconds (its stdout closed with the server), and its death is provable, so
+// the runtime need not wait out a five-minute scan for it; one inspection of a
+// few named groups every few seconds is cheap.
+const pluginCommandBlockerPollInterval = 5 * time.Second
+
 const pluginCommandCallerQuarantineReason = "commands are quarantined until automatic recovery succeeds; see /logs"
+
+// pluginCommandStagingTemporary reports whether settings name a staging root
+// private to this process, which deletes it on exit (the MemoryFS default).
+func pluginCommandStagingTemporary(settings plugin_commands.Settings) bool {
+	temporary, ok := settings.(interface{ StagingTemporary() bool })
+	return ok && temporary.StagingTemporary()
+}
 
 func newPluginCommandRuntimeController(owner *MahresourcesContext) *pluginCommandRuntimeController {
 	return &pluginCommandRuntimeController{owner: owner}
@@ -98,10 +120,14 @@ func (ctx *MahresourcesContext) pluginCommandActive() (*pluginCommandActiveRunti
 	}
 	controller.mu.Lock()
 	retryAt := controller.retryAt
+	recovering := controller.state == pluginCommandRuntimeAcquiring || controller.state == pluginCommandRuntimeQuarantined
 	controller.mu.Unlock()
-	retryAfter := time.Until(retryAt)
-	if retryAt.IsZero() || retryAfter < 0 {
-		retryAfter = 0
+	// A caller is told when to come back only while the host will try again. A
+	// retry that is due or already running is still one, so it is named as a
+	// second rather than as nothing; a stopping or failed runtime names none.
+	var retryAfter time.Duration
+	if recovering {
+		retryAfter = max(time.Until(retryAt), time.Second)
 	}
 	return nil, &plugin_commands.RuntimeQuarantinedError{Reason: pluginCommandCallerQuarantineReason, RetryAfterDuration: retryAfter}
 }
@@ -117,7 +143,10 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 		cfg.acquireLease = plugin_commands.AcquireRuntimeLease
 	}
 	if cfg.acquireDBFence == nil {
-		cfg.acquireDBFence = ctx.acquirePluginCommandDBFence
+		temporary := pluginCommandStagingTemporary(settings)
+		cfg.acquireDBFence = func(root string) (string, error) {
+			return ctx.acquirePluginCommandDBFenceFor(root, temporary)
+		}
 	}
 	if cfg.releaseDBFence == nil {
 		cfg.releaseDBFence = ctx.releasePluginCommandDBFence
@@ -130,6 +159,9 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 	}
 	if cfg.recoveryInterval <= 0 {
 		cfg.recoveryInterval = 5 * time.Minute
+	}
+	if cfg.blockerPollInterval <= 0 {
+		cfg.blockerPollInterval = pluginCommandBlockerPollInterval
 	}
 	controller := ctx.pluginCommandController
 	if controller == nil {
@@ -165,15 +197,21 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 	controller.bootSessionID = bootSessionID
 	controller.mu.Unlock()
 
+	// Plugins reach this context from the start. Every call is refused until the
+	// runtime is active, so during a boot-time quarantine a plugin is told when
+	// the host will try again rather than only that commands are unavailable.
+	ctx.pluginManager.SetCommandSubmitter(ctx)
+	ctx.pluginManager.SetExchangeMediator(ctx)
+
 	kind, err := controller.tryActivate(runCtx, 0)
 	switch kind {
 	case pluginCommandAttemptActive:
 		close(done)
 		return nil
 	case pluginCommandAttemptLeaseBusy, pluginCommandAttemptRecoveryBlocked:
-		go controller.retryLoop(runCtx, done)
+		go controller.retryLoop(runCtx, done, recoveryBlockersOf(err))
 		return nil
-	case pluginCommandAttemptStopped:
+	case pluginCommandAttemptStopped, pluginCommandAttemptRefused:
 		close(done)
 		return nil
 	default:
@@ -195,6 +233,7 @@ const (
 	pluginCommandAttemptRecoveryBlocked
 	pluginCommandAttemptActive
 	pluginCommandAttemptStopped
+	pluginCommandAttemptRefused
 )
 
 func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attempt int) (pluginCommandAttemptKind, error) {
@@ -238,6 +277,15 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 			c.mu.Lock()
 			c.lease = nil
 			c.mu.Unlock()
+			if errors.Is(fenceErr, errPluginCommandFenceRootIsDurable) {
+				// No retry can move a binding meant to outlive restarts, so none
+				// is made or promised, and the message says what will.
+				message := fmt.Sprintf("plugin command runtime is unavailable: this server's staging root is %q, and the %v", c.settings.StagingRoot(), fenceErr)
+				if !c.enterQuarantine(pluginCommandRuntimeRefused, message, nil, 0) {
+					return pluginCommandAttemptStopped, nil
+				}
+				return pluginCommandAttemptRefused, fenceErr
+			}
 			message := fmt.Sprintf("plugin command runtime is quarantined because its database fence is unavailable: %v; automatic retry is active; see /logs", fenceErr)
 			if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
 				return pluginCommandAttemptStopped, nil
@@ -273,7 +321,8 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 		var blocked *plugin_commands.RecoveryBlockedError
 		if errors.As(err, &blocked) {
 			message := fmt.Sprintf("plugin command runtime recovery is quarantined: %v; automatic retry is active; see /logs for details; after deciding a named process group is abandoned an operator may terminate it with kill -KILL -- -<pgid>; restart with -plugins-disabled to keep plugin commands offline", blocked)
-			if !c.enterQuarantine(pluginCommandRuntimeQuarantined, message, recoveryBlockerLogDetails(blocked.Blockers), c.config.recoveryInterval) {
+			retry := c.retryDelay(c.config.recoveryInterval, awaitingExit(blocked.Blockers))
+			if !c.enterQuarantine(pluginCommandRuntimeQuarantined, message, recoveryBlockerLogDetails(blocked.Blockers), retry) {
 				return pluginCommandAttemptStopped, nil
 			}
 			return pluginCommandAttemptRecoveryBlocked, err
@@ -417,7 +466,7 @@ func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRunt
 	return true
 }
 
-func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done chan struct{}) {
+func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done chan struct{}, blockers []plugin_commands.RecoveryBlocker) {
 	defer close(done)
 	acquireAttempt := 0
 	for {
@@ -431,22 +480,21 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 		if state == pluginCommandRuntimeAcquiring {
 			delay = c.acquireDelay(acquireAttempt)
 		}
-		c.retryAt = time.Now().Add(delay)
+		watched := awaitingExit(blockers)
+		if state != pluginCommandRuntimeQuarantined {
+			watched = nil
+		}
+		c.retryAt = time.Now().Add(c.retryDelay(delay, watched))
 		c.mu.Unlock()
 
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+		if !c.waitForRetry(ctx, delay, watched) {
 			return
-		case <-timer.C:
 		}
 
 		kind, err := c.tryActivate(ctx, acquireAttempt+1)
+		blockers = recoveryBlockersOf(err)
 		switch kind {
-		case pluginCommandAttemptActive, pluginCommandAttemptStopped:
+		case pluginCommandAttemptActive, pluginCommandAttemptStopped, pluginCommandAttemptRefused:
 			return
 		case pluginCommandAttemptLeaseBusy:
 			acquireAttempt++
@@ -474,6 +522,74 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 			}
 		}
 	}
+}
+
+// waitForRetry waits out delay before the next activation attempt. While
+// recovery is blocked on process groups whose exit would settle it, it also
+// inspects those groups every blocker poll interval and returns early once one
+// is provably dead, so a crashed server's orphan that exits in seconds does not
+// keep commands unavailable for a full recovery interval. It reports false when
+// the runtime is stopping.
+func (c *pluginCommandRuntimeController) waitForRetry(ctx context.Context, delay time.Duration, watched []plugin_commands.RecoveryBlocker) bool {
+	deadline := time.NewTimer(delay)
+	defer deadline.Stop()
+	var poll <-chan time.Time
+	if len(watched) != 0 {
+		ticker := time.NewTicker(c.config.blockerPollInterval)
+		defer ticker.Stop()
+		poll = ticker.C
+	}
+	due := time.Now().Add(delay)
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return true
+		case <-poll:
+			c.mu.Lock()
+			pending := c.pending
+			c.mu.Unlock()
+			if pending != nil && pending.BlockingGroupExited(watched) {
+				return true
+			}
+			c.mu.Lock()
+			if c.state != pluginCommandRuntimeStopping {
+				c.retryAt = time.Now().Add(c.retryDelay(time.Until(due), watched))
+			}
+			c.mu.Unlock()
+		}
+	}
+}
+
+// retryDelay is how long callers are told to wait: until the next recovery
+// attempt, or the next inspection of the groups it waits for, whichever is
+// sooner.
+func (c *pluginCommandRuntimeController) retryDelay(delay time.Duration, watched []plugin_commands.RecoveryBlocker) time.Duration {
+	if len(watched) != 0 && c.config.blockerPollInterval < delay {
+		return c.config.blockerPollInterval
+	}
+	return delay
+}
+
+// recoveryBlockersOf returns the blockers an activation attempt stopped on.
+func recoveryBlockersOf(err error) []plugin_commands.RecoveryBlocker {
+	var blocked *plugin_commands.RecoveryBlockedError
+	if errors.As(err, &blocked) {
+		return blocked.Blockers
+	}
+	return nil
+}
+
+// awaitingExit keeps the blockers some process group's exit would settle.
+func awaitingExit(blockers []plugin_commands.RecoveryBlocker) []plugin_commands.RecoveryBlocker {
+	var watched []plugin_commands.RecoveryBlocker
+	for _, blocker := range blockers {
+		if blocker.AwaitingExit && blocker.ProcessGroupID > 0 {
+			watched = append(watched, blocker)
+		}
+	}
+	return watched
 }
 
 func (c *pluginCommandRuntimeController) resetAfterFailedStart() {

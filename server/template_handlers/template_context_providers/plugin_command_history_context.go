@@ -12,6 +12,13 @@ import (
 
 const pluginCommandHistoryPageSize = 50
 
+// PluginCommandRunRow is one listed run and whether its Job still exists, since
+// retention deletes ended Jobs and keeps the history that names them.
+type PluginCommandRunRow struct {
+	plugin_commands.RunRecord
+	JobPresent bool
+}
+
 func PluginCommandHistoryContextProvider(context PluginCommandHistoryPageContext) func(*http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		ctx := StaticTemplateCtx(request)
@@ -30,24 +37,43 @@ func PluginCommandHistoryContextProvider(context PluginCommandHistoryPageContext
 		if err != nil {
 			return addErrContext(err, ctx)
 		}
-		ctx["commandRuns"] = runs
+		id := request.URL.Query().Get("id")
+		var detail plugin_commands.RunView
+		var detailAvailable bool
+		if id != "" {
+			detail, detailAvailable, err = context.GetPluginCommandRun(id)
+			if err != nil && !errors.Is(err, plugin_commands.ErrRunNotFound) {
+				return addErrContext(err, ctx)
+			}
+			if err != nil {
+				ctx["errorMessage"] = "Plugin command run not found"
+				id = ""
+			}
+		}
+		jobIDs := make([]string, 0, len(runs)+1)
+		for _, run := range runs {
+			jobIDs = append(jobIDs, run.JobID)
+		}
+		if id != "" {
+			jobIDs = append(jobIDs, detail.JobID)
+		}
+		present, err := context.PresentJobIDs(jobIDs)
+		if err != nil {
+			return addErrContext(err, ctx)
+		}
+		rows := make([]PluginCommandRunRow, len(runs))
+		for i, run := range runs {
+			rows[i] = PluginCommandRunRow{RunRecord: run, JobPresent: present[run.JobID]}
+		}
+		ctx["commandRuns"] = rows
 		ctx["commandRunsCount"] = count
 		ctx["pagination"] = pagination
-
-		id := request.URL.Query().Get("id")
 		if id == "" {
 			return ctx
 		}
-		detail, available, err := context.GetPluginCommandRun(id)
-		if err != nil {
-			if errors.Is(err, plugin_commands.ErrRunNotFound) {
-				ctx["errorMessage"] = "Plugin command run not found"
-				return ctx
-			}
-			return addErrContext(err, ctx)
-		}
 		ctx["commandRun"] = detail
-		ctx["outputAvailable"] = available
+		ctx["commandRunJobPresent"] = present[detail.JobID]
+		ctx["outputAvailable"] = detailAvailable
 		ctx["exitCodeAvailable"] = detail.ExitCode != nil
 		return ctx
 	}

@@ -2,8 +2,10 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"runtime"
 	"sync"
 
@@ -20,6 +22,10 @@ type CommandSubmitter interface {
 }
 
 const commandRuntimeUnavailableMessage = "plugin command runtime is unavailable; quarantined recovery retries automatically when applicable; see /logs for details"
+
+// errCommandRuntimeUnavailable is the refusal when no command host has been
+// published, so the runtime is not running in this process at all.
+var errCommandRuntimeUnavailable = errors.New(commandRuntimeUnavailableMessage)
 
 type commandAdmissionKey struct {
 	plugin     string
@@ -141,7 +147,7 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 			host := pm.commandHost()
 			if host == nil {
 				release()
-				return pushLuaHostError(L, fmt.Errorf("%s", commandRuntimeUnavailableMessage))
+				return pushLuaHostError(L, errCommandRuntimeUnavailable)
 			}
 			runID, err := host.SubmitPluginCommand(plugin_commands.CommandRequest{
 				PluginName:       admission.pluginName,
@@ -235,10 +241,30 @@ func checkCommandParams(L *lua.LState, index int) map[string]string {
 	return params
 }
 
+// pushLuaHostError returns nil and the error. An unavailable command runtime
+// reads the one documented message whichever door refused, plus a third value,
+// {unavailable = true, retry_after = seconds}, so a plugin route can answer 503
+// "try later" instead of blaming the request. retry_after is the whole seconds
+// until the host next checks whether it can recover the runtime, and absent
+// when no check is scheduled. Any other refusal returns two values.
 func pushLuaHostError(L *lua.LState, err error) int {
 	L.Push(lua.LNil)
-	L.Push(lua.LString(err.Error()))
-	return 2
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	isQuarantined := errors.As(err, &quarantined)
+	if !isQuarantined && !errors.Is(err, errCommandRuntimeUnavailable) {
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	L.Push(lua.LString(commandRuntimeUnavailableMessage))
+	info := L.NewTable()
+	info.RawSetString("unavailable", lua.LTrue)
+	if isQuarantined {
+		if retryAfter := quarantined.RetryAfter(); retryAfter > 0 {
+			info.RawSetString("retry_after", lua.LNumber(math.Ceil(retryAfter.Seconds())))
+		}
+	}
+	L.Push(info)
+	return 3
 }
 
 // checkCommandInputs reads the optional options table, the fourth argument.

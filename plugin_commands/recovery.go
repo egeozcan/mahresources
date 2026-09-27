@@ -12,6 +12,10 @@ type RecoveryBlocker struct {
 	RunID          string
 	ProcessGroupID int
 	Reason         string
+	// AwaitingExit marks a blocker that its process group's exit settles: the
+	// group was seen alive, or could not be inspected. A blocker without it (no
+	// recorded group, a group from another boot) is changed by no exit.
+	AwaitingExit bool
 }
 
 // RecoveryBlockedError reports every independently blocked running command
@@ -179,7 +183,7 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return RunFinish{}, nil, ctxErr
 		}
-		return RunFinish{}, recoveryBlocker(run.ID, pgid, fmt.Sprintf("verify process group ownership: %v", err)), nil
+		return RunFinish{}, awaitingExitBlocker(run.ID, pgid, fmt.Sprintf("verify process group ownership: %v", err)), nil
 	}
 	switch identity.State {
 	case GroupDead:
@@ -188,14 +192,14 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 		}
 		return finish, nil, nil
 	case GroupAliveUnverified:
-		return RunFinish{}, recoveryBlocker(run.ID, pgid, fmt.Sprintf("process group %d ownership could not be verified while it remains alive", pgid)), nil
+		return RunFinish{}, awaitingExitBlocker(run.ID, pgid, fmt.Sprintf("process group %d ownership could not be verified while it remains alive", pgid)), nil
 	case GroupAliveOwned:
 		reason, err := d.terminateRecoveredGroup(ctx, pgid, run.ID)
 		if err != nil {
 			return RunFinish{}, nil, err
 		}
 		if reason != "" {
-			return RunFinish{}, recoveryBlocker(run.ID, pgid, reason), nil
+			return RunFinish{}, awaitingExitBlocker(run.ID, pgid, reason), nil
 		}
 		if run.CancelRequested {
 			finish.Status, finish.Error = RunStatusCancelled, run.Error
@@ -208,6 +212,32 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 
 func recoveryBlocker(runID string, pgid int, reason string) *RecoveryBlocker {
 	return &RecoveryBlocker{RunID: runID, ProcessGroupID: pgid, Reason: reason}
+}
+
+func awaitingExitBlocker(runID string, pgid int, reason string) *RecoveryBlocker {
+	blocker := recoveryBlocker(runID, pgid, reason)
+	blocker.AwaitingExit = true
+	return blocker
+}
+
+// BlockingGroupExited reports whether the process group behind one of these
+// blockers is now provably dead, so a recovery attempt would settle its run.
+// It only inspects the named groups; it signals nothing and changes no row.
+// An inspection that fails or finds the group alive proves nothing.
+func (d *Dispatcher) BlockingGroupExited(blockers []RecoveryBlocker) bool {
+	if d == nil || d.deps.Inspector == nil {
+		return false
+	}
+	for _, blocker := range blockers {
+		if !blocker.AwaitingExit || blocker.ProcessGroupID <= 0 {
+			continue
+		}
+		identity, err := d.deps.Inspector.InspectGroup(blocker.ProcessGroupID, blocker.RunID)
+		if err == nil && identity.State == GroupDead {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dispatcher) terminateRecoveredGroup(ctx context.Context, pgid int, runID string) (string, error) {

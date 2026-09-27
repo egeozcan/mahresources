@@ -15,6 +15,7 @@ import (
 	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/plugin_system"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
@@ -869,5 +870,46 @@ func TestJobRuntimeNeverLogsTheDecryptedInputItCouldNotDecode(t *testing.T) {
 	}
 	if held := storedCapacity(t, app, jobs.CapacityGroupGlobal) + storedCapacity(t, app, runtimeTestKind); held != 0 {
 		t.Fatalf("the blocked Job still holds %d capacity slots", held)
+	}
+}
+
+// TestRuntimeIdentityFitsTheClaimantBound keeps the recorded runtime identity
+// inside the claimant column for the longest recorded hostname, a boot session
+// UUID, the largest Linux pid and the largest pid namespace inode: a claimant
+// over the bound refuses the claim, and every Job this process dispatches would
+// fail to start.
+func TestRuntimeIdentityFitsTheClaimantBound(t *testing.T) {
+	identity := plugin_system.CurrentRuntimeIdentity()
+	identity.Host = strings.Repeat("h", plugin_system.MaxRuntimeHostBytes)
+	identity.BootSession = "01234567-89ab-cdef-0123-456789abcdef"
+	identity.PID = 4194304
+	identity.PIDNamespace = "4294967295"
+	if recorded := identity.String(); len(recorded) > jobs.MaxClaimantBytes {
+		t.Fatalf("recorded identity %q is %d bytes, over the %d-byte claimant bound", recorded, len(recorded), jobs.MaxClaimantBytes)
+	}
+}
+
+// TestAnUnreadableOrOlderRuntimeIdentityIsNeverProvedGone pins how every
+// consumer reads identities an earlier release recorded in claims, summaries
+// and the command fence: an older form still parses, and a form that does not
+// parse proves nothing. Neither may read as Gone (which would expire a live
+// claim or take over a live fence) or fail hard (which would block for good).
+func TestAnUnreadableOrOlderRuntimeIdentityIsNeverProvedGone(t *testing.T) {
+	current := plugin_system.CurrentRuntimeIdentity()
+	olderRelease := fmt.Sprintf("%s/%s/%d", current.Host, current.BootSession, current.PID)
+	if parsed, ok := plugin_system.ParseRuntimeIdentity(olderRelease); !ok || parsed.Nonce != "" {
+		t.Fatalf("the earlier release's form %q: parsed %+v ok=%v", olderRelease, parsed, ok)
+	}
+	for _, claimant := range []string{
+		"", "garbage", "unknown-host:4242", "host/boot", "host/boot/notapid",
+		olderRelease, // this process's pid, written without a nonce
+		fmt.Sprintf("%s/%s/%d/7c2456c1", current.Host, "00000000-0000-4000-8000-000000000000", current.PID),
+	} {
+		if runtimeClaimantIsProvedGone(claimant) {
+			t.Errorf("claimant %q was proved gone", claimant)
+		}
+		if pluginCommandFenceOwnerStopped(models.JobRuntimeFence{Token: "held", Owner: claimant}) {
+			t.Errorf("a fence held by %q was read as released", claimant)
+		}
 	}
 }

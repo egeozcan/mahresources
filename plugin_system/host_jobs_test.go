@@ -1,10 +1,12 @@
 package plugin_system
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -357,7 +359,7 @@ func TestRuntimeIdentityLiveness_isConservative(t *testing.T) {
 	}{
 		{"this process", current, RuntimeAlive},
 		{"another host", RuntimeIdentity{Host: current.Host + "-elsewhere", BootSession: current.BootSession, PID: current.PID}, RuntimeUnknown},
-		{"a boot that ended", RuntimeIdentity{Host: current.Host, BootSession: current.BootSession + "-old", PID: current.PID}, RuntimeGone},
+		{"another boot", RuntimeIdentity{Host: current.Host, BootSession: current.BootSession + "-old", PID: current.PID, Nonce: "0badc0de", PIDNamespace: current.PIDNamespace}, RuntimeUnknown},
 		{"no boot session recorded", RuntimeIdentity{Host: current.Host, PID: current.PID}, RuntimeUnknown},
 	}
 	for _, tc := range cases {
@@ -368,19 +370,162 @@ func TestRuntimeIdentityLiveness_isConservative(t *testing.T) {
 
 	// A pid that cannot exist in this boot is gone; one that is certainly taken
 	// (this process's own) is alive.
-	gone := RuntimeIdentity{Host: current.Host, BootSession: current.BootSession, PID: 1 << 30}
+	gone := current
+	gone.PID = 1 << 30
 	if got := gone.Liveness(); got != RuntimeGone {
 		t.Errorf("a pid no process holds: liveness = %v, want gone", got)
 	}
 }
 
-func TestRuntimeIdentityRoundTrips(t *testing.T) {
-	identity := RuntimeIdentity{Host: "host-a", BootSession: "boot-b", PID: 4242}
-	parsed, ok := ParseRuntimeIdentity(identity.String())
-	if !ok || parsed != identity {
-		t.Fatalf("round trip of %q gave %+v ok=%v", identity.String(), parsed, ok)
+// TestRuntimeIdentityFromAnotherMachineWithThisHostnameIsUnknown pins that a
+// hostname proves nothing on its own: cloned machines and containers with a
+// fixed hostname share one. A record with this hostname and another boot
+// session may name a process that is running on another machine, so neither
+// its pid nor its nonce can be judged here, and nothing about it is Gone.
+func TestRuntimeIdentityFromAnotherMachineWithThisHostnameIsUnknown(t *testing.T) {
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
 	}
-	for _, bad := range []string{"", "host", "host/boot", "host/boot/notanumber", "host/boot/0", "/boot/1"} {
+	elsewhere := current
+	elsewhere.BootSession = "00000000-0000-4000-8000-000000000000"
+	for name, pid := range map[string]int{"this pid": current.PID, "a pid free here": 1 << 30} {
+		for nonceName, nonce := range map[string]string{"another nonce": current.Nonce + "0", "this nonce": current.Nonce, "no nonce": ""} {
+			record := elsewhere
+			record.PID, record.Nonce = pid, nonce
+			if got := record.Liveness(); got != RuntimeUnknown {
+				t.Errorf("same hostname, another boot, %s, %s: liveness = %v, want unknown", name, nonceName, got)
+			}
+		}
+	}
+}
+
+// TestRuntimeIdentityFromAnotherPIDNamespaceIsUnknown covers containers that
+// share this kernel and this hostname but not this pid namespace: their pids
+// are not this process table's, so a pid that is free here or held by this
+// process says nothing about them.
+func TestRuntimeIdentityFromAnotherPIDNamespaceIsUnknown(t *testing.T) {
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
+	}
+	sibling := current
+	sibling.PIDNamespace = current.PIDNamespace + "1"
+	sibling.Nonce = current.Nonce + "0"
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("another pid namespace holding this pid: liveness = %v, want unknown", got)
+	}
+	sibling.PID = 1 << 30
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("another pid namespace, a pid free here: liveness = %v, want unknown", got)
+	}
+}
+
+// TestRuntimeIdentityWithoutAPIDNamespaceOnLinuxIsUnknown covers a Linux
+// process that cannot read /proc/self/ns/pid: its records name no process
+// table, so two such containers with one hostname, one kernel and one pid are
+// not the same table, and nothing about either is proved.
+func TestRuntimeIdentityWithoutAPIDNamespaceOnLinuxIsUnknown(t *testing.T) {
+	realHas, realCurrent := hasPIDNamespaces, currentPIDNamespace
+	t.Cleanup(func() { hasPIDNamespaces, currentPIDNamespace = realHas, realCurrent })
+	hasPIDNamespaces = true
+	currentPIDNamespace = func() string { return "" }
+
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
+	}
+	sibling := current
+	sibling.Nonce = current.Nonce + "0"
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("this pid, another nonce, no namespace on either side: liveness = %v, want unknown", got)
+	}
+	sibling.PID = 1 << 30
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a pid free here, no namespace on either side: liveness = %v, want unknown", got)
+	}
+	if got := current.Liveness(); got != RuntimeUnknown {
+		t.Errorf("this process's own record without a namespace: liveness = %v, want unknown", got)
+	}
+
+	// A readable namespace on this side does not make a record without one
+	// comparable either.
+	currentPIDNamespace = func() string { return "4026531836" }
+	withoutNamespace := CurrentRuntimeIdentity()
+	withoutNamespace.PIDNamespace = ""
+	withoutNamespace.PID = 1 << 30
+	if got := withoutNamespace.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a record without a namespace: liveness = %v, want unknown", got)
+	}
+}
+
+func TestRuntimeIdentityHostIsBoundedToFitTheClaimant(t *testing.T) {
+	long := strings.Repeat("h", 80)
+	if got := runtimeHost(long); len(got) != MaxRuntimeHostBytes || !strings.HasPrefix(long, got) {
+		t.Fatalf("runtimeHost(%d bytes) = %q", len(long), got)
+	}
+	if got := runtimeHost("short-host"); got != "short-host" {
+		t.Fatalf("runtimeHost(short) = %q", got)
+	}
+}
+
+// TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone is the restarted
+// container: the hostname, the kernel's boot session and the pid all survive a
+// `docker restart`, so a process that finds its own pid in a record can only
+// tell itself from its predecessor by the per-process nonce. The pid is held by
+// this process now, so whoever recorded it with another nonce has exited. A
+// record with no nonce proves nothing either way: it is neither this process
+// nor provably gone.
+func TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone(t *testing.T) {
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
+	}
+	if current.Nonce == "" {
+		t.Fatal("the current runtime identity carries no nonce")
+	}
+	// A nonce equal by chance would read a dead predecessor as this process
+	// forever, so it carries 128 random bits (base64url, 22 characters).
+	if raw, err := base64.RawURLEncoding.DecodeString(current.Nonce); err != nil || len(raw) < 16 {
+		t.Fatalf("nonce %q carries %d random bytes (err %v), want at least 16", current.Nonce, len(raw), err)
+	}
+	if again := CurrentRuntimeIdentity(); again != current {
+		t.Fatalf("the nonce changed within one process: %+v then %+v", current, again)
+	}
+
+	predecessor := current
+	predecessor.Nonce = current.Nonce + "0"
+	if got := predecessor.Liveness(); got != RuntimeGone {
+		t.Errorf("an earlier process with this pid: liveness = %v, want gone", got)
+	}
+	recordedBeforeNonces, ok := ParseRuntimeIdentity(fmt.Sprintf("%s/%s/%d", current.Host, current.BootSession, current.PID))
+	if !ok {
+		t.Fatal("a three-part identity recorded by an earlier release no longer parses")
+	}
+	if got := recordedBeforeNonces.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a record of this pid without a nonce: liveness = %v, want unknown", got)
+	}
+	parsed, ok := ParseRuntimeIdentity(current.String())
+	if !ok || parsed.Liveness() != RuntimeAlive {
+		t.Errorf("this process's own recorded identity %q: parsed ok=%v liveness=%v, want alive", current.String(), ok, parsed.Liveness())
+	}
+}
+
+func TestRuntimeIdentityRoundTrips(t *testing.T) {
+	for _, identity := range []RuntimeIdentity{
+		{Host: "host-a", BootSession: "boot-b", PID: 4242, Nonce: "0a1b2c3d", PIDNamespace: "4026531836"},
+		{Host: "host-a", BootSession: "boot-b", PID: 4242, Nonce: "0a1b2c3d"},
+	} {
+		parsed, ok := ParseRuntimeIdentity(identity.String())
+		if !ok || parsed != identity {
+			t.Fatalf("round trip of %q gave %+v ok=%v", identity.String(), parsed, ok)
+		}
+	}
+	legacy, ok := ParseRuntimeIdentity("host-a/boot-b/4242")
+	if !ok || legacy != (RuntimeIdentity{Host: "host-a", BootSession: "boot-b", PID: 4242}) {
+		t.Fatalf("a record without a nonce gave %+v ok=%v", legacy, ok)
+	}
+	for _, bad := range []string{"", "host", "host/boot", "host/boot/notanumber", "host/boot/0", "/boot/1", "host/boot/1/", "host/boot/1/n/", "host/boot/1//4026531836", "host/boot/1/n/ns/extra"} {
 		if _, ok := ParseRuntimeIdentity(bad); ok {
 			t.Errorf("ParseRuntimeIdentity(%q) was accepted", bad)
 		}

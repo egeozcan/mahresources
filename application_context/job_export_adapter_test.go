@@ -144,13 +144,16 @@ func reconcileOnce(t *testing.T, ctx *MahresourcesContext, jobID string) jobs.Re
 	return ""
 }
 
-// goneRuntimeIdentityForTest names a process that cannot exist any more: this host,
-// a boot session it is not in, and a pid. Fixtures that stand for "the execution
-// died" claim in this name, because an identity a reconciler cannot read has to
-// leave the Job blocked rather than dispatching a replacement over work that might
-// be live.
+// goneRuntimeIdentityForTest names a process that cannot exist any more: this
+// process table (host, boot session and pid namespace), and a pid no process in
+// it holds. Fixtures that stand for "the execution died" claim in this name,
+// because an identity a reconciler cannot read (another machine, boot or pid
+// namespace) has to leave the Job blocked rather than dispatching a replacement
+// over work that might be live.
 func goneRuntimeIdentityForTest() string {
-	return plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended-for-tests/4242"
+	identity := plugin_system.CurrentRuntimeIdentity()
+	identity.PID = 1 << 30
+	return identity.String()
 }
 
 // TestACrashedExportIsSettledFromItsArchiveRatherThanRerun is §3's reconciliation

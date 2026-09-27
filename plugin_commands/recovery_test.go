@@ -544,3 +544,52 @@ func TestRecoverySignalAttemptIsLatchedAcrossHealingScans(t *testing.T) {
 		t.Fatalf("record = %+v", record)
 	}
 }
+
+// TestRecoveryBlockersSayWhetherAnExitSettlesThem pins which blockers the
+// runtime may re-check on the short cadence: one waiting for a live or
+// uninspectable group is settled by that group's exit, and the probe reports
+// the exit; one with no recorded group, or a group from another boot, names
+// nothing an exit could change, so the probe never inspects it.
+func TestRecoveryBlockersSayWhetherAnExitSettlesThem(t *testing.T) {
+	alive, otherBoot := 61, 62
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runOrder = []string{"alive", "unrecorded", "other-boot"}
+	store.runs["alive"] = RunRecord{ID: "alive", Status: RunStatusRunning, ProcessGroupID: &alive}
+	store.runs["unrecorded"] = RunRecord{ID: "unrecorded", Status: RunStatusRunning}
+	store.runs["other-boot"] = RunRecord{ID: "other-boot", Status: RunStatusRunning, ProcessGroupID: &otherBoot}
+	store.bootSessionIDs["alive"] = "boot-b"
+	store.bootSessionIDs["other-boot"] = "boot-a"
+	inspector := &recoveryInspector{states: map[int][]GroupIdentity{
+		alive: {{State: GroupAliveUnverified}},
+	}}
+	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector, BootSessionID: "boot-b"})
+	var blocked *RecoveryBlockedError
+	if err := d.Recover(context.Background()); !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want recovery blockers", err)
+	}
+	awaiting := map[string]bool{}
+	for _, blocker := range blocked.Blockers {
+		awaiting[blocker.RunID] = blocker.AwaitingExit
+	}
+	if !awaiting["alive"] || awaiting["unrecorded"] || awaiting["other-boot"] || len(awaiting) != 3 {
+		t.Fatalf("awaiting exit = %v, want only the live group's run", awaiting)
+	}
+
+	if d.BlockingGroupExited(blocked.Blockers) {
+		t.Fatal("the probe reported an exit while the group is alive")
+	}
+	inspector.mu.Lock()
+	inspector.states[alive] = []GroupIdentity{{State: GroupDead}}
+	inspector.inspections = nil
+	inspector.mu.Unlock()
+	if !d.BlockingGroupExited(blocked.Blockers) {
+		t.Fatal("the probe missed the blocking group's exit")
+	}
+	inspector.mu.Lock()
+	defer inspector.mu.Unlock()
+	for _, pgid := range inspector.inspections {
+		if pgid != alive {
+			t.Fatalf("the probe inspected group %d, which no exit can settle", pgid)
+		}
+	}
+}

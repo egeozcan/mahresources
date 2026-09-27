@@ -1211,7 +1211,7 @@ func TestAQueueBackedReconcileNeedsProofTheExecutorIsGone(t *testing.T) {
 
 	// A process that cannot exist any more: the work may be queued again, and the
 	// next runtime starts it.
-	goneUntil := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4242"
+	goneUntil := goneRuntimeIdentityForTest()
 	gone := acceptDownloadForTest(t)
 	claimDownloadForTest(t, gone.ID, goneUntil)
 	time.Sleep(40 * time.Millisecond)
