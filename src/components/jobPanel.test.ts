@@ -139,12 +139,8 @@ describe('Job Center panel', () => {
         expect(next.ownerScope).toBe('');
         await vi.waitFor(() => expect(puts).toEqual(['everyone', 'everyone']));
 
-        // A page rendered with it clears the carried choice.
-        const settled = jobPanel();
-        settled._ownerViewer = 7;
-        settled.ownerScope = '';
-        settled.adoptPendingOwnerChoice();
-        expect(storage.size).toBe(0);
+        // Its own write answered, the carried choice is dropped.
+        await vi.waitFor(() => expect(storage.size).toBe(0));
         // Another account in the same tab ignores it.
         storage.set('mahresources.jobsPanelScope.pending.7', 'everyone');
         const other = jobPanel();
@@ -152,6 +148,44 @@ describe('Job Center panel', () => {
         other.ownerScope = 'me';
         other.adoptPendingOwnerChoice();
         expect(other.ownerScope).toBe('me');
+    });
+
+    test('a page rendered with the carried choice still stores it once, and carries it until that write is answered', async () => {
+        const storage = new Map<string, string>([['mahresources.jobsPanelScope.pending.7', 'everyone']]);
+        vi.stubGlobal('sessionStorage', {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => { storage.set(key, value); },
+            removeItem: (key: string) => { storage.delete(key); },
+        });
+        const sent: string[] = [];
+        const answers: Array<(ok: boolean) => void> = [];
+        vi.stubGlobal('fetch', vi.fn((_url: string, init: any) => {
+            sent.push(JSON.parse(init.body).value);
+            return new Promise(resolve => answers.push(ok => resolve({ ok })));
+        }));
+
+        // The render may reflect a write the page before sent, which a slower
+        // one it left in flight can still overtake: matching it proves nothing.
+        const matching = jobPanel();
+        matching._ownerViewer = 7;
+        matching.ownerScope = '';
+        matching.adoptPendingOwnerChoice();
+        expect(matching.ownerScope).toBe('');
+        await vi.waitFor(() => expect(sent).toEqual(['everyone']));
+        expect(storage.get('mahresources.jobsPanelScope.pending.7')).toBe('everyone');
+
+        // A write that fails leaves it carried for the next page.
+        answers.shift()!(false);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(storage.get('mahresources.jobsPanelScope.pending.7')).toBe('everyone');
+
+        const next = jobPanel();
+        next._ownerViewer = 7;
+        next.ownerScope = '';
+        next.adoptPendingOwnerChoice();
+        await vi.waitFor(() => expect(sent).toEqual(['everyone', 'everyone']));
+        answers.shift()!(true);
+        await vi.waitFor(() => expect(storage.size).toBe(0));
     });
 
     test('asks first only for a command that stops work or cannot be undone', () => {
@@ -575,11 +609,41 @@ describe('Job Center panel', () => {
             await panel.runCommand(panel.jobs[0], { key, label: key, jobVersion: 4 });
 
             expect(panel.noticeText).toBe(`${key} requested for first.bin.`);
-            // The executor acts: the row reaches a later version, and says the rest.
+            // The executor acts: the row leaves the state it was in, and says the rest.
             panel.applyStreamSnapshot({ ...panel.jobs[0], state: 'cancelled', version: 6 });
             expect(panel.noticeText).toBe('');
         });
     }
+
+    test('a request whose answer already carries the result is said as the result, whatever version the reread shows', async () => {
+        // The executor finished stopping before the service wrote its answer, so
+        // the answer and the read after it are the same cancelled version.
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...panel.jobs[0], state: 'cancelled', version: 7, commands: undefined } } }
+            : { ...panel.jobs[0], state: 'cancelled', version: 7, commands: [] });
+        panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
+
+        await panel.runCommand(panel.jobs[0], { key: 'cancel', label: 'Cancel', jobVersion: 4 });
+
+        expect(panel.noticeText).toBe('');
+        expect(panel._noticeWatch).toBeNull();
+        await vi.waitFor(() => expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin cancelled.'));
+    });
+
+    test('a requested box stands through a later version in the same state', async () => {
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...panel.jobs[0], version: 5, controlIntent: 'cancel' } } }
+            : { ...panel.jobs[0], version: 5, controlIntent: 'cancel', commands: [] });
+        panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
+
+        await panel.runCommand(panel.jobs[0], { key: 'cancel', label: 'Cancel', jobVersion: 4 });
+        expect(panel.noticeText).toBe('Cancel requested for first.bin.');
+
+        panel.applyStreamSnapshot({ ...panel.jobs[0], state: 'running', version: 6 });
+        expect(panel.noticeText).toBe('Cancel requested for first.bin.');
+        panel.applyStreamSnapshot({ ...panel.jobs[0], state: 'cancelled', version: 7 });
+        expect(panel.noticeText).toBe('');
+    });
 
     test('a request the executor carried out before the reread is said as its result, not as requested', async () => {
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'

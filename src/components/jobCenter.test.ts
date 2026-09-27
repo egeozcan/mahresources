@@ -288,7 +288,23 @@ describe('Job detail commands', () => {
         expect(center.detail.controlIntent).toBeUndefined();
     });
 
-    test('a request the executor carried out before the reread says the result, and a pending one waits for the answer\'s version', async () => {
+    test('a request whose answer already carries the result says the result, whatever version the reread shows', async () => {
+        const running = { id: 'job-4', title: 'big.iso', kind: 'remote-download', state: 'running', phase: 'downloading', version: 5,
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5, destructive: true, confirmation: 'Stop this download?' }] };
+        // The executor finished stopping before the service wrote its answer, so
+        // the answer and the read after it are the same cancelled version.
+        const { phase: _phase, ...cancelled } = { ...running, state: 'cancelled', version: 7 };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...cancelled, commands: undefined } } }
+            : { ...cancelled, commands: [] });
+
+        await center.runCommand(center.detail, running.commands[0]);
+
+        expect(center.noticeText).toBe('big.iso cancelled.');
+        expect(center._noticeWatch).toBeNull();
+    });
+
+    test('a request the executor carried out before the reread says the result, and a pending one waits for the Job to leave its state', async () => {
         const running = { id: 'job-3', title: 'held.iso', kind: 'remote-download', state: 'running', version: 5,
             commands: [{ key: 'pause', label: 'Pause', jobVersion: 5, confirmation: 'Pause?' }] };
         let reread: any = { ...running, state: 'paused', version: 7, commands: [] };
@@ -299,12 +315,15 @@ describe('Job detail commands', () => {
         await center.runCommand(center.detail, running.commands[0]);
         expect(center.noticeText).toBe('held.iso paused.');
 
-        // Not yet held at the reread: the box waits for the version after the answer's.
+        // Not yet held at the reread: the box stands until the Job leaves the
+        // state the reader acted on, not merely until a later version.
         center.detail = { ...running };
         reread = { ...running, controlIntent: 'pause', version: 6 };
         await center.runCommand(center.detail, running.commands[0]);
         expect(center.noticeText).toBe('Pause requested for held.iso.');
-        center.applyStreamSnapshot({ ...running, state: 'paused', version: 7, commands: [] });
+        center.applyStreamSnapshot({ ...running, controlIntent: 'pause', version: 7 });
+        expect(center.noticeText).toBe('Pause requested for held.iso.');
+        center.applyStreamSnapshot({ ...running, state: 'paused', version: 8, commands: [] });
         expect(center.noticeText).toBe('');
     });
 

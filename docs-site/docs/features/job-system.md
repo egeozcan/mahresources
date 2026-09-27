@@ -235,6 +235,10 @@ cannot see, so a failure another account retried stays in its Needs attention.
 An administrator's drawer offers **My jobs** and **Everyone's**. It starts on
 **My jobs** (`owner=me`), so its badges count only the administrator's own work,
 and remembers the choice for the account (the user setting `jobsPanelScope`).
+Choices are stored in the order they are made, and the last one is carried to
+the next page opened in the same tab, which applies it and stores it again.
+Known limit: a write the page left behind still had in flight can land after
+the next page's write, and is then the stored choice.
 **Dismiss finished** dismisses what the chosen scope lists. Other accounts see
 only their own Jobs and are offered no choice.
 
@@ -253,8 +257,11 @@ The drawer never leaves the page it is open on, which may hold unsaved work.
 **Retry** and **Continue** leave a notice naming the new Job with a link to it,
 and a command whose answer names a page (**Inspect command history**) offers
 that page as a link. The Job's own page opens both directly. A notice names its
-Job; one for a request, such as "Cancel requested for ...", goes once the row
-has moved on, and closing the drawer clears it. After every command, and after
+Job; one for a request, such as "Cancel requested for ...", stays until the Job
+leaves the state it was in when the command was sent, and closing the drawer
+clears it. A request the executor has already carried out by the time the
+answer or the read after it arrives is said as its result ("<Job> cancelled.")
+instead. After every command, and after
 a refusal of a Job that still exists, the Job's controls are read again, so a
 control the Job no longer offers disappears. A refusal names the command and
 the Job and says why: a Kind's refusal in its own words ("Retry refused for

@@ -551,7 +551,7 @@ export function jobCenter(options = {}) {
 
         get noticeText() {
             const watch = this._noticeWatch;
-            if (watch && Number(this.detail?.version || 0) > watch.version) return '';
+            if (watch && requestPassed(watch, this.detail)) return '';
             return this.notice;
         },
 
@@ -613,8 +613,7 @@ export function jobCenter(options = {}) {
                 this.notice = rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
                     : settled ? lifecycleAnnouncement({ ...job, ...now }) : commandNoticeText(job, command, outcome);
-                this._noticeWatch = outcome.code === 'requested' && !settled
-                    ? { version: requestWatchVersion(job, freshJob) } : null;
+                this._noticeWatch = outcome.code === 'requested' && !settled ? requestWatch(job) : null;
                 this._liveRegion?.announce(this.notice);
                 return outcome;
             } catch (error) {
@@ -870,19 +869,25 @@ export function commandNoticeText(job, command, outcome) {
     return message ? `${name}: ${message}.`.replace(/\.\.$/, '.') : `${label} completed for ${name}.`;
 }
 
-// Whether the executor has already acted on a requested control: the Job read
-// after the answer has left the state the answer reported. Its box would
-// otherwise say "requested" of something already done.
+// A requested control is settled once the Job has left the state the reader
+// acted on: that is the command's result, or whatever overtook it, at whatever
+// version it arrived, the answer's own included. Until then its box says
+// "requested"; after, it would say that of something already done.
 export function requestSettled(job, answered, now, outcome) {
-    return outcome?.code === 'requested' && !!now?.state &&
-        Number(now.version || 0) > Number(answered?.version ?? job?.version ?? 0) &&
-        stateOf(now) !== stateOf(answered || job);
+    if (outcome?.code !== 'requested') return false;
+    const latest = now && Number(now.version || 0) >= Number(answered?.version || 0) ? now : answered || now;
+    return !!latest?.state && requestPassed(requestWatch(job), latest);
 }
 
-// The version a requested control's box waits to see passed: the one its answer
-// reported, never a later read's, which may already be the result.
-export function requestWatchVersion(job, answered) {
-    return Number(answered?.version ?? job?.version ?? 0);
+// What a requested control's box waits for: the Job leaving `job`'s state.
+export function requestWatch(job) {
+    return { state: stateOf(job) };
+}
+
+// Whether `current` (the Job as shown now, or nothing once it is gone) has
+// passed what the box was waiting for.
+export function requestPassed(watch, current) {
+    return !current || stateOf(current) !== watch.state;
 }
 
 // Fields a snapshot leaves out when they are empty. A newer snapshot that

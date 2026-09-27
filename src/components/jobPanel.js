@@ -12,8 +12,9 @@ import {
     commandLocation,
     commandNoticeText,
     commandRefusalText,
+    requestPassed,
     requestSettled,
-    requestWatchVersion,
+    requestWatch,
     eventJob,
     isPartialSuccess,
     lifecycleAnnouncement,
@@ -238,6 +239,7 @@ export function jobPanel() {
         _focusRestoreTimer: null,
         _focusObserver: null,
         _focusInHandler: null,
+        _focusOutHandler: null,
         _resourceRefreshNotified: new Set(),
         busy: false,
         // Dismiss finished is reading its first page or asking about it.
@@ -393,7 +395,7 @@ export function jobPanel() {
             const watch = this._noticeWatch;
             if (watch) {
                 const row = this.jobs.find(job => job.id === watch.jobId);
-                if (!row || Number(row.version || 0) > watch.version) return '';
+                if (requestPassed(watch, row)) return '';
             }
             return this.notice;
         },
@@ -1306,9 +1308,12 @@ export function jobPanel() {
         },
 
         // A page opened before the choice was stored is rendered with the old
-        // one. The choice is carried in the tab's session until a page is
-        // rendered with it: a page that disagrees applies it and stores it
-        // again. Keyed by the viewer, so another account in the tab ignores it.
+        // one. The choice is carried in the tab's session: the next page
+        // applies it if it was rendered without it, and stores it again
+        // either way, since a write the page before left in flight can still
+        // overtake the one its render reflects. It is dropped once that write
+        // is answered. Keyed by the viewer, so another account in the tab
+        // ignores it.
         pendingOwnerChoiceKey() {
             return `mahresources.jobsPanelScope.pending.${this._ownerViewer}`;
         },
@@ -1324,15 +1329,15 @@ export function jobPanel() {
             try { pending = globalThis.sessionStorage?.getItem(this.pendingOwnerChoiceKey()) || null; }
             catch { return; }
             if (pending !== 'mine' && pending !== 'everyone') return;
-            const scope = pending === 'mine' ? 'me' : '';
-            if (scope === this.ownerScope) {
-                try { globalThis.sessionStorage?.removeItem(this.pendingOwnerChoiceKey()); }
-                catch { /* harmless: it matches what the page rendered */ }
-                return;
-            }
             // Before the first read and the stream: nothing to reconnect yet.
-            this.ownerScope = scope;
-            this.saveOwnerChoice(pending);
+            this.ownerScope = pending === 'mine' ? 'me' : '';
+            const key = this.pendingOwnerChoiceKey();
+            this.saveOwnerChoice(pending).then(stored => {
+                if (!stored) return;
+                try {
+                    if (globalThis.sessionStorage?.getItem(key) === pending) globalThis.sessionStorage.removeItem(key);
+                } catch { /* the next page stores it once more */ }
+            }, () => {});
         },
 
         // The Undo a Dismiss's box offers.
@@ -1436,6 +1441,12 @@ export function jobPanel() {
             if (!panel || typeof MutationObserver === 'undefined') return;
             this._focusInHandler = event => this.rememberFocus(event);
             panel.addEventListener('focusin', this._focusInHandler);
+            // The element losing focus names where it went, which is heard even
+            // when the browser dispatches no focusin for the element gaining it.
+            this._focusOutHandler = event => {
+                if (event.relatedTarget) this.noteFocus(event.relatedTarget);
+            };
+            panel.addEventListener('focusout', this._focusOutHandler);
             this._focusObserver = new MutationObserver(() => this.checkFocusLost());
             this._focusObserver.observe(panel, { childList: true, subtree: true });
             this._focusObserver.panel = panel;
@@ -1445,11 +1456,13 @@ export function jobPanel() {
         stopFocusKeeper() {
             if (this._focusObserver) {
                 this._focusObserver.panel?.removeEventListener('focusin', this._focusInHandler);
+                this._focusObserver.panel?.removeEventListener('focusout', this._focusOutHandler);
                 this._focusObserver.disconnect();
             }
             clearTimeout(this._focusRestoreTimer);
             this._focusObserver = null;
             this._focusInHandler = null;
+            this._focusOutHandler = null;
             this._focusRestoreTimer = null;
             this._focusMemo = null;
         },
@@ -1488,45 +1501,56 @@ export function jobPanel() {
             // After the trap's own rescue, which runs on the same mutations.
             this._focusRestoreTimer = setTimeout(() => {
                 this._focusRestoreTimer = null;
-                if (this._focusMemo !== memo || memo.element.isConnected || !this.isOpen) return;
-                if (!memo.jobId) {
-                    // The box cleared: the stopped drawer's Reload page, else
-                    // the first row, else All jobs. A frame later, because
-                    // x-show reveals an element (the stopped notice) on the next
-                    // animation frame, after this timer.
-                    afterNextPaint(() => {
-                        if (this._focusMemo !== memo || !this.isOpen) return;
-                        const panel = document.querySelector('#job-center-panel');
-                        for (const candidate of [
-                            panel?.querySelector('[data-job-panel-stopped] button'),
-                            panel?.querySelector('article[data-job-id] a[href]'),
-                            panel?.querySelector('[data-job-panel-all-jobs]'),
-                        ]) {
-                            if (candidate && isRendered(candidate) && focusOn(candidate)) {
-                                this.noteFocus(candidate);
-                                return;
-                            }
-                        }
-                    });
-                    return;
-                }
-                const restore = () => this.focusRowOrNeighbour(memo.jobId, memo.rows, [
-                    memo.selector,
-                    ...(memo.commandKey ? panelFocusSuccessorKeys(memo.commandKey).map(other => `button[data-command-key="${CSS.escape(other)}"]`) : []),
-                    'a[id^="job-panel-title-"]',
-                ]);
-                // A row the drawer still lists but has not drawn yet is being
-                // redrawn in another group: it is waited for, once, rather than
-                // focus going to a neighbour.
-                const drawn = document.querySelector(`#job-center-panel article[data-job-id="${CSS.escape(String(memo.jobId))}"]`);
-                if (!drawn && this.jobs.some(job => job.id === memo.jobId)) {
-                    afterNextPaint(() => {
-                        if (this._focusMemo === memo && !memo.element.isConnected && this.isOpen) restore();
-                    });
-                    return;
-                }
-                restore();
+                this.restoreLostFocus(memo);
             }, 0);
+        },
+
+        // Puts focus back where `memo` says the reader was. A render still in
+        // progress may leave nothing to focus yet, so an attempt that places it
+        // nowhere is made again a frame later, a few times, while the memo is
+        // still the reader's and its element is still gone.
+        restoreLostFocus(memo, attempt = 0) {
+            if (this._focusMemo !== memo || memo.element.isConnected || !this.isOpen) return;
+            const last = attempt >= FOCUS_RESTORE_ATTEMPTS - 1;
+            const again = () => {
+                if (!last) afterNextPaint(() => this.restoreLostFocus(memo, attempt + 1));
+            };
+            if (!memo.jobId) {
+                // The box cleared: the stopped drawer's Reload page, else the
+                // first row, else All jobs. A frame later, because x-show
+                // reveals an element (the stopped notice) on the next animation
+                // frame, after this timer.
+                afterNextPaint(() => {
+                    if (this._focusMemo !== memo || !this.isOpen) return;
+                    const panel = document.querySelector('#job-center-panel');
+                    for (const candidate of [
+                        panel?.querySelector('[data-job-panel-stopped] button'),
+                        panel?.querySelector('article[data-job-id] a[href]'),
+                        panel?.querySelector('[data-job-panel-all-jobs]'),
+                    ]) {
+                        if (candidate && isRendered(candidate) && focusOn(candidate)) {
+                            this.noteFocus(candidate);
+                            return;
+                        }
+                    }
+                    again();
+                });
+                return;
+            }
+            // A row the drawer still lists but has not drawn yet is being
+            // redrawn in another group: it is waited for rather than focus
+            // going to a neighbour.
+            const drawn = document.querySelector(`#job-center-panel article[data-job-id="${CSS.escape(String(memo.jobId))}"]`);
+            if (!drawn && !last && this.jobs.some(job => job.id === memo.jobId)) {
+                again();
+                return;
+            }
+            const placed = this.focusRowOrNeighbour(memo.jobId, memo.rows, [
+                memo.selector,
+                ...(memo.commandKey ? panelFocusSuccessorKeys(memo.commandKey).map(other => `button[data-command-key="${CSS.escape(other)}"]`) : []),
+                'a[id^="job-panel-title-"]',
+            ]);
+            if (!placed) again();
         },
 
         async runCommandUnfocused(job, command) {
@@ -1602,7 +1626,7 @@ export function jobPanel() {
                     spoken = lifecycleAnnouncement({ ...job, ...now });
                 } else {
                     this.setNotice(commandNoticeText(job, command, outcome), {
-                        watch: outcome.code === 'requested' ? { jobId: job.id, version: requestWatchVersion(job, freshJob) } : null,
+                        watch: outcome.code === 'requested' ? { jobId: job.id, ...requestWatch(job) } : null,
                     });
                 }
                 this.announceNotice(this.notice || spoken, proved);
@@ -1850,6 +1874,9 @@ function buildFinishedPageURL(cursor, ownerScope = '') {
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
 }
+
+// How many frames a lost focus is looked for before the keeper gives up.
+const FOCUS_RESTORE_ATTEMPTS = 4;
 
 function afterNextPaint(callback) {
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(callback, 0));
