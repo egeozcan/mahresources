@@ -151,7 +151,7 @@ func TestTheOriginRuntimeIsStoredOpaque(t *testing.T) {
 // there rather than treating the closure as one nobody can account for.
 func TestAdoptionReadsTheRuntimeOfARowTheScrubHasNotReached(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
-	gone := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4243"
+	gone := goneRuntimeIdentityForTest()
 	accepted, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
 		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
 		Origin: "plugin", Title: "written by an older process", Replay: jobs.ReplayInput{NonReplayable: true},

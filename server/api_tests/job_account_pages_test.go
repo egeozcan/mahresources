@@ -33,7 +33,7 @@ func TestJobPagesNameAccountsForAnAdministrator(t *testing.T) {
 		}
 	}
 
-	page := doReq(tc, http.MethodGet, "/jobs", map[string]string{"Accept": "text/html"}, []*http.Cookie{adminCookie}, nil)
+	page := doReq(tc, http.MethodGet, "/jobs?dismissed=false", map[string]string{"Accept": "text/html"}, []*http.Cookie{adminCookie}, nil)
 	if page.Code != http.StatusOK {
 		t.Fatalf("/jobs answered %d", page.Code)
 	}

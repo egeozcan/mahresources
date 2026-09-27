@@ -413,10 +413,13 @@ func TestJobRetentionRuntimeKeepsRenewingAfterASlowRenewal(t *testing.T) {
 	createExpiredArtifactJob(t, first)
 
 	// The first fence update on this handle is the claim; the second is the
-	// first renewal, which is held past its timeout.
+	// first renewal, which is held past its timeout. It is held before its
+	// transaction begins: the sweep holds the SQLite writer lock across the
+	// artifact cleanup, so a renewal that had begun would be waiting for that lock
+	// instead of reaching this hook.
 	slowRenewal := make(chan struct{})
 	var fenceUpdates atomic.Int32
-	if err := first.db.Callback().Update().Before("gorm:update").Register("test:slow-retention-renewal", func(tx *gorm.DB) {
+	if err := first.db.Callback().Update().Before("gorm:begin_transaction").Register("test:slow-retention-renewal", func(tx *gorm.DB) {
 		if tx.Statement.Table != "job_runtime_fences" || fenceUpdates.Add(1) != 2 {
 			return
 		}
