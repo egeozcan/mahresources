@@ -624,9 +624,13 @@ export function jobPanel() {
             const changed = preferenceCommand(url, init, payload)?.jobIds;
             if (changed?.length) {
                 // This tab changed them: what it holds about them is older now,
-                // and the open drawer reads it again (Forget takes Retry away,
-                // with no version to say so).
+                // and so is every list read begun before, whose rows carry the
+                // old pin at the same version. Those reads are fenced, the
+                // lists read again, and the open drawer's details too (Forget
+                // takes Retry away, with no version to say so).
                 this.movePreferenceEpochs(changed);
+                this.fenceEarlierReads();
+                this.startScheduledPanelRefresh();
                 this.loadStaleDetails();
             }
             announcePreferenceCommand(url, init, payload, this._broadcast);

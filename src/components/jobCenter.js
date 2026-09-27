@@ -601,7 +601,10 @@ export function jobCenter(options = {}) {
         hearPreferenceChange(message) {
             if (!Array.isArray(message?.jobIds) || !message.jobIds.map(String).includes(String(this.detailId))) return;
             this._preferenceEpoch += 1;
-            if (this.detail) this.reconcileDetail();
+            // Whichever read applies a change of state first says it, once
+            // the stream is live: this one may overtake the read the change's
+            // own event started, which then finds nothing new.
+            if (this.detail) this.reconcileDetail({ announce: this.streamCaughtUp });
         },
 
         detailURL(job) {
@@ -722,7 +725,7 @@ export function jobCenter(options = {}) {
         // guard. The obligation outlives a failed read: it is tried again after
         // a delay that doubles up to a minute, and a read begun before a
         // preference change is read again rather than applied.
-        reconcileDetail() {
+        reconcileDetail({ announce = false } = {}) {
             if (!this.detailId) return;
             clearTimeout(this._reconcileTimer);
             this._reconcileTimer = null;
@@ -731,11 +734,11 @@ export function jobCenter(options = {}) {
                 .then(payload => {
                     this._reconcileDelay = 0;
                     if (epoch !== this._preferenceEpoch) {
-                        this.reconcileDetail();
+                        this.reconcileDetail({ announce });
                         return;
                     }
                     const snapshot = payload.job || payload;
-                    if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, false);
+                    if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announce);
                 })
                 .catch(() => {
                     this._reconcileDelay = Math.min(Math.max(this._reconcileDelay * 2, 2000), 60000);
@@ -765,13 +768,15 @@ export function jobCenter(options = {}) {
                 const epoch = this._preferenceEpoch;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
-                        let snapshot = payload.job || payload;
+                        const snapshot = payload.job || payload;
                         if (!this.jobs.some(job => job.id === snapshot.id)) return;
-                        // A pin changed elsewhere during the read: the Job's
-                        // change applies, its pin is settled by a fresh read.
+                        // A preference changed during the read (a pin, or
+                        // Forget taking Retry away): none of this answer is
+                        // applied, and a fresh read carries the Job's change,
+                        // said as this one would have been.
                         if (epoch !== this._preferenceEpoch && String(snapshot.id) === String(this.detailId)) {
-                            snapshot = { ...snapshot, pinned: this.detail?.pinned };
-                            this.reconcileDetail();
+                            this.reconcileDetail({ announce: announceSnapshot });
+                            return;
                         }
                         this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })

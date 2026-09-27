@@ -618,6 +618,38 @@ describe('Job detail stream connection', () => {
         expect(center.detail.pinned).toBe(false);
     });
 
+    test('an event read answered after Forget elsewhere is replaced by a fresh read, and its change is still said', async () => {
+        const center = jobCenter({ detailId: 'job-12' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.streamCaughtUp = true;
+        center.jobs = [{ id: 'job-12', title: 'Export', state: 'running', version: 2, commands: [{ key: 'cancel' }] }];
+        center.detail = center.jobs[0];
+        center.loading = false;
+        let forgotten = false;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let reads = 0;
+        center.fetchJSON = vi.fn(async () => {
+            reads += 1;
+            const commands = forgotten ? [] : [{ key: 'retry' }, { key: 'forget' }];
+            const answer = { id: 'job-12', title: 'Export', state: 'failed', version: 3, commands };
+            if (reads === 1) await firstHeld;
+            return answer;
+        });
+        center.handleStreamMessage({
+            data: JSON.stringify({ id: 'e-12', jobId: 'job-12', jobVersion: 3, type: 'failed', deliverySequence: 30 }),
+            lastEventId: 'v2:30',
+        });
+        forgotten = true;
+        center.hearPreferenceChange({ command: 'forget', jobIds: ['job-12'] });
+        await vi.waitFor(() => expect(center.detail.state).toBe('failed'));
+        releaseFirst();
+        await vi.waitFor(() => expect(reads).toBeGreaterThanOrEqual(3));
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(center.detail.commands).toEqual([]);
+        expect(center._liveRegion.announce).toHaveBeenCalledWith(expect.stringMatching(/Export failed/));
+    });
+
     test('a reconciling read that fails is tried again', async () => {
         vi.useFakeTimers();
         const center = jobCenter({ detailId: 'job-9' });

@@ -2994,6 +2994,39 @@ describe('Job Center drawer connection and list reads', () => {
         await vi.waitFor(() => expect(panel.commandsFor(panel.jobs[0]).map((command: any) => command.key)).toEqual(['dismiss']));
     });
 
+    test('a list read begun before this tab pinned a job does not unpin its row', async () => {
+        const row = { id: 'r', state: 'failed', version: 5, acceptedAt: '2026-09-27T10:00:00Z', pinned: false };
+        let pinned = false;
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
+        let releaseOld = () => {};
+        const oldHeld = new Promise<void>(resolve => { releaseOld = resolve; });
+        let lists = 0;
+        vi.stubGlobal('fetch', vi.fn(async (raw: string, init: any = {}) => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (init.method === 'POST') {
+                pinned = true;
+                return { ok: true, json: async () => ({ result: { status: 'succeeded' } }) };
+            }
+            if (url.pathname === '/v1/jobs') {
+                lists += 1;
+                const answer = { ...row, pinned };
+                if (lists <= 3) await oldHeld;
+                return { ok: true, json: async () => ({ jobs: url.searchParams.getAll('state').includes('failed') ? [answer] : [] }) };
+            }
+            return { ok: true, json: async () => ({ ...row, pinned, commands: [] }) };
+        }));
+        panel.jobs = [row];
+        panel.startScheduledPanelRefresh();
+        await vi.waitFor(() => expect(lists).toBe(3));
+        await panel.requestJSON('/v1/jobs/r/commands/pin', { method: 'POST', body: '{}' });
+        releaseOld();
+        await vi.waitFor(() => expect(lists).toBe(6));
+        await vi.waitFor(() => expect(panel.jobs[0]?.pinned).toBe(true));
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(panel.jobs[0].pinned).toBe(true);
+    });
+
     test('Dismiss finished dismisses what the drawer lists, in its owner scope', async () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
