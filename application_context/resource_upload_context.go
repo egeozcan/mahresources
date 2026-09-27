@@ -1097,6 +1097,11 @@ func (c *submitterResourceCreator) AddResourceForJob(jobID string, actorUserID *
 	})
 }
 
+// ErrSubmitterCannotWrite refuses a background download whose submitter's account
+// was deleted, disabled or demoted below writing while the transfer ran: nothing
+// may be created for an account that can no longer create it.
+var ErrSubmitterCannotWrite = errors.New("the account this download was submitted by was deleted or can no longer create resources, so nothing was saved")
+
 // addResourceOptions carries optional overrides for the internal resource
 // upload path. The public AddResource passes a zero value; later callers
 // (e.g. managed command import) supply a ScratchDir so the temporary copy
@@ -1287,6 +1292,12 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	// the account as it stands now.
 	if opts.RebindSubmitter != 0 {
 		ctx = ctx.boundToSubmitter(opts.RebindSubmitter)
+		if !ctx.Principal().CanWrite() {
+			// Refused here, by name, rather than by the scope callback's
+			// "unsupported data" at the insert: that text is what the download's
+			// Job would have shown as its reason.
+			return nil, ErrSubmitterCannotWrite
+		}
 	}
 
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
