@@ -381,3 +381,32 @@ func TestAStartCarriesAnEarlierReleasesFiredRowMarker(t *testing.T) {
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)
 }
+
+// An earlier release's fired row can name a Retry successor that was itself
+// retried before the upgrade, so neither the mapped Job nor the Job its handle
+// names now is the one it records. The row's retry chain back to its mapped Job
+// still shows the JobID is one its handle once named.
+func TestAStartAcceptsAnEarlierReleasesFiredRowNamingAnOlderRetry(t *testing.T) {
+	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
+	mapped := scheduledDownloadMapping(t, ctx, row.ID)
+	first, second := "earlier-release-first-retry", "earlier-release-second-retry"
+	for _, link := range []models.JobLink{
+		{FromJobID: first, ToJobID: mapped.JobID, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()},
+		{FromJobID: second, ToJobID: first, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()},
+	} {
+		if err := ctx.db.Create(&link).Error; err != nil {
+			t.Fatalf("link the retries: %v", err)
+		}
+	}
+	if err := ctx.db.Model(&models.JobLegacyHandle{}).
+		Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(row.ID), 10)).
+		Update("job_id", second).Error; err != nil {
+		t.Fatalf("move the handle to the second retry: %v", err)
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": first, "attempts": 1}).Error; err != nil {
+		t.Fatalf("fire the row as that release did: %v", err)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+}

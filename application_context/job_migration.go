@@ -1213,11 +1213,12 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 // fires. This release moves the marker in that same write
 // (refreshRetiredScheduledDownloadHashTx); a row an earlier release fired still
 // carries a marker taken with no JobID. That marker describes the row when the
-// JobID is one a fire writes: the Job the row's handle named, which is the Job
-// the row was mapped to, or the one its handle names now (an earlier release's
-// Retry moved it). Everything the barrier exists for — the empty payload, the URL
-// reduced to its origin, the row's identity and plugin — must still be exactly
-// what was hashed.
+// JobID is one such a fire wrote: the Job the row's handle named then, which is
+// the Job the row was mapped to or, once an earlier release's Retry had moved the
+// handle, a Retry successor of it. The Job the handle names now, or the retry
+// chain back to the mapped Job, shows which. Everything the barrier exists for —
+// the empty payload, the URL reduced to its origin, the row's identity and
+// plugin — must still be exactly what was hashed.
 func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, mapping models.JobSourceMapping) (bool, error) {
 	if hashRetiredScheduledDownload(row) == mapping.PostScrubHash {
 		return true, nil
@@ -1233,10 +1234,31 @@ func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, 
 	var handle models.JobLegacyHandle
 	err := db.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(row.ID), 10)).
 		First(&handle).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
 	}
-	return err == nil && handle.JobID == row.JobID, err
+	if err == nil && handle.JobID == row.JobID {
+		return true, nil
+	}
+	// Up the retry chain from the recorded Job; the seen set ends a cycle, which a
+	// Retry never makes.
+	seen := map[string]bool{}
+	for current := row.JobID; current != "" && !seen[current]; {
+		seen[current] = true
+		var ancestors []string
+		if err := db.Model(&models.JobLink{}).Where("type = ? AND from_job_id = ?", string(jobs.LinkRetryOf), current).
+			Pluck("to_job_id", &ancestors).Error; err != nil {
+			return false, err
+		}
+		if len(ancestors) == 0 {
+			return false, nil
+		}
+		if ancestors[0] == mapping.JobID {
+			return true, nil
+		}
+		current = ancestors[0]
+	}
+	return false, nil
 }
 
 func hashJobMigrationProjection(value any) string {

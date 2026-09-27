@@ -569,25 +569,43 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 var errScheduledDownloadNotCancellable = errors.New("the scheduled download is not pending")
 
 // deferredDownloadJobIDTx names the Job behind one scheduled download, or ""
-// when it has none, and with lock takes that Job's row lock. The cancel then acts
-// on that Job alone: a Retry that moved the handle meanwhile made an ordinary
-// download the row does not track.
+// when it has none, and with lock takes that Job's row lock.
 func deferredDownloadJobIDTx(tx *gorm.DB, rowID uint, lock bool) (string, error) {
-	var handle models.JobLegacyHandle
-	err := tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(rowID), 10)).
-		First(&handle).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
-	}
-	if err != nil || !lock {
-		return handle.JobID, err
+	jobID, err := deferredDownloadJobIDOn(tx, rowID)
+	if err != nil || jobID == "" || !lock {
+		return jobID, err
 	}
 	var job models.Job
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", handle.JobID).First(&job).Error
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", jobID).First(&job).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", err
 	}
-	return handle.JobID, nil
+	return jobID, nil
+}
+
+// deferredDownloadJobIDOn names the Job a deferred row was accepted with, or ""
+// when it has none. That is its source mapping's Job, which nothing moves. The
+// row's legacy handle is not: a Retry moves it to its successor, an ordinary
+// download the row does not track. A row with no mapping, written before there
+// was one, is named by its handle.
+func deferredDownloadJobIDOn(db *gorm.DB, rowID uint) (string, error) {
+	id := strconv.FormatUint(uint64(rowID), 10)
+	if db.Migrator().HasTable(&models.JobSourceMapping{}) {
+		var mapping models.JobSourceMapping
+		err := db.Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, id).First(&mapping).Error
+		if err == nil && mapping.JobID != "" {
+			return mapping.JobID, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", err
+		}
+	}
+	var handle models.JobLegacyHandle
+	err := db.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, id).First(&handle).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return handle.JobID, err
 }
 
 // cancelDeferredDownloadJobTx cancels one row's scheduled Job, inside the
@@ -633,15 +651,31 @@ func (ctx *MahresourcesContext) cancelDeferredDownloadJobTx(tx *gorm.DB, jobID s
 // already won on the Job, and a sweep holding the claim reserves the row only
 // while it is still pending, so it finds nothing left to submit.
 func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) error {
-	var handle models.JobLegacyHandle
-	err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, job.ID).First(&handle).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+	// The row the Job was accepted with (deferredDownloadJobIDOn): a Retry's
+	// successor has taken over a handle, but it is not the row's Job.
+	var source string
+	if tx.Migrator().HasTable(&models.JobSourceMapping{}) {
+		var mapping models.JobSourceMapping
+		err := tx.Where("source_kind = ? AND job_id = ?", jobMigrationScheduledDownload, job.ID).First(&mapping).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		source = mapping.SourceID
+	} else {
+		var handle models.JobLegacyHandle
+		err := tx.Where("namespace = ? AND job_id = ?", ScheduledDownloadHandleNamespace, job.ID).First(&handle).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		source = handle.Handle
 	}
-	if err != nil {
-		return err
-	}
-	rowID, err := strconv.ParseUint(handle.Handle, 10, 64)
+	rowID, err := strconv.ParseUint(source, 10, 64)
 	if err != nil {
 		return nil
 	}
@@ -686,10 +720,10 @@ func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 	}{
 		// A submitted row names the Job the sweep queued.
 		{models.ScheduledDownloadStatusSubmitted, "JOIN jobs ON jobs.id = scheduled_downloads.job_id", nil},
-		// A pending row is the Job its handle names.
+		// A pending row is the Job it was accepted with (deferredDownloadJobIDOn).
 		{models.ScheduledDownloadStatusPending,
-			"JOIN job_legacy_handles AS handle ON handle.namespace = ? AND handle.handle = CAST(scheduled_downloads.id AS TEXT) JOIN jobs ON jobs.id = handle.job_id",
-			[]any{ScheduledDownloadHandleNamespace}},
+			"JOIN job_source_mappings AS mapping ON mapping.source_kind = ? AND mapping.source_id = CAST(scheduled_downloads.id AS TEXT) JOIN jobs ON jobs.id = mapping.job_id",
+			[]any{jobMigrationScheduledDownload}},
 	} {
 		var after uint
 		for {
@@ -904,15 +938,15 @@ func (ctx *MahresourcesContext) materializeDeferredDownloadJob(rowID uint) (stri
 	if service == nil {
 		return "", false, nil
 	}
-	jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ScheduledDownloadHandleNamespace, fmt.Sprintf("%d", rowID))
-	if err != nil {
-		if errors.Is(err, jobs.ErrNotFound) {
-			return "", false, nil
-		}
+	jobID, err := deferredDownloadJobIDOn(ctx.db, rowID)
+	if err != nil || jobID == "" {
 		return "", false, err
 	}
 	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
 	if err != nil {
+		if errors.Is(err, jobs.ErrNotFound) {
+			return "", false, nil
+		}
 		return "", false, err
 	}
 	if job.State != jobs.StateScheduled {
@@ -959,14 +993,14 @@ func (ctx *MahresourcesContext) deferredJobEndedUnrun(rowID uint) (jobs.State, b
 	if service == nil {
 		return "", false, nil
 	}
-	jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ScheduledDownloadHandleNamespace, fmt.Sprintf("%d", rowID))
-	if errors.Is(err, jobs.ErrNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
+	jobID, err := deferredDownloadJobIDOn(ctx.db, rowID)
+	if err != nil || jobID == "" {
 		return "", false, err
 	}
 	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	if errors.Is(err, jobs.ErrNotFound) {
+		return "", false, nil
+	}
 	if err != nil {
 		return "", false, err
 	}

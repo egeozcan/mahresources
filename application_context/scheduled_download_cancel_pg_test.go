@@ -88,11 +88,12 @@ func TestCancellingADeferredRowAndItsJobTogetherDoesNotDeadlock(t *testing.T) {
 }
 
 // TestCancellingADeferredRowLeavesARetryAlone lands a Retry inside the row's
-// cancel, after it read which Job its handle names and before it locks that Job:
-// the Retry moves the handle to an ordinary download that starts now. The row's
-// cancel acts on the Job it read and locked, whose end is already final, so it
-// cancels the row and leaves the Retry's download alone. The starting state is one
-// earlier releases left: the Job cancelled, the row still pending.
+// cancel, after it read which Job the row was accepted with and before it locks
+// that Job: the Retry moves the row's handle to an ordinary download that starts
+// now. The row's cancel acts on the Job it read and locked, whose end is already
+// final, so it cancels the row and leaves the Retry's download alone. The
+// starting state is one earlier releases left: the Job cancelled, the row still
+// pending.
 func TestCancellingADeferredRowLeavesARetryAlone(t *testing.T) {
 	ctx, _, _ := newPostgresOwnershipFixture(t, 2)
 	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
@@ -118,9 +119,9 @@ func TestCancellingADeferredRowLeavesARetryAlone(t *testing.T) {
 	var retried atomic.Bool
 	var successorID string
 	var retryErr error
-	const name = "test:retry-after-the-handle-read"
+	const name = "test:retry-after-the-job-read"
 	if err := ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table != "job_legacy_handles" {
+		if tx.Statement.Table != "job_source_mappings" {
 			return
 		}
 		if _, inTransaction := tx.Statement.ConnPool.(*sql.Tx); !inTransaction || !retried.CompareAndSwap(false, true) {

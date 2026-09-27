@@ -503,3 +503,73 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 		t.Fatalf("the row whose Job is still waiting is %s, want submitted", got.Status)
 	}
 }
+
+// legacyPendingRowRetried builds a state earlier releases left: the deferred Job
+// cancelled while its row stayed pending, then retried. The Retry's successor is
+// an ordinary queued download, and it has taken over the row's legacy handle.
+func legacyPendingRowRetried(t *testing.T, ctx *MahresourcesContext, actorID uint, name string) (models.ScheduledDownload, jobs.Snapshot, jobs.Snapshot) {
+	t.Helper()
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actorID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/" + name + ".bin"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	cancelled, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled})
+	if err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	successor := retryJob(t, ctx, cancelled)
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending {
+		t.Fatalf("setup: the row is %s, want the pending row an earlier release left", got.Status)
+	}
+	return *row, cancelled, successor
+}
+
+// The row's own Job is the one it was accepted with, not whatever its handle was
+// moved to: cancelling such a row cancels the row, and leaves the Retry's
+// download alone.
+func TestCancellingAnEarlierReleasesPendingRowLeavesItsRetryAlone(t *testing.T) {
+	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
+	row, _, successor := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-cancel")
+	cancelled, err := ctx.CancelScheduledDownload(row.ID)
+	if err != nil || !cancelled {
+		t.Fatalf("cancel the row = %v, %v; want cancelled", cancelled, err)
+	}
+	after, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, successor.ID)
+	if err != nil {
+		t.Fatalf("read the successor: %v", err)
+	}
+	if after.State == jobs.StateCancelled {
+		t.Fatalf("cancelling the row cancelled the Retry's download")
+	}
+}
+
+// Startup reconciles such a row against the Job it was accepted with, and a
+// later sweep at its due time leaves it cancelled rather than recording the
+// Retry's download as its submission.
+func TestStartupReconcilesAnEarlierReleasesPendingRowAcrossARetry(t *testing.T) {
+	ctx, key, actor, _ := newRetiredDeferredDownloadContext(t)
+	row, _, _ := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-reconcile")
+	if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled < 1 {
+		t.Fatalf("reconcile = %d, %v; want the row recorded", reconciled, err)
+	}
+	fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" {
+		t.Fatalf("the row is %s naming %q, want cancelled naming none", got.Status, got.JobID)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+}
+
+// A row an earlier release left pending behind a cancelled Job, then retried,
+// comes due without startup having reconciled it: the sweep records the end of
+// its own Job, not the Retry's download.
+func TestADueEarlierReleasePendingRowIgnoresItsRetry(t *testing.T) {
+	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
+	row, _, _ := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-due")
+	fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" {
+		t.Fatalf("the row is %s naming %q, want cancelled naming none", got.Status, got.JobID)
+	}
+}
