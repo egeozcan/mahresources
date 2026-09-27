@@ -400,7 +400,9 @@ without it adds `dismissed=false`, so a copied Job Center address lists the same
 Jobs through the API and the CLI, which include dismissed Jobs unless asked not
 to. Dismissal does not delete Job history. **Saved searches** keep a filter for reuse.
 
-Open a Job to see its progress, timeline, outputs, and related Jobs. Use only
+Each card's **Details** lists when the Job was accepted, started and finished,
+and the fields of its summary, such as a download's host. Open a Job to see its
+progress, timeline, outputs, and related Jobs. Use only
 the controls displayed on that Job; available commands are checked again when
 submitted. Selecting several Jobs offers only commands they all advertise for
 bulk use, with a separate result for each Job.
