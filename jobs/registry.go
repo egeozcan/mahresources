@@ -91,9 +91,11 @@ type CommandExecutionRevalidator interface {
 
 // CommandPreflight is an optional Kind check a command runs after its
 // advertisement and before it takes effect. It answers whether the Kind's own
-// dispatch would refuse the work the command starts, for a reason the Kind can
-// already read without opening sealed input: a target outside the principal's
-// scope, a role that no longer writes, a plugin that is gone. A refusal is
+// dispatch would refuse the work the command starts, for a durable reason the
+// Kind can already read without opening sealed input: a target outside the
+// principal's scope, a role that no longer writes. A fact only true of this
+// process (whether it has a plugin loaded) is not one: another process may claim
+// the work. A refusal is
 // returned to the caller with its reason instead of creating work whose only
 // outcome is to block, and nothing is written.
 //

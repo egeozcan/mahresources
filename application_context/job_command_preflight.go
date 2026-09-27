@@ -45,24 +45,20 @@ func preflightPrincipal(command jobs.CommandContext, key string) (uint, bool) {
 }
 
 // PreflightCommand refuses a Retry or Resume of a download that refusalReason
-// would block: its plugin is gone, its principal can no longer write, or a
-// target it names is outside that principal's scope.
+// would block because its principal can no longer write, or because a target it
+// names is outside that principal's scope. Both are durable facts about the
+// account. refusalReason's plugin check is deliberately not asked here: it reads
+// whether *this* process has the plugin loaded, and the process that claims the
+// work may be another one that does.
 func (a *downloadJobAdapter) PreflightCommand(_ context.Context, command jobs.CommandContext, key string) (jobs.CommandRefusal, error) {
 	principal, applies := preflightPrincipal(command, key)
-	if !applies || a.ctx == nil {
+	if !applies || principal == 0 || a.ctx == nil {
 		return jobs.CommandRefusal{}, nil
 	}
 	var summary downloadSummary
 	if err := json.Unmarshal(command.Snapshot.Summary, &summary); err != nil {
 		// A summary this Kind cannot read describes nothing to check; dispatch
 		// still decides from the sealed input.
-		return jobs.CommandRefusal{}, nil
-	}
-	if summary.Plugin != "" && !a.ctx.scheduledDownloadPluginAvailable(summary.Plugin, nil) {
-		return jobs.CommandRefusal{Reason: "plugin-unavailable",
-			Message: "The plugin this download belongs to is no longer available."}, nil
-	}
-	if principal == 0 {
 		return jobs.CommandRefusal{}, nil
 	}
 	scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(principal))
