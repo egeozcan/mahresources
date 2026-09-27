@@ -3,6 +3,7 @@ package api_tests
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"mahresources/download_queue"
@@ -86,4 +87,31 @@ func TestLegacyJobControlsAcceptTheCanonicalJobID(t *testing.T) {
 		t.Fatalf("retry answered %+v, want a successor of %s", retried, canonicalID)
 	}
 	postLegacyControl(t, tc, "cancel", retried.CanonicalJobID)
+}
+
+// TestLegacyPauseOfAJobThisProcessDoesNotRunIsAConflict covers a Job that is
+// listed but has no transfer in this server process: queued and not yet
+// dispatched, or running in another process. Pause is the queue's own control,
+// so there is nothing here to hold, and saying "not found" about a Job the
+// caller has just listed sends them looking for the wrong problem.
+func TestLegacyPauseOfAJobThisProcessDoesNotRunIsAConflict(t *testing.T) {
+	tc := SetupTestEnv(t)
+	accepted, err := tc.AppCtx.JobService().Accept(jobs.Deps{DB: tc.DB}, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued,
+		Origin: "api", Title: "a download nobody here runs",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	res := tc.MakeRequest(http.MethodPost, "/v1/jobs/pause?id="+accepted.ID, nil)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("pause answered %d, want 409: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "not running in this server process") {
+		t.Fatalf("pause refusal does not say why: %s", res.Body.String())
+	}
+	if res := tc.MakeRequest(http.MethodPost, "/v1/jobs/pause?id=01a0e1d9-0000-7000-8000-000000000000", nil); res.Code != http.StatusNotFound {
+		t.Fatalf("pause of an unknown Job answered %d, want 404", res.Code)
+	}
 }

@@ -9,8 +9,10 @@ sidebar_label: pause
 Suspend an in-flight download without cancelling it. `<id>` is the Job
 id `jobs list` prints, or the legacy handle `job submit` returns as
 `id`. Pause only works while the download is queued or running in the
-server process that holds its transfer; the server rejects pause
-requests against finished, cancelled, or already-paused jobs. The
+server process that holds its transfer; the server answers HTTP 409
+Conflict for a Job no transfer in that process belongs to, such as one
+running in another server process, and rejects pause requests against
+finished, cancelled, or already-paused jobs. The
 transfer is cancelled, discarding the bytes received so far, and the
 Job waits until you call `job resume`.
 
