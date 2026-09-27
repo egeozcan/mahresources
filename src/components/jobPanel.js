@@ -7,6 +7,7 @@ import {
     commandConfirmation,
     commandConfirmOptions,
     commandEndpoint,
+    commandFocusSuccessorKeys,
     commandLocation,
     commandNoticeText,
     commandRefusalText,
@@ -177,10 +178,8 @@ export function unsaidOutcomesText(count) {
 
 // Where focus goes when the command control that had it leaves the row: its
 // counterpart first, since Pin becomes Unpin, then the same command re-rendered.
-const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause', dismiss: 'undismiss', undismiss: 'dismiss' };
-
 export function panelFocusSuccessorKeys(key) {
-    return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
+    return commandFocusSuccessorKeys(key);
 }
 
 // Commands whose result the row shows at once: it gains or loses its pin, or
@@ -226,6 +225,14 @@ export function jobPanel() {
         _noticeWatch: null,
         // Jobs with a command in flight, whose controls take no second press.
         commandBusy: {},
+        // Commands whose focus keepFocusOnRow still has to place.
+        _commandFocusPending: 0,
+        // Where the reader's focus is in the drawer, for when a re-render takes
+        // the element away (see startFocusKeeper).
+        _focusMemo: null,
+        _focusRestoreTimer: null,
+        _focusObserver: null,
+        _focusInHandler: null,
         _resourceRefreshNotified: new Set(),
         busy: false,
         // Dismiss finished is reading its first page or asking about it.
@@ -293,6 +300,9 @@ export function jobPanel() {
                     this.startClock();
                     this.$nextTick?.(() => {
                         focusFirstIn(this.$refs?.panel);
+                        // By id: $refs is read before the drawer first renders
+                        // (blockingModal), and Alpine keeps that empty read.
+                        this.startFocusKeeper(document.querySelector('#job-center-panel'));
                         this.adoptPendingAnnouncement();
                     });
                 } else {
@@ -313,6 +323,7 @@ export function jobPanel() {
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this.stopClock();
+            this.stopFocusKeeper();
             this._refreshGeneration += 1;
             this._streamGeneration += 1;
             this._panelRefreshRequested = false;
@@ -325,6 +336,7 @@ export function jobPanel() {
 
         onDrawerClosed() {
             this.stopClock();
+            this.stopFocusKeeper();
             // A box answers the command it followed while the reader watched;
             // it is not news to find on the next opening.
             this.clearNotice();
@@ -1170,6 +1182,7 @@ export function jobPanel() {
             if (!job?.id || this.commandBusy[job.id]) return null;
             this.commandBusy = { ...this.commandBusy, [job.id]: true };
             const watch = this.watchReaderFocus();
+            if (watch) this._commandFocusPending += 1;
             this._commandRefresh = null;
             try {
                 return await this.runCommandUnfocused(job, command);
@@ -1222,38 +1235,118 @@ export function jobPanel() {
             if (!watch) return;
             Promise.resolve(settled).catch(() => {}).then(() => this.$nextTick?.(() => setTimeout(() => {
                 watch.stop();
+                this._commandFocusPending = Math.max(0, this._commandFocusPending - 1);
                 if (watch.opener.isConnected || watch.movedByReader || !this.isOpen) return;
                 const panel = document.querySelector('#job-center-panel');
                 const active = document.activeElement;
                 if (active && active !== document.body && !panel?.contains(active)) return;
-                const rowFor = id => panel?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
-                const row = rowFor(jobId);
-                if (!row) {
-                    // The command took its row away (Dismiss): the row that took
-                    // its place, else the one before it, else All jobs.
-                    const at = watch.rows.indexOf(String(jobId));
-                    const neighbours = [...watch.rows.slice(at + 1), ...watch.rows.slice(0, Math.max(at, 0)).reverse()];
-                    const links = [
-                        ...neighbours.map(id => rowFor(id)?.querySelector('a[href]')),
-                        // One the refresh revealed, when no neighbour is left.
-                        panel?.querySelector('article[data-job-id] a[href]'),
-                        panel?.querySelector('[data-job-panel-all-jobs]'),
-                    ];
-                    for (const link of links) {
-                        if (link && isRendered(link) && focusOn(link)) return;
-                    }
-                    return;
-                }
-                const candidates = [
-                    ...panelFocusSuccessorKeys(command?.key).map(key => row.querySelector(`button[data-command-key="${CSS.escape(key)}"]`)),
-                    row.querySelector('details[open] summary'),
-                    row.querySelector('[role="group"] button, [role="group"] summary'),
-                    row.querySelector('a[href]'),
-                ];
-                for (const candidate of candidates) {
-                    if (candidate && isRendered(candidate) && focusOn(candidate)) return;
-                }
+                this.focusRowOrNeighbour(jobId, watch.rows, [
+                    ...panelFocusSuccessorKeys(command?.key).map(key => `button[data-command-key="${CSS.escape(key)}"]`),
+                    'details[open] summary',
+                    '[role="group"] button, [role="group"] summary',
+                    'a[href]',
+                ]);
             }, 0)));
+        },
+
+        // Puts focus on the first of `selectors` the Job's row has, scrolled
+        // into view (the row may have moved to another group). A row that is
+        // gone hands focus to the row that took its place, else the one before
+        // it (`rows` is the order the reader last saw), else All jobs.
+        focusRowOrNeighbour(jobId, rows, selectors) {
+            const panel = document.querySelector('#job-center-panel');
+            const rowFor = id => panel?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
+            const reveal = element => {
+                if (!element || !isRendered(element) || !focusOn(element)) return false;
+                element.scrollIntoView?.({ block: 'nearest' });
+                this.noteFocus(element);
+                return true;
+            };
+            const row = rowFor(jobId);
+            if (row) {
+                for (const selector of selectors) if (reveal(row.querySelector(selector))) return true;
+                return false;
+            }
+            const at = (rows || []).indexOf(String(jobId));
+            const neighbours = [...(rows || []).slice(at + 1), ...(rows || []).slice(0, Math.max(at, 0)).reverse()];
+            const links = [
+                ...neighbours.map(id => rowFor(id)?.querySelector('a[href]')),
+                // One a refresh revealed, when no neighbour is left.
+                panel?.querySelector('article[data-job-id] a[href]'),
+                panel?.querySelector('[data-job-panel-all-jobs]'),
+            ];
+            for (const link of links) if (reveal(link)) return true;
+            return false;
+        },
+
+        // Rows re-render all the time: a live change moves a row from one group
+        // to another, which the drawer draws as a new element, and a refresh
+        // replaces the controls a row offers. When that takes away the element
+        // the reader was on, the trap drops focus on the Close button (or it
+        // falls to <body>), and a keyboard reader loses their place in a list
+        // of up to a hundred rows. The keeper remembers where focus is, notices
+        // the element leaving, and puts focus back on the same row: the same
+        // control, its counterpart, or the row's title, wherever the row now is.
+        startFocusKeeper(panel) {
+            this.stopFocusKeeper();
+            if (!panel || typeof MutationObserver === 'undefined') return;
+            this._focusInHandler = event => this.rememberFocus(event);
+            panel.addEventListener('focusin', this._focusInHandler);
+            this._focusObserver = new MutationObserver(() => this.checkFocusLost());
+            this._focusObserver.observe(panel, { childList: true, subtree: true });
+            this._focusObserver.panel = panel;
+            this.noteFocus(document.activeElement);
+        },
+
+        stopFocusKeeper() {
+            if (this._focusObserver) {
+                this._focusObserver.panel?.removeEventListener('focusin', this._focusInHandler);
+                this._focusObserver.disconnect();
+            }
+            clearTimeout(this._focusRestoreTimer);
+            this._focusObserver = null;
+            this._focusInHandler = null;
+            this._focusRestoreTimer = null;
+            this._focusMemo = null;
+        },
+
+        // A move the reader makes comes from the element losing focus, so it has
+        // a relatedTarget; the trap's rescue after the focused element was
+        // removed comes from nowhere, and is not remembered as theirs.
+        rememberFocus(event) {
+            const previous = this._focusMemo?.element;
+            if (previous && !previous.isConnected && !event.relatedTarget) return;
+            this.noteFocus(event.target);
+        },
+
+        noteFocus(target) {
+            const panel = this._focusObserver?.panel;
+            if (!target || !panel?.contains?.(target)) return;
+            const row = target.closest?.('article[data-job-id]');
+            this._focusMemo = {
+                element: target,
+                jobId: row?.dataset.jobId || null,
+                commandKey: target.dataset?.commandKey || '',
+                selector: rowControlSelector(target),
+                rows: row ? [...panel.querySelectorAll('article[data-job-id]')].map(article => article.dataset.jobId) : null,
+            };
+        },
+
+        checkFocusLost() {
+            const memo = this._focusMemo;
+            if (!memo?.jobId || memo.element.isConnected || this._focusRestoreTimer) return;
+            // A command places focus itself once it settles (keepFocusOnRow).
+            if (this._commandFocusPending > 0) return;
+            // After the trap's own rescue, which runs on the same mutations.
+            this._focusRestoreTimer = setTimeout(() => {
+                this._focusRestoreTimer = null;
+                if (this._focusMemo !== memo || memo.element.isConnected || !this.isOpen) return;
+                this.focusRowOrNeighbour(memo.jobId, memo.rows, [
+                    memo.selector,
+                    ...(memo.commandKey ? panelFocusSuccessorKeys(memo.commandKey).map(other => `button[data-command-key="${CSS.escape(other)}"]`) : []),
+                    'a[id^="job-panel-title-"]',
+                ]);
+            }, 0);
         },
 
         async runCommandUnfocused(job, command) {
@@ -1542,6 +1635,16 @@ function buildFinishedPageURL(cursor) {
     params.set('limit', String(FINISHED_PAGE_LIMIT));
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
+}
+
+// The selector that finds, in a re-rendered row, the control a reader was on.
+function rowControlSelector(element) {
+    const key = element?.dataset?.commandKey;
+    if (key) return `button[data-command-key="${CSS.escape(key)}"]`;
+    if (element?.id?.startsWith?.('job-panel-title-')) return 'a[id^="job-panel-title-"]';
+    if (element?.tagName === 'SUMMARY') return 'summary';
+    if (element?.tagName === 'A') return '[role="group"] a[href]';
+    return 'a[id^="job-panel-title-"]';
 }
 
 // Newest first, each group held to its own limit: a burst of new running work

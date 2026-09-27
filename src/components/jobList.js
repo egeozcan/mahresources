@@ -1,7 +1,8 @@
 import { findListContainer } from '../utils/listContainer.js';
 import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { commandConfirmation, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
+import { commandConfirmation, commandFocusSuccessorKeys, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
+import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
 // After a failed refetch: long enough not to hammer a struggling server, short
@@ -288,6 +289,33 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         init() {
             this.$watch(() => this.selectionKey(), () => { void this.sync(); });
             void this.sync();
+            // A command that changes the offer takes away the button that ran it
+            // (Pin becomes Unpin), and one that empties the selection hides the
+            // whole bar. Focus goes to the button that replaced it, else Select
+            // All, which shows once nothing is selected, else the first card,
+            // else the page's main region when the list is left empty.
+            const bar = this.$el?.closest?.('.bulk-editors');
+            this._focusKeeper = this.$el ? keepFocusWithin(this.$el, {
+                observe: bar?.parentElement || this.$el,
+                attributes: true,
+                describe: element => (element.dataset?.commandKey ? { key: element.dataset.commandKey } : null),
+                restore: ({ key }) => {
+                    const candidates = [
+                        ...commandFocusSuccessorKeys(key).map(other => this.$el.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+                        this.$el.querySelector('button[data-command-key]'),
+                        ...document.querySelectorAll('[data-bulk-select-all]'),
+                        document.querySelector('[data-job-id] a[href]'),
+                        document.querySelector('main'),
+                    ];
+                    for (const candidate of candidates) {
+                        if (candidate?.checkVisibility?.() !== false && focusOn(candidate)) return;
+                    }
+                },
+            }) : null;
+        },
+
+        destroy() {
+            this._focusKeeper?.stop();
         },
 
         selectionKey() {

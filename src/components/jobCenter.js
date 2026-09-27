@@ -1,4 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { focusOn, keepFocusWithin } from '../utils/focus.js';
 import {
     applyProgressFrame,
     formatAmount,
@@ -45,6 +46,15 @@ export function warningEvents(events) {
     return (Array.isArray(events) ? events : []).filter(event =>
         event?.type === 'warning' || event?.type === 'events-truncated',
     );
+}
+
+// Where focus goes when the command control that had it is re-rendered away:
+// its counterpart first, since Pin becomes Unpin, then the same command drawn
+// again.
+const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause', dismiss: 'undismiss', undismiss: 'dismiss' };
+
+export function commandFocusSuccessorKeys(key) {
+    return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
 }
 
 export function commandLabel(command) {
@@ -479,11 +489,13 @@ export function jobCenter(options = {}) {
             this._liveRegion = createLiveRegion();
             // Keeps "about 14 s left" counting down between progress frames.
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
+            this._focusKeeper = this.$el ? keepCommandFocus(this.$el) : null;
             this.connect();
             this.load();
         },
 
         destroy() {
+            this._focusKeeper?.stop();
             if (this._clockTimer) clearInterval(this._clockTimer);
             this.eventSource?.close();
             this._liveRegion?.destroy();
@@ -747,6 +759,26 @@ const FORGET_CONFIRMATION = 'Forget this job’s saved replay input. Retry, Cont
 // Kind's own confirmation, a destructive command, and Forget. Dismiss, Pin and
 // their inverses change only the viewer's own list and retention, and each can
 // be undone, so they run at once, however many Jobs they reach.
+// The detail page's commands are drawn from the Job's current offer, so a
+// command that changes it takes away the button that ran it, and so does a live
+// change that ends the Job. Focus goes to the button that replaced it, else the
+// first command left, else the Job's heading.
+function keepCommandFocus(root) {
+    const group = () => root.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    return keepFocusWithin(root, {
+        describe: element => (element.dataset?.commandKey && group()?.contains(element) ? { key: element.dataset.commandKey } : null),
+        restore: ({ key }) => {
+            const buttons = group();
+            const candidates = [
+                ...commandFocusSuccessorKeys(key).map(other => buttons?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+                buttons?.querySelector('button'),
+                root.querySelector('h1'),
+            ];
+            for (const candidate of candidates) if (candidate && focusOn(candidate)) return;
+        },
+    });
+}
+
 export function commandConfirmation(command) {
     if (command?.key === 'forget') return FORGET_CONFIRMATION;
     if (command?.confirmation) return command.confirmation;

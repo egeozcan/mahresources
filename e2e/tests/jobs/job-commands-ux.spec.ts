@@ -442,3 +442,140 @@ test.describe('Job detail page', () => {
     await expect(page.locator('[data-job-notice]')).toBeHidden();
   });
 });
+
+async function refreshDrawer(page: Page) {
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="job-panel-root"]');
+    return (window as any).Alpine.$data(root).refresh();
+  });
+}
+
+test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
+  function manyRows() {
+    // Enough finished rows that the Finished group starts below the fold.
+    return Array.from({ length: 12 }, (_, index) => ({
+      ...failedJob(`focus-filler-${index}`, `Filler ${index}`, { acceptedAt: `2026-09-26T09:${String(10 + index).padStart(2, '0')}:00Z` }),
+      state: 'succeeded', failure: undefined,
+    }));
+  }
+
+  for (const start of ['title', 'Cancel'] as const) {
+    test(`a row that finishes while focus is on its ${start} keeps focus on that row, in its new group`, async ({ page }) => {
+      const store = jobStore([runningJob('focus-follow', 'Focus follows download', { acceptedAt: '2026-09-26T11:00:00Z' }), ...manyRows()]);
+      await serveStore(page, store);
+      await page.setViewportSize({ width: 1280, height: 700 });
+      await page.goto('/dashboard');
+      const drawer = await openDrawer(page);
+      const row = drawer.locator('article[data-job-id="focus-follow"]');
+      const control = start === 'title'
+        ? row.getByRole('link', { name: 'Focus follows download' })
+        : row.getByRole('button', { name: 'Cancel', exact: true });
+      await control.focus();
+
+      store.set('focus-follow', { state: 'succeeded', version: 3, phase: undefined, progress: { completed: 100, total: 100, unit: 'bytes' }, commands: [
+        { key: 'dismiss', label: 'Dismiss', endpoint: '/v1/jobs/focus-follow/commands/dismiss', jobVersion: 3, bulk: true },
+      ] });
+      await refreshDrawer(page);
+
+      await expect(drawer.locator('[data-job-panel-group="finished"] article[data-job-id="focus-follow"]')).toHaveCount(1);
+      const title = row.getByRole('link', { name: 'Focus follows download' });
+      await expect(title).toBeFocused();
+      await expect(title).toBeInViewport();
+    });
+  }
+
+  test('a Resume whose row moves on later keeps focus on that row', async ({ page }) => {
+    const blocked = withCommands({ ...failedJob('focus-resume', 'Focus resume download'), state: 'blocked', failure: undefined }, [
+      ['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }], ['resume', 'Resume'],
+    ]);
+    const store = jobStore([blocked]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/focus-resume/commands/resume', route => {
+      store.set('focus-resume', withCommands({ ...store.jobs.get('focus-resume')!, state: 'queued', version: 3 }, [['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }]]));
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'queued to start again', job: store.jobs.get('focus-resume') } });
+    });
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    const row = drawer.locator('article[data-job-id="focus-resume"]');
+    await row.getByRole('button', { name: 'Resume', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(row.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest('article')?.getAttribute('data-job-id'))).toBe('focus-resume');
+
+    // Later the transfer fails: the row moves to Needs attention, and focus
+    // stays on it.
+    store.set('focus-resume', withCommands({ ...failedJob('focus-resume', 'Focus resume download'), version: 4 }, [['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }]]));
+    await refreshDrawer(page);
+    await expect(drawer.locator('[data-job-panel-group="attention"] article[data-job-id="focus-resume"]')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest('article')?.getAttribute('data-job-id'))).toBe('focus-resume');
+    await expect(drawer.getByRole('button', { name: 'Close Jobs panel' })).not.toBeFocused();
+  });
+});
+
+test.describe('Job pages keep focus on their commands', () => {
+  test('Pin on the detail page hands focus to Unpin, and a Job that ends hands it to what it offers next', async ({ page }) => {
+    const store = jobStore([withCommands(runningJob('detail-focus', 'Detail focus download'), [
+      ['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }], ['pin', 'Pin', { bulk: true }], ['unpin', 'Unpin', { bulk: true }],
+    ])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/detail-focus/commands/pin', route => {
+      store.set('detail-focus', { pinned: true });
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'pinned', job: store.jobs.get('detail-focus') } });
+    });
+
+    await page.goto('/job?id=detail-focus');
+    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await commands.getByRole('button', { name: 'Pin', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(commands.getByRole('button', { name: 'Unpin', exact: true })).toBeFocused();
+
+    // The download ends on its own: Cancel is no longer offered.
+    await commands.getByRole('button', { name: 'Cancel', exact: true }).focus();
+    const finished = withCommands({ ...store.jobs.get('detail-focus')!, state: 'succeeded', version: 3, phase: undefined }, [
+      ['dismiss', 'Dismiss', { bulk: true }], ['pin', 'Pin', { bulk: true }], ['unpin', 'Unpin', { bulk: true }],
+    ]);
+    await page.evaluate(snapshot => {
+      const root = document.querySelector('[data-testid="job-detail"]');
+      (window as any).Alpine.$data(root).applyStreamSnapshot(snapshot);
+    }, finished);
+    await expect(commands.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+    await expect(commands.getByRole('button', { name: 'Dismiss', exact: true })).toBeFocused();
+  });
+
+  test('the /jobs bulk bar keeps focus after Pin, and hands it to Select All once Dismiss empties the selection', async ({ page, request }) => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.end('gone');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const stamp = `bulk-focus-${Date.now()}`;
+      const ids: string[] = [];
+      for (const index of [0, 1]) {
+        const name = `${stamp}-${index}.bin`;
+        const submitted = await request.post('/v1/download/submit', { data: { URL: `${base}/${name}`, Name: name, FileName: name } });
+        expect(submitted.status()).toBe(202);
+        ids.push((await submitted.json()).jobs[0].canonicalJobId as string);
+      }
+      for (const id of ids) await expect.poll(async () => (await (await request.get(`/v1/jobs/${id}`)).json()).state, { timeout: 20_000 }).toBe('failed');
+      const jobId = ids[0];
+
+      await page.goto(`/jobs?dismissed=false&search=${encodeURIComponent(stamp)}`);
+      await expect(page.locator('[data-job-id]')).toHaveCount(2);
+      await page.locator(`[data-job-id="${jobId}"]`).getByRole('checkbox').check();
+      const bulk = page.getByRole('group', { name: 'Commands for the selected jobs' });
+      await bulk.getByRole('button', { name: 'Pin', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(bulk.getByRole('button', { name: 'Unpin', exact: true })).toBeFocused({ timeout: 10_000 });
+
+      await bulk.getByRole('button', { name: 'Dismiss', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator(`[data-job-id="${jobId}"]`)).toHaveCount(0, { timeout: 10_000 });
+      await expect(page.locator('[data-bulk-select-all]').first()).toBeFocused();
+    } finally {
+      server.close();
+    }
+  });
+});
