@@ -396,6 +396,36 @@ test.describe('Job command answers in the drawer', () => {
   });
 });
 
+test.describe('Jobs drawer keeps focus when its box clears', () => {
+  test('focus on Undo moves to Reload page when the drawer stops', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('undo-reset', 'Undo reset job'), [
+      ['dismiss', 'Dismiss', { bulk: true }], ['undismiss', 'Undismiss', { bulk: true }],
+    ])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/undo-reset/commands/dismiss', route => {
+      store.set('undo-reset', { dismissed: true });
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'dismissed', job: store.jobs.get('undo-reset') } });
+    });
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    await drawer.locator('article[data-job-id="undo-reset"]').getByRole('button', { name: 'Dismiss', exact: true }).click();
+    // The Dismiss places focus once its refresh settles: with no row left, on All jobs.
+    await expect(drawer.getByRole('link', { name: 'All jobs', exact: true })).toBeFocused();
+    const undo = drawer.locator('[data-job-panel-notice]').getByRole('button', { name: 'Undo' });
+    await undo.focus();
+
+    // The database behind the drawer was restored: it stops and clears the box.
+    await page.evaluate(() => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      (window as any).Alpine.$data(root).stopForStreamReset();
+    });
+
+    await expect(undo).toHaveCount(0);
+    await expect(drawer.getByRole('button', { name: 'Reload page' })).toBeFocused();
+  });
+});
+
 test.describe('Job detail page', () => {
   test('a dismissed Job says so and offers Undismiss instead of Dismiss', async ({ page }) => {
     const store = jobStore([withCommands({ ...failedJob('detail-dismissed', 'Detail dismissed job'), dismissed: true }, [
@@ -617,6 +647,59 @@ test.describe('Jobs drawer opened for a job just started', () => {
       await expect(title).toBeInViewport();
     });
   }
+});
+
+test.describe('Jobs drawer opened for a run that started many jobs', () => {
+  test('shows one of them even when the first is past its group\'s cap', async ({ page }) => {
+    // A bulk run started 60 jobs; the drawer lists the newest 50, so the first
+    // one started is not among them.
+    const started = Array.from({ length: 60 }, (_, index) => runningJob(`bulk-run-${index}`, `Bulk run ${index}`, {
+      acceptedAt: `2026-09-26T10:${String(index).padStart(2, '0')}:00Z`,
+    }));
+    const store = jobStore(started);
+    await serveStore(page, store);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/dashboard');
+    await expect.poll(() => page.evaluate(() => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      return (window as any).Alpine.$data(root).jobs.length;
+    })).toBe(50);
+    await page.evaluate(ids => window.dispatchEvent(new CustomEvent('jobs-panel-open', { detail: { jobIds: ids } })), started.map(job => job.id));
+
+    const focusedRow = () => page.evaluate(() => document.activeElement?.closest('article[data-job-id]')?.getAttribute('data-job-id') || '');
+    await expect.poll(focusedRow).toMatch(/^bulk-run-/);
+    // The topmost of them: the newest, which the group lists first.
+    expect(await focusedRow()).toBe('bulk-run-59');
+  });
+
+  test('offers a link to the job when a full group leaves it out', async ({ page }) => {
+    const newer = Array.from({ length: 12 }, (_, index) => ({
+      ...failedJob(`newer-finished-${index}`, `Newer finished ${index}`, { acceptedAt: `2026-09-26T11:${String(10 + index).padStart(2, '0')}:00Z` }),
+      state: 'succeeded', failure: undefined,
+    }));
+    // Finished before the drawer read it, and older than every finished row it shows.
+    const quick = { ...failedJob('quick-run', 'Quick run', { acceptedAt: '2026-09-26T09:00:00Z' }), state: 'succeeded', failure: undefined };
+    const store = jobStore([...newer, quick]);
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: newer.filter(job => states.includes(job.state)), nextCursor: null } });
+    });
+    await page.route(/\/v1\/jobs\/[^/?]+$/, route => {
+      const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() || '');
+      const job = store.jobs.get(id);
+      return job ? route.fulfill({ json: job }) : route.fulfill({ status: 404, json: { error: 'job not found' } });
+    });
+    await page.goto('/dashboard');
+    await expect.poll(() => page.evaluate(() => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      return (window as any).Alpine.$data(root).jobs.length;
+    })).toBe(10);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('jobs-panel-open', { detail: { jobIds: ['quick-run'] } })));
+
+    const notice = page.getByRole('dialog', { name: 'Jobs' }).locator('[data-job-panel-notice]');
+    await expect(notice).toContainText('Quick run started.');
+    await expect(notice.getByRole('link', { name: 'Open the job' })).toHaveAttribute('href', '/job?id=quick-run');
+  });
 });
 
 test.describe('Needs attention', () => {

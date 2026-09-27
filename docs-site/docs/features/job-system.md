@@ -261,7 +261,9 @@ a command runs, the Job's controls take no second press.
 When a row changes group while the keyboard is on it, or a command replaces the
 control that had focus, focus stays on that row: the same control, its
 counterpart (Pin and Unpin), or the row's title. Running a plugin action opens
-the drawer with focus on the Job it started. On the Job's page and in the
+the drawer with focus on the Job it started (for a run that started several, the
+newest of them the drawer lists), or, when a full group leaves that Job out,
+with a notice linking to it. On the Job's page and in the
 `/jobs` bulk bar, focus moves to the command that replaced the one pressed, else
 to the first command left; when a command empties the bulk selection, focus
 moves to **Select All**.

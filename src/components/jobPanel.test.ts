@@ -269,12 +269,21 @@ describe('Job Center panel', () => {
         expect(posts).toHaveLength(1);
     });
 
-    test('an administrator listing their own jobs dismisses only their own finished jobs', async () => {
-        const { panel, listURLs } = dismissAllHarness([{ ids: ['a'] }]);
+    test('an administrator listing their own jobs dismisses only their own finished jobs, even if the drawer is widened meanwhile', async () => {
+        const { panel, listURLs, posts } = dismissAllHarness([{ ids: ['a'], nextCursor: 'c1' }, { ids: ['b'] }]);
         panel.ownerScope = 'me';
+        const post = panel.requestJSON;
+        panel.requestJSON = vi.fn(async (url: string, init: any = {}) => {
+            const answer = await post(url, init);
+            // The reader switches to everyone's jobs after confirming.
+            if (init.method === 'POST') panel.ownerScope = '';
+            return answer;
+        }) as any;
 
         await panel.dismissFinished();
 
+        expect(posts).toHaveLength(2);
+        expect(listURLs).toHaveLength(2);
         expect(listURLs.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
     });
 
@@ -496,6 +505,17 @@ describe('Job Center panel', () => {
 
         expect(panel.noticeText).toBe('');
         expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin succeeded.');
+    });
+
+    test('a record-keeping command says its own result even when the job changed state meanwhile', async () => {
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'applied', message: 'pinned 3 of 3 visible related jobs', job: { ...panel.jobs[0], state: 'succeeded', version: 5 } } }
+            : { ...panel.jobs[0], state: 'succeeded', version: 5, commands: [] });
+        panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
+
+        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin visible lineage', jobVersion: 4 });
+
+        expect(panel.notice).toBe('first.bin: pinned 3 of 3 visible related jobs.');
     });
 
     test('closing the drawer takes the box away', async () => {
@@ -952,7 +972,7 @@ describe('Job Center panel accessibility hooks', () => {
         await panel.handleStreamMessage({ data: JSON.stringify({ id: 'e-50', jobId: 'dl-50', jobVersion: 3, type: 'failed', deliverySequence: 11 }), lastEventId: 'v2:11' });
         panel.requestJSON = vi.fn(async () => failed) as any;
 
-        await panel.revealJob('dl-50');
+        await panel.revealJobs(['dl-50']);
 
         expect(panel.jobs.map((job: any) => job.id)).toEqual(['dl-50']);
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('sweep failed: boom.');

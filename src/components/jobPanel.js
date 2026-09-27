@@ -225,8 +225,8 @@ export function jobPanel() {
         _noticeWatch: null,
         // Jobs with a command in flight, whose controls take no second press.
         commandBusy: {},
-        // A Job the drawer was opened to show (see openFromEvent).
-        _revealJobId: '',
+        // The Jobs the drawer was opened to show (see openFromEvent).
+        _revealJobIds: [],
         // Commands whose focus keepFocusOnRow still has to place.
         _commandFocusPending: 0,
         // Where the reader's focus is in the drawer, for when a re-render takes
@@ -309,9 +309,9 @@ export function jobPanel() {
                         focusFirstIn(panel);
                         this.startFocusKeeper(panel);
                         this.adoptPendingAnnouncement();
-                        const reveal = this._revealJobId;
-                        this._revealJobId = '';
-                        if (reveal) void this.revealJob(reveal);
+                        const reveal = this._revealJobIds;
+                        this._revealJobIds = [];
+                        if (reveal.length) void this.revealJobs(reveal);
                     });
                 } else {
                     this.onDrawerClosed();
@@ -412,10 +412,10 @@ export function jobPanel() {
         },
 
         // `jobIds` names the Jobs whatever asked for the drawer just started (a
-        // plugin action run): the drawer shows the first of them, which may sit
-        // far below the failures listed first.
+        // plugin action run, in the order it started them): the drawer shows one
+        // of them, which may sit far below the failures listed first.
         openFromEvent(detail = null) {
-            const reveal = Array.isArray(detail?.jobIds) ? detail.jobIds.find(id => typeof id === 'string' && id) : '';
+            const reveal = Array.isArray(detail?.jobIds) ? detail.jobIds.filter(id => typeof id === 'string' && id) : [];
             if (!this.isOpen) {
                 if (this.blockingModal()) {
                     this.announceNotice('A dialog is open. Close it before opening Jobs.');
@@ -423,22 +423,27 @@ export function jobPanel() {
                 }
                 const requested = detail?.returnFocusTo;
                 this._lastTrigger = (isRendered(requested) ? requested : null) ?? focusedElement() ?? this._trigger;
-                this._revealJobId = reveal || '';
+                this._revealJobIds = reveal;
                 this.isOpen = true;
                 return;
             }
-            if (reveal) void this.revealJob(reveal);
+            if (reveal.length) void this.revealJobs(reveal);
         },
 
-        // Moves focus to a Job's row and scrolls it into view, reading the Job
-        // and adding its row when no list has it yet: it was accepted a moment
-        // ago. Focus the reader has already moved somewhere of their own is left
-        // there.
-        async revealJob(id) {
+        // Moves focus to the topmost row of the Jobs a run started, scrolled into
+        // view. When the drawer lists none of them yet (they were accepted a
+        // moment ago), it reads the newest one, the last started, which a
+        // group's cap keeps longest, and adds its row. One a full group still
+        // leaves out is offered as a link in the box instead. Focus the reader
+        // has already moved somewhere of their own is left there.
+        async revealJobs(ids) {
+            const wanted = new Set(ids);
             const panel = () => document.querySelector('#job-center-panel');
-            const rowFor = () => panel()?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
+            const firstRow = () => [...(panel()?.querySelectorAll('article[data-job-id]') || [])].find(row => wanted.has(row.dataset.jobId));
             const initialFocus = document.activeElement;
-            if (!rowFor() && !this.jobs.some(job => job.id === id)) {
+            let read = null;
+            if (!firstRow() && !this.jobs.some(job => wanted.has(job.id))) {
+                const id = ids[ids.length - 1];
                 // Heard as any read is: an outcome it finds is said only when a
                 // live event proves it happened on this stream (hearFromRead).
                 const streamGeneration = this._streamGeneration;
@@ -446,6 +451,7 @@ export function jobPanel() {
                     const job = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
                     if (job?.id === id && !this.jobs.some(row => row.id === id)) {
                         const spoken = [];
+                        read = job;
                         this.details[id] = job;
                         this.hearFromRead(job, streamGeneration, spoken);
                         this.upsert(job);
@@ -456,8 +462,15 @@ export function jobPanel() {
                 }
                 await new Promise(resolve => (this.$nextTick ? this.$nextTick(resolve) : resolve()));
             }
-            const title = rowFor()?.querySelector('a[id^="job-panel-title-"]');
-            if (!title || !this.isOpen) return;
+            if (!this.isOpen) return;
+            const title = firstRow()?.querySelector('a[id^="job-panel-title-"]');
+            if (!title) {
+                if (read && !this.jobs.some(job => job.id === read.id)) {
+                    this.setNotice(`${read.title || read.kind || 'The job'} started.`, { link: { href: this.detailURL(read), label: 'Open the job' } });
+                    this.announceNotice(this.notice);
+                }
+                return;
+            }
             const active = document.activeElement;
             const untouched = !active || active === document.body || active === initialFocus || active.matches?.('button[aria-label="Close Jobs panel"]');
             if (!untouched || !focusOn(title)) return;
@@ -1404,6 +1417,8 @@ export function jobPanel() {
             this._focusMemo = {
                 element: target,
                 jobId: row?.dataset.jobId || null,
+                // A control in the box (Undo, a link) goes when the box clears.
+                inNotice: !!target.closest?.('[data-job-panel-notice]'),
                 commandKey: target.dataset?.commandKey || '',
                 selector: rowControlSelector(target),
                 rows: row ? [...panel.querySelectorAll('article[data-job-id]')].map(article => article.dataset.jobId) : null,
@@ -1412,13 +1427,34 @@ export function jobPanel() {
 
         checkFocusLost() {
             const memo = this._focusMemo;
-            if (!memo?.jobId || memo.element.isConnected || this._focusRestoreTimer) return;
+            if (!(memo?.jobId || memo?.inNotice) || memo.element.isConnected || this._focusRestoreTimer) return;
             // A command places focus itself once it settles (keepFocusOnRow).
             if (this._commandFocusPending > 0) return;
             // After the trap's own rescue, which runs on the same mutations.
             this._focusRestoreTimer = setTimeout(() => {
                 this._focusRestoreTimer = null;
                 if (this._focusMemo !== memo || memo.element.isConnected || !this.isOpen) return;
+                if (!memo.jobId) {
+                    // The box cleared: the stopped drawer's Reload page, else
+                    // the first row, else All jobs. A frame later, because
+                    // x-show reveals an element (the stopped notice) on the next
+                    // animation frame, after this timer.
+                    afterNextPaint(() => {
+                        if (this._focusMemo !== memo || !this.isOpen) return;
+                        const panel = document.querySelector('#job-center-panel');
+                        for (const candidate of [
+                            panel?.querySelector('[data-job-panel-stopped] button'),
+                            panel?.querySelector('article[data-job-id] a[href]'),
+                            panel?.querySelector('[data-job-panel-all-jobs]'),
+                        ]) {
+                            if (candidate && isRendered(candidate) && focusOn(candidate)) {
+                                this.noteFocus(candidate);
+                                return;
+                            }
+                        }
+                    });
+                    return;
+                }
                 this.focusRowOrNeighbour(memo.jobId, memo.rows, [
                     memo.selector,
                     ...(memo.commandKey ? panelFocusSuccessorKeys(memo.commandKey).map(other => `button[data-command-key="${CSS.escape(other)}"]`) : []),
@@ -1473,7 +1509,10 @@ export function jobPanel() {
                 // a link, never opened in its place.
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
                 const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
-                const movedOn = now?.state && stateOf(now) !== stateOf(job) && outcome.code !== 'requested';
+                // Only a lifecycle command's answer can be what moved the row; a
+                // record-keeping command's result is said whatever else changed,
+                // and a change of state it happened to read is heard as a read.
+                const movedOn = !keepsRecord && now?.state && stateOf(now) !== stateOf(job) && outcome.code !== 'requested';
                 let spoken = '';
                 if (rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')) {
                     this.setNotice(`${commandLabel(command)} completed. Reload this job to see its current pin status.`);
@@ -1529,9 +1568,12 @@ export function jobPanel() {
         async dismissFinished() {
             if (this.busy || this._dismissAsking || this.streamStopped || this.finishedCount === 0) return { dismissed: 0, total: 0 };
             let first;
+            // The scope the reader confirmed is the one dismissed, page after
+            // page, whatever the drawer is switched to while this runs.
+            const ownerScope = this.ownerScope;
             this._dismissAsking = true;
             try {
-                first = await this.requestJSON(buildFinishedPageURL('', this.ownerScope));
+                first = await this.requestJSON(buildFinishedPageURL('', ownerScope));
                 const count = (first.jobs || []).length;
                 if (count === 0) {
                     // What the drawer showed has already gone.
@@ -1560,7 +1602,7 @@ export function jobPanel() {
                 let cursor = '';
                 let page = first;
                 do {
-                    if (!page) page = await this.requestJSON(buildFinishedPageURL(cursor, this.ownerScope));
+                    if (!page) page = await this.requestJSON(buildFinishedPageURL(cursor, ownerScope));
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1718,6 +1760,11 @@ function buildFinishedPageURL(cursor, ownerScope = '') {
     params.set('limit', String(FINISHED_PAGE_LIMIT));
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
+}
+
+function afterNextPaint(callback) {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(callback, 0));
+    else setTimeout(callback, 0);
 }
 
 // The selector that finds, in a re-rendered row, the control a reader was on.
