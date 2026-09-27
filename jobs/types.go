@@ -356,6 +356,13 @@ const (
 	// executor is told, so what was asked of a Job survives an executor that
 	// stops answering.
 	EventControlRequested = "control-requested"
+	// EventRetried records on a Job that a Retry or Continue successor now
+	// extends its chain. It names no successor, which may belong to an account
+	// the Job's own viewers cannot see: it is what tells those viewers their
+	// failure was taken care of, as the retried filter already says. An account
+	// that cannot write is not sent it (retriedEventHidden), as it is not told
+	// of such a retry by that filter either.
+	EventRetried = "retried"
 )
 
 // Bounds on everything searchable. A summary, event detail or failure message

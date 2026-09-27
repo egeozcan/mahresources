@@ -2663,7 +2663,7 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 		})
 	}
 	download := accept("sunrise.png", `{"scheme":"http","host":"files.example.test","targets":["owner:12","group:3"]}`)
-	export := accept("an export", `{"rootGroups":[4077],"subtree":true,"fidelity":["blobs"]}`)
+	export := accept("an export", `{"rootGroups":[987654321],"subtree":true,"fidelity":["blobs"]}`)
 	plain := accept("a plain summary", `"nothing in common"`)
 
 	search := func(term string) []string {
@@ -2672,7 +2672,7 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 	}
 	requireIDs(t, "a string value", search("files.example"), download.ID)
 	requireIDs(t, "a value inside a list", search("group:3"), download.ID)
-	requireIDs(t, "a number inside a list", search("4077"), export.ID)
+	requireIDs(t, "a number inside a list", search("987654321"), export.ID)
 	requireIDs(t, "a value in any case", search("BLOBS"), export.ID)
 	for _, term := range []string{`"`, "{", "scheme", "rootGroups", `":"`, "true"} {
 		if got := search(term); len(got) != 0 {

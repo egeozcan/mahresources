@@ -1283,7 +1283,7 @@ func (s *Service) Timeline(deps Deps, access Access, jobID string, afterSequence
 	}
 
 	var rows []models.JobEvent
-	err = deps.DB.Where("job_id = ? AND sequence > ?", jobID, afterSequence).
+	err = retriedEventHidden(deps.DB.Where("job_id = ? AND sequence > ?", jobID, afterSequence), access).
 		Order("sequence ASC").Limit(size).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read timeline: %w", err)
@@ -1304,14 +1304,25 @@ func (s *Service) PublishedEvents(deps Deps, access Access, filter EventFilter, 
 		return nil, err
 	}
 	var rows []models.JobEvent
-	err = deps.DB.
+	err = retriedEventHidden(deps.DB.
 		Where("delivery_sequence IS NOT NULL AND delivery_sequence > ?", afterDelivery).
-		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)), access).
 		Order("delivery_sequence ASC").Limit(size).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read published events: %w", err)
 	}
 	return eventsOf(rows), nil
+}
+
+// retriedEventHidden leaves EventRetried out of what an account that cannot
+// write reads of a timeline or a stream. Such an account is not told of a
+// retry it cannot see (linkedJobs reads a hidden successor as absent for it),
+// and the event would tell it one exists.
+func retriedEventHidden(db *gorm.DB, access Access) *gorm.DB {
+	if !access.ReadOnly {
+		return db
+	}
+	return db.Where("type <> ?", EventRetried)
 }
 
 // streamJobIDs is the stream's set of Jobs: the visible ones, narrowed by the
@@ -1349,9 +1360,9 @@ func (s *Service) EventSequenceHead(deps Deps) (uint64, error) {
 // client starting over, and nothing above it has been published for this asker.
 func (s *Service) PublishedEventHead(deps Deps, access Access, filter EventFilter) (uint64, error) {
 	var heads []uint64
-	err := deps.DB.Model(&models.JobEvent{}).
+	err := retriedEventHidden(deps.DB.Model(&models.JobEvent{}).
 		Where("delivery_sequence IS NOT NULL").
-		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)), access).
 		Order("delivery_sequence DESC").Limit(1).
 		Pluck("delivery_sequence", &heads).Error
 	if err != nil {

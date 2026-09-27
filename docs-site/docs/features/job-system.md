@@ -275,9 +275,12 @@ again.
 
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
-to watch, and a retry that fails is listed there in its own right. Known
-limit: an account that cannot write, such as a guest, is not told of a retry it
-cannot see, so a failure another account retried stays in its Needs attention.
+to watch, and a retry that fails is listed there in its own right. A Retry or
+Continue records a `retried` event on the Job it follows, naming no successor,
+so an open drawer lets go of a failure at once even when another account, such
+as an administrator, retried it. Known limit: an account that cannot write,
+such as a guest, is not told of a retry it cannot see (it is not sent that
+event), so a failure another account retried stays in its Needs attention.
 
 An administrator's drawer offers **My jobs** and **Everyone's**. It starts on
 **My jobs** (`owner=me`), so its badges count only the administrator's own work,

@@ -4106,7 +4106,7 @@ describe('Job Center lifecycle event types', () => {
     const repo = (path: string) => fileURLToPath(new URL(`../../${path}`, import.meta.url));
     // Event types that record no transition; every other Event constant must be
     // one the panel treats as a live lifecycle event.
-    const NOT_TRANSITIONS = new Set(['warning', 'events-truncated', 'output-published', 'output-expired', 'output-removed', 'control-requested']);
+    const NOT_TRANSITIONS = new Set(['warning', 'events-truncated', 'output-published', 'output-expired', 'output-removed', 'control-requested', 'retried']);
 
     test('every lifecycle Event constant in jobs/types.go is known to the panel', () => {
         const types = readFileSync(repo('jobs/types.go'), 'utf8');
