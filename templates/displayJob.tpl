@@ -136,7 +136,8 @@
                         </div>
                     </template>
                 </div>
-                <p x-show="!['ancestors', 'successors', 'parents', 'children'].some(key => detail.lineage?.[key]?.length)" class="mt-2 text-sm text-stone-500">No visible related jobs.</p>
+                <p x-show="detail.lineage?.retriedElsewhere" x-cloak class="mt-2 text-sm text-stone-700" data-job-retried-elsewhere>Another account has retried this job, so it cannot be retried again. That retry is not visible to you.</p>
+                <p x-show="!detail.lineage?.retriedElsewhere && !['ancestors', 'successors', 'parents', 'children'].some(key => detail.lineage?.[key]?.length)" class="mt-2 text-sm text-stone-500">No visible related jobs.</p>
             </section>
 
             <section aria-labelledby="job-timeline-heading" class="rounded border border-stone-200 bg-white p-4">

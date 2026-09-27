@@ -558,6 +558,14 @@ func applyStateFilter(db *gorm.DB, tokens []string) *gorm.DB {
 // EXISTS the same rule makes a Job whose only successor is hidden read as not
 // followed. Lineage already drops those relatives; the filters agree with it.
 //
+// One relation is the exception: a retry-of link read from its TO end, "this Job
+// was retried". Retry lineage is linear whoever extended it, so a Job an
+// administrator retried offers its owner no Retry, and the owner's lineage says
+// another account retried it (Lineage.RetriedElsewhere). A filter that read that
+// Job as not retried would disagree with both, so the link row alone answers it.
+// That publishes nothing the missing Retry had not: only the far Job's existence,
+// never its identity, and only on the asker's own Job.
+//
 // Each link is checked against its own far Job rather than against "IN (every
 // Job the asker may see)", which materializes that whole set — all of them, for
 // an administrator — before one page is read. The far Job is its own FROM clause
@@ -567,11 +575,14 @@ func applyStateFilter(db *gorm.DB, tokens []string) *gorm.DB {
 // which would hide relations rather than authorize them.
 func linkedJobs(db *gorm.DB, access Access, linkType, nearColumn, farColumn string) *gorm.DB {
 	fresh := db.Session(&gorm.Session{NewDB: true})
+	links := fresh.Table("job_links AS l").Select("1").
+		Where("l.type = ? AND l."+nearColumn+" = jobs.id", linkType)
+	if linkType == string(LinkRetryOf) && nearColumn == "to_job_id" {
+		return links
+	}
 	far := visibleTo(fresh.Table("jobs AS far"), access).
 		Select("1").Where("far.id = l." + farColumn)
-	return fresh.Table("job_links AS l").Select("1").
-		Where("l.type = ? AND l."+nearColumn+" = jobs.id", linkType).
-		Where("EXISTS (?)", far)
+	return links.Where("EXISTS (?)", far)
 }
 
 // preferencePredicate is one viewer-preference predicate over the asker's own
@@ -1165,13 +1176,24 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 			lineage.Children = append(lineage.Children, link.other)
 		}
 	}
+	visibleRetries := 0
 	for _, link := range incoming {
 		switch link.row.Type {
 		case string(LinkRetryOf), string(LinkRepeatOf):
 			lineage.Successors = append(lineage.Successors, link.other)
+			if link.row.Type == string(LinkRetryOf) {
+				visibleRetries++
+			}
 		case string(LinkParentChild):
 			lineage.Parents = append(lineage.Parents, link.other)
 		}
+	}
+	if !access.Administrator {
+		successors, err := retrySuccessors(deps.DB, jobID)
+		if err != nil {
+			return Lineage{}, err
+		}
+		lineage.RetriedElsewhere = len(successors) > visibleRetries
 	}
 	return lineage, nil
 }
@@ -1179,7 +1201,8 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 // relativeLink is one link together with the far endpoint, if the asker may see
 // it. A link whose far endpoint is hidden is dropped rather than reported with a
 // placeholder, because "there is something here you may not see" is itself a
-// leak.
+// leak. The one fact Lineage keeps about a hidden relative is RetriedElsewhere,
+// which the missing Retry control has already published.
 type relativeLink struct {
 	row   models.JobLink
 	other Snapshot

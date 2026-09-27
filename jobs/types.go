@@ -886,6 +886,11 @@ type Lineage struct {
 	Parents []Snapshot
 	// Children are this Job's child stages.
 	Children []Snapshot
+	// RetriedElsewhere reports that the Job has a Retry or Continue successor
+	// the asker cannot see: an administrator retried an owner's Job. Retry
+	// lineage is linear whoever extended it, so the Job offers the owner no Retry,
+	// and this is what says why. The successor itself stays hidden.
+	RetriedElsewhere bool
 }
 
 // ReplayAvailability is what a viewer can do with a Job's replay input right

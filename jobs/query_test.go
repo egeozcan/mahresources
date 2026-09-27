@@ -721,28 +721,42 @@ func testListFiltersByInboundRelationship(t *testing.T, deps Deps) {
 	link(LinkRetryOf, hiddenRetry, hiddenlyRetried)
 	link(LinkParentChild, retry, untouched)
 
+	hiddenlyRepeated := accept("repeated by a hidden job", VisibilityOwner)
+	hiddenRepeat := accept("a repeat the owner may not read", VisibilityAdmin)
+	orphanStage := accept("a stage whose parent the owner may not read", VisibilityOwner)
+	hiddenStageParent := accept("a parent the owner may not read", VisibilityAdmin)
+	link(LinkRepeatOf, hiddenRepeat, hiddenlyRepeated)
+	link(LinkParentChild, hiddenStageParent, orphanStage)
+
 	admin := Access{UserID: 1, Administrator: true}
 	owner := Access{UserID: 7}
 	requireIDs(t, "retried, admin", pageIDs(listFor(t, svc, deps, admin, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
 		hiddenlyRetried.ID, retried.ID)
+	// A Retry the owner cannot see still makes their Job retried: lineage is
+	// linear whoever extended it, so the Job no longer offers the owner Retry.
+	// Every other relation to a hidden Job reads as absent.
 	requireIDs(t, "retried, owner", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
-		retried.ID)
+		hiddenlyRetried.ID, retried.ID)
 	requireIDs(t, "repeated", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkRepeatOf)}, Cursor{}, 0)),
 		repeated.ID)
 	requireIDs(t, "child stage", pageIDs(listFor(t, svc, deps, owner, Filter{InboundRelationship: string(LinkParentChild)}, Cursor{}, 0)),
 		untouched.ID)
 
 	requireIDs(t, "not retried, owner", pageIDs(listFor(t, svc, deps, owner, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
-		untouched.ID, hiddenlyRetried.ID, repeat.ID, repeated.ID, retry.ID)
+		orphanStage.ID, hiddenlyRepeated.ID, untouched.ID, repeat.ID, repeated.ID, retry.ID)
 	requireIDs(t, "not retried, admin", pageIDs(listFor(t, svc, deps, admin, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)),
-		untouched.ID, hiddenRetry.ID, repeat.ID, repeated.ID, retry.ID)
+		hiddenStageParent.ID, orphanStage.ID, hiddenRepeat.ID, hiddenlyRepeated.ID, untouched.ID, hiddenRetry.ID, repeat.ID, repeated.ID, retry.ID)
+	requireIDs(t, "not repeated, owner", pageIDs(listFor(t, svc, deps, owner, Filter{NoInboundRelationship: string(LinkRepeatOf)}, Cursor{}, 0)),
+		orphanStage.ID, hiddenlyRepeated.ID, untouched.ID, hiddenlyRetried.ID, repeat.ID, retry.ID, retried.ID)
+	requireIDs(t, "no child stage, owner", pageIDs(listFor(t, svc, deps, owner, Filter{NoInboundRelationship: string(LinkParentChild)}, Cursor{}, 0)),
+		orphanStage.ID, hiddenlyRepeated.ID, hiddenlyRetried.ID, repeat.ID, repeated.ID, retry.ID, retried.ID)
 
 	summary, err := svc.Summary(deps, owner, Filter{InboundRelationship: string(LinkRetryOf)}, 0)
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
 	}
-	if summary.Total != 1 {
-		t.Fatalf("the owner's aggregate counted %d retried Jobs, want 1", summary.Total)
+	if summary.Total != 2 {
+		t.Fatalf("the owner's aggregate counted %d retried Jobs, want 2", summary.Total)
 	}
 
 	for _, filter := range []Filter{{InboundRelationship: "retried"}, {NoInboundRelationship: "retried"}} {

@@ -81,6 +81,9 @@ type JobLineageResponse struct {
 	Successors []JobSnapshotResponse `json:"successors"`
 	Parents    []JobSnapshotResponse `json:"parents"`
 	Children   []JobSnapshotResponse `json:"children"`
+	// RetriedElsewhere reports a Retry or Continue successor the caller cannot
+	// see, which is why the Job no longer offers Retry. The successor stays hidden.
+	RetriedElsewhere bool `json:"retriedElsewhere,omitempty"`
 }
 
 type JobDetailResponse struct {
@@ -199,6 +202,7 @@ func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {
 	return JobLineageResponse{
 		Ancestors: convert(lineage.Ancestors), Successors: convert(lineage.Successors),
 		Parents: convert(lineage.Parents), Children: convert(lineage.Children),
+		RetriedElsewhere: lineage.RetriedElsewhere,
 	}
 }
 

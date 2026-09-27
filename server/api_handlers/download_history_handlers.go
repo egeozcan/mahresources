@@ -324,10 +324,15 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	}
 	projection, handleFound, err := canonical.ProjectDownloadJobForRetry(entry.JobID)
 	if err != nil {
-		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
+		if handleFound && errors.Is(err, jobs.ErrNotFound) {
 			// A durable handle did resolve, so ErrNotFound means its current target is
-			// hidden. Any other projection failure is also fail-closed: neither case is
-			// evidence that queue-level Retry or payload resubmission is safe.
+			// hidden: another account's Retry moved the handle onto a Job this caller
+			// cannot see. The refusal says so without naming that Job.
+			return "", "", true, errDownloadRetriedElsewhere
+		}
+		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
+			// Any other projection failure is also fail-closed: it is no evidence that
+			// queue-level Retry or payload resubmission is safe.
 			return "", "", true, err
 		}
 		return "", "", false, nil
@@ -374,6 +379,19 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	}
 	return entry.JobID, result.SuccessorID, true, nil
 }
+
+// errDownloadRetriedElsewhere refuses the retry of a row whose handle another
+// account's Retry has moved onto a Job this caller cannot see. It is still
+// jobs.ErrNotFound underneath, and its text names neither Job.
+var errDownloadRetriedElsewhere error = retriedElsewhereError{}
+
+type retriedElsewhereError struct{}
+
+func (retriedElsewhereError) Error() string {
+	return "another account has already retried this download, and its retry is not visible to you"
+}
+
+func (retriedElsewhereError) Unwrap() error { return jobs.ErrNotFound }
 
 // The retry slot's claim marker. A claim is written before the download is
 // submitted and replaced by the real job id immediately after, so a marker still

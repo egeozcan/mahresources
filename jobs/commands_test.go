@@ -2136,3 +2136,68 @@ func TestAReadOnlyViewerIsOfferedNoCommand(t *testing.T) {
 		t.Fatalf("a read-only dismissal = %#v, %v; want not-advertised", result, err)
 	}
 }
+
+// Retry lineage is linear whoever retried: once an administrator retries an
+// owner's failed Job, the owner may not retry it again, and cannot see the
+// administrator's successor. The filters and the lineage have to say the same
+// thing the controls do, or the owner is shown a failed Job that reads as not
+// retried and offers no Retry, with nothing to say why.
+func TestAJobRetriedByAnotherAccountReadsAsRetriedToItsOwner(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	ownerView := Access{UserID: owner}
+	adminView := Access{UserID: 1, Administrator: true}
+	h.advertiseStateful()
+
+	failed := h.acceptReplayable(&owner)
+	h.fail(failed.ID)
+	h.now()
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(failed.ID, CommandRetry, "admin-retry", adminView))
+	if err != nil || result.SuccessorID == "" {
+		t.Fatalf("the administrator's retry = %#v, %v", result, err)
+	}
+
+	for _, command := range h.advertise(failed.ID, ownerView) {
+		if command.Key == CommandRetry {
+			t.Fatalf("the owner is offered Retry on a job that already has a retry successor")
+		}
+	}
+
+	notRetried, err := h.svc.List(h.deps, ownerView, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("list not retried: %v", err)
+	}
+	for _, job := range notRetried.Jobs {
+		if job.ID == failed.ID {
+			t.Fatalf("noInboundRelationship=retry-of lists a job another account retried as not retried")
+		}
+	}
+	retried, err := h.svc.List(h.deps, ownerView, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("list retried: %v", err)
+	}
+	if len(retried.Jobs) != 1 || retried.Jobs[0].ID != failed.ID {
+		t.Fatalf("inboundRelationship=retry-of lists %d jobs to the owner, want the one another account retried", len(retried.Jobs))
+	}
+
+	lineage, err := h.svc.Lineage(h.deps, ownerView, failed.ID)
+	if err != nil {
+		t.Fatalf("owner lineage: %v", err)
+	}
+	if len(lineage.Successors) != 0 {
+		t.Fatalf("the owner's lineage lists %d successors; the administrator's is not theirs to see", len(lineage.Successors))
+	}
+	if !lineage.RetriedElsewhere {
+		t.Fatalf("the owner's lineage does not say the job was retried by another account")
+	}
+
+	adminLineage, err := h.svc.Lineage(h.deps, adminView, failed.ID)
+	if err != nil {
+		t.Fatalf("administrator lineage: %v", err)
+	}
+	if len(adminLineage.Successors) != 1 || adminLineage.RetriedElsewhere {
+		t.Fatalf("the administrator's lineage = %d successors, retried elsewhere %v; want the visible successor",
+			len(adminLineage.Successors), adminLineage.RetriedElsewhere)
+	}
+}

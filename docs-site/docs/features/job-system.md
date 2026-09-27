@@ -204,9 +204,13 @@ stage. `inboundRelationship` matches the Job it points at: one that was retried
 or continued (`retry-of`), repeated (`repeat-of`), or a child stage
 (`parent-child`). `noInboundRelationship` is its negation, so
 `state=failed&noInboundRelationship=retry-of` lists failed Jobs nobody has
-retried. Only Jobs the viewer can see count as the other end, so a Job whose
-only retry is hidden from the viewer reads as not retried. On the Job Center
-page these are the **Has been** and **Has not been** selects. `get`
+retried. Only Jobs the viewer can see count as the other end, with one
+exception: a Retry or Continue made by another account, such as an
+administrator retrying your Job, still counts. Retry lineage is linear whoever
+extends it, so such a Job no longer offers you Retry, reads as retried in these
+filters, and its detail page says that another account retried it. The retry
+itself stays hidden from you. On the Job Center page these filters are the
+**Has been** and **Has not been** selects. `get`
 returns the current command and output declarations. `timeline` reads ordered
 durable events by per-Job sequence. `summary` uses the same visibility and
 filters as listing and accepts windows up to 90 days.
