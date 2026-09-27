@@ -141,6 +141,21 @@ func TestJobListRejectsMalformedCommandQueryBeforeReading(t *testing.T) {
 	}
 }
 
+func TestJobListReadsTheOrderAndRefusesAnUnknownOne(t *testing.T) {
+	ctx := &jobListContextStub{}
+	GetJobListHandler(ctx)(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/jobs?order=stateEntered", nil))
+	if !ctx.called || ctx.cursor.Order != jobs.OrderStateEntered {
+		t.Fatalf("ListJobs called=%v with cursor %+v, want the state-entered order", ctx.called, ctx.cursor)
+	}
+
+	refused := &jobListContextStub{}
+	recorder := httptest.NewRecorder()
+	GetJobListHandler(refused)(recorder, httptest.NewRequest(http.MethodGet, "/v1/jobs?order=newest", nil))
+	if recorder.Code != http.StatusBadRequest || refused.called {
+		t.Fatalf("an unknown order answered %d and read=%v: %s", recorder.Code, refused.called, recorder.Body.String())
+	}
+}
+
 func TestJobListMapsServiceValidationToBadRequest(t *testing.T) {
 	ctx := &jobListContextStub{err: errors.Join(errors.New("wrapped"), jobs.ErrInvalidFilter)}
 	recorder := httptest.NewRecorder()

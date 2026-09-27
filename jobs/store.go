@@ -170,6 +170,7 @@ func snapshot(job models.Job) Snapshot {
 		StartedAt:          job.StartedAt,
 		LastResumedAt:      job.LastResumedAt,
 		FinishedAt:         job.FinishedAt,
+		StateEnteredAt:     job.StateEnteredAt,
 		RunningDuration:    job.RunningDuration,
 		PausedDuration:     job.PausedDuration,
 		BlockedDuration:    job.BlockedDuration,

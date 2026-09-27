@@ -115,6 +115,51 @@ func TestCursorRoundTrips(t *testing.T) {
 	}
 }
 
+// A cursor carries the order it was issued in, and a token from before there
+// was a second order continues acceptance order.
+func TestCursorRoundTripsInEitherOrder(t *testing.T) {
+	stateEntered := jobs.Cursor{Order: jobs.OrderStateEntered, StateEnteredAt: time.Date(2026, 9, 1, 8, 0, 0, 5, time.UTC), ID: "abc"}
+	token, err := EncodeCursor(stateEntered)
+	if err != nil {
+		t.Fatalf("EncodeCursor: %v", err)
+	}
+	if decoded, err := DecodeCursor(token); err != nil || decoded != stateEntered {
+		t.Fatalf("round trip = %+v, %v; want %+v", decoded, err, stateEntered)
+	}
+	old, err := EncodeCursor(jobs.Cursor{AcceptedAt: stateEntered.StateEnteredAt, ID: "abc"})
+	if err != nil {
+		t.Fatalf("EncodeCursor: %v", err)
+	}
+	if decoded, err := DecodeCursor(old); err != nil || decoded.Order != jobs.OrderAccepted {
+		t.Fatalf("an acceptance token decoded as %+v, %v", decoded, err)
+	}
+}
+
+func TestApplyListOrder(t *testing.T) {
+	first, err := ApplyListOrder(url.Values{"order": {"stateEntered"}}, jobs.Cursor{})
+	if err != nil || first.Order != jobs.OrderStateEntered || first.ID != "" {
+		t.Fatalf("order=stateEntered on the first page = %+v, %v", first, err)
+	}
+	if cursor, err := ApplyListOrder(url.Values{}, first); err != nil || cursor != first {
+		t.Fatalf("no order parameter changed the cursor: %+v, %v", cursor, err)
+	}
+	if cursor, err := ApplyListOrder(url.Values{"order": {"accepted"}}, jobs.Cursor{}); err != nil || cursor.Order != jobs.OrderAccepted {
+		t.Fatalf("order=accepted = %+v, %v", cursor, err)
+	}
+	next := jobs.Cursor{Order: jobs.OrderStateEntered, StateEnteredAt: time.Now(), ID: "abc"}
+	for _, values := range []url.Values{
+		{"order": {"finishedAt"}},
+		{"order": {"accepted", "stateEntered"}},
+	} {
+		if _, err := ApplyListOrder(values, jobs.Cursor{}); err == nil {
+			t.Errorf("%v was accepted", values)
+		}
+	}
+	if _, err := ApplyListOrder(url.Values{"order": {"accepted"}}, next); err == nil {
+		t.Fatal("a state-entered cursor was read in acceptance order")
+	}
+}
+
 func TestResultLinkForPrefersTheEntityOutput(t *testing.T) {
 	job := jobs.Snapshot{ID: "j1", Kind: "remote-download", Title: "cat.jpg", State: jobs.StateSucceeded}
 	outputs := []jobs.Output{

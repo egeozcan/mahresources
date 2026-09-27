@@ -574,7 +574,7 @@ func listRowsStatement(t *testing.T, svc *Service, deps Deps, access Access, fil
 	if !desc {
 		position = func(q *gorm.DB) *gorm.DB { return continueBefore(q, cursor) }
 	}
-	query, _, union, err := svc.listRowsQuery(deps, access, filter, 0, false, desc, position)
+	query, _, union, err := svc.listRowsQuery(deps, access, filter, cursor.Order, 0, false, desc, position)
 	if err != nil {
 		t.Fatalf("listRowsQuery: %v", err)
 	}

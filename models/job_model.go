@@ -139,10 +139,10 @@ type Job struct {
 	ProgressSeries    types.JSON `gorm:"type:json" json:"progressSeries,omitempty"`
 	ProgressUpdatedAt *time.Time `gorm:"index:idx_jobs_progress_updated" json:"progressUpdatedAt,omitempty"`
 
-	// AcceptedAt is the acceptance instant, and the keyset column every visible
-	// listing pages on. The rest are the common UTC instants; StateEnteredAt is
-	// the bookkeeping behind the cumulative durations below and is deliberately
-	// not part of a public snapshot.
+	// AcceptedAt is the acceptance instant, and the keyset column a listing
+	// pages on by default. The rest are the common UTC instants. StateEnteredAt
+	// is the bookkeeping behind the cumulative durations below, and the column a
+	// listing ordered by state change pages on (see job_filter_indexes.go).
 	AcceptedAt     time.Time  `gorm:"not null;index:idx_jobs_visible,priority:4;index:idx_jobs_admin_order,priority:1" json:"acceptedAt"`
 	ScheduledFor   *time.Time `json:"scheduledFor,omitempty"`
 	QueuedAt       *time.Time `json:"queuedAt,omitempty"`

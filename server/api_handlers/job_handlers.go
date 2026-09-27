@@ -239,6 +239,10 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if cursor, err = jobview.ApplyListOrder(r.URL.Query(), cursor); err != nil {
+			writeJobError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
 		page, err := ctx.ListJobs(filter, cursor, limit)
 		if err != nil {
@@ -457,6 +461,7 @@ type JobSnapshotResponse struct {
 	StartedAt          *time.Time              `json:"startedAt,omitempty"`
 	LastResumedAt      *time.Time              `json:"lastResumedAt,omitempty"`
 	FinishedAt         *time.Time              `json:"finishedAt,omitempty"`
+	StateEnteredAt     *time.Time              `json:"stateEnteredAt,omitempty"`
 	RunningDuration    time.Duration           `json:"runningDuration"`
 	PausedDuration     time.Duration           `json:"pausedDuration"`
 	BlockedDuration    time.Duration           `json:"blockedDuration"`
@@ -577,6 +582,7 @@ func jobSnapshotResponseAt(snap jobs.Snapshot, now time.Time, withSeries bool) J
 		Progress:   jobProgressResponse(snap, now, withSeries),
 		AcceptedAt: snap.AcceptedAt, ScheduledFor: snap.ScheduledFor, QueuedAt: snap.QueuedAt,
 		StartedAt: snap.StartedAt, LastResumedAt: snap.LastResumedAt, FinishedAt: snap.FinishedAt,
+		StateEnteredAt:  snap.StateEnteredAt,
 		RunningDuration: snap.RunningDuration, PausedDuration: snap.PausedDuration,
 		BlockedDuration: snap.BlockedDuration, QueueDuration: snap.QueueDuration, ExpiresAt: snap.ExpiresAt,
 	}

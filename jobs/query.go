@@ -68,9 +68,10 @@ func requireVisibleJob(db *gorm.DB, access Access, jobID string) error {
 
 // List returns one bounded, newest-first page of the Jobs the asker may see.
 //
-// Ordering is accepted_at then identity, and the cursor is that pair, because
-// accepted_at is not unique: a page boundary drawn on the instant alone would
-// either repeat or skip every Job accepted in the same tick.
+// Ordering is the cursor's order instant (accepted_at by default) then
+// identity, and the cursor is that pair, because the instant is not unique: a
+// page boundary drawn on the instant alone would either repeat or skip every Job
+// that shares it.
 func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, limit int) (Page, error) {
 	// One row beyond the page is read so the answer says whether there is a next
 	// page without a second query, and without ever reporting a next page that
@@ -78,7 +79,8 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 	if err := validateCursor(cursor); err != nil {
 		return Page{}, err
 	}
-	rows, size, err := s.readListRows(deps, access, filter, limit, false, true, func(query *gorm.DB) *gorm.DB {
+	order := cursor.Order
+	rows, size, err := s.readListRows(deps, access, filter, order, limit, false, true, func(query *gorm.DB) *gorm.DB {
 		return continueAfter(query, cursor)
 	})
 	if err != nil {
@@ -94,17 +96,17 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
 	}
 	if hasNext {
-		page.Next = cursorOf(rows[len(rows)-1])
+		page.Next = cursorOf(rows[len(rows)-1], order)
 	}
 	// A page that did not start at the top has one before it. Its first row is
 	// where ListBefore walks back from; if everything newer has since gone,
 	// ListBefore answers the first page rather than an empty one. A page that
 	// came back empty — its rows dismissed, or moved out of the filter — walks
 	// back from its own cursor, so the reader is never stranded without a way to
-	// the rows that remain before it.
-	if cursor.ID != "" {
+	// the rows that remain before it. Only acceptance order pages backwards.
+	if cursor.ID != "" && order == OrderAccepted {
 		if len(rows) > 0 {
-			page.Prev = cursorOf(rows[0])
+			page.Prev = cursorOf(rows[0], order)
 		} else {
 			prev := cursor
 			page.Prev = &prev
@@ -121,13 +123,16 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 // listing's first page rather than a short slice of the top, so the page a
 // reader lands on is always one the forward walk would also have shown.
 func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cursor, limit int) (Page, error) {
+	if before.Order != OrderAccepted {
+		return Page{}, fmt.Errorf("%w: only acceptance order pages backwards", ErrInvalidCursor)
+	}
 	if before.ID == "" {
 		return s.List(deps, access, filter, Cursor{}, limit)
 	}
 	if err := validateCursor(before); err != nil {
 		return Page{}, err
 	}
-	rows, size, err := s.readListRows(deps, access, filter, limit, false, false, func(query *gorm.DB) *gorm.DB {
+	rows, size, err := s.readListRows(deps, access, filter, OrderAccepted, limit, false, false, func(query *gorm.DB) *gorm.DB {
 		return continueBefore(query, before)
 	})
 	if err != nil {
@@ -143,13 +148,13 @@ func (s *Service) ListBefore(deps Deps, access Access, filter Filter, before Cur
 	for _, row := range rows {
 		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
 	}
-	page.Prev = cursorOf(rows[0])
+	page.Prev = cursorOf(rows[0], OrderAccepted)
 
 	// Whether anything is older than this page is asked rather than assumed: the
 	// cursor's own row may be gone, and a Next that opens an empty page is the
 	// answer List promises never to give.
-	last := *cursorOf(rows[len(rows)-1])
-	older, _, err := s.readListRows(deps, access, filter, limit, true, true, func(query *gorm.DB) *gorm.DB {
+	last := *cursorOf(rows[len(rows)-1], OrderAccepted)
+	older, _, err := s.readListRows(deps, access, filter, OrderAccepted, limit, true, true, func(query *gorm.DB) *gorm.DB {
 		return continueAfter(query, last)
 	})
 	if err != nil {
@@ -230,16 +235,44 @@ func listBranches(filter Filter) []Filter {
 	return []Filter{rest, partialOnly}
 }
 
+// orderedBranches is the filter as a listing in the given order reads it. In
+// state-entered order a filter of several states is read as one branch per
+// state, merged by the keyset: each branch is a seek on an index that leads
+// with the state and is ordered by state_entered_at (job_filter_indexes.go),
+// so a page costs its own size whatever the table holds. As one IN predicate
+// the planner has two ways to read it and both are slow at scale: sort every
+// match (a million succeeded Jobs, to show ten), or walk the whole ordering
+// filtering by state (every Job, to find three old failures).
+func orderedBranches(filter Filter, order ListOrder) []Filter {
+	branches := listBranches(filter)
+	if order != OrderStateEntered || len(branches) != 1 || len(filter.States) < 2 || slices.Contains(filter.States, FilterStatePartial) {
+		return branches
+	}
+	split := make([]Filter, 0, len(filter.States))
+	seen := make(map[string]bool, len(filter.States))
+	for _, state := range filter.States {
+		if seen[state] {
+			continue
+		}
+		seen[state] = true
+		branch := filter
+		branch.States = []string{state}
+		split = append(split, branch)
+	}
+	return split
+}
+
 // readListRows reads one keyset-bounded run of a listing, newest first when desc,
 // oldest first otherwise: at most size+1 rows, or one when probe asks only
 // whether any row is there. position applies the keyset bound to each branch.
 //
-// With two branches (listBranches) each is ordered and limited on its own index
-// and the two are combined in ONE statement. Separate statements would read two
-// snapshots, and a Job moving from one branch to the other between them — a
-// running Job succeeding as partial — would be returned twice.
-func (s *Service) readListRows(deps Deps, access Access, filter Filter, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) ([]models.Job, int, error) {
-	query, size, union, err := s.listRowsQuery(deps, access, filter, limit, probe, desc, position)
+// With several branches (orderedBranches) each is ordered and limited on its
+// own index and they are combined in ONE statement. Separate statements would
+// read several snapshots, and a Job moving from one branch to another between
+// them — a running Job succeeding as partial, or a queued one starting — would
+// be returned twice.
+func (s *Service) readListRows(deps Deps, access Access, filter Filter, order ListOrder, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) ([]models.Job, int, error) {
+	query, size, union, err := s.listRowsQuery(deps, access, filter, order, limit, probe, desc, position)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -254,14 +287,16 @@ func (s *Service) readListRows(deps Deps, access Access, filter Filter, limit in
 
 // listRowsQuery builds the statement readListRows runs, so a test can explain
 // exactly what the listing executes. union reports whether it is the raw
-// two-branch statement (read with Scan) rather than a query-builder one.
-func (s *Service) listRowsQuery(deps Deps, access Access, filter Filter, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) (*gorm.DB, int, bool, error) {
-	order := "jobs.accepted_at DESC, jobs.id DESC"
-	outer := "accepted_at DESC, id DESC"
+// several-branch statement (read with Scan) rather than a query-builder one.
+func (s *Service) listRowsQuery(deps Deps, access Access, filter Filter, listOrder ListOrder, limit int, probe, desc bool, position func(*gorm.DB) *gorm.DB) (*gorm.DB, int, bool, error) {
+	column := orderColumn(listOrder)
+	direction := "DESC"
 	if !desc {
-		order, outer = "jobs.accepted_at ASC, jobs.id ASC", "accepted_at ASC, id ASC"
+		direction = "ASC"
 	}
-	branches := listBranches(filter)
+	order := fmt.Sprintf("jobs.%s %s, jobs.id %s", column, direction, direction)
+	outer := fmt.Sprintf("%s %s, id %s", column, direction, direction)
+	branches := orderedBranches(filter, listOrder)
 	queries := make([]*gorm.DB, 0, len(branches))
 	size, take := 0, 1
 	for _, branch := range branches {
@@ -278,8 +313,14 @@ func (s *Service) listRowsQuery(deps Deps, access Access, filter Filter, limit i
 	if len(queries) == 1 {
 		return queries[0], size, false, nil
 	}
-	return deps.DB.Raw("SELECT * FROM (?) AS a UNION ALL SELECT * FROM (?) AS b ORDER BY "+outer+" LIMIT ?",
-		queries[0], queries[1], take), size, true, nil
+	parts := make([]string, 0, len(queries))
+	args := make([]any, 0, len(queries)+1)
+	for i, query := range queries {
+		parts = append(parts, fmt.Sprintf("SELECT * FROM (?) AS b%d", i))
+		args = append(args, query)
+	}
+	args = append(args, take)
+	return deps.DB.Raw(strings.Join(parts, " UNION ALL ")+" ORDER BY "+outer+" LIMIT ?", args...), size, true, nil
 }
 
 // listQuery validates one listing question and builds its filtered, visible,
@@ -320,8 +361,23 @@ func (s *Service) finishPage(deps Deps, access Access, page Page) (Page, error) 
 	return page, nil
 }
 
-func cursorOf(row models.Job) *Cursor {
+func cursorOf(row models.Job, order ListOrder) *Cursor {
+	if order == OrderStateEntered {
+		cursor := &Cursor{Order: order, ID: row.ID}
+		if row.StateEnteredAt != nil {
+			cursor.StateEnteredAt = *row.StateEnteredAt
+		}
+		return cursor
+	}
 	return &Cursor{AcceptedAt: row.AcceptedAt, ID: row.ID}
+}
+
+// orderColumn is the column a listing order sorts and pages on.
+func orderColumn(order ListOrder) string {
+	if order == OrderStateEntered {
+		return "state_entered_at"
+	}
+	return "accepted_at"
 }
 
 // fillViewerPinState projects one viewer's pin preference onto a bounded set of
@@ -647,6 +703,10 @@ func continueAfter(db *gorm.DB, cursor Cursor) *gorm.DB {
 	if cursor.ID == "" {
 		return db
 	}
+	if cursor.Order == OrderStateEntered {
+		return db.Where("(jobs.state_entered_at < ? OR (jobs.state_entered_at = ? AND jobs.id < ?))",
+			cursor.StateEnteredAt.UTC(), cursor.StateEnteredAt.UTC(), cursor.ID)
+	}
 	return db.Where("(jobs.accepted_at < ? OR (jobs.accepted_at = ? AND jobs.id < ?))",
 		cursor.AcceptedAt.UTC(), cursor.AcceptedAt.UTC(), cursor.ID)
 }
@@ -663,11 +723,18 @@ func continueBefore(db *gorm.DB, cursor Cursor) *gorm.DB {
 // alone is not unique and a position without an identity has no defined page
 // boundary.
 func validateCursor(cursor Cursor) error {
-	if cursor.ID == "" && cursor.AcceptedAt.IsZero() {
+	if !cursor.Order.Valid() {
+		return fmt.Errorf("%w: unknown order %q", ErrInvalidCursor, cursor.Order)
+	}
+	at := cursor.AcceptedAt
+	if cursor.Order == OrderStateEntered {
+		at = cursor.StateEnteredAt
+	}
+	if cursor.ID == "" && at.IsZero() {
 		return nil
 	}
-	if cursor.ID == "" || cursor.AcceptedAt.IsZero() {
-		return fmt.Errorf("%w: a cursor needs both the accepted instant and the job id", ErrInvalidCursor)
+	if cursor.ID == "" || at.IsZero() {
+		return fmt.Errorf("%w: a cursor needs both the instant it is ordered by and the job id", ErrInvalidCursor)
 	}
 	return nil
 }

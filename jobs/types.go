@@ -687,13 +687,40 @@ type EventFilter struct {
 	OwnedByViewer bool
 }
 
-// Cursor is the keyset position a listing continues from: the accepted instant
-// and identity of the last Job the previous page returned. It is a value rather
-// than an offset because history grows under the reader — a Job accepted while a
-// page is open moves every later row down an offset and silently skips one.
+// ListOrder names the instant a listing is ordered by, newest first.
+type ListOrder string
+
+const (
+	// OrderAccepted orders by acceptance. It is the default and the only order
+	// a listing pages backwards in.
+	OrderAccepted ListOrder = ""
+	// OrderStateEntered orders by the instant each Job entered its current
+	// state, so work that has just finished, failed or started leads however
+	// long ago it was accepted. The Jobs panel reads its groups this way: a
+	// page of the newest accepted Jobs leaves out a long download that has
+	// just finished, and an old Job that has just failed.
+	OrderStateEntered ListOrder = "stateEntered"
+)
+
+// Valid reports whether the order is one a listing can be read in.
+func (o ListOrder) Valid() bool {
+	return o == OrderAccepted || o == OrderStateEntered
+}
+
+// Cursor is the keyset position a listing continues from: the instant the
+// listing is ordered by and the identity of the last Job the previous page
+// returned. It is a value rather than an offset because history grows under the
+// reader — a Job accepted while a page is open moves every later row down an
+// offset and silently skips one.
+//
+// Order is part of the position: a cursor names a place in one ordering, and
+// the zero Cursor of an order is the start of that ordering. AcceptedAt holds
+// the instant under OrderAccepted and StateEnteredAt under OrderStateEntered.
 type Cursor struct {
-	AcceptedAt time.Time
-	ID         string
+	AcceptedAt     time.Time
+	ID             string
+	Order          ListOrder
+	StateEnteredAt time.Time
 }
 
 // PreferenceRequest is one viewer's change to one Job: whether they dismiss it
@@ -1115,11 +1142,14 @@ type Snapshot struct {
 	StartedAt         *time.Time
 	LastResumedAt     *time.Time
 	FinishedAt        *time.Time
-	RunningDuration   time.Duration
-	PausedDuration    time.Duration
-	BlockedDuration   time.Duration
-	QueueDuration     time.Duration
-	ExpiresAt         *time.Time
+	// StateEnteredAt is when the Job entered its current state: the instant
+	// OrderStateEntered lists by.
+	StateEnteredAt  *time.Time
+	RunningDuration time.Duration
+	PausedDuration  time.Duration
+	BlockedDuration time.Duration
+	QueueDuration   time.Duration
+	ExpiresAt       *time.Time
 }
 
 // Terminal reports whether the snapshot's Job reached an end state.

@@ -31,10 +31,17 @@ type jobFilterIndex struct {
 //     so it cannot narrow on to_job_id; this one carries from_job_id as well so
 //     it covers the far-endpoint join, because SQLite prefers a covering index
 //     and without it picked the unique one anyway.
+//   - idx_jobs_state_entered and idx_jobs_visible_state_entered read one state
+//     newest state change first, for an administrator and for an owner: the
+//     listing in state-entered order reads each state of its filter as one
+//     such seek (jobs.orderedBranches), which is how the Jobs panel reads its
+//     groups on every refresh.
 var jobFilterIndexes = []jobFilterIndex{
 	{"idx_jobs_state_phase", "jobs", "state, phase, accepted_at, id"},
 	{"idx_jobs_visible_phase", "jobs", "visibility_class, owner_user_id, state, phase, accepted_at, id"},
 	{"idx_job_links_inbound", "job_links", "to_job_id, type, from_job_id"},
+	{"idx_jobs_state_entered", "jobs", "state, state_entered_at, id"},
+	{"idx_jobs_visible_state_entered", "jobs", "visibility_class, owner_user_id, state, state_entered_at, id"},
 }
 
 // jobFilterIndexLockKey is the PostgreSQL advisory lock one server holds while
