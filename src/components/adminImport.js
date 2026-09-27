@@ -108,7 +108,12 @@ export function adminImport() {
 
     /**
      * Restores the import a handle names: its review while the plan is waiting,
-     * its parse while that is running, and otherwise what became of it.
+     * its parse while that is running, and otherwise the apply that took the plan
+     * (its report, the groups it created and how it ended).
+     *
+     * Every read here is authorized by the server for this viewer, and a handle
+     * the viewer may not see answers exactly as one that does not exist, so the
+     * page can tell nobody whether an import is there.
      */
     async resume(handle) {
       this.jobId = handle;
@@ -149,10 +154,54 @@ export function adminImport() {
           return;
         }
         this.jobId = null;
-        this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
+        await this.resumeApplied(handle, parse.canonicalJobId);
       } catch (err) {
         this.error = err.message;
       }
+    },
+
+    // Shows what became of an import whose plan an apply took: the apply's report,
+    // and whether that apply succeeded, failed or is still running, read from the
+    // newest apply the parse's Job lists (following its Retries).
+    async resumeApplied(handle, parseJobId) {
+      const apply = await this.latestApply(parseJobId);
+      const resultResp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/result`);
+      const result = resultResp.ok ? await resultResp.json() : null;
+      const state = apply?.state || '';
+      if (state === 'queued' || state === 'running' || state === 'scheduled' || state === 'paused' || state === 'blocked') {
+        this.resumeNotice = 'This import is being applied. Follow it in the Jobs panel or on its Job page.';
+        return;
+      }
+      if (!result) {
+        this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
+        return;
+      }
+      if (state && state !== 'succeeded') {
+        this.error = apply?.failure?.message || `The apply ended ${state}.`;
+      }
+      this.applyResult = result;
+    },
+
+    async latestApply(parseJobId) {
+      if (!parseJobId) return null;
+      const read = async (id) => {
+        const resp = await fetch(`/v1/jobs/${encodeURIComponent(id)}`);
+        return resp.ok ? resp.json() : null;
+      };
+      const newest = (jobs) => (Array.isArray(jobs) ? jobs : [])
+        .filter(job => job?.kind === 'group-import-apply')
+        .sort((a, b) => String(b.acceptedAt).localeCompare(String(a.acceptedAt)))[0] || null;
+      const parse = await read(parseJobId);
+      let apply = newest(parse?.lineage?.children);
+      // A Retry of an apply is a new Job linked to it; the newest one is the one
+      // whose outcome the report describes. The walk is bounded.
+      for (let hop = 0; apply && hop < 10; hop++) {
+        const detail = await read(apply.id);
+        const next = newest(detail?.lineage?.successors);
+        if (!next) return detail || apply;
+        apply = next;
+      }
+      return apply;
     },
 
     // SSE subscription — matches existing adminExport.js pattern exactly

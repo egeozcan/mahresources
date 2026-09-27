@@ -382,7 +382,7 @@
       </section>
 
       <!-- Apply Section -->
-      <section aria-label="Apply" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-apply">
+      <section x-show="!applyResult" aria-label="Apply" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-apply">
         <h2 class="text-sm font-medium font-mono text-stone-700">Apply Import</h2>
         <p x-show="!applyJobId && !applyResult" class="text-sm text-stone-500 mb-3">Review your decisions above, then apply.</p>
 
@@ -416,6 +416,16 @@
           </button>
         </div>
 
+      </section>
+    </div>
+  </template>
+
+  {# The apply's report: shown after an apply on this page, and when ?job= names an #}
+  {# import an apply has already taken, where there is no plan to review. #}
+  <template x-if="applyResult">
+    <section aria-label="Import result" class="border-t border-stone-200 pt-5 space-y-3">
+      <h2 class="text-sm font-medium font-mono text-stone-700">Import Result</h2>
+      <p x-show="resumeJobURL" class="text-sm"><a :href="resumeJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the import's Job</a></p>
         <!-- Success result -->
         <template x-if="applyResult && !error">
           <div class="space-y-3" data-testid="import-apply-result">
@@ -477,7 +487,7 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="gid in applyResult.created_group_ids" :key="gid">
-                    <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'#' + gid"></a>
+                    <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'Group #' + gid"></a>
                   </template>
                 </div>
               </div>
@@ -498,7 +508,7 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Groups (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="gid in applyResult.created_group_ids" :key="gid">
-                    <a :href="'/group?id=' + gid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + gid"></a>
+                    <a :href="'/group?id=' + gid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Group #' + gid"></a>
                   </template>
                 </div>
               </div>
@@ -508,7 +518,7 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Resources (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="rid in applyResult.created_resource_ids" :key="rid">
-                    <a :href="'/resource?id=' + rid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + rid"></a>
+                    <a :href="'/resource?id=' + rid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Resource #' + rid"></a>
                   </template>
                 </div>
               </div>
@@ -518,15 +528,14 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Notes (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="nid in applyResult.created_note_ids" :key="nid">
-                    <a :href="'/note?id=' + nid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + nid"></a>
+                    <a :href="'/note?id=' + nid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Note #' + nid"></a>
                   </template>
                 </div>
               </div>
             </template>
           </div>
         </template>
-      </section>
-    </div>
+    </section>
   </template>
 </div>
 {% endblock %}
