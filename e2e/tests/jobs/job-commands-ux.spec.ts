@@ -579,3 +579,42 @@ test.describe('Job pages keep focus on their commands', () => {
     }
   });
 });
+
+test.describe('Jobs drawer opened for a job just started', () => {
+  for (const listed of [true, false]) {
+    test(`shows that job, not the failures above it${listed ? '' : ', even before a list has it'}`, async ({ page }) => {
+      const failures = Array.from({ length: 30 }, (_, index) => failedJob(`started-above-${index}`, `Old failure ${index}`, {
+        acceptedAt: `2026-09-26T09:${String(10 + index).padStart(2, '0')}:00Z`,
+      }));
+      const started = runningJob('started-now', 'Group Sweep', { acceptedAt: '2026-09-26T08:00:00Z' });
+      const store = jobStore([...failures, started]);
+      // Unlisted, the job was accepted after the drawer's lists were read; the
+      // next list read has it.
+      let inLists = listed;
+      await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+        const states = new URL(route.request().url()).searchParams.getAll('state');
+        const rows = store.rows().filter(job => inLists || job.id !== 'started-now');
+        return route.fulfill({ json: { jobs: rows.filter(job => states.includes(job.state)), nextCursor: null } });
+      });
+      await page.route(/\/v1\/jobs\/[^/?]+$/, route => {
+        const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() || '');
+        if (id === 'started-now') inLists = true;
+        const job = store.jobs.get(id);
+        return job ? route.fulfill({ json: job }) : route.fulfill({ status: 404, json: { error: 'job not found' } });
+      });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.goto('/dashboard');
+      // The page's own lists were read before the job existed.
+      await expect.poll(() => page.evaluate(() => {
+        const root = document.querySelector('[data-testid="job-panel-root"]');
+        return (window as any).Alpine.$data(root).jobs.length;
+      })).toBe(listed ? 31 : 30);
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('jobs-panel-open', { detail: { jobIds: ['started-now'] } })));
+
+      const drawer = page.getByRole('dialog', { name: 'Jobs' });
+      const title = drawer.locator('article[data-job-id="started-now"]').getByRole('link', { name: 'Group Sweep' });
+      await expect(title).toBeFocused();
+      await expect(title).toBeInViewport();
+    });
+  }
+});

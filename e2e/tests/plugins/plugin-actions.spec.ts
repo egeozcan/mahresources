@@ -439,6 +439,8 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
 
     const jobsPanel = page.getByRole('dialog', { name: 'Jobs' });
     await expect(jobsPanel).toBeVisible({ timeout: 5000 });
+    // The panel shows the job the run started: focus is on its row's title.
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id || ''), { timeout: 10_000 }).toMatch(/^job-panel-title-/);
   });
 });
 

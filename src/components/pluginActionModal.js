@@ -348,9 +348,14 @@ export function pluginActionModal() {
                     // round — and until Alpine flushes, the x-if still has this one
                     // mounted, so a synchronous request would be refused by the guard
                     // that exists to protect the reader from it.
+                    // The canonical ids of the Jobs this run started, so the panel
+                    // can show the reader their job rather than whatever group
+                    // happens to be at its top.
+                    const jobIds = [data.canonicalJobId, ...(Array.isArray(data.jobs) ? data.jobs.map(entry => entry?.canonicalJobId) : [])]
+                        .filter((id, index, all) => typeof id === 'string' && id && all.indexOf(id) === index);
                     this.$nextTick(() => {
                         window.dispatchEvent(new CustomEvent('jobs-panel-open', {
-                            detail: { returnFocusTo: opener },
+                            detail: { returnFocusTo: opener, jobIds },
                         }));
                     });
                 } else if (data.redirect && data.success !== false) {

@@ -225,6 +225,8 @@ export function jobPanel() {
         _noticeWatch: null,
         // Jobs with a command in flight, whose controls take no second press.
         commandBusy: {},
+        // A Job the drawer was opened to show (see openFromEvent).
+        _revealJobId: '',
         // Commands whose focus keepFocusOnRow still has to place.
         _commandFocusPending: 0,
         // Where the reader's focus is in the drawer, for when a re-render takes
@@ -299,11 +301,15 @@ export function jobPanel() {
                 if (open) {
                     this.startClock();
                     this.$nextTick?.(() => {
-                        focusFirstIn(this.$refs?.panel);
                         // By id: $refs is read before the drawer first renders
                         // (blockingModal), and Alpine keeps that empty read.
-                        this.startFocusKeeper(document.querySelector('#job-center-panel'));
+                        const panel = document.querySelector('#job-center-panel');
+                        focusFirstIn(panel);
+                        this.startFocusKeeper(panel);
                         this.adoptPendingAnnouncement();
+                        const reveal = this._revealJobId;
+                        this._revealJobId = '';
+                        if (reveal) void this.revealJob(reveal);
                     });
                 } else {
                     this.onDrawerClosed();
@@ -404,7 +410,11 @@ export function jobPanel() {
             return blockingModal([this._root, this.$refs?.panel]);
         },
 
+        // `jobIds` names the Jobs whatever asked for the drawer just started (a
+        // plugin action run): the drawer shows the first of them, which may sit
+        // far below the failures listed first.
         openFromEvent(detail = null) {
+            const reveal = Array.isArray(detail?.jobIds) ? detail.jobIds.find(id => typeof id === 'string' && id) : '';
             if (!this.isOpen) {
                 if (this.blockingModal()) {
                     this.announceNotice('A dialog is open. Close it before opening Jobs.');
@@ -412,8 +422,41 @@ export function jobPanel() {
                 }
                 const requested = detail?.returnFocusTo;
                 this._lastTrigger = (isRendered(requested) ? requested : null) ?? focusedElement() ?? this._trigger;
+                this._revealJobId = reveal || '';
+                this.isOpen = true;
+                return;
             }
-            this.isOpen = true;
+            if (reveal) void this.revealJob(reveal);
+        },
+
+        // Moves focus to a Job's row and scrolls it into view, reading the Job
+        // and adding its row when no list has it yet: it was accepted a moment
+        // ago. Focus the reader has already moved somewhere of their own is left
+        // there.
+        async revealJob(id) {
+            const panel = () => document.querySelector('#job-center-panel');
+            const rowFor = () => panel()?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
+            const initialFocus = document.activeElement;
+            if (!rowFor() && !this.jobs.some(job => job.id === id)) {
+                try {
+                    const job = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
+                    if (job?.id === id && !this.jobs.some(row => row.id === id)) {
+                        this.details[id] = job;
+                        this.hearJob(job);
+                        this.upsert(job);
+                    }
+                } catch {
+                    return;
+                }
+                await new Promise(resolve => (this.$nextTick ? this.$nextTick(resolve) : resolve()));
+            }
+            const title = rowFor()?.querySelector('a[id^="job-panel-title-"]');
+            if (!title || !this.isOpen) return;
+            const active = document.activeElement;
+            const untouched = !active || active === document.body || active === initialFocus || active.matches?.('button[aria-label="Close Jobs panel"]');
+            if (!untouched || !focusOn(title)) return;
+            title.scrollIntoView?.({ block: 'nearest' });
+            this.noteFocus(title);
         },
 
         toggle(event = null) {
