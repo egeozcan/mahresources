@@ -1,3 +1,10 @@
+// The CodeMirror view behind a field's editor container, or a promise of it: the editor
+// mounts from a lazy import, and a prompt can be submitted before that lands. Settles null
+// for an editor that could not be built.
+function editorFor(container) {
+  return Promise.resolve(container?._cmView || container?._cmReady || null);
+}
+
 // Shared generation state for a template/CSS pair or a standalone schema/CSS editor.
 export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
   return {
@@ -19,10 +26,11 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     generationContext() {
       const form = fieldName ? this.$el.closest('form') : this.$refs.editorContainer.closest('form');
       const input = fieldName ? form?.querySelector(`input[name="${fieldName}"]`) : this.$refs.hiddenInput;
-      const view = fieldName
-        ? input?.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]')?._cmView
-        : this.view;
-      return { form, name: fieldName || input?.getAttribute('name') || '', view };
+      const container = fieldName
+        ? input?.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]')
+        : this.$refs.editorContainer;
+      const view = fieldName ? container?._cmView : this.view;
+      return { form, name: fieldName || input?.getAttribute('name') || '', view, container };
     },
 
     // generateFromPrompt asks the server to draft this slot (or MetaSchema) from
@@ -51,23 +59,36 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         return;
       }
 
-      const { form, name: fieldName, view } = this.generationContext();
-      if (!view) {
-        this.generationError = 'The editor is still loading. Try again in a moment.';
-        return;
-      }
+      const { form, name: fieldName, container } = this.generationContext();
       let target = fieldName === 'MetaSchema' ? 'metaschema' : 'slot';
       const base = fieldName.endsWith('CSS') ? fieldName.slice(0, -3) : fieldName;
       const pair = [base, `${base}CSS`];
       if (base !== 'Custom' && pair.every((name) => form?.querySelector(`input[name="${name}"]`))) target = 'cluster';
+
+      const requestId = ++this._generationRequestId;
+      this.generating = true;
+      this.generationStatus = 'Generating…';
+
+      // Every editor the draft will be written into has to exist before the request goes
+      // out: the snapshot that decides whether to auto-apply is read from them, and a
+      // prompt submitted while they are still mounting waits for them rather than being
+      // refused. A pair waits for its CSS editor too, or the draft would be dropped at apply.
+      const editors = target === 'cluster'
+        ? pair.map((name) => form.querySelector(`input[name="${name}"]`)?.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]'))
+        : [container];
+      const views = await Promise.all(editors.map(editorFor));
+      if (requestId !== this._generationRequestId) return;
+      if (views.some((editorView) => !editorView)) {
+        this.generationError = 'The editor could not be loaded. Reload the page to try again.';
+        this.generationStatus = '';
+        this.generating = false;
+        return;
+      }
+      const view = target === 'cluster' ? views[pair.indexOf(fieldName)] : views[0];
       const pairSnapshot = Object.fromEntries(pair.map((name) => [name, form?.querySelector(`input[name="${name}"]`)?.value || '']));
       this._generatedForm = form;
       const metaSchema = (form && form.querySelector('input[name="MetaSchema"]')?.value) || '';
-
-      const requestId = ++this._generationRequestId;
       const snapshot = view.state.doc.toString();
-      this.generating = true;
-      this.generationStatus = 'Generating…';
 
       try {
         const resp = await fetch(generatePath, {

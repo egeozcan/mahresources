@@ -43,6 +43,44 @@ test.describe('Template section generation', () => {
     expect(seenBody).toMatchObject({ target: 'cluster', slot: 'CustomHeader', prompt: 'a header with the name' });
   });
 
+  test('a prompt submitted before the editors have loaded waits for them', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          target: 'bundle',
+          slots: { CustomHeader: '<h1>[property path="Name"]</h1>', CustomHeaderCSS: 'h1{color:red}' },
+          explanation: 'Shows the name.',
+          valid: true,
+        }),
+      });
+    });
+    // Hold CodeMirror back, so the prompt is certainly submitted before any editor exists.
+    let releaseEditors!: () => void;
+    const editorsReleased = new Promise<void>((resolve) => { releaseEditors = resolve; });
+    await page.route('**/public/dist/assets/*.js', async (route) => {
+      const response = await route.fetch();
+      const body = await response.text();
+      if (body.includes('cm-editor')) await editorsReleased;
+      await route.fulfill({ response, body });
+    });
+
+    await page.goto('/category/new');
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cm-editor')).toHaveCount(0);
+
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header with the name');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeDisabled();
+    await expect(page.getByTestId('generate-error-CustomHeader')).toHaveCount(0);
+
+    releaseEditors();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>[property path="Name"]</h1>');
+    await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
+    await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('applied');
+  });
+
   test('an invalid slot draft stays out of the editor until "Use anyway"', async ({ page }) => {
     await page.route('**/v1/category/generateTemplate', async (route) => {
       await route.fulfill({

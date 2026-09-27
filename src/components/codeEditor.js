@@ -22,7 +22,30 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
     generate,
     ...templateGeneration({ mode }),
 
-    async init() {
+    init() {
+      const container = this.$refs.editorContainer;
+
+      // The editor mounts only once mountEditor's imports land, which is after the page's
+      // load event, and until then its container is an empty two-pixel border. Every
+      // editor then grows by its minimum at once: a category form has two dozen, and
+      // everything under them moved about 3,400px a few frames after load, under a
+      // click already aimed at it. Reserving the minimum now keeps that space from
+      // changing when the editor arrives; the 2px is the container's own border.
+      container.style.minHeight = `${MIN_EDITOR_HEIGHT + 2}px`;
+
+      // What acts on the editor, generation above all, waits on this instead of finding
+      // no view while CodeMirror is still loading. It settles null if the editor could not
+      // be built, so a waiter is told rather than left waiting.
+      container._cmReady = this.mountEditor().then(
+        () => container._cmView || null,
+        (err) => {
+          console.error('code editor failed to load', err);
+          return null;
+        },
+      );
+    },
+
+    async mountEditor() {
       this.mode = mode;
       this.shortcodes = shortcodes;
       const hiddenInput = this.$refs.hiddenInput;
@@ -30,14 +53,6 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
       const initialValue = hiddenInput.value || '';
       const fieldName = hiddenInput.getAttribute('name') || '';
       const ariaLabel = label || fieldName;
-
-      // The editor mounts only once the imports below land, which is after the page's
-      // load event, and until then its container is an empty two-pixel border. Every
-      // editor then grows by its minimum at once: a category form has two dozen, and
-      // everything under them moved about 3,400px a few frames after load, under a
-      // click already aimed at it. Reserving the minimum now keeps that space from
-      // changing when the editor arrives; the 2px is the container's own border.
-      container.style.minHeight = `${MIN_EDITOR_HEIGHT + 2}px`;
 
       // Lazy-load CodeMirror core modules
       const [

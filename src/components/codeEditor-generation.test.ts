@@ -66,6 +66,43 @@ describe('template cluster generation', () => {
     expect(editor.generationStatus).toBe('Generated content applied.');
   });
 
+  it('waits for editors that are still mounting instead of refusing the prompt', async () => {
+    const { editor, views } = fixture();
+    // The editors' lazy import has not landed: no view yet, only the promise of one.
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const generation = editor.generateFromPrompt();
+    await Promise.resolve();
+    expect(editor.generating).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+    mounted.forEach(mount => mount());
+    await generation;
+
+    expect(editor.generationError).toBe('');
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+    expect(editor.generationStatus).toBe('Generated content applied.');
+  });
+
+  it('says so when an editor never mounts', async () => {
+    const { editor } = fixture();
+    const css = document.querySelectorAll('[x-ref="editorContainer"]')[1] as HTMLElement & Record<string, unknown>;
+    delete css._cmView;
+    css._cmReady = Promise.resolve(null);
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    await editor.generateFromPrompt();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(editor.generating).toBe(false);
+    expect(editor.generationError).toBe('The editor could not be loaded. Reload the page to try again.');
+  });
+
   it('does not apply an incomplete pair', async () => {
     const { editor, views } = fixture();
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: 'incomplete' } }) })));
