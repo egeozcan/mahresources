@@ -18,13 +18,14 @@ import (
 // TestARelationHoldsItsEndpointsUntilItCommitsPG pins the Postgres half of
 // AddRelation's category check. Under READ COMMITTED a check inside the
 // transaction still sees whatever commits the instant after it, so the endpoint
-// rows are locked when they are checked: a category change issued between the
-// check and the commit has to wait for the relation to land, and the category
-// change's own edge cleanup then sees it. Remove the lock clause and the change
-// commits at once, leaving an edge its relation type does not allow.
+// rows are locked when they are checked, and a category change issued between
+// the check and the commit has to wait for the relation to land. (UpdateGroup
+// updates the group row before its edge cleanup, so in the product that wait is
+// what lets the cleanup see the new edge; this test asserts only the wait.)
+// Remove the lock clause and the change commits at once.
 //
-// The change is injected on its own connection, at the back relation's insert,
-// which comes after the check.
+// The change is a raw UPDATE injected on its own connection, at the back
+// relation's insert, which comes after the check.
 func TestARelationHoldsItsEndpointsUntilItCommitsPG(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(&models.Category{}, &models.Group{}, &models.GroupRelationType{}, &models.GroupRelation{}); err != nil {
