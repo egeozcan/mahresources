@@ -1716,7 +1716,7 @@ func TestAPluginRetryExistsOnlyWhereTheRegistrationDeclaresIt(t *testing.T) {
 // is the execution's own lifecycle, and a cancelled runtime leaves the Job
 // unresolved — with its claim and its lease — for reconciliation.
 func TestADispatchedPluginExecutionWaitsForItsOwnReportNotForAClock(t *testing.T) {
-	ctx := newPluginActionJobContext(t)
+	ctx := newPluginActionJobContextWithoutDispatch(t)
 
 	// Every plugin job slot is taken, so the manager accepts this work and cannot
 	// start it: the state a dispatched execution has to wait through.

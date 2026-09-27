@@ -120,7 +120,7 @@ func TestAShutdownInterruptsTheRunningActionAndLeavesQueuedWorkForTheNextProcess
 // whose function dies with this process, is withdrawn as never started. Neither
 // is a failure.
 func TestAnAdmittedExecutionThatIsNotEnteredEndsByWhetherItCanRunElsewhere(t *testing.T) {
-	ctx := newPluginActionJobContext(t)
+	ctx := newPluginActionJobContextWithoutDispatch(t)
 
 	actor := models.User{Username: "not-entered-actor", Role: models.RoleUser, PasswordHash: "x"}
 	if err := ctx.db.Create(&actor).Error; err != nil {
@@ -303,7 +303,10 @@ func TestAJobHeldByAProcessThatIsGoneIsReconciledWithoutWaitingForItsLease(t *te
 	deadIdentity := current
 	deadIdentity.PID = unusedPIDForTest(t)
 	dead := deadIdentity.String()
-	job := acceptClosureJobForTest(t, ctx, dead)
+	// Submitted by this process and claimed by the gone one: the claim holder is
+	// what reconciliation judges, and this harness's dispatch loop withdraws a
+	// waiting closure whose submitter is gone before any claim could take it.
+	job := acceptClosureJobForTest(t, ctx, current.String())
 	claimJobForTestAs(t, ctx, job.ID, dead)
 
 	ended := waitForJobState(t, ctx, job.ID, "the abandoned Job to be reconciled", func(s jobs.Snapshot) bool {
@@ -335,7 +338,7 @@ func unusedPIDForTest(t *testing.T) int {
 // at shutdown records: its Job says the server shut down rather than ending
 // interrupted with no reason.
 func TestAHandlerLostAtShutdownSaysWhy(t *testing.T) {
-	ctx := newPluginActionJobContext(t)
+	ctx := newPluginActionJobContextWithoutDispatch(t)
 	actor := models.User{Username: "lost-actor", Role: models.RoleUser, PasswordHash: "x"}
 	if err := ctx.db.Create(&actor).Error; err != nil {
 		t.Fatalf("seed the actor: %v", err)
@@ -363,7 +366,7 @@ func TestAHandlerLostAtShutdownSaysWhy(t *testing.T) {
 // against one that did not; and a Job accepted as cancellable is not run by a
 // registration that no longer allows it.
 func TestCancelFollowsWhatTheJobRecordsNotTheCurrentRegistration(t *testing.T) {
-	ctx := newPluginActionJobContext(t)
+	ctx := newPluginActionJobContextWithoutDispatch(t)
 	actor := models.User{Username: "cancel-authority-actor", Role: models.RoleUser, PasswordHash: "x"}
 	if err := ctx.db.Create(&actor).Error; err != nil {
 		t.Fatalf("seed the actor: %v", err)
@@ -519,7 +522,7 @@ func TestAPluginJobIsAnnouncedWithTheOutcomeItHas(t *testing.T) {
 	})
 
 	t.Run("a success a cancellation won", func(t *testing.T) {
-		ctx := newPluginActionJobContext(t)
+		ctx := newPluginActionJobContextWithoutDispatch(t)
 		observer := &recordingJobEventSink{}
 		ctx.SetJobEventSink(observer)
 		actor := models.User{Username: "announce-actor", Role: models.RoleUser, PasswordHash: "x"}
