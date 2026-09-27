@@ -1229,10 +1229,16 @@ func copyCount(v *int64) *int64 {
 // string built out of one of them is the concrete leak a redaction rule can
 // actually close: `error(ctx.params.token)` reaching the timeline, the progress
 // snapshot or a hook payload. Every nonempty value is replaced, including short
-// strings whose meaning the host cannot infer. A Job with no parameters has
-// nothing to redact.
+// strings whose meaning the host cannot infer. The plugin's password-typed
+// settings are values the host knows too, and are replaced the same way
+// (plugin_system.RedactPluginSecrets); plugin_system replaces them before the
+// text reaches this sink as well, and this is the durable plane's own guarantee.
 func (s *pluginActionSink) safeText(message string, limit int) string {
-	return truncateTo(redactPluginParamValues(message, s.input), limit)
+	message = redactPluginParamValues(message, s.input)
+	if pm := s.ctx.PluginManager(); pm != nil && s.input != nil {
+		message = pm.RedactPluginSecrets(s.input.Plugin, message)
+	}
+	return truncateTo(message, limit)
 }
 
 // sanitizedResult is the result table with every parameter value replaced, at every

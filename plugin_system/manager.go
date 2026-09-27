@@ -1257,11 +1257,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 		level := L.CheckString(1)
-		message := L.CheckString(2)
+		secrets := pm.pluginSecrets(*pluginNamePtr)
+		message := redactSecrets(L.CheckString(2), secrets)
 
 		var details map[string]any
 		if detailsTbl := L.OptTable(3, nil); detailsTbl != nil {
-			details = luaTableToGoMap(detailsTbl)
+			details = redactResult(luaTableToGoMap(detailsTbl), secrets)
 		}
 
 		if pl := pm.loggerFor(L); pl != nil {
@@ -1637,6 +1638,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 
+		secrets := pm.pluginSecrets(*pluginNamePtr)
 		job.mu.Lock()
 		next := HostProgress{Percent: percent, Message: message}
 		if table != nil {
@@ -1647,6 +1649,11 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 				return 0
 			}
 			next = parsed
+		}
+		next.Message = redactSecrets(next.Message, secrets)
+		for i := range next.Metrics {
+			next.Metrics[i].Label = redactSecrets(next.Metrics[i].Label, secrets)
+			next.Metrics[i].Unit = redactSecrets(next.Metrics[i].Unit, secrets)
 		}
 		job.Progress = next.Percent
 		job.Message = next.Message
@@ -1699,13 +1706,15 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		// see settleActionJob. Reporting it from inside the Lua call ended a durable
 		// Job whose handler could still be writing, freeing the deployment's capacity
 		// for work that had not stopped.
+		var parsed map[string]any
+		if resultTbl != nil {
+			parsed = redactResult(luaTableToGoMap(resultTbl), pm.pluginSecrets(*pluginNamePtr))
+		}
 		job.mu.Lock()
 		job.Status = "completed"
 		job.Progress = 100
 
-		var parsed map[string]any
 		if resultTbl != nil {
-			parsed = luaTableToGoMap(resultTbl)
 			if msg, hasMsg := parsed["message"].(string); hasMsg {
 				job.Message = msg
 			} else {
@@ -1726,7 +1735,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 		jobID := L.CheckString(1)
-		errMsg := L.CheckString(2)
+		errMsg := pm.RedactPluginSecrets(*pluginNamePtr, L.CheckString(2))
 
 		job, ok := pm.jobOwnedBy(jobID, *pluginNamePtr)
 		if !ok {

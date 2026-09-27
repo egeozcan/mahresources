@@ -392,6 +392,6 @@ func (pm *PluginManager) runDurableCallback(pluginName string, generation uint64
 	L.SetContext(ctx)
 	defer L.RemoveContext()
 	if err := L.CallByParam(lua.P{Fn: callback, NRet: 0, Protect: true}, goToLuaTable(L, result)); err != nil {
-		log.Printf("[plugin] warning: durable command callback error: %v", err)
+		log.Printf("[plugin] warning: durable command callback error: %s", pm.RedactPluginSecrets(pluginName, err.Error()))
 	}
 }

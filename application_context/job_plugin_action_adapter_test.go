@@ -1,9 +1,13 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +37,17 @@ const pluginActionTestPlugin = "action-plugin"
 // closure-backed child job, one that floods progress, and a schedule.
 const pluginActionTestSource = `
 plugin = { name = "` + pluginActionTestPlugin + `", version = "1.0", api_version = 1,
-           capabilities = { "actions", "jobs", "kv", "schedule", "hooks", "job_events" } }
+           capabilities = { "actions", "jobs", "kv", "schedule", "hooks", "job_events" },
+           settings = { { name = "api_key", type = "password", label = "API key" } } }
+
+-- Puts the operator's password-typed setting into every surface a handler's text
+-- reaches: a log line, a progress report and its error.
+function setting_leaking_work(ctx)
+    local key = ctx.settings.api_key or ""
+    mah.log("error", "calling upstream with " .. key, { key = key })
+    mah.job_progress(ctx.job_id, 10, "authenticating with " .. key)
+    error("the upstream refused key " .. key)
+end
 
 local function bump(key)
     local n = tonumber(mah.kv.get(key) or "0") or 0
@@ -226,6 +240,8 @@ function init()
                  handler = leaky_work })
     mah.action({ id = "long-work", label = "Long Work", entity = "resource", async = true,
                  handler = long_work })
+    mah.action({ id = "setting-leaking-work", label = "Setting Leaking Work", entity = "resource", async = true,
+                 handler = setting_leaking_work })
     mah.action({ id = "cancellable-work", label = "Cancellable Work", entity = "resource", async = true,
                  cancel = true, handler = long_work })
     mah.action({ id = "erroring-work", label = "Erroring Work", entity = "resource", async = true,
@@ -2255,5 +2271,74 @@ func TestAPluginsCountsAndMetricsReachTheJobAndItsFinalProgress(t *testing.T) {
 		if _, ok := point.Values["rows"]; !ok {
 			t.Fatalf("series point %+v is missing the graphed metric", point)
 		}
+	}
+}
+
+// TestAPluginSecretIsRedactedFromEveryPublishedSurface pins that an operator's
+// password-typed plugin setting, which a handler receives and can echo, is
+// replaced in every place the host publishes the handler's text, for a Job a
+// non-administrator owns: the Job's failure and timeline, its progress, the
+// in-memory entry the panel and its stream read, the job-event hook payload, the
+// plugin's own log entries, and the server log.
+func TestAPluginSecretIsRedactedFromEveryPublishedSurface(t *testing.T) {
+	const secret = "sk-live-4f8a91c2e7"
+	ctx := newPluginActionJobContext(t)
+	pm := ctx.PluginManager()
+	pm.SetPluginSettings(pluginActionTestPlugin, map[string]any{"api_key": secret})
+	observer := &recordingJobEventSink{}
+	ctx.SetJobEventSink(observer)
+	events := pm.SubscribeActionJobs()
+	t.Cleanup(func() { pm.UnsubscribeActionJobs(events) })
+	var logged bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(io.MultiWriter(previous, &logged))
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	owner := models.User{Username: "secret-owner", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&owner).Error; err != nil {
+		t.Fatalf("seed the owner: %v", err)
+	}
+	handle, jobID, err := ctx.RunPluginActionAsync(&owner.ID, pluginActionTestPlugin, "setting-leaking-work", 1, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, jobID, "the action to fail", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+	if job.State != jobs.StateFailed || job.Failure == nil || !strings.Contains(job.Failure.Message, "the upstream refused key [redacted]") {
+		t.Fatalf("the failure is %s (%+v), want failed naming the refusal with the key redacted", job.State, job.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, secret)
+	if strings.Contains(job.Failure.Message, secret) {
+		t.Fatalf("the failure carries the secret: %q", job.Failure.Message)
+	}
+
+	if entry := pm.GetActionJob(handle); entry != nil && (strings.Contains(entry.Message, secret) || strings.Contains(fmt.Sprint(entry.Result), secret)) {
+		t.Fatalf("the in-memory entry carries the secret: %q %v", entry.Message, entry.Result)
+	}
+	for drained := false; !drained; {
+		select {
+		case event := <-events:
+			if strings.Contains(event.Job.Message, secret) || strings.Contains(fmt.Sprint(event.Job.Result), secret) {
+				t.Fatalf("a %s event carries the secret: %q", event.Type, event.Job.Message)
+			}
+		default:
+			drained = true
+		}
+	}
+	waitFor(t, "the end to be announced", func() bool { return len(observer.snapshot()) > 0 })
+	for _, record := range observer.snapshot() {
+		if strings.Contains(record.Error, secret) || strings.Contains(record.Name, secret) {
+			t.Fatalf("the job-event payload carries the secret: %+v", record)
+		}
+	}
+	var entries []models.LogEntry
+	if err := ctx.db.Find(&entries).Error; err == nil {
+		for _, entry := range entries {
+			if strings.Contains(entry.Message, secret) || strings.Contains(string(entry.Details), secret) {
+				t.Fatalf("a log entry carries the secret: %q %s", entry.Message, entry.Details)
+			}
+		}
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatal("the server log carries the secret")
 	}
 }

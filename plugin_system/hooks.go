@@ -464,9 +464,9 @@ func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation,
 		if err != nil {
 			mu.Unlock()
 			if isAbort, reason := parseAbortError(err); isAbort {
-				return nil, &PluginAbortError{Reason: reason}
+				return nil, &PluginAbortError{Reason: pm.RedactPluginSecrets(hook.pluginName, reason)}
 			}
-			log.Printf("[plugin] warning: hook for %q returned error: %v", event, err)
+			log.Printf("[plugin] warning: hook for %q returned error: %s", event, pm.RedactPluginSecrets(hook.pluginName, err.Error()))
 			continue
 		}
 
@@ -556,7 +556,7 @@ func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[s
 		mu.Unlock()
 
 		if err != nil {
-			log.Printf("[plugin] warning: after-hook for %q returned error: %v", event, err)
+			log.Printf("[plugin] warning: after-hook for %q returned error: %s", event, pm.RedactPluginSecrets(hook.pluginName, err.Error()))
 		}
 	}
 }

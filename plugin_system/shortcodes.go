@@ -288,8 +288,9 @@ func (pm *PluginManager) RenderShortcodeContext(reqCtx context.Context, pluginNa
 	cancel()
 
 	if err != nil {
+		err = pm.pluginCallError(pluginName, "shortcode render error", err)
 		log.Printf("[plugin] warning: shortcode render %q/%q returned error: %v", pluginName, fullTypeName, err)
-		return "", fmt.Errorf("shortcode render error: %w", err)
+		return "", err
 	}
 
 	ret := L.Get(-1)

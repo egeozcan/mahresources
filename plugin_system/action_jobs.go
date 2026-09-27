@@ -901,7 +901,7 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 
 	pm.notifyActionJobSubscribers("updated", job)
 	if workErr != nil {
-		log.Printf("[plugin] %s ended: %v", logLabel, workErr)
+		log.Printf("[plugin] %s ended: %s", logLabel, pm.RedactPluginSecrets(job.PluginName, workErr.Error()))
 	}
 	if !speaks {
 		// The host was told at shutdown that this callback would never finish,
@@ -1062,6 +1062,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 				parsed = luaTableToGoMap(retTbl)
 			}
 			release()
+			parsed = redactResult(parsed, pm.pluginSecrets(job.PluginName))
 
 			// If the handler returned a table, treat it as the result and mark completed.
 			if isTable {

@@ -148,7 +148,8 @@ func (pm *PluginManager) HandleAPI(reqCtx context.Context, pluginName, method, p
 			return APIResponse{StatusCode: 504, Error: fmt.Sprintf("handler timed out after %v", endpoint.timeout)}
 		}
 
-		log.Printf("[plugin] warning: api handler %q %s:%s returned error: %v", pluginName, method, path, err)
+		log.Printf("[plugin] warning: api handler %q %s:%s returned error: %s", pluginName, method, path,
+			pm.RedactPluginSecrets(pluginName, err.Error()))
 		return APIResponse{StatusCode: 500, Error: "internal plugin error"}
 	}
 

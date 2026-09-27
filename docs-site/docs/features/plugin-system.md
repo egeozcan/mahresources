@@ -199,6 +199,11 @@ plugin = {
 
 Required settings must be configured before the plugin can be enabled.
 
+A `password` setting is a secret the plugin's code receives. Wherever the server
+shows or stores text the plugin produced (a job's failure reason, progress and
+result, an action's or a page's error, a hook's refusal, `mah.log` entries and
+the server log), every occurrence of its value is replaced with `[redacted]`.
+
 ### Reading Settings at Runtime
 
 ```lua

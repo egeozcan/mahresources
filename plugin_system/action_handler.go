@@ -333,7 +333,7 @@ func (pm *PluginManager) handlerFailure(pluginName string, workErr error, timedO
 			Message: fmt.Sprintf("the handler ran for longer than %s and was stopped", readableDuration(asyncHandlerTimeout))}
 	}
 	if isAbort, reason := parseAbortError(workErr); isAbort {
-		return HostFailure{Cause: FailureDeclared, Message: reason}
+		return HostFailure{Cause: FailureDeclared, Message: pm.RedactPluginSecrets(pluginName, reason)}
 	}
 	return HostFailure{Cause: FailureError, Message: pm.handlerErrorText(pluginName, workErr)}
 }
@@ -358,7 +358,7 @@ func (pm *PluginManager) handlerErrorText(pluginName string, err error) string {
 	if plugin := pm.GetDiscoveredPlugin(pluginName); plugin != nil && plugin.Dir != "" {
 		text = strings.ReplaceAll(text, plugin.Dir+string(os.PathSeparator), "")
 	}
-	return text
+	return pm.RedactPluginSecrets(pluginName, text)
 }
 
 // readableDuration writes a whole number of minutes as minutes, and anything

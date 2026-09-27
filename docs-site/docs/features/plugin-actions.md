@@ -477,8 +477,9 @@ job's page:
 | The handler ran for longer than 5 minutes | `plugin-handler-timeout` | `timeout` | `the handler ran for longer than 5 minutes and was stopped` |
 
 Every value of the job's own parameters in the reason is replaced with
-`[redacted]` before it is stored, as in progress and completion messages, and the
-reason is cut at 1000 bytes. A Lua error names the plugin's file relative to the
+`[redacted]` before it is stored, as in progress and completion messages, and so
+is the value of every `password` setting of the plugin; the reason is cut at 1000
+bytes. A Lua error names the plugin's file relative to the
 plugin's directory, and its stack traceback goes to the server log only. An empty
 message reads "the plugin's handler failed".
 
