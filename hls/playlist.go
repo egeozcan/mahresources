@@ -138,12 +138,27 @@ func SniffLen() int { return sniffLen }
 // opposed to one it failed to handle. Callers surface the message as-is: each
 // one says what would have to change, and a user who is told "unsupported" with
 // no reason will retry the same URL.
-type ErrNotSupported struct{ Reason string }
+//
+// Limit is true when what refused the stream is a limit the deployment
+// configures (-hls-max-segments, -hls-max-bytes) rather than the stream itself:
+// raising the limit makes the same download possible, so it is worth retrying,
+// where a live stream or DRM is not.
+type ErrNotSupported struct {
+	Reason string
+	Limit  bool
+	cause  error
+}
 
 func (e *ErrNotSupported) Error() string { return e.Reason }
+func (e *ErrNotSupported) Unwrap() error { return e.cause }
 
 func unsupported(format string, args ...any) error {
 	return &ErrNotSupported{Reason: fmt.Sprintf(format, args...)}
+}
+
+// overLimit is unsupported for a stream over a configured limit (see Limit).
+func overLimit(format string, args ...any) error {
+	return &ErrNotSupported{Reason: fmt.Sprintf(format, args...), Limit: true}
 }
 
 // media is a parsed, validated media playlist: the segments to fetch, in order,
@@ -248,7 +263,7 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 	// readMedia still enforces the same limit on what it accepts.
 	segments, variants, alternatives, tags := countTags(text)
 	if segments > opt.MaxSegments {
-		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", segments, opt.MaxSegments)
+		return nil, "", overLimit("this HLS playlist lists %d segments, which is over this server's limit of %d", segments, opt.MaxSegments)
 	}
 	// Renditions are capped far below the segment limit, and separately from
 	// it, because the two numbers describe different things: a stream is
@@ -498,7 +513,7 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 			continue
 		}
 		if len(out.segments) >= opt.MaxSegments {
-			return nil, unsupported("this HLS stream has more than %d segments, which is over this server's limit", opt.MaxSegments)
+			return nil, overLimit("this HLS stream has more than %d segments, which is over this server's limit", opt.MaxSegments)
 		}
 		// A per-segment EXT-X-MAP after the first is a format change mid-stream
 		// that a single -c copy mux cannot represent.

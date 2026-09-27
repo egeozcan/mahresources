@@ -686,7 +686,9 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 
 // activeEntryForURLLocked answers the id of another entry fetching url, or "". An
 // entry publishing into the same durable Job the submission names is not
-// another one: it is this Job's own earlier attempt. Must be called with dm.mu
+// another one: it is this Job's own earlier attempt. A held (paused) entry is not
+// fetching anything and may wait for a person indefinitely, so it holds no URL;
+// resuming it is what is arbitrated (ResumeExclusive). Must be called with dm.mu
 // held.
 func (dm *DownloadManager) activeEntryForURLLocked(url string, opts SubmissionOptions) string {
 	for _, id := range dm.jobOrder {
@@ -698,7 +700,7 @@ func (dm *DownloadManager) activeEntryForURLLocked(url string, opts SubmissionOp
 			continue
 		}
 		switch job.GetStatus() {
-		case JobStatusPending, JobStatusDownloading, JobStatusProcessing, JobStatusPaused:
+		case JobStatusPending, JobStatusDownloading, JobStatusProcessing:
 			return id
 		}
 	}
@@ -1548,13 +1550,37 @@ func (dm *DownloadManager) Resume(jobID string) error {
 	// — unlistable, uncancellable and never retired.
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
+	return dm.resumeLocked(jobID, false)
+}
 
+// ResumeExclusive resumes a paused download unless another entry is fetching its
+// URL, which it answers with a *URLActiveError. The check and the start are one
+// step under the registry's write lock, the lock an exclusive submission takes, so
+// neither can start a second transfer of the URL between the other's check and
+// its start.
+func (dm *DownloadManager) ResumeExclusive(jobID string) error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	return dm.resumeLocked(jobID, true)
+}
+
+// resumeLocked is Resume's body, with dm.mu held (read or write).
+func (dm *DownloadManager) resumeLocked(jobID string, exclusiveURL bool) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		return &NotFoundError{JobID: jobID}
 	}
 	if job.isManaged() {
 		return &StateConflictError{JobID: jobID, Action: "resumed", Status: job.GetStatus()}
+	}
+	if exclusiveURL {
+		opts := SubmissionOptions{}
+		if job.CanonicalJobID != "" {
+			opts.Canonical = &CanonicalRef{JobID: job.CanonicalJobID}
+		}
+		if live := dm.activeEntryForURLLocked(job.GetURL(), opts); live != "" && live != job.ID {
+			return &URLActiveError{JobID: live}
+		}
 	}
 
 	// The context is built before the claim and discarded if the claim loses, so the

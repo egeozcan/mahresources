@@ -1365,9 +1365,6 @@ const (
 	// MaxCapacityGroupBytes bounds a concurrency budget's name, which is stored
 	// on every capacity row that occupies it and on nothing else.
 	MaxCapacityGroupBytes = 120
-	// MaxClaimExclusions bounds ClaimRequest.ExcludeJobIDs, which is bound into
-	// the claim's query as one parameter per id.
-	MaxClaimExclusions = 500
 	// MaxReleaseReasonBytes bounds the bounded reason a release records.
 	MaxReleaseReasonBytes = 40
 )

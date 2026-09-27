@@ -253,9 +253,6 @@ func validateClaimRequest(request *ClaimRequest, definition Definition) error {
 	if request.Lease < 0 {
 		return invalid("lease is negative")
 	}
-	if len(request.ExcludeJobIDs) > MaxClaimExclusions {
-		return invalid("a claim may pass over at most %d Jobs, not %d", MaxClaimExclusions, len(request.ExcludeJobIDs))
-	}
 
 	kindBudget := CapacityRef{Group: definition.capacityGroup(), Limit: definition.MaxConcurrent}
 	budgets := []CapacityRef{kindBudget}
@@ -309,7 +306,7 @@ func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, exclude
 		// shape, and the caller here is the one place a job id arrives untyped.
 		query = query.Where("jobs.id = ?", jobID)
 	} else if len(exclude) > 0 {
-		query = query.Where("jobs.id NOT IN ?", exclude)
+		return firstNotPassedOver(query, exclude)
 	}
 	var job models.Job
 	err := query.Order("accepted_at, jobs.id").First(&job).Error
@@ -320,6 +317,42 @@ func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, exclude
 		return models.Job{}, false, fmt.Errorf("jobs: select claimable job: %w", err)
 	}
 	return job, true, nil
+}
+
+// claimScanPage is how many waiting Jobs one read of firstNotPassedOver takes.
+const claimScanPage = 200
+
+// firstNotPassedOver walks the waiting Jobs oldest first, a page at a time, and
+// answers the first one the claim is not asked to pass over. The ids are skipped
+// here rather than bound into the query, so there is no limit on how many a Kind
+// may name: a list capped to fit a query would leave the Jobs past the cap to be
+// claimed and handed back on every pass, ahead of the work behind them.
+func firstNotPassedOver(query *gorm.DB, exclude []string) (models.Job, bool, error) {
+	skip := make(map[string]struct{}, len(exclude))
+	for _, id := range exclude {
+		skip[id] = struct{}{}
+	}
+	var after Cursor
+	for {
+		page := query.Session(&gorm.Session{})
+		if after.ID != "" {
+			page = continueBefore(page, after)
+		}
+		var rows []models.Job
+		if err := page.Order("accepted_at, jobs.id").Limit(claimScanPage).Find(&rows).Error; err != nil {
+			return models.Job{}, false, fmt.Errorf("jobs: select claimable job: %w", err)
+		}
+		for _, row := range rows {
+			if _, passed := skip[row.ID]; !passed {
+				return row, true, nil
+			}
+		}
+		if len(rows) < claimScanPage {
+			return models.Job{}, false, nil
+		}
+		last := rows[len(rows)-1]
+		after = Cursor{AcceptedAt: last.AcceptedAt, ID: last.ID}
+	}
 }
 
 // waitingJobs narrows a query to the Jobs of one Kind that are waiting to run:

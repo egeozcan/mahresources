@@ -65,6 +65,7 @@ func TestAFailureIsCodedByWhatWentWrong(t *testing.T) {
 		{"a refusal inside a playlist", fmt.Errorf("could not download this stream's audio: %w", &policyRefusalError{err: errors.New("not in the allowlist")}), FailureAddressRefused},
 		{"plugin policy gone", &pluginPolicyUnavailableError{msg: "refusing to fetch: plugin \"fetcher\"'s network policy is not available"}, FailurePluginUnavailable},
 		{"a live stream", &hls.ErrNotSupported{Reason: "this is a live stream"}, FailureUnsupportedStream},
+		{"a stream over the configured limits", &hls.ErrNotSupported{Reason: "over the segment limit", Limit: true}, FailureStreamOverLimit},
 		{"no ffmpeg", hls.ErrFfmpegUnavailable, FailureFfmpegUnavailable},
 		{"duplicate", existingFixture{}, FailureResourceExists},
 		{"a code the writer named", fmt.Errorf("add resource: %w", codedFixture{}), FailureSubmitterRefused},

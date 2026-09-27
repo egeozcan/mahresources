@@ -240,7 +240,7 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	// the caller asked for, so counting it separately would let a playlist
 	// spend twice the configured cap by splitting its streams.
 	if m.audio != nil && len(m.segments)+len(m.audio.segments) > opt.MaxSegments {
-		return nil, unsupported("this HLS stream has more than %d segments across its video and audio, which is over this server's limit", opt.MaxSegments)
+		return nil, overLimit("this HLS stream has more than %d segments across its video and audio, which is over this server's limit", opt.MaxSegments)
 	}
 
 	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, p, &spent)
@@ -747,7 +747,11 @@ type budgetReader struct {
 func (b *budgetReader) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
 	if n > 0 && b.total.Add(int64(n)) > b.limit {
-		return n, fmt.Errorf("%w: this stream is larger than the %d byte limit this server allows for one download", errBudgetExceeded, b.limit)
+		return n, &ErrNotSupported{
+			Reason: fmt.Sprintf("this stream is larger than the %d byte limit this server allows for one download", b.limit),
+			Limit:  true,
+			cause:  errBudgetExceeded,
+		}
 	}
 	return n, err
 }

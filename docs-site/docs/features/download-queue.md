@@ -214,12 +214,13 @@ when opened, like every entity output.
 ### Failure reasons and Retry
 
 Every failed download records a code and a class, which the Job Center's
-failure breakdown and the summary export group on. Retry is offered only where
-asking again could answer differently. The failures a Retry would repeat exactly
-offer none: a duplicate, an address the deployment refuses, a stream this server
-does not assemble, and a remote 4xx other than 403, 408, 423, 425 and 429. That
-is the rule the bulk upload widget applies to its own failures. A 403 keeps
-Retry because the User-Agent the deployment sends can be changed.
+failure breakdown and the summary export group on. Retry is offered unless the
+same input can never succeed: a duplicate of content the library holds, a stream
+this server does not assemble at all, and a remote 4xx other than 403, 408, 423,
+425 and 429 offer none. That is the rule the bulk upload widget applies to its
+own failures. A refusal by this deployment's own policy or limits keeps Retry,
+because an operator can allow the address or raise the limit, and a 403 keeps
+it because the User-Agent the deployment sends can be changed.
 
 | Code | Class | Retry | Cause |
 |------|-------|-------|-------|
@@ -231,10 +232,11 @@ Retry because the User-Agent the deployment sends can be changed.
 | `remote-timeout` | `timeout` | yes | Connecting or waiting for the response headers timed out, or the remote answered 408 |
 | `idle-timeout` | `timeout` | yes | The remote stopped sending for longer than `-remote-idle-timeout` |
 | `overall-timeout` | `timeout` | yes | The transfer ran past `-remote-overall-timeout` |
-| `address-refused` | `policy` | no | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
+| `address-refused` | `policy` | yes | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
 | `plugin-unavailable` | `policy` | yes | A plugin's download whose plugin, and so its network policy, is no longer enabled |
 | `submitter-refused` | `policy` | yes | The submitter may no longer create content |
-| `unsupported-stream` | `validation` | no | An HLS stream this server refuses (live, DRM, a non-HTTP URL, over the configured limits) |
+| `unsupported-stream` | `validation` | no | An HLS stream this server refuses (live, DRM, a non-HTTP URL, a kind it does not handle) |
+| `stream-over-limit` | `policy` | yes | An HLS stream over `-hls-max-segments` or `-hls-max-bytes` |
 | `ffmpeg-unavailable` | `dependency` | yes | An HLS stream and no ffmpeg to assemble it |
 | `resource-exists` | `conflict` | no | The library already holds the bytes |
 | `download-failed` | `internal` | yes | Anything else |
@@ -255,9 +257,11 @@ Retry because the User-Agent the deployment sends can be changed.
   with the phase `waiting` and the message "Waiting for another download of this
   URL to finish" on its row. It holds no slot of the concurrency budget while it
   waits, the dispatch loop passes over it, and it starts on the first pass after
-  the other transfer ends. That covers a Retry, a deferred download coming due
-  and queued work. A cancel ends the waiting Job like any queued Job and leaves
-  the other transfer alone. `POST /v1/download/retry` and `POST /v1/jobs/retry`
+  the other transfer ends. That covers a Retry, a deferred download coming due,
+  queued work, and a paused download being resumed. A paused download does not
+  hold its URL, since it fetches nothing and may wait for a person indefinitely.
+  A cancel ends the waiting Job like any queued Job and leaves the other
+  transfer alone. `POST /v1/download/retry` and `POST /v1/jobs/retry`
   refuse such a retry with 409 instead, while the queue still holds the failed
   attempt.
 

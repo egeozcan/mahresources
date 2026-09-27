@@ -289,10 +289,11 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		if !a.queuedForDispatch(execution) {
 			return a.block(execution, "paused")
 		}
-		if a.ctx.downloadManager.OtherActiveTransfer(entry.GetURL(), execution.JobID) != "" {
-			return a.waitForTheURL(execution, entry.GetURL())
-		}
-		if err := a.ctx.downloadManager.Resume(entry.ID); err != nil {
+		if err := a.ctx.downloadManager.ResumeExclusive(entry.ID); err != nil {
+			var busy *download_queue.URLActiveError
+			if errors.As(err, &busy) {
+				return a.waitForTheURL(execution, entry.GetURL())
+			}
 			var conflict *download_queue.StateConflictError
 			if errors.As(err, &conflict) {
 				// The entry moved while this dispatch held its claim: whatever it moved
@@ -341,8 +342,7 @@ func (w *downloadURLWaits) add(jobID, url string) {
 	w.byJob[jobID] = url
 }
 
-// stillWaiting forgets every Job whose URL is free and lists the rest, at most
-// jobs.MaxClaimExclusions of them, oldest id first.
+// stillWaiting forgets every Job whose URL is free and lists the rest.
 func (w *downloadURLWaits) stillWaiting(busy func(jobID, url string) bool) []string {
 	if w == nil {
 		return nil
@@ -358,9 +358,6 @@ func (w *downloadURLWaits) stillWaiting(busy func(jobID, url string) bool) []str
 		delete(w.byJob, jobID)
 	}
 	sort.Strings(waiting)
-	if len(waiting) > jobs.MaxClaimExclusions {
-		waiting = waiting[:jobs.MaxClaimExclusions]
-	}
 	return waiting
 }
 
@@ -775,13 +772,14 @@ func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason
 // same input could answer differently.
 type downloadFailureKind struct {
 	class string
-	// alike is true when a Retry replays a request that is refused the same way
-	// every time. A remote's answer mostly describes the remote at that moment and
-	// keeps Retry; these do not change until somebody changes what the library
-	// holds or what this deployment allows, which a Retry does not do. It is the
-	// rule the bulk upload widget applies to its own failures: a duplicate, a 4xx
-	// other than the ones that mean "ask later", and input the server refuses on
-	// its merits are left out of "Retry failed".
+	// alike is true when the same input can never succeed, so a Retry, which
+	// replays it, would be refused the same way: a duplicate of what the library
+	// holds, a remote 4xx other than the ones that mean "ask later", and a stream
+	// this server does not assemble at all. It is the rule the bulk upload widget
+	// applies to its own failures. A refusal by this deployment's own policy or
+	// limits is not one of them: an operator can allow the address or raise the
+	// limit, and the Retry that follows is how the same download is asked for
+	// again.
 	alike bool
 }
 
@@ -797,10 +795,11 @@ var downloadFailureKinds = map[string]downloadFailureKind{
 	download_queue.FailureRemoteTimeout:     {class: jobs.FailureClassTimeout},
 	download_queue.FailureIdleTimeout:       {class: jobs.FailureClassTimeout},
 	download_queue.FailureOverallTimeout:    {class: jobs.FailureClassTimeout},
-	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy, alike: true},
+	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy},
 	download_queue.FailurePluginUnavailable: {class: jobs.FailureClassPolicy},
 	download_queue.FailureSubmitterRefused:  {class: jobs.FailureClassPolicy},
 	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation, alike: true},
+	download_queue.FailureStreamOverLimit:   {class: jobs.FailureClassPolicy},
 	download_queue.FailureFfmpegUnavailable: {class: jobs.FailureClassDependency},
 	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict, alike: true},
 	download_queue.FailureDownloadFailed:    {class: jobs.FailureClassInternal},

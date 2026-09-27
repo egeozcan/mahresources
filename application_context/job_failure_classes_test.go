@@ -53,6 +53,9 @@ func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 		{server.URL + "/busy", download_queue.FailureRemoteServerError, jobs.FailureClassDependency, true},
 		{server.URL + "/forbidden", download_queue.FailureRemoteForbidden, jobs.FailureClassDependency, true},
 		{closed, download_queue.FailureRemoteConnection, jobs.FailureClassDependency, true},
+		// Refused by this deployment's fetch policy, which an operator can change:
+		// the same download may succeed once the address is allowed.
+		{"http://10.255.255.1:9/private.bin", download_queue.FailureAddressRefused, jobs.FailureClassPolicy, true},
 		{server.URL + "/first.bin", "", "", false},
 		{server.URL + "/second.bin", download_queue.FailureResourceExists, jobs.FailureClassConflict, false},
 	}
@@ -93,6 +96,7 @@ func TestTheRetrySelectorAgreesWithDeterministicFailures(t *testing.T) {
 		{download_queue.FailureRemoteClientError, jobs.FailureClassDependency},
 		{download_queue.FailureAddressRefused, jobs.FailureClassPolicy},
 		{download_queue.FailureUnsupportedStream, jobs.FailureClassValidation},
+		{download_queue.FailureStreamOverLimit, jobs.FailureClassPolicy},
 		{download_queue.FailureResourceExists, jobs.FailureClassConflict},
 		{download_queue.FailureRemoteServerError, jobs.FailureClassDependency},
 		{download_queue.FailureOverallTimeout, jobs.FailureClassTimeout},

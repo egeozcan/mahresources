@@ -38,14 +38,19 @@ const (
 	// FailureOverallTimeout is a transfer that ran past the overall time limit.
 	FailureOverallTimeout = "overall-timeout"
 	// FailureAddressRefused is the deployment's fetch policy refusing an address
-	// or a host: a private address, or a host outside a plugin's network list.
+	// or a host: a private address, or a host outside a plugin's network list. An
+	// operator can change either, so it describes the deployment, not the URL.
 	FailureAddressRefused = "address-refused"
 	// FailurePluginUnavailable is a plugin download whose plugin, and so whose
 	// network policy, cannot be resolved: it was disabled or removed.
 	FailurePluginUnavailable = "plugin-unavailable"
 	// FailureUnsupportedStream is an HLS stream this server refuses to assemble:
-	// live, DRM-protected, naming a non-HTTP URL, or over the configured limits.
+	// live, DRM-protected, naming a non-HTTP URL, or otherwise of a kind it does
+	// not handle.
 	FailureUnsupportedStream = "unsupported-stream"
+	// FailureStreamOverLimit is an HLS stream over a limit the deployment
+	// configures (-hls-max-segments, -hls-max-bytes).
+	FailureStreamOverLimit = "stream-over-limit"
 	// FailureFfmpegUnavailable is an HLS stream with no ffmpeg to assemble it.
 	FailureFfmpegUnavailable = "ffmpeg-unavailable"
 	// FailureSubmitterRefused is a download whose submitter may no longer add
@@ -121,6 +126,9 @@ func failureCode(err error) string {
 	}
 	var unsupported *hls.ErrNotSupported
 	if errors.As(err, &unsupported) {
+		if unsupported.Limit {
+			return FailureStreamOverLimit
+		}
 		return FailureUnsupportedStream
 	}
 	if errors.Is(err, hls.ErrFfmpegUnavailable) {
