@@ -2,7 +2,9 @@ package application_context
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -144,23 +146,33 @@ func (ctx *MahresourcesContext) GetServerStats() (*ServerStats, error) {
 
 	// SQLite file size
 	if ctx.Config.DbType == constants.DbTypeSqlite && ctx.Config.DbDsn != "" {
-		// Extract the file path from the DSN (strip query params and "file:" prefix)
-		dsn := ctx.Config.DbDsn
-		// Handle "file:path?..." format
-		if len(dsn) > 5 && dsn[:5] == "file:" {
-			dsn = dsn[5:]
-		}
-		// Strip query string
-		if i := strings.IndexByte(dsn, '?'); i >= 0 {
-			dsn = dsn[:i]
-		}
-		if info, err := os.Stat(dsn); err == nil {
+		if info, err := os.Stat(sqliteDSNFilePath(ctx.Config.DbDsn)); err == nil {
 			stats.DBFileSizeBytes = info.Size()
 			stats.DBFileSizeFmt = formatBytes(info.Size())
 		}
 	}
 
 	return stats, nil
+}
+
+// sqliteDSNFilePath extracts the database file's path from a SQLite DSN: a plain
+// path or "file:path", either with a query string, or a file URL whose path is
+// escaped (see ephemeralDatabaseDSN).
+func sqliteDSNFilePath(dsn string) string {
+	if strings.HasPrefix(dsn, "file://") {
+		if parsed, err := url.Parse(dsn); err == nil {
+			path := parsed.Path
+			if runtime.GOOS == "windows" {
+				path = strings.TrimPrefix(path, "/")
+			}
+			return filepath.FromSlash(path)
+		}
+	}
+	dsn = strings.TrimPrefix(dsn, "file:")
+	if i := strings.IndexByte(dsn, '?'); i >= 0 {
+		dsn = dsn[:i]
+	}
+	return dsn
 }
 
 // ---- Task 3: GetDataStats ----

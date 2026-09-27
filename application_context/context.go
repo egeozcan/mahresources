@@ -432,7 +432,10 @@ type MahresourcesContext struct {
 	db *gorm.DB
 	// the db readonly connection to the main db
 	readOnlyDB *sqlx.DB
-	Config     *MahresourcesConfig
+	// ephemeralDB is the scratch file behind -memory-db, released at shutdown by
+	// ReleaseEphemeralDatabase; nil for every other database.
+	ephemeralDB *ephemeralDatabase
+	Config      *MahresourcesConfig
 	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
 	// groupio owns group import/export. Safe as a field because it holds only
@@ -1666,22 +1669,30 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		}
 	}
 
+	// ephemeral is the scratch file behind -memory-db. Until the context that owns
+	// it is returned, a failed start deletes it here.
+	var ephemeral *ephemeralDatabase
+	opened := false
+	defer func() {
+		if ephemeral != nil && !opened {
+			_ = ephemeral.remove()
+		}
+	}()
+
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
-		// Use a per-process temp file with WAL mode for better concurrent write handling.
-		// Including the PID ensures multiple ephemeral instances don't share the same file.
-		ephemeralPath := fmt.Sprintf("/tmp/mahresources_ephemeral_%d.db", os.Getpid())
-		dbDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", ephemeralPath)
-		readOnlyDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&mode=ro", ephemeralPath)
-
-		// Remove any existing temp database files for this PID
-		os.Remove(ephemeralPath)
-		os.Remove(ephemeralPath + "-wal")
-		os.Remove(ephemeralPath + "-shm")
+		// A temp file in WAL mode rather than :memory:, for concurrent writers.
+		created, err := createEphemeralDatabase()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ephemeral = created
+		dbDsn = ephemeralDatabaseDSN(ephemeral.path, "_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL")
+		readOnlyDsn = ephemeralDatabaseDSN(ephemeral.path, "_journal_mode=WAL&_busy_timeout=10000&mode=ro")
 
 		if cfg.SeedDB != "" {
 			// Copy seed database to temp location
-			if err := copySeedDatabase(cfg.SeedDB, ephemeralPath); err != nil {
+			if err := copySeedDatabase(cfg.SeedDB, ephemeral.path); err != nil {
 				return nil, nil, nil, fmt.Errorf("copy seed database: %w", err)
 			}
 			log.Printf("Using ephemeral SQLite database seeded from %s", cfg.SeedDB)
@@ -1889,6 +1900,8 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 	resolvedConfig.PluginCommandOutputRetention = cfg.PluginCommandOutputRetention
 	resolvedConfig.PluginCommandStagingTemporary = cfg.PluginCommandStagingTemporary
 	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, resolvedConfig)
+	mahContext.ephemeralDB = ephemeral
+	opened = true
 
 	// The slow-query logger exists before the context does, so its
 	// application-log sink can only be attached now.

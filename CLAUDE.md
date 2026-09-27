@@ -108,6 +108,13 @@ Mahresources is a CRUD application for personal information management written i
 
 **Extracted services take the db handle per call, never at construction.** Scope, actor identity, and transaction membership all ride inside the `*gorm.DB` handle: `WithPrincipal` swaps in a handle whose context carries the subtree allow-list and acting user, `WithTransaction` swaps in the transaction's handle, and the GORM callbacks read both off `db.Statement.Context`. A service that captured `db` when it was built would run outside the caller's transaction and outside their subtree — silently, and with no test failing. `groupio` and `search` therefore hold only process-lifetime state (filesystems, the search cache, the FTS provider) and receive `Deps{DB, Scope}` on every entry point; the facades rebuild `Deps` per call. Follow this for any further extraction. See `docs/plans/2026-07-28-application-context-decomposition.md` §2.
 
+**SQLite transactions take the writer lock at BEGIN.** Every production SQLite handle opens with `models.SQLiteDriverName`, which wraps go-sqlite3 so that a transaction begins `BEGIN IMMEDIATE` unless it is declared read-only. Under go-sqlite3's own deferred `BEGIN`, a transaction that reads and then writes fails at once with "database is locked" whenever another connection commits between its first read and its first write: the snapshot the read took cannot be promoted (`SQLITE_BUSY_SNAPSHOT`), and SQLite never puts that code through the busy handler, so `busy_timeout` does nothing. Taking the lock at BEGIN goes through the busy handler, so writers queue instead, and the order of reads and writes inside a transaction no longer matters on SQLite. Measured over HTTP at concurrency 8, a read-first create went from 57–59% refused to none. Three consequences:
+
+- **A transaction that only reads must pass `models.ReadOnlyTxOptions(db)...` to `Transaction`.** One that is not marked holds the writer lock for its whole length, and every writer in the process waits on it. Marked, it begins deferred on SQLite, keeps its snapshot without blocking writers, and runs under `PRAGMA query_only`, so a write inside it fails loudly instead of reintroducing the promotion. On Postgres the helper returns nothing and changes nothing. The driver logs a warning naming the caller when a write transaction held the lock for a second or more without writing.
+- Nothing inside a transaction may write through a second connection (`ctx.db` instead of the transaction's handle, a logger built from the outer context): it waits `busy_timeout` for the lock its own transaction holds, then fails.
+- A test cannot make a commit land inside a write transaction on this driver; `commitAfterEveryFirstRead` and `commitBeforeEveryWriteTo` attempt one on a connection that does not wait, which is refused. `internal/arch/sqlite_driver_chokepoint_test.go` keeps SQLite from being opened anywhere but `models`.
+- Transactions written before the driver put a write first on purpose (a no-op `UPDATE`, or the insert before its checks): upload phase 3, relations, Resource Reduction, job migration, the user-management lock, the jobs event store and transitions. On the server's driver that order is redundant but harmless; their comments describe go-sqlite3's deferred `BEGIN`, which a handle opened with the plain `sqlite3` driver (most Go unit-test fixtures) still has.
+
 ### Entity Relationships
 
 - **Resource**: Files with metadata, thumbnails, perceptual hashes. Many-to-many with Tags, Notes, Groups.
@@ -312,24 +319,22 @@ syntax, which also means **SQLite cannot exhibit this bug and cannot test it**:
 `TestDeleteRacingAValidatedGroupIsRefusedPG` is a Postgres test, and it
 resurrects a blank group the moment the lock clause is removed.
 
-**INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
-there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`
-(and its constrained-pool twin, which mirrors the e2e harness's
-`-max-db-connections=2`) is the only thing that would catch it. Reads *after* the
-first write are fine — the writer lock is already held, which covers the
-association validations and the series lookup. Measured: 6–7 of 8 concurrent
-distinct-file uploads failed before, none after. A residue survives that fix at roughly one
-request in a hundred at concurrency 4 over HTTP, so phase 3 is retried a bounded
-number of times on `isLockContentionError`. Be precise about that residue: those
-failures return in well under a millisecond, so the busy handler demonstrably
-never engages and the 10s `busy_timeout` is not what is being exhausted — but
-which lock they lose is **not** root-caused (disabling the hash and thumbnail
-workers does not change the rate, and the transaction's first statement really is
-the INSERT). Retrying is right regardless of the variant, because the condition
-is transient contention rather than a failure on the statement's own merits;
-it is safe because a failed attempt rolled back and the file is already on disk,
-and `res.ID` is reset each attempt or a re-run `Save` would be an UPDATE of a row
-the rollback removed. Measured 0 failures in 220 uploads after.
+**Phase 3 holds the writer lock from its `Begin()`** (see "SQLite transactions
+take the writer lock at BEGIN" above), so a read inside it can no longer be
+refused by a commit landing first; what keeps phases 1 and 2 outside it now is
+that the lock is not held across the file copy.
+`TestAddResource_ConcurrentDistinctHashes` (and its constrained-pool twin, which
+mirrors the e2e harness's `-max-db-connections=2`) covers the concurrent shape.
+Under the old deferred `BEGIN`, 6–7 of 8 concurrent distinct-file uploads failed
+with a read first, and a residue survived even with the INSERT first: 31 failed
+attempts in 400 uploads at concurrency 4 over HTTP, 166–178 in 1,000 at
+concurrency 8. With the lock taken at BEGIN, before any statement is prepared,
+that measured 0 in 4,400 uploads.
+Phase 3 is still retried a bounded number of times on `isLockContentionError`,
+for a `busy_timeout` that expires under a long write elsewhere; that is safe
+because a failed attempt rolled back and the file is already on disk, and
+`res.ID` is reset each attempt or a re-run `Save` would be an UPDATE of a row the
+rollback removed.
 
 ### Mass Edit
 

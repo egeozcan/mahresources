@@ -15,9 +15,9 @@ import (
 // lock makes the walk-then-write sequence unambiguous: it is always acquired
 // before any group row involved in a re-parent is inspected or changed.
 //
-// SQLite needs nothing here: its single-writer discipline plus WAL snapshot
-// isolation turns a concurrent re-parent landing mid-transaction into a failed
-// write (SQLITE_BUSY_SNAPSHOT) instead of a silently stale check.
+// SQLite needs nothing here: a write transaction holds its single writer lock
+// from BEGIN (see models.SQLiteDriverName), so no re-parent can land while the
+// walk is reading.
 const groupTreeAdvisoryLockKey int64 = 0x6d61687267727473 // "mahrgrts"
 
 // lockGroupTreeMutation must run before any group row involved in a re-parent

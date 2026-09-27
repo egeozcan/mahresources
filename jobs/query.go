@@ -1355,7 +1355,7 @@ func (s *Service) summaryRange(deps Deps, access Access, filter Filter, window t
 			}
 			summary, err = summarizeQuery(base, window, from, to)
 			return err
-		})
+		}, models.ReadOnlyTxOptions(deps.DB)...)
 		if err != nil {
 			return Summary{}, err
 		}

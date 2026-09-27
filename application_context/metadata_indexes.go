@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"gorm.io/gorm"
 	"mahresources/contracts"
+	"mahresources/models"
 	"mahresources/mrql"
 )
 
@@ -94,7 +96,7 @@ func (m *MetadataIndexer) Reconcile(ctx context.Context) error {
 	var verified []mrql.MetadataIndex
 	reconcile := func(db *gorm.DB) error {
 		var err error
-		verified, err = m.reconcileOn(db)
+		verified, err = m.reconcileOn(db, true)
 		return err
 	}
 	err := m.db.WithContext(ctx).Connection(func(db *gorm.DB) error {
@@ -120,6 +122,17 @@ func (m *MetadataIndexer) Reconcile(ctx context.Context) error {
 			}()
 			return reconcile(db)
 		case "sqlite":
+			// Nearly every pass finds nothing to change. Establishing that in a
+			// read-only transaction keeps a pass from taking the writer lock every
+			// few seconds, and from failing while a long write elsewhere holds it.
+			err := db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				verified, err = m.reconcileOn(tx, false)
+				return err
+			}, models.ReadOnlyTxOptions(db)...)
+			if !errors.Is(err, errMetadataIndexWorkPending) {
+				return err
+			}
 			// SQLite has one writer. Atomic DDL also prevents a partial reconciliation
 			// if a later index fails (for example because stored JSON is malformed).
 			return db.Transaction(reconcile)
@@ -154,7 +167,14 @@ type managedMetadataIndex struct {
 // remain untouched. The version allows replacement if expressions change.
 var managedMetadataIndexName = regexp.MustCompile(`^mah_midx_v[0-9]+_[0-9a-f]{32}$`)
 
-func (m *MetadataIndexer) reconcileOn(db *gorm.DB) ([]mrql.MetadataIndex, error) {
+// errMetadataIndexWorkPending is how reconcileOn without apply reports that an
+// index has to be built or removed.
+var errMetadataIndexWorkPending = errors.New("metadata index changes pending")
+
+// reconcileOn brings the managed indexes in line with the declarations. Without
+// apply it changes nothing and returns errMetadataIndexWorkPending at the first
+// index it would build or remove.
+func (m *MetadataIndexer) reconcileOn(db *gorm.DB, apply bool) ([]mrql.MetadataIndex, error) {
 	desired, err := collectCategoryMetadataIndexes(db)
 	if err != nil {
 		return nil, err
@@ -187,6 +207,9 @@ func (m *MetadataIndexer) reconcileOn(db *gorm.DB) ([]mrql.MetadataIndex, error)
 			if ok && current.Valid {
 				continue
 			}
+			if !apply {
+				return nil, errMetadataIndexWorkPending
+			}
 			detail := fmt.Sprintf("%s.%s (%s)", index.Entity, index.Key, index.Kind)
 			m.report("building", detail, nil)
 			if ok {
@@ -210,6 +233,9 @@ func (m *MetadataIndexer) reconcileOn(db *gorm.DB) ([]mrql.MetadataIndex, error)
 	for name, index := range existing {
 		if wanted[name] {
 			continue
+		}
+		if !apply {
+			return nil, errMetadataIndexWorkPending
 		}
 		m.report("removing", "Removing an index no longer configured", nil)
 		if err := dropManagedMetadataIndex(db, index); err != nil {

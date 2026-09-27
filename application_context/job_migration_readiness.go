@@ -77,6 +77,7 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 		report.Blockers["source-write-barrier-missing"]++
 	}
 
+	// One read-only snapshot, so the counts below agree with one another.
 	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		var groups []struct {
 			SourceKind  string
@@ -199,7 +200,7 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 			cursor = canonicalOnly[len(canonicalOnly)-1].ID
 		}
 		return nil
-	}); err != nil {
+	}, models.ReadOnlyTxOptions(ctx.db)...); err != nil {
 		return report, err
 	}
 	report.Ready = len(report.Blockers) == 0

@@ -13,7 +13,9 @@ import (
 	"mahresources/models"
 	"mahresources/models/types"
 
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // uuidV7Pattern is the identity contract: an opaque, time-ordered UUIDv7 that
@@ -95,6 +97,27 @@ func openSecondHandle(t *testing.T, dsn string) *gorm.DB {
 	sqlDB.SetMaxOpenConns(2)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return db
+}
+
+// noWaitHandle opens another handle on the SQLite file behind db with go-sqlite3's
+// own driver: a deferred BEGIN and no busy timeout, so a write through it that meets
+// the writer lock fails at once instead of waiting for it.
+func noWaitHandle(t *testing.T, db *gorm.DB) *gorm.DB {
+	t.Helper()
+	var path string
+	if err := db.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&path).Error; err != nil || path == "" {
+		t.Fatalf("locate the database file: %q, %v", path, err)
+	}
+	handle, err := gorm.Open(sqlite.Open("file:"+path+"?_busy_timeout=0"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("open a no-wait handle: %v", err)
+	}
+	sqlDB, err := handle.DB()
+	if err != nil {
+		t.Fatalf("underlying no-wait handle: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return handle
 }
 
 func uintPtr(v uint) *uint { return &v }
