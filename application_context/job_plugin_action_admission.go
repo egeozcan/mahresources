@@ -541,8 +541,8 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 	}
 	a.afterReturn(func() {
 		a.ctx.settlePluginActionWhile(jobID, jobs.StateQueued, func() error {
-			return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: jobID}, "not-started",
-				"the process that was going to run this job stopped first")
+			return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: jobID}, pluginActionNotStartedEvent,
+				pluginActionNotStartedMessage(reason))
 		})
 	})
 }

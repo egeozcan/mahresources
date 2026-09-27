@@ -1630,14 +1630,23 @@ func (s *pluginActionSink) NotStarted(reason string) {
 		s.ctx.settlePluginActionWhile(s.execution.JobID, jobs.StateRunning, release)
 		return
 	}
-	message := "the server shut down before this ran"
-	if reason == plugin_system.StopPluginDisabled {
-		message = "the plugin was disabled before this ran"
-	}
 	execution := s.execution
 	s.ctx.settlePluginActionWhile(execution.JobID, jobs.StateRunning, func() error {
-		return s.ctx.withdrawPluginActionJob(execution, pluginActionNotStartedEvent, message)
+		return s.ctx.withdrawPluginActionJob(execution, pluginActionNotStartedEvent, pluginActionNotStartedMessage(reason))
 	})
+}
+
+// pluginActionNotStartedMessage is what a withdrawn Job says about why it never
+// started, for the reasons an execution is given up before its handler runs: its
+// plugin went away, or the server stopped. A plugin that is unavailable here was
+// disabled or reloaded under the execution.
+func pluginActionNotStartedMessage(reason string) string {
+	switch reason {
+	case plugin_system.StopPluginDisabled, "plugin-unavailable":
+		return "the plugin was disabled before this ran"
+	default:
+		return "the server shut down before this ran"
+	}
 }
 
 // announceTerminal tells the deployment's job-event observer that one plugin Job
@@ -2244,7 +2253,13 @@ func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execut
 			case <-stopped:
 				return
 			case <-intents.C:
-				ctx.deliverPluginActionCancel(execution.JobID)
+				if !ctx.deliverPluginActionCancel(execution.JobID) {
+					// The Job has left running, so there is no handler left to
+					// stop. The heartbeat itself goes on until its own answer
+					// says the claim is over: a quarantined claim is still this
+					// execution's to renew.
+					intents.Stop()
+				}
 				continue
 			case <-ticker.C:
 			}
@@ -2269,17 +2284,25 @@ func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execut
 // command was run by another process: the intent is durable, and the process that
 // holds the execution reads it on the heartbeat's schedule. A read that fails
 // is asked again on the next tick.
-func (ctx *MahresourcesContext) deliverPluginActionCancel(jobID string) {
+//
+// It answers false once the Job is known to have left running, so its caller can
+// stop asking.
+func (ctx *MahresourcesContext) deliverPluginActionCancel(jobID string) bool {
 	pm := ctx.PluginManager()
 	service := ctx.JobService()
 	if pm == nil || service == nil {
-		return
+		return false
 	}
 	snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
-	if err != nil || snap.State != jobs.StateRunning || snap.ControlIntent != jobs.ControlIntentCancel {
-		return
+	switch {
+	case err != nil:
+		return true
+	case snap.State != jobs.StateRunning:
+		return false
+	case snap.ControlIntent == jobs.ControlIntentCancel:
+		pm.StopHostJob(jobID)
 	}
-	pm.StopHostJob(jobID)
+	return true
 }
 
 // pluginActionLease is the definition's own lease, so a heartbeat renews exactly

@@ -263,6 +263,11 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		// wait's.
 		if !overlapAllows {
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		} else {
+			// The row was advanced before the run, so this interval is not
+			// coming back and no Job records it: this line is its trace.
+			log.Printf("[plugin] schedule %s/%s could not start within %s; this interval is skipped",
+				row.PluginName, row.ScheduleID, s.dispatchWait)
 		}
 		return
 	}

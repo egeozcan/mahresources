@@ -1013,9 +1013,12 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 				// the settle path below publishes the same outcome through the
 				// once-guarded call. Attempting it here is only so a Job is not left
 				// without an outcome if that path is never reached, and a refusal is
-				// swallowed for the settle path to make good on.
-				flushHeldProgress(job)
-				_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
+				// swallowed for the settle path to make good on. Nothing is reported
+				// for an execution a shutdown already reported lost.
+				if pm.reportsFor(job) {
+					flushHeldProgress(job)
+					_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
+				}
 			}
 
 			return nil
