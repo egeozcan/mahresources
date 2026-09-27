@@ -63,7 +63,8 @@ The URL field accepts multiple URLs (one per line) for batch imports.
 
 For large files or slow connections, enable **Download in background**:
 
-- The download starts immediately but you can navigate away
+- **Save** starts the download and keeps you on the form: the **Jobs panel** opens on the new download, and the form says how many downloads started and lists any URL the server refused with its reason. The URL field is cleared and the other fields are kept for the next download. **Show in the Jobs panel** opens the panel on them again
+- You can navigate away; the download carries on
 - Progress is tracked in the **Jobs panel**, opened from the header: a bar with the amount downloaded, the speed, the time left and a speed graph
 - When the download finishes, **View created resource** in the Jobs panel or the [Job Center](#job-center) opens the new resource
 - Failed downloads remain in the [Job Center](#job-center) after restart and can be retried when the Job advertises Retry

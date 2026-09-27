@@ -40,6 +40,20 @@ export function adminImport() {
     applyResult: null,
     applyEventSource: null,
 
+    // Set when /admin/import?job=<handle> names an import whose review cannot
+    // be shown any more: what happened to it, and the page of the Job that
+    // parsed it, where its apply and report are.
+    resumeNotice: '',
+    resumeJobURL: '',
+
+    init() {
+      // A parsed import is reviewed from its plan on the server, so the page can
+      // be left and come back to: the parse's Job links here with its handle,
+      // and an upload puts the handle in the address so a reload keeps it.
+      const handle = new URLSearchParams(window.location.search).get('job');
+      if (handle) void this.resume(handle);
+    },
+
     destroy() {
       if (this.eventSource) {
         this.eventSource.close();
@@ -73,11 +87,71 @@ export function adminImport() {
         }
         const data = await resp.json();
         this.jobId = data.jobId;
+        this.rememberHandle(data.jobId);
         this.subscribeProgress(data.jobId);
       } catch (err) {
         this.error = err.message;
       } finally {
         this.uploading = false;
+      }
+    },
+
+    // Puts the import's handle in the address without navigating, so a reload
+    // or a bookmark comes back to this import.
+    rememberHandle(handle) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('job', handle);
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+      } catch (_) { /* the address is a convenience; the import goes on without it */ }
+    },
+
+    /**
+     * Restores the import a handle names: its review while the plan is waiting,
+     * its parse while that is running, and otherwise what became of it.
+     */
+    async resume(handle) {
+      this.jobId = handle;
+      this.error = null;
+      this.resumeNotice = '';
+      this.resumeJobURL = '';
+      const encoded = encodeURIComponent(handle);
+      try {
+        const planResp = await fetch(`/v1/imports/${encoded}/plan`);
+        if (planResp.ok) {
+          this.plan = await planResp.json();
+          this.initDecisionsFromPlan();
+          return;
+        }
+        if (planResp.status !== 404) {
+          throw new Error(await errorMessageFromResponse(planResp));
+        }
+        // No plan to review: the parse is still running, it failed, or an apply
+        // took the plan (or the import's files were removed). The parse's own
+        // record says which.
+        const jobResp = await fetch(`/v1/jobs/get?id=${encoded}`);
+        if (!jobResp.ok) {
+          this.jobId = null;
+          this.resumeNotice = 'This import could not be found. Its files may have been removed; upload the archive again to import it.';
+          return;
+        }
+        const parse = await jobResp.json();
+        this.job = parse;
+        if (parse.canonicalJobId) {
+          this.resumeJobURL = '/job?id=' + encodeURIComponent(parse.canonicalJobId);
+        }
+        if (parse.status === 'failed' || parse.status === 'cancelled') {
+          this.error = parse.error || `Job ${parse.status}`;
+          return;
+        }
+        if (parse.status !== 'completed') {
+          this.subscribeProgress(handle);
+          return;
+        }
+        this.jobId = null;
+        this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
+      } catch (err) {
+        this.error = err.message;
       }
     },
 
@@ -535,6 +609,26 @@ export function adminImport() {
         if (generation !== this._parentSearchGeneration) return;
         this.parentGroupResults = [];
         this.parentActiveIndex = -1;
+      }
+    },
+
+    // --- Conflict outcomes ---
+
+    // What the apply does with a resource whose content is already here, under the
+    // resource collision policy currently chosen.
+    resourceCollisionOutcome() {
+      return this.decisions.resource_collision_policy === 'duplicate'
+        ? 'will be imported as duplicate rows'
+        : 'will be skipped, keeping the existing resource';
+    },
+
+    // What the apply does with an entity whose GUID is already here, under the GUID
+    // policy currently chosen.
+    guidPolicyOutcome() {
+      switch (this.decisions.guid_collision_policy) {
+        case 'skip': return 'will be skipped, keeping the existing rows';
+        case 'replace': return 'will replace the existing rows';
+        default: return 'will be merged into the existing rows';
       }
     },
 

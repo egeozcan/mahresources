@@ -31,7 +31,7 @@ Optional **user accounts and role-based access control** (admin, editor, user, g
 
 **Perceptual hashing** finds visually similar images automatically across your library. Resources support **versioning** to track changes over time. A **series** groups Resources with shared metadata (e.g., pages of a scanned document).
 
-The **download queue** accepts remote URLs and tracks progress via the Download Cockpit UI. An **activity log** records create, update, delete, and plugin operations across all entities.
+The **download queue** accepts remote URLs and tracks their progress in the Jobs panel. An **activity log** records create, update, delete, and plugin operations across all entities.
 
 Categories, Resource Categories, and Note Types support **custom templates**: HTML fragments with server-side shortcodes, rendered into slots on detail pages, cards, hover cards, and list pages (see [Custom Templates](./features/custom-templates.md)). All three also carry a **meta schema**, a JSON Schema that validates metadata and generates a structured form for it.
 

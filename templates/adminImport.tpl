@@ -49,6 +49,13 @@
   <!-- Error -->
   <div x-show="error" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
 
+  {# An import named by ?job= whose review is gone: what became of it, and the #}
+  {# Job page that records its apply. #}
+  <div x-show="resumeNotice" role="status" class="rounded-md bg-stone-50 border border-stone-200 p-4 text-sm text-stone-700" data-testid="import-resume-notice">
+    <p x-text="resumeNotice"></p>
+    <p x-show="resumeJobURL" class="mt-2"><a :href="resumeJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the import's Job</a></p>
+  </div>
+
   <!-- Review Section (shown after parse completes) -->
   <template x-if="plan">
     <div class="space-y-6">
@@ -68,8 +75,13 @@
           <dd x-text="plan.counts.notes"></dd>
           <dt class="text-stone-500">Series</dt>
           <dd x-text="plan.counts.series"></dd>
-          <dt class="text-stone-500">Hash collisions (will skip)</dt>
-          <dd x-text="plan.conflicts.resource_hash_matches"></dd>
+          {# Each count names the policy that decides it: a resource whose GUID #}
+          {# is already here is decided by the GUID policy before its content is #}
+          {# looked at, so it is not among the content matches. #}
+          <dt x-show="plan.conflicts.resource_guid_matches !== undefined" class="text-stone-500">Resources already here by GUID</dt>
+          <dd x-show="plan.conflicts.resource_guid_matches !== undefined" data-testid="import-summary-guid-resources"><span x-text="plan.conflicts.resource_guid_matches"></span><span x-text="plan.conflicts.resource_guid_matches > 0 ? ' (' + guidPolicyOutcome() + ')' : ''"></span></dd>
+          <dt class="text-stone-500">Resources whose content is already here</dt>
+          <dd data-testid="import-summary-hash-resources"><span x-text="plan.conflicts.resource_hash_matches"></span><span x-text="plan.conflicts.resource_hash_matches > 0 ? ' (' + resourceCollisionOutcome() + ')' : ''"></span></dd>
         </dl>
         <template x-if="plan && plan.conflicts && plan.conflicts.guid_matches > 0">
           <p class="text-sm text-amber-700">
@@ -147,7 +159,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-stone-700 mb-1" for="collision-policy">Resource Collision Policy</label>
-            <p class="text-xs text-stone-500 mb-2">When a resource with the same hash already exists on this instance.</p>
+            <p class="text-xs text-stone-500 mb-2">When a resource with the same content already exists on this instance and no resource here has the imported one's GUID.</p>
             <select id="collision-policy" x-model="decisions.resource_collision_policy"
                     class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
               <option value="skip">Skip (use existing)</option>

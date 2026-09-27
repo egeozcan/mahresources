@@ -151,8 +151,33 @@
                                 >
                                 <label for="background" class="text-sm font-mono text-stone-700">
                                     Download in background
-                                    <span class="text-stone-500">(track progress in download cockpit)</span>
+                                    <span class="text-stone-500">(follow its progress in the Jobs panel)</span>
                                 </label>
+                            </div>
+                            {# A background download is submitted without leaving the page: the Jobs #}
+                            {# panel opens on it and this says what was started. The region stays in  #}
+                            {# the page so its text is announced when it changes.                      #}
+                            <div role="status" class="text-sm" data-testid="background-download-notice">
+                                <template x-if="backgroundNotice">
+                                    <div class="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+                                        <p x-text="backgroundNotice"></p>
+                                        <template x-if="backgroundRefusals.length > 0">
+                                            <div class="mt-2">
+                                                <p>Not started:</p>
+                                                <ul class="list-disc pl-5">
+                                                    <template x-for="refusal in backgroundRefusals" :key="refusal">
+                                                        <li class="break-words" x-text="refusal"></li>
+                                                    </template>
+                                                </ul>
+                                            </div>
+                                        </template>
+                                        <button type="button" x-show="backgroundJobIds.length > 0" @click="showBackgroundJobs($event.currentTarget)"
+                                                class="mt-2 text-sm font-medium text-emerald-900 underline decoration-emerald-400 underline-offset-2 hover:decoration-emerald-900 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600">Show in the Jobs panel</button>
+                                    </div>
+                                </template>
+                            </div>
+                            <div role="alert" class="text-sm" data-testid="background-download-error">
+                                <p x-show="backgroundError" x-text="backgroundError" class="rounded-md border border-red-200 bg-red-50 p-3 text-red-800"></p>
                             </div>
                         </div>
                     </div>

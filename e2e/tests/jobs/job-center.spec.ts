@@ -354,7 +354,10 @@ test.describe('Job Center', () => {
     await page.goto(`/resource/new?OwnerId=${groupId}&URL=${encodeURIComponent(source)}`);
     await page.getByLabel('Download in background').check();
     await page.locator('form[x-data="resourceUpload()"] button[type="submit"]').click();
-    await expect(page).toHaveURL(new RegExp(`/group\\?id=${groupId}$`));
+    // The form stays, and the Jobs panel opens on the new download.
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    await expect(panel).toBeVisible();
+    await expect(page).toHaveURL(/\/resource\/new/);
 
     // The form's background path must accept a durable Job; before, it went to the
     // queue alone and the download never appeared in the Jobs panel or /jobs.
@@ -365,9 +368,6 @@ test.describe('Job Center', () => {
       return (body.jobs as Job[]).some(candidate => candidate.title === `Download from ${new URL(source).host}`);
     }, { timeout: 20_000 }).toBe(true);
 
-    const trigger = page.getByRole('button', { name: 'Open Jobs panel' });
-    await trigger.click();
-    const panel = page.getByRole('dialog', { name: 'Jobs' });
     const panelLink = panel.getByRole('link', { name: /^View created resource for Download from / }).first();
     await expect(panelLink).toBeVisible();
     await panelLink.click();
