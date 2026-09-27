@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -264,6 +265,15 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 
 func (ctx *MahresourcesContext) recordDualPublishedSource(kind, sourceID, jobID, hash string, scrubbed bool, now time.Time) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// On SQLite the first statement is a no-op write, which takes the writer lock
+		// before the mapping is read. Read first, and a commit from another connection in
+		// between (the compute Job's own bookkeeping lands at the same moment) fails the
+		// save at once with SQLITE_BUSY_SNAPSHOT, which never reaches the busy handler.
+		if ctx.Config.DbType == constants.DbTypeSqlite {
+			if err := tx.Exec("UPDATE job_source_mappings SET source_kind = source_kind WHERE source_kind = ? AND source_id = ?", kind, sourceID).Error; err != nil {
+				return err
+			}
+		}
 		return ctx.recordDualPublishedSourceTx(tx, kind, sourceID, jobID, hash, hash, scrubbed, now)
 	})
 }
