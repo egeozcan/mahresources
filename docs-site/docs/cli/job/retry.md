@@ -11,7 +11,10 @@ Retry only works against jobs in the `failed` or `cancelled` state;
 the server rejects retry on jobs that are still active, paused, or
 already completed. A retry is also refused with HTTP 409 while any queued
 or running job is already fetching the same URL, so one URL is never
-transferred twice. The existing job's ID is reused: progress, error
+transferred twice, and for a failure a retry would repeat: a duplicate
+of content the library holds, an address the server refuses to fetch, a
+stream it will not assemble, or a remote 4xx other than 403, 408, 423,
+425 and 429. The existing job's ID is reused: progress, error
 message, and completion times are cleared, then the worker re-runs the
 original URL fetch.
 

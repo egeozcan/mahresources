@@ -24,7 +24,17 @@ When you submit a URL for download:
 3. Progress is tracked and broadcast via Server-Sent Events (SSE)
 4. On completion, a Resource is created from the downloaded file
 
-The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created.
+A download with no name of its own is named after what the server delivered:
+the filename a `Content-Disposition` header gives (the RFC 6266 `filename*`
+form when it sends one), otherwise the last path segment of the URL the
+response came from, which after a redirect is the redirect's target, decoded
+and without its query string, otherwise the host. The name keeps only its last
+path element, and control and bidirectional-formatting characters are removed.
+The same rule names a resource created from the remote-resource form,
+`POST /v1/resource/remote` and `mah.db.create_resource_from_url`. An assembled
+HLS stream takes the playlist's name with an `.mp4` extension.
+
+The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created, and the Job fails with the code `submitter-refused` and a message saying so.
 
 ## Queue Limits
 
@@ -50,7 +60,7 @@ plugin actions also publish through the durable Job Service.
 - Every non-admin principal sees only the rows it submitted.
 - **Retry** through the legacy handle creates a new canonical Job and moves the handle to that Retry leaf. The source Job keeps its original outcome. Current authorization and download scope are checked again, and a duplicate active transfer is refused.
 - **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
-- A restart records whatever was downloading or paused as cancelled, so it stays retryable afterwards.
+- A restart is not a cancellation, and nothing records it as one. When the server stops gracefully, a download that was running goes back to the queue under the same Job and handle, with the event reason `server-shutdown`, and starts again from the beginning when the server is back. A paused download stays held until someone resumes or cancels it. Neither writes a history row until it finishes. After a crash the Job reaches the same state once its claim expires and the process that held it is known to be gone. A download the queue runs without a durable Job is recorded as failed with the reason "The server shut down before the download finished".
 
 See [Job System](./job-system.md) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
@@ -97,7 +107,11 @@ job until it is due; keeping future work out of the in-memory queue avoids the
 100-job cap and pending-job eviction rules. When the due time comes, the Job is
 queued, the plugin and submitting user are re-validated, and the plugin
 scheduler's next tick marks the row `submitted` with the Job's id; until then
-the row reads `pending` even if the Job has started. The download becomes eligible to start at the
+the row reads `pending` even if the Job has started. The re-validation belongs to
+the Job: if the plugin is disabled, or the user may no longer write or reach the
+download's targets, the Job is blocked with that reason in the Job Center, and
+the row still reads `submitted`. If the same URL is already downloading, the Job
+waits for that transfer and then runs. The download becomes eligible to start at the
 time a `start_at` or a `delay` names, whatever time zone the server runs in; it
 then runs as soon as the job runtime has capacity for it. If the submitting user is
 deleted before a pending row fires, the row becomes ownerless and is never
@@ -180,7 +194,9 @@ states:
 
 A failed download's Job records why it failed: for example
 `HTTP 403 Forbidden`, `connect: connection refused`, or the timeout that ended
-the transfer. The Jobs drawer shows it under the failed row as **Reason**, and
+the transfer. A transfer that runs past `-remote-overall-timeout` says it did
+not finish within the overall time limit and names the limit; only a person's
+cancel reads as cancelled. The Jobs drawer shows it under the failed row as **Reason**, and
 `/jobs` and the Job detail page show the same text. The reason names no URL
 beyond its scheme and host, because a Job's failure message is stored as plain,
 searchable text and a URL's path and query can hold a signature or token. An
@@ -195,6 +211,34 @@ existing resource's ID. The Job publishes that resource as its
 page links to it with **View existing resource**. The link checks access
 when opened, like every entity output.
 
+### Failure reasons and Retry
+
+Every failed download records a code and a class, which the Job Center's
+failure breakdown and the summary export group on. Retry is offered only where
+asking again could answer differently. The failures a Retry would repeat exactly
+offer none: a duplicate, an address the deployment refuses, a stream this server
+does not assemble, and a remote 4xx other than 403, 408, 423, 425 and 429. That
+is the rule the bulk upload widget applies to its own failures. A 403 keeps
+Retry because the User-Agent the deployment sends can be changed.
+
+| Code | Class | Retry | Cause |
+|------|-------|-------|-------|
+| `remote-client-error` | `dependency` | no | The remote answered with a 4xx not listed below |
+| `remote-forbidden` | `dependency` | yes | The remote answered 403 |
+| `remote-busy` | `dependency` | yes | The remote answered 423, 425 or 429 |
+| `remote-server-error` | `dependency` | yes | The remote answered 5xx or another unexpected status |
+| `remote-connection-failed` | `dependency` | yes | The name did not resolve, or the connection was refused, reset or dropped |
+| `remote-timeout` | `timeout` | yes | Connecting or waiting for the response headers timed out, or the remote answered 408 |
+| `idle-timeout` | `timeout` | yes | The remote stopped sending for longer than `-remote-idle-timeout` |
+| `overall-timeout` | `timeout` | yes | The transfer ran past `-remote-overall-timeout` |
+| `address-refused` | `policy` | no | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
+| `plugin-unavailable` | `policy` | yes | A plugin's download whose plugin, and so its network policy, is no longer enabled |
+| `submitter-refused` | `policy` | yes | The submitter may no longer create content |
+| `unsupported-stream` | `validation` | no | An HLS stream this server refuses (live, DRM, a non-HTTP URL, over the configured limits) |
+| `ffmpeg-unavailable` | `dependency` | yes | An HLS stream and no ffmpeg to assemble it |
+| `resource-exists` | `conflict` | no | The library already holds the bytes |
+| `download-failed` | `internal` | yes | Anything else |
+
 ## Job Operations
 
 - **Cancel, pause, resume, retry** -- The compatibility endpoints remain
@@ -203,7 +247,17 @@ when opened, like every entity output.
   version when the command runs.
 - **Retry** -- Creates a linked Job and preserves the earlier Job's terminal
   state. A failed legacy download handle resolves to the current Retry leaf for
-  at least one documented release and six months after canonical cutover.
+  at least one documented release and six months after canonical cutover. It is
+  offered only for a failure a Retry could change (see
+  [Failure reasons and Retry](#failure-reasons-and-retry)).
+- **One transfer per URL** -- A Job about to start while another transfer in
+  this process is fetching the same URL waits for that transfer, in the phase
+  `waiting` with the message "Waiting for another download of this URL to
+  finish", and starts once it ends. That covers a Retry, a deferred download
+  coming due and queued work. A cancel ends the waiting Job at once and leaves
+  the other transfer alone. `POST /v1/download/retry` and `POST /v1/jobs/retry`
+  refuse such a retry with 409 instead, while the queue still holds the failed
+  attempt.
 
 ## Submitting Downloads
 

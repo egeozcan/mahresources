@@ -243,6 +243,17 @@ controls how long export bytes remain available, independently of the Job's
 history retention. Import Retry is offered only when the adapter's durable
 staging and apply evidence prove that replay is safe.
 
+A parse that fails because the archive itself cannot be read says why: the
+reader's own message, such as that the file is not a mahresources export
+archive or names an unsupported `schema_version`. Its Job fails with the class
+`validation` and the code `import-archive-invalid`, or
+`import-archive-unsupported` for a schema version this server does not read,
+and it offers no Retry, because parsing the same staged bytes again reads them
+the same way. Upload a corrected archive instead. A parse that fails for any
+other reason keeps the code `import-parse-failed`, the class `internal` and the
+message "the archive could not be read", writes the underlying error to the
+server log, and offers Retry while the staged archive remains.
+
 ## Configuration
 
 | Flag | Env Variable | Default | Description |
