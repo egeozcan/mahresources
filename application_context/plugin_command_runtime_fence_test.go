@@ -105,6 +105,49 @@ func TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner(t *testing.T) {
 	require.Equal(t, current.String(), row.Owner)
 }
 
+// TestPluginCommandFenceOnAPrivateRootIsReleasedByStartingOnIt is the way out
+// when the owner of a private root cannot be proved gone, as after a host
+// reboot that skipped the clean stop: one server started with that root as its
+// staging path takes the fence over on the root's own lease, keeps the binding
+// private, and on its clean stop leaves it free for the next private root.
+func TestPluginCommandFenceOnAPrivateRootIsReleasedByStartingOnIt(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	_, err := ctx.acquirePluginCommandDBFenceFor("/private/before-reboot", true)
+	require.NoError(t, err)
+	anotherBoot := plugin_system.CurrentRuntimeIdentity()
+	anotherBoot.BootSession = "00000000-0000-4000-8000-000000000000"
+	require.NoError(t, ctx.db.Model(&models.JobRuntimeFence{}).
+		Where("key = ?", pluginCommandRuntimeFenceKey).Update("owner", anotherBoot.String()).Error)
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/after-reboot", true)
+	require.ErrorIs(t, err, errPluginCommandFenceOwnerNotStopped)
+
+	token, err := ctx.acquirePluginCommandDBFenceFor("/private/before-reboot", false)
+	require.NoError(t, err, "a server started on the bound root takes it over on the root's own lease")
+	var row models.JobRuntimeFence
+	require.NoError(t, ctx.db.Where("key = ?", pluginCommandRuntimeFenceKey).First(&row).Error)
+	require.True(t, row.StagingTemporary, "starting on a private root by name keeps it private")
+	require.NoError(t, ctx.releasePluginCommandDBFence(token))
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/after-reboot", true)
+	require.NoError(t, err)
+}
+
+// TestPluginCommandFenceRecordedBeforeOwnersIsKeptAsDurable covers a binding
+// written before the fence recorded its owner and whether its root is private:
+// nothing proves that root expendable, so it is kept, and a server started on
+// that root by name takes it over as the /logs refusal says.
+func TestPluginCommandFenceRecordedBeforeOwnersIsKeptAsDurable(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	require.NoError(t, ctx.db.Create(&models.JobRuntimeFence{
+		Key: pluginCommandRuntimeFenceKey, Token: "left-by-an-earlier-release",
+		StagingRoot: "/tmp/mahresources-plugin-commands-181321493", AcquiredAt: time.Now().UTC(),
+	}).Error)
+	_, err := ctx.acquirePluginCommandDBFenceFor("/tmp/mahresources-plugin-commands-new", true)
+	require.ErrorIs(t, err, errPluginCommandFenceRootIsDurable)
+	require.Contains(t, err.Error(), "/tmp/mahresources-plugin-commands-181321493")
+	_, err = ctx.acquirePluginCommandDBFenceFor("/tmp/mahresources-plugin-commands-181321493", false)
+	require.NoError(t, err)
+}
+
 // TestPluginCommandFenceOnADurableRootNamesTheRootToRestartWith pins the
 // refusal a durable binding gives: it names the bound root and the flag that
 // selects it, because no retry can change a binding that outlives restarts.

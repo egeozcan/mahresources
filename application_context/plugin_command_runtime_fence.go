@@ -26,7 +26,7 @@ var (
 	// errPluginCommandFenceOwnerNotStopped explains a binding that moves once its
 	// owner stops: the bound root is private to a process that is still running
 	// or runs where this process cannot inspect it.
-	errPluginCommandFenceOwnerNotStopped = errors.New("that root is private to the process holding the fence, which is still running or cannot be inspected from here; the binding ends when it stops")
+	errPluginCommandFenceOwnerNotStopped = errors.New("that root is private to the process holding the fence, which is still running or cannot be inspected from here (another host or an earlier boot); the binding ends when it stops, or once a server started with -plugin-command-staging-path set to that root stops cleanly")
 )
 
 func (ctx *MahresourcesContext) pluginCommandFenceOwned() bool {
@@ -111,6 +111,12 @@ func (ctx *MahresourcesContext) acquirePluginCommandDBFenceFor(stagingRoot strin
 			if !pluginCommandFenceOwnerStopped(current) {
 				return fmt.Errorf("%w %q; %w", errPluginCommandFenceBoundToOtherRoot, current.StagingRoot, errPluginCommandFenceOwnerNotStopped)
 			}
+		} else if current.StagingTemporary {
+			// A private root started on by name stays private: it is how an
+			// operator frees a binding whose owner cannot be proved gone (after a
+			// reboot that skipped the clean stop), and its clean stop then leaves
+			// the binding to the next private root.
+			temporary = true
 		}
 		result := tx.Model(&models.JobRuntimeFence{}).
 			Where("key = ? AND staging_root = ? AND token = ?", pluginCommandRuntimeFenceKey, current.StagingRoot, current.Token).

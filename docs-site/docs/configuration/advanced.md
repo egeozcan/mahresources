@@ -496,9 +496,15 @@ server started with a different root keeps plugin commands unavailable, and
 with MemoryFS is deleted when its process exits, so its binding ends with that
 process: the next server takes the database over with its own private root once
 the previous one has stopped cleanly, or can be shown to have exited because it
-ran on this host and its process no longer exists (or the host has rebooted
-since). A previous server on another host cannot be shown to have exited, so a
-new server waits until that one stops cleanly.
+ran in this process table (same hostname, boot and PID namespace) and its
+process no longer exists. A previous server on another host, or one from before
+a reboot that skipped the clean stop, cannot be shown to have exited, since
+another machine can share a hostname. To release its binding, start one server
+with `-plugin-command-staging-path` set to the root `/logs` names (it is
+recreated if missing): that server takes the fence over on the root's own lease,
+and once it stops cleanly the next MemoryFS server takes the database over as
+usual. A binding recorded by a release that did not mark private roots is kept
+as durable; keep that root pinned with the flag.
 
 The path is used both to resolve a declaration's executable basename and as the
 child's `PATH`, so include required helpers too. A yt-dlp command using a
