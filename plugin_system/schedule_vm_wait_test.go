@@ -77,3 +77,34 @@ end
 			"wait here outlives the claim and the next tick fires the same schedule again.", budget)
 	}
 }
+
+// TestAScheduleRunPastItsDeadlineDoesNotStartOnFreeResources pins the "skip"
+// dispatch deadline at every point a run accepts something, not only where it
+// waits. A lane turn, a job slot and the VM that are free at the instant they
+// are asked for are taken without waiting at all; taken after the deadline, they
+// would start a run the scheduler has already stopped waiting for, while its
+// claim was sized for runs that started before it. Under "allow" there is no
+// such deadline: the row was advanced before the run, and
+// TestOverlapAllowWaitsOutABusyVM is the other half of this pair.
+func TestAScheduleRunPastItsDeadlineDoesNotStartOnFreeResources(t *testing.T) {
+	dir := t.TempDir()
+	pm, err := enablingPlugin(t, dir, "late", `plugin = { name = "late", version = "1.0", api_version = 1, capabilities = {"schedule"} }
+function init()
+    mah.schedule({ id = "poll", every = "30s", handler = function() end })
+end
+`)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	pm.mu.RLock()
+	regs := pm.schedules["late"]
+	pm.mu.RUnlock()
+	if len(regs) != 1 {
+		t.Fatalf("expected one registered schedule, got %d", len(regs))
+	}
+
+	_, ran, _ := pm.RunSchedule(regs[0], 0, time.Nanosecond, true)
+	if ran {
+		t.Fatal("a run whose dispatch deadline had passed started on free resources")
+	}
+}

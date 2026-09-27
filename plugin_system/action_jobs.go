@@ -550,6 +550,11 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			return got
 		}
 		heldVM, slotHeld = held, true
+		// Everything is held now, whether or not any of it was waited for, so
+		// this is where a caller's absolute deadline is asked once more.
+		if expired(bounds.slot) {
+			return asyncGaveUp
+		}
 		got, next := pm.admitOnce(job, slotDeadline)
 		if next == admitDone && got == asyncRan {
 			break

@@ -431,6 +431,16 @@ func (pm *PluginManager) recheckOutsideLane(job *ActionJob, ticket **laneTicket,
 	}
 }
 
+// expired reports whether an absolute deadline has passed. A lane turn, a job
+// slot or the VM that is free when asked for is taken without waiting, so a
+// caller's absolute deadline is asked again once they are held, and what was
+// taken after it is given back: that caller has stopped waiting. A bound on one
+// wait alone (asyncBounds.slotWait) is not asked again, because the wait it
+// bounds did not happen.
+func expired(deadline time.Time) bool {
+	return !deadline.IsZero() && !time.Now().Before(deadline)
+}
+
 // abandonedWait says why a wait that did not end in its turn ended.
 func (pm *PluginManager) abandonedWait(revoked <-chan struct{}) asyncOutcome {
 	switch {
