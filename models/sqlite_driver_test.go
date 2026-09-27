@@ -1,10 +1,12 @@
 package models
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
@@ -91,4 +93,42 @@ func TestSQLiteReadOnlyTransactionRefusesWritesAndLeavesItsConnectionWritable(t 
 			"the connection stayed read-only after its read-only transaction ended")
 	}
 	require.EqualValues(t, 2, countRows(t, db))
+}
+
+// A BEGIN still waiting for the writer lock when its context ends may yet take the
+// lock. Whatever BeginTx then reports has to match the connection: a transaction
+// left open behind an error would be pooled holding the writer lock for good.
+func TestSQLiteBeginCancelledWhileWaitingLeavesNoTransactionOpen(t *testing.T) {
+	db, other := openProductionSQLite(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	holder, err := other.Conn(context.Background())
+	require.NoError(t, err)
+	_, err = holder.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	began := make(chan error, 1)
+	go func() {
+		tx, err := sqlDB.BeginTx(ctx, nil)
+		if err == nil {
+			_ = tx.Rollback()
+		}
+		began <- err
+	}()
+	// The BEGIN holds the pool's only connection while it waits for the lock.
+	require.Eventually(t, func() bool { return sqlDB.Stats().InUse == 1 }, 5*time.Second, time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	_, err = holder.ExecContext(context.Background(), "ROLLBACK")
+	require.NoError(t, err)
+	require.NoError(t, holder.Close())
+	<-began
+
+	_, err = other.Exec("INSERT INTO t (v) VALUES ('after the cancelled BEGIN')")
+	require.NoError(t, err, "the cancelled BEGIN left a transaction holding the writer lock")
+	require.NoError(t, db.Exec("INSERT INTO t (v) VALUES ('on the pooled connection')").Error)
 }
