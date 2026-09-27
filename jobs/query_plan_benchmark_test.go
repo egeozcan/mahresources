@@ -28,7 +28,10 @@ type jobQueryCapture struct {
 }
 
 func (c *jobQueryCapture) record(db *gorm.DB) {
-	if db.Error != nil || db.Statement == nil || db.Statement.SQL.Len() == 0 {
+	// A subquery is built by a dry run of the query callbacks inside its
+	// parent's statement, numbered in the parent's placeholders; only the
+	// statement that ran is evidence.
+	if db.Error != nil || db.Statement == nil || db.Statement.SQL.Len() == 0 || db.DryRun {
 		return
 	}
 	sqlText := db.Statement.SQL.String()
