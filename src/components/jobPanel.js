@@ -669,6 +669,7 @@ export function jobPanel() {
         },
 
         countUnsaidOutcome() {
+            if (this.streamStopped) return;
             this._unsaidOutcomes += 1;
             if (!this._unsaidOutcomesTimer) {
                 this._unsaidOutcomesTimer = setTimeout(() => this.sayUnsaidOutcomes(), UNSAID_OUTCOMES_COALESCE_MS);
@@ -755,6 +756,10 @@ export function jobPanel() {
         // outcomes is carried until its message has actually landed, whatever
         // the clock says and across a drop: nothing else would say it again.
         say(entries = [], notice = '') {
+            // A stopped drawer says nothing about Jobs: they came from the
+            // database a reset replaced. A notice, such as the stop itself, is
+            // still said.
+            if (this.streamStopped) entries = [];
             const carried = this._countNews ? [this._countNews] : [];
             const news = this.currentNews([...carried, ...this.pendingNews(), ...entries]);
             const text = notice || this.pendingNotice();
@@ -943,6 +948,27 @@ export function jobPanel() {
             this.finishedHasMore = false;
             this.notice = '';
             this.error = '';
+            // What the reader was, or was about to be, told about Jobs belongs to
+            // the other database too: the ledger, the proofs, every message not
+            // yet landed and every timer that would say one. Only the stop is
+            // said, and say() says nothing about a Job from here on.
+            clearTimeout(this._drawerAnnounceTimer);
+            clearTimeout(this._unsaidOutcomesTimer);
+            clearTimeout(this._landTimer);
+            this._drawerAnnounceTimer = null;
+            this._unsaidOutcomesTimer = null;
+            this._landTimer = null;
+            this._unsaidOutcomes = 0;
+            this._countNews = null;
+            this._recentNews = [];
+            this._recentNotice = '';
+            this._newsAt = 0;
+            this._heard = new Map();
+            this._liveVersions = new Map();
+            this._streamTouched = new Map();
+            this._liveRegion?.cancel?.();
+            const inside = this._drawerAnnouncer();
+            if (inside) inside.textContent = '';
             this.announceNotice(STREAM_STOPPED_NOTICE);
         },
 

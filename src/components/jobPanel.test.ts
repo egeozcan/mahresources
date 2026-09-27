@@ -727,6 +727,25 @@ describe('Job Center panel accessibility hooks', () => {
         vi.unstubAllGlobals();
     });
 
+    test('a stopped drawer says only that it stopped, and nothing about Jobs after', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), cancel: vi.fn(), destroy: vi.fn() } as any;
+        // A count of outcomes still on its way, and one scheduled to be said.
+        panel._countNews = { jobId: null, count: 2, text: '2 jobs finished or need attention; see the Jobs panel.' };
+        panel.countUnsaidOutcome();
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        panel.announceNews([{ jobId: 'dl-1', state: 'failed', version: 3, text: 'old.bin failed.' }]);
+        panel.countUnsaidOutcome();
+        await vi.advanceTimersByTimeAsync(5000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(["Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs."]);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     // An answer to a request the drawer sent before it stopped lands on a
     // stopped drawer: it must change nothing and say nothing.
     function lateAnswers(panel: any) {
