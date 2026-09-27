@@ -82,7 +82,8 @@ type JobLineageResponse struct {
 	Parents    []JobSnapshotResponse `json:"parents"`
 	Children   []JobSnapshotResponse `json:"children"`
 	// RetriedElsewhere reports a Retry or Continue successor the caller cannot
-	// see, which is why the Job no longer offers Retry. The successor stays hidden.
+	// see, which is why the Job no longer offers Retry. The successor stays hidden,
+	// and a caller who cannot write is never told.
 	RetriedElsewhere bool `json:"retriedElsewhere,omitempty"`
 }
 

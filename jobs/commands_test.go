@@ -2201,3 +2201,47 @@ func TestAJobRetriedByAnotherAccountReadsAsRetriedToItsOwner(t *testing.T) {
 			len(adminLineage.Successors), adminLineage.RetriedElsewhere)
 	}
 }
+
+// A viewer who may not act is offered no Retry at all, so no missing Retry has
+// told them anything: to them, a Job another account retried reads as the
+// visible world shows it, not retried.
+func TestAReadOnlyOwnerIsNotToldAnotherAccountRetriedTheirJob(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	readOnlyView := Access{UserID: owner, ReadOnly: true}
+	adminView := Access{UserID: 1, Administrator: true}
+	h.advertiseStateful()
+
+	failed := h.acceptReplayable(&owner)
+	h.fail(failed.ID)
+	h.now()
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(failed.ID, CommandRetry, "admin-retry", adminView))
+	if err != nil || result.SuccessorID == "" {
+		t.Fatalf("the administrator's retry = %#v, %v", result, err)
+	}
+
+	lineage, err := h.svc.Lineage(h.deps, readOnlyView, failed.ID)
+	if err != nil {
+		t.Fatalf("read-only lineage: %v", err)
+	}
+	if lineage.RetriedElsewhere || len(lineage.Successors) != 0 {
+		t.Fatalf("a read-only owner's lineage = %d successors, retried elsewhere %v; want neither",
+			len(lineage.Successors), lineage.RetriedElsewhere)
+	}
+
+	retried, err := h.svc.List(h.deps, readOnlyView, Filter{InboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("list retried: %v", err)
+	}
+	if len(retried.Jobs) != 0 {
+		t.Fatalf("inboundRelationship=retry-of lists %d jobs to a read-only owner whose only retry is hidden", len(retried.Jobs))
+	}
+	notRetried, err := h.svc.List(h.deps, readOnlyView, Filter{NoInboundRelationship: string(LinkRetryOf)}, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("list not retried: %v", err)
+	}
+	if len(notRetried.Jobs) != 1 || notRetried.Jobs[0].ID != failed.ID {
+		t.Fatalf("noInboundRelationship=retry-of lists %d jobs to a read-only owner, want their job", len(notRetried.Jobs))
+	}
+}

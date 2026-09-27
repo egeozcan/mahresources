@@ -228,7 +228,9 @@ exception: a Retry or Continue made by another account, such as an
 administrator retrying your Job, still counts. Retry lineage is linear whoever
 extends it, so such a Job no longer offers you Retry, reads as retried in these
 filters, and its detail page says that another account retried it. The retry
-itself stays hidden from you. On the Job Center page these filters are the
+itself stays hidden from you. The exception does not apply to an account that
+cannot write, such as a guest, which is offered no Retry on any Job: to it, such
+a Job reads as not retried. On the Job Center page these filters are the
 **Has been** and **Has not been** selects. `get`
 returns the current command and output declarations. `timeline` reads ordered
 durable events by per-Job sequence. `summary` uses the same visibility and
@@ -297,7 +299,10 @@ from every surface. The Jobs panel, the Job Center list, and the Job
 detail page link a succeeded Job's available entity output. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail
-still offers “View JSON result” for the stored summary. A download that failed
+still offers “View JSON result” for the stored summary. A summary whose redirect
+names an entity the viewer can no longer open is offered without the redirect,
+here and in the legacy plugin-action reads (`GET /v1/jobs/action/job` and the
+action rows of the legacy event stream). A download that failed
 because the library already holds its bytes publishes the Resource holding them
 as its `existing-resource` entity output. The Job detail page links to it from
 the Failure section. Only a Resource the submitter can see counts as already
@@ -343,7 +348,12 @@ refuse when it came to run is refused up front with `409`, result code
 `refused` and the reason in `message`, and nothing is created: for example a
 download or an export whose target group has left the scope of the account it
 would run as. A Retry, Continue or Repeat runs as the account that asks for it;
-a Resume runs as the account the Job was accepted for. Bulk requests accept at most 200 Job IDs; each result commits
+a Resume runs as the account the Job was accepted for. When the account or
+group read behind that check fails, the command answers `500` instead of
+refusing, and asking again once the database answers is safe. The same read
+failing as a download or an export is about to start currently blocks the Job
+with the reason the check would have given (`role-refused`, `scope-refused` or
+`group-out-of-scope`) instead of leaving it queued; Resume starts it again. Bulk requests accept at most 200 Job IDs; each result commits
 independently, so a response can contain both successes and refusals.
 
 ## Replay keys and writer epoch

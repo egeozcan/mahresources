@@ -897,7 +897,8 @@ type Lineage struct {
 	// RetriedElsewhere reports that the Job has a Retry or Continue successor
 	// the asker cannot see: an administrator retried an owner's Job. Retry
 	// lineage is linear whoever extended it, so the Job offers the owner no Retry,
-	// and this is what says why. The successor itself stays hidden.
+	// and this is what says why. The successor itself stays hidden. A read-only
+	// asker, who is offered no Retry on any Job, is never told.
 	RetriedElsewhere bool
 }
 

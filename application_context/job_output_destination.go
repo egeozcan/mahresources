@@ -2,8 +2,6 @@ package application_context
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -83,44 +81,90 @@ func safeEntityDestination(raw string) (string, uint64, bool) {
 // redirect, so nothing links to the page. Deletion and lost scope are not told
 // apart.
 func (ctx *MahresourcesContext) openableJobOutput(jobKind string, output jobs.Output) (jobs.Output, bool, error) {
-	if output.Availability != jobs.OutputAvailable {
-		return output, true, nil
-	}
-	if output.Type == jobs.OutputTypeEntity {
-		reachable, err := ctx.jobEntityReferenceReachable(output.Reference)
-		return output, reachable, err
-	}
-	path, id, ok := jobSummaryDestinationEntity(jobKind, output)
-	if !ok {
-		return output, true, nil
-	}
-	field := map[string]string{"/resource": "resourceId", "/note": "noteId", "/group": "groupId"}[path]
-	reachable, err := ctx.jobEntityReferenceReachable(json.RawMessage(fmt.Sprintf(`{%q:%d}`, field, id)))
-	if err != nil || reachable {
-		return output, true, err
-	}
-	var reference map[string]json.RawMessage
-	if err := json.Unmarshal(output.Reference, &reference); err != nil {
-		return output, true, err
-	}
-	delete(reference, "redirect")
-	stripped, err := json.Marshal(reference)
+	offered, shown, err := ctx.openableJobOutputs([]jobOutputOf{{Snapshot: jobs.Snapshot{Kind: jobKind}, Output: output}})
 	if err != nil {
 		return output, true, err
 	}
-	output.Reference = stripped
-	return output, true, nil
+	return offered[0], shown[0], nil
 }
 
-// jobEntityReferenceReachable answers whether an entity reference names an entity
-// this context's principal can open. A reference the resolver refuses as
-// malformed is not reachable either.
-func (ctx *MahresourcesContext) jobEntityReferenceReachable(reference json.RawMessage) (bool, error) {
-	if _, err := ctx.resolveJobEntityOutput(reference); err != nil {
-		if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, ErrJobOutputInvalid) {
-			return false, nil
-		}
-		return false, err
+// jobOutputOf is one output together with the Job that published it.
+type jobOutputOf struct {
+	Snapshot jobs.Snapshot
+	Output   jobs.Output
+}
+
+// openableJobOutputs is openableJobOutput for many outputs at once. It answers
+// each output as offered, and whether it is shown, in order. The entities they
+// name are asked about with one read per entity type rather than one per output,
+// so a listing of many rows costs what one row costs.
+func (ctx *MahresourcesContext) openableJobOutputs(items []jobOutputOf) ([]jobs.Output, []bool, error) {
+	type named struct {
+		page     string
+		id       uint
+		redirect bool
 	}
-	return true, nil
+	offered := make([]jobs.Output, len(items))
+	shown := make([]bool, len(items))
+	names := make([]*named, len(items))
+	wanted := map[string][]uint{}
+	asked := map[string]map[uint]bool{}
+	for i, item := range items {
+		offered[i], shown[i] = item.Output, true
+		if item.Output.Availability != jobs.OutputAvailable {
+			continue
+		}
+		var name named
+		if item.Output.Type == jobs.OutputTypeEntity {
+			page, id, err := jobEntityTarget(item.Output.Reference)
+			if err != nil {
+				// A reference the resolver refuses as malformed opens nothing.
+				shown[i] = false
+				continue
+			}
+			name = named{page: page, id: id}
+		} else {
+			page, id, ok := jobSummaryDestinationEntity(item.Snapshot.Kind, item.Output)
+			if !ok {
+				continue
+			}
+			name = named{page: page, id: uint(id), redirect: true}
+		}
+		names[i] = &name
+		if asked[name.page] == nil {
+			asked[name.page] = map[uint]bool{}
+		}
+		if !asked[name.page][name.id] {
+			asked[name.page][name.id] = true
+			wanted[name.page] = append(wanted[name.page], name.id)
+		}
+	}
+	reachable := make(map[string]map[uint]bool, len(wanted))
+	for page, ids := range wanted {
+		found, err := ctx.jobEntitiesReachable(page, ids)
+		if err != nil {
+			return nil, nil, err
+		}
+		reachable[page] = found
+	}
+	for i, name := range names {
+		if name == nil || reachable[name.page][name.id] {
+			continue
+		}
+		if !name.redirect {
+			shown[i] = false
+			continue
+		}
+		var reference map[string]json.RawMessage
+		if err := json.Unmarshal(items[i].Output.Reference, &reference); err != nil {
+			return nil, nil, err
+		}
+		delete(reference, "redirect")
+		stripped, err := json.Marshal(reference)
+		if err != nil {
+			return nil, nil, err
+		}
+		offered[i].Reference = stripped
+	}
+	return offered, shown, nil
 }

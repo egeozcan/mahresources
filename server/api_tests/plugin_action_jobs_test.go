@@ -590,6 +590,171 @@ func TestProjectActionJobsHydratesSanitizedResultsInOneBatchAndSSEInit(t *testin
 	}
 }
 
+// The legacy action reads show a result the way the Job API does: a redirect to
+// an entity the viewer can no longer open is left out, and the rest of the
+// result stays. The rows of one init ask which entities are reachable once per
+// entity type, not once per row.
+func TestLegacyActionReadsLeaveOutARedirectTheViewerCannotOpen(t *testing.T) {
+	tc, owner, _, ownerToken := setupRetryableActionProjectionEnv(t)
+	gone := &models.Resource{Name: "redirect-gone", ResourceCategoryId: 1}
+	kept := &models.Resource{Name: "redirect-kept", ResourceCategoryId: 1}
+	for _, resource := range []*models.Resource{gone, kept} {
+		if err := tc.DB.Create(resource).Error; err != nil {
+			t.Fatalf("create resource: %v", err)
+		}
+	}
+	goneNote := &models.Note{Name: "redirect-gone-note"}
+	if err := tc.DB.Create(goneNote).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	redirects := map[string]string{
+		"gone":      fmt.Sprintf("/resource?id=%d", gone.ID),
+		"kept":      fmt.Sprintf("/resource?id=%d", kept.ID),
+		"gone-note": fmt.Sprintf("/note?id=%d", goneNote.ID),
+	}
+	handles := map[string]string{}
+	for name, redirect := range redirects {
+		handle, completed := runResultActionToCompletion(t, tc, owner, name)
+		reference := fmt.Sprintf(`{"stable":"kept","redirect":%q}`, redirect)
+		if err := tc.DB.Model(&models.JobOutput{}).Where("job_id = ? AND key = ?", completed.ID, "result").
+			Update("reference", reference).Error; err != nil {
+			t.Fatalf("record the %s redirect: %v", name, err)
+		}
+		handles[name] = handle
+	}
+
+	legacyGet := func(handle string) map[string]any {
+		t.Helper()
+		response := doReq(tc, http.MethodGet, "/v1/jobs/action/job?id="+handle,
+			map[string]string{"Authorization": "Bearer " + ownerToken, "Accept": "application/json"}, nil, nil)
+		if response.Code != http.StatusOK {
+			t.Fatalf("legacy action get answered %d: %s", response.Code, response.Body.String())
+		}
+		var job plugin_system.ActionJob
+		if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+			t.Fatalf("decode legacy action job: %v", err)
+		}
+		return job.Result
+	}
+	for name, redirect := range redirects {
+		if got := legacyGet(handles[name]); got["redirect"] != redirect {
+			t.Fatalf("while its entity exists the %s result = %#v, want redirect %s", name, got, redirect)
+		}
+	}
+
+	if err := tc.AppCtx.DeleteResource(gone.ID); err != nil {
+		t.Fatalf("delete the resource: %v", err)
+	}
+	if err := tc.AppCtx.DeleteNote(goneNote.ID); err != nil {
+		t.Fatalf("delete the note: %v", err)
+	}
+	want := func(name string, result map[string]any) {
+		t.Helper()
+		if result["stable"] != "kept" {
+			t.Fatalf("the %s result lost the rest of it: %#v", name, result)
+		}
+		_, has := result["redirect"]
+		if name == "kept" && result["redirect"] != redirects["kept"] {
+			t.Fatalf("the result whose entity exists = %#v, want its redirect", result)
+		}
+		if name != "kept" && has {
+			t.Fatalf("the %s result still links a deleted entity: %#v", name, result)
+		}
+	}
+	for name, handle := range handles {
+		want(name, legacyGet(handle))
+	}
+
+	counter := &entityReachQueryCounter{Interface: logger.Default.LogMode(logger.Silent)}
+	priorLogger := tc.DB.Config.Logger
+	tc.DB.Config.Logger = counter
+	projected, err := tc.AppCtx.WithPrincipal(auth.FromUser(owner)).ProjectActionJobs()
+	tc.DB.Config.Logger = priorLogger
+	if err != nil {
+		t.Fatalf("project action jobs: %v", err)
+	}
+	if counter.resources != 1 || counter.notes != 1 {
+		t.Fatalf("three rows asked %d resource and %d note reads, want one of each", counter.resources, counter.notes)
+	}
+	byHandle := map[string]*plugin_system.ActionJob{}
+	for _, row := range projected {
+		byHandle[row.ID] = row
+	}
+	for name, handle := range handles {
+		if byHandle[handle] == nil {
+			t.Fatalf("the projection omitted the %s row", name)
+		}
+		want(name, byHandle[handle].Result)
+	}
+
+	writer, cancel, done := startPluginActionEventsRequest(t, tc, ownerToken, false)
+	stopPluginActionEventsRequest(t, cancel, done)
+	frameEnd := strings.Index(writer.String(), "\n\n")
+	if frameEnd < 0 {
+		t.Fatalf("SSE response has no complete init frame: %q", writer.String())
+	}
+	frame := writer.String()[:frameEnd]
+	dataAt := strings.Index(frame, "data: ")
+	if dataAt < 0 {
+		t.Fatalf("SSE init frame has no data field: %q", frame)
+	}
+	var init struct {
+		ActionJobs []plugin_system.ActionJob `json:"actionJobs"`
+	}
+	if err := json.Unmarshal([]byte(frame[dataAt+len("data: "):]), &init); err != nil {
+		t.Fatalf("decode SSE init: %v (%s)", err, frame)
+	}
+	seen := 0
+	for i := range init.ActionJobs {
+		for name, handle := range handles {
+			if init.ActionJobs[i].ID == handle {
+				want(name, init.ActionJobs[i].Result)
+				seen++
+			}
+		}
+	}
+	if seen != len(handles) {
+		t.Fatalf("SSE init carried %d of the %d rows", seen, len(handles))
+	}
+
+	// An owner who can no longer write is offered no output by the Job API, and
+	// the legacy read agrees.
+	scope := &models.Group{Name: "redirect-guest-scope"}
+	if err := tc.DB.Create(scope).Error; err != nil {
+		t.Fatalf("create scope group: %v", err)
+	}
+	if err := tc.DB.Model(&models.User{}).Where("id = ?", owner.ID).
+		Updates(map[string]any{"role": models.RoleGuest, "scope_group_id": scope.ID}).Error; err != nil {
+		t.Fatalf("demote the owner: %v", err)
+	}
+	if got := legacyGet(handles["kept"]); got != nil {
+		t.Fatalf("a read-only owner's legacy read carries the result %#v the Job API withholds", got)
+	}
+}
+
+// entityReachQueryCounter counts the statements that read the resources and
+// notes tables.
+type entityReachQueryCounter struct {
+	logger.Interface
+	mu        sync.Mutex
+	resources int
+	notes     int
+}
+
+func (counter *entityReachQueryCounter) Trace(ctx context.Context, begin time.Time, query func() (string, int64), err error) {
+	sql, rows := query()
+	lower := strings.ToLower(sql)
+	counter.mu.Lock()
+	if strings.Contains(lower, "from `resources`") || strings.Contains(lower, `from "resources"`) {
+		counter.resources++
+	}
+	if strings.Contains(lower, "from `notes`") || strings.Contains(lower, `from "notes"`) {
+		counter.notes++
+	}
+	counter.mu.Unlock()
+	counter.Interface.Trace(ctx, begin, func() (string, int64) { return sql, rows }, err)
+}
+
 func TestLegacyActionEventsDurablePollNotifiesResultAvailabilityChange(t *testing.T) {
 	tc, owner, _, _ := setupRetryableActionProjectionEnv(t)
 	handle, completed := runResultActionToCompletion(t, tc, owner, "poll-private-value")

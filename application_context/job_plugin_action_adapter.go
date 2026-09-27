@@ -2305,8 +2305,13 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 		if output.Key != "result" || output.Type != jobs.OutputTypeSummary || output.Availability != jobs.OutputAvailable {
 			continue
 		}
+		// The result as the Job API offers it, redirect included or not.
+		offered, shown, err := ctx.offeredJobOutputs(ctx.JobService(), []jobOutputOf{{Snapshot: projected, Output: output}})
+		if err != nil {
+			return nil, err
+		}
 		var result map[string]any
-		if err := json.Unmarshal(output.Reference, &result); err == nil {
+		if shown[0] && json.Unmarshal(offered[0].Reference, &result) == nil {
 			job.Result = result
 		}
 		break
@@ -2359,9 +2364,26 @@ func (ctx *MahresourcesContext) ProjectActionJobs() ([]*plugin_system.ActionJob,
 			Select("job_id", "reference").Find(&outputs).Error; err != nil {
 			return nil, fmt.Errorf("application_context: read visible plugin action results: %w", err)
 		}
+		// Each result as the Job API offers it, projected together so the
+		// entities their redirects name are read once per entity type.
+		snapshots := make(map[string]jobs.Snapshot, len(candidates))
+		for _, candidate := range candidates {
+			snapshots[candidate.Job.ID] = pluginActionSnapshotFromModel(candidate.Job)
+		}
+		items := make([]jobOutputOf, 0, len(outputs))
 		for _, output := range outputs {
+			items = append(items, jobOutputOf{Snapshot: snapshots[output.JobID], Output: jobs.Output{
+				Key: "result", Type: jobs.OutputTypeSummary, Availability: jobs.OutputAvailable,
+				Reference: json.RawMessage(output.Reference),
+			}})
+		}
+		offered, shown, err := ctx.offeredJobOutputs(ctx.JobService(), items)
+		if err != nil {
+			return nil, err
+		}
+		for i, output := range outputs {
 			var result map[string]any
-			if err := json.Unmarshal(output.Reference, &result); err == nil {
+			if shown[i] && json.Unmarshal(offered[i].Reference, &result) == nil {
 				results[output.JobID] = result
 			}
 		}

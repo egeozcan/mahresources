@@ -73,26 +73,56 @@ func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Outp
 	if err != nil {
 		return nil, err
 	}
-	principal := ctx.Principal()
-	openable := make([]jobs.Output, 0, len(outputs))
+	items := make([]jobOutputOf, 0, len(outputs))
 	for _, output := range outputs {
-		request := JobOutputOpenRequest{Snapshot: snapshot, Output: output, Principal: principal}
+		items = append(items, jobOutputOf{Snapshot: snapshot, Output: output})
+	}
+	offered, shown, err := ctx.offeredJobOutputs(service, items)
+	if err != nil {
+		return nil, err
+	}
+	openable := make([]jobs.Output, 0, len(offered))
+	for i := range offered {
+		if shown[i] {
+			openable = append(openable, offered[i])
+		}
+	}
+	return openable, nil
+}
+
+// offeredJobOutputs is what this principal is offered of some Jobs' outputs:
+// each output the output policy lets it open (authorizeJobOutput), as
+// openableJobOutputs projects it, in order, with whether it is shown. The Job
+// API's listing and the legacy plugin-action reads both answer through it, so
+// they cannot offer different things.
+func (ctx *MahresourcesContext) offeredJobOutputs(service *jobs.Service, items []jobOutputOf) ([]jobs.Output, []bool, error) {
+	principal := ctx.Principal()
+	authorized := make([]jobOutputOf, 0, len(items))
+	positions := make([]int, 0, len(items))
+	for i, item := range items {
+		request := JobOutputOpenRequest{Snapshot: item.Snapshot, Output: item.Output, Principal: principal}
 		if err := ctx.authorizeJobOutput(context.Background(), service, request); err != nil {
 			if errors.Is(err, ErrJobOutputForbidden) {
 				continue
 			}
-			return nil, err
+			return nil, nil, err
 		}
-		offered, reachable, err := ctx.openableJobOutput(snapshot.Kind, output)
-		if err != nil {
-			return nil, err
-		}
-		if !reachable {
-			continue
-		}
-		openable = append(openable, offered)
+		authorized = append(authorized, item)
+		positions = append(positions, i)
 	}
-	return openable, nil
+	projected, projectedShown, err := ctx.openableJobOutputs(authorized)
+	if err != nil {
+		return nil, nil, err
+	}
+	offered := make([]jobs.Output, len(items))
+	shown := make([]bool, len(items))
+	for i, item := range items {
+		offered[i] = item.Output
+	}
+	for j, i := range positions {
+		offered[i], shown[i] = projected[j], projectedShown[j]
+	}
+	return offered, shown, nil
 }
 
 // OpenJobOutput reauthorizes the canonical Job and its output on every open.
@@ -212,6 +242,23 @@ func (ctx *MahresourcesContext) openStandardJobOutput(output jobs.Output) (contr
 // deleted or that the principal cannot see answers jobs.ErrNotFound; a read that
 // failed answers its own error, because it proves neither.
 func (ctx *MahresourcesContext) resolveJobEntityOutput(reference json.RawMessage) (string, error) {
+	page, id, err := jobEntityTarget(reference)
+	if err != nil {
+		return "", err
+	}
+	reachable, err := ctx.jobEntitiesReachable(page, []uint{id})
+	if err != nil {
+		return "", err
+	}
+	if !reachable[id] {
+		return "", jobs.ErrNotFound
+	}
+	return fmt.Sprintf("%s?id=%d", page, id), nil
+}
+
+// jobEntityTarget reads the one entity an entity output's reference names, as
+// the page that shows it and its id. Anything else is ErrJobOutputInvalid.
+func jobEntityTarget(reference json.RawMessage) (string, uint, error) {
 	var ref struct {
 		ResourceID  uint `json:"resourceId"`
 		GroupID     uint `json:"groupId"`
@@ -219,41 +266,67 @@ func (ctx *MahresourcesContext) resolveJobEntityOutput(reference json.RawMessage
 		ReductionID uint `json:"reductionId"`
 	}
 	if err := json.Unmarshal(reference, &ref); err != nil {
-		return "", ErrJobOutputInvalid
+		return "", 0, ErrJobOutputInvalid
 	}
 	switch {
 	case ref.ResourceID > 0 && ref.GroupID == 0 && ref.NoteID == 0 && ref.ReductionID == 0:
-		return ctx.jobEntityLocation(&models.Resource{}, ref.ResourceID, "/resource?id=%d")
+		return "/resource", ref.ResourceID, nil
 	case ref.GroupID > 0 && ref.ResourceID == 0 && ref.NoteID == 0 && ref.ReductionID == 0:
-		return ctx.jobEntityLocation(&models.Group{}, ref.GroupID, "/group?id=%d")
+		return "/group", ref.GroupID, nil
 	case ref.NoteID > 0 && ref.ResourceID == 0 && ref.GroupID == 0 && ref.ReductionID == 0:
-		return ctx.jobEntityLocation(&models.Note{}, ref.NoteID, "/note?id=%d")
+		return "/note", ref.NoteID, nil
 	case ref.ReductionID > 0 && ref.ResourceID == 0 && ref.GroupID == 0 && ref.NoteID == 0:
-		ownerID, restricted := reductionOwnerFilter(ctx.Principal())
-		if _, err := ctx.GetResourceReduction(ref.ReductionID, ownerID, restricted); err != nil {
-			if errors.Is(err, ErrReductionNotFound) {
-				return "", jobs.ErrNotFound
-			}
-			return "", fmt.Errorf("read job output reduction: %w", err)
-		}
-		return fmt.Sprintf("/reduction?id=%d", ref.ReductionID), nil
+		return "/reduction", ref.ReductionID, nil
 	default:
-		return "", ErrJobOutputInvalid
+		return "", 0, ErrJobOutputInvalid
 	}
 }
 
-// jobEntityLocation answers the page of one entity when this context's principal
-// can see it. The count runs the query callbacks, so the subtree predicate of a
-// group-limited principal applies exactly as it does to the entity's own page.
-func (ctx *MahresourcesContext) jobEntityLocation(model any, id uint, format string) (string, error) {
-	var count int64
-	if err := ctx.db.Model(model).Where("id = ?", id).Count(&count).Error; err != nil {
-		return "", fmt.Errorf("read job output entity: %w", err)
+// jobEntityReachChunk bounds how many ids one reachability read binds, beside
+// whatever the scope predicate binds.
+const jobEntityReachChunk = 200
+
+// jobEntitiesReachable answers which of ids, all entities of the one page named,
+// this context's principal can open. The read runs the query callbacks, so the
+// subtree predicate of a group-limited principal applies exactly as it does to
+// the entity's own page. A read that failed answers its error, because it proves
+// neither answer.
+func (ctx *MahresourcesContext) jobEntitiesReachable(page string, ids []uint) (map[uint]bool, error) {
+	reachable := make(map[uint]bool, len(ids))
+	var model any
+	switch page {
+	case "/resource":
+		model = &models.Resource{}
+	case "/group":
+		model = &models.Group{}
+	case "/note":
+		model = &models.Note{}
+	case "/reduction":
+		ownerID, restricted := reductionOwnerFilter(ctx.Principal())
+		for _, id := range ids {
+			if _, err := ctx.GetResourceReduction(id, ownerID, restricted); err != nil {
+				if errors.Is(err, ErrReductionNotFound) {
+					continue
+				}
+				return nil, fmt.Errorf("read job output reduction: %w", err)
+			}
+			reachable[id] = true
+		}
+		return reachable, nil
+	default:
+		return reachable, nil
 	}
-	if count == 0 {
-		return "", jobs.ErrNotFound
+	for start := 0; start < len(ids); start += jobEntityReachChunk {
+		end := min(start+jobEntityReachChunk, len(ids))
+		var found []uint
+		if err := ctx.db.Model(model).Where("id IN ?", ids[start:end]).Pluck("id", &found).Error; err != nil {
+			return nil, fmt.Errorf("read job output entities: %w", err)
+		}
+		for _, id := range found {
+			reachable[id] = true
+		}
 	}
-	return fmt.Sprintf(format, id), nil
+	return reachable, nil
 }
 
 func safeJobExternalLink(reference json.RawMessage) (string, error) {

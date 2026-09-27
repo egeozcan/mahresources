@@ -181,8 +181,8 @@ func (ctx *MahresourcesContext) exportPrincipalRefusal(principalID uint, rootGro
 		return jobs.CommandRefusal{}, nil
 	}
 	for _, id := range rootGroupIDs {
-		visible, err := scoped.entityVisibleChecked(&models.Group{}, id)
-		if err != nil || !visible {
+		inScope, err := scoped.entityVisibleChecked(&models.Group{}, id)
+		if err != nil || !inScope {
 			return outOfScope, err
 		}
 	}

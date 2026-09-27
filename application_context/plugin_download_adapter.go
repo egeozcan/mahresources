@@ -198,8 +198,8 @@ func (ctx *MahresourcesContext) downloadTargetsScopeRefusal(creator *query_model
 		return outOfScopeGroup, nil
 	}
 	for _, g := range append([]uint{creator.OwnerId}, creator.Groups...) {
-		visible, err := scoped.entityVisibleChecked(&models.Group{}, g)
-		if err != nil || !visible {
+		inScope, err := scoped.entityVisibleChecked(&models.Group{}, g)
+		if err != nil || !inScope {
 			return outOfScopeGroup, err
 		}
 	}
@@ -209,8 +209,8 @@ func (ctx *MahresourcesContext) downloadTargetsScopeRefusal(creator *query_model
 	// change to one function rather than a widening nobody notices, which is
 	// the shape this whole check exists to prevent.
 	for _, n := range creator.Notes {
-		visible, err := scoped.entityVisibleChecked(&models.Note{}, n)
-		if err != nil || !visible {
+		inScope, err := scoped.entityVisibleChecked(&models.Note{}, n)
+		if err != nil || !inScope {
 			return errors.New("download target note is outside your permitted scope"), err
 		}
 	}
