@@ -645,16 +645,16 @@ func (ctx *MahresourcesContext) recordOwnedHold(execution jobs.Execution, entry 
 	}
 }
 
-// waitQueueFollowers waits, at most timeout, for every goroutine ownQueueExecution
+// WaitQueueFollowers waits, at most timeout, for every goroutine ownQueueExecution
 // started, and reports whether they all returned. Once the queue is shutting down
 // they stop following and stop retrying a publication, so what is left to wait
 // for is a write already in flight.
 //
-// Only something that closes the database calls it: the test fixtures, and
+// Only something that closes the database calls it: the test harnesses, and
 // ReleaseEphemeralDatabase for -memory-db. A persistent deployment never closes
 // its database; the process exits, and a follower cut short there leaves its Job
 // running with its claim, for the next process to reconcile.
-func (ctx *MahresourcesContext) waitQueueFollowers(timeout time.Duration) bool {
+func (ctx *MahresourcesContext) WaitQueueFollowers(timeout time.Duration) bool {
 	if ctx == nil || ctx.queueFollowers == nil {
 		return true
 	}

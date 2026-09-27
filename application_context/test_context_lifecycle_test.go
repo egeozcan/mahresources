@@ -34,7 +34,7 @@ func cleanupMahresourcesTestContext(t *testing.T, ctx *MahresourcesContext) {
 		}
 		// A queue-backed execution's follower goes on writing after its Job reads
 		// terminal, and a write during the directory's removal recreates the journal.
-		if !ctx.waitQueueFollowers(10 * time.Second) {
+		if !ctx.WaitQueueFollowers(10 * time.Second) {
 			t.Errorf("a queue follower was still running when the fixture closed its database")
 		}
 		if ctx.pluginManager != nil {

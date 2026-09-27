@@ -592,7 +592,7 @@ type MahresourcesContext struct {
 	// one that renews its claim. The queue's own drain covers only its download
 	// workers, and a Job reads terminal before its follower's last writes land (a
 	// Reduction's source-mapping refresh, the claim release), so whatever closes
-	// the database waits them out through waitQueueFollowers. A pointer, so every
+	// the database waits them out through WaitQueueFollowers. A pointer, so every
 	// clone of the context counts into one group.
 	queueFollowers *sync.WaitGroup
 	// queueClaimLease overrides the lease a queue-backed admission claims with.

@@ -209,7 +209,7 @@ func (ctx *MahresourcesContext) ReleaseEphemeralDatabase() error {
 		return nil
 	}
 	eph.release.Do(func() {
-		if !ctx.waitQueueFollowers(download_queue.ShutdownDrainTimeout) {
+		if !ctx.WaitQueueFollowers(download_queue.ShutdownDrainTimeout) {
 			log.Printf("warning: a queue execution was still publishing its outcome when the ephemeral database closed")
 		}
 		var errs []error
