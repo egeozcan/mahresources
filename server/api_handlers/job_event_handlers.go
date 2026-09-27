@@ -111,8 +111,18 @@ func GetJobTimelineHandler(ctx JobTimelineContext) func(http.ResponseWriter, *ht
 		for _, event := range events {
 			response.Events = append(response.Events, jobEventResponse(event))
 		}
+		// A full page offers a continuation only when an event follows it, so the
+		// last page never points at an empty one.
 		if len(events) == limit && len(events) > 0 {
-			response.NextSequence = events[len(events)-1].Sequence
+			last := events[len(events)-1].Sequence
+			following, err := ctx.GetJobTimeline(jobID, last, 1)
+			if err != nil {
+				writeJobServiceError(w, err)
+				return
+			}
+			if len(following) > 0 {
+				response.NextSequence = last
+			}
 		}
 		writeJobJSON(w, http.StatusOK, response)
 	}

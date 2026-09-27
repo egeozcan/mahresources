@@ -8,6 +8,7 @@ package jobview
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -149,6 +150,28 @@ func optionalBool(values url.Values, name string) (*bool, error) {
 		return nil, fmt.Errorf("%s must be true or false", name)
 	}
 	return &parsed, nil
+}
+
+// RequestErrorMessage is how a refusal of the caller's own request reads to that
+// caller: from the refusal's own sentinel onwards, without the package prefix and
+// the layers the service wrapped it in on the way out. "jobs: list: jobs: invalid
+// filter: unknown state" names two internal call sites before it names the
+// problem; the caller wrote a filter, not a call.
+func RequestErrorMessage(err error) string {
+	message := err.Error()
+	for _, sentinel := range []error{
+		jobs.ErrInvalidFilter, jobs.ErrInvalidCursor, jobs.ErrInvalidPage,
+		jobs.ErrInvalidWindow, jobs.ErrInvalidCommand,
+	} {
+		if !errors.Is(err, sentinel) {
+			continue
+		}
+		if at := strings.Index(message, sentinel.Error()); at >= 0 {
+			message = message[at:]
+		}
+		break
+	}
+	return strings.TrimPrefix(message, "jobs: ")
 }
 
 type encodedCursor struct {

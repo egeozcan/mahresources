@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -325,7 +326,7 @@ func GetJobSummaryExportHandler(ctx JobSummaryExportSubmitter) func(http.Respons
 			return
 		}
 		if body.To.Sub(body.From) <= jobs.MaxSummaryWindow {
-			writeJobError(w, http.StatusBadRequest, fmt.Sprintf("summary export range must exceed %s", jobs.MaxSummaryWindow))
+			writeJobError(w, http.StatusBadRequest, fmt.Sprintf("summary export range must exceed %s", summaryWindowCeiling))
 			return
 		}
 		if body.Format != "csv" && body.Format != "json" {
@@ -345,6 +346,10 @@ func GetJobSummaryExportHandler(ctx JobSummaryExportSubmitter) func(http.Respons
 	}
 }
 
+// summaryWindowCeiling names the interactive summary ceiling the way the window
+// parameter is written and the interface talks about it: in days.
+var summaryWindowCeiling = fmt.Sprintf("%d days", jobs.MaxSummaryWindow/(24*time.Hour))
+
 func parseJobSummaryWindow(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
@@ -354,11 +359,15 @@ func parseJobSummaryWindow(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("window must be a positive duration such as 24h or 7d")
 	}
 	if duration > jobs.MaxSummaryWindow {
-		return 0, fmt.Errorf("window may not exceed %s", jobs.MaxSummaryWindow)
+		return 0, fmt.Errorf("window may not exceed %s", summaryWindowCeiling)
 	}
 	return duration, nil
 }
 
+// parseJobDuration reads a Go duration, or a whole number of days (`7d`) or weeks
+// (`2w`). It does not apply the ceiling, so a window over it is refused by the
+// caller as too long rather than here as malformed; a count of days or weeks too
+// large to represent reads as the longest duration, which no ceiling admits.
 func parseJobDuration(raw string) (time.Duration, error) {
 	if strings.HasSuffix(raw, "d") || strings.HasSuffix(raw, "w") {
 		unit := time.Hour * 24
@@ -368,8 +377,11 @@ func parseJobDuration(raw string) (time.Duration, error) {
 			amount = strings.TrimSuffix(raw, "w")
 		}
 		count, err := strconv.ParseInt(amount, 10, 64)
-		if err != nil || count <= 0 || count > int64(jobs.MaxSummaryWindow/unit) {
+		if err != nil || count <= 0 {
 			return 0, fmt.Errorf("invalid duration %q", raw)
+		}
+		if count > int64(math.MaxInt64/unit) {
+			return math.MaxInt64, nil
 		}
 		return time.Duration(count) * unit, nil
 	}
@@ -576,7 +588,7 @@ func parseJobLimit(values url.Values) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("limit must be an integer")
 	}
-	if limit < 0 || limit > jobs.MaxPageSize {
+	if limit < 1 || limit > jobs.MaxPageSize {
 		return 0, fmt.Errorf("limit must be between 1 and %d", jobs.MaxPageSize)
 	}
 	return limit, nil
@@ -587,7 +599,7 @@ func writeJobServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrInvalidFilter), errors.Is(err, jobs.ErrInvalidCursor),
 		errors.Is(err, jobs.ErrInvalidPage), errors.Is(err, jobs.ErrInvalidWindow),
 		errors.Is(err, jobs.ErrInvalidCommand):
-		writeJobError(w, http.StatusBadRequest, err.Error())
+		writeJobError(w, http.StatusBadRequest, jobview.RequestErrorMessage(err))
 	case errors.Is(err, jobs.ErrNotFound):
 		writeJobError(w, http.StatusNotFound, "job not found")
 	default:

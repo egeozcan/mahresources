@@ -487,3 +487,52 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 		}
 	}
 }
+
+// timelineStub pages a fixed timeline the way the service does: after a
+// sequence, at most limit events.
+type timelineStub struct{ events []jobs.Event }
+
+func (s timelineStub) GetJobTimeline(_ string, after uint64, limit int) ([]jobs.Event, error) {
+	var page []jobs.Event
+	for _, event := range s.events {
+		if event.Sequence > after && len(page) < limit {
+			page = append(page, event)
+		}
+	}
+	return page, nil
+}
+
+// TestJobTimelineOffersANextPageOnlyWhenOneExists pins the continuation a page
+// hands out. A page that happens to end exactly at the limit is the last page
+// when nothing follows it, and a continuation there sends a client to read an
+// empty page it had no reason to ask for.
+func TestJobTimelineOffersANextPageOnlyWhenOneExists(t *testing.T) {
+	stub := timelineStub{}
+	for sequence := uint64(1); sequence <= 4; sequence++ {
+		stub.events = append(stub.events, jobs.Event{ID: "event-" + strconv.FormatUint(sequence, 10), JobID: "job-123", Sequence: sequence})
+	}
+	for _, tt := range []struct {
+		query string
+		want  uint64
+	}{
+		{"limit=2", 2},
+		{"limit=3", 3},
+		{"limit=4", 0},
+		{"limit=5", 0},
+		{"afterSequence=2&limit=2", 0},
+	} {
+		request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/events?"+tt.query, nil), map[string]string{"id": "job-123"})
+		recorder := httptest.NewRecorder()
+		GetJobTimelineHandler(stub)(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d: %s", tt.query, recorder.Code, recorder.Body.String())
+		}
+		var page JobTimelineResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+			t.Fatalf("%s: decode: %v", tt.query, err)
+		}
+		if page.NextSequence != tt.want {
+			t.Fatalf("%s: nextSequence = %d, want %d", tt.query, page.NextSequence, tt.want)
+		}
+	}
+}

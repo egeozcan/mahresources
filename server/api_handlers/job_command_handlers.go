@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"mahresources/jobs"
+	"mahresources/server/jobview"
 )
 
 const maxJobCommandRequestBytes = 64 << 10
@@ -230,12 +231,35 @@ func writeJobCommandError(w http.ResponseWriter, ctx JobCommandContext, jobID st
 		status = http.StatusConflict
 	}
 	message := "job command failed"
-	if status == http.StatusBadRequest {
-		message = err.Error()
+	switch status {
+	case http.StatusBadRequest:
+		message = jobview.RequestErrorMessage(err)
+	case http.StatusConflict:
+		// Each conflict asks for something different of the caller, so each one
+		// says which it is, and carries the code a bulk answer gives it.
+		message = conflictMessage(err)
+		if result.Code == "" {
+			result.JobID, result.Status = jobID, jobs.CommandStatusFailed
+			result.Code, result.Message = jobs.CommandCodeForError(err), message
+		}
 	}
 	body := map[string]any{"error": message}
 	if result.JobID != "" || result.Code != "" {
 		body["result"] = jobCommandResultResponse(result)
 	}
 	writeJobJSON(w, status, body)
+}
+
+// conflictMessage names which command conflict refused a request: the matched
+// refusal's own text, without the package prefix or the ids the service added.
+func conflictMessage(err error) string {
+	for _, conflict := range []error{
+		jobs.ErrCommandKeyReused, jobs.ErrCommandInFlight, jobs.ErrCommandChainConflict,
+		jobs.ErrCommandNotAdvertised, jobs.ErrCommandFailed,
+	} {
+		if errors.Is(err, conflict) {
+			return strings.TrimPrefix(conflict.Error(), "jobs: ")
+		}
+	}
+	return "job command failed"
 }
