@@ -240,8 +240,9 @@ export function saveNow(key, value) {
   _cache[key] = value;
   _dirty.add(key);
   clearTimeout(_timers[key]);
-  putNow(key, value, true).then((ok) => {
+  return putNow(key, value, true).then((ok) => {
     if (ok && _loaded && _cache[key] === value) _dirty.delete(key);
+    return ok;
   });
 }
 

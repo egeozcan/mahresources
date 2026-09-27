@@ -228,7 +228,9 @@ shows the speed and time left under each running Job's bar.
 
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
-to watch, and a retry that fails is listed there in its own right.
+to watch, and a retry that fails is listed there in its own right. Known
+limit: an account that cannot write, such as a guest, is not told of a retry it
+cannot see, so a failure another account retried stays in its Needs attention.
 
 An administrator's drawer offers **My jobs** and **Everyone's**. It starts on
 **My jobs** (`owner=me`), so its badges count only the administrator's own work,

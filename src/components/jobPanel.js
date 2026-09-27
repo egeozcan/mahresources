@@ -295,6 +295,7 @@ export function jobPanel() {
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
             // Stand-in for the drawer stream's own initialization; replaced at merge.
             this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
+            this.adoptPendingOwnerChoice();
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
@@ -1289,10 +1290,49 @@ export function jobPanel() {
 
         // An administrator's Mine or Everyone choice, kept for their next page.
         chooseOwnerScope(choice) {
-            const mine = choice === 'mine';
-            this.setOwnerScope(mine ? 'me' : '');
-            // Sent at once: the next page is rendered with the stored choice.
-            userSettings.saveNow('jobsPanelScope', mine ? 'mine' : 'everyone');
+            const value = choice === 'mine' ? 'mine' : 'everyone';
+            this.setOwnerScope(value === 'mine' ? 'me' : '');
+            this.rememberPendingOwnerChoice(value);
+            this.saveOwnerChoice(value);
+        },
+
+        // Sent at once, since the next page is rendered with the stored choice,
+        // and one after another, so the last choice made is the last one stored.
+        saveOwnerChoice(value) {
+            this._ownerChoiceSave = (this._ownerChoiceSave || Promise.resolve())
+                .catch(() => {})
+                .then(() => userSettings.saveNow('jobsPanelScope', value));
+            return this._ownerChoiceSave;
+        },
+
+        // A page opened before the choice was stored is rendered with the old
+        // one. The choice is carried in the tab's session until a page is
+        // rendered with it: a page that disagrees applies it and stores it
+        // again. Keyed by the viewer, so another account in the tab ignores it.
+        pendingOwnerChoiceKey() {
+            return `mahresources.jobsPanelScope.pending.${this._ownerViewer}`;
+        },
+
+        rememberPendingOwnerChoice(value) {
+            try { globalThis.sessionStorage?.setItem(this.pendingOwnerChoiceKey(), value); }
+            catch { /* the stored choice still applies on the next page once saved */ }
+        },
+
+        adoptPendingOwnerChoice() {
+            if (!this._ownerViewer) return;
+            let pending = null;
+            try { pending = globalThis.sessionStorage?.getItem(this.pendingOwnerChoiceKey()) || null; }
+            catch { return; }
+            if (pending !== 'mine' && pending !== 'everyone') return;
+            const scope = pending === 'mine' ? 'me' : '';
+            if (scope === this.ownerScope) {
+                try { globalThis.sessionStorage?.removeItem(this.pendingOwnerChoiceKey()); }
+                catch { /* harmless: it matches what the page rendered */ }
+                return;
+            }
+            // Before the first read and the stream: nothing to reconnect yet.
+            this.ownerScope = scope;
+            this.saveOwnerChoice(pending);
         },
 
         // The Undo a Dismiss's box offers.

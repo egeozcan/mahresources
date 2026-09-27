@@ -137,7 +137,13 @@ test('an administrator\'s drawer lists their own jobs until they choose everyone
     await expect(choice.getByRole('radio', { name: 'Everyone\'s' })).toBeChecked();
     await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(1);
 
+    // Switched back and away in the same moment: the next page still lists
+    // only this administrator's jobs, and the choice is stored.
     await choice.getByText('My jobs', { exact: true }).click();
+    await admin.goto('/dashboard');
+    await admin.getByRole('button', { name: 'Open Jobs panel' }).click();
+    await expect(choice.getByRole('radio', { name: 'My jobs' })).toBeChecked();
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${mine}"]`)).toHaveCount(1);
     await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(0);
     await expect.poll(async () => (await (await admin.request.get('/v1/account/settings')).json()).jobsPanelScope).toBe('mine');
 

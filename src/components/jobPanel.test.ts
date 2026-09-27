@@ -81,7 +81,7 @@ describe('Job Center panel', () => {
         requests.length = 0;
         panel.chooseOwnerScope('everyone');
         // Sent at once, and able to outlive a navigation that follows.
-        expect(puts).toHaveLength(1);
+        await vi.waitFor(() => expect(puts).toHaveLength(1));
         expect(puts[0].url).toBe('/v1/account/settings/jobsPanelScope');
         expect(puts[0].init).toMatchObject({ method: 'PUT', keepalive: true, body: JSON.stringify({ value: 'everyone' }) });
         await vi.waitFor(() => expect(requests).toHaveLength(3));
@@ -91,7 +91,67 @@ describe('Job Center panel', () => {
 
         panel.chooseOwnerScope('mine');
         expect(panel.ownerScope).toBe('me');
-        expect(userSettings.get('jobsPanelScope')).toBe('mine');
+        await vi.waitFor(() => expect(userSettings.get('jobsPanelScope')).toBe('mine'));
+    });
+
+    test('rapid owner choices are stored one after another, so the last one made is the one kept', async () => {
+        const sent: string[] = [];
+        const answers: Array<() => void> = [];
+        vi.stubGlobal('fetch', vi.fn((_url: string, init: any) => {
+            sent.push(JSON.parse(init.body).value);
+            return new Promise(resolve => answers.push(() => resolve({ ok: true })));
+        }));
+        const panel = jobPanel();
+        panel._ownerViewer = 1;
+        panel.requestJSON = vi.fn(async () => ({ jobs: [] })) as any;
+
+        panel.chooseOwnerScope('everyone');
+        panel.chooseOwnerScope('mine');
+        panel.chooseOwnerScope('everyone');
+        await vi.waitFor(() => expect(sent).toEqual(['everyone']));
+        // The next is not sent until the one before it has been answered.
+        answers.shift()!();
+        await vi.waitFor(() => expect(sent).toEqual(['everyone', 'mine']));
+        answers.shift()!();
+        await vi.waitFor(() => expect(sent).toEqual(['everyone', 'mine', 'everyone']));
+        answers.shift()!();
+    });
+
+    test('a choice a page was rendered without is applied on that page, before its first read, and stored again', async () => {
+        const storage = new Map<string, string>();
+        vi.stubGlobal('sessionStorage', {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => { storage.set(key, value); },
+            removeItem: (key: string) => { storage.delete(key); },
+        });
+        const puts: string[] = [];
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => { puts.push(JSON.parse(init.body).value); return { ok: true }; }));
+        const first = jobPanel();
+        first._ownerViewer = 7;
+        first.requestJSON = vi.fn(async () => ({ jobs: [] })) as any;
+        first.chooseOwnerScope('everyone');
+
+        // The next page was rendered before that choice was stored.
+        const next = jobPanel();
+        next._ownerViewer = 7;
+        next.ownerScope = 'me';
+        next.adoptPendingOwnerChoice();
+        expect(next.ownerScope).toBe('');
+        await vi.waitFor(() => expect(puts).toEqual(['everyone', 'everyone']));
+
+        // A page rendered with it clears the carried choice.
+        const settled = jobPanel();
+        settled._ownerViewer = 7;
+        settled.ownerScope = '';
+        settled.adoptPendingOwnerChoice();
+        expect(storage.size).toBe(0);
+        // Another account in the same tab ignores it.
+        storage.set('mahresources.jobsPanelScope.pending.7', 'everyone');
+        const other = jobPanel();
+        other._ownerViewer = 8;
+        other.ownerScope = 'me';
+        other.adoptPendingOwnerChoice();
+        expect(other.ownerScope).toBe('me');
     });
 
     test('asks first only for a command that stops work or cannot be undone', () => {
