@@ -285,7 +285,10 @@ func TestAMissingAdapterQuarantineReleasesCapacityOnlyAfterRuntimeLossIsProved(t
 // some stale *writes*; it proves nothing about the worker, and it does not give the
 // capacity back.
 func TestALiveReductionIsNotQueuedOverByAnExpiredClaim(t *testing.T) {
-	ctx := newWorkflowJobContext(t)
+	// No dispatch loop: the test claims the Job and reconciles the expired claim
+	// itself, and a running loop does both on its own tick, so it would take the
+	// queued Job before this claim or settle the expired one before reconcileOnce.
+	ctx := newJobHarnessContext(t, false)
 	reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusComputing)
 
 	input, err := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: reduction.Version})
