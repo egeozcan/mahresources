@@ -70,11 +70,21 @@ export function panelFinishedLimit(doc = globalThis.document) {
     return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_FINISHED_LIMIT) : DEFAULT_FINISHED_LIMIT;
 }
 
-// When the server began rendering this page, as epoch milliseconds, or null
+// An RFC 3339 time as epoch microseconds, or NaN. Date.parse keeps only
+// milliseconds, and two server times within one millisecond must still order.
+// Microseconds are as fine as a Number stays exact at.
+export function epochMicros(raw) {
+    const match = /^(.+T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(String(raw || ''));
+    if (!match) return NaN;
+    const fraction = (match[2] || '').padEnd(6, '0');
+    const millis = Date.parse(`${match[1]}.${fraction.slice(0, 3)}${match[3]}`);
+    return Number.isFinite(millis) ? millis * 1000 + Number(fraction.slice(3, 6)) : NaN;
+}
+
+// When the server began rendering this page, as epoch microseconds, or null
 // when the page does not say.
 export function panelRenderedAt(doc = globalThis.document) {
-    const raw = doc?.querySelector?.('meta[name="x-jobs-panel-rendered-at"]')?.getAttribute('content');
-    const parsed = raw ? Date.parse(raw) : NaN;
+    const parsed = epochMicros(doc?.querySelector?.('meta[name="x-jobs-panel-rendered-at"]')?.getAttribute('content'));
     return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -1053,7 +1063,7 @@ export function jobPanel() {
             if (this._resourceRefreshNotified.size > 256) {
                 this._resourceRefreshNotified.delete(this._resourceRefreshNotified.values().next().value);
             }
-            const finishedAt = Date.parse(job.finishedAt || '');
+            const finishedAt = epochMicros(job.finishedAt);
             if (this._renderedAt === null || !Number.isFinite(finishedAt) || finishedAt < this._renderedAt) return;
             if (globalThis.window?.dispatchEvent && globalThis.CustomEvent) {
                 globalThis.window.dispatchEvent(new CustomEvent('download-completed', { detail: { jobId: job.id } }));

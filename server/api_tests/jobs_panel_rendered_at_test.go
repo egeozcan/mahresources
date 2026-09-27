@@ -20,7 +20,7 @@ var jobsPanelRenderedAtMeta = regexp.MustCompile(`<meta name="x-jobs-panel-rende
 func TestPagesPublishWhenTheirRenderBegan(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	before := time.Now().Truncate(time.Millisecond)
+	before := time.Now().Truncate(time.Microsecond)
 	resp := tc.MakeRequest(http.MethodGet, "/resources", nil)
 	after := time.Now()
 	require.Equal(t, http.StatusOK, resp.Code)

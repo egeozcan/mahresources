@@ -172,7 +172,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// lists, so the drawer refreshes the lists for it, and for nothing older.
 		renderedAt := time.Now()
 		ctx := ctxFn(request)
-		ctx["jobsPanelRenderedAt"] = renderedAt.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+		ctx["jobsPanelRenderedAt"] = renderedAt.UTC().Format("2006-01-02T15:04:05.000000Z07:00")
 
 		// Always set — needed for [mrql] shortcodes even without plugins
 		ctx["_appContext"] = appContext
