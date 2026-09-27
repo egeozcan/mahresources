@@ -103,6 +103,27 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
   }, { timeout: 30_000 }).toBe('ready');
 }
 
+// Waits for every CSS transition running on the page to end. Selecting an item
+// collapses the bulk bar's "select all" row, which slides the bar's buttons up,
+// and a Reduction panel animates its height open: a click aimed at a control while
+// it moves can land on nothing (the element under the press is not the one under
+// the release), so the panel stays shut or a checkbox keeps its state.
+async function transitionsSettled(page: Page) {
+  await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations()
+      .filter(animation => animation instanceof CSSTransition)
+      .map(animation => animation.finished.catch(() => undefined)));
+  });
+}
+
+async function openReductionPanel(page: Page, trigger: Locator) {
+  await transitionsSettled(page);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await transitionsSettled(page);
+}
+
 // Clicks the checkbox of a Cluster the click will remove from the filtered list.
 // The card is addressed by its Cluster id rather than by position, and clicked
 // once: uncheck() verifies the state after its click, and finding its element
@@ -184,7 +205,7 @@ test.describe('Resource Reduction', () => {
 
     await page.goto(`/group?id=${root.ID}`);
     const panel = page.locator('.detail-panel').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
-    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
     await expect(panel.getByRole('checkbox', { name: 'Include resources from all subgroups' })).not.toBeChecked();
     await panel.getByTestId('bulk-reduction-name').fill(label);
     await panel.getByRole('checkbox', { name: 'Exclude external resources' }).check();
@@ -196,7 +217,7 @@ test.describe('Resource Reduction', () => {
     await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
 
     await page.goto(`/group?id=${root.ID}`);
-    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
     await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
     await panel.getByRole('radio', { name: 'Add to existing reduction' }).check();
     await expect(panel.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeVisible();
@@ -217,7 +238,7 @@ test.describe('Resource Reduction', () => {
     });
 
     await page.goto(`/group?id=${root.ID}`);
-    await page.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, page.getByRole('button', { name: 'Reduce', exact: true }));
     await page.getByTestId('bulk-reduction-submit').click();
     await expect(page.getByTestId('bulk-reduction-error')).toContainText('no owned Resources');
     await page.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
@@ -235,7 +256,7 @@ test.describe('Resource Reduction', () => {
     await page.getByRole('checkbox', { name: `Select ${keeper.Name}` }).check();
     await page.getByRole('checkbox', { name: `Select ${twin.Name}` }).check();
 
-    await page.getByTestId('bulk-reduction-action').click();
+    await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
     await page.getByTestId('bulk-reduction-name').fill(label);
     await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
     await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
@@ -256,7 +277,7 @@ test.describe('Resource Reduction', () => {
     const group = await apiClient.createGroup({ name: label, categoryId: category.ID });
     await page.goto(`/groups?Name=${encodeURIComponent(label)}`);
     await page.getByRole('checkbox', { name: `Select ${group.Name}`, exact: true }).check();
-    await page.getByTestId('bulk-reduction-action').click();
+    await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
     await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
     await page.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(/\/reduction\?id=\d+/);
