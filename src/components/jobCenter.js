@@ -1,5 +1,6 @@
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 import {
     applyProgressFrame,
@@ -873,7 +874,13 @@ export function jobCenter(options = {}) {
                 return;
             }
             this.jobs = result.jobs;
-            if (result.announcement) this._liveRegion?.announce(result.announcement);
+            if (result.announcement) this.sayLifecycle(eventJob(message), result.announcement);
+        },
+
+        // A Job's state change is said by the drawer when it follows the Job
+        // (utils/jobAnnouncements.js), and by this page only when it does not.
+        sayLifecycle(job, text) {
+            if (text && !drawerAnnouncesJob(job)) this._liveRegion?.announce(text);
         },
 
         updateJob(job) {
@@ -895,7 +902,7 @@ export function jobCenter(options = {}) {
             const stale = current => current && Number(job.version || 0) > 0 && Number(job.version || 0) < Number(current.version || 0);
             if (!stale(this.details[job.id])) this.details[job.id] = mergeFetchedProgress(mergeJobSnapshot(this.details[job.id], job), this.details[job.id]);
             if (this.detail?.id === job.id && !stale(this.detail)) this.detail = mergeFetchedProgress(mergeJobSnapshot(this.detail, job), this.detail);
-            if (announce && result.announcement) this._liveRegion?.announce(result.announcement);
+            if (announce && result.announcement) this.sayLifecycle(job, result.announcement);
         },
 
         progressText(job) { return progressText(job); },

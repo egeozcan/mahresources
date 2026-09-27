@@ -35,6 +35,7 @@ import {
     stateLabel,
     warningEvents,
 } from './jobCenter.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 
 const unfamiliarJob = {
     id: 'job-unknown-kind',
@@ -651,6 +652,32 @@ describe('Job Center event stream catch-up boundary', () => {
         sendJob('cancelled', 5, 13);
         expect(center._liveRegion.announce).toHaveBeenCalledTimes(2);
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
+    });
+
+    test('a Job the drawer announces is not announced again by its page, and one it does not follow is, with its reason', () => {
+        const center = jobCenter();
+        center.jobs = [{ id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 }];
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const failed = {
+            id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'failed', version: 3, ownerUserId: 8,
+            failure: { code: 'http-404', message: 'HTTP 404 Not Found' },
+        };
+
+        const stop = followJobAnnouncements(job => job.ownerUserId === 8);
+        center.applyStreamSnapshot(failed, null, true);
+        expect(center._liveRegion.announce).not.toHaveBeenCalled();
+        stop();
+
+        // An administrator's drawer on My jobs does not follow another account's
+        // Job, so the page that shows it says its change.
+        const stopOwn = followJobAnnouncements(job => job.ownerUserId === 7);
+        center.jobs = [{ ...failed, state: 'running', version: 3 }];
+        center.detail = null;
+        center.details = {};
+        center.applyStreamSnapshot({ ...failed, version: 4 }, null, true);
+        expect(center._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(center._liveRegion.announce).toHaveBeenCalledWith('sunrise.png failed: HTTP 404 Not Found.');
+        stopOwn();
     });
 
     test('a stream that reset its cursor reloads the page rather than repairing it', () => {
