@@ -107,12 +107,13 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 	dismissed := false
 	filter := Filter{States: []string{string(StateSucceeded), string(StateCancelled)}, Dismissed: &dismissed}
 	for _, tc := range []struct {
-		name   string
-		access Access
-		index  string
+		name       string
+		access     Access
+		index      string
+		phaseIndex string
 	}{
-		{"administrator", Access{UserID: 1, Administrator: true}, "idx_jobs_state_entered"},
-		{"owner", Access{UserID: 7}, "idx_jobs_visible_state_entered"},
+		{"administrator", Access{UserID: 1, Administrator: true}, "idx_jobs_state_entered", "idx_jobs_state_phase_entered"},
+		{"owner", Access{UserID: 7}, "idx_jobs_visible_state_entered", "idx_jobs_visible_phase_entered"},
 	} {
 		sql, vars := listRowsStatement(t, svc, deps, tc.access, filter, true, Cursor{Order: OrderStateEntered})
 		plan := explainSQLite(t, deps, sql, vars)
@@ -120,13 +121,13 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 			t.Errorf("the %s's state-entered page does not seek %s once per state:\n%s", tc.name, tc.index, plan)
 		}
 		// States beside the partial token are split too; the partial token
-		// keeps its own branch, which seeks its state on the same index and
-		// reads the phase off the rows.
+		// keeps its own branch, which seeks the state and the phase together.
 		mixed := Filter{States: []string{FilterStatePartial, string(StateFailed), string(StateInterrupted)}, Dismissed: &dismissed}
 		sql, vars = listRowsStatement(t, svc, deps, tc.access, mixed, true, Cursor{Order: OrderStateEntered})
 		plan = explainSQLite(t, deps, sql, vars)
-		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 3 || strings.Contains(plan, "SCAN jobs") {
-			t.Errorf("the %s's state-entered page beside partial does not seek %s once per state:\n%s", tc.name, tc.index, plan)
+		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 2 || !strings.Contains(plan, "USING INDEX "+tc.phaseIndex+" (") ||
+			!strings.Contains(plan, "phase=?") || strings.Contains(plan, "SCAN jobs") {
+			t.Errorf("the %s's state-entered page beside partial does not seek %s once per state and %s for partial:\n%s", tc.name, tc.index, tc.phaseIndex, plan)
 		}
 		// Beside succeeded the partial token is redundant, and the states are
 		// split as if it were not there.
