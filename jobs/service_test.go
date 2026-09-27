@@ -1446,7 +1446,7 @@ func TestJobPublishStaysWithinItsBatchWhenPredecessorsAreBroughtForward(t *testi
 		}
 		// Every later fact of the Job carries an earlier time than its first.
 		clock = time.Date(2031, 6, 7, 8, 9, 10+i, 0, time.UTC)
-		for fact := 0; fact < 4; fact++ {
+		for fact := 0; fact < 30; fact++ {
 			if err := svc.AppendEvent(deps, ref, EventInput{Type: "later-fact"}); err != nil {
 				t.Fatalf("append later: %v", err)
 			}
@@ -1454,14 +1454,32 @@ func TestJobPublishStaysWithinItsBatchWhenPredecessorsAreBroughtForward(t *testi
 		jobIDs = append(jobIDs, job.ID)
 	}
 
+	// Rows read from the event table while publishing, counted where GORM
+	// returns them: bringing predecessors forward must read no more than the
+	// batch can take.
+	rowsRead := int64(0)
+	const callbackName = "test:count-published-event-reads"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "job_events" {
+			rowsRead += tx.Statement.RowsAffected
+		}
+	}); err != nil {
+		t.Fatalf("count reads: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(callbackName) })
+
 	const limit = 4
-	for round := 0; round < 10; round++ {
+	for round := 0; round < 40; round++ {
+		rowsRead = 0
 		published, err := svc.PublishPendingEvents(deps, limit)
 		if err != nil {
 			t.Fatalf("publish round %d: %v", round, err)
 		}
 		if published > limit {
 			t.Fatalf("round %d published %d events past its limit of %d", round, published, limit)
+		}
+		if rowsRead > 3*limit {
+			t.Fatalf("round %d read %d event rows to publish at most %d", round, rowsRead, limit)
 		}
 		if published == 0 {
 			break

@@ -1556,10 +1556,12 @@ func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 // So the batch is chosen by time, and each fact is taken together with every
 // earlier unpublished fact of its own Job: a Job's earlier fact is never left for
 // a later batch while its successor is published. Those prefixes are taken in
-// the order their facts came up until the batch reaches its limit, so one
-// transaction never holds the allocator for more than its limit; a prefix that
-// does not fit is cut to its earliest facts, which is still a prefix, so a batch
-// always makes progress. Each fact is then delivered no earlier than the facts
+// the order their facts came up until the batch reaches its limit, and a prefix
+// that does not fit is cut to its earliest facts, which is still a prefix, so a
+// batch always makes progress. The limit bounds what is read as well as what is
+// published: a Job's earlier facts are read only when the window skipped them,
+// and never more of them than the batch has room for, because this runs while
+// the allocator is held. Each fact is then delivered no earlier than the facts
 // before it on its own Job: its time is raised to the latest time among them.
 func unsequencedEventsInDeliveryOrder(tx *gorm.DB, limit int) ([]models.JobEvent, error) {
 	var window []models.JobEvent
@@ -1573,45 +1575,59 @@ func unsequencedEventsInDeliveryOrder(tx *gorm.DB, limit int) ([]models.JobEvent
 		return nil, nil
 	}
 
-	latest := make(map[string]uint64, len(window))
-	highest := uint64(0)
+	// next is, per Job, the lowest sequence that may still be unpublished and
+	// untaken: every unpublished fact below it is already in the batch.
+	next := make(map[string]uint64, len(window))
+	jobIDs := make([]string, 0, len(window))
 	for _, event := range window {
-		latest[event.JobID] = max(latest[event.JobID], event.Sequence)
-		highest = max(highest, event.Sequence)
-	}
-	jobIDs := make([]string, 0, len(latest))
-	for jobID := range latest {
-		jobIDs = append(jobIDs, jobID)
-	}
-	var candidates []models.JobEvent
-	if err := tx.Where("delivery_sequence IS NULL AND job_id IN ? AND sequence <= ?", jobIDs, highest).
-		Find(&candidates).Error; err != nil {
-		return nil, fmt.Errorf("jobs: read earlier unsequenced events: %w", err)
-	}
-	pendingByJob := make(map[string][]models.JobEvent, len(latest))
-	for _, event := range candidates {
-		if event.Sequence <= latest[event.JobID] {
-			pendingByJob[event.JobID] = append(pendingByJob[event.JobID], event)
+		if _, seen := next[event.JobID]; !seen {
+			next[event.JobID] = 0
+			jobIDs = append(jobIDs, event.JobID)
 		}
 	}
-	for _, pending := range pendingByJob {
-		sort.Slice(pending, func(i, j int) bool { return pending[i].Sequence < pending[j].Sequence })
+	var lowest []struct {
+		JobID    string
+		Sequence uint64
+	}
+	if err := tx.Model(&models.JobEvent{}).
+		Select("job_id, MIN(sequence) AS sequence").
+		Where("delivery_sequence IS NULL AND job_id IN ?", jobIDs).
+		Group("job_id").
+		Find(&lowest).Error; err != nil {
+		return nil, fmt.Errorf("jobs: read earliest unsequenced events: %w", err)
+	}
+	for _, row := range lowest {
+		next[row.JobID] = row.Sequence
 	}
 
 	var batch []models.JobEvent
-	taken := make(map[string]int, len(latest))
 	for _, event := range window {
-		if len(batch) >= limit {
+		room := limit - len(batch)
+		if room <= 0 {
 			break
 		}
-		pending, from := pendingByJob[event.JobID], taken[event.JobID]
-		end := from
-		for end < len(pending) && pending[end].Sequence <= event.Sequence {
-			end++
+		from := next[event.JobID]
+		switch {
+		case event.Sequence < from:
+			// Taken already, as a predecessor of an earlier fact of its Job.
+			continue
+		case event.Sequence == from:
+			batch = append(batch, event)
+			next[event.JobID] = event.Sequence + 1
+			continue
 		}
-		end = min(end, from+limit-len(batch))
-		batch = append(batch, pending[from:end]...)
-		taken[event.JobID] = end
+		var prefix []models.JobEvent
+		if err := tx.Where("delivery_sequence IS NULL AND job_id = ? AND sequence >= ? AND sequence <= ?", event.JobID, from, event.Sequence).
+			Order("sequence").
+			Limit(room).
+			Find(&prefix).Error; err != nil {
+			return nil, fmt.Errorf("jobs: read earlier unsequenced events: %w", err)
+		}
+		if len(prefix) == 0 {
+			continue
+		}
+		batch = append(batch, prefix...)
+		next[event.JobID] = prefix[len(prefix)-1].Sequence + 1
 	}
 
 	sort.Slice(batch, func(i, j int) bool {
