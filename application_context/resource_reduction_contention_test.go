@@ -1,10 +1,13 @@
 package application_context
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -93,4 +96,52 @@ func TestAReductionOverrideIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Clusters, 1)
 	assert.Equal(t, models.ReductionClusterSkipped, plan.Clusters[0].State)
+}
+
+// TestAGroupSelectionIsReadFromOneSnapshot pins that a Reduction created from a group
+// subtree reads that subtree's Resources as of one moment. The owners are queried in
+// chunks, and outside any transaction each chunk would see whatever had committed
+// since the last: a Resource moved from a group in a later chunk into one in an
+// earlier chunk, after the earlier chunk was read, is in the subtree the whole time
+// and in neither answer.
+func TestAGroupSelectionIsReadFromOneSnapshot(t *testing.T) {
+	ctx := newReductionWALContext(t)
+	root := &models.Group{Name: "root"}
+	require.NoError(t, ctx.db.Create(root).Error)
+	children := make([]models.Group, idChunk+1)
+	for i := range children {
+		children[i] = models.Group{Name: fmt.Sprintf("child %d", i), OwnerId: &root.ID}
+	}
+	require.NoError(t, ctx.db.CreateInBatches(children, 200).Error)
+
+	owners, err := ctx.collectSubtreeGroupIDs(root.ID)
+	require.NoError(t, err)
+	require.Greater(t, len(owners), idChunk, "the subtree has to span two chunks")
+	earlier, later := owners[1], owners[len(owners)-1]
+	moved := &models.Resource{Name: "moved", OwnerId: &later}
+	require.NoError(t, ctx.db.Create(moved).Error)
+
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	var once sync.Once
+	const name = "test:move_between_chunks"
+	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "resources" {
+			return
+		}
+		once.Do(func() {
+			if _, err := sqlDB.Exec(`UPDATE resources SET owner_id = ? WHERE id = ?`, earlier, moved.ID); err != nil {
+				t.Errorf("competing move: %v", err)
+			}
+		})
+	}))
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
+
+	created, err := ctx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		OwnerId: root.ID, IncludeDescendants: true,
+	}, nil, false)
+	require.NoError(t, err)
+	extent, err := DecodeReductionExtent(created.Extent)
+	require.NoError(t, err)
+	assert.Equal(t, []uint{moved.ID}, extent.ResourceIDs)
 }

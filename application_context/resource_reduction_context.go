@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,28 +67,9 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 	resourceIDs := dedupeUints(creator.ResourceIds)
 	groupIDs := dedupeUints(creator.GroupIds)
 	if creator.OwnerId != 0 {
-		// Check the root before traversing: subtree collection uses raw SQL,
-		// while the Resource query below retains the caller's scope filter.
-		if !ctx.GroupVisible(creator.OwnerId) {
-			return nil, errors.New("no such Group")
-		}
-		owners := []uint{creator.OwnerId}
-		if creator.IncludeDescendants {
-			var err error
-			owners, err = ctx.collectSubtreeGroupIDs(creator.OwnerId)
-			if err != nil {
-				return nil, err
-			}
-		}
-		var owned []uint
-		for _, chunk := range chunkUints(owners, idChunk) {
-			var ids []uint
-			if err := ctx.db.Model(&models.Resource{}).
-				Where("resources.owner_id IN ?", chunk).
-				Pluck("resources.id", &ids).Error; err != nil {
-				return nil, fmt.Errorf("selecting owned Resources: %w", err)
-			}
-			owned = append(owned, ids...)
+		owned, err := ctx.resourcesOwnedWithin(creator.OwnerId, creator.IncludeDescendants)
+		if err != nil {
+			return nil, err
 		}
 		if len(owned) == 0 {
 			return nil, errors.New("no owned Resources found in the selected group scope")
@@ -145,6 +127,60 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		return nil, err
 	}
 	return row, nil
+}
+
+// resourcesOwnedWithin lists the Resources owned by a group, or by it and every
+// group below it.
+//
+// The owners are queried in chunks, so the reads share one snapshot: otherwise each
+// chunk sees whatever committed since the last, and a Resource moved from a group
+// in a later chunk into one in an earlier chunk, after that chunk was read, is in
+// the subtree throughout and in neither answer. The snapshot's transaction only
+// reads, so on SQLite it never has a write to promote.
+func (ctx *MahresourcesContext) resourcesOwnedWithin(ownerID uint, includeDescendants bool) ([]uint, error) {
+	var owned []uint
+	err := ctx.withReadSnapshot(func(snapCtx *MahresourcesContext) error {
+		// Check the root before traversing: subtree collection uses raw SQL,
+		// while the Resource query below retains the caller's scope filter.
+		if !snapCtx.GroupVisible(ownerID) {
+			return errors.New("no such Group")
+		}
+		owners := []uint{ownerID}
+		if includeDescendants {
+			var err error
+			owners, err = snapCtx.collectSubtreeGroupIDs(ownerID)
+			if err != nil {
+				return err
+			}
+		}
+		for _, chunk := range chunkUints(owners, idChunk) {
+			var ids []uint
+			if err := snapCtx.db.Model(&models.Resource{}).
+				Where("resources.owner_id IN ?", chunk).
+				Pluck("resources.id", &ids).Error; err != nil {
+				return fmt.Errorf("selecting owned Resources: %w", err)
+			}
+			owned = append(owned, ids...)
+		}
+		return nil
+	})
+	return owned, err
+}
+
+// withReadSnapshot runs reads that must agree with one another against one
+// snapshot, in a transaction that never writes. SQLite's deferred transaction gives
+// that on its own (a WAL reader keeps its snapshot until it ends); Postgres needs
+// REPEATABLE READ, because its default gives every statement a fresh snapshot.
+func (ctx *MahresourcesContext) withReadSnapshot(read func(snapCtx *MahresourcesContext) error) error {
+	var options []*sql.TxOptions
+	if ctx.db.Dialector.Name() == "postgres" {
+		options = append(options, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	}
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		snapCtx := *ctx
+		snapCtx.db = tx
+		return read(&snapCtx)
+	}, options...)
 }
 
 // UpdateResourceReductionSettings changes a Reduction's own settings. Guarded by
