@@ -731,6 +731,14 @@ func main() {
 	} else if reconciled > 0 {
 		log.Printf("[jobs] reconciled %d deferred download row(s) with the Jobs they name", reconciled)
 	}
+	// Plugin-action summaries an earlier release wrote with the server's runtime
+	// identity in them, which every owner is shown and the search box matches.
+	// A failure leaves them as they were and is retried at the next start.
+	if scrubbed, err := context.ScrubPluginActionRuntimeFromSummaries(); err != nil {
+		log.Printf("[jobs] WARNING: plugin-action summaries could not be scrubbed of the runtime identity: %v", err)
+	} else if scrubbed > 0 {
+		log.Printf("[jobs] removed the runtime identity from %d plugin-action summary(ies)", scrubbed)
+	}
 
 	// Recovery must settle every durable command/import writer before a plugin
 	// VM can load and observe mah.commands or mah.fs. The context-owned gate keeps

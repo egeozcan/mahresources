@@ -906,13 +906,14 @@ func acceptClosureJobForTest(t *testing.T, ctx *MahresourcesContext, runtime str
 		t.Fatalf("build input: %v", err)
 	}
 	accepted, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
-		Kind:        JobKindPluginAction,
-		KindVersion: jobPluginActionKindVersion,
-		State:       jobs.StateQueued,
-		Origin:      "plugin",
-		Title:       "child work",
-		Replay:      jobs.ReplayInput{NonReplayable: true},
-		Summary:     pluginActionSummaryOf(input),
+		Kind:          JobKindPluginAction,
+		KindVersion:   jobPluginActionKindVersion,
+		State:         jobs.StateQueued,
+		Origin:        "plugin",
+		Title:         "child work",
+		Replay:        jobs.ReplayInput{NonReplayable: true},
+		Summary:       pluginActionSummaryOf(input),
+		OriginRuntime: runtime,
 	})
 	if err != nil {
 		t.Fatalf("accept the closure job: %v", err)

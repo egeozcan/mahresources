@@ -635,7 +635,12 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 		ownedByItsProcess = !successor
 	}
 	if ownedByItsProcess {
-		identity, ok := plugin_system.ParseRuntimeIdentity(summary.Runtime)
+		recorded, err := ctx.JobService().OriginRuntime(ctx.jobDeps(), job.ID)
+		if err != nil {
+			log.Printf("warning: could not read the origin runtime of plugin job %s: %v", job.ID, err)
+			return false
+		}
+		identity, ok := plugin_system.ParseRuntimeIdentity(recorded)
 		if ok && identity.Liveness() == plugin_system.RuntimeGone {
 			if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: job.ID}, "not-started",
 				"the process that started this job stopped before it ran"); err != nil {

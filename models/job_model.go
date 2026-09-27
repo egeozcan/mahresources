@@ -95,6 +95,13 @@ type Job struct {
 	// with. Empty means no claim owns the Job.
 	ExecutionToken string `gorm:"size:36" json:"-"`
 
+	// OriginRuntime names the process whose memory a non-restorable Job's work
+	// lives in (host, boot session and pid), so reconciliation can prove that
+	// process gone. It is host-internal like ExecutionToken: it belongs to no
+	// summary, no public projection and no search. Empty for every Kind that
+	// does not record one.
+	OriginRuntime string `gorm:"size:120;not null;default:''" json:"-"`
+
 	// ControlIntent is durable control intent that has been requested but not
 	// yet reached its outcome state: "" or "cancel" or "pause".
 	ControlIntent      string     `gorm:"size:20" json:"controlIntent,omitempty"`

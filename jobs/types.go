@@ -1028,6 +1028,11 @@ type Acceptance struct {
 	Replay             ReplayInput
 	ScheduledFor       *time.Time
 	LegacyRefs         []LegacyRef
+	// OriginRuntime names the process whose memory the work lives in, for a Kind
+	// whose work cannot be restored by another process. It is stored on the Job
+	// for reconciliation and never returned by a read a viewer makes: a host
+	// name, a boot session and a pid are the deployment's, not the owner's.
+	OriginRuntime string
 	// Parents names the Jobs this Job is a parent-child child of. They are linked in
 	// the same transaction as the acceptance, and a parent that is gone rolls the
 	// acceptance back rather than committing a child that names nothing.

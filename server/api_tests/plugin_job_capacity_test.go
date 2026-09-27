@@ -322,7 +322,8 @@ func holdGlobalSlot(t *testing.T, tc *TestContext) func() {
 	accepted, err := tc.AppCtx.JobService().Accept(deps, jobs.Acceptance{
 		Kind: application_context.JobKindPluginAction, KindVersion: 1, State: jobs.StateQueued,
 		Origin: "api", Title: "holding the budget", Replay: jobs.ReplayInput{NonReplayable: true},
-		Summary: json.RawMessage(`{"subtype":"closure-start-job","plugin":"busy-plugin","runtime":"elsewhere/boot/1"}`),
+		Summary:       json.RawMessage(`{"subtype":"closure-start-job","plugin":"busy-plugin"}`),
+		OriginRuntime: "elsewhere/boot/1",
 	})
 	if err != nil {
 		t.Fatalf("accept the holding job: %v", err)
