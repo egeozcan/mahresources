@@ -116,7 +116,8 @@ func createEphemeralDatabase() (*ephemeralDatabase, error) {
 
 // claimEphemeralDirectory makes dir the shared ephemeral directory, or confirms it
 // already is: a real directory (not a link), private to this user, holding the
-// marker. It answers false for anything else, which the caller must not touch.
+// marker, or still empty. It answers false for anything else, which the caller
+// must not touch.
 func claimEphemeralDirectory(dir string) bool {
 	created := os.Mkdir(dir, 0o700) == nil
 	info, err := os.Lstat(dir)
@@ -124,11 +125,15 @@ func claimEphemeralDirectory(dir string) bool {
 		return false
 	}
 	marker := filepath.Join(dir, ephemeralDirectoryMarker)
-	if created {
-		return os.WriteFile(marker, []byte(ephemeralDirectoryMarkerText), 0o600) == nil
+	if markerInfo, err := os.Lstat(marker); err == nil {
+		return markerInfo.Mode().IsRegular()
 	}
-	markerInfo, err := os.Lstat(marker)
-	return err == nil && markerInfo.Mode().IsRegular()
+	// Made here, or left empty by a start that stopped before writing the marker:
+	// either way nothing in it can be anyone else's.
+	if entries, err := os.ReadDir(dir); !created && (err != nil || len(entries) > 0) {
+		return false
+	}
+	return os.WriteFile(marker, []byte(ephemeralDirectoryMarkerText), 0o600) == nil
 }
 
 // ephemeralDatabaseDSN is the SQLite URI for the database at path, with the path

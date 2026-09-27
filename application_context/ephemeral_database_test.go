@@ -226,6 +226,22 @@ func TestOpeningAnEphemeralDatabaseSweepsTheDatabasesOfExitedProcesses(t *testin
 	}
 }
 
+// An empty private directory of that name is one a start left before writing the
+// marker; it is claimed.
+func TestAnEmptyPrivateEphemeralDirectoryWithoutTheMarkerIsClaimed(t *testing.T) {
+	dir := filepath.Join(isolateTempDir(t), ephemeralDirectoryName())
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := openEphemeralContext(t)
+	if filepath.Dir(ctx.ephemeralDB.path) != dir {
+		t.Fatalf("database at %s, want it in %s", ctx.ephemeralDB.path, dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ephemeralDirectoryMarker)); err != nil {
+		t.Fatalf("the claimed directory carries no marker: %v", err)
+	}
+}
+
 // A directory of that name the process did not make its own (no marker, or open
 // to others) is neither written to nor swept.
 func TestAnEphemeralDirectoryThatIsNotOursIsNeitherUsedNorSwept(t *testing.T) {
