@@ -52,7 +52,7 @@ func NewReaderWithManifestLimit(src io.Reader, maxBytes int64) (*Reader, error) 
 }
 
 func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
-	pr := &peekedReader{r: src}
+	pr := &peekedReader{r: sourceReader{src}}
 	header, err := pr.Peek(2)
 	if err != nil && !isFormatFailure(err) {
 		// A read that failed says nothing about what the file holds. Carrying on
@@ -148,6 +148,10 @@ func (e *FormatError) Unwrap() error { return e.Err }
 // stream that ends early, a header or checksum tar or gzip refuses, a compressed
 // stream that does not decode, or JSON that does not parse.
 func isFormatFailure(err error) bool {
+	var source *sourceError
+	if errors.As(err, &source) {
+		return false
+	}
 	var corrupt flate.CorruptInputError
 	var syntax *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
@@ -372,6 +376,27 @@ func isSupportedVersion(v int) bool {
 	}
 	return false
 }
+
+// sourceReader marks every failure the archive's own source returns, other than
+// its end, as a sourceError, so that what the source says about itself is never
+// read as what the archive's bytes say: a source may fail with
+// io.ErrUnexpectedEOF, which from the tar or gzip reader means a truncated
+// archive.
+type sourceReader struct{ r io.Reader }
+
+func (s sourceReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		err = &sourceError{err: err}
+	}
+	return n, err
+}
+
+// sourceError is a failure of the source an archive is read from.
+type sourceError struct{ err error }
+
+func (e *sourceError) Error() string { return e.err.Error() }
+func (e *sourceError) Unwrap() error { return e.err }
 
 // peekedReader wraps an io.Reader with a 2-byte peek so we can detect gzip
 // magic without consuming the bytes from the source.

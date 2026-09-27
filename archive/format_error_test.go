@@ -77,13 +77,19 @@ func TestAFormatErrorIsTheArchivesOwnAndAReadFailureIsNot(t *testing.T) {
 	}
 
 	for name, at := range map[string]int{"before the first entry": 0, "inside the first bytes": 1, "in the manifest": 600, "mid-walk": len(whole) - 600} {
-		for kind, src := range map[string]io.Reader{
-			"and keeps failing":  &failingReader{data: whole, n: at, err: io.ErrClosedPipe},
-			"once and then ends": &failingOnceReader{failingReader: failingReader{data: whole, n: at, err: io.ErrClosedPipe}},
+		for kind, src := range map[string]struct {
+			r     io.Reader
+			cause error
+		}{
+			"and keeps failing":  {&failingReader{data: whole, n: at, err: io.ErrClosedPipe}, io.ErrClosedPipe},
+			"once and then ends": {&failingOnceReader{failingReader: failingReader{data: whole, n: at, err: io.ErrClosedPipe}}, io.ErrClosedPipe},
+			// A source may name its own failure with the error a truncated archive
+			// produces; it is still the read's, not the archive's.
+			"with an unexpected EOF of its own": {&failingReader{data: whole, n: at, err: io.ErrUnexpectedEOF}, io.ErrUnexpectedEOF},
 		} {
-			err := readWhole(src)
+			err := readWhole(src.r)
 			var format *FormatError
-			if errors.As(err, &format) || !errors.Is(err, io.ErrClosedPipe) {
+			if errors.As(err, &format) || !errors.Is(err, src.cause) {
 				t.Errorf("a read failing %s %s answered %v, want the read's own cause and no FormatError", name, kind, err)
 			}
 		}
@@ -135,5 +141,35 @@ func TestAVisitorsOwnFailureIsNotAnArchiveVerdict(t *testing.T) {
 	var format *FormatError
 	if err := walk(whole[:cut+3], blobReadingVisitor{}); !errors.As(err, &format) {
 		t.Errorf("a blob the archive cut short answered %v, want a FormatError", err)
+	}
+}
+
+// The same holds through the gzip layer of a compressed archive.
+func TestAGzipArchiveReadFailureIsNotAnArchiveVerdict(t *testing.T) {
+	var buf bytes.Buffer
+	w, err := NewWriter(&buf, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteManifest(&Manifest{SchemaVersion: SchemaVersion, CreatedBy: "mahresources"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteBlob("abc", bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	whole := buf.Bytes()
+	for name, at := range map[string]int{"in the gzip header": 5, "mid-stream": len(whole) / 2} {
+		err := readWhole(&failingReader{data: whole, n: at, err: io.ErrUnexpectedEOF})
+		var format *FormatError
+		if errors.As(err, &format) || !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Errorf("a compressed archive whose read failed %s answered %v, want the read's own cause and no FormatError", name, err)
+		}
+	}
+	var format *FormatError
+	if err := readWhole(bytes.NewReader(whole[:len(whole)/2])); !errors.As(err, &format) {
+		t.Errorf("a compressed archive cut in half answered %v, want a FormatError", err)
 	}
 }
