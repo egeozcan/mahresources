@@ -693,81 +693,81 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 }
 
 // ReconcileDeferredDownloadRows brings rows earlier releases left behind into
-// line with a Job that was cancelled, or otherwise ended, before anything ran it:
-// a row still pending behind it, and one the sweep marked submitted naming it.
-// Both are recorded as the Job ended, with the submit attempt the sweep counted
-// taken back. A pending row whose Job retention has deleted is closed as well,
-// with its outcome unknown (deferredRowEnd). A row whose Job started, or has not
-// ended, is left alone. Startup runs it once; it pages by row id, so a large table
-// costs one bounded query per page.
+// line with their own Job, the one they were accepted with (deferredRowJob). It is
+// read through the source mapping, never through the job_id a row records: an
+// earlier release's sweep read the row's legacy handle, which a Retry had moved to
+// its successor, an ordinary download the row does not track.
+//
+// A pending or submitted row whose own Job ended before anything ran it is
+// recorded as that Job ended, with the submit attempt a sweep counted taken back.
+// A pending row whose own Job is gone, and a submitted row naming some other Job
+// while its own is gone, are closed with their outcome unknown (deferredRowEnd).
+// A row whose own Job started or has not ended is left alone, and so is a
+// submitted row naming its own Job after retention deleted it: it already records
+// that Job. Startup runs it once; it pages by row id, so a large table costs one
+// bounded query per page.
 func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 	if ctx == nil || ctx.db == nil || ctx.JobService() == nil {
 		return 0, nil
 	}
 	ended := []string{string(jobs.StateCancelled), string(jobs.StateFailed), string(jobs.StateInterrupted), string(jobs.StateSucceeded)}
+	open := []string{models.ScheduledDownloadStatusPending, models.ScheduledDownloadStatusSubmitted}
 	reconciled := 0
-	for _, source := range []struct {
-		status string
-		join   string
-		args   []any
-	}{
-		// A submitted row names the Job the sweep queued.
-		{models.ScheduledDownloadStatusSubmitted, "JOIN jobs ON jobs.id = scheduled_downloads.job_id", nil},
-		// A pending row is the Job it was accepted with (deferredDownloadJobIDOn).
-		// The predicate below is deferredRowJob.ended in SQL: a Job that ended
-		// before it started, or one that is gone (mappedJobGone).
-		{models.ScheduledDownloadStatusPending,
-			"JOIN job_source_mappings AS mapping ON mapping.source_kind = ? AND mapping.source_id = CAST(scheduled_downloads.id AS TEXT) AND mapping.job_id <> '' LEFT JOIN jobs ON jobs.id = mapping.job_id",
-			[]any{jobMigrationScheduledDownload}},
-	} {
-		var after uint
-		for {
-			var candidates []struct {
-				ID    uint
-				JobID string
-				State string
-			}
-			if err := ctx.db.Table("scheduled_downloads").
-				Select("scheduled_downloads.id AS id, COALESCE(jobs.id, '') AS job_id, COALESCE(jobs.state, '') AS state").
-				Joins(source.join, source.args...).
-				Where("scheduled_downloads.status = ? AND scheduled_downloads.id > ?", source.status, after).
-				Where("jobs.id IS NULL OR (jobs.started_at IS NULL AND jobs.state IN ?)", ended).
-				Order("scheduled_downloads.id").Limit(jobMigrationReadinessBatchSize).
-				Scan(&candidates).Error; err != nil {
-				return reconciled, err
-			}
-			for _, candidate := range candidates {
-				status, lastError := deferredRowEnd(jobs.State(candidate.State))
-				updates := map[string]any{
-					"claim_token": "",
-					"claimed_at":  nil,
-					"status":      status,
-					"last_error":  lastError,
-					"updated_at":  time.Now(),
-				}
-				// The Job's end is final, so only the row is re-checked: still in the
-				// state it was read in, and for a pending row not held by a sweep,
-				// which decides it itself.
-				query := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ? AND status = ?", candidate.ID, source.status)
-				if source.status == models.ScheduledDownloadStatusSubmitted {
-					updates["attempts"] = gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END")
-					query = query.Where("job_id = ?", candidate.JobID)
-				} else {
-					query = query.Where(scheduledDownloadClaimFree(ctx.db), time.Now().Add(-ScheduledDownloadClaimTTL))
-				}
-				res := query.Updates(updates)
-				if res.Error != nil {
-					return reconciled, res.Error
-				}
-				reconciled += int(res.RowsAffected)
-			}
-			if len(candidates) < jobMigrationReadinessBatchSize {
-				break
-			}
-			after = candidates[len(candidates)-1].ID
+	var after uint
+	for {
+		var candidates []struct {
+			ID       uint
+			Status   string
+			RowJobID string
+			State    string
 		}
+		if err := ctx.db.Table("scheduled_downloads").
+			Select("scheduled_downloads.id AS id, scheduled_downloads.status AS status, "+
+				"COALESCE(scheduled_downloads.job_id, '') AS row_job_id, COALESCE(jobs.state, '') AS state").
+			Joins("JOIN job_source_mappings AS mapping ON mapping.source_kind = ? AND mapping.source_id = CAST(scheduled_downloads.id AS TEXT) AND mapping.job_id <> '' "+
+				"LEFT JOIN jobs ON jobs.id = mapping.job_id", jobMigrationScheduledDownload).
+			Where("scheduled_downloads.status IN ? AND scheduled_downloads.id > ?", open, after).
+			// deferredRowJob.ended in SQL: the own Job ended before it started, or is
+			// gone (mappedJobGone), in which case a submitted row naming it is kept.
+			Where("((jobs.id IS NOT NULL AND jobs.started_at IS NULL AND jobs.state IN ?) OR "+
+				"(jobs.id IS NULL AND (scheduled_downloads.status = ? OR COALESCE(scheduled_downloads.job_id, '') <> mapping.job_id)))",
+				ended, models.ScheduledDownloadStatusPending).
+			Order("scheduled_downloads.id").Limit(jobMigrationReadinessBatchSize).
+			Scan(&candidates).Error; err != nil {
+			return reconciled, err
+		}
+		for _, candidate := range candidates {
+			status, lastError := deferredRowEnd(jobs.State(candidate.State))
+			updates := map[string]any{
+				"claim_token": "",
+				"claimed_at":  nil,
+				"status":      status,
+				"last_error":  lastError,
+				"updated_at":  time.Now(),
+			}
+			// The Job's end is final, so only the row is re-checked: still in the
+			// state it was read in, and for a pending row not held by a sweep,
+			// which decides it itself.
+			query := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ? AND status = ?", candidate.ID, candidate.Status)
+			if candidate.Status == models.ScheduledDownloadStatusSubmitted {
+				if candidate.State != "" {
+					updates["attempts"] = gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END")
+				}
+				query = query.Where("COALESCE(job_id, '') = ?", candidate.RowJobID)
+			} else {
+				query = query.Where(scheduledDownloadClaimFree(ctx.db), time.Now().Add(-ScheduledDownloadClaimTTL))
+			}
+			res := query.Updates(updates)
+			if res.Error != nil {
+				return reconciled, res.Error
+			}
+			reconciled += int(res.RowsAffected)
+		}
+		if len(candidates) < jobMigrationReadinessBatchSize {
+			return reconciled, nil
+		}
+		after = candidates[len(candidates)-1].ID
 	}
-	return reconciled, nil
 }
 
 // PluginScheduledDownloadsFor lists one plugin's scheduled downloads for the

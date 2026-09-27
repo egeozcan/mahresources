@@ -456,6 +456,14 @@ func (ctx *MahresourcesContext) rearmRestoredSources(now time.Time) (int, error)
 					if !exists || matches {
 						return nil
 					}
+					// A restored copy of a source whose Job is gone has nothing to be
+					// proved against, and its input expired: the scrub pass clears it.
+					if expired, err := expireMappingOfGoneJob(tx, &mapping, now); err != nil {
+						return errors.New("job migration restored source could not be expired")
+					} else if expired {
+						rearmed = true
+						return nil
+					}
 					fullHash, valid, err := verifyRestoredMigrationSource(ctx, tx, kind, mapping)
 					if err != nil {
 						mapping.Status, mapping.BlockerCode, mapping.UpdatedAt = models.JobSourceMappingQuarantined, "restored-source-not-proven", now
@@ -571,6 +579,27 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 // comes to delete a nonterminal Job makes all of their answers wrong.
 func mappedJobGone(err error) bool {
 	return errors.Is(err, jobs.ErrNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+// expireMappingOfGoneJob records, on a mapping whose Job is gone (mappedJobGone),
+// what purging the Job's expired replay input records: the mapping becomes purged
+// as expired, with its scrub marker cleared, so the scrub pass clears whatever
+// replay copy the source row still holds. That purge usually reaches a mapping
+// before retention deletes its Job, but nothing guarantees it, and the envelope
+// goes with the Job. It reports false, touching nothing, while the Job exists.
+func expireMappingOfGoneJob(db *gorm.DB, mapping *models.JobSourceMapping, now time.Time) (bool, error) {
+	if mapping.JobID == "" {
+		return false, nil
+	}
+	var job models.Job
+	err := db.Select("id").Where("id = ?", mapping.JobID).First(&job).Error
+	if err == nil || !mappedJobGone(err) {
+		return false, err
+	}
+	at := now
+	mapping.Status, mapping.PurgedAt, mapping.PurgeReason = models.JobSourceMappingPurged, &at, models.JobReplayPurgeExpired
+	mapping.ScrubbedAt, mapping.PostScrubHash, mapping.BlockerCode, mapping.UpdatedAt = nil, "", "", now
+	return true, db.Save(mapping).Error
 }
 
 // migrationJobReplayReady reports whether a mapped source's Job can still run from

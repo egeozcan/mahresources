@@ -329,7 +329,9 @@ projection, is returned to scrubbed at the next start.
 A source row can outlive its Job: Job history retention deletes an ended Job and
 keeps the source row and its mapping. Readiness does not ask for the replay
 input of a Job that no longer exists, because retention deletes only Jobs that
-have ended.
+have ended. Before the sources are retired, the migration treats such a source
+as one whose replay input expired: it is not quarantined, and its plaintext is
+scrubbed like any other expired source.
 
 ## Plugin Command Runtime Ownership
 

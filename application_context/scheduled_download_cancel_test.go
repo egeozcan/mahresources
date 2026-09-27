@@ -669,6 +669,97 @@ func TestStartupReconcilesAnEarlierReleasesPendingRowAcrossARetry(t *testing.T) 
 	requireCleanBoot(t, ctx)
 }
 
+// An earlier release's sweep resolved a row's Job through its legacy handle, so a
+// row left pending behind a cancelled Job and then retried was marked submitted
+// naming the Retry's successor, an ordinary download the row does not track.
+// Startup records the end of the row's own Job, whatever the successor does.
+func TestStartupReconcilesAnEarlierReleasesSubmittedRowNamingARetry(t *testing.T) {
+	for _, retired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sources retired %v", retired), func(t *testing.T) {
+			ctx := newJobHarnessContext(t, false)
+			key := sharedReplayKey(t)
+			holdJobReplayKey(t, ctx, key)
+			enableDownloadTestPlugin(t, ctx)
+			actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+			if err != nil {
+				t.Fatalf("create the acting user: %v", err)
+			}
+			if retired {
+				if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 50, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+					t.Fatalf("retire the job sources = %+v, %v", result, err)
+				}
+			}
+			row, _, successor := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-submitted")
+			if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+				Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": successor.ID, "attempts": 1}).Error; err != nil {
+				t.Fatalf("fire the row as that release's sweep did: %v", err)
+			}
+
+			if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
+				t.Fatalf("reconcile = %d, %v; want the row recorded", reconciled, err)
+			}
+			if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.Attempts != 0 {
+				t.Fatalf("the row is %s after %d attempts, want cancelled as its own Job was, never submitted", got.Status, got.Attempts)
+			}
+			if job, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, successor.ID); err != nil || job.State != successor.State {
+				t.Fatalf("the Retry's successor is %s (%v), want it left %s", job.State, err, successor.State)
+			}
+			if retired {
+				ctx = restartJobProcess(t, ctx, key)
+				requireCleanBoot(t, ctx)
+			}
+		})
+	}
+}
+
+// The same earlier-release row after retention deleted both its own cancelled Job
+// and the Retry's: nothing says any more how its own deferral ended, and the row
+// names a download it does not track, so it is closed with its outcome unknown. A
+// submitted row naming its own deleted Job already records that Job and is kept.
+func TestStartupClosesASubmittedRowNamingARetryOnceItsOwnJobIsGone(t *testing.T) {
+	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
+	row, own, successor := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-gone")
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": successor.ID, "attempts": 1}).Error; err != nil {
+		t.Fatalf("fire the row as that release's sweep did: %v", err)
+	}
+	kept, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/kept.bin"}, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create the row that fires normally: %v", err)
+	}
+	fireDueDeferredDownloads(t, ctx, time.Now())
+	keptJob := deferredDownloadJob(t, ctx, kept.ID)
+	for _, job := range []jobs.Snapshot{successor, keptJob} {
+		if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+		}); err != nil {
+			t.Fatalf("end Job %s: %v", job.ID, err)
+		}
+	}
+	gone := []string{own.ID, successor.ID, keptJob.ID}
+	if err := ctx.db.Model(&models.Job{}).Where("id IN ?", gone).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != len(gone) {
+		t.Fatalf("retention = %+v, %v; want the %d ended Jobs deleted", sweep, err, len(gone))
+	}
+	if got := scheduledDownloadRow(t, ctx, kept.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("setup: the normally fired row is %s, want submitted", got.Status)
+	}
+
+	if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile = %d, %v; want only the row naming the Retry", reconciled, err)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusFailed || !strings.Contains(got.LastError, "not known") {
+		t.Fatalf("the row naming the Retry is %s (%q), want failed with its outcome unknown", got.Status, got.LastError)
+	}
+	if got := scheduledDownloadRow(t, ctx, kept.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("the row naming its own deleted Job is %s, want it kept submitted", got.Status)
+	}
+}
+
 // A row an earlier release left pending behind a cancelled Job, then retried,
 // comes due without startup having reconciled it: the sweep records the end of
 // its own Job, not the Retry's download.

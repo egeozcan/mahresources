@@ -312,6 +312,45 @@ func dropScheduledDownloadBarriers(t *testing.T, ctx *MahresourcesContext) {
 	}
 }
 
+// A restored copy of a retired row whose Job retention deleted has nothing to be
+// proved against, and its input expired with the Job: the re-arm records the
+// expiry rather than quarantining the source for an operator, and the next start
+// scrubs the copy.
+func TestARestoredRowWhoseJobIsGoneIsExpiredRatherThanQuarantined(t *testing.T) {
+	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+		t.Fatalf("retention = %+v, %v; want the ended Job deleted", sweep, err)
+	}
+	dropScheduledDownloadBarriers(t, ctx)
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"url": row.URL, "payload": mustScheduledPayload(t, &query_models.ResourceFromRemoteCreator{URL: row.URL})}).Error; err != nil {
+		t.Fatalf("restore the row's plaintext: %v", err)
+	}
+	reinstallScheduledDownloadBarriers(t, ctx)
+
+	if _, err := ctx.rearmRestoredSources(time.Now()); err != nil {
+		t.Fatalf("re-arm: %v", err)
+	}
+	if mapping := scheduledDownloadMapping(t, ctx, row.ID); mapping.Status != models.JobSourceMappingPurged || mapping.PurgeReason != models.JobReplayPurgeExpired {
+		t.Fatalf("the restored source is %s (%s), want purged as expired", mapping.Status, mapping.BlockerCode)
+	}
+	ctx = restartJobProcess(t, ctx, key)
+	requireCleanBoot(t, ctx)
+	if got := scheduledDownloadRow(t, ctx, row.ID); len(got.Payload) != 0 {
+		t.Fatalf("the restored payload survived the next start")
+	}
+}
+
 // TestAFiredDeferredRowMayDifferFromItsMarkerOnlyInAJobIDItsFireWrote pins what
 // the retirement check accepts beyond an exact match: a JobID where the marker
 // recorded none, the one field a fire writes after the scrub. A marker taken

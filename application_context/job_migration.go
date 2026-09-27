@@ -1470,6 +1470,11 @@ func (ctx *MahresourcesContext) verifyDownloadHistoryBatch(cursor string, limit 
 				continue
 			}
 		}
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("download history mapping could not be expired")
+		} else if expired {
+			continue
+		}
 		if mapping.Status != models.JobSourceMappingPurged {
 			if err := ctx.verifyDownloadReplay(ctx.db, mapping.JobID, row); err != nil {
 				return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "canonical replay did not verify")
@@ -1546,6 +1551,11 @@ func (ctx *MahresourcesContext) verifyScheduledDownloadBatch(cursor string, limi
 			if mapping.Status == models.JobSourceMappingPurged || mapping.Status == models.JobSourceMappingScrubbed {
 				continue
 			}
+		}
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("scheduled download mapping could not be expired")
+		} else if expired {
+			continue
 		}
 		if err := ctx.verifyScheduledDownloadReplay(ctx.db, mapping.JobID, row); err != nil {
 			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "canonical replay did not verify")

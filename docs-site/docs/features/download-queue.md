@@ -110,8 +110,8 @@ which the Job's own Cancel stops instead.
 Retrying a deferred download that never started downloads it now: the control
 reads **Download now** and asks for confirmation, because the time it was
 scheduled for is not kept. The new Job is an ordinary download. The plugin's
-row stays `cancelled` and does not follow it. A deferred download that ran
-offers an ordinary **Retry**.
+row keeps the status it ended with and does not follow it. A deferred download
+that ran offers an ordinary **Retry**.
 
 ## Streaming playlists (HLS)
 
