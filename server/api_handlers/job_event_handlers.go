@@ -242,6 +242,14 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		defer heartbeat.Stop()
 		caughtUp := false
 		for {
+			// The allocator's head, read before the events: nothing at or below
+			// it is published later, so once a read of this viewer's events above
+			// the cursor comes back short, every event up to it that this viewer
+			// can be sent has been. The cursor then moves to it, so a viewer who
+			// sees few of the deployment's events (an owner=me stream, anyone who
+			// is not an administrator) does not read everyone else's again on
+			// every poll. A failed read of it only leaves the cursor where it is.
+			issued, issuedErr := ctx.GetJobEventSequenceHead()
 			events, err := ctx.GetPublishedJobEvents(filter, cursor, catchupPageSize)
 			if err != nil {
 				// The stream may already have sent headers. Do not serialize an error
@@ -290,6 +298,11 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
 				flusher.Flush()
 				caughtUp = true
+			}
+			// After the marker, which names the last cursor this reader was sent:
+			// the move is the stream's own bookkeeping, not an event to resume from.
+			if issuedErr == nil && issued > cursor {
+				cursor = issued
 			}
 			// Live progress follows the durable events in each poll and is only
 			// sent once the reader is caught up, so a frame never overtakes the
