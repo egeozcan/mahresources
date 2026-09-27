@@ -2128,3 +2128,11 @@ where the review's own record lives.
 ## Stopping processes — 2026-09-27
 
 - Never stop a process by pattern. `pkill -f '<pattern>' -n` on macOS read the trailing `-n` as a second pattern and sent SIGTERM to every process whose command line contained `-n`: the user's terminal tabs, Steam, GoLand and Codex helpers. Stop your own background tasks through the harness (TaskStop); stop anything else you started by its exact PID, confirmed with `ps -o pid,command -p <pid>` first. BSD and GNU tools parse options differently, so an option after the pattern can silently widen the match.
+
+## Jobs QA remediation, batch 1 — 2026-09-27
+
+- When two review rounds in a row find the same kind of defect at different sites, stop patching sites. Name the rule, route every site through one helper, and audit the rest. "A missing mapped Job" was read as a verdict at six separate sites; each round found the next one until a single classifier (`mappedJobGone`) replaced them.
+- Absence proves less than it seems. A Job that retention deleted proves the Job ended, not that it never ran; a failed read proves nothing at all. Treat both as their own state, never as the answer the surrounding code wanted.
+- A design choice that keeps producing review findings is itself the finding. Retry reopening a deferred row produced half of one lane's majors; replacing it with "Retry downloads now" removed about 300 lines and the findings with them.
+- After a merge conflict in `public/dist`, rebuild the stylesheet after the bundle. `npm run build` builds CSS first, Tailwind scans `public/dist`, and a stale bundle resurrects classes that the source no longer uses (here the `focus:outline-none` the forced-colors fix had removed).
+- Parallel worktrees multiply the Go build cache (cgo packages embed absolute paths). Five lanes grew it to 132 GB in ten hours and filled the disk; trim it by age (`find ~/Library/Caches/go-build -type f -mmin +180 -delete`) rather than `go clean -cache`, which can break builds in flight.

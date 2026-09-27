@@ -55,4 +55,16 @@ only then does the next batch start, because later batches build on earlier fixe
 
 ## Results
 
-Filled in as each batch merges.
+### Batch 1 (merged 2026-09-27)
+
+All eight P1s are fixed, plus two defects found along the way and the recurring test flakes.
+
+| Lane | Outcome | pi rounds (majors per round) |
+|---|---|---|
+| b1-access | A1: both legacy job streams write every frame through one function that re-checks the credential after reading the frame and before writing it. A2: scoped callers get their own resource over a shared file; deletion reference-counts every row; the download worker re-resolves the submitter after the body copy. | 17 rounds: 5,1,1,2,0,0,2,0,1,2,0,1,0,2,2,0,0 |
+| b1-deferred | S1, S2, S5, S6; S7 simplified to "Retry downloads now" (the row is never reopened). Also a pre-existing P1: once retention deleted any Job a source mapping named, every later start of a retired database was refused. A missing mapped Job is now classified once (`mappedJobGone`) at every site. | 8 rounds, then a second series of 10 after the S7 simplification: 3,1,1,0,0,1,1,2,1,0 |
+| b1-capacity | C1: queued plugin work waits in a per-plugin lane holding no capacity, slot or claim; admission claims only with the VM held, bounded, and gives the claim back on any failure. C2: commands, imports and `mah.start_job` wait for a full budget or a full managed lane instead of failing. | 8 rounds, then 7: 3,4,1,2,2,1,0 |
+| b1-a11y | X1: a first sight that is already an outcome is announced when a live event proves it happened after the page connected; outcomes that cannot be said one by one are counted into one message. X2: `outline-none` replaced by `outline-hidden` app-wide, with a guard test. | 8 rounds: 1,1,2,1,2,1,2,4 |
+| b1-flakes | Root causes of the recurring flakes: read-first SQLite transactions in the reduction writers, `AddRelation`, the resource merge and the dual-publish refresh; shared-list premises in the lightbox and picker specs; a popover left behind when its input moved; CodeMirror editors mounting without their final size; list highlights moving under a resting pointer; template generation refusing before its editor loaded; the Select All row animating in. | 8 rounds: 4,1,0,2,1,0,0,0 |
+
+Known limits carried forward: four drawer announcement orderings under overlapping or stalled refreshes and the 50 ms region handoff (batch 3); a scope re-check slower than one minute never admits its Job, and a failing re-check grows the timeline at a bounded rate (batch 2); two deferred-row states that exist only in data written by earlier releases.
