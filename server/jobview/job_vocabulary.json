@@ -22,7 +22,7 @@
   "failureClasses": {
     "policy": "Refused by policy",
     "validation": "Invalid input",
-    "dependency": "Something it depends on failed",
+    "dependency": "A dependency failed",
     "timeout": "Timed out",
     "capacity": "Out of capacity",
     "conflict": "Conflict",
