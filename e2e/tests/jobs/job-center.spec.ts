@@ -364,6 +364,45 @@ test.describe('Job Center', () => {
     }).toBe(2);
   });
 
+  test('a job whose card leaves the list leaves the bulk selection', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-ghost-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const jobs = [];
+    for (const suffix of ['a', 'b', 'c', 'd', 'e']) {
+      jobs.push(await submitFailingDownload(request, groupId, `${name}-${suffix}.bin`));
+    }
+    for (const job of jobs) await waitForJobState(request, job.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
+    await expect(page.locator('[data-job-id]')).toHaveCount(5);
+    for (const job of jobs.slice(0, 3)) {
+      await page.locator(`[data-job-id="${job.canonicalId}"]`).getByRole('checkbox').check();
+    }
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('3 jobs selected');
+
+    // Dismissed from the bar: the three cards leave, and so do their selections.
+    await page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await expect(page.locator('[data-job-id]')).toHaveCount(2, { timeout: 10_000 });
+    await expect(page.getByTestId('bulk-selected-count')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('bulkSelection').selectedIds.size)).toBe(0);
+
+    // Removed by a refresh this page did not ask for: another tab dismissed it.
+    const [fourth, fifth] = jobs.slice(3);
+    await page.locator(`[data-job-id="${fourth.canonicalId}"]`).getByRole('checkbox').check();
+    await page.locator(`[data-job-id="${fifth.canonicalId}"]`).getByRole('checkbox').check();
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('2 jobs selected');
+    const dismissed = await request.post('/v1/jobs/commands/dismiss', {
+      data: { jobIds: [fourth.canonicalId], idempotencyKey: `ghost-${stamp}` },
+      headers: { 'Idempotency-Key': `ghost-${stamp}` },
+    });
+    expect(dismissed.ok(), await dismissed.text()).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('job-list-refresh')));
+    await expect(page.locator('[data-job-id]')).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('1 job selected');
+    await expect.poll(() => page.evaluate(() => [...(window as any).Alpine.store('bulkSelection').selectedIds])).toEqual([fifth.canonicalId]);
+  });
+
   test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {
     const stamp = Date.now();
     // A fresh owner per run: a hash collision under another owner still succeeds

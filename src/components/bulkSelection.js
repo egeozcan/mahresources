@@ -380,6 +380,12 @@ export function createBulkSelection(scope = null) {
 
 export function bulkSelectionForms() {
   return {
+    // Declared for the reason selectableItem's are: each bulk action's forms
+    // sit in their own scope under the bar's, and an undeclared property would
+    // be one slot every action overwrites.
+    _selection: null,
+    _forms: null,
+
     init() {
       // $root dies with the subtree, so capture it while it is attached.
       const root = this.$root;
@@ -412,6 +418,14 @@ export function bulkSelectionForms() {
 
 export function selectableItem({ itemNo, itemId } = {}) {
   return {
+    // Declared, not only assigned in init(): a card nested in another component
+    // (the Job Center's list) shares a scope stack with it, and Alpine writes an
+    // undeclared property to the outermost scope. Every card then held the last
+    // card's checkbox, and a card leaving the list unregistered another's.
+    _selection: null,
+    _checkbox: null,
+    _entityObserver: null,
+
     init() {
       const el = this.$root.querySelector("input[type='checkbox']");
 

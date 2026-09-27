@@ -206,6 +206,8 @@ export function jobList() {
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
         _preferences: null,
+        _onRefreshRequest: null,
+        _onNotice: null,
         // Set once the stream has given a cursor, which a reopened stream then
         // resumes from, even v2:0.
         _holdsCursor: false,
@@ -336,6 +338,8 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         error: '',
         outcomes: [],
         _generation: 0,
+        _root: null,
+        _focusKeeper: null,
 
         init() {
             this.$watch(() => this.selectionKey(), () => { void this.sync(); });
@@ -582,6 +586,8 @@ export function instantFromDatetimeInput(value, end = false) {
  */
 export function jobFilterTimes() {
     return {
+        _onPageShow: null,
+
         init() {
             this.showInstants();
             // A page the back-forward cache brings back is the one the reader
