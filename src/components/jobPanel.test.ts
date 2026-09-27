@@ -44,6 +44,26 @@ describe('Job Center panel', () => {
         expect([...byGroup.values()].filter(Boolean)).toEqual(['retry-of']);
     });
 
+    test('a drawer scoped to its viewer\'s own jobs reads only those, and reads everything again once widened', async () => {
+        const panel = jobPanel();
+        panel.ownerScope = 'me';
+        const requests: URL[] = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            requests.push(new URL(String(raw), 'http://localhost'));
+            return { jobs: [] };
+        }) as any;
+
+        await panel.refresh();
+        expect(requests).toHaveLength(3);
+        expect(requests.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
+
+        requests.length = 0;
+        panel.setOwnerScope('');
+        await vi.waitFor(() => expect(requests).toHaveLength(3));
+        expect(panel.ownerScope).toBe('');
+        expect(requests.some(url => url.searchParams.has('owner'))).toBe(false);
+    });
+
     test('asks first only for a command that stops work or cannot be undone', () => {
         // The viewer's own list and pins: each has an inverse, so none asks.
         for (const key of ['dismiss', 'undismiss', 'pin', 'unpin', 'pin-lineage', 'retry']) {
@@ -223,6 +243,15 @@ describe('Job Center panel', () => {
         expect(asked[0][0]).toBe('Dismiss 3 finished jobs? 2 of them are not shown here. Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.');
         expect(asked[0][1]).toEqual({ title: 'Dismiss finished jobs', confirmLabel: 'Dismiss 3', destructive: false });
         expect(posts).toHaveLength(1);
+    });
+
+    test('an administrator listing their own jobs dismisses only their own finished jobs', async () => {
+        const { panel, listURLs } = dismissAllHarness([{ ids: ['a'] }]);
+        panel.ownerScope = 'me';
+
+        await panel.dismissFinished();
+
+        expect(listURLs.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
     });
 
     test('a backlog past one page is named as more than it, and declining dismisses nothing', async () => {

@@ -286,12 +286,16 @@ export function jobPanel() {
         _streamTouchSeq: 0,
         _streamTouched: new Map(),
         _ownerViewer: 0,
+        // '' lists every Job the viewer may see; 'me' only their own (owner=me).
+        // An administrator's drawer starts with the choice the page rendered.
+        ownerScope: '',
 
         init() {
             this.finishedLimit = panelFinishedLimit();
             // Set on an administrator's drawer only: whose Job a row is matters
             // when the drawer lists every account's.
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
+            this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
@@ -562,7 +566,9 @@ export function jobPanel() {
             const touchedFrom = this._streamTouchSeq;
             try {
                 const groups = panelGroups(this.finishedLimit);
-                const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group))));
+                const ownerScope = this.ownerScope;
+                const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group, ownerScope))));
+                if (ownerScope !== this.ownerScope) return;
                 if (generation !== this._refreshGeneration) return;
                 const byId = new Map();
                 pages.forEach((payload, index) => {
@@ -1241,6 +1247,19 @@ export function jobPanel() {
             }
         },
 
+        // Lists every Job the viewer may see (''), or only their own ('me'),
+        // reading the lists again for the new scope.
+        // Stand-in for the drawer stream's own setOwnerScope, which also
+        // reopens the live stream with owner=me from the drawer's cursor; that
+        // implementation replaces this one, and ownerScope and the owner=me
+        // list parameters with it, when the two are merged.
+        setOwnerScope(scope) {
+            const next = scope === 'me' ? 'me' : '';
+            if (next === this.ownerScope || this.streamStopped) return;
+            this.ownerScope = next;
+            this.refresh();
+        },
+
         // The Undo a Dismiss's box offers.
         async undoDismiss() {
             const undo = this.noticeUndo;
@@ -1498,7 +1517,7 @@ export function jobPanel() {
             let first;
             this._dismissAsking = true;
             try {
-                first = await this.requestJSON(buildFinishedPageURL(''));
+                first = await this.requestJSON(buildFinishedPageURL('', this.ownerScope));
                 const count = (first.jobs || []).length;
                 if (count === 0) {
                     // What the drawer showed has already gone.
@@ -1527,7 +1546,7 @@ export function jobPanel() {
                 let cursor = '';
                 let page = first;
                 do {
-                    if (!page) page = await this.requestJSON(buildFinishedPageURL(cursor));
+                    if (!page) page = await this.requestJSON(buildFinishedPageURL(cursor, this.ownerScope));
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1653,10 +1672,11 @@ export function jobPanel() {
     };
 }
 
-function buildPanelListURL(group) {
+function buildPanelListURL(group, ownerScope = '') {
     const params = new URLSearchParams();
     group.states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
+    if (ownerScope === 'me') params.set('owner', 'me');
     if (group.notRetried) params.set('noInboundRelationship', 'retry-of');
     params.set('limit', String(group.limit));
     if (group.series) params.set('include', 'progressSeries');
@@ -1674,10 +1694,11 @@ export function dismissFinishedConfirmation(count, more, shown) {
     return `Dismiss ${count} finished job${plural}?${hidden > 0 ? ` ${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown here.` : ''} ${after}`;
 }
 
-function buildFinishedPageURL(cursor) {
+function buildFinishedPageURL(cursor, ownerScope = '') {
     const params = new URLSearchParams();
     FINISHED_STATES.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
+    if (ownerScope === 'me') params.set('owner', 'me');
     params.set('limit', String(FINISHED_PAGE_LIMIT));
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
