@@ -266,7 +266,7 @@ func canonicalJobFilterQueryParams() []openapi.QueryParam {
 		{Name: "kinds", Type: "array", ItemType: "string", Description: "Filter by Kinds; repeat or comma-separate values."},
 		{Name: "origin", Type: "array", ItemType: "string", Description: "Filter by origin; repeat or comma-separate values."},
 		{Name: "origins", Type: "array", ItemType: "string", Description: "Filter by origins; repeat or comma-separate values."},
-		{Name: "search", Type: "string", Description: "Search safe Job title, summary, and phase fields."},
+		{Name: "search", Type: "string", Description: "Search a Job's id, title, the values in its sanitized summary (not its field names), its failure message and its output labels, ignoring case (ASCII letters only on SQLite) and spaces around the term."},
 		{Name: "relationship", Type: "string", Description: "Filter by a supported lineage relationship."},
 		{Name: "inboundRelationship", Type: "string", Description: "Filter to Jobs a visible Job links to with this lineage relationship: retried or continued (retry-of), repeated (repeat-of), or a child stage (parent-child)."},
 		{Name: "noInboundRelationship", Type: "string", Description: "Filter to Jobs no visible Job links to with this lineage relationship, for example not yet retried (retry-of)."},

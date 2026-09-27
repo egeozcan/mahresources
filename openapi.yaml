@@ -6089,7 +6089,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Search safe Job title, summary, and phase fields.
+                - description: Search a Job's id, title, the values in its sanitized summary (not its field names), its failure message and its output labels, ignoring case (ASCII letters only on SQLite) and spaces around the term.
                   in: query
                   name: search
                   schema:
@@ -7821,7 +7821,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Search safe Job title, summary, and phase fields.
+                - description: Search a Job's id, title, the values in its sanitized summary (not its field names), its failure message and its output labels, ignoring case (ASCII letters only on SQLite) and spaces around the term.
                   in: query
                   name: search
                   schema:
@@ -7974,7 +7974,7 @@ paths:
                         type: string
                     type: array
                   style: form
-                - description: Search safe Job title, summary, and phase fields.
+                - description: Search a Job's id, title, the values in its sanitized summary (not its field names), its failure message and its output labels, ignoring case (ASCII letters only on SQLite) and spaces around the term.
                   in: query
                   name: search
                   schema:
