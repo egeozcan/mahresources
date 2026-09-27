@@ -1743,6 +1743,89 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._unsaidOutcomes).toBe(0);
     });
 
+    test('an older refresh does not release the outcome a newer refresh holds', async () => {
+        vi.useFakeTimers();
+        const base = { id: 'dl-61', title: 'overlap.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, [{ ...base, state: 'queued', version: 1 }]);
+        let listed: any[] = [{ ...base, state: 'running', version: 2 }];
+        const gates: Array<() => void> = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const url = String(raw);
+            if (url.startsWith('/v1/jobs?')) {
+                const states = new URL(url, 'http://localhost').searchParams.getAll('state');
+                return { jobs: listed.filter(job => states.includes(job.state)) };
+            }
+            const answer = { ...listed[0], commands: [] };
+            await new Promise<void>(resolve => gates.push(resolve));
+            return answer;
+        });
+
+        // The first refresh hears "running" and waits on its detail read.
+        const first = panel.refresh();
+        await vi.waitFor(() => expect(gates).toHaveLength(1));
+        await deliverLive(panel, 'dl-61', [['failed', 3]], 11);
+        // A second refresh hears the live-proven failure and holds it.
+        listed = [{ ...base, state: 'failed', version: 3 }];
+        const second = panel.refresh();
+        await vi.waitFor(() => expect(gates).toHaveLength(2));
+        gates[0]();
+        await first;
+        // The stream drops before the second refresh's detail answers.
+        panel.dropStream();
+        gates[1]();
+        await second;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a count still on its way to the region survives a drop and rides the next message', async () => {
+        vi.useFakeTimers();
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        panel.countUnsaidOutcome();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('1 job finished or needs attention; see the Jobs panel.');
+        // Before the region has spoken it, the stream drops and a notice follows.
+        await vi.advanceTimersByTimeAsync(20);
+        panel.dropStream();
+        panel.announceNotice('A dialog is open. Close it before opening Jobs.');
+
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith(
+            '1 job finished or needs attention; see the Jobs panel. A dialog is open. Close it before opening Jobs.');
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a count is carried until its message has landed, not only for the coalescing window', async () => {
+        vi.useFakeTimers();
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        panel.countUnsaidOutcome();
+        await vi.advanceTimersByTimeAsync(1000);
+        // The clock reaches the end of the window before the region's timer runs.
+        vi.setSystemTime(Date.now() + 50);
+        panel.announceNotice('A dialog is open. Close it before opening Jobs.');
+
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith(
+            '1 job finished or needs attention; see the Jobs panel. A dialog is open. Close it before opening Jobs.');
+        // Once that message has landed, the count is not said again.
+        await vi.advanceTimersByTimeAsync(60);
+        panel.announceNotice('A dialog is open. Close it before opening Jobs.');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('A dialog is open. Close it before opening Jobs.');
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('a job accepted live that failed while disconnected is history after the reconnect', async () => {
         const failed = { id: 'dl-55', title: 'meanwhile.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([failed]);

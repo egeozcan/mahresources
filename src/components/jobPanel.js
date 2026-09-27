@@ -228,6 +228,10 @@ export function jobPanel() {
         // yet said.
         _unsaidOutcomes: 0,
         _unsaidOutcomesTimer: null,
+        // The count most recently said, until the message carrying it has
+        // landed (see announce).
+        _countNews: null,
+        _landTimer: null,
         // What was said within the last NEWS_COALESCE_MS, which may not have
         // landed: news, and at most one notice (the newest notice wins).
         _recentNews: [],
@@ -282,6 +286,7 @@ export function jobPanel() {
             this._liveRegion?.destroy();
             clearTimeout(this._drawerAnnounceTimer);
             clearTimeout(this._unsaidOutcomesTimer);
+            clearTimeout(this._landTimer);
         },
 
         startClock() {
@@ -371,15 +376,23 @@ export function jobPanel() {
             const inside = this._drawerAnnouncer();
             if (!inside) {
                 this._liveRegion?.announce(message);
-                return;
+            } else {
+                this._liveRegion?.cancel?.();
+                inside.textContent = '';
+                this._drawerAnnounceTimer = setTimeout(() => {
+                    this._drawerAnnounceTimer = null;
+                    const region = this._drawerAnnouncer();
+                    if (region) region.textContent = message;
+                    else this._liveRegion?.announce(message);
+                }, 50);
             }
-            this._liveRegion?.cancel?.();
-            inside.textContent = '';
-            this._drawerAnnounceTimer = setTimeout(() => {
-                this._drawerAnnounceTimer = null;
-                const region = this._drawerAnnouncer();
-                if (region) region.textContent = message;
-                else this._liveRegion?.announce(message);
+            // Timers of one delay run in the order they were set, so this one
+            // runs once the region has put the message in place: from then on a
+            // count it carried has been spoken.
+            clearTimeout(this._landTimer);
+            this._landTimer = setTimeout(() => {
+                this._landTimer = null;
+                this._countNews = null;
             }, 50);
         },
 
@@ -518,7 +531,7 @@ export function jobPanel() {
         // `proofOnly` is for a command's answer: the reader asked for the change
         // and hears the command's notice, so it speaks only for a change a live
         // event already proved happened on its own.
-        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false, hold = false } = {}) {
+        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false, holdFor = null } = {}) {
             if (!job?.id || !job.state) return '';
             const version = Number(job.version || 0);
             const shown = this._heard.has(job.id) ? null : this.jobs.find(row => row.id === job.id);
@@ -547,12 +560,13 @@ export function jobPanel() {
             }
             // Only an observation that could speak uses the proof up; a stale
             // read must leave it for the live one that follows. An outcome a
-            // refresh holds until its detail reads finish (`hold`) is still owed
-            // to the reader until it is handed to say(): its proof stays, marked
-            // held, so a drop before then counts it (dropStream) instead of
-            // losing it, and announceHeld releases it once said.
+            // refresh holds until its detail reads finish (`holdFor`, that
+            // refresh's list of what it will say) is still owed to the reader
+            // until it is handed to say(): its proof stays, marked with its
+            // holder, so a drop before then counts it (dropStream) instead of
+            // losing it, and that refresh alone releases it (announceHeld).
             if (provenLive && this.streamCaughtUp && (live || proofOnly)) {
-                if (hold && said && ['attention', 'finished'].includes(classifyJobState(job))) proof.held = true;
+                if (holdFor && said && ['attention', 'finished'].includes(classifyJobState(job))) proof.held = holdFor;
                 else this._liveVersions.delete(job.id);
             }
             // It stays while the job is still in that state, whatever versions a
@@ -644,16 +658,18 @@ export function jobPanel() {
 
         sayUnsaidOutcomes() {
             this._unsaidOutcomesTimer = null;
-            const count = this._unsaidOutcomes;
+            // A count still on its way to the region is replaced, so it is added in.
+            const count = this._unsaidOutcomes + (this._countNews?.count || 0);
             this._unsaidOutcomes = 0;
-            if (count > 0) this.say([{ jobId: null, text: unsaidOutcomesText(count) }]);
+            if (count > 0) this.say([{ jobId: null, count, text: unsaidOutcomesText(count) }]);
         },
 
         // A list or detail read, which may speak only if no reconnect happened
         // since the read began; what it says is held for the refresh to say.
         hearFromRead(job, streamGeneration, spoken, { hold = false } = {}) {
             const said = this.hearJob(job, {
-                live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration, hold,
+                live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration,
+                holdFor: hold ? spoken : null,
             });
             if (said) spoken.push(this.newsEntry(job.id, said));
         },
@@ -666,9 +682,10 @@ export function jobPanel() {
         announceHeld(spoken, streamGeneration) {
             if (streamGeneration !== this._streamGeneration) return;
             this.announceNews(spoken);
-            // Handed to say(), or superseded by newer news: no longer owed.
+            // Handed to say(), or superseded by newer news: no longer owed. Only
+            // the proofs this refresh holds; another may hold a newer one.
             for (const entry of spoken) {
-                if (this._liveVersions.get(entry.jobId)?.held) this._liveVersions.delete(entry.jobId);
+                if (this._liveVersions.get(entry.jobId)?.held === spoken) this._liveVersions.delete(entry.jobId);
             }
         },
 
@@ -715,10 +732,14 @@ export function jobPanel() {
         // Every panel message goes through here: news, a notice, or both. What
         // was said within the window and may not have landed is said again with
         // it, since the region would otherwise replace it. A new notice replaces
-        // a pending one; news accumulates, less anything superseded.
+        // a pending one; news accumulates, less anything superseded. A count of
+        // outcomes is carried until its message has actually landed, whatever
+        // the clock says and across a drop: nothing else would say it again.
         say(entries = [], notice = '') {
-            const news = this.currentNews([...this.pendingNews(), ...entries]);
+            const carried = this._countNews ? [this._countNews] : [];
+            const news = this.currentNews([...carried, ...this.pendingNews(), ...entries]);
             const text = notice || this.pendingNotice();
+            this._countNews = news.find(entry => entry.jobId === null) || null;
             this._recentNews = news;
             this._recentNotice = text;
             this._newsAt = Date.now();
