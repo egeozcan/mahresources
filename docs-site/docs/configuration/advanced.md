@@ -488,6 +488,18 @@ five-minute sweep interval. A durable command database and its staging root are
 one runtime domain; do not run multiple command-enabled server processes against
 one such domain.
 
+The database records which staging root it is bound to. A root chosen by the
+flag, or `<file-save-path>/_plugin_commands`, keeps the database's retained
+command outputs and import sources, so that binding survives every restart: a
+server started with a different root keeps plugin commands unavailable, and
+`/logs` names the bound root to restart with. The private temporary root used
+with MemoryFS is deleted when its process exits, so its binding ends with that
+process: the next server takes the database over with its own private root once
+the previous one has stopped cleanly, or can be shown to have exited because it
+ran on this host and its process no longer exists (or the host has rebooted
+since). A previous server on another host cannot be shown to have exited, so a
+new server waits until that one stops cleanly.
+
 The path is used both to resolve a declaration's executable basename and as the
 child's `PATH`, so include required helpers too. A yt-dlp command using a
 separate-video/audio format needs trusted `ffmpeg` on that path. Child processes

@@ -193,6 +193,12 @@ func (s configPluginCommandSettings) OutputRetention() time.Duration {
 }
 func (s configPluginCommandSettings) CommandPath() string { return s.config.PluginCommandPath }
 
+// StagingTemporary reports a staging root created for this process, which main
+// deletes on exit, so the database fence binding to it ends with the process.
+func (s configPluginCommandSettings) StagingTemporary() bool {
+	return s.config.PluginCommandStagingTemporary
+}
+
 func (ctx *MahresourcesContext) PluginCommandSettings() plugin_commands.Settings {
 	return configPluginCommandSettings{config: ctx.Config}
 }

@@ -74,6 +74,13 @@ func defaultPluginCommandControllerConfig() pluginCommandControllerConfig {
 
 const pluginCommandCallerQuarantineReason = "commands are quarantined until automatic recovery succeeds; see /logs"
 
+// pluginCommandStagingTemporary reports whether settings name a staging root
+// private to this process, which deletes it on exit (the MemoryFS default).
+func pluginCommandStagingTemporary(settings plugin_commands.Settings) bool {
+	temporary, ok := settings.(interface{ StagingTemporary() bool })
+	return ok && temporary.StagingTemporary()
+}
+
 func newPluginCommandRuntimeController(owner *MahresourcesContext) *pluginCommandRuntimeController {
 	return &pluginCommandRuntimeController{owner: owner}
 }
@@ -117,7 +124,10 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 		cfg.acquireLease = plugin_commands.AcquireRuntimeLease
 	}
 	if cfg.acquireDBFence == nil {
-		cfg.acquireDBFence = ctx.acquirePluginCommandDBFence
+		temporary := pluginCommandStagingTemporary(settings)
+		cfg.acquireDBFence = func(root string) (string, error) {
+			return ctx.acquirePluginCommandDBFenceFor(root, temporary)
+		}
 	}
 	if cfg.releaseDBFence == nil {
 		cfg.releaseDBFence = ctx.releasePluginCommandDBFence
@@ -239,6 +249,11 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 			c.lease = nil
 			c.mu.Unlock()
 			message := fmt.Sprintf("plugin command runtime is quarantined because its database fence is unavailable: %v; automatic retry is active; see /logs", fenceErr)
+			if errors.Is(fenceErr, errPluginCommandFenceRootIsDurable) {
+				// No retry can move a binding meant to outlive restarts, so the
+				// message says what will, rather than promising a retry.
+				message = fmt.Sprintf("plugin command runtime is unavailable because its database fence is unavailable: %v; commands stay unavailable until the server restarts with that staging root; see /logs", fenceErr)
+			}
 			if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
 				return pluginCommandAttemptStopped, nil
 			}
