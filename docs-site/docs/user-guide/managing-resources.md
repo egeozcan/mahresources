@@ -366,7 +366,13 @@ Uploading a custom thumbnail does not create a new version -- it only changes th
 
 Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
 `/jobs` for the full Job Center. The panel is a drawer on the right that
-groups work needing attention, active work and recently finished work. A running
+groups work needing attention, active and scheduled work, and recently finished
+work that needs nothing more (**Finished, no attention needed**: succeeded and
+cancelled Jobs, since failed ones are under **Needs attention**). When it holds
+only the newest of those, its heading says so. A scheduled Job says when it
+starts, and how long that is from now, in the panel, on the Job Center card and
+on its page. Only running work shows a moving progress bar; a Job that is
+waiting, paused or stopped shows only what it reported. A running
 Job shows its progress bar, speed, time left, any figures it reports and a graph
 of its speed; see [Progress, metrics and graphs](../features/job-system.md#progress-metrics-and-graphs). The Job Center lists every Job you can see: downloads, exports,
 imports, Resource Reduction, maintenance, and plugin work.
@@ -382,7 +388,7 @@ other page stops with a **Reload page** button, so you can save your work first.
 The **Show** links in the sidebar select **Needs attention** (blocked, failed,
 or interrupted), **Active** (scheduled, queued, running, or paused),
 **Finished** (succeeded, failed, cancelled, or interrupted), and **Pinned by
-me**. Each count is how many Jobs the list shows with that link selected,
+me**. A failed or interrupted Job is both Finished and Needs attention. Each count is how many Jobs the list shows with that link selected,
 under your other filters. Select an active link again to clear it. The **Filter** form narrows
 the list by text, state, Kind, currently available command, origin, owner,
 actor, and acceptance time. Times are in your browser's time zone, and an
@@ -414,7 +420,8 @@ by you** in the list, detail page, and Jobs panel; **Unpin** removes your pin.
 Administrators can see Jobs across accounts; other accounts see only work
 allowed by current scope.
 
-Old `/downloads` links redirect to `/jobs` with recognized filters translated.
+Old `/downloads` links redirect to `/jobs` with recognized filters translated,
+listing downloads scheduled for later as well as immediate ones.
 Legacy `/v1/downloads` API routes remain available during the compatibility
 window. Download history retention remains configurable on `/admin/settings`;
 see [Job System](../features/job-system.md#retention) for canonical Job and

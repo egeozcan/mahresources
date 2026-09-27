@@ -80,6 +80,16 @@ phase such as parsing, downloading, or assembling without changing the Job
 state. The old queue endpoints may continue to use their established status
 names during compatibility.
 
+`paused` is a hold a person asked for and the Job's executor confirmed. A
+download is the Kind that can be paused: while it runs it offers Pause, and
+its Resume starts the transfer again from the beginning, because the download
+queue keeps no partial bytes; the paused row says so. A paused Job counts as
+Active. `blocked` is work that cannot go on until a person or a policy change
+lets it, such as a refusal of the account it runs as or a claim nobody could
+prove stopped, and it Needs attention. Every surface names a state the same
+way: the Jobs panel, the Job Center card and the Job page read one table of
+labels, groups and colours, and only running work shows a moving progress bar.
+
 One phase has a host-wide meaning. A succeeded Job with phase `partial` stopped
 short of finished: its Kind recorded that the run did its share and left the
 rest. A plugin action records it when its handler returns `continue = true`.

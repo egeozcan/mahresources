@@ -248,6 +248,16 @@ deployment's policy and limits.
   available while clients migrate. The canonical interface renders only the
   commands the current Job detail advertises and rechecks role, scope, and Job
   version when the command runs.
+- **Pause** -- A running download offers **Pause** in the Jobs panel, on its Job
+  page and as the `pause` command. The server process fetching the file stops
+  the transfer, and the Job becomes `paused`, whether the pause came from the
+  Job Center, from another server process or from the compatibility endpoints.
+  The queue keeps no partial bytes, so **Resume** starts the download again
+  from the beginning, and the paused row says so. A paused Job holds no slot of
+  the concurrency budget. It is listed under active work, not under **Needs
+  attention**, and the `paused` state filter finds it. A download an earlier
+  release paused was stored as `blocked`; the server records it as `paused`
+  when it starts.
 - **Retry** -- Creates a linked Job and preserves the earlier Job's terminal
   state. A failed legacy download handle resolves to the current Retry leaf for
   at least one documented release and six months after canonical cutover. It is

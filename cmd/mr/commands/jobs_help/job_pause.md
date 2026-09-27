@@ -14,7 +14,10 @@ Conflict for a Job no transfer in that process belongs to, such as one
 running in another server process, and rejects pause requests against
 finished, cancelled, or already-paused jobs. The
 transfer is cancelled, discarding the bytes received so far, and the
-Job waits until you call `job resume`.
+Job's state becomes `paused` until you call `job resume`, which starts
+the download again from the beginning. To pause a download whichever
+server process is running it, use the canonical command:
+`mr job command <id> pause`.
 
 Generic jobs (group exports, imports) cannot be paused -- their runners
 are not re-entrant. Pause is intended for long URL fetches.

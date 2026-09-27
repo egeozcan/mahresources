@@ -76,6 +76,11 @@ List, summary, and export share these optional filters: `state`/`states`,
 deleted) and `owner=me` (the asking account's own Jobs, without naming its id);
 an export refuses those four, and `state=partial`, with a `400`.
 Repeating a token parameter or comma-separating its values is supported.
+`command` lists the Jobs that currently offer that command to the asker. `pin`
+and `unpin` are advertised on every Job, so a bulk selection of pinned and
+unpinned Jobs can do either; the filter lists the Jobs a single Job's controls
+offer them on, `pin` the ones the asker has not pinned and `unpin` the ones
+they have.
 `pinned` and `dismissed` take `true`, `false` or `any`; `any` applies no
 preference, exactly as omitting the parameter does. The Job Center page is the
 one place that reads an omitted `dismissed` differently: opening `/jobs` without
