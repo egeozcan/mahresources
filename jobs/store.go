@@ -155,6 +155,8 @@ func snapshot(job models.Job) Snapshot {
 		Summary:            json.RawMessage(job.Summary),
 		OwnerUserID:        job.OwnerUserID,
 		ActorUserID:        job.ActorUserID,
+		OwnerDeleted:       job.OwnerDeleted,
+		ActorDeleted:       job.ActorDeleted,
 		Origin:             job.Origin,
 		Visibility:         VisibilityClass(job.VisibilityClass),
 		ReplayClass:        ReplayClass(job.ReplayClass),

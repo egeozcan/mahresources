@@ -441,6 +441,9 @@ func validateFilter(filter Filter) error {
 		filter.AcceptedAfter.After(*filter.AcceptedBefore) {
 		return invalid("the accepted window ends before it starts")
 	}
+	if filter.OwnerDeleted && filter.OwnerID != nil {
+		return invalid("a job whose owner was deleted has no owner id; ask for one or the other")
+	}
 	if filter.Command != "" {
 		if strings.TrimSpace(filter.Command) == "" {
 			return invalid("command key is empty")
@@ -494,6 +497,9 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 	}
 	if filter.ActorID != nil {
 		db = db.Where("jobs.actor_user_id = ?", *filter.ActorID)
+	}
+	if filter.OwnerDeleted {
+		db = db.Where("jobs.owner_deleted = ?", true)
 	}
 	if filter.AcceptedAfter != nil {
 		db = db.Where("jobs.accepted_at >= ?", filter.AcceptedAfter.UTC())
@@ -779,7 +785,8 @@ func (s *Service) applyCommandHostNarrowing(query *gorm.DB, deps Deps, key strin
 	case CommandResume:
 		return query.Where("jobs.state IN ?", []State{StatePaused, StateBlocked}).
 			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel).
-			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()), nil
+			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()).
+			Where(executionPrincipalPresent), nil
 	case CommandRetry:
 		query = query.Where("jobs.state IN ?", []State{StateFailed, StateCancelled, StateInterrupted}).
 			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
@@ -830,6 +837,12 @@ func (s *Service) applyReplayAvailableFilter(query *gorm.DB, deps Deps) (*gorm.D
 		Where("EXISTS (SELECT 1 FROM job_replay_envelopes e WHERE e.job_id = jobs.id AND e.purged_at IS NULL AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.key_id IN ? AND ("+strings.Join(codecPredicates, " OR ")+"))", args...)
 	return query, nil
 }
+
+// executionPrincipalPresent is executionAccess's answer as a predicate: the
+// principal a Job's execution acts as still exists. A row from before the class
+// was recorded derives it from the references, and so always has one.
+const executionPrincipalPresent = "NOT ((jobs.execution_principal = 'actor' AND jobs.actor_user_id IS NULL) OR " +
+	"(jobs.execution_principal = 'owner' AND jobs.owner_user_id IS NULL))"
 
 func terminalJobStates() []State {
 	return []State{StateSucceeded, StateFailed, StateCancelled, StateInterrupted}

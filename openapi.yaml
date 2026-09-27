@@ -971,6 +971,8 @@ components:
                     items:
                         $ref: '#/components/schemas/JobSnapshotResponsePartial'
                     type: array
+                retriedElsewhere:
+                    type: boolean
                 successors:
                     items:
                         $ref: '#/components/schemas/JobSnapshotResponsePartial'
@@ -6044,6 +6046,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
@@ -7743,6 +7750,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
@@ -7868,6 +7880,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter

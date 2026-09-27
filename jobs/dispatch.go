@@ -625,10 +625,13 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 	access, err := executionAccess(job)
 	if err != nil {
 		settled := s.unrunnableClaim(settle, origin, job, claim,
-			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, err)
+			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, principalMissingFailure(), err)
 		if errors.Is(settled, errUnrunnableUnrecorded) {
-			return newExecution(ctx, settle, s, job, claim, Access{}, nil, claimedFrom),
-				&UnrunnableClaimError{Reason: blockedReasonPrincipalMissing, Cause: settled}
+			unrunnable := &UnrunnableClaimError{Reason: blockedReasonPrincipalMissing, Cause: settled}
+			if origin != claimFromExpired {
+				unrunnable.Failure = principalMissingFailure()
+			}
+			return newExecution(ctx, settle, s, job, claim, Access{}, nil, claimedFrom), unrunnable
 		}
 		return Execution{}, settled
 	}
@@ -636,7 +639,7 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 	if err != nil {
 		if ReplayBlocked(State(job.State), err) {
 			settled := s.unrunnableClaim(settle, origin, job, claim,
-				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, err)
+				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, nil, err)
 			if errors.Is(settled, errUnrunnableUnrecorded) {
 				return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
 					&UnrunnableClaimError{Reason: blockedReasonInputUnavailable, Cause: settled}
@@ -650,13 +653,48 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 }
 
 // unrunnableClaim decides what becomes of a claim the control plane cannot hand to
-// an adapter: an ordinary block that hands the claim back, or a quarantine that keeps
-// it.
-func (s *Service) unrunnableClaim(deps Deps, origin claimOrigin, job models.Job, claim models.JobClaim, blockReason, quarantineReason string, cause error) error {
+// an adapter: an ordinary block that hands the claim back, a failure that ends work
+// nothing could ever run, or a quarantine that keeps the claim.
+//
+// ends is the failure for a reason that no later change can remove, and nil for one
+// that may clear, which is what a block is for. It only applies to waiting work:
+// a claim taken over an expired one is quarantined whatever the reason, because the
+// execution it replaced may still be running.
+func (s *Service) unrunnableClaim(deps Deps, origin claimOrigin, job models.Job, claim models.JobClaim, blockReason, quarantineReason string, ends *Failure, cause error) error {
 	if origin == claimFromExpired {
 		return s.quarantineUnrunnableClaim(deps, job, claim, quarantineReason, cause)
 	}
+	if ends != nil {
+		return s.failUnrunnableJob(deps, job, claim, *ends, cause)
+	}
 	return s.blockUnrunnableJob(deps, job, claim, blockReason, cause)
+}
+
+// principalMissingFailure is the outcome of waiting work whose recorded principal
+// was deleted. Deletion is permanent and ids are not reused, so no Resume and no
+// later pass could ever run it; blocking it only offered a Resume that queued it to
+// block again.
+func principalMissingFailure() *Failure {
+	return &Failure{
+		Code:    blockedReasonPrincipalMissing,
+		Class:   FailureClassPolicy,
+		Message: "The account this job runs as was deleted, so it cannot run.",
+	}
+}
+
+// failUnrunnableJob ends a Job an execution was claimed for but can never run, under
+// the claim's own token, which Finish hands back with the capacity it held.
+func (s *Service) failUnrunnableJob(deps Deps, job models.Job, claim models.JobClaim, failure Failure, cause error) error {
+	_, err := s.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken},
+		ExpectedVersion: job.Version,
+		Outcome:         StateFailed,
+		Failure:         &failure,
+	})
+	if err != nil {
+		return fmt.Errorf("%w (and the job could not be failed either: %v; %w)", cause, err, errUnrunnableUnrecorded)
+	}
+	return cause
 }
 
 // quarantineUnrunnableClaim is blockUnrunnableJob for a claim that was taken over an

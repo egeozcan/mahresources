@@ -147,6 +147,8 @@ func unsealableSummaryFilterDimension(filter jobs.Filter) string {
 		return "inboundRelationship"
 	case filter.NoInboundRelationship != "":
 		return "noInboundRelationship"
+	case filter.OwnerDeleted:
+		return "ownerDeleted"
 	}
 	return ""
 }

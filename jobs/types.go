@@ -632,6 +632,10 @@ type Filter struct {
 
 	OwnerID *uint
 	ActorID *uint
+	// OwnerDeleted narrows to Jobs whose owner was an account that has since been
+	// deleted. Deletion nulls the owner reference, so OwnerID cannot find them
+	// again, and it is refused beside OwnerID for the same reason.
+	OwnerDeleted bool
 
 	AcceptedAfter  *time.Time
 	AcceptedBefore *time.Time
@@ -1059,8 +1063,13 @@ type Snapshot struct {
 	Summary     json.RawMessage
 	OwnerUserID *uint
 	ActorUserID *uint
-	Origin      string
-	Visibility  VisibilityClass
+	// OwnerDeleted and ActorDeleted say the reference beside them named an
+	// account that has been deleted since, which is what tells a deleted
+	// person's Job apart from work that never had an owner or an actor.
+	OwnerDeleted bool
+	ActorDeleted bool
+	Origin       string
+	Visibility   VisibilityClass
 	// ExecutionPrincipal is the principal this execution acts as. It is a
 	// durable fact, not a live lookup: an account deleted since acceptance still
 	// names the class, which is what the dispatch refusal reads.
@@ -1475,13 +1484,17 @@ type CapacityRef struct {
 }
 
 // UnrunnableClaimError is ClaimJob's answer for a Job it claimed that cannot run
-// — its principal is gone, or its input cannot be opened — when blocking it could
+// — its principal is gone, or its input cannot be opened — when settling it could
 // not be written within the claim's bound. The Execution returned with it holds
-// the claim: its holder records Reason as the block, retrying until it lands. It
-// is never run.
+// the claim: its holder records what the control plane would have, retrying until
+// it lands — Failure when it is set, and otherwise Reason as the block. It is
+// never run.
 type UnrunnableClaimError struct {
 	// Reason is the bounded block reason the control plane would have recorded.
 	Reason string
+	// Failure, when set, is the outcome the control plane would have ended the Job
+	// with instead of blocking it: the reason can never clear.
+	Failure *Failure
 	// Cause is why the Job cannot run, and why the block was not written.
 	Cause error
 }

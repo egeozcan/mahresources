@@ -269,6 +269,7 @@ func canonicalJobFilterQueryParams() []openapi.QueryParam {
 		{Name: "noInboundRelationship", Type: "string", Description: "Filter to Jobs no visible Job links to with this lineage relationship, for example not yet retried (retry-of)."},
 		{Name: "ownerId", Type: "integer", Description: "Filter by owner user ID."},
 		{Name: "actorId", Type: "integer", Description: "Filter by actor user ID."},
+		{Name: "ownerDeleted", Type: "boolean", Description: "true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it."},
 		{Name: "acceptedAfter", Type: "string", Description: "Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second."},
 		{Name: "acceptedBefore", Type: "string", Description: "Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second."},
 		{Name: "pinned", Type: "boolean", Description: "Filter this viewer's pin state."},

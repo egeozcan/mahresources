@@ -336,6 +336,7 @@ func TestSummaryExportRefusesFilterDimensionsAnOlderWorkerWouldDrop(t *testing.T
 		"partial state":           {States: []string{string(jobs.StateFailed), jobs.FilterStatePartial}},
 		"inbound relationship":    {InboundRelationship: string(jobs.LinkRetryOf)},
 		"no inbound relationship": {NoInboundRelationship: string(jobs.LinkRetryOf)},
+		"deleted owner":           {OwnerDeleted: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ctx.SubmitJobSummaryExport(filter, from, to, "json", "api"); !errors.Is(err, jobs.ErrInvalidFilter) {

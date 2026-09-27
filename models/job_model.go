@@ -68,6 +68,13 @@ type Job struct {
 
 	OwnerUserID *uint `gorm:"index:idx_jobs_visible,priority:2" json:"ownerUserId,omitempty"`
 	ActorUserID *uint `gorm:"index:idx_jobs_actor" json:"actorUserId,omitempty"`
+	// OwnerDeleted and ActorDeleted record that the reference beside them named
+	// an account that has since been deleted. Deletion nulls the reference, so
+	// without them a deleted person's Job reads exactly like work that never had
+	// an owner or an actor. They keep no id: the account is gone, and its id
+	// grants nothing.
+	OwnerDeleted bool `gorm:"not null;default:false" json:"ownerDeleted,omitempty"`
+	ActorDeleted bool `gorm:"not null;default:false" json:"actorDeleted,omitempty"`
 
 	// Origin names what initiated the Job: ui, api, cli, plugin, schedule or
 	// system.

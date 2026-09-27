@@ -774,11 +774,11 @@ func TestAnUnstartedOccurrenceIsWithdrawnWhenItsFirstSettlementFails(t *testing.
 	}
 }
 
-// TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission pins the claim of a Job
-// whose actor was deleted when the control plane could not block it within the
-// admission's bound: the admission holds that claim and records the block
+// TestAClaimWhosePrincipalIsGoneIsFailedFromTheAdmission pins the claim of a Job
+// whose actor was deleted when the control plane could not end it within the
+// admission's bound: the admission holds that claim and records the failure
 // itself, rather than dropping a running Job nobody owns.
-func TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission(t *testing.T) {
+func TestAClaimWhosePrincipalIsGoneIsFailedFromTheAdmission(t *testing.T) {
 	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	enableActionPluginForTest(t, ctx)
@@ -792,15 +792,15 @@ func TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission(t *testing.T) {
 		t.Fatalf("delete the actor: %v", err)
 	}
 	var stalled atomic.Bool
-	if err := ctx.db.Callback().Update().Before("gorm:update").Register("stall-the-first-block", func(db *gorm.DB) {
-		if !updatesState(jobs.StateBlocked)(db) {
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("stall-the-first-failure", func(db *gorm.DB) {
+		if !updatesState(jobs.StateFailed)(db) {
 			return
 		}
 		if stalled.CompareAndSwap(false, true) {
 			<-db.Statement.Context.Done()
 		}
 	}); err != nil {
-		t.Fatalf("register the stalled block: %v", err)
+		t.Fatalf("register the stalled failure: %v", err)
 	}
 
 	admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
@@ -808,13 +808,20 @@ func TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission(t *testing.T) {
 		t.Fatalf("a claim whose principal is gone answered %v, want withdrawn", got)
 	}
 	if !stalled.Load() {
-		t.Fatal("the control plane never tried to block the Job: the test did not reach it")
+		t.Fatal("the control plane never tried to fail the Job: the test did not reach it")
 	}
-	waitFor(t, "the admission to block the Job", func() bool {
-		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateBlocked
+	waitFor(t, "the admission to fail the Job", func() bool {
+		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateFailed
 	})
+	ended, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, accepted.ID)
+	if err != nil {
+		t.Fatalf("read the failed job: %v", err)
+	}
+	if ended.Failure == nil || ended.Failure.Code != "principal-missing" {
+		t.Fatalf("the admission failed the job with %+v, want the principal-missing failure", ended.Failure)
+	}
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
-		t.Fatalf("the blocked Job still holds %d slots", held)
+		t.Fatalf("the failed Job still holds %d slots", held)
 	}
 	if got := pluginKVForTest(t, ctx, "ran"); got != "" {
 		t.Fatalf("a Job whose principal is gone ran %q times", got)

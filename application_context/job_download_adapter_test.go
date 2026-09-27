@@ -1040,11 +1040,12 @@ func TestDueDeferredWorkRunsAsTheSameJob(t *testing.T) {
 	}
 }
 
-// TestDeferredWorkWithADeletedActorIsBlockedAndNeverRunsAsTheHost is acceptance
-// property: a scheduled Job whose actor is gone blocks rather than falling back to
-// root or the host, because the principal a deferred command would act as is the
-// one that asked for it and that identity cannot be substituted.
-func TestDeferredWorkWithADeletedActorIsBlockedAndNeverRunsAsTheHost(t *testing.T) {
+// TestDeferredWorkWithADeletedActorFailsAndNeverRunsAsTheHost is acceptance
+// property: a scheduled Job whose actor is gone never falls back to root or the
+// host, because the principal a deferred command would act as is the one that
+// asked for it and that identity cannot be substituted. Nothing can ever run it,
+// so it ends failed and says why rather than blocking with a Resume.
+func TestDeferredWorkWithADeletedActorFailsAndNeverRunsAsTheHost(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 
 	actor, err := ctx.CreateUser(&UserInput{Username: "departing", Password: "password1", Role: models.RoleUser})
@@ -1065,10 +1066,10 @@ func TestDeferredWorkWithADeletedActorIsBlockedAndNeverRunsAsTheHost(t *testing.
 		t.Fatalf("delete the acting user: %v", err)
 	}
 
-	blocked := waitForSnapshot(t, ctx, accepted.ID, "the orphaned deferred work to block",
-		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateBlocked })
-	if blocked.State != jobs.StateBlocked {
-		t.Fatalf("the orphaned deferred job is %s, want blocked", blocked.State)
+	ended := waitForSnapshot(t, ctx, accepted.ID, "the orphaned deferred work to end",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if ended.State != jobs.StateFailed || ended.Failure == nil || ended.Failure.Code != "principal-missing" {
+		t.Fatalf("the orphaned deferred job is %s with %+v, want failed as principal-missing", ended.State, ended.Failure)
 	}
 	if entries := ctx.DownloadManager().GetJobs(); len(entries) != 0 {
 		t.Fatalf("work whose actor is gone was dispatched anyway: %d queue entries", len(entries))

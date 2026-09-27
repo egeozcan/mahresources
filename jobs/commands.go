@@ -228,6 +228,11 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 		if (state != StatePaused && state != StateBlocked) || job.ControlIntent == ControlIntentCancel {
 			return false, nil
 		}
+		// Nor while the principal the work acts as is gone: dispatch refuses it
+		// every time, so a Resume would only queue it to fail.
+		if _, err := executionAccess(job); err != nil {
+			return false, nil
+		}
 		// And only while nothing unresolved still owns the work. Returning a Job to
 		// the queue releases whatever claim its token names — a quarantine included —
 		// and §3 permits that release only once the owning runtime has proved the

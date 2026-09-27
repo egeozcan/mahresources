@@ -320,11 +320,11 @@ func TestAClaimJobDeadlineBoundsBlockingAnInputItCannotOpen(t *testing.T) {
 }
 
 // TestAClaimJobHandsBackAClaimWhosePrincipalIsGone pins the same rule for the
-// other Job that cannot run: one whose principal has been deleted. When its block
-// cannot be written within the claim's bound, the claim is not dropped: the
-// execution comes back with an UnrunnableClaimError naming the reason, so its
-// holder can record the block, and a later claim does not find a running Job
-// that nobody owns.
+// other Job that cannot run: one whose principal has been deleted. When its
+// failure cannot be written within the claim's bound, the claim is not dropped:
+// the execution comes back with an UnrunnableClaimError naming the reason, so its
+// holder can record it, and a later claim does not find a running Job that
+// nobody owns.
 func TestAClaimJobHandsBackAClaimWhosePrincipalIsGone(t *testing.T) {
 	_, deps := newDispatchDatabase(t, "claim-principal-gone.db")
 	svc := NewService()
@@ -340,7 +340,7 @@ func TestAClaimJobHandsBackAClaimWhosePrincipalIsGone(t *testing.T) {
 	var stalled atomic.Bool
 	if err := deps.DB.Callback().Update().Before("gorm:update").Register("stall-the-block", func(db *gorm.DB) {
 		updates, ok := db.Statement.Dest.(map[string]any)
-		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(StateBlocked) {
+		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(StateFailed) {
 			return
 		}
 		stalled.Store(true)
@@ -360,11 +360,14 @@ func TestAClaimJobHandsBackAClaimWhosePrincipalIsGone(t *testing.T) {
 		Kind: testKind, KindVersion: 1, JobID: accepted.ID, Claimant: "bounded-runtime",
 	})
 	if !stalled.Load() {
-		t.Fatal("the block was never written: the test did not reach it")
+		t.Fatal("the failure was never written: the test did not reach it")
 	}
 	var unrunnable *UnrunnableClaimError
 	if !errors.As(err, &unrunnable) || unrunnable.Reason != blockedReasonPrincipalMissing {
-		t.Fatalf("a block that could not be written answered %v, want an UnrunnableClaimError for the principal", err)
+		t.Fatalf("a failure that could not be written answered %v, want an UnrunnableClaimError for the principal", err)
+	}
+	if unrunnable.Failure == nil || unrunnable.Failure.Code != blockedReasonPrincipalMissing {
+		t.Fatalf("the unrunnable claim carries failure %+v, want the one its holder must record", unrunnable.Failure)
 	}
 	row := jobRow(t, deps, accepted.ID)
 	if State(row.State) != StateRunning || row.ExecutionToken == "" || row.ExecutionToken != execution.ExecutionToken {

@@ -143,8 +143,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		// The Job cannot run, and the control plane could not record why within
 		// the bound. It is recorded from here, under the claim.
 		claimed = &execution
-		reason := unrunnable.Reason
-		a.endClaimed(execution, func() error { return a.ctx.blockPluginActionJob(execution, reason) })
+		a.endClaimed(execution, func() error { return a.ctx.settleUnrunnablePluginActionJob(execution, unrunnable) })
 		return plugin_system.AdmitWithdrawn
 	case errors.Is(err, jobs.ErrExecutionNotLoaded):
 		// The sealed input could not be read in time. The admission holds the

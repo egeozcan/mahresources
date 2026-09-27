@@ -413,8 +413,21 @@ func TestDeleteUser_NullsJobOwnershipAndActor(t *testing.T) {
 	if job.OwnerUserID != nil || job.ActorUserID != nil {
 		t.Fatalf("job references = owner %v, actor %v; both must be NULL", job.OwnerUserID, job.ActorUserID)
 	}
+	// The references go, and the fact that there was an account does not: an
+	// administrator reading the Job can tell a deleted account's work from work
+	// that never had one.
+	if !job.OwnerDeleted || !job.ActorDeleted {
+		t.Fatalf("job deleted-account markers = owner %v, actor %v; both must be set", job.OwnerDeleted, job.ActorDeleted)
+	}
 	if job.Origin != "api" || job.State != string(jobs.StateQueued) || job.Title != "the download this user asked for" {
 		t.Fatalf("the job's own history changed: %+v", job)
+	}
+	read, err := svc.Get(jobs.Deps{DB: ctx.db}, jobs.Access{Administrator: true}, snap.ID)
+	if err != nil {
+		t.Fatalf("read the ownerless job: %v", err)
+	}
+	if !read.OwnerDeleted || !read.ActorDeleted {
+		t.Fatalf("the snapshot does not say the owner and actor were deleted: %+v", read)
 	}
 
 	if _, err := svc.Get(jobs.Deps{DB: ctx.db}, jobs.Access{Administrator: true}, snap.ID); err != nil {
@@ -431,9 +444,9 @@ func TestDeleteUser_NullsJobOwnershipAndActor(t *testing.T) {
 // "this work was never anyone's" — the live column alone cannot, because user
 // deletion nulls it.
 //
-// So the Job whose actor is deleted is refused at dispatch and blocked, rather
-// than running as the surviving owner (which would transfer authority) or as the
-// host (which would grant the work an identity nobody recorded).
+// So the Job whose actor is deleted is refused at dispatch and ends failed,
+// rather than running as the surviving owner (which would transfer authority) or
+// as the host (which would grant the work an identity nobody recorded).
 func TestDeleteUser_RefusesDispatchOfAJobWhoseActorIsGone(t *testing.T) {
 	ctx := newStampTestContext(t, true)
 	makeAdmin(t, ctx, "keeper")
@@ -483,16 +496,16 @@ func TestDeleteUser_RefusesDispatchOfAJobWhoseActorIsGone(t *testing.T) {
 	if err := ctx.db.Where("id = ?", snap.ID).First(&job).Error; err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
-	if job.State != string(jobs.StateBlocked) {
-		t.Fatalf("state = %s, want blocked", job.State)
+	if job.State != string(jobs.StateFailed) || job.FailureCode != "principal-missing" {
+		t.Fatalf("state = %s (%s), want failed as principal-missing", job.State, job.FailureCode)
 	}
-	if job.OwnerUserID == nil || *job.OwnerUserID != owner.ID {
-		t.Fatalf("the owner must survive the actor's deletion: %v", job.OwnerUserID)
+	if job.OwnerUserID == nil || *job.OwnerUserID != owner.ID || job.OwnerDeleted {
+		t.Fatalf("the owner must survive the actor's deletion: %v (deleted %v)", job.OwnerUserID, job.OwnerDeleted)
 	}
-	if job.ActorUserID != nil {
-		t.Fatalf("the deleted actor's reference survived: %v", *job.ActorUserID)
+	if job.ActorUserID != nil || !job.ActorDeleted {
+		t.Fatalf("the deleted actor's reference = %v (deleted %v), want NULL and marked", job.ActorUserID, job.ActorDeleted)
 	}
 	if job.ExecutionToken != "" {
-		t.Fatalf("a blocked Job must not keep an execution token: %q", job.ExecutionToken)
+		t.Fatalf("a failed Job must not keep an execution token: %q", job.ExecutionToken)
 	}
 }
