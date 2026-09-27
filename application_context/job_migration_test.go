@@ -537,6 +537,51 @@ func TestJobMigrationSourceAndMappingWritesAreAtomic(t *testing.T) {
 	})
 }
 
+// Retention deletes an ended Job and leaves the mapping that names it, so a
+// retired source outlives its Job by design. Work whose Job was deleted is over,
+// and needs no replay for the next start to prove.
+func TestJobMigrationStaysReadyAfterRetentionDeletesAMappedJob(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	holdJobReplayKey(t, ctx, sharedReplayKey(t))
+	created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	started, finished := created.Add(time.Minute), created.Add(2*time.Minute)
+	creator := query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/file.bin?signature=private"}
+	payload, err := json.Marshal(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := uint(17)
+	entry := models.DownloadHistoryEntry{
+		JobID: "legacy-download-outlived", URL: creator.URL, Status: models.DownloadHistoryStatusCompleted,
+		CreatedAt: created, StartedAt: &started, CompletedAt: &finished, CreatedByUserId: &owner, Payload: payload,
+	}
+	if err := ctx.db.Create(&entry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+		t.Fatalf("retire the sources = %+v, %v", result, err)
+	}
+	jobID, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, entry.JobID)
+	if err != nil {
+		t.Fatalf("resolve the migrated Job: %v", err)
+	}
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", jobID).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+		t.Fatalf("retention = %+v, %v; want the ended Job deleted", sweep, err)
+	}
+
+	result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20})
+	if err != nil || !result.Complete {
+		t.Fatalf("the next start's migration = %+v, %v; want complete", result, err)
+	}
+	if readiness, err := ctx.GetJobMigrationReadiness(); err != nil || !readiness.Ready {
+		t.Fatalf("readiness after retention = %+v, %v; want ready", readiness, err)
+	}
+}
+
 func TestJobMigrationCopiesDownloadHistoryBeforeScrubbingAndIsIdempotent(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {

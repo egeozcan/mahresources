@@ -326,6 +326,11 @@ scrubbed; that change alone is not a restored source. A deferred-download
 source that was quarantined for it, and whose row still matches its scrubbed
 projection, is returned to scrubbed at the next start.
 
+A source row can outlive its Job: Job history retention deletes an ended Job and
+keeps the source row and its mapping. Readiness does not ask for the replay
+input of a Job that no longer exists, because retention deletes only Jobs that
+have ended.
+
 ## Plugin Command Runtime Ownership
 
 Plugin command runs and command imports use an exclusive staging-root lease and

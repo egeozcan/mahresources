@@ -288,7 +288,9 @@ Rows are one-shot deferred host downloads created by `mah.download.submit` with
 queued; the accepted fail-closed exception is a crash between reserving the
 row and queueing its Job, which can strand a `submitted` row without a job id
 until operational reconciliation. A row whose Job ended before it ran, because
-it was cancelled while it waited, is `cancelled` rather than `submitted`. `claimedAt` appears briefly while a scheduler tick holds the
+it was cancelled while it waited, is `cancelled` rather than `submitted`. So is
+a pending row whose Job has since been removed from Job history, with a
+`lastError` saying so; its download is never started. `claimedAt` appears briefly while a scheduler tick holds the
 submit claim. `owned: false` on a pending row means the submitting user was
 deleted and the row has stopped rather than firing as an administrator. Naming
 a plugin that has no rows returns an empty array.

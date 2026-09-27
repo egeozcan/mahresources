@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -501,6 +502,77 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 	}
 	if got := scheduledDownloadRow(t, ctx, waitingRow.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
 		t.Fatalf("the row whose Job is still waiting is %s, want submitted", got.Status)
+	}
+}
+
+// An earlier release could cancel a deferred Job and leave its row pending, and
+// a row due further out than the Job's history is kept outlives the Job.
+// Retention removes only ended Jobs, so the row's download was decided under a
+// Job nobody can read any more: the row is recorded cancelled, with that reason,
+// and never submitted from the payload it still stores. Both startup and the
+// due-time sweep reach it, with the sources retired or not.
+func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
+	settle := map[string]func(*testing.T, *MahresourcesContext){
+		"at startup": func(t *testing.T, ctx *MahresourcesContext) {
+			if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
+				t.Fatalf("reconcile = %d, %v; want the row whose Job is gone", reconciled, err)
+			}
+		},
+		"at its due time": func(t *testing.T, ctx *MahresourcesContext) {
+			fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
+		},
+	}
+	for _, retired := range []bool{false, true} {
+		for name, settle := range settle {
+			t.Run(fmt.Sprintf("%s, sources retired %v", name, retired), func(t *testing.T) {
+				ctx := newJobHarnessContext(t, false)
+				key := sharedReplayKey(t)
+				holdJobReplayKey(t, ctx, key)
+				enableDownloadTestPlugin(t, ctx)
+				actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+				if err != nil {
+					t.Fatalf("create the acting user: %v", err)
+				}
+				row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+					&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/outlived.bin?token=private"}, time.Now().Add(time.Hour))
+				if err != nil {
+					t.Fatalf("create the deferred download: %v", err)
+				}
+				if retired {
+					if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 50, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+						t.Fatalf("retire the job sources = %+v, %v", result, err)
+					}
+				}
+				job := deferredDownloadJob(t, ctx, row.ID)
+				if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+					JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+				}); err != nil {
+					t.Fatalf("cancel the Job alone: %v", err)
+				}
+				if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).
+					Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+					t.Fatalf("expire the cancelled Job: %v", err)
+				}
+				if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+					t.Fatalf("retention = %+v, %v; want the cancelled Job pruned", sweep, err)
+				}
+				if retired {
+					ctx = restartJobProcess(t, ctx, key)
+					requireCleanBoot(t, ctx)
+				}
+
+				settle(t, ctx)
+				got := scheduledDownloadRow(t, ctx, row.ID)
+				if got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" || got.Attempts != 0 || got.LastError == "" {
+					t.Fatalf("the row is %s naming job %q after %d attempts (%q), want cancelled with its reason, never submitted",
+						got.Status, got.JobID, got.Attempts, got.LastError)
+				}
+				if retired {
+					ctx = restartJobProcess(t, ctx, key)
+					requireCleanBoot(t, ctx)
+				}
+			})
+		}
 	}
 }
 

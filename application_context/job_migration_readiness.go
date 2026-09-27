@@ -561,10 +561,13 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 	}
 }
 
+// migrationJobReplayReady reports whether a mapped source's Job can still run from
+// its canonical input when it needs to. Retention deletes only ended Jobs and
+// leaves their mappings, so a mapping whose Job is gone names work that is over.
 func migrationJobReplayReady(db *gorm.DB, service *jobs.Service, deps jobs.Deps, kind, jobID string) bool {
 	var job models.Job
 	if err := db.Where("id = ?", jobID).First(&job).Error; err != nil {
-		return false
+		return errors.Is(err, gorm.ErrRecordNotFound)
 	}
 	if jobs.State(job.State).Terminal() || jobs.ReplayClass(job.ReplayClass) == jobs.ReplayClassNonReplayable {
 		return true
