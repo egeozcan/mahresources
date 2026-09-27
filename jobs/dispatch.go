@@ -91,7 +91,7 @@ func (s *Service) ClaimJob(ctx context.Context, deps Deps, request ClaimRequest)
 		return execution, nil
 	case errors.Is(err, errNothingWaiting), errors.Is(err, errClaimContended):
 		return Execution{}, fmt.Errorf("%w: job %s", ErrJobNotWaiting, request.JobID)
-	case errors.Is(err, ErrExecutionNotLoaded):
+	case errors.Is(err, ErrExecutionNotLoaded), errors.As(err, new(*UnrunnableClaimError)):
 		return execution, err
 	default:
 		return Execution{}, err
@@ -607,12 +607,13 @@ func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, c
 }
 
 // executionLoadedOn is executionFor with the input read on load and a claim that
-// cannot run settled through settle. A read that fails for any reason but an
-// input that cannot be opened answers ErrExecutionNotLoaded with the execution
-// the claim created: the Job is running under its token, and whoever holds the
-// token is the only one who can hand it back. So does an input that cannot be
-// opened when recording that failed, wrapping the reason the input could not be
-// opened.
+// cannot run settled through settle. It never drops the claim it was given: the
+// Job is running under its token, and whoever holds the token is the only one who
+// can settle it. A read of the input that fails for any reason but an input that
+// cannot be opened answers ErrExecutionNotLoaded with the execution the claim
+// created. A Job that cannot run at all, whose block could not be written,
+// answers an *UnrunnableClaimError with that execution, to be settled and never
+// run.
 func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job models.Job, claim models.JobClaim, claimedFrom State, origin claimOrigin) (Execution, error) {
 	// Who the work acts as is settled before what it runs with: a Job whose
 	// recorded principal has been deleted may not be handed to an adapter at all,
@@ -620,8 +621,13 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 	// runs under.
 	access, err := executionAccess(job)
 	if err != nil {
-		return Execution{}, s.unrunnableClaim(settle, origin, job, claim,
+		settled := s.unrunnableClaim(settle, origin, job, claim,
 			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, err)
+		if errors.Is(settled, errUnrunnableUnrecorded) {
+			return newExecution(ctx, settle, s, job, claim, Access{}, nil, claimedFrom),
+				&UnrunnableClaimError{Reason: blockedReasonPrincipalMissing, Cause: settled}
+		}
+		return Execution{}, settled
 	}
 	input, err := s.executionInput(load, job)
 	if err != nil {
@@ -630,7 +636,7 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, err)
 			if errors.Is(settled, errUnrunnableUnrecorded) {
 				return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
-					fmt.Errorf("%w: %w", ErrExecutionNotLoaded, settled)
+					&UnrunnableClaimError{Reason: blockedReasonInputUnavailable, Cause: settled}
 			}
 			return Execution{}, settled
 		}

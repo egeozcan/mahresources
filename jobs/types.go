@@ -1456,6 +1456,24 @@ type CapacityRef struct {
 	Limit int
 }
 
+// UnrunnableClaimError is ClaimJob's answer for a Job it claimed that cannot run
+// — its principal is gone, or its input cannot be opened — when blocking it could
+// not be written within the claim's bound. The Execution returned with it holds
+// the claim: its holder records Reason as the block, retrying until it lands. It
+// is never run.
+type UnrunnableClaimError struct {
+	// Reason is the bounded block reason the control plane would have recorded.
+	Reason string
+	// Cause is why the Job cannot run, and why the block was not written.
+	Cause error
+}
+
+func (e *UnrunnableClaimError) Error() string {
+	return fmt.Sprintf("jobs: the claimed job cannot run (%s), and blocking it was not recorded: %v", e.Reason, e.Cause)
+}
+
+func (e *UnrunnableClaimError) Unwrap() error { return e.Cause }
+
 // ClaimRequest asks the Service to claim the next Job of one Kind that is
 // waiting to run, and to hand it back as an Execution.
 type ClaimRequest struct {

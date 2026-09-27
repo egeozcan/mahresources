@@ -652,15 +652,21 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 			// than to end work somebody is running.
 			log.Printf("warning: could not read plugin job %s while waiting for it: %v", execution.JobID, err)
 		} else if snap.State.Terminal() {
-			run := pluginActionRun{
-				JobID:   execution.JobID,
-				Started: !ctx.pluginActionNeverStarted(snap),
-				Failed:  snap.State == jobs.StateFailed || snap.State == jobs.StateInterrupted,
+			neverStarted, err := ctx.pluginActionNeverStarted(snap)
+			if err == nil {
+				run := pluginActionRun{
+					JobID:   execution.JobID,
+					Started: !neverStarted,
+					Failed:  snap.State == jobs.StateFailed || snap.State == jobs.StateInterrupted,
+				}
+				if snap.Failure != nil {
+					run.Message = snap.Failure.Message
+				}
+				return run, nil
 			}
-			if snap.Failure != nil {
-				run.Message = snap.Failure.Message
-			}
-			return run, nil
+			// Whether it ever started could not be read, which is not "it did":
+			// asked again on the next poll.
+			log.Printf("warning: could not read the timeline of plugin job %s while waiting for it: %v", execution.JobID, err)
 		}
 		select {
 		case <-runCtx.Done():
@@ -676,22 +682,21 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 // handler being entered: it was withdrawn, which leaves a not-started event on its
 // timeline. Whoever waited for the Job's outcome must not read "it ended" as "it
 // ran" — a scheduler would record a tick that never ran as a completed one, and
-// advance its row past it.
-func (ctx *MahresourcesContext) pluginActionNeverStarted(snap jobs.Snapshot) bool {
+// advance its row past it. A timeline that could not be read answers neither.
+func (ctx *MahresourcesContext) pluginActionNeverStarted(snap jobs.Snapshot) (bool, error) {
 	if snap.State != jobs.StateCancelled {
-		return false
+		return false, nil
 	}
 	events, err := ctx.JobService().Timeline(ctx.jobDeps(), jobs.Access{Administrator: true}, snap.ID, 0, 0)
 	if err != nil {
-		log.Printf("warning: could not read the timeline of plugin job %s: %v", snap.ID, err)
-		return false
+		return false, err
 	}
 	for _, event := range events {
 		if event.Type == pluginActionNotStartedEvent {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // pluginActionRefusal answers why this execution may not run as the principal it
@@ -1870,9 +1875,9 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 
 	pm := ctx.PluginManager()
 	if pm == nil {
-		if err := ctx.blockPluginActionJob(jobs.Execution{JobID: accepted.ID}, "plugins-unavailable"); err != nil {
-			return pluginActionRun{JobID: accepted.ID}, err
-		}
+		ctx.settlePluginActionWhile(accepted.ID, jobs.StateQueued, func() error {
+			return ctx.blockPluginActionJob(jobs.Execution{JobID: accepted.ID}, "plugins-unavailable")
+		})
 		return pluginActionRun{JobID: accepted.ID}, nil
 	}
 	decoded, err := pluginActionInputOf(input)
@@ -1952,23 +1957,29 @@ func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActio
 	if admission.endedByItself() {
 		return run, nil
 	}
-	if admission.stillReturning() {
-		admission.afterReturn(func() {
-			ctx.settlePluginActionWhile(admission.jobID, jobs.StateQueued, func() error {
-				return ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
-					"the plugin's execution budget or VM stayed busy")
-			})
+	withdraw := func() {
+		ctx.settlePluginActionWhile(admission.jobID, jobs.StateQueued, func() error {
+			return ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
+				"the plugin's execution budget or VM stayed busy")
 		})
+	}
+	if admission.stillReturning() {
+		admission.afterReturn(withdraw)
 		return run, nil
 	}
 	snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, admission.jobID)
 	if err != nil {
-		return run, err
+		// Where the occurrence stands could not be read. It did not start here,
+		// so it is withdrawn once it can be: a withdrawal only applies to a Job
+		// still waiting, and one another runtime has claimed is left to it.
+		log.Printf("warning: could not read the unstarted occurrence %s; withdrawing it once it can be: %v", admission.jobID, err)
+		go withdraw()
+		return run, nil
 	}
 	switch {
 	case snap.State == jobs.StateQueued:
-		return run, ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
-			"the plugin's execution budget or VM stayed busy")
+		withdraw()
+		return run, nil
 	case snap.State == jobs.StateRunning, snap.State.Terminal():
 		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: admission.jobID})
 	default:

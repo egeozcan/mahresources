@@ -261,7 +261,7 @@ func TestAClaimJobDeadlineBoundsTheLoadAfterItsCommit(t *testing.T) {
 // claim makes before its execution is handed over. An input that cannot be opened
 // blocks the Job, and that block is written inside the claim's bound: a caller
 // holding a plugin's VM must not wait on it past its budget. A block that could
-// not be written in the bound answers ErrExecutionNotLoaded with the claimed
+// not be written in the bound answers an UnrunnableClaimError with the claimed
 // execution, so the caller holds the token and can record the block itself.
 func TestAClaimJobDeadlineBoundsBlockingAnInputItCannotOpen(t *testing.T) {
 	_, deps := newDispatchDatabase(t, "claim-block-deadline.db")
@@ -308,12 +308,70 @@ func TestAClaimJobDeadlineBoundsBlockingAnInputItCannotOpen(t *testing.T) {
 	if !stalled.Load() {
 		t.Fatal("the block was never written: the test did not reach it")
 	}
-	if !errors.Is(err, ErrExecutionNotLoaded) || !ReplayBlocked(StateRunning, err) {
-		t.Fatalf("a block that could not be written answered %v, want ErrExecutionNotLoaded with the reason the input could not be opened", err)
+	var unrunnable *UnrunnableClaimError
+	if !errors.As(err, &unrunnable) || unrunnable.Reason != blockedReasonInputUnavailable || !ReplayBlocked(StateRunning, err) {
+		t.Fatalf("a block that could not be written answered %v, want an UnrunnableClaimError for the input", err)
 	}
 	row := jobRow(t, deps, accepted.ID)
 	if State(row.State) != StateRunning || row.ExecutionToken == "" || row.ExecutionToken != execution.ExecutionToken {
 		t.Fatalf("the claim handed back does not own the running job (row %s token %q, execution %q)",
 			row.State, row.ExecutionToken, execution.ExecutionToken)
+	}
+}
+
+// TestAClaimJobHandsBackAClaimWhosePrincipalIsGone pins the same rule for the
+// other Job that cannot run: one whose principal has been deleted. When its block
+// cannot be written within the claim's bound, the claim is not dropped: the
+// execution comes back with an UnrunnableClaimError naming the reason, so its
+// holder can record the block, and a later claim does not find a running Job
+// that nobody owns.
+func TestAClaimJobHandsBackAClaimWhosePrincipalIsGone(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-principal-gone.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	actor := uint(41)
+	accepted := acceptQueued(t, svc, deps, &actor)
+	// The account deletion sweep nulls the actor a Job was accepted to act as.
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", accepted.ID).
+		Updates(map[string]any{"actor_user_id": nil, "owner_user_id": nil}).Error; err != nil {
+		t.Fatalf("delete the actor: %v", err)
+	}
+
+	var stalled atomic.Bool
+	if err := deps.DB.Callback().Update().Before("gorm:update").Register("stall-the-block", func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(StateBlocked) {
+			return
+		}
+		stalled.Store(true)
+		select {
+		case <-db.Statement.Context.Done():
+		case <-time.After(5 * time.Second):
+		}
+	}); err != nil {
+		t.Fatalf("register the stalled block: %v", err)
+	}
+
+	bounded := deps
+	claimCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	bounded.DB = deps.DB.WithContext(claimCtx)
+	execution, err := svc.ClaimJob(context.Background(), bounded, ClaimRequest{
+		Kind: testKind, KindVersion: 1, JobID: accepted.ID, Claimant: "bounded-runtime",
+	})
+	if !stalled.Load() {
+		t.Fatal("the block was never written: the test did not reach it")
+	}
+	var unrunnable *UnrunnableClaimError
+	if !errors.As(err, &unrunnable) || unrunnable.Reason != blockedReasonPrincipalMissing {
+		t.Fatalf("a block that could not be written answered %v, want an UnrunnableClaimError for the principal", err)
+	}
+	row := jobRow(t, deps, accepted.ID)
+	if State(row.State) != StateRunning || row.ExecutionToken == "" || row.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the claim handed back does not own the running job (row %s token %q, execution %q)",
+			row.State, row.ExecutionToken, execution.ExecutionToken)
+	}
+	if execution.Access != (Access{}) {
+		t.Fatalf("an execution whose principal is gone carries access %+v, want none", execution.Access)
 	}
 }

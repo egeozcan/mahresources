@@ -118,15 +118,12 @@ func timelineHasEvent(t *testing.T, ctx *MahresourcesContext, jobID, eventType s
 	return countTimelineEvents(t, ctx, jobID, eventType) > 0
 }
 
-// setAdmissionBounds shortens the admission's bound and one recheck's bound for
-// one test.
-func setAdmissionBounds(t *testing.T, admission, recheck time.Duration) {
+// setAdmissionBound shortens the admission's bound for one test.
+func setAdmissionBound(t *testing.T, bound time.Duration) {
 	t.Helper()
-	savedAdmission, savedRecheck := pluginActionAdmissionAttempt, pluginActionRecheckAttempt
-	pluginActionAdmissionAttempt, pluginActionRecheckAttempt = admission, recheck
-	t.Cleanup(func() {
-		pluginActionAdmissionAttempt, pluginActionRecheckAttempt = savedAdmission, savedRecheck
-	})
+	saved := pluginActionAdmissionAttempt
+	pluginActionAdmissionAttempt = bound
+	t.Cleanup(func() { pluginActionAdmissionAttempt = saved })
 }
 
 // acceptRegisteredActionForTest accepts one queued async-work action as actor.
@@ -194,11 +191,10 @@ func enableActionPluginForTest(t *testing.T, ctx *MahresourcesContext) *plugin_s
 // admission's bound or failing outright. The admission has already been granted
 // its claim when the read is made, and holds the plugin's VM while it asks; it
 // must answer within its bound, give the claim back so the Job is waiting again
-// with no slot of the budget held, defer until a re-check without a claim
-// answers, and then run. A read that could not answer is never recorded as a
-// refusal.
+// with no slot of the budget held, and run once the read answers. A read that
+// could not answer is never recorded as a refusal.
 func exerciseAReCheckThatCannotFinish(t *testing.T, ctx *MahresourcesContext) {
-	setAdmissionBounds(t, 300*time.Millisecond, 2*time.Second)
+	setAdmissionBound(t, 300*time.Millisecond)
 	enableActionPluginForTest(t, ctx)
 	actor, target := seedScopedActorForTest(t, ctx, "recheck-actor")
 	stall := installReadStall(t, ctx.db)
@@ -233,9 +229,7 @@ func exerciseAReCheckThatCannotFinish(t *testing.T, ctx *MahresourcesContext) {
 			if elapsed > 3*time.Second {
 				t.Fatalf("the admission took %v with the plugin's VM held: its bound did not reach the re-check", elapsed)
 			}
-			if ready, _ := admission.Recheck(context.Background()); !ready {
-				t.Fatal("the re-check without a claim did not answer once the read did")
-			}
+			waitFor(t, "the claim to be given back", func() bool { return !admission.stillReturning() })
 			if state := jobStateForTest(t, ctx, accepted.ID); state != jobs.StateQueued {
 				t.Fatalf("a Job whose claim was given back is %s, want queued", state)
 			}
@@ -270,7 +264,7 @@ func TestAReCheckThatCannotFinishGivesTheClaimBack(t *testing.T) {
 // giving the plugin's VM and its job slot back, so the plugin's hooks and pages,
 // and other plugins' work, are never held behind it.
 func TestAStalledReCheckHoldsNeitherTheVMNorASlot(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 300*time.Millisecond)
+	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	pm := enableActionPluginForTest(t, ctx)
 	actor := models.User{Username: "stalled-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -320,14 +314,14 @@ func TestAStalledReCheckHoldsNeitherTheVMNorASlot(t *testing.T) {
 	}
 }
 
-// TestAReCheckThatKeepsFailingGivesItsClaimBackOnce pins what a re-check that
-// cannot answer for a long time costs. The claim is given back once, and never
-// again: the Job's timeline holds one start however long the failure lasts. The
-// re-checks made without a claim back off, and while they fail the Job is out of
-// its plugin's lane, so the plugin's other work runs. Once the check answers,
-// the Job runs.
-func TestAReCheckThatKeepsFailingGivesItsClaimBackOnce(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 300*time.Millisecond)
+// TestAReCheckThatKeepsFailingBacksOff pins what a re-check that cannot answer
+// for a long time costs. Each claim whose re-check fails is given back, and the
+// execution stays out of its plugin's lane for a while that doubles each time,
+// so the Job's timeline gains at most one start per interval and the plugin's
+// other work runs meanwhile. The Job never runs while the check fails, and runs
+// once it answers.
+func TestAReCheckThatKeepsFailingBacksOff(t *testing.T) {
+	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	pm := enableActionPluginForTest(t, ctx)
 	// Only the scoped actor's re-check reads the target, so only its Job fails.
@@ -352,21 +346,20 @@ func TestAReCheckThatKeepsFailingGivesItsClaimBackOnce(t *testing.T) {
 	waitForJobState(t, ctx, other.ID, "the plugin's other work to run behind a failing re-check", func(s jobs.Snapshot) bool {
 		return s.State == jobs.StateSucceeded
 	})
-	waitFor(t, "four re-checks", func() bool { return stall.hits.Load() >= 4 })
+	waitFor(t, "three claims whose re-check failed", func() bool { return stall.hits.Load() >= 3 })
 	times := stall.hitTimes()
-	// The first read is the one under the claim and the second the first
-	// re-check without one, straight after; from there each wait doubles.
-	if gap := times[2].Sub(times[1]); gap < 900*time.Millisecond {
-		t.Fatalf("the second re-check came %v after the first, want a backoff of about a second", gap)
+	if gap := times[1].Sub(times[0]); gap < 900*time.Millisecond {
+		t.Fatalf("the second claim came %v after the first give-back, want a deferral of about a second", gap)
 	}
-	if gap := times[3].Sub(times[2]); gap < 1800*time.Millisecond {
-		t.Fatalf("the third re-check came %v after the second, want the backoff doubled", gap)
+	if gap := times[2].Sub(times[1]); gap < 1800*time.Millisecond {
+		t.Fatalf("the third claim came %v after the second, want the deferral doubled", gap)
 	}
-	if started := countTimelineEvents(t, ctx, stuck.ID, jobs.EventStarted); started != 1 {
-		t.Fatalf("a Job whose re-check kept failing was started %d times, want once", started)
+	started := countTimelineEvents(t, ctx, stuck.ID, jobs.EventStarted)
+	if hits := int(stall.hits.Load()); started != hits {
+		t.Fatalf("the Job was started %d times for %d claims: a start that was not a claim, or a claim that was not given back", started, hits)
 	}
-	if state := jobStateForTest(t, ctx, stuck.ID); state != jobs.StateQueued {
-		t.Fatalf("the Job whose re-check keeps failing is %s, want queued", state)
+	if got := pluginKVForTest(t, ctx, "ran"); got != "1" {
+		t.Fatalf("the handler ran %q times while one Job's re-check failed, want only the other Job's run", got)
 	}
 
 	stall.disarm()
@@ -376,54 +369,14 @@ func TestAReCheckThatKeepsFailingGivesItsClaimBackOnce(t *testing.T) {
 	if job.State != jobs.StateSucceeded {
 		t.Fatalf("the Job ended %s, want succeeded", job.State)
 	}
-	if started := countTimelineEvents(t, ctx, stuck.ID, jobs.EventStarted); started != 2 {
-		t.Fatalf("the Job was started %d times in all, want its one give-back and its run", started)
-	}
 }
 
-// TestASlowReCheckStillRunsTheJob pins a check that answers, but only after
-// longer than an admission may hold the plugin's VM. The re-check without a
-// claim may wait for it; the claim made straight after it acts on that answer
-// when the check under the claim runs out again, rather than giving the claim
-// back a second time.
-func TestASlowReCheckStillRunsTheJob(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 3*time.Second)
-	ctx := newJobHarnessContext(t, false)
-	pm := enableActionPluginForTest(t, ctx)
-	actor := models.User{Username: "slow-actor", Role: models.RoleUser, PasswordHash: "x"}
-	if err := ctx.db.Create(&actor).Error; err != nil {
-		t.Fatalf("seed the actor: %v", err)
-	}
-	stall := installReadStall(t, ctx.db)
-	stall.armSlow(readsTable("users"), 600*time.Millisecond)
-	defer stall.disarm()
-
-	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 4)
-	owner := actor.ID
-	if err := ctx.queueRegisteredPluginAction(pm, accepted.ID, "slow-handle", &owner, input); err != nil {
-		t.Fatalf("queue the action: %v", err)
-	}
-	job := waitForJobState(t, ctx, accepted.ID, "the action to run despite its slow re-check", func(s jobs.Snapshot) bool {
-		return s.State.Terminal()
-	})
-	if job.State != jobs.StateSucceeded {
-		t.Fatalf("the action ended %s, want succeeded", job.State)
-	}
-	if started := countTimelineEvents(t, ctx, accepted.ID, jobs.EventStarted); started != 2 {
-		t.Fatalf("the action was started %d times, want one give-back and its run", started)
-	}
-	if timelineHasEvent(t, ctx, accepted.ID, jobs.EventBlocked) {
-		t.Fatal("a slow re-check was recorded as a refusal")
-	}
-}
-
-// TestAnOldReCheckAnswerIsNotActedOn pins the freshness of the answer a claim may
-// act on. An answer from an earlier turn says what the account could do then; the
-// account is disabled after it, and the claim that follows must not run the Job
-// on it even though the check under that claim cannot answer. Only an answer
-// taken again, just before the claim, is acted on, and it refuses.
-func TestAnOldReCheckAnswerIsNotActedOn(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 2*time.Second)
+// TestAFailedReCheckNeverRunsTheJob pins that nothing stands in for a current
+// answer. The account is disabled after an earlier attempt; the next claim's
+// re-check cannot read it, and the Job must not run on anything it saw before.
+// Once the check can read, it refuses.
+func TestAFailedReCheckNeverRunsTheJob(t *testing.T) {
+	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	enableActionPluginForTest(t, ctx)
 	actor := models.User{Username: "changing-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -438,32 +391,17 @@ func TestAnOldReCheckAnswerIsNotActedOn(t *testing.T) {
 	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
 		t.Fatalf("an admission whose re-check failed answered %v, want deferred", got)
 	}
-	stall.disarm()
-	if ready, _ := admission.Recheck(context.Background()); !ready {
-		t.Fatal("the re-check without a claim did not answer")
-	}
-
+	waitFor(t, "the claim to be given back", func() bool { return !admission.stillReturning() })
 	if err := ctx.db.Model(&models.User{}).Where("id = ?", actor.ID).Update("disabled", true).Error; err != nil {
 		t.Fatalf("disable the account: %v", err)
 	}
-	time.Sleep(pluginActionAdmissionAttempt + 100*time.Millisecond)
-
-	stall.arm(readsTable("users"), true)
 	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
-		t.Fatalf("an admission holding only an old answer said %v, want deferred without a claim", got)
-	}
-	if started := countTimelineEvents(t, ctx, accepted.ID, jobs.EventStarted); started != 1 {
-		t.Fatalf("an old answer was claimed on: the Job was started %d times", started)
+		t.Fatalf("a claim whose re-check failed again answered %v, want deferred", got)
 	}
 	stall.disarm()
-	if ready, _ := admission.Recheck(context.Background()); !ready {
-		t.Fatal("the fresh re-check did not answer")
-	}
-	stall.arm(readsTable("users"), true)
-	got := admission.Admit(time.Time{})
-	stall.disarm()
-	if got != plugin_system.AdmitWithdrawn {
-		t.Fatalf("a claim made on a fresh refusal answered %v, want withdrawn", got)
+	waitFor(t, "the claim to be given back", func() bool { return !admission.stillReturning() })
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+		t.Fatalf("a claim whose re-check read a disabled account answered %v, want withdrawn", got)
 	}
 	waitFor(t, "the refusal to be recorded", func() bool {
 		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateBlocked
@@ -476,10 +414,9 @@ func TestAnOldReCheckAnswerIsNotActedOn(t *testing.T) {
 // TestADeferredAdmissionClaimsNothingUntilItsClaimIsBack pins the order between a
 // claim given back and the next claim. Until the Job is waiting again it is
 // running under the returned token, and a claim asked for then would read it as
-// work another execution owns; the re-check without a claim waits for the claim
-// to be back before it answers, and nothing is claimed before it has.
+// work another execution owns; nothing is claimed before it is back.
 func TestADeferredAdmissionClaimsNothingUntilItsClaimIsBack(t *testing.T) {
-	setAdmissionBounds(t, 200*time.Millisecond, 2*time.Second)
+	setAdmissionBound(t, 200*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	enableActionPluginForTest(t, ctx)
 	actor := models.User{Username: "returning-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -512,18 +449,13 @@ func TestADeferredAdmissionClaimsNothingUntilItsClaimIsBack(t *testing.T) {
 	if !admission.stillReturning() {
 		t.Fatal("the claim came back although its first release failed: the test did not reach the retry")
 	}
-	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
-		t.Fatalf("asking while the claim was still coming back answered %v, want deferred", got)
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitLater {
+		t.Fatalf("asking while the claim was still coming back answered %v, want later", got)
 	}
 	if started := countTimelineEvents(t, ctx, accepted.ID, jobs.EventStarted); started != 1 {
 		t.Fatalf("the Job was claimed %d times while its claim was coming back", started)
 	}
-	if ready, _ := admission.Recheck(context.Background()); !ready {
-		t.Fatal("the re-check did not answer once the claim was back")
-	}
-	if admission.stillReturning() {
-		t.Fatal("the re-check answered before the claim was back")
-	}
+	waitFor(t, "the claim to come back", func() bool { return !admission.stillReturning() })
 	if got := admission.Admit(time.Time{}); got != plugin_system.Admitted {
 		t.Fatalf("asking once the claim was back answered %v, want admitted", got)
 	}
@@ -537,7 +469,7 @@ func TestADeferredAdmissionClaimsNothingUntilItsClaimIsBack(t *testing.T) {
 // input in memory, as it was sealed or opened, so a read that fails is not a
 // reason to give the claim back, which an admission may do only once.
 func TestAClaimWhoseInputCannotBeReadRunsWithTheQueuedInput(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 2*time.Second)
+	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	enableActionPluginForTest(t, ctx)
 	actor := models.User{Username: "input-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -571,7 +503,7 @@ func TestAClaimWhoseInputCannotBeReadRunsWithTheQueuedInput(t *testing.T) {
 // not start, and once the claim lands it is withdrawn, not left waiting for a
 // scheduler that has moved on.
 func TestAnOccurrenceWhoseClaimIsStillComingBackIsWithdrawnWhenItLands(t *testing.T) {
-	setAdmissionBounds(t, 200*time.Millisecond, 2*time.Second)
+	setAdmissionBound(t, 200*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	pm := enableActionPluginForTest(t, ctx)
 	operator := models.User{Username: "occurrence-operator", Role: models.RoleUser, PasswordHash: "x"}
@@ -693,7 +625,7 @@ func TestAnOccurrenceAdmittedTooLateIsWithdrawnEvenIfTheFirstWriteFails(t *testi
 // the admission's bound: the admission holds the claim, so it records the block
 // itself, after the VM is released, rather than leaving the Job running.
 func TestAClaimWhoseInputCannotBeOpenedIsBlockedFromTheAdmission(t *testing.T) {
-	setAdmissionBounds(t, 300*time.Millisecond, 2*time.Second)
+	setAdmissionBound(t, 300*time.Millisecond)
 	ctx := newJobHarnessContext(t, false)
 	enableActionPluginForTest(t, ctx)
 	actor := models.User{Username: "unopenable-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -729,5 +661,162 @@ func TestAClaimWhoseInputCannotBeOpenedIsBlockedFromTheAdmission(t *testing.T) {
 	})
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the blocked Job still holds %d slots", held)
+	}
+}
+
+// failFirst makes the first n statements match fails, and reports how many it
+// has left to fail.
+func failFirst(t *testing.T, register func(name string, hook func(*gorm.DB)) error, n int64, match func(*gorm.DB) bool) *atomic.Int64 {
+	t.Helper()
+	left := &atomic.Int64{}
+	left.Store(n)
+	if err := register("fail-first", func(db *gorm.DB) {
+		if !match(db) {
+			return
+		}
+		if left.Add(-1) >= 0 {
+			_ = db.AddError(errors.New("database is locked"))
+		}
+	}); err != nil {
+		t.Fatalf("register the failing statement: %v", err)
+	}
+	return left
+}
+
+func updatesState(state jobs.State) func(*gorm.DB) bool {
+	return func(db *gorm.DB) bool {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		return ok && db.Statement.Table == "jobs" && updates["state"] == string(state)
+	}
+}
+
+// TestAWaiterDoesNotReadAnUnreadableTimelineAsARun pins what "never started"
+// rests on: the not-started event on a withdrawn Job's timeline. A timeline that
+// could not be read is not a timeline without that event, so the waiter asks
+// again rather than reporting a run that never happened.
+func TestAWaiterDoesNotReadAnUnreadableTimelineAsARun(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	occurrence := acceptOccurrenceForTest(t, ctx)
+	if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: occurrence.ID}, "not-started", "the VM stayed busy"); err != nil {
+		t.Fatalf("withdraw the occurrence: %v", err)
+	}
+	left := failFirst(t, func(name string, hook func(*gorm.DB)) error {
+		return ctx.db.Callback().Query().Before("gorm:query").Register(name, hook)
+	}, 1, readsTable("job_events"))
+
+	run, err := ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: occurrence.ID})
+	if err != nil {
+		t.Fatalf("wait for the occurrence: %v", err)
+	}
+	if left.Load() >= 0 {
+		t.Fatal("the timeline was not read again after the failed read: the test did not reach the retry")
+	}
+	if run.Started {
+		t.Fatal("a withdrawn occurrence was reported as started because its timeline could not be read once")
+	}
+}
+
+// TestAnUnstartedOccurrenceIsWithdrawnWhenItsFirstSettlementFails pins the
+// scheduler's side of an occurrence that did not start here. A fresh one is not
+// adopted by any other runtime, so once the scheduler has given its row's claim
+// back, nothing else would end it: neither a read of where it stands nor the
+// withdrawal itself may be tried once and dropped.
+func TestAnUnstartedOccurrenceIsWithdrawnWhenItsFirstSettlementFails(t *testing.T) {
+	cases := []struct {
+		name  string
+		chain func(ctx *MahresourcesContext) func(name string, hook func(*gorm.DB)) error
+		match func(*gorm.DB) bool
+	}{
+		{
+			name: "the read fails",
+			chain: func(ctx *MahresourcesContext) func(string, func(*gorm.DB)) error {
+				return func(name string, hook func(*gorm.DB)) error {
+					return ctx.db.Callback().Query().Before("gorm:query").Register(name, hook)
+				}
+			},
+			match: readsTable("jobs"),
+		},
+		{
+			name: "the withdrawal fails",
+			chain: func(ctx *MahresourcesContext) func(string, func(*gorm.DB)) error {
+				return func(name string, hook func(*gorm.DB)) error {
+					return ctx.db.Callback().Update().Before("gorm:update").Register(name, hook)
+				}
+			},
+			match: updatesState(jobs.StateCancelled),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := newJobHarnessContext(t, false)
+			occurrence := acceptOccurrenceForTest(t, ctx)
+			admission := ctx.newPluginActionAdmission(occurrence.ID,
+				&pluginActionJobInput{Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin}, nil)
+			left := failFirst(t, c.chain(ctx), 1, c.match)
+
+			run, err := ctx.settleUnstartedOccurrence(admission)
+			if err != nil {
+				t.Fatalf("settle the occurrence: %v", err)
+			}
+			if run.Started {
+				t.Fatal("an occurrence that never started was reported as started")
+			}
+			waitFor(t, "the occurrence to be withdrawn", func() bool {
+				return jobStateForTest(t, ctx, occurrence.ID) == jobs.StateCancelled
+			})
+			if left.Load() >= 0 {
+				t.Fatal("nothing was tried again after the failure: the test did not reach the retry")
+			}
+			if got := lastEventType(t, ctx, occurrence.ID); got != pluginActionNotStartedEvent {
+				t.Fatalf("the withdrawn occurrence's last event is %q, want %q", got, pluginActionNotStartedEvent)
+			}
+		})
+	}
+}
+
+// TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission pins the claim of a Job
+// whose actor was deleted when the control plane could not block it within the
+// admission's bound: the admission holds that claim and records the block
+// itself, rather than dropping a running Job nobody owns.
+func TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission(t *testing.T) {
+	setAdmissionBound(t, 300*time.Millisecond)
+	ctx := newJobHarnessContext(t, false)
+	enableActionPluginForTest(t, ctx)
+	actor := models.User{Username: "deleted-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 11)
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", accepted.ID).
+		Updates(map[string]any{"actor_user_id": nil, "owner_user_id": nil}).Error; err != nil {
+		t.Fatalf("delete the actor: %v", err)
+	}
+	var stalled atomic.Bool
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("stall-the-first-block", func(db *gorm.DB) {
+		if !updatesState(jobs.StateBlocked)(db) {
+			return
+		}
+		if stalled.CompareAndSwap(false, true) {
+			<-db.Statement.Context.Done()
+		}
+	}); err != nil {
+		t.Fatalf("register the stalled block: %v", err)
+	}
+
+	admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+		t.Fatalf("a claim whose principal is gone answered %v, want withdrawn", got)
+	}
+	if !stalled.Load() {
+		t.Fatal("the control plane never tried to block the Job: the test did not reach it")
+	}
+	waitFor(t, "the admission to block the Job", func() bool {
+		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateBlocked
+	})
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the blocked Job still holds %d slots", held)
+	}
+	if got := pluginKVForTest(t, ctx, "ran"); got != "" {
+		t.Fatalf("a Job whose principal is gone ran %q times", got)
 	}
 }

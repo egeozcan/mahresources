@@ -805,33 +805,27 @@ func TestAPanicJustBeforeTheHandlerReleasesTheVM(t *testing.T) {
 	})
 }
 
-// deferredAdmission defers its first answer and admits once the test says its
-// host has found out; until then each recheck asks the lane to wait a moment.
+// deferredAdmission defers until the test says its host has found out, and
+// counts how often it was asked.
 type deferredAdmission struct {
-	ready    atomic.Bool
-	deferred atomic.Bool
-	rechecks atomic.Int64
+	ready atomic.Bool
+	asked atomic.Int64
 }
 
 func (a *deferredAdmission) Admit(time.Time) AdmitResult {
-	if a.deferred.CompareAndSwap(false, true) || !a.ready.Load() {
+	a.asked.Add(1)
+	if !a.ready.Load() {
 		return AdmitDeferred
 	}
 	return Admitted
 }
 
-func (a *deferredAdmission) Recheck(ctx context.Context) (bool, time.Duration) {
-	a.rechecks.Add(1)
-	if ctx.Err() != nil {
-		return false, 0
-	}
-	return a.ready.Load(), 20 * time.Millisecond
-}
+func (a *deferredAdmission) Deferral() time.Duration { return 20 * time.Millisecond }
 
 // TestADeferredHeadStepsOutOfItsLane pins what a deferral costs the plugin's other
-// work: nothing. The deferred execution leaves the head of the lane while its host
-// finds out, the work behind it runs, and it runs once its host is ready. A
-// disable ends its wait outside the lane at once, as it ends every other wait.
+// work: nothing. The deferred execution leaves the head of the lane for its
+// host's deferral, the work behind it runs, and it runs once its host admits it.
+// A disable ends its wait outside the lane at once, as it ends every other wait.
 func TestADeferredHeadStepsOutOfItsLane(t *testing.T) {
 	pm := newLanePluginManager(t)
 
@@ -842,7 +836,7 @@ func TestADeferredHeadStepsOutOfItsLane(t *testing.T) {
 		nil, "idle", "work", 1, nil, ""); err != nil {
 		t.Fatalf("submit the deferred work: %v", err)
 	}
-	waitUntil(t, "the host to be rechecked", 5*time.Second, func() bool { return deferred.rechecks.Load() > 0 })
+	waitUntil(t, "the host to defer", 5*time.Second, func() bool { return deferred.asked.Load() > 0 })
 
 	behindSink := &recordingSink{}
 	if _, err := pm.RunActionAsyncForHost(
@@ -855,11 +849,11 @@ func TestADeferredHeadStepsOutOfItsLane(t *testing.T) {
 		return completed == 1
 	})
 	if started, _, _, _ := deferredSink.counts(); started != 0 {
-		t.Fatal("the deferred work started before its host was ready")
+		t.Fatal("the deferred work started before its host admitted it")
 	}
 
 	deferred.ready.Store(true)
-	waitUntil(t, "the deferred work to run once its host is ready", 5*time.Second, func() bool {
+	waitUntil(t, "the deferred work to run once its host admits it", 5*time.Second, func() bool {
 		_, completed, _, _ := deferredSink.counts()
 		return completed == 1
 	})
@@ -869,9 +863,9 @@ func TestADeferredHeadStepsOutOfItsLane(t *testing.T) {
 	if _, err := pm.RunActionAsyncForHost(
 		&HostJobRef{JobID: "job-waiting", Handle: "handle-waiting", Sink: waitingSink, Admission: waiting},
 		nil, "idle", "work", 3, nil, ""); err != nil {
-		t.Fatalf("submit the work that never becomes ready: %v", err)
+		t.Fatalf("submit the work that is never admitted: %v", err)
 	}
-	waitUntil(t, "the host to be rechecked", 5*time.Second, func() bool { return waiting.rechecks.Load() > 0 })
+	waitUntil(t, "the host to defer", 5*time.Second, func() bool { return waiting.asked.Load() > 0 })
 	began := time.Now()
 	if err := pm.DisablePlugin("idle"); err != nil {
 		t.Fatalf("disable: %v", err)

@@ -568,9 +568,9 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			if paused := pm.pauseBeforeAdmission(slotDeadline, bounds.revoked); paused != asyncRan {
 				return paused
 			}
-		case admitRecheck:
-			if rechecked := pm.recheckOutsideLane(job, &ticket, &laneHeld, waitCtx, slotDeadline, bounds.revoked); rechecked != asyncRan {
-				return rechecked
+		case admitStepOut:
+			if back := pm.stepOutOfLane(job, &ticket, &laneHeld, waitCtx, slotDeadline, bounds.revoked); back != asyncRan {
+				return back
 			}
 		default:
 			return got

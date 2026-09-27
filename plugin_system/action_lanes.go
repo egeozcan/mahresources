@@ -240,22 +240,18 @@ const (
 	// ended, it was blocked, or another runtime owns it. The host has recorded
 	// whatever needed recording, and the execution leaves without starting.
 	AdmitWithdrawn
-	// AdmitDeferred means the Job is still waiting, and the host cannot admit it
-	// until it has found out something it could not find out under a claim. The
-	// execution gives up its place in the lane, so the plugin's other work is not
-	// held behind it, and the host asks again (HostRecheck) before it next claims.
+	// AdmitDeferred means the host gave back the claim it had granted, because
+	// it could not find out under it whether the Job may run. The Job is waiting
+	// again. The execution leaves its lane for the host's deferral (HostDeferral),
+	// so the plugin's other work is not held behind it, and rejoins at the back.
 	AdmitDeferred
 )
 
-// HostRecheck is implemented by a HostAdmission that answers AdmitDeferred.
-//
-// Recheck is asked with nothing held but the head of the lane: no job slot, no
-// VM and no claim, so it may take as long as its own bound allows. It is asked
-// immediately before the slot and the VM are taken for the next claim, which is
-// what makes its answer fresh when that claim is made. ready false asks the
-// execution to stay out of the lane for retryAfter before asking again.
-type HostRecheck interface {
-	Recheck(ctx context.Context) (ready bool, retryAfter time.Duration)
+// HostDeferral is implemented by a HostAdmission that answers AdmitDeferred.
+// Deferral is how long the execution stays out of its lane before it takes a
+// place again.
+type HostDeferral interface {
+	Deferral() time.Duration
 }
 
 // HostAdmission is the durable half of one queued execution: the claim the head
@@ -356,8 +352,8 @@ const (
 	admitDone admitNext = iota
 	// admitAgain: ask again once the VM and the slot have been given back.
 	admitAgain
-	// admitRecheck: give up the lane until the host has asked again (HostRecheck).
-	admitRecheck
+	// admitStepOut: leave the lane for the host's deferral (HostDeferral).
+	admitStepOut
 )
 
 // admitOnce asks the host for the durable claim once. It is asked with the
@@ -384,8 +380,8 @@ func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (asyncOut
 	case AdmitWithdrawn:
 		return asyncWithdrawn, admitDone
 	case AdmitDeferred:
-		if _, ok := ref.Admission.(HostRecheck); ok {
-			return asyncRan, admitRecheck
+		if _, ok := ref.Admission.(HostDeferral); ok {
+			return asyncRan, admitStepOut
 		}
 		return asyncRan, admitAgain
 	default:
@@ -393,42 +389,36 @@ func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (asyncOut
 	}
 }
 
-// recheckOutsideLane is how the head of a lane waits for a host that deferred
-// it: the host asks again from the head of the lane, holding no slot and no VM,
-// and while it cannot find out the execution leaves the lane, so the plugin's
-// other work goes first, and comes back to its end. It answers asyncRan holding
-// the lane again, with the host ready to be asked for its claim at once.
-func (pm *PluginManager) recheckOutsideLane(job *ActionJob, ticket **laneTicket, laneHeld *bool, waitCtx context.Context, deadline time.Time, revoked <-chan struct{}) asyncOutcome {
-	recheck := job.hostJobRef().Admission.(HostRecheck)
+// stepOutOfLane is how the head of a lane waits for a host that deferred it: it
+// gives its place up, so the plugin's other work goes first, stays out for the
+// host's deferral, and takes a place at the back again. It answers asyncRan
+// holding the lane again.
+func (pm *PluginManager) stepOutOfLane(job *ActionJob, ticket **laneTicket, laneHeld *bool, waitCtx context.Context, deadline time.Time, revoked <-chan struct{}) asyncOutcome {
+	deferral := job.hostJobRef().Admission.(HostDeferral).Deferral()
+	if deferral <= 0 {
+		deferral = hostAdmissionPollInterval
+	}
+	(*ticket).lane.release()
+	*laneHeld = false
 	ctx := waitCtx
 	if !deadline.IsZero() {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(waitCtx, deadline)
 		defer cancel()
 	}
-	for {
-		ready, retryAfter := recheck.Recheck(ctx)
-		if ready {
-			return asyncRan
-		}
-		(*ticket).lane.release()
-		*laneHeld = false
-		if retryAfter <= 0 {
-			retryAfter = hostAdmissionPollInterval
-		}
-		timer := time.NewTimer(retryAfter)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return pm.abandonedWait(revoked)
-		}
-		*ticket = (*ticket).rejoin()
-		if !(*ticket).wait(pm.done, deadline, revoked) {
-			return pm.abandonedWait(revoked)
-		}
-		*laneHeld = true
+	timer := time.NewTimer(deferral)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return pm.abandonedWait(revoked)
 	}
+	*ticket = (*ticket).rejoin()
+	if !(*ticket).wait(pm.done, deadline, revoked) {
+		return pm.abandonedWait(revoked)
+	}
+	*laneHeld = true
+	return asyncRan
 }
 
 // expired reports whether an absolute deadline has passed. A lane turn, a job
