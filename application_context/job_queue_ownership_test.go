@@ -523,8 +523,7 @@ func TestAQueuedClusteringRunLeavesTheReductionFreeForTheRuntimeThatRunsIt(t *te
 	holdJobReplayKey(t, first, key)
 	other, otherRuntime := newSecondProcessJobContext(t, first, key)
 
-	// The one slot the deployment has, held by a claim of the runtime test Kind —
-	// which the second process can run, so a free slot really does mean it is free.
+	// The one slot the deployment has, held by a claim of the runtime test Kind.
 	holder := holdTheDeploymentBudgetIn(t, first)
 
 	reduction := createReductionRowForTest(t, first, `{"clusters":[]}`, models.ReductionStatusFailed)
@@ -551,14 +550,9 @@ func TestAQueuedClusteringRunLeavesTheReductionFreeForTheRuntimeThatRunsIt(t *te
 	}
 
 	// The slot frees, and the process with room takes both claims — the Job's and the
-	// row's — and runs the clustering.
-	if _, err := first.JobService().ReleaseClaim(first.jobDeps(), jobs.ReleaseRequest{
-		ExecutionRef: jobs.ExecutionRef{JobID: holder.JobID, ExecutionToken: holder.ExecutionToken},
-		To:           jobs.StateQueued,
-		Reason:       "test released the budget",
-	}); err != nil {
-		t.Fatalf("release the budget holder: %v", err)
-	}
+	// row's — and runs the clustering. The holder ends rather than going back to the
+	// queue, so the clustering run is the only work waiting for the slot.
+	finishForTest(t, holder, jobs.StateSucceeded)
 	otherRuntime.tick(context.Background())
 
 	finished := waitForSnapshot(t, other, queued.ID, "the queued clustering run to finish", func(s jobs.Snapshot) bool {
