@@ -317,10 +317,11 @@ reads as work the server does for itself, and it would run with no account
 check. Before admitting traffic after the upgrade, list the unfinished ones:
 
 ```sql
-SELECT id, kind, state, accepted_at FROM jobs
+SELECT id, kind, title, state, accepted_at FROM jobs
 WHERE state IN ('scheduled', 'queued', 'running', 'paused', 'blocked')
   AND execution_principal = ''
-  AND owner_user_id IS NULL AND actor_user_id IS NULL;
+  AND owner_user_id IS NULL AND actor_user_id IS NULL
+  AND owner_deleted = false AND actor_deleted = false;
 ```
 
 A row here either belongs to an account deleted before this release or was
@@ -328,8 +329,12 @@ started with no account at all, such as plugin work that no request started;
 the row does not record which. Judge each by its Kind, title and time, and
 cancel the ones a person submitted, or any you cannot place, since cancelled
 work can be submitted again. Cancel as an administrator with
-`mr job command <id> cancel --confirm`, or
-`POST /v1/jobs/{id}/commands/cancel`.
+`mr job command <id> cancel --confirm`, which reads the Job's current version
+and sends an idempotency key for you. Through the API it is
+`POST /v1/jobs/{id}/commands/cancel` with a JSON body carrying the Job's
+current `version` from `GET /v1/jobs/{id}` as `expectedVersion` and a unique
+`idempotencyKey` (see
+[the Job Center API](../api/other-endpoints.md#canonical-job-center-api)).
 
 ## Restoring a Pre-Retirement Backup
 

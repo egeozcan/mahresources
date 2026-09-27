@@ -85,19 +85,18 @@ func (ctx *MahresourcesContext) JobAccountOptions() ([]JobAccountOption, error) 
 // without anybody to run as. It is one grouped read over the nonterminal
 // Jobs, whose state is indexed, however many accounts the page lists.
 //
-// The account a Job acts as is the one its execution principal names. A row
-// written before that class was recorded carries none, and is read the way
-// dispatch reads it (jobs.executionPrincipalOf): its actor, else its owner.
+// The account a Job acts as is the one dispatch runs it as
+// (jobs.ExecutionAccountSQL), so a row written before its class was recorded is
+// read exactly as dispatch reads it, deletion marks included.
 func (ctx *MahresourcesContext) UnfinishedJobCounts() (map[uint]int64, error) {
 	var rows []struct {
 		AccountID uint
 		Count     int64
 	}
+	account, accountArgs := jobs.ExecutionAccountSQL()
 	err := ctx.db.Table("(?) AS unfinished",
 		ctx.db.Model(&models.Job{}).
-			Select("CASE execution_principal WHEN ? THEN owner_user_id WHEN ? THEN actor_user_id WHEN ? THEN NULL "+
-				"ELSE COALESCE(actor_user_id, owner_user_id) END AS account_id",
-				string(jobs.PrincipalOwner), string(jobs.PrincipalActor), string(jobs.PrincipalHost)).
+			Select(account+" AS account_id", accountArgs...).
 			Where("state NOT IN ?", []jobs.State{jobs.StateSucceeded, jobs.StateFailed, jobs.StateCancelled, jobs.StateInterrupted})).
 		Select("account_id, COUNT(*) AS count").
 		Where("account_id IS NOT NULL").

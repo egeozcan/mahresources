@@ -95,6 +95,13 @@ func TestUnfinishedJobCountsCountWorkThatActsAsEachAccount(t *testing.T) {
 	if err := ctx.db.Model(&models.Job{}).Where("id = ?", legacy.ID).Update("execution_principal", "").Error; err != nil {
 		t.Fatalf("clear the execution class: %v", err)
 	}
+	// A row like it whose actor was deleted: dispatch refuses it as the deleted
+	// actor's, so it does not act as the owner who remains.
+	orphaned := accept(&carol, &bob, jobs.StateQueued)
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", orphaned.ID).
+		Updates(map[string]any{"execution_principal": "", "actor_user_id": nil, "actor_deleted": true}).Error; err != nil {
+		t.Fatalf("delete the legacy row's actor: %v", err)
+	}
 
 	counts, err := ctx.UnfinishedJobCounts()
 	if err != nil {

@@ -458,3 +458,36 @@ func TestPluginCommandHeartbeatKeepsLongRunningCanonicalClaimAlive(t *testing.T)
 	require.Error(t, ctx.heartbeatPluginCommandJob(execution))
 	require.NotEmpty(t, oldToken)
 }
+
+// The command runtime claims inside its own transaction, so it binds the claim to
+// the source row atomically. A claim that cannot run because the command's
+// account was deleted ends the Job failed as principal-missing, and that outcome
+// commits even though the claim does not: the Job does not go back to waiting,
+// and the source row is not bound to an execution that never ran.
+func TestAPluginCommandWhoseActorWasDeletedEndsFailedAtClaim(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: t.TempDir(), commandPath: t.TempDir()}))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+	actor := &models.User{Username: "departed-commander", PasswordHash: "x", Role: models.RoleUser}
+	require.NoError(t, ctx.db.Create(actor).Error)
+	now := time.Now().UTC()
+	record := testRun("deleted-actor-command", &actor.ID, false, now)
+	require.NoError(t, ctx.CreateRun(record, testOutput(record.ID, now)))
+	stored, _, err := ctx.Run(record.ID)
+	require.NoError(t, err)
+	require.NoError(t, ctx.DeleteUser(actor.ID))
+
+	_, claimed, err := ctx.claimPluginCommandJob(stored.JobID, JobKindPluginCommand, record.ID)
+	require.ErrorIs(t, err, jobs.ErrExecutionPrincipalUnavailable)
+	require.False(t, claimed)
+	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, stored.JobID)
+	require.NoError(t, err)
+	require.Equal(t, jobs.StateFailed, snapshot.State)
+	require.NotNil(t, snapshot.Failure)
+	require.Equal(t, "principal-missing", snapshot.Failure.Code)
+	stored, _, err = ctx.Run(record.ID)
+	require.NoError(t, err)
+	require.Empty(t, stored.JobExecutionToken)
+}

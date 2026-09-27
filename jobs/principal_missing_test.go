@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"mahresources/models"
@@ -231,6 +232,70 @@ func TestOwnedByViewerListsTheAskersOwnJobs(t *testing.T) {
 	for _, filter := range []Filter{{OwnedByViewer: true, OwnerID: &theirs}, {OwnedByViewer: true, OwnerDeleted: true}} {
 		if _, err := svc.List(deps, admin, filter, Cursor{}, 0); !errors.Is(err, ErrInvalidFilter) {
 			t.Fatalf("owner=me beside another owner filter %+v = %v, want refused", filter, err)
+		}
+	}
+}
+
+// The SQL a query asks "which account does this Job act as" with, and the Resume
+// predicate built on it, answer what executionAccess answers for every
+// combination of recorded class, references and deletion marks.
+func TestTheExecutionPrincipalSQLAgreesWithExecutionAccess(t *testing.T) {
+	testTheExecutionPrincipalSQLAgreesWithExecutionAccess(t, newTestDeps(t))
+}
+
+func testTheExecutionPrincipalSQLAgreesWithExecutionAccess(t *testing.T, deps Deps) {
+	svc := NewService()
+	owner := uint(8)
+	job := acceptFor(t, svc, deps, Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: &owner, ActorUserID: &owner, Replay: ReplayInput{NonReplayable: true},
+	})
+	account, accountArgs := ExecutionAccountSQL()
+	present, presentArgs := executionPrincipalPresentSQL()
+	actorID, ownerID := uint(7), uint(8)
+	for _, class := range []string{"", string(PrincipalActor), string(PrincipalOwner), string(PrincipalHost)} {
+		for _, actor := range []*uint{nil, &actorID} {
+			for _, actorDeleted := range []bool{false, true} {
+				for _, ownerRef := range []*uint{nil, &ownerID} {
+					for _, ownerDeleted := range []bool{false, true} {
+						if err := deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).Updates(map[string]any{
+							"execution_principal": class, "actor_user_id": actor, "actor_deleted": actorDeleted,
+							"owner_user_id": ownerRef, "owner_deleted": ownerDeleted,
+						}).Error; err != nil {
+							t.Fatalf("set the row: %v", err)
+						}
+						var row models.Job
+						if err := deps.DB.Where("id = ?", job.ID).First(&row).Error; err != nil {
+							t.Fatalf("read the row: %v", err)
+						}
+						access, accessErr := executionAccess(row)
+						var got struct {
+							Account *uint
+							Present bool
+						}
+						args := append(append(append([]any{}, accountArgs...), presentArgs...), job.ID)
+						if err := deps.DB.Raw("SELECT "+account+" AS account, "+present+" AS present FROM jobs WHERE jobs.id = ?", args...).
+							Scan(&got).Error; err != nil {
+							t.Fatalf("read the SQL answer: %v", err)
+						}
+						name := fmt.Sprintf("class %q actor %v (deleted %v) owner %v (deleted %v)", class, actor != nil, actorDeleted, ownerRef != nil, ownerDeleted)
+						if got.Present != (accessErr == nil) {
+							t.Fatalf("%s: SQL says present %v, executionAccess says %v", name, got.Present, accessErr)
+						}
+						wantAccount := uint(0)
+						if accessErr == nil {
+							wantAccount = access.UserID
+						}
+						gotAccount := uint(0)
+						if got.Account != nil {
+							gotAccount = *got.Account
+						}
+						if gotAccount != wantAccount {
+							t.Fatalf("%s: SQL says account %d, executionAccess says %d", name, gotAccount, wantAccount)
+						}
+					}
+				}
+			}
 		}
 	}
 }

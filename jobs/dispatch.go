@@ -633,7 +633,7 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 			}
 			return newExecution(ctx, settle, s, job, claim, Access{}, nil, claimedFrom), unrunnable
 		}
-		return Execution{}, settled
+		return Execution{}, fmt.Errorf("%w: %w", ErrClaimSettled, settled)
 	}
 	input, err := s.executionInput(load, job)
 	if err != nil {
@@ -644,7 +644,7 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 				return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
 					&UnrunnableClaimError{Reason: blockedReasonInputUnavailable, Cause: settled}
 			}
-			return Execution{}, settled
+			return Execution{}, fmt.Errorf("%w: %w", ErrClaimSettled, settled)
 		}
 		return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
 			fmt.Errorf("%w: %w", ErrExecutionNotLoaded, err)
@@ -711,6 +711,14 @@ func (s *Service) quarantineUnrunnableClaim(deps Deps, job models.Job, claim mod
 	}
 	return cause
 }
+
+// ErrClaimSettled marks a claim the control plane could not hand to an adapter
+// and settled in its place: the Job was ended, blocked or quarantined under the
+// claim's token, on the claim's own handle. A caller that claims inside a
+// transaction of its own commits that transaction rather than rolling it back,
+// or the Job goes back to waiting to meet the same refusal again. The cause is
+// wrapped beside it.
+var ErrClaimSettled = errors.New("jobs: the claim could not run, and its Job was settled")
 
 // errUnrunnableUnrecorded marks a claim that could not run and whose block or
 // quarantine could not be recorded either: the Job is still running under the

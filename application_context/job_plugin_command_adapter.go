@@ -500,6 +500,7 @@ func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID stri
 	controller.mu.Unlock()
 	var execution jobs.Execution
 	var claimed bool
+	var settled error
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
 			return err
@@ -512,6 +513,13 @@ func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID stri
 			Claimant: "plugin-command:" + token, Capacity: ctx.hostClaimCapacityBudget(),
 		})
 		if errors.Is(err, jobs.ErrJobNotWaiting) {
+			return nil
+		}
+		if errors.Is(err, jobs.ErrClaimSettled) {
+			// The claim could not run, and the Job was ended or blocked in its
+			// place. That outcome commits with this transaction; the source row is
+			// bound only to a claim that runs.
+			settled = err
 			return nil
 		}
 		if err != nil {
@@ -534,6 +542,9 @@ func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID stri
 		}
 		return nil
 	})
+	if err == nil && settled != nil {
+		return jobs.Execution{}, false, settled
+	}
 	return execution, claimed, err
 }
 
