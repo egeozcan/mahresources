@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,10 +75,23 @@ func startJobControlPlaneRuntime(t *testing.T, tc *TestContext, service *jobs.Se
 // keeps using.
 func submitFailingDownload(t *testing.T, tc *TestContext) string {
 	t.Helper()
+	// The first request fails, so the submitted download ends failed. Every later
+	// one, a Retry's, is held until the test ends: a Retry successor that failed at
+	// once under load would let a "while the successor is still active" request
+	// succeed for the wrong reason.
+	var requests atomic.Int32
+	hold := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > 1 {
+			select {
+			case <-hold:
+			case <-r.Context().Done():
+			}
+		}
 		http.Error(w, "nope", http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(hold) }) // runs first: srv.Close waits for held handlers
 
 	res := tc.MakeRequest(http.MethodPost, "/v1/download/submit",
 		map[string]any{"URL": srv.URL + "/bridge-test.bin"})

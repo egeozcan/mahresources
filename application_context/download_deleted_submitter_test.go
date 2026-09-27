@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/download_queue"
 	"mahresources/hls"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -78,6 +79,13 @@ func TestADownloadWhoseSubmitterWasDeletedMidTransferCreatesNothing(t *testing.T
 	}
 	if finished.Failure == nil || strings.TrimSpace(finished.Failure.Message) == "" {
 		t.Fatalf("the download ended %s with %+v, and says nothing a person can read", finished.State, finished.Failure)
+	}
+	// The refusal is the submitter's, found when the account was bound again after
+	// the body was copied, and it is policy: a Retry by someone who may still add
+	// content can succeed.
+	if finished.Failure.Code != download_queue.FailureSubmitterRefused || finished.Failure.Class != jobs.FailureClassPolicy {
+		t.Fatalf("the download failed as %s/%s, want %s/%s", finished.Failure.Code, finished.Failure.Class,
+			download_queue.FailureSubmitterRefused, jobs.FailureClassPolicy)
 	}
 	if !finished.ActorDeleted || !finished.OwnerDeleted {
 		t.Fatalf("the Job does not say its account was deleted: %+v", finished)
