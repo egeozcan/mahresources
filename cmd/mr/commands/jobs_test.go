@@ -747,7 +747,7 @@ func TestJobControlFallbackNamesACommandThatCanReplayItsKey(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"error":"job not found"}`)
 		case r.Method == http.MethodGet:
-			writeJobJSON(w, `{"id":"`+jobID+`","version":3,"commands":[{"key":"retry","endpoint":"/v1/jobs/`+jobID+`/commands/retry","jobVersion":3}]}`)
+			writeJobJSON(w, `{"id":"`+jobID+`","version":3,"commands":[{"key":"retry","endpoint":"/v1/jobs/`+jobID+`/commands/retry","jobVersion":3,"confirmation":"Run it again?"}]}`)
 		default:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -763,7 +763,9 @@ func TestJobControlFallbackNamesACommandThatCanReplayItsKey(t *testing.T) {
 	if err == nil || len(postedKeys) != 1 {
 		t.Fatalf("retry = %v after %d posts, want a failure after one", err, len(postedKeys))
 	}
-	want := "mr job command " + jobID + " retry --idempotency-key " + postedKeys[0]
+	// job command asks for --confirm when the command carries a confirmation,
+	// so the recovery it names must pass it or it would be refused.
+	want := "mr job command " + jobID + " retry --confirm --idempotency-key " + postedKeys[0]
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("the failure %q does not name %q", err, want)
 	}

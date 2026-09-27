@@ -20,9 +20,11 @@ part of the URL, because commas are legal in URL paths and queries. Use
 `--url` for a URL that itself contains a comma followed by `http`.
 
 The server answers each URL separately: it queues the ones it accepts
-and names the ones it refuses, with the reason. When any URL is refused
-the command prints the answer, with the queued Job ids, and exits 1
-with every refusal in the error.
+and names the ones it refuses, with the reason. When some URLs are
+queued and others refused, the command prints the answer, with the
+queued Job ids, and exits 1 with every refusal in the error. When every
+URL is refused, the server refuses the whole request, and the error
+names the first refusal only.
 
 Downloaded content becomes a new Resource once the fetch succeeds.
 Each job's `canonicalJobId` is the Job id `jobs list` prints. Watch

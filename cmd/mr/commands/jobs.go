@@ -285,9 +285,14 @@ func runAdvertisedJobControl(c *client.Client, jobID string, verb jobControlVerb
 	body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
 	if err := c.Post(endpoint, nil, body, &result); err != nil {
 		// This verb takes no --idempotency-key, so the rerun that can send the
-		// same key again is the equivalent job command.
-		return nil, fmt.Errorf("%w\nThe request was sent with idempotency key %s. To retry it without applying it twice, run: mr job command %s %s --idempotency-key %s",
-			err, key, jobID, verb.action, key)
+		// same key again is the equivalent job command, with the confirmation
+		// job command asks for when the command is advertised as needing one.
+		confirm := ""
+		if advertised.Destructive || advertised.Confirmation != "" {
+			confirm = " --confirm"
+		}
+		return nil, fmt.Errorf("%w\nThe request was sent with idempotency key %s. To retry it without applying it twice, run: mr job command %s %s%s --idempotency-key %s",
+			err, key, jobID, verb.action, confirm, key)
 	}
 	var outcome struct {
 		JobID       string `json:"jobId"`
