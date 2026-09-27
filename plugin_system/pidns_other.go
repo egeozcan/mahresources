@@ -2,6 +2,9 @@
 
 package plugin_system
 
-// currentPIDNamespace is empty where there are no pid namespaces: the boot
-// session alone names the process table.
-func currentPIDNamespace() string { return "" }
+// platformHasPIDNamespaces is false where there are no pid namespaces: the
+// boot session alone names the process table.
+const platformHasPIDNamespaces = false
+
+// platformPIDNamespace is empty where there are no pid namespaces.
+func platformPIDNamespace() string { return "" }

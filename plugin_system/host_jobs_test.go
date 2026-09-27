@@ -420,6 +420,44 @@ func TestRuntimeIdentityFromAnotherPIDNamespaceIsUnknown(t *testing.T) {
 	}
 }
 
+// TestRuntimeIdentityWithoutAPIDNamespaceOnLinuxIsUnknown covers a Linux
+// process that cannot read /proc/self/ns/pid: its records name no process
+// table, so two such containers with one hostname, one kernel and one pid are
+// not the same table, and nothing about either is proved.
+func TestRuntimeIdentityWithoutAPIDNamespaceOnLinuxIsUnknown(t *testing.T) {
+	realHas, realCurrent := hasPIDNamespaces, currentPIDNamespace
+	t.Cleanup(func() { hasPIDNamespaces, currentPIDNamespace = realHas, realCurrent })
+	hasPIDNamespaces = true
+	currentPIDNamespace = func() string { return "" }
+
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
+	}
+	sibling := current
+	sibling.Nonce = current.Nonce + "0"
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("this pid, another nonce, no namespace on either side: liveness = %v, want unknown", got)
+	}
+	sibling.PID = 1 << 30
+	if got := sibling.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a pid free here, no namespace on either side: liveness = %v, want unknown", got)
+	}
+	if got := current.Liveness(); got != RuntimeUnknown {
+		t.Errorf("this process's own record without a namespace: liveness = %v, want unknown", got)
+	}
+
+	// A readable namespace on this side does not make a record without one
+	// comparable either.
+	currentPIDNamespace = func() string { return "4026531836" }
+	withoutNamespace := CurrentRuntimeIdentity()
+	withoutNamespace.PIDNamespace = ""
+	withoutNamespace.PID = 1 << 30
+	if got := withoutNamespace.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a record without a namespace: liveness = %v, want unknown", got)
+	}
+}
+
 func TestRuntimeIdentityHostIsBoundedToFitTheClaimant(t *testing.T) {
 	long := strings.Repeat("h", 80)
 	if got := runtimeHost(long); len(got) != MaxRuntimeHostBytes || !strings.HasPrefix(long, got) {

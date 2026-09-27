@@ -212,6 +212,14 @@ type RuntimeIdentity struct {
 	PIDNamespace string
 }
 
+// hasPIDNamespaces and currentPIDNamespace are the platform's answers, held in
+// variables so a test can stand in for a Linux process that cannot read its
+// namespace.
+var (
+	hasPIDNamespaces    = platformHasPIDNamespaces
+	currentPIDNamespace = platformPIDNamespace
+)
+
 // MaxRuntimeHostBytes bounds the recorded hostname so the whole identity fits a
 // Job claimant (jobs.MaxClaimantBytes, 120 bytes) with a 36-byte boot session,
 // a 10-digit pid namespace inode, a 7-digit pid and the nonce.
@@ -347,15 +355,19 @@ const (
 //     one does. A reused pid reads as Alive, which errs toward leaving a Job
 //     blocked rather than interrupting work that may still run.
 //
-// "This table" is equal hostname, boot session and pid namespace. A record from
-// before pid namespaces were recorded carries none, so on Linux, where this
-// process has one, it is never this table; on other systems neither side has
-// one and the boot session is the table.
+// "This table" is equal hostname, boot session and pid namespace. On Linux, where
+// pid namespaces exist, a side without one (a record from before they were
+// recorded, or a process that could not read its own) names no table, so the
+// answer is Unknown; on other systems neither side has one and the boot session
+// is the table.
 func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 	if r.Host == "" || r.BootSession == "" {
 		return RuntimeUnknown
 	}
 	current := CurrentRuntimeIdentity()
+	if hasPIDNamespaces && (r.PIDNamespace == "" || current.PIDNamespace == "") {
+		return RuntimeUnknown
+	}
 	if r.Host != current.Host || r.BootSession != current.BootSession || r.PIDNamespace != current.PIDNamespace {
 		return RuntimeUnknown
 	}
