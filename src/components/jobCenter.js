@@ -551,8 +551,12 @@ export function jobCenter(options = {}) {
         async load() {
             this.loading = true;
             this.error = '';
+            const epoch = this._preferenceEpoch;
             try {
                 await this.loadDetail(this.detailId);
+                // A preference changed while the page read its Job: the read
+                // may predate it, so it is read again.
+                if (epoch !== this._preferenceEpoch) this._reconcileAfterLoad = true;
             } catch (error) {
                 this.error = error.message || 'Could not load this job.';
             } finally {
@@ -601,6 +605,8 @@ export function jobCenter(options = {}) {
         hearPreferenceChange(message) {
             if (!Array.isArray(message?.jobIds) || !message.jobIds.map(String).includes(String(this.detailId))) return;
             this._preferenceEpoch += 1;
+            // The page's own read is still on its way: load() reads again
+            // once it lands, because the epoch moved under it.
             // Whichever read applies a change of state first says it, once
             // the stream is live: this one may overtake the read the change's
             // own event started, which then finds nothing new.

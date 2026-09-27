@@ -650,6 +650,28 @@ describe('Job detail stream connection', () => {
         expect(center._liveRegion.announce).toHaveBeenCalledWith(expect.stringMatching(/Export failed/));
     });
 
+    test('a Job read answered after another page pinned it is read again', async () => {
+        const center = jobCenter({ detailId: 'job-13' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        let pinned = false;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let reads = 0;
+        center.fetchJSON = vi.fn(async (url: string) => {
+            if (url.includes('/events')) return { events: [] };
+            reads += 1;
+            const answer = { id: 'job-13', state: 'failed', version: 2, pinned };
+            if (reads === 1) await firstHeld;
+            return answer;
+        });
+        const loading = center.load();
+        pinned = true;
+        center.hearPreferenceChange({ command: 'pin', jobIds: ['job-13'] });
+        releaseFirst();
+        await loading;
+        await vi.waitFor(() => expect(center.detail.pinned).toBe(true));
+    });
+
     test('a reconciling read that fails is tried again', async () => {
         vi.useFakeTimers();
         const center = jobCenter({ detailId: 'job-9' });
