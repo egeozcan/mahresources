@@ -652,6 +652,25 @@ describe('Job Center panel accessibility hooks', () => {
         });
     });
 
+    test('a reset drops rows held from the old database, so a restored older version is shown', async () => {
+        vi.useFakeTimers();
+        const restored = { id: 'dl-7', title: 'restored.bin', kind: 'remote-download', state: 'queued', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([restored]);
+        panel.jobs = [{ ...restored, state: 'failed', version: 10 }];
+        panel.lastSequence = 5000;
+        panel.streamCaughtUp = true;
+        showHeard(panel, panel.jobs);
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(panel.jobs).toHaveLength(1);
+        expect(panel.jobs[0]).toMatchObject({ id: 'dl-7', state: 'queued', version: 2 });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('a reset boundary drops a cursor this database never issued and reads the panel again', () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;

@@ -464,6 +464,14 @@ export function jobCenter(options = {}) {
             try {
                 await this.loadDetail(this.detailId);
             } catch (error) {
+                // A Job that is not there any more, or no longer this viewer's,
+                // leaves nothing of itself on the page.
+                if (error.status === 404) {
+                    this.detail = null;
+                    this.jobs = [];
+                    this.details = {};
+                    this.timeline = [];
+                }
                 this.error = error.message || 'Could not load this job.';
             } finally {
                 this.loading = false;
@@ -587,6 +595,12 @@ export function jobCenter(options = {}) {
             // database now serving it (a restore or a wipe): it starts from the
             // server's cursor and reads the Job again.
             if (boundary.reset === true) {
+                // What this page holds was numbered by another database, so it
+                // is dropped rather than compared with what the new one says.
+                this.jobs = [];
+                this.details = {};
+                this.detail = null;
+                this.timeline = [];
                 this.lastSequence = sequence;
                 this.streamCaughtUp = true;
                 this.load();

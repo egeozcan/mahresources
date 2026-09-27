@@ -377,12 +377,38 @@ describe('Job Center event stream catch-up boundary', () => {
         center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
         expect(center.lastSequence).toBe(875);
         expect(center.load).toHaveBeenCalledTimes(1);
+        expect(center.jobs).toEqual([]);
 
+        // The read again finds the Job as the new database has it, and the next
+        // event is applied rather than dropped under the old cursor.
+        center.jobs = [{ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
         center.handleStreamMessage({
             data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 2, deliverySequence: 876 }),
             lastEventId: 'v2:876',
         });
         expect(center.jobs[0].state).toBe('failed');
+    });
+
+    test('a reset whose Job is gone from the database shows no trace of it', async () => {
+        const center = jobCenter({ detailId: 'gone-job' });
+        center.detail = { id: 'gone-job', title: 'Private export', kind: 'group-export', state: 'failed', version: 10 };
+        center.jobs = [center.detail];
+        center.details = { 'gone-job': center.detail };
+        center.timeline = [{ id: 'e-1', type: 'failed' }];
+        center.fetchJSON = vi.fn(async () => {
+            const error: any = new Error('job not found');
+            error.status = 404;
+            throw error;
+        });
+
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:0', reset: true }) });
+        await vi.waitFor(() => expect(center.loading).toBe(false));
+
+        expect(center.detail).toBeNull();
+        expect(center.jobs).toEqual([]);
+        expect(center.details).toEqual({});
+        expect(center.timeline).toEqual([]);
+        expect(center.error).toBe('job not found');
     });
 
     test('an ordinary boundary never moves the cursor back', () => {

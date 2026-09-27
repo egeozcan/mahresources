@@ -887,13 +887,28 @@ export function jobPanel() {
             if (sequence === null) return;
             const wasCaughtUp = this.streamCaughtUp;
             // A reset means the cursor this panel held was never issued by the
-            // database now serving it (a restore or a wipe): every sequence it
-            // remembers is meaningless, so it starts from the server's and reads
-            // the panel again.
+            // database now serving it (a restore or a wipe): the sequences, rows
+            // and versions it holds were numbered by another database, so they
+            // are dropped rather than compared, and the panel reads again.
+            if (boundary.reset === true) this.forgetHeldState();
             this.lastSequence = boundary.reset === true ? sequence : Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
             if (!wasCaughtUp || boundary.reset === true) this.schedulePanelRefresh();
+        },
+
+        // Drops everything the panel holds about Jobs, including what the reader
+        // was told, and any read still in flight: all of it was numbered by the
+        // database a reset stream no longer speaks for. A restored Job at an
+        // older version would otherwise stay hidden behind the newer row held
+        // for it, and one the database no longer has would stay on screen.
+        forgetHeldState() {
+            this._refreshGeneration += 1;
+            this.jobs = [];
+            this.details = {};
+            this._heard = new Map();
+            this._liveVersions = new Map();
+            this._streamTouched = new Map();
         },
 
         async handleStreamMessage(event) {
