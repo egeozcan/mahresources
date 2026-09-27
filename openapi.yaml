@@ -854,6 +854,8 @@ components:
                     nullable: true
                     type: integer
                 blockedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 commands:
                     items:
@@ -895,6 +897,8 @@ components:
                     nullable: true
                     type: integer
                 pausedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 phase:
                     type: string
@@ -903,6 +907,8 @@ components:
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 queuedAt:
                     format: date-time
@@ -913,6 +919,8 @@ components:
                 replayClass:
                     type: string
                 runningDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 scheduledFor:
                     format: date-time
@@ -937,8 +945,12 @@ components:
         JobDurationStatsResponse:
             properties:
                 median:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 p95:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
             type: object
         JobEventResponsePartial:
@@ -1132,6 +1144,8 @@ components:
                     nullable: true
                     type: integer
                 blockedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 controlIntent:
                     type: string
@@ -1163,6 +1177,8 @@ components:
                     nullable: true
                     type: integer
                 pausedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 phase:
                     type: string
@@ -1171,6 +1187,8 @@ components:
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 queuedAt:
                     format: date-time
@@ -1181,6 +1199,8 @@ components:
                 replayClass:
                     type: string
                 runningDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 scheduledFor:
                     format: date-time
@@ -1264,6 +1284,8 @@ components:
                 total:
                     type: integer
                 window:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
             type: object
         JobTimelineResponse:

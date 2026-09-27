@@ -152,6 +152,14 @@ func (g *SchemaGenerator) generateSchemaInternal(t reflect.Type, asPartial bool,
 		return openapi3.NewSchemaRef("", schema)
 	}
 
+	// A time.Duration marshals as its integer count of nanoseconds; the unit is
+	// part of the contract, and an integer schema alone does not say it.
+	if t == reflect.TypeOf(time.Duration(0)) {
+		schema := openapi3.NewInt64Schema()
+		schema.Description = "Duration in nanoseconds."
+		return openapi3.NewSchemaRef("", schema)
+	}
+
 	// Handle basic types
 	switch t.Kind() {
 	case reflect.String:
