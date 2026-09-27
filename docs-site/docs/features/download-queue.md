@@ -105,12 +105,13 @@ The row and the Job are cancelled together. The Job's **Cancel**, used before
 the download has started, ends the row as `cancelled`. The admin-only
 `POST /v1/plugin/scheduled-downloads/cancel` endpoint cancels a pending row and
 its Job; it refuses a row that has been submitted or whose Job has started,
-which the Job's own Cancel stops instead. **Retry** on a deferred download that
-was cancelled before it ran keeps its start time while that is still ahead: the
-control reads **Schedule again**, the new Job is scheduled for the same time,
-and the row returns to `pending`, owned by whoever retried it. Once the time has
-passed, the control reads **Download now** and the new Job starts at once, as it
-also does when the time passes before **Schedule again** is used.
+which the Job's own Cancel stops instead.
+
+Retrying a deferred download that never started downloads it now: the control
+reads **Download now** and asks for confirmation, because the time it was
+scheduled for is not kept. The new Job is an ordinary download. The plugin's
+row stays `cancelled` and does not follow it. A deferred download that ran
+offers an ordinary **Retry**.
 
 ## Streaming playlists (HLS)
 

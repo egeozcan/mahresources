@@ -11,9 +11,9 @@ A deferred download is stored durably, with a scheduled Job of Kind
 `deferred-download`, until its due time queues that Job. Pending rows have
 not been marked submitted by the scheduler yet (once the due time has come,
 the Job can already be running); submitted rows carry the `jobId` of the Job
-they queued; failed rows are terminal, and so are cancelled rows unless their
-Job is retried before its time, which returns the row to pending. Cancelling
-the Job before it starts cancels its row.
+they queued; failed and cancelled rows are terminal. Cancelling the Job
+before it starts cancels its row; retrying it afterwards downloads now, as an
+ordinary download the row does not track.
 
 Every row fires under the plugin name that submitted it, so a restart does
 not turn it into an unrestricted host download. It also fires as the user

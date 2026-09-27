@@ -3,13 +3,13 @@ package application_context
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
 
-	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -183,14 +183,16 @@ func retryJob(t *testing.T, ctx *MahresourcesContext, job jobs.Snapshot) jobs.Sn
 	return successor
 }
 
-// A deferred download cancelled while it waited, and retried while its time is
-// still ahead, is scheduled again for that time; the control says so, and the
-// plugin's row is pending again until the time comes.
-func TestRetryingACancelledDeferredDownloadSchedulesItAgain(t *testing.T) {
+// A Retry of a deferred download cancelled before it started downloads now. The
+// control says so, and asks, before it is used: the time the download was
+// scheduled for is not kept. The plugin's row stays cancelled; the successor is an
+// ordinary download the row does not track. A deferred download that ran offers
+// an ordinary Retry.
+func TestRetryingACancelledDeferredDownloadDownloadsNow(t *testing.T) {
 	ctx, key, actor, _ := newRetiredDeferredDownloadContext(t)
-	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	due := time.Now().Add(time.Hour)
 	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/again.bin"}, due)
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/now.bin"}, due)
 	if err != nil {
 		t.Fatalf("create the deferred download: %v", err)
 	}
@@ -198,69 +200,35 @@ func TestRetryingACancelledDeferredDownloadSchedulesItAgain(t *testing.T) {
 	cancelled := deferredDownloadJob(t, ctx, row.ID)
 
 	command, offered := advertisedCommand(t, ctx, cancelled.ID, jobs.CommandRetry)
-	if !offered || command.Label != "Schedule again" {
-		t.Fatalf("the cancelled deferred download offers retry=%v labelled %q, want \"Schedule again\"", offered, command.Label)
+	if !offered || command.Label != "Download now" || !strings.Contains(command.Confirmation, "does not wait for the scheduled time") {
+		t.Fatalf("the cancelled deferred download offers retry=%v labelled %q confirming %q, want \"Download now\" saying the time is not kept",
+			offered, command.Label, command.Confirmation)
 	}
-	// Retried by an administrator, who owns the successor: the row fires as the
-	// actor the successor runs as, so it is the row's owner from now on.
-	admin, err := ctx.CreateUser(&UserInput{Username: "deferred-admin", Password: "password1", Role: models.RoleAdmin})
-	if err != nil {
-		t.Fatalf("create the administrator: %v", err)
-	}
-	asAdmin := ctx.WithPrincipal(&auth.Principal{UserID: admin.ID, Username: admin.Username, Role: models.RoleAdmin})
-	successor := retryJob(t, asAdmin, cancelled)
-	if successor.State != jobs.StateScheduled || successor.ScheduledFor == nil || !successor.ScheduledFor.Equal(due) {
-		t.Fatalf("the successor is %s for %v, want scheduled for %v", successor.State, successor.ScheduledFor, due)
-	}
-	reopened := scheduledDownloadRow(t, ctx, row.ID)
-	if reopened.Status != models.ScheduledDownloadStatusPending || reopened.Attempts != 0 || reopened.JobID != "" {
-		t.Fatalf("the row is %s after %d attempts naming %q, want pending again", reopened.Status, reopened.Attempts, reopened.JobID)
-	}
-	if reopened.CreatedByUserId == nil || *reopened.CreatedByUserId != admin.ID || successor.ActorUserID == nil || *successor.ActorUserID != admin.ID {
-		t.Fatalf("the reopened row is owned by %v and the successor acts as %v, want both the administrator %d",
-			reopened.CreatedByUserId, successor.ActorUserID, admin.ID)
-	}
-
-	fireDueDeferredDownloads(t, ctx, time.Now())
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending {
-		t.Fatalf("the rescheduled row is %s before its time, want pending", got.Status)
+	successor := retryJob(t, ctx, cancelled)
+	if successor.State != jobs.StateQueued || successor.ScheduledFor != nil {
+		t.Fatalf("the successor is %s for %v, want queued now", successor.State, successor.ScheduledFor)
 	}
 	fireDueDeferredDownloads(t, ctx, due.Add(time.Minute))
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != successor.ID {
-		t.Fatalf("the rescheduled row is %s naming %q at its time, want submitted naming the successor %s", got.Status, got.JobID, successor.ID)
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" {
+		t.Fatalf("the cancelled deferral's row is %s naming %q after a Retry and its due time, want still cancelled", got.Status, got.JobID)
+	}
+
+	ran, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/ran.bin"}, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create a deferred download that runs: %v", err)
+	}
+	runOneDispatchPass(ctx)
+	finished := waitForSnapshot(t, ctx, deferredDownloadJob(t, ctx, ran.ID).ID, "the deferred download to run and end",
+		func(snap jobs.Snapshot) bool { return snap.StartedAt != nil && snap.State.Terminal() })
+	if finished.State != jobs.StateSucceeded {
+		if command, offered := advertisedCommand(t, ctx, finished.ID, jobs.CommandRetry); !offered || command.Label != "Retry" || command.Confirmation != "" {
+			t.Fatalf("a deferred download that ran offers retry=%v labelled %q confirming %q, want a plain Retry", offered, command.Label, command.Confirmation)
+		}
 	}
 
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)
-}
-
-// Once the time has passed, the Retry of a download that never ran starts it
-// now, and the control says that instead; the cancelled deferral stays cancelled.
-func TestRetryingADeferredDownloadWhoseTimePassedStartsItNow(t *testing.T) {
-	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/now.bin"}, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	cancelJobAsItsOwner(t, ctx, deferredDownloadJob(t, ctx, row.ID))
-	cancelled := deferredDownloadJob(t, ctx, row.ID)
-	if err := ctx.db.Model(&models.Job{}).Where("id = ?", cancelled.ID).
-		Update("scheduled_for", time.Now().Add(-time.Minute).UTC()).Error; err != nil {
-		t.Fatalf("let the due time pass: %v", err)
-	}
-
-	command, offered := advertisedCommand(t, ctx, cancelled.ID, jobs.CommandRetry)
-	if !offered || command.Label != "Download now" {
-		t.Fatalf("the overdue cancelled download offers retry=%v labelled %q, want \"Download now\"", offered, command.Label)
-	}
-	successor := retryJob(t, ctx, deferredDownloadJob(t, ctx, row.ID))
-	if successor.State != jobs.StateQueued || successor.ScheduledFor != nil {
-		t.Fatalf("the successor is %s for %v, want queued now", successor.State, successor.ScheduledFor)
-	}
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled {
-		t.Fatalf("the cancelled deferral's row is %s after an immediate retry, want still cancelled", got.Status)
-	}
 }
 
 // The sweep can reach a due row before the dispatch loop claims its Job: the row
@@ -399,38 +367,6 @@ func TestCancellingADeferredJobTheSweepJustReservedDoesNotStopTheSweep(t *testin
 	}
 }
 
-// An earlier release left a cancelled Job's row pending. A Retry that keeps the
-// time takes that row over as it would a cancelled one: due at the successor's
-// time and owned by the successor's actor.
-func TestRetryingADeferredJobWhoseRowWasLeftPendingRebindsTheRow(t *testing.T) {
-	ctx, _, actor, _ := newRetiredDeferredDownloadContext(t)
-	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/left-pending.bin"}, due)
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	job := deferredDownloadJob(t, ctx, row.ID)
-	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
-		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
-	}); err != nil {
-		t.Fatalf("cancel the Job alone: %v", err)
-	}
-	admin, err := ctx.CreateUser(&UserInput{Username: "pending-row-admin", Password: "password1", Role: models.RoleAdmin})
-	if err != nil {
-		t.Fatalf("create the administrator: %v", err)
-	}
-	asAdmin := ctx.WithPrincipal(&auth.Principal{UserID: admin.ID, Username: admin.Username, Role: models.RoleAdmin})
-	successor := retryJob(t, asAdmin, deferredDownloadJob(t, ctx, row.ID))
-	if successor.State != jobs.StateScheduled {
-		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
-	}
-	got := scheduledDownloadRow(t, ctx, row.ID)
-	if got.Status != models.ScheduledDownloadStatusPending || got.CreatedByUserId == nil || *got.CreatedByUserId != admin.ID {
-		t.Fatalf("the row is %s owned by %v, want pending and owned by the administrator %d", got.Status, got.CreatedByUserId, admin.ID)
-	}
-}
-
 // A pending row an earlier release left behind a cancelled Job is recorded
 // cancelled when it comes due, before anything about its plugin or owner is
 // checked: the deferral ended when its Job did, and a refusal found afterwards
@@ -565,155 +501,5 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 	}
 	if got := scheduledDownloadRow(t, ctx, waitingRow.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
 		t.Fatalf("the row whose Job is still waiting is %s, want submitted", got.Status)
-	}
-}
-
-// Startup reconciliation reads a pending row's Job, then records the row. A Retry
-// landing in between (from another process) moves the row's handle to a
-// scheduled successor and takes the row over; the reconciliation must then leave
-// the row pending for that successor rather than cancel it.
-func TestStartupReconciliationYieldsToARetryThatTookTheRowOver(t *testing.T) {
-	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
-	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
-		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
-	}
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/reconcile-retry.bin"}, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	job := deferredDownloadJob(t, ctx, row.ID)
-	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
-		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
-	}); err != nil {
-		t.Fatalf("cancel the Job alone: %v", err)
-	}
-	var retried atomic.Bool
-	var successor jobs.Snapshot
-	const name = "test:retry-before-the-reconciliation-records-the-row"
-	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table != "scheduled_downloads" || !retried.CompareAndSwap(false, true) {
-			return
-		}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			successor = retryJob(t, ctx, deferredDownloadJob(t, ctx, row.ID))
-		}()
-		select {
-		case <-done:
-		case <-time.After(1500 * time.Millisecond):
-		}
-	}); err != nil {
-		t.Fatalf("register the interleave: %v", err)
-	}
-	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
-
-	if _, err := ctx.ReconcileDeferredDownloadRows(); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if !retried.Load() || successor.ID == "" {
-		t.Fatalf("setup: the Retry never landed inside the reconciliation")
-	}
-	if successor.State != jobs.StateScheduled {
-		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
-	}
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending {
-		t.Fatalf("the row a Retry took over is %s after the reconciliation, want pending for the successor", got.Status)
-	}
-}
-
-// An earlier release could mark a row submitted before its time. Cancelling that
-// unstarted Job cancels the row with the Job still named on it; a Retry that
-// keeps the time must still take the row over, even when the post-scrub hash was
-// last recorded naming that Job.
-func TestRetryingADeferredJobAnEarlierReleaseSubmittedEarlyTakesTheRowOver(t *testing.T) {
-	ctx, key, actor, earlier := newRetiredDeferredDownloadContext(t)
-	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
-		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
-	}
-	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/submitted-early.bin"}, due)
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	// What the earlier release's early sweep left: the Job queued before its
-	// time, the row submitted naming it.
-	job := deferredDownloadJob(t, ctx, row.ID)
-	queued, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateQueued})
-	if err != nil {
-		t.Fatalf("queue the Job early: %v", err)
-	}
-	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
-		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": job.ID, "attempts": 1}).Error; err != nil {
-		t.Fatalf("mark the row submitted early: %v", err)
-	}
-	cancelJobAsItsOwner(t, ctx, queued)
-	cancelledRow := scheduledDownloadRow(t, ctx, row.ID)
-	if cancelledRow.Status != models.ScheduledDownloadStatusCancelled || cancelledRow.JobID != job.ID {
-		t.Fatalf("setup: the row is %s naming %q, want cancelled naming the Job", cancelledRow.Status, cancelledRow.JobID)
-	}
-	// A reinstated quarantine records the post-scrub hash of the row as it is.
-	if err := ctx.db.Model(&models.JobSourceMapping{}).
-		Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, strconv.FormatUint(uint64(row.ID), 10)).
-		Update("post_scrub_hash", hashRetiredScheduledDownload(cancelledRow)).Error; err != nil {
-		t.Fatalf("record the post-scrub hash naming the Job: %v", err)
-	}
-
-	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
-	successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
-	if successor.State != jobs.StateScheduled {
-		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
-	}
-	reopened := scheduledDownloadRow(t, ctx, row.ID)
-	if reopened.Status != models.ScheduledDownloadStatusPending || reopened.JobID != "" || reopened.Attempts != 0 {
-		t.Fatalf("the row is %s naming %q after %d attempts, want pending again, naming none", reopened.Status, reopened.JobID, reopened.Attempts)
-	}
-	fireDueDeferredDownloads(t, ctx, due.Add(time.Minute))
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != successor.ID {
-		t.Fatalf("the row is %s naming %q at its time, want submitted naming the successor", got.Status, got.JobID)
-	}
-	ctx = restartJobProcess(t, ctx, key)
-	requireCleanBoot(t, ctx)
-}
-
-// An earlier release could queue a deferred Job before its time, mark its row
-// submitted, and then cancel the Job without touching the row. A Retry that keeps
-// the time takes that row over too, and startup reconciliation leaves it to the
-// successor.
-func TestRetryingAnEarlySubmittedJobCancelledAloneTakesTheRowOver(t *testing.T) {
-	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
-	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
-		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
-	}
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/early-cancelled-alone.bin"}, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	job := deferredDownloadJob(t, ctx, row.ID)
-	queued, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateQueued})
-	if err != nil {
-		t.Fatalf("queue the Job early: %v", err)
-	}
-	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
-		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": job.ID, "attempts": 1}).Error; err != nil {
-		t.Fatalf("mark the row submitted early: %v", err)
-	}
-	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{JobID: job.ID, ExpectedVersion: queued.Version, To: jobs.StateCancelled}); err != nil {
-		t.Fatalf("cancel the Job alone: %v", err)
-	}
-	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
-	successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
-	if successor.State != jobs.StateScheduled {
-		t.Fatalf("setup: the successor is %s, want scheduled", successor.State)
-	}
-	if _, err := ctx.ReconcileDeferredDownloadRows(); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	got := scheduledDownloadRow(t, ctx, row.ID)
-	if got.Status != models.ScheduledDownloadStatusPending || got.JobID != "" || got.Attempts != 0 {
-		t.Fatalf("the row is %s naming %q after %d attempts, want pending for the successor", got.Status, got.JobID, got.Attempts)
 	}
 }

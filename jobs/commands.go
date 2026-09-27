@@ -1715,7 +1715,7 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 	}
 
 	owner := ownerReference(request.Actor)
-	acceptance := Acceptance{
+	successor, err := s.Accept(deps, Acceptance{
 		Kind:        job.Kind,
 		KindVersion: job.KindVersion,
 		State:       StateQueued,
@@ -1724,19 +1724,7 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 		Origin:      commandOrigin(request, job),
 		Title:       job.Title,
 		Replay:      ReplayInput{Input: opened.Input},
-	}
-	// A Retry replays the work as it was accepted, and work accepted for a future
-	// time is part of that request: a successor of work that never started waits
-	// for the same time while it is still ahead. Once the time has passed it runs
-	// now, as a deferral that came due while nothing was running does. Work that
-	// started is retried now whatever time it was meant for (a Job can be queued
-	// early, which an earlier release's due-row sweep did), because what a Retry
-	// of it recovers from is what happened when it ran.
-	if linkType == LinkRetryOf && job.StartedAt == nil && job.ScheduledFor != nil && job.ScheduledFor.After(now) {
-		scheduledFor := *job.ScheduledFor
-		acceptance.State, acceptance.ScheduledFor = StateScheduled, &scheduledFor
-	}
-	successor, err := s.Accept(deps, acceptance)
+	})
 	if err != nil {
 		return err
 	}
@@ -1754,13 +1742,6 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 	if linkType == LinkRetryOf {
 		if err := moveLegacyHandles(tx, job.ID, successor.ID, now); err != nil {
 			return err
-		}
-		if adapter, _, err := s.adapterFor(job.Kind, job.KindVersion); err == nil {
-			if hook, ok := adapter.(RetrySuccessorAdapter); ok {
-				if err := hook.ApplyRetrySuccessor(ctx, deps, viewerSnapshot(job, request.Actor), successor); err != nil {
-					return err
-				}
-			}
 		}
 	}
 

@@ -40,7 +40,7 @@ available commands. Current adapters include:
 | Kind | Work | Recovery and visibility |
 |------|------|------------------------|
 | `remote-download@1` | Fetch one remote URL into a Resource | Replayable; owner-visible |
-| `deferred-download@1` | A remote download accepted for a future time | Replayable; owner-visible; a Retry of one cancelled before it ran is scheduled for the same time while that is still ahead, and starts at once after it has passed |
+| `deferred-download@1` | A remote download accepted for a future time | Replayable; owner-visible; Retry of one that never started is offered as **Download now** and starts at once, without its scheduled time |
 | `group-export@1` | Build a group archive | Replayable; owner-visible; artifact retention is separate from Job history |
 | `group-import-parse@1` | Parse an uploaded archive into a review plan | Replayable from durable staged input; owner-visible |
 | `group-import-apply@1` | Apply a reviewed plan | Replayable only when import evidence proves it safe; owner-visible |

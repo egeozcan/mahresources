@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
 	"time"
 
@@ -741,13 +740,11 @@ func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time
 	}
 }
 
-// carryFiredDeferredDownloadHashes moves the post-scrub hash of a scrubbed row
-// whose JobID changed after the scrub, as rows earlier releases fired did, to the
-// row as it now is, once retiredScheduledDownloadMatches has verified the change
-// through the row's retry lineage. From then on the row matches its marker
-// exactly, so retention pruning that lineage later cannot turn it into a
-// mismatch. This release moves the marker with the JobID itself
-// (refreshRetiredScheduledDownloadHashTx); this is for the rows it did not write.
+// carryFiredDeferredDownloadHashes moves the post-scrub hash of a row an earlier
+// release fired, which still describes the row before it fired, to the row as it
+// now is, once retiredScheduledDownloadMatches has accepted the change. From then
+// on the row matches its marker exactly, and a later move or prune of its handle
+// cannot turn it into a mismatch.
 func (ctx *MahresourcesContext) carryFiredDeferredDownloadHashes(now time.Time) error {
 	var cursor string
 	for {
@@ -1212,67 +1209,34 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 //
 // JobID is the one projected field a live row changes after it was scrubbed: a
 // deferred download is scrubbed at creation once the sources are retired, or by
-// the migration while it is still pending; its JobID is written when it comes
-// due, and cleared again when a Retry that keeps the time takes a cancelled row
-// over. A scrub marker may have been recorded while the row named any of those
-// Jobs, or none. So the JobID may be any Job in the row's own retry lineage — the
-// Job it was mapped to and the successors a Retry moved its handle to — or empty,
-// and the hash may have been recorded under any of them. Everything the barrier
-// exists for — the empty payload, the URL reduced to its origin, the row's
-// identity and plugin — must still be exactly what was hashed.
+// the migration while it is still pending, and its JobID is written when it
+// fires. This release moves the marker in that same write
+// (refreshRetiredScheduledDownloadHashTx); a row an earlier release fired still
+// carries a marker taken with no JobID. That marker describes the row when the
+// JobID is one a fire writes: the Job the row's handle named, which is the Job
+// the row was mapped to, or the one its handle names now (an earlier release's
+// Retry moved it). Everything the barrier exists for — the empty payload, the URL
+// reduced to its origin, the row's identity and plugin — must still be exactly
+// what was hashed.
 func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, mapping models.JobSourceMapping) (bool, error) {
 	if hashRetiredScheduledDownload(row) == mapping.PostScrubHash {
 		return true, nil
 	}
-	if mapping.JobID == "" {
+	beforeItFired := row
+	beforeItFired.JobID = ""
+	if row.JobID == "" || hashRetiredScheduledDownload(beforeItFired) != mapping.PostScrubHash {
 		return false, nil
 	}
-	lineage, err := retryLineageFrom(db, mapping.JobID)
-	if err != nil {
-		return false, err
+	if row.JobID == mapping.JobID {
+		return true, nil
 	}
-	named := append([]string{""}, lineage...)
-	if !slices.Contains(named, row.JobID) {
+	var handle models.JobLegacyHandle
+	err := db.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(row.ID), 10)).
+		First(&handle).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
-	for _, jobID := range named {
-		recorded := row
-		recorded.JobID = jobID
-		if hashRetiredScheduledDownload(recorded) == mapping.PostScrubHash {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// retryLineageFrom lists a Job and the successors Retries made from it, in order.
-// A Retry chain is linear, and it has no length limit: a deferral can be
-// cancelled and rescheduled any number of times. The seen set ends the walk on a
-// cycle, which a Retry never makes.
-func retryLineageFrom(db *gorm.DB, root string) ([]string, error) {
-	lineage := []string{root}
-	seen := map[string]bool{root: true}
-	for current := root; ; {
-		var successors []string
-		if err := db.Model(&models.JobLink{}).
-			Where("type = ? AND to_job_id = ?", string(jobs.LinkRetryOf), current).
-			Order("from_job_id").Pluck("from_job_id", &successors).Error; err != nil {
-			return nil, err
-		}
-		next := ""
-		for _, successor := range successors {
-			if !seen[successor] {
-				next = successor
-				break
-			}
-		}
-		if next == "" {
-			return lineage, nil
-		}
-		seen[next] = true
-		lineage = append(lineage, next)
-		current = next
-	}
+	return err == nil && handle.JobID == row.JobID, err
 }
 
 func hashJobMigrationProjection(value any) string {

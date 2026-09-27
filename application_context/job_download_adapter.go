@@ -704,26 +704,25 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 		})
 	}
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
-		commands = append(commands, jobs.Command{
-			Key:   jobs.CommandRetry,
-			Label: downloadRetryLabel(commandContext.Snapshot, time.Now()),
-		})
+		commands = append(commands, downloadRetryCommand(commandContext.Snapshot))
 	}
 	return commands, nil
 }
 
-// downloadRetryLabel names what a Retry of this download will do. A deferred
-// download that ended before it ran is retried for its original time while that
-// is still ahead, and at once after it has passed (see createSuccessor), and a
-// control reading "Retry" in both cases told the person neither.
-func downloadRetryLabel(snapshot jobs.Snapshot, now time.Time) string {
-	if snapshot.ScheduledFor == nil || snapshot.StartedAt != nil {
-		return "Retry"
+// downloadRetryCommand is the Retry one download offers. A Retry's successor is
+// an ordinary download that starts now. For a deferred download that never
+// started, that drops the time it was scheduled for, so the control says so
+// before it is used instead of reading "Retry"; the plugin's deferred row stays
+// cancelled and does not follow the successor.
+func downloadRetryCommand(snapshot jobs.Snapshot) jobs.Command {
+	if snapshot.ScheduledFor != nil && snapshot.StartedAt == nil {
+		return jobs.Command{
+			Key:          jobs.CommandRetry,
+			Label:        "Download now",
+			Confirmation: "This download was scheduled for later and never started. Download now starts it immediately; it does not wait for the scheduled time.",
+		}
 	}
-	if snapshot.ScheduledFor.After(now) {
-		return "Schedule again"
-	}
-	return "Download now"
+	return jobs.Command{Key: jobs.CommandRetry, Label: "Retry"}
 }
 
 // ExecuteCommand runs one control the host decided this Kind owns.
@@ -1080,16 +1079,4 @@ func (a *downloadJobAdapter) ApplyHostTransition(_ context.Context, deps jobs.De
 		return nil
 	}
 	return cancelDeferredDownloadRowTx(deps.DB, snapshot, time.Now())
-}
-
-// ApplyRetrySuccessor returns a cancelled deferral's row to pending when its Retry
-// keeps the original start time. The successor waits for that time, and the row is
-// the plugin's record of the deferral, which the management surfaces list and the
-// scheduler sweeps. A successor that runs now is an immediate download, and the
-// deferral it replaces stays cancelled.
-func (a *downloadJobAdapter) ApplyRetrySuccessor(_ context.Context, deps jobs.Deps, ancestor, successor jobs.Snapshot) error {
-	if a.kind != JobKindDeferredDownload || successor.State != jobs.StateScheduled || successor.ScheduledFor == nil {
-		return nil
-	}
-	return reopenDeferredDownloadRowTx(deps.DB, ancestor, successor, time.Now())
 }

@@ -1,13 +1,10 @@
 package application_context
 
 import (
-	"context"
-	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
-	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -135,6 +132,10 @@ func TestAFiredDeferredDownloadDoesNotBlockTheNextBoot(t *testing.T) {
 			t.Fatalf("setup: scheduled download %d is %s with job %q after its due time, want submitted with its Job",
 				row.ID, current.Status, current.JobID)
 		}
+		// The fire moves the marker with the JobID it writes.
+		if mapping := scheduledDownloadMapping(t, ctx, row.ID); mapping.PostScrubHash != hashRetiredScheduledDownload(current) {
+			t.Fatalf("scheduled download %d fired without its post-scrub hash following its JobID", row.ID)
+		}
 	}
 
 	ctx = restartJobProcess(t, ctx, key)
@@ -192,6 +193,7 @@ func TestARestoredPlaintextDeferredRowStaysQuarantined(t *testing.T) {
 	if fired := fireDueDeferredDownloads(t, ctx, time.Now()); fired != 1 {
 		t.Fatalf("the sweep fired %d rows, want 1", fired)
 	}
+	fired := scheduledDownloadRow(t, ctx, row.ID)
 	dropScheduledDownloadBarriers(t, ctx)
 	restored := row.URL + "&restored=from-backup"
 	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
@@ -199,7 +201,9 @@ func TestARestoredPlaintextDeferredRowStaysQuarantined(t *testing.T) {
 		t.Fatalf("restore plaintext into the scrubbed row: %v", err)
 	}
 	reinstallScheduledDownloadBarriers(t, ctx)
-	quarantineAsAnEarlierReleaseDid(t, ctx, scheduledDownloadRow(t, ctx, row.ID), "source-canonical-replay-mismatch", models.JobMigrationPhaseDrainFence)
+	// The marker is the one that release took of the scrubbed row, before the
+	// plaintext came back.
+	quarantineAsAnEarlierReleaseDid(t, ctx, fired, "source-canonical-replay-mismatch", models.JobMigrationPhaseDrainFence)
 
 	ctx = restartJobProcess(t, ctx, key)
 	if _, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 50, MaxBatches: 20}); err != nil {
@@ -266,7 +270,12 @@ func quarantineAsAnEarlierReleaseDid(t *testing.T, ctx *MahresourcesContext, row
 	if mapping.ScrubbedAt == nil || mapping.PostScrubHash == "" {
 		t.Fatalf("setup: the mapping has no scrub marker to keep: %+v", mapping)
 	}
-	updates := map[string]any{"status": models.JobSourceMappingQuarantined, "blocker_code": blockerCode, "updated_at": time.Now().UTC()}
+	// That release never moved the marker when the row fired: it still describes
+	// the row naming no Job.
+	beforeItFired := row
+	beforeItFired.JobID = ""
+	updates := map[string]any{"status": models.JobSourceMappingQuarantined, "blocker_code": blockerCode,
+		"post_scrub_hash": hashRetiredScheduledDownload(beforeItFired), "updated_at": time.Now().UTC()}
 	if blockerCode == "source-canonical-replay-mismatch" {
 		updates["source_hash"] = hashScheduledDownload(row)
 	}
@@ -347,91 +356,27 @@ func TestAFiredDeferredRowMustNameItsOwnJob(t *testing.T) {
 	}
 }
 
-// A deferral can be cancelled and rescheduled any number of times before it
-// fires, and its row then names the last Job of that chain. The retirement check
-// follows the whole chain back to the Job the row was mapped to.
-func TestAFiredDeferredRowAtTheEndOfALongRetryChainIsRetired(t *testing.T) {
+// A row an earlier release fired can name the Job its handle had moved to (that
+// release's Retry of a cancelled deferral queued a successor and moved the handle,
+// and the still-pending row then fired naming it), with a marker taken before it
+// fired. The first start of this release accepts that and moves the marker, so a
+// later move or prune of the handle leaves nothing to re-establish.
+func TestAStartCarriesAnEarlierReleasesFiredRowMarker(t *testing.T) {
 	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
-	if fired := fireDueDeferredDownloads(t, ctx, time.Now()); fired != 1 {
-		t.Fatalf("the sweep fired %d rows, want 1", fired)
-	}
-	mapped := scheduledDownloadMapping(t, ctx, row.ID)
-	previous := mapped.JobID
-	leaf := ""
-	for i := 0; i < 100; i++ {
-		leaf = fmt.Sprintf("retry-chain-%03d", i)
-		if err := ctx.db.Create(&models.JobLink{FromJobID: leaf, ToJobID: previous, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()}).Error; err != nil {
-			t.Fatalf("link retry %d: %v", i, err)
-		}
-		previous = leaf
-	}
-	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Update("job_id", leaf).Error; err != nil {
-		t.Fatalf("name the last Job of the chain: %v", err)
-	}
-	ctx = restartJobProcess(t, ctx, key)
-	requireCleanBoot(t, ctx)
-}
-
-// Retention prunes an expired Job's lineage links. A deferral cancelled and
-// rescheduled twice, then fired, names the last successor; once the Job between
-// them expires, nothing links that successor back to the Job the row was mapped
-// to. The next start must not depend on those links.
-func TestAFiredDeferredRowStaysRetiredAfterRetentionPrunesItsLineage(t *testing.T) {
-	ctx, key, actor, earlier := newRetiredDeferredDownloadContext(t)
-	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
-		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
-	}
-	due := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/twice-rescheduled.bin"}, due)
-	if err != nil {
-		t.Fatalf("create the deferred download: %v", err)
-	}
-	asOwner := ctx.WithPrincipal(&auth.Principal{UserID: actor.ID, Username: actor.Username, Role: actor.Role})
-	var middle string
-	for i := 0; i < 2; i++ {
-		job := deferredDownloadJob(t, ctx, row.ID)
-		result, err := asOwner.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
-			JobID: job.ID, Key: jobs.CommandCancel, IdempotencyKey: fmt.Sprintf("cancel-%d", i), ExpectedVersion: job.Version,
-		})
-		if err != nil || result.Status != jobs.CommandStatusSucceeded {
-			t.Fatalf("cancel %d = %+v, %v", i, result, err)
-		}
-		successor := retryJob(t, asOwner, deferredDownloadJob(t, ctx, row.ID))
-		if i == 0 {
-			middle = successor.ID
-		}
-	}
-	fireDueDeferredDownloads(t, ctx, due.Add(time.Minute))
-	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
-		t.Fatalf("setup: the row is %s at its time, want submitted", got.Status)
-	}
-	if err := ctx.db.Where("from_job_id = ? OR to_job_id = ?", middle, middle).Delete(&models.JobLink{}).Error; err != nil {
-		t.Fatalf("prune the middle Job's lineage: %v", err)
-	}
-	ctx = restartJobProcess(t, ctx, key)
-	requireCleanBoot(t, ctx)
-}
-
-// A row an earlier release fired names a Retry successor, and its marker still
-// describes the row before it fired. The first start of this release verifies
-// that through the lineage and moves the marker; a later prune of the lineage
-// then leaves nothing to verify and nothing that needs it.
-func TestAStartCarriesAnEarlierReleasesFiredRowMarkerBeforeItsLineageIsPruned(t *testing.T) {
-	ctx, key, _, row := newRetiredDeferredDownloadContext(t)
-	mapped := scheduledDownloadMapping(t, ctx, row.ID)
+	handle := strconv.FormatUint(uint64(row.ID), 10)
 	successor := "earlier-release-successor"
-	if err := ctx.db.Create(&models.JobLink{FromJobID: successor, ToJobID: mapped.JobID, Type: string(jobs.LinkRetryOf), CreatedAt: time.Now()}).Error; err != nil {
-		t.Fatalf("link the successor: %v", err)
+	if err := ctx.db.Model(&models.JobLegacyHandle{}).Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).
+		Update("job_id", successor).Error; err != nil {
+		t.Fatalf("move the handle as that release's Retry did: %v", err)
 	}
 	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
 		Updates(map[string]any{"status": models.ScheduledDownloadStatusSubmitted, "job_id": successor, "attempts": 1}).Error; err != nil {
-		t.Fatalf("fire the row as an earlier release did: %v", err)
+		t.Fatalf("fire the row as that release did: %v", err)
 	}
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)
-	if err := ctx.db.Where("from_job_id = ?", successor).Delete(&models.JobLink{}).Error; err != nil {
-		t.Fatalf("prune the lineage: %v", err)
+	if err := ctx.db.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, handle).Delete(&models.JobLegacyHandle{}).Error; err != nil {
+		t.Fatalf("prune the handle: %v", err)
 	}
 	ctx = restartJobProcess(t, ctx, key)
 	requireCleanBoot(t, ctx)

@@ -87,13 +87,13 @@ func TestCancellingADeferredRowAndItsJobTogetherDoesNotDeadlock(t *testing.T) {
 	}
 }
 
-// TestCancellingADeferredRowFollowsAConcurrentRetry adds a Retry to the race:
-// the row's cancel reads which Job its handle names, and before it locks that Job
-// a Retry moves the handle to a successor. The cancel must lock the successor it
-// is about to cancel before it takes the row, or a cancel of that successor,
-// holding it and waiting for the row, deadlocks with it. The starting state is
-// one earlier releases left: the Job cancelled, the row still pending.
-func TestCancellingADeferredRowFollowsAConcurrentRetry(t *testing.T) {
+// TestCancellingADeferredRowLeavesARetryAlone lands a Retry inside the row's
+// cancel, after it read which Job its handle names and before it locks that Job:
+// the Retry moves the handle to an ordinary download that starts now. The row's
+// cancel acts on the Job it read and locked, whose end is already final, so it
+// cancels the row and leaves the Retry's download alone. The starting state is one
+// earlier releases left: the Job cancelled, the row still pending.
+func TestCancellingADeferredRowLeavesARetryAlone(t *testing.T) {
 	ctx, _, _ := newPostgresOwnershipFixture(t, 2)
 	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
 		t.Fatalf("seed writer epoch: %v", err)
@@ -118,8 +118,8 @@ func TestCancellingADeferredRowFollowsAConcurrentRetry(t *testing.T) {
 	var retried atomic.Bool
 	var successorID string
 	var retryErr error
-	const retryName = "test:retry-after-the-handle-read"
-	if err := ctx.db.Callback().Query().After("gorm:query").Register(retryName, func(tx *gorm.DB) {
+	const name = "test:retry-after-the-handle-read"
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
 		if tx.Statement.Table != "job_legacy_handles" {
 			return
 		}
@@ -133,54 +133,24 @@ func TestCancellingADeferredRowFollowsAConcurrentRetry(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register the retry: %v", err)
 	}
-	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(retryName) })
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
 
-	var cancelled atomic.Bool
-	var successorCancel sync.WaitGroup
-	var successorCancelErr error
-	const cancelName = "test:cancel-the-successor-inside-the-row-cancel"
-	if err := ctx.db.Callback().Update().After("gorm:update").Register(cancelName, func(tx *gorm.DB) {
-		if tx.Statement.Table != "scheduled_downloads" || successorID == "" {
-			return
-		}
-		if _, inTransaction := tx.Statement.ConnPool.(*sql.Tx); !inTransaction || !cancelled.CompareAndSwap(false, true) {
-			return
-		}
-		successor := deferredDownloadJob(t, ctx, row.ID)
-		done := make(chan struct{})
-		successorCancel.Add(1)
-		go func() {
-			defer successorCancel.Done()
-			defer close(done)
-			_, successorCancelErr = ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
-				JobID: successor.ID, Key: jobs.CommandCancel, IdempotencyKey: "pg-cancel-" + successor.ID, ExpectedVersion: successor.Version,
-			})
-		}()
-		select {
-		case <-done:
-		case <-time.After(1500 * time.Millisecond):
-		}
-	}); err != nil {
-		t.Fatalf("register the successor cancel: %v", err)
-	}
-	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(cancelName) })
-
-	ok, rowErr := ctx.CancelScheduledDownload(row.ID)
-	successorCancel.Wait()
+	ok, err := ctx.CancelScheduledDownload(row.ID)
 	if retryErr != nil || successorID == "" {
 		t.Fatalf("setup: the concurrent Retry = %q, %v", successorID, retryErr)
 	}
-	if !cancelled.Load() {
-		t.Fatalf("setup: the successor's cancel was never started")
+	if err != nil || !ok {
+		t.Fatalf("the row cancel = %v, %v; want the row cancelled", ok, err)
 	}
-	if isDeadlockError(rowErr) || isDeadlockError(successorCancelErr) {
-		t.Fatalf("the cancels deadlocked: row cancel %v, successor cancel %v", rowErr, successorCancelErr)
+	successor, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, successorID)
+	if err != nil {
+		t.Fatalf("read the successor: %v", err)
 	}
-	if rowErr != nil || !ok {
-		t.Fatalf("the row cancel = %v, %v; want it to win the race it started", ok, rowErr)
+	if successor.State == jobs.StateCancelled {
+		t.Fatalf("the row's cancel cancelled the Retry's download")
 	}
-	if got := deferredDownloadJob(t, ctx, row.ID); got.ID != successorID || got.State != jobs.StateCancelled {
-		t.Fatalf("the row's Job is %s (%s), want the successor %s cancelled", got.ID, got.State, successorID)
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusCancelled {
+		t.Fatalf("the row is %s, want cancelled", got.Status)
 	}
 }
 
