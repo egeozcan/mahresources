@@ -860,6 +860,7 @@ func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
 	// the one-shot warning behavior.
 	time.Sleep(110 * time.Millisecond)
 	kills, inspections, killTimes := inspector.snapshot()
+	observedAt := time.Now()
 	if kills != 2 || len(killTimes) != 2 {
 		inspector.setDead()
 		<-result
@@ -879,10 +880,12 @@ func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
 	if len(afterForced) < 3 {
 		t.Errorf("post-cleanup inspections = %d, want at least 3", len(afterForced))
 	}
-	for index := 1; index < len(afterForced); index++ {
-		if interval := afterForced[index].Sub(afterForced[index-1]); interval < 32*time.Millisecond {
-			t.Errorf("post-cleanup inspection interval = %s, want at least 32ms", interval)
-		}
+	// The backed-off poll is a 40ms ticker, which delivers at most one tick per
+	// period over any span. One interval between two inspections can still look
+	// short when the receive of the earlier tick was late under load, so the
+	// bound is on the count over the span, not on each gap.
+	if span := observedAt.Sub(killTimes[1]); len(afterForced) > int(span/(40*time.Millisecond))+2 {
+		t.Errorf("post-cleanup inspections = %d over %s, want at most one per 40ms backoff period", len(afterForced), span)
 	}
 	warningMu.Lock()
 	gotWarnings := append([]RuntimeWarning(nil), warnings...)
