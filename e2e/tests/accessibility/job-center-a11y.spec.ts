@@ -183,29 +183,46 @@ test.describe('Job Center list accessibility', () => {
 // check is on pixels: the control's surroundings must look different focused
 // than not, whatever property draws the difference.
 test.describe('Job Center focus in forced colors', () => {
+  // One measurement: the same clip, focused and then not. A page that
+  // re-renders the control (a live update landing mid-measurement) or moves it
+  // invalidates the comparison, so that attempt is discarded and repeated
+  // rather than read as a missing indicator.
   async function paintedFocus(page: import('@playwright/test').Page, control: import('@playwright/test').Locator) {
-    await control.scrollIntoViewIfNeeded();
-    const box = await control.boundingBox();
-    expect(box, 'the control must be rendered').not.toBeNull();
     const viewport = page.viewportSize()!;
-    const x = Math.max(0, Math.floor(box!.x) - 6);
-    const y = Math.max(0, Math.floor(box!.y) - 6);
-    const clip = {
-      x, y,
-      width: Math.min(viewport.width - x, Math.ceil(box!.width) + 12),
-      height: Math.min(viewport.height - y, Math.ceil(box!.height) + 12),
+    const unchanged = async (box: { x: number; y: number; width: number; height: number }) => {
+      const now = await control.boundingBox();
+      return !!now && ['x', 'y', 'width', 'height'].every(key => Math.abs((now as any)[key] - (box as any)[key]) < 0.5);
     };
-    const shot = () => page.screenshot({ clip, animations: 'disabled', caret: 'hide' });
-    await control.focus();
-    await expect(control).toBeFocused();
-    const focused = await shot();
-    const style = await control.evaluate(element => {
-      const computed = getComputedStyle(element);
-      return `outline=${computed.outlineStyle} ${computed.outlineWidth} shadow=${computed.boxShadow}`;
-    });
-    await control.evaluate(element => (element as HTMLElement).blur());
-    const blurred = await shot();
-    return { painted: !focused.equals(blurred), style };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await control.scrollIntoViewIfNeeded();
+      // Finite ones only: a pulsing indicator never finishes.
+      await page.evaluate(() => Promise.all(document.getAnimations()
+        .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
+        .map(animation => animation.finished.catch(() => null))));
+      const box = await control.boundingBox();
+      expect(box, 'the control must be rendered').not.toBeNull();
+      const x = Math.max(0, Math.floor(box!.x) - 6);
+      const y = Math.max(0, Math.floor(box!.y) - 6);
+      const clip = {
+        x, y,
+        width: Math.min(viewport.width - x, Math.ceil(box!.width) + 12),
+        height: Math.min(viewport.height - y, Math.ceil(box!.height) + 12),
+      };
+      const shot = () => page.screenshot({ clip, animations: 'disabled', caret: 'hide' });
+      await control.focus();
+      await expect(control).toBeFocused();
+      const focused = await shot();
+      const style = await control.evaluate(element => {
+        const computed = getComputedStyle(element);
+        return `outline=${computed.outlineStyle} ${computed.outlineWidth} shadow=${computed.boxShadow}`;
+      });
+      const stillFocused = await control.evaluate(element => element === document.activeElement);
+      await control.evaluate(element => (element as HTMLElement).blur());
+      const blurred = await shot();
+      if (!stillFocused || !(await unchanged(box!))) continue;
+      return { painted: !focused.equals(blurred), style };
+    }
+    throw new Error('the control kept moving or losing focus while it was measured');
   }
 
   async function expectPaintedFocus(page: import('@playwright/test').Page, control: import('@playwright/test').Locator, what: string) {
@@ -224,6 +241,12 @@ test.describe('Job Center focus in forced colors', () => {
     const jobId = (await submitted.json()).jobs[0].canonicalJobId as string;
     await expect.poll(async () => (await (await request.get(`/v1/jobs/${jobId}`)).json()).state, { timeout: 20_000 })
       .toBe('failed');
+    // Every event published, so the pages below load after the stream has
+    // said everything about this job and nothing re-renders its row mid-check.
+    await expect.poll(async () => {
+      const events = (await (await request.get(`/v1/jobs/${jobId}/events`)).json()).events || [];
+      return events.length > 0 && events.every((event: any) => Number(event.deliverySequence) > 0);
+    }, { timeout: 20_000 }).toBe(true);
 
     await page.emulateMedia({ forcedColors: 'active' });
     await page.goto('/dashboard');

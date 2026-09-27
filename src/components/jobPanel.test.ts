@@ -1509,16 +1509,40 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('inflight.bin failed.');
     });
 
-    test('proofs no read took are dropped to the ledger\'s size once a refresh has had its chance at them', async () => {
+    test('a refresh whose reads failed keeps the proofs for the next one, however many arrived', async () => {
+        const failed = { id: 'dl-51', title: 'retried.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        const list = panel.requestJSON;
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-51', fastLife, 11);
+        await otherJobsBurst(panel, 1500, 20);
+        panel.requestJSON = vi.fn(async () => { throw new Error('Request failed (503)'); });
+        await panel.refresh();
+        expect(panel.error).toBe('Request failed (503)');
+        await otherJobsBurst(panel, 1, 2000);
+        panel.requestJSON = list;
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('retried.bin failed.');
+    });
+
+    test('proofs no read took are kept until a refresh has read, then dropped to the ledger\'s size', async () => {
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
         showHeard(panel, []);
 
         await otherJobsBurst(panel, 1500, 20);
-        await panel.refresh();
-        await otherJobsBurst(panel, 1, 2000);
+        expect(panel._liveVersions.size).toBe(1500);
+        expect(panel._liveVersions.has('other-20')).toBe(true);
 
-        expect(panel._liveVersions.size).toBeLessThanOrEqual(1000);
+        await panel.refresh();
+
+        expect(panel._liveVersions.size).toBe(1000);
+        expect(panel._liveVersions.has('other-20')).toBe(false);
+        expect(panel._liveVersions.has('other-1519')).toBe(true);
     });
 
     test('a read that began before catch-up withholds a first-seen outcome for its live event', async () => {

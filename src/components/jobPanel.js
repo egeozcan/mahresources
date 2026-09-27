@@ -452,10 +452,7 @@ export function jobPanel() {
                 // A superseded refresh leaves its proofs to the newer one.
                 if (generation === this._refreshGeneration) this.settleProofs(proofsFrom);
             } catch (error) {
-                if (generation === this._refreshGeneration) {
-                    this.error = error.message || 'Could not load jobs.';
-                    this.settleProofs(proofsFrom);
-                }
+                if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
             }
         },
 
@@ -581,12 +578,12 @@ export function jobPanel() {
         },
 
         // Past HEARD_LIMIT the oldest proof goes, but only once a refresh that
-        // began after it has finished (settleProofs). Until then that refresh
-        // may be the very read the proof is for, and a job whose first read is
-        // its outcome has nothing else to say it, however many other jobs'
-        // events arrive meanwhile. So the map holds at most the ledger's size
-        // plus the events of one refresh cycle. A refresh that failed has had
-        // its chance too: its proofs stay unless the map overflows.
+        // began after it has read the lists (settleProofs). Until then that
+        // refresh, or the next one if its reads failed, may be the very read
+        // the proof is for, and a job whose first read is its outcome has
+        // nothing else to say it, however many other jobs' events arrive
+        // meanwhile. So the map holds at most the ledger's size plus the events
+        // since the last refresh that read.
         trimLiveProofs() {
             while (this._liveVersions.size > HEARD_LIMIT) {
                 const [jobId, proof] = this._liveVersions.entries().next().value;
