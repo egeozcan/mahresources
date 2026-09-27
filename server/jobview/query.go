@@ -26,7 +26,9 @@ func ParseFilter(values url.Values) (jobs.Filter, error) {
 	filter.States = tokens(values, "states", "state")
 	filter.Kinds = tokens(values, "kinds", "kind")
 	filter.Origins = tokens(values, "origins", "origin")
-	filter.Search = values.Get("search")
+	// A pasted term often carries a space at either end, which no stored text
+	// is looking for: " heartbeat " asks what "heartbeat" asks.
+	filter.Search = strings.TrimSpace(values.Get("search"))
 	filter.Relationship = values.Get("relationship")
 	filter.InboundRelationship = values.Get("inboundRelationship")
 	filter.NoInboundRelationship = values.Get("noInboundRelationship")
