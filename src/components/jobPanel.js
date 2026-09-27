@@ -1,5 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
+import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
 import {
@@ -305,9 +305,22 @@ export function jobPanel() {
         _listRetryDelay: 0,
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
-        // Rows whose detail read is in flight, and the latest pass of them.
+        // Detail reads: the rows in flight, the rows waiting for one of the
+        // DETAIL_READ_CONCURRENCY readers the whole drawer shares, and the pass
+        // those readers are working through (see loadStaleDetails).
         _detailReads: new Set(),
+        _detailQueue: [],
+        _detailReaders: 0,
+        _detailOutcomes: new Set(),
+        _detailDrain: null,
+        _resolveDetailDrain: null,
         _detailLoad: null,
+        // A pin moves no version, so a read cannot tell by version whether it
+        // predates a preference change. Each Job's epoch moves when a change is
+        // seen (this tab's command, another page's announcement, a list read
+        // that shows a different pin), and a read begun at an older epoch is
+        // older than what the drawer holds.
+        _preferenceEpochs: new Map(),
         _broadcast: null,
         // Set once the stream has given a cursor (a catch-up), which a reopened
         // stream then resumes from, even v2:0.
@@ -605,6 +618,7 @@ export function jobPanel() {
                 error.payload = payload;
                 throw error;
             }
+            this.movePreferenceEpochs(preferenceCommand(url, init, payload)?.jobIds);
             announcePreferenceCommand(url, init, payload, this._broadcast);
             return payload;
         },
@@ -616,6 +630,7 @@ export function jobPanel() {
         hearPreferenceBroadcast(message) {
             if (this.streamStopped || this._destroyed) return;
             const ids = new Set(Array.isArray(message?.jobIds) ? message.jobIds.map(String) : []);
+            this.movePreferenceEpochs([...ids]);
             for (const id of ids) delete this.details[id];
             if (message?.command === 'dismiss') this.jobs = this.jobs.filter(job => !ids.has(String(job.id)));
             this.refresh();
@@ -637,6 +652,14 @@ export function jobPanel() {
 
         fenceEarlierReads() {
             this._refreshFloor = this._refreshGeneration;
+        },
+
+        movePreferenceEpochs(ids) {
+            for (const id of ids || []) this._preferenceEpochs.set(String(id), this.preferenceEpoch(id) + 1);
+        },
+
+        preferenceEpoch(id) {
+            return this._preferenceEpochs.get(String(id)) || 0;
         },
 
         // Whether a list read's answer may still apply: no read that started
@@ -676,6 +699,11 @@ export function jobPanel() {
             // applied is older than the row it would replace; the newer row
             // stays, rather than the row rolling back.
             const shown = new Map(this.jobs.map(job => [job.id, job]));
+            // A pin this read shows differently from the row was changed
+            // somewhere the drawer did not hear (another browser).
+            this.movePreferenceEpochs([...byId.values()]
+                .filter(job => shown.has(job.id) && Object.hasOwn(job, 'pinned') && !!shown.get(job.id).pinned !== !!job.pinned)
+                .map(job => job.id));
             const listed = [...byId.values()].map(job => {
                 const held = shown.get(job.id);
                 return held && Number(held.version || 0) > Number(job.version || 0) ? held : job;
@@ -770,9 +798,13 @@ export function jobPanel() {
             for (const id of Object.keys(this.details)) if (!shown.has(id)) delete this.details[id];
         },
 
-        async loadStaleDetails() {
-            if (!this.isOpen || this.streamStopped || this._destroyed) return;
-            const stale = [];
+        // Queues the rows whose detail is stale and starts readers for them, at
+        // most DETAIL_READ_CONCURRENCY across every pass, and answers when the
+        // pass in progress has drained. A pass that ends with a failed read
+        // tries again after the list retry's delay; one that ends with a row
+        // that moved on while it was read starts another.
+        loadStaleDetails() {
+            if (!this.isOpen || this.streamStopped || this._destroyed) return this._detailDrain || Promise.resolve();
             for (const job of this.jobs) {
                 if (advertisedCommands(job).length) {
                     // A row that carries its commands (a stream snapshot or a
@@ -780,19 +812,39 @@ export function jobPanel() {
                     if (this.detailStale(job)) this.details[job.id] = job;
                     continue;
                 }
-                if (this.detailStale(job) && !this._detailReads.has(job.id)) stale.push(job);
+                if (this.detailStale(job) && !this._detailReads.has(job.id) && !this._detailQueue.includes(job.id)) {
+                    this._detailQueue.push(job.id);
+                }
             }
-            const outcomes = [];
-            const next = () => stale.shift();
-            const worker = async () => {
-                for (let job = next(); job; job = next()) outcomes.push(await this.loadDetail(job));
-            };
-            await Promise.all(Array.from({ length: Math.min(DETAIL_READ_CONCURRENCY, stale.length) }, worker));
-            if (this.streamStopped || this._destroyed) return;
-            if (outcomes.includes('failed')) this.scheduleListRetry();
-            // A row that moved on while its detail was read was skipped by the
-            // pass its move started: it is read again now.
-            else if (outcomes.includes('moved')) this._detailLoad = this.loadStaleDetails();
+            while (this._detailReaders < DETAIL_READ_CONCURRENCY && this._detailQueue.length) this.startDetailReader();
+            return this._detailDrain || Promise.resolve();
+        },
+
+        startDetailReader() {
+            this._detailReaders += 1;
+            if (!this._detailDrain) this._detailDrain = new Promise(resolve => { this._resolveDetailDrain = resolve; });
+            (async () => {
+                for (let id = this._detailQueue.shift(); id !== undefined; id = this._detailQueue.shift()) {
+                    const job = this.jobs.find(row => row.id === id);
+                    if (!job || !this.detailStale(job) || this.streamStopped || this._destroyed) continue;
+                    this._detailOutcomes.add(await this.loadDetail(job));
+                }
+                this._detailReaders -= 1;
+                if (this._detailReaders === 0) this.finishDetailPass();
+            })();
+        },
+
+        finishDetailPass() {
+            const outcomes = this._detailOutcomes;
+            const resolve = this._resolveDetailDrain;
+            this._detailOutcomes = new Set();
+            this._detailDrain = null;
+            this._resolveDetailDrain = null;
+            if (!this.streamStopped && !this._destroyed) {
+                if (outcomes.has('failed')) this.scheduleListRetry();
+                else if (outcomes.has('moved')) this.loadStaleDetails();
+            }
+            resolve?.();
         },
 
         // Reads one row's detail and merges it into the row, heard as any read
@@ -805,7 +857,7 @@ export function jobPanel() {
             this._detailReads.add(job.id);
             const streamGeneration = this._streamGeneration;
             const askedFor = Number(job.version || 0);
-            const pinnedWhenAsked = !!job.pinned;
+            const epoch = this.preferenceEpoch(job.id);
             let detail;
             try {
                 detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
@@ -823,7 +875,7 @@ export function jobPanel() {
             if (Number(detail.version || 0) < Number(current.version || 0)) {
                 return Number(current.version || 0) > askedFor ? 'moved' : 'failed';
             }
-            if (!!current.pinned !== pinnedWhenAsked) return 'moved';
+            if (this.preferenceEpoch(job.id) !== epoch) return 'moved';
             this.details[job.id] = detail;
             const spoken = [];
             this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
@@ -1427,8 +1479,16 @@ export function jobPanel() {
         ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
 
         async refreshJobPreference(id, spoken = null) {
+            const epoch = this.preferenceEpoch(id);
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
+            // A preference changed elsewhere while this was read: the answer is
+            // older than the row, and a fresh read replaces it.
+            if (this.preferenceEpoch(id) !== epoch) {
+                delete this.details[id];
+                this.startScheduledPanelRefresh();
+                return freshJob;
+            }
             if (freshJob?.id) {
                 this.details[id] = freshJob;
                 // A read: any change of state in it is someone else's.

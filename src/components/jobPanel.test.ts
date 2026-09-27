@@ -2916,6 +2916,58 @@ describe('Job Center drawer connection and list reads', () => {
         expect(panel.jobs[0].pinned).toBe(true);
     });
 
+    test('overlapping detail passes share four readers', async () => {
+        const rows = Array.from({ length: 12 }, (_, index) => ({ id: `d-${index}`, state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }));
+        const { panel } = listingPanel(rows);
+        const list = panel.requestJSON;
+        let inFlight = 0;
+        let most = 0;
+        const gates: Array<() => void> = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) return list(raw);
+            inFlight += 1;
+            most = Math.max(most, inFlight);
+            await new Promise<void>(resolve => gates.push(resolve));
+            inFlight -= 1;
+            return list(raw);
+        });
+        await panel.refresh();
+        panel.isOpen = true;
+        const first = panel.loadStaleDetails();
+        const second = panel.loadStaleDetails();
+        await vi.waitFor(async () => {
+            while (gates.length) gates.shift()!();
+            await Promise.resolve();
+            expect(Object.keys(panel.details)).toHaveLength(12);
+        });
+        await Promise.all([first, second]);
+        expect(most).toBe(4);
+        expect(panel.requestJSON.mock.calls.filter(([raw]: any[]) => !String(raw).startsWith('/v1/jobs?'))).toHaveLength(12);
+    });
+
+    test('a pin read answered after another page unpinned the job does not pin it again', async () => {
+        const rows = [{ id: 'q', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:00:00Z', pinned: false }];
+        const { panel } = listingPanel(rows);
+        await panel.refresh();
+        let releaseRead = () => {};
+        const readHeld = new Promise<void>(resolve => { releaseRead = resolve; });
+        const list = panel.requestJSON;
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) return list(raw);
+            await readHeld;
+            // Read before the other page's unpin.
+            return { ...rows[0], pinned: true, commands: [{ key: 'unpin', jobVersion: 2 }] };
+        });
+        // This tab pinned; its follow-up read is on its way when another page unpins.
+        const reading = panel.refreshJobPreference('q');
+        panel.hearPreferenceBroadcast({ command: 'unpin', jobIds: ['q'] });
+        releaseRead();
+        await reading;
+        await vi.waitFor(() => expect(list).toBeDefined());
+        expect(panel.details.q?.pinned).not.toBe(true);
+        expect(panel.jobs[0].pinned).toBe(false);
+    });
+
     test('Dismiss finished dismisses what the drawer lists, in its owner scope', async () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;

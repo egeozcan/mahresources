@@ -552,6 +552,10 @@ export function jobCenter(options = {}) {
             if (!id) throw new Error('A job ID is required.');
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             this.detail = payload.job || payload;
+            // The Job is followed from here, before its timeline is read: a
+            // stream message about it while that read runs must find it.
+            this.details[id] = this.detail;
+            this.jobs = this.detail ? [this.detail] : [];
             this.timelineError = '';
             this.timeline = [];
             if (this.detail?.id) {
@@ -562,8 +566,6 @@ export function jobCenter(options = {}) {
                     this.timelineError = error.message || 'Timeline is unavailable.';
                 }
             }
-            this.details[id] = this.detail;
-            this.jobs = this.detail ? [this.detail] : [];
             return this.detail;
         },
 
@@ -731,6 +733,10 @@ export function jobCenter(options = {}) {
 
         applyStreamSnapshot(job, previousResult = null, announce = false) {
             if (!job?.id) return;
+            // A snapshot older than the one the page shows (a read answered
+            // after a live update) replaces nothing.
+            const shown = this.detail?.id === job.id ? this.detail : this.details[job.id];
+            if (Number(job.version || 0) < Number(shown?.version || 0)) return;
             const result = previousResult || reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
             const held = new Map(this.jobs.map(current => [current.id, current]));
             if (result.changed) this.jobs = result.jobs.map(next => mergeFetchedProgress(next, held.get(next.id)));

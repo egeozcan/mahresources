@@ -503,6 +503,65 @@ describe('Job detail stream connection', () => {
         expect(reads).toEqual([1, 2]);
     });
 
+    test('a reconciling read answered after a newer live update replaces nothing', async () => {
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter({ detailId: 'job-6' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.jobs = [{ id: 'job-6', title: 'Export', state: 'running', version: 2, commands: [{ key: 'cancel', jobVersion: 2 }] }];
+        center.detail = center.jobs[0];
+        center.loading = false;
+        let releaseRead = () => {};
+        const readHeld = new Promise<void>(resolve => { releaseRead = resolve; });
+        center.fetchJSON = vi.fn(async () => {
+            await readHeld;
+            return { id: 'job-6', title: 'Export', state: 'running', version: 2, commands: [{ key: 'cancel', jobVersion: 2 }] };
+        });
+        center.connect();
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:30' }) });
+        // A live update to v3 lands while the reconciling read is on its way.
+        center.applyStreamSnapshot({ id: 'job-6', title: 'Export', state: 'succeeded', version: 3, commands: [] });
+        releaseRead();
+        await vi.waitFor(() => expect(center.fetchJSON).toHaveBeenCalled());
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(center.detail.version).toBe(3);
+        expect(center.detail.commands).toEqual([]);
+        expect(center.jobs[0].version).toBe(3);
+    });
+
+    test('a stream message about the Job while its timeline is read is applied', async () => {
+        const center = jobCenter({ detailId: 'job-7' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.streamCaughtUp = true;
+        let releaseTimeline = () => {};
+        const timelineHeld = new Promise<void>(resolve => { releaseTimeline = resolve; });
+        let timelineAsked = () => {};
+        const timelineStarted = new Promise<void>(resolve => { timelineAsked = resolve; });
+        let failed = false;
+        center.fetchJSON = vi.fn(async (url: string) => {
+            if (url.includes('/events')) {
+                timelineAsked();
+                await timelineHeld;
+                return { events: [] };
+            }
+            return failed
+                ? { id: 'job-7', title: 'Export', state: 'failed', version: 3 }
+                : { id: 'job-7', title: 'Export', state: 'running', version: 2 };
+        });
+        const loading = center.load();
+        await timelineStarted;
+        // The Job fails while its timeline is read; the stream says so without a snapshot.
+        failed = true;
+        center.handleStreamMessage({
+            data: JSON.stringify({ id: 'e-7', jobId: 'job-7', jobVersion: 3, type: 'failed', deliverySequence: 5 }),
+            lastEventId: 'v2:5',
+        });
+        releaseTimeline();
+        await loading;
+        await vi.waitFor(() => expect(center.detail.state).toBe('failed'));
+    });
+
     test('a stream that caught up at v2:0 is reopened from v2:0', () => {
         vi.useFakeTimers();
         ClosingEventSource.made = [];
