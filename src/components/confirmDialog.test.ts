@@ -224,3 +224,23 @@ describe('focus returns to the control that opened the dialog', () => {
         expect(opener.focus).not.toHaveBeenCalled();
     });
 });
+
+describe('how the confirming button reads', () => {
+    test('is destructive unless the caller says the command destroys nothing', async () => {
+        const deletion = store.ask('Delete 3 resources?');
+        expect(store.destructive).toBe(true);
+        store.cancel();
+        await deletion;
+
+        const download = store.ask('Start this download now?', { confirmLabel: 'Download now', destructive: false });
+        expect(store.destructive).toBe(false);
+        store.cancel();
+        await download;
+
+        // A later ask starts from the default again.
+        const next = store.ask('Delete 1 note?');
+        expect(store.destructive).toBe(true);
+        store.cancel();
+        await next;
+    });
+});

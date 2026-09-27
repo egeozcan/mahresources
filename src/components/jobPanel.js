@@ -4,8 +4,12 @@ import { blockingModal, isRendered } from '../utils/modality.js';
 import {
     advertisedCommands,
     classifyJobState,
+    commandConfirmation,
+    commandConfirmOptions,
     commandEndpoint,
     commandLocation,
+    commandNoticeText,
+    commandRefusalText,
     eventJob,
     isPartialSuccess,
     lifecycleAnnouncement,
@@ -19,6 +23,7 @@ import {
     resultOutput,
     resultURL,
     stateLabel,
+    stateOf,
     streamCursorSequence,
     progressAccessibleText,
     progressIndeterminate,
@@ -91,22 +96,10 @@ export function panelCounts(jobs) {
     }, { active: 0, attention: 0 });
 }
 
+// The drawer asks by the same rule as every other Job surface
+// (commandConfirmation): only what stops work or cannot be taken back.
 export function panelCommandConfirmation(command) {
-    if (command?.key === 'dismiss') {
-        return 'Dismiss this job from your default list. Its history and outputs remain available, and any artifacts keep their own retention.';
-    }
-    if (command?.key === 'pin') {
-        return "Pin this job's metadata and event history against ordinary retention. Linked jobs and artifacts keep their own retention.";
-    }
-    if (command?.key === 'pin-lineage') {
-        return 'Pin this job and each related job you can see against ordinary retention. Artifacts keep their own retention.';
-    }
-    if (command?.key === 'forget') {
-        return 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
-    }
-    if (command?.confirmation) return command.confirmation;
-    if (command?.destructive) return `Run ${commandLabel(command)}? ${command.confirmation || ''}`.trim();
-    return '';
+    return commandConfirmation(command);
 }
 
 // Commands that keep a job's record rather than act on its work. They sit
@@ -184,19 +177,21 @@ export function unsaidOutcomesText(count) {
 
 // Where focus goes when the command control that had it leaves the row: its
 // counterpart first, since Pin becomes Unpin, then the same command re-rendered.
-const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause' };
+const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause', dismiss: 'undismiss', undismiss: 'dismiss' };
 
 export function panelFocusSuccessorKeys(key) {
     return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
 }
 
-// Commands whose result the row shows at once: it leaves, or gains or loses
-// its pin. They succeed without a box; a screen reader hears the row and what
-// happened to it. Every other command keeps the server's words in the box:
-// Cancel, Pause and Resume are requests the row may not reflect until the
+// Commands whose result the row shows at once: it gains or loses its pin, or
+// comes back to the list. They succeed without a box; a screen reader hears
+// the row and what happened to it. A Dismiss takes its row away, so it leaves
+// a box that offers to undo it. Every other command leaves a box naming its
+// Job (commandNoticeText), unless the answer already moved the row to another
+// state: Cancel and Pause are requests the row may not reflect until the
 // executor acts, and lineage pins, forgetting replay input and a plugin's own
 // commands have results the row cannot show, partial ones included.
-const ROW_SHOWN_COMMANDS = { dismiss: 'dismissed', pin: 'pinned', unpin: 'unpinned' };
+const ROW_SHOWN_COMMANDS = { pin: 'pinned', unpin: 'unpinned', undismiss: 'returned to the list' };
 
 function commandDoneText(job, command) {
     return `${job?.title || job?.kind || 'Job'} ${ROW_SHOWN_COMMANDS[command?.key]}.`;
@@ -220,8 +215,21 @@ export function jobPanel() {
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
+        // What a command's box offers besides its words: a page its answer
+        // named (noticeLink), which the drawer never opens on its own since the
+        // page under it may hold unsaved work, or the Undismiss that takes a
+        // Dismiss back (noticeUndo).
+        noticeLink: null,
+        noticeUndo: null,
+        // A requested control's box leaves once its row has moved past the
+        // version the command answered with: the row says the rest.
+        _noticeWatch: null,
+        // Jobs with a command in flight, whose controls take no second press.
+        commandBusy: {},
         _resourceRefreshNotified: new Set(),
         busy: false,
+        // Dismiss finished is reading its first page or asking about it.
+        _dismissAsking: false,
         finishedLimit: DEFAULT_FINISHED_LIMIT,
         finishedHasMore: false,
         // Bumped once a second while the drawer is open, so "about 14 s left"
@@ -288,15 +296,7 @@ export function jobPanel() {
                         this.adoptPendingAnnouncement();
                     });
                 } else {
-                    this.stopClock();
-                    // After the trap has let go and the drawer is gone: focus
-                    // moved while the trap is armed is pulled back inside, and
-                    // then falls to <body> when the drawer is removed.
-                    const trigger = this._lastTrigger;
-                    this._lastTrigger = null;
-                    setTimeout(() => {
-                        if (!this.isOpen) restoreFocus(trigger, this._trigger);
-                    }, 0);
+                    this.onDrawerClosed();
                 }
             });
             // The expression is the Dismiss finished button's own x-show.
@@ -321,6 +321,21 @@ export function jobPanel() {
             clearTimeout(this._drawerAnnounceTimer);
             clearTimeout(this._unsaidOutcomesTimer);
             clearTimeout(this._landTimer);
+        },
+
+        onDrawerClosed() {
+            this.stopClock();
+            // A box answers the command it followed while the reader watched;
+            // it is not news to find on the next opening.
+            this.clearNotice();
+            // After the trap has let go and the drawer is gone: focus moved
+            // while the trap is armed is pulled back inside, and then falls to
+            // <body> when the drawer is removed.
+            const trigger = this._lastTrigger;
+            this._lastTrigger = null;
+            setTimeout(() => {
+                if (!this.isOpen) restoreFocus(trigger, this._trigger);
+            }, 0);
         },
 
         startClock() {
@@ -350,6 +365,15 @@ export function jobPanel() {
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
         get countsText() { return panelCountsText(this.counts); },
+        // The box's words, until what they report has reached the row.
+        get noticeText() {
+            const watch = this._noticeWatch;
+            if (watch) {
+                const row = this.jobs.find(job => job.id === watch.jobId);
+                if (!row || Number(row.version || 0) > watch.version) return '';
+            }
+            return this.notice;
+        },
         get finishedCount() {
             return this.jobs.filter(job => classifyJobState(job) === 'finished' &&
                 this.commandsFor(job).some(command => command.key === 'dismiss')).length;
@@ -970,7 +994,7 @@ export function jobPanel() {
             this.jobs = [];
             this.details = {};
             this.finishedHasMore = false;
-            this.notice = '';
+            this.clearNotice();
             this.error = '';
             // What the reader was, or was about to be, told about Jobs belongs to
             // the other database too: the ledger, the proofs, every message not
@@ -1110,7 +1134,25 @@ export function jobPanel() {
         stateTone(job) { return panelStateTone(job); },
         ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
 
-        async refreshJobPreference(id, spoken = null) {
+        setNotice(text, { link = null, undo = null, watch = null } = {}) {
+            this.notice = text || '';
+            this.noticeLink = text ? link : null;
+            this.noticeUndo = text ? undo : null;
+            this._noticeWatch = text ? watch : null;
+        },
+
+        clearNotice() {
+            this.setNotice('');
+        },
+
+        commandBusyFor(job) {
+            return !!this.commandBusy[job?.id];
+        },
+
+        // A read of one Job's detail after a command: the answer's snapshot
+        // carries no commands, and a command such as Forget moves no version, so
+        // nothing else would replace the controls the command made stale.
+        async rereadJob(id, spoken = null) {
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
             if (freshJob?.id) {
@@ -1118,20 +1160,34 @@ export function jobPanel() {
                 // A read: any change of state in it is someone else's.
                 this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
             }
-            return freshJob;
+            return freshJob?.id ? freshJob : null;
         },
 
+        // One command per Job at a time: a second press while the first is in
+        // flight would be decided from the version the first is changing, and
+        // turn its success into a conflict.
         async runCommand(job, command) {
+            if (!job?.id || this.commandBusy[job.id]) return null;
+            this.commandBusy = { ...this.commandBusy, [job.id]: true };
             const watch = this.watchReaderFocus();
             this._commandRefresh = null;
             try {
                 return await this.runCommandUnfocused(job, command);
             } finally {
+                const { [job.id]: _done, ...stillBusy } = this.commandBusy;
+                this.commandBusy = stillBusy;
                 // A Dismiss's refresh may reveal the job that takes the freed
                 // place; focus is placed once it has.
                 this.keepFocusOnRow(job.id, command, watch, this._commandRefresh);
                 this._commandRefresh = null;
             }
+        },
+
+        // The Undo a Dismiss's box offers.
+        async undoDismiss() {
+            const undo = this.noticeUndo;
+            if (!undo) return null;
+            return this.runCommand(undo.job, undo.command);
         },
 
         // Records whether the reader moved focus inside the drawer while a
@@ -1203,9 +1259,7 @@ export function jobPanel() {
         async runCommandUnfocused(job, command) {
             const confirmation = panelCommandConfirmation(command);
             if (confirmation) {
-                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
-                    title: commandLabel(command), confirmLabel: commandLabel(command),
-                });
+                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, commandConfirmOptions(job, command));
                 if (!accepted) return null;
             }
             // A confirmation answered after the drawer stopped would send a
@@ -1214,9 +1268,7 @@ export function jobPanel() {
             const key = commandKey();
             // Changes a live event proved, said with the command's notice.
             const proved = [];
-            // The notice is said with the proved changes, less any a newer
-            // change has superseded while the command ran.
-            const sayNotice = () => this.announceNotice(this.notice, proved);
+            const name = job.title || job.kind || 'Job';
             try {
                 const result = await this.requestJSON(commandEndpoint(job, command), {
                     method: 'POST',
@@ -1228,42 +1280,70 @@ export function jobPanel() {
                 // A command that keeps the record (pin, forget, dismiss) changes no
                 // state, so a change of state in its answer is someone else's and
                 // is heard as a read; a lifecycle command's answer is the reader's.
-                const keepsRecord = RECORD_COMMANDS.has(command?.key) || command?.key === 'dismiss';
+                const keepsRecord = RECORD_COMMANDS.has(command?.key) || command?.key === 'dismiss' || command?.key === 'undismiss';
                 if (freshJob?.id) this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
-                let preferenceRefreshFailed = false;
-                if (command?.key === 'pin' || command?.key === 'unpin') {
-                    try { await this.refreshJobPreference(job.id, proved); }
-                    catch { preferenceRefreshFailed = true; }
+                let now = freshJob || null;
+                let rereadFailed = false;
+                if (command?.key === 'dismiss' || command?.key === 'undismiss') {
+                    // Dismissing records a preference and emits no job event, so
+                    // no refresh would take the row away (or bring it back): it
+                    // leaves now, and a fresh refresh supersedes any that read the
+                    // lists before the change and brings in whatever the freed
+                    // place, or the returned Job, makes room for.
+                    if (command.key === 'dismiss') this.jobs = this.jobs.filter(row => row.id !== job.id);
+                    this._commandRefresh = this.refresh();
+                } else {
+                    try { now = await this.rereadJob(job.id, proved) || now; }
+                    catch { rereadFailed = true; }
                     if (this.streamStopped) return null;
                 }
-                // Dismissing records a preference and emits no job event, so no
-                // refresh would take the row away: it leaves now, and a fresh
-                // refresh supersedes any that read the lists before the dismissal
-                // and brings in whatever the freed place makes room for.
-                if (command?.key === 'dismiss') {
-                    this.jobs = this.jobs.filter(row => row.id !== job.id);
-                    this._commandRefresh = this.refresh();
-                }
+                // The drawer sits over every page, and the page may hold input
+                // nobody has saved: a page a command's answer names is offered as
+                // a link, never opened in its place.
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
                 const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
-                if (location && !this.streamStopped) globalThis.location?.assign?.(location);
-                const rowShowsIt = Object.hasOwn(ROW_SHOWN_COMMANDS, command?.key);
-                this.notice = preferenceRefreshFailed
-                    ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
-                    : rowShowsIt ? '' : outcome.message || `${commandLabel(command)} requested.`;
-                this.announceNotice(this.notice || commandDoneText(job, command), proved);
+                const movedOn = now?.state && stateOf(now) !== stateOf(job) && outcome.code !== 'requested';
+                let spoken = '';
+                if (rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')) {
+                    this.setNotice(`${commandLabel(command)} completed. Reload this job to see its current pin status.`);
+                } else if (command?.key === 'dismiss') {
+                    const undismiss = advertisedCommands(this.details[job.id] || job).find(entry => entry?.key === 'undismiss');
+                    this.setNotice(`${name} dismissed.`, { undo: undismiss ? { job, command: undismiss } : null });
+                } else if (Object.hasOwn(ROW_SHOWN_COMMANDS, command?.key)) {
+                    this.clearNotice();
+                    spoken = commandDoneText(job, command);
+                } else if (location) {
+                    this.setNotice(successorId
+                        ? `${commandLabel(command)} started a new job for ${name}.`
+                        : `${commandLabel(command)} for ${name} opens another page.`,
+                    { link: { href: location, label: successorId ? 'Open the new job' : 'Open it' } });
+                } else if (movedOn) {
+                    // The answer moved the row to another state, which it shows.
+                    this.clearNotice();
+                    spoken = lifecycleAnnouncement({ ...job, ...now });
+                } else {
+                    this.setNotice(commandNoticeText(job, command, outcome), {
+                        watch: outcome.code === 'requested' ? { jobId: job.id, version: Number(now?.version ?? job.version ?? 0) } : null,
+                    });
+                }
+                this.announceNotice(this.notice || spoken, proved);
                 return outcome;
             } catch (error) {
                 if (this.streamStopped) return null;
-                const freshJob = error.payload?.job;
-                if (error.status === 409 && freshJob?.id) {
-                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
-                    this.notice = 'This job changed. The latest details are shown.';
-                    sayNotice();
-                    return null;
+                // A refusal that carries the Job reports someone else's change,
+                // heard as a read would hear it.
+                const freshJob = error.payload?.job || error.payload?.result?.job;
+                if (freshJob?.id) this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
+                let now = freshJob?.id ? freshJob : null;
+                // Whatever refused it, the controls on screen offered a command
+                // the Job did not take: they are read again.
+                if (error.status !== 404 && !error.streamStopped) {
+                    try { now = await this.rereadJob(job.id, proved) || now; }
+                    catch { /* the refusal is still said */ }
                 }
-                this.notice = error.message || 'The command could not be completed.';
-                sayNotice();
+                if (this.streamStopped) return null;
+                this.setNotice(commandRefusalText(job, command, error, now));
+                this.announceNotice(this.notice, proved);
                 return null;
             }
         },
@@ -1273,17 +1353,43 @@ export function jobPanel() {
         // the undismissed filter while we page do not shift it, and each page fits
         // one bulk request. The server answers per job, so it alone decides which
         // jobs may be dismissed. Only counts are kept: a backlog can be far larger
-        // than anything worth holding in the page.
+        // than anything worth holding in the page, which is also why this one asks
+        // first, saying how many it reaches, where a single Dismiss offers Undo.
         async dismissFinished() {
-            if (this.busy || this.streamStopped || this.finishedCount === 0) return { dismissed: 0, total: 0 };
+            if (this.busy || this._dismissAsking || this.streamStopped || this.finishedCount === 0) return { dismissed: 0, total: 0 };
+            let first;
+            this._dismissAsking = true;
+            try {
+                first = await this.requestJSON(buildFinishedPageURL(''));
+                const count = (first.jobs || []).length;
+                if (count === 0) {
+                    // What the drawer showed has already gone.
+                    void this.refresh();
+                    return { dismissed: 0, total: 0 };
+                }
+                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(
+                    dismissFinishedConfirmation(count, !!first.nextCursor, this.finishedJobs.length),
+                    { title: 'Dismiss finished jobs', confirmLabel: first.nextCursor ? 'Dismiss all' : `Dismiss ${count}`, destructive: false },
+                );
+                if (!accepted || this.streamStopped) return { dismissed: 0, total: 0 };
+            } catch (error) {
+                if (!this.streamStopped) {
+                    this.setNotice(error.message || 'Could not dismiss finished jobs.');
+                    this.announceNotice(this.notice);
+                }
+                return { dismissed: 0, total: 0 };
+            } finally {
+                this._dismissAsking = false;
+            }
             this.busy = true;
             let dismissed = 0;
             let total = 0;
             let refusal = '';
             try {
                 let cursor = '';
+                let page = first;
                 do {
-                    const page = await this.requestJSON(buildFinishedPageURL(cursor));
+                    if (!page) page = await this.requestJSON(buildFinishedPageURL(cursor));
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1313,12 +1419,13 @@ export function jobPanel() {
                         if (confirmed.size) this.jobs = this.jobs.filter(job => !confirmed.has(job.id));
                     }
                     cursor = page.nextCursor || '';
+                    page = null;
                 } while (cursor);
                 const plural = total === 1 ? '' : 's';
                 // Full success shows no box: the rows leaving say it.
-                this.notice = dismissed === total
+                this.setNotice(dismissed === total
                     ? ''
-                    : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
+                    : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`);
                 this.announceNotice(this.notice || `${dismissed} finished job${plural} dismissed.`);
             } catch (error) {
                 if (this.streamStopped) {
@@ -1326,10 +1433,11 @@ export function jobPanel() {
                     return { dismissed, total };
                 }
                 const reason = error.message || 'Could not dismiss finished jobs.';
-                this.notice = dismissed > 0
+                let notice = dismissed > 0
                     ? `${dismissed} finished job${dismissed === 1 ? '' : 's'} dismissed before an error: ${reason}`
                     : reason;
-                if (refusal) this.notice = `${this.notice.replace(/\.$/, '')}. Not dismissed: ${refusal}`;
+                if (refusal) notice = `${notice.replace(/\.$/, '')}. Not dismissed: ${refusal}`;
+                this.setNotice(notice);
                 this.announceNotice(this.notice);
             }
             // Busy lasts through the refresh, which brings in whatever the
@@ -1414,6 +1522,17 @@ function buildPanelListURL(group) {
     params.set('limit', String(group.limit));
     if (group.series) params.set('include', 'progressSeries');
     return `/v1/jobs?${params}`;
+}
+
+// What Dismiss finished asks before it runs. `count` is the first page of
+// finished jobs the viewer has not dismissed, and `more` says there are pages
+// after it; `shown` is how many of them the drawer lists.
+export function dismissFinishedConfirmation(count, more, shown) {
+    const after = 'Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.';
+    if (more) return `Dismiss every finished job you have not dismissed? That is more than ${count}, and the drawer shows ${shown}. ${after}`;
+    const hidden = Math.max(0, count - shown);
+    const plural = count === 1 ? '' : 's';
+    return `Dismiss ${count} finished job${plural}?${hidden > 0 ? ` ${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown here.` : ''} ${after}`;
 }
 
 function buildFinishedPageURL(cursor) {

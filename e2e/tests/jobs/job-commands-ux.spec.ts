@@ -200,3 +200,245 @@ test.describe('Job command confirmations', () => {
     await page.keyboard.press('Escape');
   });
 });
+
+// A mutable set of Jobs the mocked API answers from, with each command's
+// answer decided by the test.
+function jobStore(initial: MockJob[]) {
+  const jobs = new Map(initial.map(job => [job.id, job]));
+  return {
+    jobs,
+    rows: () => [...jobs.values()].filter(job => !job.dismissed),
+    set(id: string, patch: MockJob) { jobs.set(id, { ...jobs.get(id), ...patch }); },
+  };
+}
+
+async function serveStore(page: Page, store: ReturnType<typeof jobStore>) {
+  await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+    const params = new URL(route.request().url()).searchParams;
+    const states = params.getAll('state');
+    const listed = params.get('dismissed') === 'false' ? store.rows() : [...store.jobs.values()];
+    return route.fulfill({ json: { jobs: listed.filter(job => states.includes(job.state)), nextCursor: null } });
+  });
+  await page.route(/\/v1\/jobs\/[^/?]+$/, route => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() || '');
+    const job = store.jobs.get(id);
+    return job ? route.fulfill({ json: job }) : route.fulfill({ status: 404, json: { error: 'job not found' } });
+  });
+  await page.route(/\/v1\/jobs\/[^/?]+\/events/, route => route.fulfill({ json: { events: [] } }));
+}
+
+function withCommands(job: MockJob, keys: Array<[string, string, MockJob?]>) {
+  return {
+    ...job,
+    commands: keys.map(([key, label, extra]) => ({ key, label, endpoint: `/v1/jobs/${job.id}/commands/${key}`, jobVersion: job.version, ...(extra || {}) })),
+  };
+}
+
+test.describe('Job commands keep their controls current', () => {
+  test('Forget in the drawer takes Retry and Forget away, and a refused command says the Kind\'s reason', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('stale-drawer', 'Stale drawer job'), [
+      ['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }], ['forget', 'Forget replay input', { destructive: true }],
+    ])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/stale-drawer/commands/forget', route => {
+      store.set('stale-drawer', withCommands(store.jobs.get('stale-drawer')!, [['dismiss', 'Dismiss', { bulk: true }]]));
+      return route.fulfill({ json: { jobId: 'stale-drawer', key: 'forget', status: 'succeeded', code: 'applied', message: 'replay input forgotten' } });
+    });
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    const row = drawer.locator('article[data-job-id="stale-drawer"]');
+    await row.locator('summary').click();
+    // Forget cannot be undone: it asks, and its button reads as destructive.
+    const forget = row.getByRole('button', { name: 'Forget replay input' });
+    await expect(forget).toHaveClass(/text-red-700/);
+    await forget.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+
+    await expect(drawer.locator('[data-job-panel-notice]')).toHaveText('Stale drawer job: replay input forgotten.');
+    await expect(row.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Forget replay input' })).toHaveCount(0);
+  });
+
+  test('a refusal on the detail page says the Kind\'s own reason and replaces the controls', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('refused-detail', 'Refused detail job'), [['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }]])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/refused-detail/commands/retry', route => {
+      store.set('refused-detail', withCommands(store.jobs.get('refused-detail')!, [['dismiss', 'Dismiss', { bulk: true }]]));
+      return route.fulfill({ status: 409, json: {
+        error: 'The group this download files into no longer exists.',
+        result: { jobId: 'refused-detail', key: 'retry', status: 'failed', code: 'refused', message: 'The group this download files into no longer exists.' },
+      } });
+    });
+
+    await page.goto('/job?id=refused-detail');
+    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await commands.getByRole('button', { name: 'Retry', exact: true }).click();
+
+    await expect(page.locator('[data-job-notice]')).toHaveText('The group this download files into no longer exists.');
+    await expect(commands.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+  });
+
+  test('a double press of Resume on the detail page sends one command', async ({ page }) => {
+    const blocked = { ...failedJob('double-resume', 'Double resume job'), state: 'blocked', failure: undefined };
+    const store = jobStore([withCommands(blocked, [['resume', 'Resume'], ['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }]])]);
+    await serveStore(page, store);
+    let posts = 0;
+    let release = () => {};
+    await page.route('**/v1/jobs/double-resume/commands/resume', async route => {
+      posts += 1;
+      await new Promise<void>(resolve => { release = resolve; });
+      store.set('double-resume', withCommands({ ...store.jobs.get('double-resume')!, state: 'queued', version: 3 }, [['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }]]));
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'queued to start again', job: store.jobs.get('double-resume') } });
+    });
+
+    await page.goto('/job?id=double-resume');
+    const resume = page.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Resume', exact: true });
+    await resume.dblclick();
+    await expect.poll(() => posts).toBe(1);
+    await expect(resume).toHaveAttribute('aria-disabled', 'true');
+    release();
+    await expect(resume).toHaveCount(0);
+    expect(posts).toBe(1);
+  });
+});
+
+test.describe('Job command answers in the drawer', () => {
+  test('Retry leaves the page the drawer sits on, and offers its new job as a link', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('retry-stays', 'Retry stays job'), [['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }]])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/retry-stays/commands/retry', route => {
+      store.set('retry-stays', withCommands(store.jobs.get('retry-stays')!, [['dismiss', 'Dismiss', { bulk: true }]]));
+      return route.fulfill({ json: { jobId: 'retry-stays', key: 'retry', status: 'succeeded', code: 'applied', message: 'a new job was created', successorId: 'retry-stays-2' } });
+    });
+
+    await page.goto('/note/new');
+    await page.locator('input#Name').fill('Unsaved note title');
+    const drawer = await openDrawer(page);
+    await drawer.locator('article[data-job-id="retry-stays"]').getByRole('button', { name: 'Retry', exact: true }).click();
+
+    const notice = drawer.locator('[data-job-panel-notice]');
+    await expect(notice).toContainText('Retry started a new job for Retry stays job.');
+    await expect(notice.getByRole('link', { name: 'Open the new job' })).toHaveAttribute('href', '/job?id=retry-stays-2');
+    await page.waitForTimeout(300);
+    expect(new URL(page.url()).pathname).toBe('/note/new');
+    await expect(page.locator('input#Name')).toHaveValue('Unsaved note title');
+  });
+
+  test('a Cancel request names its job, and the box does not outlive the drawer', async ({ page }) => {
+    const store = jobStore([runningJob('cancel-box', 'Cancel box download')]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/cancel-box/commands/cancel', route => {
+      store.set('cancel-box', { version: 3, controlIntent: 'cancel', phase: 'cancelling' });
+      return route.fulfill({ json: { jobId: 'cancel-box', key: 'cancel', status: 'succeeded', code: 'requested', message: 'cancelling', job: store.jobs.get('cancel-box') } });
+    });
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    await drawer.locator('article[data-job-id="cancel-box"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    const notice = drawer.locator('[data-job-panel-notice]');
+    await expect(notice).toHaveText('Cancel requested for Cancel box download.');
+
+    // The executor acts: the row moves on, and the box leaves with it.
+    store.set('cancel-box', { state: 'cancelled', version: 4, controlIntent: undefined, phase: undefined, commands: [] });
+    await page.evaluate(snapshot => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      (window as any).Alpine.$data(root).applyStreamSnapshot(snapshot);
+    }, store.jobs.get('cancel-box'));
+    await expect(notice).toBeHidden();
+  });
+
+  test('a notice is gone when the drawer opens again', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('forget-close', 'Forget close job'), [['forget', 'Forget replay input', { destructive: true }]])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/forget-close/commands/forget', route => route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } }));
+
+    await page.goto('/dashboard');
+    let drawer = await openDrawer(page);
+    const row = drawer.locator('article[data-job-id="forget-close"]');
+    await row.locator('summary').click();
+    await row.getByRole('button', { name: 'Forget replay input' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+    await expect(drawer.locator('[data-job-panel-notice]')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    drawer = await openDrawer(page);
+    await expect(drawer.locator('[data-job-panel-notice]')).toBeHidden();
+  });
+
+  test('a Dismiss can be undone from its box, and the row comes back', async ({ page }) => {
+    const store = jobStore([withCommands(failedJob('undo-dismiss', 'Undo dismiss job'), [
+      ['dismiss', 'Dismiss', { bulk: true }], ['undismiss', 'Undismiss', { bulk: true }],
+    ])]);
+    await serveStore(page, store);
+    for (const key of ['dismiss', 'undismiss']) {
+      await page.route(`**/v1/jobs/undo-dismiss/commands/${key}`, route => {
+        store.set('undo-dismiss', { dismissed: key === 'dismiss' });
+        return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: `${key}ed`, job: store.jobs.get('undo-dismiss') } });
+      });
+    }
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    const row = drawer.locator('article[data-job-id="undo-dismiss"]');
+    await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await expect(row).toHaveCount(0);
+    const undo = drawer.locator('[data-job-panel-notice]').getByRole('button', { name: 'Undo' });
+    await undo.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(row).toHaveCount(1);
+    await expect(drawer.locator('[data-job-panel-notice]')).toBeHidden();
+    // Focus lands on the returned row rather than falling out of the drawer.
+    await expect(row.getByRole('button', { name: 'Dismiss', exact: true })).toBeFocused();
+  });
+});
+
+test.describe('Job detail page', () => {
+  test('a dismissed Job says so and offers Undismiss instead of Dismiss', async ({ page }) => {
+    const store = jobStore([withCommands({ ...failedJob('detail-dismissed', 'Detail dismissed job'), dismissed: true }, [
+      ['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }], ['undismiss', 'Undismiss', { bulk: true }],
+    ])]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/detail-dismissed/commands/undismiss', route => {
+      store.set('detail-dismissed', { dismissed: false });
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'undismissed', job: store.jobs.get('detail-dismissed') } });
+    });
+
+    await page.goto('/job?id=detail-dismissed');
+    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await expect(page.getByText('Dismissed by you', { exact: true })).toBeVisible();
+    await expect(commands.getByRole('button', { name: 'Dismiss', exact: true })).toHaveCount(0);
+    await commands.getByRole('button', { name: 'Undismiss', exact: true }).click();
+
+    await expect(page.getByText('Dismissed by you', { exact: true })).toBeHidden();
+    await expect(commands.getByRole('button', { name: 'Dismiss', exact: true })).toBeVisible();
+  });
+
+  test('a cancelled Job shows no phase it no longer has', async ({ page }) => {
+    const store = jobStore([runningJob('detail-phase', 'Detail phase download')]);
+    await serveStore(page, store);
+    await page.route('**/v1/jobs/detail-phase/commands/cancel', route => {
+      store.set('detail-phase', { version: 3, phase: 'cancelling', controlIntent: 'cancel' });
+      return route.fulfill({ json: { status: 'succeeded', code: 'requested', message: 'cancelling', job: store.jobs.get('detail-phase') } });
+    });
+
+    await page.goto('/job?id=detail-phase');
+    await page.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.locator('[data-job-notice]')).toHaveText('Cancel requested for Detail phase download.');
+
+    const { phase: _phase, controlIntent: _intent, ...cancelled } = { ...store.jobs.get('detail-phase')!, state: 'cancelled', version: 4, commands: [] };
+    await page.evaluate(snapshot => {
+      const root = document.querySelector('[data-testid="job-detail"]');
+      (window as any).Alpine.$data(root).applyStreamSnapshot(snapshot);
+    }, cancelled);
+
+    const header = page.locator('[data-testid="job-detail"] header');
+    await expect(header).toContainText('Cancelled');
+    await expect(header).not.toContainText('cancelling');
+    await expect(page.locator('[data-job-notice]')).toBeHidden();
+  });
+});

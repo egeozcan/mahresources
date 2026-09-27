@@ -41,6 +41,11 @@ export function registerConfirmDialogStore(Alpine) {
         title: DEFAULT_TITLE,
         confirmLabel: DEFAULT_CONFIRM_LABEL,
         cancelLabel: DEFAULT_CANCEL_LABEL,
+        // Whether the confirming button is styled as destructive. Most callers
+        // confirm a deletion, so it is the default; a confirmation for work that
+        // destroys nothing (starting a download now, dismissing from a list)
+        // passes false and gets the ordinary accent instead of the warning red.
+        destructive: true,
 
         _resolve: null,
         _opener: null,
@@ -57,9 +62,10 @@ export function registerConfirmDialogStore(Alpine) {
          * of a bug here must be that nothing happens, never that something is
          * destroyed without being confirmed.
          */
-        ask(message, { title, confirmLabel, cancelLabel } = {}) {
+        ask(message, { title, confirmLabel, cancelLabel, destructive = true } = {}) {
             if (this.isOpen) return Promise.resolve(false);
 
+            this.destructive = destructive !== false;
             this.message = message || 'Are you sure?';
             this.title = title || DEFAULT_TITLE;
             this.confirmLabel = confirmLabel || DEFAULT_CONFIRM_LABEL;

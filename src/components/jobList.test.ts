@@ -315,6 +315,37 @@ describe('job bulk commands', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
+    test('a dismissal changes no Job version, so the row\'s dismissed state picks Dismiss or Undismiss', async () => {
+        const dismiss = { key: 'dismiss', label: 'Dismiss', bulk: true };
+        const undismiss = { key: 'undismiss', label: 'Undismiss', bulk: true };
+        const fetchImpl = vi.fn(async (url: string) => ({
+            ok: true, json: async () => ({ job: { id: decodeURIComponent(url.split('/').pop()!), version: 1, commands: [dismiss, undismiss] } }),
+        }));
+        const component = Object.assign(jobBulkCommands({ fetchImpl }), { $selection: selection(['a', 'b']) });
+        await component.sync();
+        expect(component.commands().map((command: { key: string }) => command.key)).toEqual(['dismiss']);
+
+        component.$selection.options.a.entity.dismissed = true;
+        // A mixed selection may take either; each is idempotent.
+        expect(component.commands().map((command: { key: string }) => command.key)).toEqual(['dismiss', 'undismiss']);
+        component.$selection.options.b.entity.dismissed = true;
+        expect(component.commands().map((command: { key: string }) => command.key)).toEqual(['undismiss']);
+    });
+
+    test('a pin, a dismissal and an undismissal run without asking, and a destructive confirmation is styled as one', async () => {
+        const ask = vi.fn(async () => false);
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ results: [] }) }));
+        const component = Object.assign(jobBulkCommands({ fetchImpl }), { $selection: selection(['a']) });
+
+        for (const key of ['pin', 'dismiss', 'undismiss']) await component.run({ key, label: key, bulk: true });
+        expect(ask).not.toHaveBeenCalled();
+        expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+        await component.run({ key: 'cancel', label: 'Cancel', bulk: true, destructive: true, confirmation: 'Stop these?' });
+        expect(ask).toHaveBeenCalledWith('Stop these? This applies to 1 selected job.', { title: 'Cancel', confirmLabel: 'Cancel', destructive: true });
+    });
+
     test('a newer selection with nothing to read does not leave the bar loading', async () => {
         let release!: (value: unknown) => void;
         const pending = new Promise(resolve => { release = resolve; });

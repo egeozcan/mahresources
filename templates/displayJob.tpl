@@ -13,14 +13,19 @@
                     <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
                         <span class="rounded border border-stone-300 px-2 py-0.5 font-mono" x-text="stateLabel(detail)"></span>
                         <span x-show="detail.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">Pinned by you</span>
+                        <span x-show="detail.dismissed" x-cloak data-job-dismissed class="inline-flex items-center rounded border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-700">Dismissed by you</span>
                         <span x-text="detail.kind"></span>
                         <span x-show="phaseText(detail)" x-text="phaseText(detail)"></span>
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2" role="group" aria-label="Advertised job commands">
+                    {# aria-disabled, not disabled, while a command runs: a disabled button drops the focus it holds. #}
                     <template x-for="command in commandsFor(detail)" :key="command.key">
-                        <button type="button" @click="runCommand(detail, command)" class="rounded border border-stone-400 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-50" x-text="command.label || command.key"></button>
+                        <button type="button" @click="runCommand(detail, command)" :data-command-key="command.key" :aria-disabled="commandBusy ? 'true' : null"
+                                class="rounded border bg-white px-3 py-2 text-sm font-medium hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                                :class="command.destructive ? 'border-red-300 text-red-800' : 'border-stone-400 text-stone-800'"
+                                x-text="command.label || command.key"></button>
                     </template>
                 </div>
             </header>
@@ -43,7 +48,7 @@
                 </dl>
             </section>
 
-            <p x-show="notice" x-cloak class="rounded border border-stone-200 bg-white p-3 text-sm text-stone-800" x-text="notice"></p>
+            <p x-show="noticeText" x-cloak data-job-notice class="rounded border border-stone-200 bg-white p-3 text-sm text-stone-800" x-text="noticeText"></p>
 
             <template x-if="detail.progress">
                 <section aria-labelledby="job-progress-heading" class="rounded border border-stone-200 bg-white p-4">

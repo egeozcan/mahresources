@@ -49,7 +49,16 @@
                 <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-job-panel-announcer></div>
 
                 <p x-show="error" x-cloak role="alert" class="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800" x-text="error"></p>
-                <p x-show="notice" x-cloak class="border-b border-stone-200 px-4 py-2 text-sm text-stone-700" data-job-panel-notice x-text="notice"></p>
+                {# A command's box names its Job. It offers the page an answer named rather than opening it, since the page under the drawer may hold unsaved work, and a Dismiss's box offers to undo it. #}
+                <div x-show="noticeText" x-cloak class="flex flex-wrap items-baseline gap-x-2 border-b border-stone-200 px-4 py-2 text-sm text-stone-700" data-job-panel-notice>
+                    <span x-text="noticeText"></span>
+                    <template x-if="noticeLink">
+                        <a :href="noticeLink.href" data-job-panel-notice-link class="font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700" x-text="noticeLink.label"></a>
+                    </template>
+                    <template x-if="noticeUndo">
+                        <button type="button" @click="undoDismiss()" data-job-panel-undo class="inline-flex min-h-6 items-center rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700">Undo</button>
+                    </template>
+                </div>
                 {# After a stream reset the drawer holds nothing from the other database, and the page around it may hold unsaved input, so it offers a reload rather than reloading. #}
                 <div x-show="streamStopped" x-cloak class="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-job-panel-stopped>
                     <p>Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs.</p>
@@ -166,9 +175,10 @@
                                             <template x-if="resultOutput(job)">
                                                 <a :href="resultURL(job)" :aria-label="resultAccessibleLabel(job)" class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"><span x-text="resultLinkLabel(job)"></span>&nbsp;<span aria-hidden="true">&rarr;</span></a>
                                             </template>
+                                            {# aria-disabled, not disabled, while the Job's command runs: a disabled button drops the focus it holds. #}
                                             <template x-for="command in primaryCommandsFor(job)" :key="command.key">
-                                                <button type="button" @click="runCommand(job, command)" :data-command-key="command.key"
-                                                        class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
+                                                <button type="button" @click="runCommand(job, command)" :data-command-key="command.key" :aria-disabled="commandBusyFor(job) ? 'true' : null"
+                                                        class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                                                         :class="command.key === 'cancel' || command.destructive ? 'text-red-700' : command.key === 'dismiss' ? 'text-stone-600' : 'text-amber-800'"
                                                         x-text="command.label || command.key"></button>
                                             </template>
@@ -179,8 +189,9 @@
                                                 </summary>
                                                 <div class="flex flex-wrap items-center gap-x-1">
                                                     <template x-for="command in moreCommandsFor(job)" :key="command.key">
-                                                        <button type="button" @click="runCommand(job, command)" :data-command-key="command.key"
-                                                                class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-stone-700 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
+                                                        <button type="button" @click="runCommand(job, command)" :data-command-key="command.key" :aria-disabled="commandBusyFor(job) ? 'true' : null"
+                                                                class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                                                                :class="command.destructive ? 'text-red-700' : 'text-stone-700'"
                                                                 x-text="command.label || command.key"></button>
                                                     </template>
                                                 </div>

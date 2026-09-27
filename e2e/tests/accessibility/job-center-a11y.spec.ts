@@ -267,7 +267,9 @@ test.describe('Job Center focus in forced colors', () => {
     await expectPaintedFocus(page, row.locator('summary'), 'a row\'s More');
     await expectPaintedFocus(page, drawer.getByRole('link', { name: 'All jobs' }), 'the All jobs link');
 
-    await row.getByRole('button', { name: 'Dismiss' }).focus();
+    // Forget cannot be undone, so it asks first.
+    await row.locator('summary').click();
+    await row.getByRole('button', { name: 'Forget replay input' }).focus();
     await page.keyboard.press('Enter');
     const confirm = page.getByRole('alertdialog');
     await expect(confirm).toBeVisible();

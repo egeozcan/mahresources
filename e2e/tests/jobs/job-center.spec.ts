@@ -569,6 +569,10 @@ test.describe('Job Center', () => {
     await page.getByRole('button', { name: 'Open Jobs panel' }).click();
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     await panel.getByRole('button', { name: 'Dismiss finished' }).click();
+    // It reaches beyond the rows shown, so it asks first and says how far.
+    const confirmation = page.getByRole('alertdialog', { name: 'Dismiss finished jobs' });
+    await expect(confirmation).toContainText(/Dismiss (\d+ finished jobs?|every finished job you have not dismissed)\?/);
+    await confirmation.getByRole('button', { name: /^Dismiss (all|\d+)$/ }).click();
 
     // A full success shows no box, since the rows leaving say it; it is spoken.
     await expect(panel.locator('[data-job-panel-announcer]')).toHaveText(/^\d+ finished jobs dismissed\.$/, { timeout: 10_000 });

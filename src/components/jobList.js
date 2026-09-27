@@ -292,11 +292,11 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
 
         selectionKey() {
             const selection = this.$selection;
-            // A pin is the viewer's preference, not a change to the Job, so it moves
-            // no version: the row's pinned bit is part of the key too.
+            // A pin or a dismissal is the viewer's preference, not a change to the
+            // Job, so it moves no version: the row's bits are part of the key too.
             return [...selection.selectedIds].map(id => {
                 const entity = selection.options[id]?.entity;
-                return `${id}:${entity?.version ?? ''}:${entity?.pinned ? 1 : 0}`;
+                return `${id}:${entity?.version ?? ''}:${entity?.pinned ? 1 : 0}:${entity?.dismissed ? 1 : 0}`;
             }).join(',');
         },
 
@@ -315,7 +315,8 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             const stale = this.selectedIds().filter(id => {
                 const detail = this.details[id];
                 const entity = selection.options[id]?.entity;
-                return !detail || detail.version !== entity?.version || Boolean(detail.pinned) !== Boolean(entity?.pinned);
+                return !detail || detail.version !== entity?.version || Boolean(detail.pinned) !== Boolean(entity?.pinned) ||
+                    Boolean(detail.dismissed) !== Boolean(entity?.dismissed);
             });
             if (!stale.length) {
                 // A newer selection with nothing to read supersedes any read still
@@ -349,13 +350,13 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             // live refresh moved past its cached detail offers nothing until the
             // re-read lands, rather than a command its new state may no longer have;
             // selectedBulkCommands answers nothing when any selected Job is missing.
-            // The rendered row's pin state is current the moment the list refreshes,
-            // since a pin moves no version.
+            // The rendered row's pin and dismissal are current the moment the list
+            // refreshes, since neither moves a version.
             const jobs = ids.map(id => {
                 const detail = this.details[id];
                 const entity = options[id]?.entity;
                 if (!detail || detail.version !== entity?.version) return null;
-                return { ...detail, pinned: Boolean(entity?.pinned) };
+                return { ...detail, pinned: Boolean(entity?.pinned), dismissed: Boolean(entity?.dismissed) };
             });
             return selectedBulkCommands(jobs.filter(Boolean), ids);
         },
@@ -383,7 +384,7 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,
-                    { title: commandLabel(command), confirmLabel: commandLabel(command) },
+                    { title: commandLabel(command), confirmLabel: commandLabel(command), destructive: command?.destructive === true },
                 );
                 if (!accepted) return;
                 // The dialog blocks the reader, not the live refresh: a card can leave

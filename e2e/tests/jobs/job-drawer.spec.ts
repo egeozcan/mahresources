@@ -233,11 +233,11 @@ test.describe('Jobs drawer', () => {
     await page.keyboard.press('Tab');
     await expect(pin).toBeFocused();
 
+    // Pin changes only the viewer's own retention and has an inverse, so it
+    // runs without asking.
     await page.keyboard.press('Enter');
-    const confirmation = page.getByRole('alertdialog');
-    await expect(confirmation).toBeVisible();
-    await confirmation.getByRole('button', { name: 'Pin', exact: true }).click();
     await expect.poll(() => pinRequests).toEqual(['POST']);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
 
     // The updated row swaps Pin for Unpin under the same disclosure, which
     // stays usable rather than being rebuilt shut.
@@ -322,7 +322,7 @@ test.describe('Jobs drawer', () => {
     await expect(allJobs).toBeFocused();
   });
 
-  test('a row\'s Dismiss takes the row away, shows no box, and hands focus to the next row', async ({ page }) => {
+  test('a row\'s Dismiss takes the row away without asking, says so in a box, and hands focus to the next row', async ({ page }) => {
     const rows = [
       { id: 'drawer-dismiss-a', title: 'Dismiss me', acceptedAt: '2026-09-26T10:00:02Z' },
       { id: 'drawer-dismiss-b', title: 'Keep me', acceptedAt: '2026-09-26T10:00:01Z' },
@@ -351,10 +351,10 @@ test.describe('Jobs drawer', () => {
     const first = drawer.locator('article[data-job-id="drawer-dismiss-a"]');
     await first.getByRole('button', { name: 'Dismiss', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss', exact: true }).click();
 
     await expect(first).toHaveCount(0);
-    await expect(drawer.locator('[data-job-panel-notice]')).toBeHidden();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(drawer.locator('[data-job-panel-notice]')).toHaveText('Dismiss me dismissed.');
     await expect(drawer.locator('[data-job-panel-announcer]')).toHaveText('Dismiss me dismissed.');
     await expect(drawer.getByRole('link', { name: 'Keep me', exact: true })).toBeFocused();
   });
@@ -385,7 +385,6 @@ test.describe('Jobs drawer', () => {
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     await drawer.locator('article[data-job-id="drawer-reveal-a"]').getByRole('button', { name: 'Dismiss', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss', exact: true }).click();
 
     await expect(drawer.getByRole('link', { name: 'Revealed next', exact: true })).toBeFocused();
   });
