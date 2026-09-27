@@ -26,9 +26,13 @@ import { test, expect } from '../../fixtures/base.fixture';
  * fold and came back null. This spec is here so the shift is caught by an
  * assertion about the shift, rather than by a hit test that is about z-index.
  *
- * The fix is `hasSelectableItems()`, which counts the rendered rows for that
- * first evaluation instead of the not-yet-filled registry. Selecting and
- * deselecting still animate the row: those move the predicate's other term.
+ * Two things keep it still. `hasSelectableItems()` counts the rendered rows for
+ * that first evaluation instead of the not-yet-filled registry, so a
+ * server-rendered list answers "rows" from the first frame. And the template
+ * puts that term and the selection term on two elements, with `x-collapse`
+ * only on the selection one: where rows arrive after the page, as the MRQL
+ * page's results do, the first term does flip, and it must show the row
+ * without animating it. Selecting and deselecting still animate the row.
  */
 test.describe('the Select All row must not animate itself open on load', () => {
   test('the row does not animate its own height on a populated list', async ({ page, apiClient }) => {
