@@ -315,6 +315,46 @@ func dateComparison(db *gorm.DB, column, bound string) (lhs, value string) {
 	return "strftime('%Y-%m-%d %H:%M:%S', " + column + ")", at.Format(sqliteInstantFormat)
 }
 
+// instantWindowMargin is how far the indexed text window of InstantRange reaches
+// past each end. A stored time's wall clock is within fourteen hours of its
+// instant (the widest zone offsets are -12:00 and +14:00), so its calendar date
+// is at most one day away from the instant's UTC date. Two days leaves the date
+// prefix alone to decide every comparison with the window's ends, whatever
+// separator or offset notation follows it.
+const instantWindowMargin = 2 * 24 * time.Hour
+
+// InstantRange is a scope restricting column to the instants in [start, end).
+//
+// PostgreSQL stores timestamptz and compares instants, so there the bounds are
+// bound as they are. SQLite has no timestamp type: go-sqlite3 stores a time as
+// text in the offset it was given, and GORM stamps rows in the server's zone, so
+// comparing the column with a bound written in another offset compares wall
+// clocks. A row created at 00:30 +02:00 sorted after a bucket ending at 00:00 UTC
+// although it was two hours earlier. julianday() reads the offset and yields the
+// instant, but a column wrapped in it loses its index, so the SQLite predicate
+// first bounds the bare column by a text window wide enough to hold every
+// instant of the range in any offset, which the index answers, and then compares
+// instants inside it. julianday() resolves milliseconds, so a row within half a
+// millisecond of a bound may be counted on its other side.
+func InstantRange(column string, start, end time.Time) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if db.Config.Dialector.Name() != "sqlite" {
+			return db.Where(column+" >= ? AND "+column+" < ?", start, end)
+		}
+		return db.Where(
+			column+" >= ? AND "+column+" < ? AND julianday("+column+") >= julianday(?) AND julianday("+column+") < julianday(?)",
+			start.UTC().Add(-instantWindowMargin).Format(dateOnlyFormat),
+			end.UTC().Add(instantWindowMargin).Format(dateOnlyFormat),
+			start.UTC().Format(sqliteJulianFormat),
+			end.UTC().Format(sqliteJulianFormat),
+		)
+	}
+}
+
+// sqliteJulianFormat writes a bound julianday() reads as UTC: no offset, and the
+// milliseconds it resolves.
+const sqliteJulianFormat = "2006-01-02 15:04:05.000"
+
 // ApplyDateRange adds created_at filters for the given column prefix if provided.
 // The prefix should be empty string for simple table queries, or "tablename." for joined queries.
 func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
