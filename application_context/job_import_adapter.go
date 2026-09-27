@@ -94,15 +94,37 @@ func importReviewLocation(handle string) string {
 	return "/admin/import?job=" + url.QueryEscape(handle)
 }
 
-// importReviewOpen reports whether a parse's review can still be resumed: its plan
-// is waiting to be applied. A plan an apply consumed, or one removed with the
-// import, leaves nothing to review. A check that failed is an error, never
-// "closed".
+// importReviewOpen reports whether the review page has anything to show for a
+// parse: its plan waiting to be applied, or the report of the apply that took it.
+// An import whose files were removed leaves nothing, and its link goes. A check
+// that failed is an error, never "nothing there".
 func (ctx *MahresourcesContext) importReviewOpen(handle string) (bool, error) {
 	if ctx == nil || handle == "" {
 		return false, nil
 	}
-	return afero.Exists(ctx.GetDefaultFs(), importPlanPathFor(handle))
+	for _, path := range []string{importPlanPathFor(handle), importResultPathFor(handle)} {
+		exists, err := afero.Exists(ctx.GetDefaultFs(), path)
+		if err != nil || exists {
+			return exists, err
+		}
+	}
+	return false, nil
+}
+
+// importReviewOutputOffered answers whether one Kind's entity output that names an
+// import review is offered: only a parse publishes one, and only while the review
+// page has something to show. The second answer is false for any other reference,
+// which the ordinary entity rules decide.
+func (ctx *MahresourcesContext) importReviewOutputOffered(jobKind string, reference json.RawMessage) (offered bool, isReview bool, err error) {
+	handle, ok := importReviewTarget(reference)
+	if !ok {
+		return false, false, nil
+	}
+	if jobKind != JobKindGroupImportParse {
+		return false, true, nil
+	}
+	open, err := ctx.importReviewOpen(handle)
+	return open, true, err
 }
 
 // publishImportReview publishes the link from a parse's Job to its review.
