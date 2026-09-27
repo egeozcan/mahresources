@@ -100,8 +100,8 @@ from a list of accounts instead of typing a user number.
 
 Deleting an account removes its id from its Jobs, and marks them instead: they
 read **Deleted account** as owner or actor (`ownerDeleted` and `actorDeleted`
-in the API), and `ownerDeleted=true`, the **Owner's account was deleted** box,
-lists them. Work that was still waiting to act as the deleted account never
+in the API), and `ownerDeleted=true`, **A deleted account** in the Job Center's
+Owner filter, lists them. Work that was still waiting to act as the deleted account never
 runs as anyone else: when its turn comes it ends failed with the code
 `principal-missing`, and a Job that an earlier release blocked for the same
 reason is not offered Resume. Work already running when the account was

@@ -104,3 +104,86 @@ func TestAJobOffersAnEntityOutputOnlyWhileTheViewerCanOpenIt(t *testing.T) {
 		t.Fatalf("an administrator is offered %v after the resource was deleted", keys)
 	}
 }
+
+// The same rule for every output that names an entity, whichever Kind published
+// it and however it is shown: a plugin-command import's "Imported Resource"
+// entity output, and the redirect a plugin action's result summary records,
+// which the Job Center shows as "View result". Once the entity is gone, neither
+// is offered; the result summary itself stays.
+func TestEveryOutputNamingAnEntityIsOfferedOnlyWhileItCanBeOpened(t *testing.T) {
+	tc := setupAuthEnv(t)
+	adminBearer := roleBearer(t, tc, models.RoleAdmin)
+	var admin models.User
+	if err := tc.DB.Where("username = ?", "rb_admin").First(&admin).Error; err != nil {
+		t.Fatalf("read the administrator: %v", err)
+	}
+	resource := &models.Resource{Name: "entity-output-everywhere"}
+	if err := tc.DB.Create(resource).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	publish := func(kind, key, outputType, reference string) string {
+		t.Helper()
+		accepted, err := tc.AppCtx.JobService().Accept(jobs.Deps{DB: tc.DB}, jobs.Acceptance{
+			Kind: kind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+			OwnerUserID: &admin.ID, ActorUserID: &admin.ID, Title: kind,
+			Replay: jobs.ReplayInput{NonReplayable: true},
+		})
+		if err != nil {
+			t.Fatalf("accept %s: %v", kind, err)
+		}
+		now := time.Now().UTC()
+		if err := tc.DB.Create(&models.JobOutput{
+			ID: types.NewUUIDv7(), JobID: accepted.ID, Key: key, Type: outputType, Label: key,
+			Reference: types.JSON(reference), Availability: string(jobs.OutputAvailable), Version: 1,
+			CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatalf("publish %s output: %v", kind, err)
+		}
+		return accepted.ID
+	}
+	imported := publish(application_context.JobKindPluginCommandImport, "resource", jobs.OutputTypeEntity,
+		fmt.Sprintf(`{"resourceId":%d}`, resource.ID))
+	action := publish(application_context.JobKindPluginAction, "result", jobs.OutputTypeSummary,
+		fmt.Sprintf(`{"ok":true,"redirect":"/resource?id=%d"}`, resource.ID))
+
+	outputs := func(jobID string) map[string]string {
+		t.Helper()
+		detail := doReq(tc, http.MethodGet, "/v1/jobs/"+jobID,
+			map[string]string{"Authorization": adminBearer, "Accept": "application/json"}, nil, nil)
+		if detail.Code != http.StatusOK {
+			t.Fatalf("job detail answered %d: %s", detail.Code, detail.Body.String())
+		}
+		var response struct {
+			Outputs []struct {
+				Key            string `json:"key"`
+				DestinationURL string `json:"destinationUrl"`
+			} `json:"outputs"`
+		}
+		if err := json.Unmarshal(detail.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode job detail: %v", err)
+		}
+		byKey := map[string]string{}
+		for _, output := range response.Outputs {
+			byKey[output.Key] = output.DestinationURL
+		}
+		return byKey
+	}
+
+	if got := outputs(imported); len(got) != 1 {
+		t.Fatalf("the import offers %v while its resource exists", got)
+	}
+	if got := outputs(action); got["result"] != fmt.Sprintf("/resource?id=%d", resource.ID) {
+		t.Fatalf("the action's result links %q while its resource exists", got["result"])
+	}
+
+	if err := tc.AppCtx.DeleteResource(resource.ID); err != nil {
+		t.Fatalf("delete the resource: %v", err)
+	}
+	if got := outputs(imported); len(got) != 0 {
+		t.Fatalf("the import still offers %v after its resource was deleted", got)
+	}
+	got := outputs(action)
+	if destination, listed := got["result"]; !listed || destination != "" {
+		t.Fatalf("the action's result = listed %v with link %q; want the result kept without the link", listed, destination)
+	}
+}

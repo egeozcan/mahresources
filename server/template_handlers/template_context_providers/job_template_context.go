@@ -33,6 +33,12 @@ const jobListPageSize = jobs.DefaultPageSize
 // API.
 const dismissedAny = "any"
 
+// jobOwnerDeletedOption is the Owner select's value for "an account that was
+// deleted". The page reads it as the API's ownerDeleted=true; being one choice of
+// the one select, it cannot be submitted beside an owner id, which the list
+// refuses.
+const jobOwnerDeletedOption = "deleted"
+
 // Quick-filter groupings. Their names are the glossary's (CONTEXT.md): Active
 // and Finished Jobs, and the Jobs that Need Attention.
 var (
@@ -273,6 +279,9 @@ func jobAccountSelectOptions(accounts []application_context.JobAccountOption, cu
 	for _, account := range accounts {
 		options = append(options, JobSelectOption{Value: strconv.FormatUint(uint64(account.ID), 10), Label: account.Label})
 	}
+	if current == jobOwnerDeletedOption {
+		return options
+	}
 	return withURLOption(options, current)
 }
 
@@ -361,6 +370,10 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 	if dismissed == dismissedAny {
 		query.Del("dismissed")
 	}
+	if query.Get("ownerId") == jobOwnerDeletedOption {
+		query.Del("ownerId")
+		query.Set("ownerDeleted", "true")
+	}
 	filter, err := jobview.ParseFilter(query)
 	if err != nil {
 		return jobs.Filter{}, err
@@ -409,6 +422,9 @@ func jobFilterForm(query url.Values) JobFilterForm {
 		NoInboundRelationship: query.Get("noInboundRelationship"),
 		Pinned:                query.Get("pinned"),
 		Dismissed:             query.Get("dismissed"),
+	}
+	if form.OwnerID == "" && form.OwnerDeleted == "true" {
+		form.OwnerID = jobOwnerDeletedOption
 	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)

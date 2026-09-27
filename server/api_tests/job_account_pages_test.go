@@ -44,8 +44,8 @@ func TestJobPagesNameAccountsForAnAdministrator(t *testing.T) {
 	if !strings.Contains(body, `id="job-filter-owner"`) || !strings.Contains(body, `>Alice Liddell (alice)</option>`) {
 		t.Fatalf("the administrator's owner filter does not offer alice by name")
 	}
-	if !strings.Contains(body, `name="ownerDeleted"`) {
-		t.Fatalf("the administrator's filters do not offer a deleted owner")
+	if !strings.Contains(body, `<option value="deleted">A deleted account</option>`) {
+		t.Fatalf("the administrator's owner filter does not offer a deleted account")
 	}
 
 	users := doReq(tc, http.MethodGet, "/admin/users", map[string]string{"Accept": "text/html"}, []*http.Cookie{adminCookie}, nil)

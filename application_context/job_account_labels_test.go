@@ -83,18 +83,24 @@ func TestUnfinishedJobCountsCountWorkThatActsAsEachAccount(t *testing.T) {
 		}
 		return accepted
 	}
-	alice, bob := uint(3), uint(4)
+	alice, bob, carol := uint(3), uint(4), uint(5)
 	accept(&alice, &alice, jobs.StateQueued)
 	accept(&alice, &alice, jobs.StateScheduled)
 	accept(&alice, &alice, jobs.StateSucceeded)
 	accept(&alice, &bob, jobs.StateRunning)
 	accept(nil, nil, jobs.StateQueued)
+	// A row from before the execution class was recorded, with only an owner:
+	// dispatch runs it as that owner, so it acts as them.
+	legacy := accept(&carol, nil, jobs.StateQueued)
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", legacy.ID).Update("execution_principal", "").Error; err != nil {
+		t.Fatalf("clear the execution class: %v", err)
+	}
 
 	counts, err := ctx.UnfinishedJobCounts()
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if counts[alice] != 2 || counts[bob] != 1 || len(counts) != 2 {
-		t.Fatalf("counts = %v, want alice 2 and bob 1", counts)
+	if counts[alice] != 2 || counts[bob] != 1 || counts[carol] != 1 || len(counts) != 3 {
+		t.Fatalf("counts = %v, want alice 2, bob 1 and carol 1", counts)
 	}
 }

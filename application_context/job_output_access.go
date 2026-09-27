@@ -58,10 +58,8 @@ type JobOutputAuthorizer interface {
 // Availability remains in the response so the UI can show expired outputs, but
 // hidden Kind-specific outputs are indistinguishable from absent outputs.
 //
-// An entity output is asked the question opening it asks: whether the entity it
-// names still exists where this principal can see it. One that was deleted, or
-// that the principal has lost the scope of, is hidden like any other output it
-// may not open, and the two cases are not told apart.
+// An output that names an entity follows openableJobOutput: it is offered only
+// while this principal can open that entity.
 func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Output, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
@@ -85,38 +83,16 @@ func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Outp
 			}
 			return nil, err
 		}
-		reachable, err := ctx.jobEntityOutputReachable(service, snapshot, output)
+		offered, reachable, err := ctx.openableJobOutput(snapshot.Kind, output)
 		if err != nil {
 			return nil, err
 		}
 		if !reachable {
 			continue
 		}
-		openable = append(openable, output)
+		openable = append(openable, offered)
 	}
 	return openable, nil
-}
-
-// jobEntityOutputReachable reports whether an available entity output the
-// standard opener would open still names an entity this context's principal can
-// see, through the resolver opening it uses. Every other output, and one a Kind
-// opens itself, is left to the checks above.
-func (ctx *MahresourcesContext) jobEntityOutputReachable(service *jobs.Service, snapshot jobs.Snapshot, output jobs.Output) (bool, error) {
-	if output.Type != jobs.OutputTypeEntity || output.Availability != jobs.OutputAvailable {
-		return true, nil
-	}
-	if adapter, ok := service.AdapterFor(snapshot.Kind, snapshot.KindVersion); ok {
-		if _, opens := adapter.(JobOutputOpener); opens {
-			return true, nil
-		}
-	}
-	if _, err := ctx.resolveJobEntityOutput(output.Reference); err != nil {
-		if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, ErrJobOutputInvalid) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 // OpenJobOutput reauthorizes the canonical Job and its output on every open.

@@ -419,3 +419,23 @@ func TestJobRowNamesAPartialSuccess(t *testing.T) {
 		t.Fatalf("running row = label %q, phase %q; want Running and its phase", running.StateLabel, running.Phase)
 	}
 }
+
+// The Owner select offers a deleted account beside the named ones, so the form
+// cannot submit an owner and "a deleted owner" at once, which the list refuses.
+// A link written with the API's own parameter shows that option chosen.
+func TestTheOwnerSelectAsksForADeletedOwnerAsOneChoice(t *testing.T) {
+	reader := &fakeJobListReader{}
+	renderJobList(t, reader, "/jobs?ownerId=deleted")
+	if got := reader.listed[0]; !got.OwnerDeleted || got.OwnerID != nil {
+		t.Fatalf("ownerId=deleted asked %+v, want a deleted owner and no owner id", got)
+	}
+
+	reader = &fakeJobListReader{}
+	ctx := renderJobList(t, reader, "/jobs?ownerDeleted=true")
+	if got := reader.listed[0]; !got.OwnerDeleted {
+		t.Fatalf("ownerDeleted=true asked %+v", got)
+	}
+	if form := ctx["jobFilter"].(JobFilterForm); form.OwnerID != jobOwnerDeletedOption {
+		t.Fatalf("the form shows owner %q for ownerDeleted=true, want the deleted-account option", form.OwnerID)
+	}
+}
