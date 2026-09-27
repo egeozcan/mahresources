@@ -259,6 +259,9 @@ type settledHold struct {
 	// the Job's own answer (HoldRecorded), or at once for a job with no durable
 	// Job to tell.
 	recorded bool
+	// published says the queue's own publication of the hold has had its answer,
+	// whatever it was.
+	published bool
 }
 
 // settleHeldAttempt is what an attempt's worker records as it exits: whether a
@@ -346,6 +349,25 @@ func (j *DownloadJob) holdAnswer() (JobStatus, bool) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	return j.Status, j.holdCurrentLocked() && j.hold.recorded
+}
+
+// markHoldPublished records that the queue's own publication of the given
+// attempt's hold has had its answer.
+func (j *DownloadJob) markHoldPublished(runID uint64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.hold.settled && j.hold.run == runID {
+		j.hold.published = true
+	}
+}
+
+// HoldUnrecorded reports whether the job's current hold is one the queue has
+// published and the durable Job did not record, so the execution that owns the
+// Job may write it again.
+func (j *DownloadJob) HoldUnrecorded() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.holdCurrentLocked() && j.hold.published && !j.hold.recorded
 }
 
 // HoldSettled reports whether the job is paused and the attempt the pause stopped
