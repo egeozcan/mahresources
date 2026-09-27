@@ -549,6 +549,7 @@ export function jobCenter(options = {}) {
                 const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
                     title: commandLabel(command),
                     confirmLabel: commandLabel(command),
+                    cancelLabel: commandDismissLabel(command),
                 });
                 if (!accepted) return null;
             }
@@ -712,6 +713,14 @@ export function jobCenter(options = {}) {
         outputLinkLabel(output, outputs) { return outputLinkLabel(output, outputs); },
         outputLinkAccessibleLabel(output, outputs) { return outputLinkAccessibleLabel(output, outputs); },
     };
+}
+
+// The dismiss label of a command's confirmation. Pause is asked about a download
+// that also offers Cancel, so a "Cancel" button in its dialog reads as cancelling
+// the download: it dismisses with "Go back" instead. Every other command keeps the
+// dialog's own default.
+export function commandDismissLabel(command) {
+    return command?.key === 'pause' ? 'Go back' : undefined;
 }
 
 export function commandConfirmation(command) {

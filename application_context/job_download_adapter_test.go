@@ -532,8 +532,8 @@ func TestAPauseIsPausedAndResumedThroughTheCanonicalSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	if result.Status != jobs.CommandStatusSucceeded {
-		t.Fatalf("pause answered %s/%s: %s", result.Status, result.Code, result.Message)
+	if result.Status != jobs.CommandStatusSucceeded || result.Code != jobs.CommandCodeApplied || result.Message != jobDownloadPausedMessage {
+		t.Fatalf("pause answered %s/%s: %s, want it applied and saying what Resume does", result.Status, result.Code, result.Message)
 	}
 	held := waitForSnapshot(t, ctx, jobID, "the pause to be confirmed",
 		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })
@@ -651,8 +651,12 @@ func TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pause from the other process: %v", err)
 	}
-	if result.Status != jobs.CommandStatusSucceeded || result.Code != jobs.CommandCodeRequested {
+	if result.Status != jobs.CommandStatusSucceeded || result.Code != jobs.CommandCodeRequested ||
+		result.Message != jobDownloadPauseRequestedMessage {
 		t.Fatalf("the other process answered %s/%s: %s, want the pause requested", result.Status, result.Code, result.Message)
+	}
+	if requested := jobSnapshot(t, other.JobService(), other, jobID); requested.State != jobs.StateRunning && requested.State != jobs.StatePaused {
+		t.Fatalf("a requested pause left the Job %s", requested.State)
 	}
 	held := waitForSnapshot(t, first, jobID, "the owning process to hold the transfer",
 		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })

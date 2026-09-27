@@ -36,7 +36,11 @@ type StatePresentation struct {
 type statePresentationTable struct {
 	States  map[string]StatePresentation `json:"states"`
 	Partial StatePresentation            `json:"partial"`
-	Unknown StatePresentation            `json:"unknown"`
+	// RunningIntents is what a running Job says while a control it was asked for
+	// is on its way to its executor: it is still running, and not yet paused or
+	// cancelled.
+	RunningIntents map[string]StatePresentation `json:"runningIntents"`
+	Unknown        StatePresentation            `json:"unknown"`
 }
 
 var statePresentations = mustLoadStatePresentations()
@@ -60,6 +64,22 @@ func PresentState(state jobs.State, phase string) StatePresentation {
 	if state == jobs.StateSucceeded && phase == jobs.PhasePartial {
 		presentation.Label = statePresentations.Partial.Label
 		presentation.Tone = statePresentations.Partial.Tone
+	}
+	return presentation
+}
+
+// PresentJob is how every surface shows one Job: its state as PresentState
+// shows it, and, while it runs with a pause or a cancellation requested but not
+// yet confirmed by its executor, what that request is doing ("Pausing",
+// "Cancelling"). It stays running work in its group and in whether it may pulse.
+func PresentJob(snapshot jobs.Snapshot) StatePresentation {
+	presentation := PresentState(snapshot.State, snapshot.Phase)
+	if snapshot.State != jobs.StateRunning {
+		return presentation
+	}
+	if intent, ok := statePresentations.RunningIntents[snapshot.ControlIntent]; ok {
+		presentation.Label = intent.Label
+		presentation.Tone = intent.Tone
 	}
 	return presentation
 }

@@ -62,6 +62,11 @@ test.describe('Job states on every surface', () => {
       const row = drawer.locator(`article[data-job-id="${id}"]`);
       await expect(row).toBeVisible({ timeout: 10_000 });
       await row.getByRole('group', { name: 'Advertised controls' }).getByRole('button', { name: 'Pause', exact: true }).click();
+      // What Resume will do is said before the pause, where the choice is made.
+      const confirmation = page.getByRole('alertdialog');
+      await expect(confirmation).toContainText('Resume starts it again from the beginning');
+      await expect(confirmation.getByRole('button', { name: 'Go back', exact: true })).toBeVisible();
+      await confirmation.getByRole('button', { name: 'Pause', exact: true }).click();
 
       await expect.poll(async () => (await readJob(request, id))?.state, { timeout: 20_000 }).toBe('paused');
       // Still active work, under its own group, with the paused pill and the reason.
@@ -84,6 +89,48 @@ test.describe('Job states on every surface', () => {
       if (id) await cancelIfUnfinished(request, id);
       server.close();
     }
+  });
+
+  test('a pause the transfer has not confirmed reads Pausing, not Paused', async ({ page }) => {
+    const id = 'states-pause-requested';
+    let requested = false;
+    const job = () => ({
+      id, kind: 'remote-download', state: 'running', version: requested ? 2 : 1, title: 'Held elsewhere',
+      acceptedAt: '2026-09-26T10:00:03Z', controlIntent: requested ? 'pause' : '', phase: requested ? 'pausing' : 'downloading',
+      progress: { completed: 1024, unit: 'bytes' },
+      commands: requested ? [] : [
+        { key: 'pause', label: 'Pause', endpoint: `/v1/jobs/${id}/commands/pause`, jobVersion: 1,
+          confirmation: 'Pause this download? The bytes received so far are discarded, and Resume starts it again from the beginning.' },
+      ],
+      outputs: [], lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({ json: { jobs: states.includes('running') ? [job()] : [], nextCursor: null } });
+    });
+    await page.route(`**/v1/jobs/${id}`, route => route.fulfill({ json: job() }));
+    await page.route(`**/v1/jobs/${id}/events**`, route => route.fulfill({ json: { events: [] } }));
+    await page.route(`**/v1/jobs/${id}/commands/pause`, route => {
+      requested = true;
+      return route.fulfill({ json: { result: { job: job(), status: 'succeeded', code: 'requested',
+        message: 'Pause requested. The download is held when the server running it next checks, about once a second.' } } });
+    });
+
+    await page.goto('/dashboard');
+    await page.keyboard.press('Control+Shift+D');
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    const row = drawer.locator(`article[data-job-id="${id}"]`);
+    await row.getByRole('group', { name: 'Advertised controls' }).getByRole('button', { name: 'Pause', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(row).toContainText('Pausing');
+    await expect(row).not.toContainText('Paused');
+    await expect(drawer.locator('[data-job-panel-notice]')).toContainText('Pause requested');
+
+    await page.goto(`/job?id=${id}`);
+    const detail = page.getByTestId('job-detail');
+    await expect(detail.getByRole('heading', { level: 1 })).toHaveText('Held elsewhere');
+    await expect(detail).toContainText('Pausing');
+    await expect(detail).not.toContainText('Paused');
   });
 
   test('a failed download that recorded nothing shows no progress on its page', async ({ page, request }) => {

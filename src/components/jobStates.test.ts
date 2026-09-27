@@ -24,6 +24,16 @@ describe('the shared state table', () => {
     });
 });
 
+describe('a requested control', () => {
+    test('a running job with a pause or cancellation on its way says so, and only while it runs', () => {
+        expect(presentState({ state: 'running', controlIntent: 'pause' })).toMatchObject({ label: 'Pausing', tone: 'paused', working: true });
+        expect(presentState({ state: 'running', controlIntent: 'cancel' })).toMatchObject({ label: 'Cancelling', tone: 'working', working: true });
+        expect(presentState({ state: 'paused', controlIntent: '' }).label).toBe('Paused');
+        expect(presentState({ state: 'blocked', controlIntent: 'cancel' }).label).toBe('Blocked');
+        expect(presentState('running').label).toBe('Running');
+    });
+});
+
 describe('scheduledStartText', () => {
     const now = Date.parse('2026-09-27T12:00:00Z');
     const instant = (date: Date) => date.toISOString();

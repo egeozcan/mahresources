@@ -11,5 +11,9 @@
     "interrupted": { "label": "Interrupted", "group": "attention", "tone": "failed", "working": false, "terminal": true }
   },
   "partial": { "label": "Partially completed", "tone": "warning" },
+  "runningIntents": {
+    "pause": { "label": "Pausing", "tone": "paused" },
+    "cancel": { "label": "Cancelling", "tone": "working" }
+  },
   "unknown": { "label": "Unknown", "group": "other", "tone": "neutral", "working": false, "terminal": false }
 }

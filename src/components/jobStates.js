@@ -23,6 +23,12 @@ export function presentState(jobOrState) {
     const entry = table.states[stateName(jobOrState)];
     if (!entry) return table.unknown;
     if (isPartial(jobOrState)) return { ...entry, label: table.partial.label, tone: table.partial.tone };
+    // A running Job with a pause or cancellation on its way to its executor is
+    // still running, and says what the request is doing until the state changes.
+    const requested = typeof jobOrState === 'object' ? String(jobOrState?.controlIntent || '') : '';
+    const intent = stateName(jobOrState) === 'running' && Object.hasOwn(table.runningIntents, requested)
+        ? table.runningIntents[requested] : null;
+    if (intent) return { ...entry, label: intent.label, tone: intent.tone };
     return entry;
 }
 

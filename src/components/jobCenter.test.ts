@@ -5,6 +5,7 @@ import {
     advertisedCommands,
     advertisedOutputs,
     classifyJobState,
+    commandDismissLabel,
     commandEndpoint,
     commandLocation,
     failureOutput,
@@ -154,6 +155,13 @@ describe('Job Center API declarations', () => {
         expect(classifyJobState(unfamiliarJob)).toBe('active');
         expect(classifyJobState({ ...unfamiliarJob, state: 'blocked' })).toBe('attention');
         expect(classifyJobState({ ...unfamiliarJob, state: 'succeeded' })).toBe('finished');
+    });
+});
+
+describe('command confirmations', () => {
+    test('a pause dismisses with Go back, since the download also offers Cancel', () => {
+        expect(commandDismissLabel({ key: 'pause' })).toBe('Go back');
+        expect(commandDismissLabel({ key: 'retry' })).toBeUndefined();
     });
 });
 

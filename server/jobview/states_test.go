@@ -47,6 +47,15 @@ func TestTheStateTableNamesEveryStateAsTheLifecycleDefinesIt(t *testing.T) {
 	if !slices.Contains(tones, statePresentations.Partial.Tone) || statePresentations.Partial.Label == "" {
 		t.Fatalf("the partial entry is %+v", statePresentations.Partial)
 	}
+	if len(statePresentations.RunningIntents) != 2 {
+		t.Fatalf("the table names %d running intents, want pause and cancel", len(statePresentations.RunningIntents))
+	}
+	for _, intent := range []string{jobs.ControlIntentPause, jobs.ControlIntentCancel} {
+		entry, ok := statePresentations.RunningIntents[intent]
+		if !ok || entry.Label == "" || !slices.Contains(tones, entry.Tone) {
+			t.Fatalf("the %q intent is %+v", intent, entry)
+		}
+	}
 }
 
 func TestPresentStateReadsAPartialSuccessAsPartial(t *testing.T) {
@@ -61,5 +70,34 @@ func TestPresentStateReadsAPartialSuccessAsPartial(t *testing.T) {
 	}
 	if got := PresentState("bogus", ""); got.Label != "Unknown" || got.Group != "other" {
 		t.Fatalf("an unknown state is presented as %+v", got)
+	}
+}
+
+// A running Job with a pause or cancellation requested and not yet confirmed says
+// what it is doing: it is pausing or cancelling, not simply running, and never
+// paused or cancelled before its executor confirms it.
+func TestPresentJobSaysWhatARequestedControlIsDoing(t *testing.T) {
+	cases := []struct {
+		snapshot jobs.Snapshot
+		label    string
+		tone     string
+	}{
+		{jobs.Snapshot{State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause}, "Pausing", "paused"},
+		{jobs.Snapshot{State: jobs.StateRunning, ControlIntent: jobs.ControlIntentCancel}, "Cancelling", "working"},
+		{jobs.Snapshot{State: jobs.StateRunning}, "Running", "working"},
+		{jobs.Snapshot{State: jobs.StatePaused}, "Paused", "paused"},
+		// A request outside running work is not what the row is doing.
+		{jobs.Snapshot{State: jobs.StateBlocked, ControlIntent: jobs.ControlIntentCancel}, "Blocked", "warning"},
+		{jobs.Snapshot{State: jobs.StateSucceeded, Phase: jobs.PhasePartial}, "Partially completed", "warning"},
+	}
+	for _, tc := range cases {
+		got := PresentJob(tc.snapshot)
+		if got.Label != tc.label || got.Tone != tc.tone {
+			t.Fatalf("%s with intent %q is presented as %q/%q, want %q/%q",
+				tc.snapshot.State, tc.snapshot.ControlIntent, got.Label, got.Tone, tc.label, tc.tone)
+		}
+		if got.Working != (tc.snapshot.State == jobs.StateRunning) {
+			t.Fatalf("%s with intent %q is working=%v", tc.snapshot.State, tc.snapshot.ControlIntent, got.Working)
+		}
 	}
 }

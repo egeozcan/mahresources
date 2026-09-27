@@ -89,6 +89,9 @@ lets it, such as a refusal of the account it runs as or a claim nobody could
 prove stopped, and it Needs attention. Every surface names a state the same
 way: the Jobs panel, the Job Center card and the Job page read one table of
 labels, groups and colours, and only running work shows a moving progress bar.
+A running Job with a pause or a cancellation requested and not yet confirmed
+by the process running it reads **Pausing** or **Cancelling** (the API's
+`controlIntent`).
 
 One phase has a host-wide meaning. A succeeded Job with phase `partial` stopped
 short of finished: its Kind recorded that the run did its share and left the

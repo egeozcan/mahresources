@@ -9,6 +9,7 @@ import {
     eventJob,
     lifecycleAnnouncement,
     commandLabel,
+    commandDismissLabel,
     failureText,
     jobCommands,
     advertisedOutputs,
@@ -1194,6 +1195,7 @@ export function jobPanel() {
             if (confirmation) {
                 const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
                     title: commandLabel(command), confirmLabel: commandLabel(command),
+                    cancelLabel: commandDismissLabel(command),
                 });
                 if (!accepted) return null;
             }

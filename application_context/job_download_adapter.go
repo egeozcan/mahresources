@@ -1080,18 +1080,26 @@ func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.Co
 		// another process is fetching is held there, where the request is delivered
 		// (deliverControlIntent).
 		if !found {
-			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "pausing"}, nil
+			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
 		}
 		if err := a.ctx.downloadManager.Pause(entry.ID); err != nil {
 			var conflict *download_queue.StateConflictError
 			if errors.As(err, &conflict) {
 				// Saving or already ended: the request stands until the Job leaves
 				// running, which it is about to.
-				return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "the transfer is already finishing"}, nil
+				return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded,
+					Message: "Pause requested, but the download is already finishing."}, nil
 			}
 			return jobs.CommandOutcome{}, err
 		}
-		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "paused"}, nil
+		// The queue's mirror records the hold as it confirms it. Only a Job that
+		// reached paused is reported paused: a mirror write that did not land
+		// leaves the request standing, which the wait for the transfer settles.
+		if current, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID); err == nil &&
+			current.State == jobs.StatePaused {
+			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPausedMessage}, nil
+		}
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
 
 	case jobs.CommandResume:
 		// A hold is released by queueing the Job, never by starting a worker from
@@ -1138,6 +1146,10 @@ func (s *jobDownloadSink) DownloadHeld(ref download_queue.CanonicalRef, snap *do
 
 // jobDownloadPauseConfirmation is what Pause asks before it holds a download.
 const jobDownloadPauseConfirmation = "Pause this download? The bytes received so far are discarded, and Resume starts it again from the beginning."
+
+// jobDownloadPauseRequestedMessage answers a pause the transfer has not
+// confirmed yet: the process fetching the file holds it when it next reads the Job.
+const jobDownloadPauseRequestedMessage = "Pause requested. The download is held when the server running it next checks, about once a second."
 
 // jobDownloadPausedMessage is what a paused download's row says. The queue keeps no
 // partial bytes, so Resume starts the transfer again, and the person deciding

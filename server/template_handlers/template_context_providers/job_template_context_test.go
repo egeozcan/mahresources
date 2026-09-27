@@ -427,6 +427,12 @@ func TestJobRowBadgeFollowsTheStateTable(t *testing.T) {
 	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "card-badge--warning" {
 		t.Fatalf("a partial success's badge is %q", got)
 	}
+	// A pause asked for and not yet confirmed: the card says it is pausing, not
+	// that it is paused, and its work still reads as work in progress.
+	pausing := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "q", State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause})
+	if pausing.StateLabel != "Pausing" || pausing.Progress == nil || !pausing.Progress.Indeterminate {
+		t.Fatalf("a running Job with a pause requested is %q with progress %+v", pausing.StateLabel, pausing.Progress)
+	}
 }
 
 // TestJobFilterFormKeepsWhatTheURLAsked covers the form's round trip: every origin

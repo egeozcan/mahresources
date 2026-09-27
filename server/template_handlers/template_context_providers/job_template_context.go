@@ -671,7 +671,7 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	if title == "" {
 		title = snapshot.ID
 	}
-	presentation := jobview.PresentState(snapshot.State, snapshot.Phase)
+	presentation := jobview.PresentJob(snapshot)
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobRowBadgeClasses[presentation.Tone],
@@ -719,7 +719,7 @@ func jobIsPartial(snapshot jobs.Snapshot) bool {
 }
 
 func jobStateLabel(snapshot jobs.Snapshot) string {
-	return jobview.PresentState(snapshot.State, snapshot.Phase).Label
+	return jobview.PresentJob(snapshot).Label
 }
 
 // jobRowBadgeClasses is the card badge each state tone takes. A paused Job is
@@ -770,7 +770,7 @@ func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 
 func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	progress := snapshot.Progress
-	working := jobview.PresentState(snapshot.State, snapshot.Phase).Working
+	working := jobview.PresentJob(snapshot).Working
 	hasData := progress.Completed != nil || progress.Total != nil || progress.Message != ""
 	succeeded := snapshot.State == jobs.StateSucceeded
 	if !hasData && !succeeded && !working {

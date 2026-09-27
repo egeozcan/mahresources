@@ -303,6 +303,15 @@ Rollback after epoch advancement uses a compatible release that understands
 the canonical schema. Do not roll back to a plaintext writer. Keep the release
 that advanced the epoch available until the rollback window closes.
 
+Two behaviours of paused downloads matter while processes of this release and
+an earlier one run against one database. An earlier release recorded a
+person's pause of a download as `blocked`. Each start of this release records
+those Jobs as `paused`, so the last process to start moves the ones the others
+wrote. And a download paused through the Job Center while an earlier-release
+process is running its transfer is not paused there: that process does not
+act on pause requests, so the Job reads **Pausing** until the transfer ends.
+Cancel still stops it.
+
 Legacy download and Job compatibility routes remain supported for at least one
 documented release and six months after canonical cutover.
 
