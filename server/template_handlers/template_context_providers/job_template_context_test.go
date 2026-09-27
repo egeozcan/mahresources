@@ -560,9 +560,16 @@ func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
 
 func TestJobKindOptionsKeepAKindTheURLNames(t *testing.T) {
 	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?kind=retired-kind&kind=group-export&dismissed=false")
-	options := ctx["jobKindOptions"].([]string)
-	if !slices.Contains(options, "retired-kind") || !slices.Contains(options, "group-export") || !slices.Contains(options, "remote-download") {
-		t.Fatalf("kind options = %v: a Kind the URL names must stay offered, or resubmitting drops it", options)
+	labels := map[string]string{}
+	for _, option := range ctx["jobKindOptions"].([]JobSelectOption) {
+		labels[option.Value] = option.Label
+	}
+	if _, ok := labels["retired-kind"]; !ok || labels["group-export"] == "" || labels["remote-download"] == "" {
+		t.Fatalf("kind options = %v: a Kind the URL names must stay offered, or resubmitting drops it", labels)
+	}
+	// Labelled in words, valued by identifier; a Kind with no words keeps its identifier.
+	if labels["remote-download"] != "Download" || labels["group-export"] != "Group export" || labels["retired-kind"] != "retired-kind" {
+		t.Fatalf("kind labels = %v", labels)
 	}
 }
 

@@ -65,8 +65,8 @@
                 <legend class="block text-xs font-mono font-medium text-stone-600">Kind</legend>
                 {% for kind in jobKindOptions %}
                 <label class="flex items-center gap-2 min-h-7 cursor-pointer">
-                    <input type="checkbox" name="kind" value="{{ kind }}"{% if kind in jobFilter.Kinds %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
-                    <span class="text-xs font-mono font-medium text-stone-600">{{ kind }}</span>
+                    <input type="checkbox" name="kind" value="{{ kind.Value }}"{% if kind.Value in jobFilter.Kinds %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
+                    <span class="text-xs font-mono font-medium text-stone-600">{{ kind.Label }}</span>
                 </label>
                 {% endfor %}
             </fieldset>

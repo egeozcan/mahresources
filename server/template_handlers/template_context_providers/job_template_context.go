@@ -302,13 +302,19 @@ func jobAccountSelectOptions(accounts []application_context.JobAccountOption, cu
 
 // jobKindOptions is the Kind checkboxes: the registered Kinds the viewer can see,
 // plus any Kind the URL names that is not among them — a retained Job of a
-// retired Kind — so resubmitting the form does not silently drop it.
-func jobKindOptions(registered, requested []string) []string {
-	options := append([]string(nil), registered...)
+// retired Kind — so resubmitting the form does not silently drop it. Each is
+// labelled in words and keeps its identifier as its value, so an address or a
+// saved filter naming a Kind still selects it.
+func jobKindOptions(registered, requested []string) []JobSelectOption {
+	kinds := append([]string(nil), registered...)
 	for _, kind := range requested {
-		if !slices.Contains(options, kind) {
-			options = append(options, kind)
+		if !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
 		}
+	}
+	options := make([]JobSelectOption, 0, len(kinds))
+	for _, kind := range kinds {
+		options = append(options, JobSelectOption{Value: kind, Label: jobview.KindLabel(kind)})
 	}
 	return options
 }
