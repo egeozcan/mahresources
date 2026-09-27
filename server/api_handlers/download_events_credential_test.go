@@ -396,3 +396,61 @@ func TestAStalledDurablePollFiltersItsRemainingRowsForADemotedViewer(t *testing.
 		t.Fatalf("a row projected for the administrator was written after the account was demoted: %s", writer.String())
 	}
 }
+
+// blockingProjectionContext holds the first download projection until the
+// test releases it, the way a projection waits on a slow database.
+type blockingProjectionContext struct {
+	*principalJobEventsContext
+	blocked  chan struct{}
+	release  chan struct{}
+	blockOne *sync.Once
+}
+
+func (c *blockingProjectionContext) ProjectDownloadJob(id string) (download_queue.DownloadProjection, error) {
+	c.blockOne.Do(func() {
+		close(c.blocked)
+		<-c.release
+	})
+	return c.principalJobEventsContext.ProjectDownloadJob(id)
+}
+
+// A projection is a read made for one check. When it outlasts that check and
+// the account has changed by the time it returns, its row is not written on the
+// old answer.
+func TestALiveFrameProjectedBeforeADemotionIsNotWrittenAfterIt(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	once := &sync.Once{}
+	blocked, release := make(chan struct{}), make(chan struct{})
+	admin := &blockingProjectionContext{&principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}}, blocked, release, once}
+	demoted := &blockingProjectionContext{&principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleUser}}, blocked, release, once}
+	source := &changingJobEventsSource{}
+	source.set(admin)
+	response, _ := startLegacyEventsHandler(t, source)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	hidden := submitOwnedLegacyJob(t, manager, 8)
+	select {
+	case <-blocked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the live event was never projected")
+	}
+	source.set(demoted)
+	time.Sleep(jobEventsCheckInterval + 50*time.Millisecond)
+	close(release)
+
+	own := submitOwnedLegacyJob(t, manager, 7)
+	if !waitForBody(response, own, 3*time.Second) {
+		t.Fatalf("the demoted viewer's stream stopped delivering its own job %q: %s", own, response.String())
+	}
+	if strings.Contains(response.String(), hidden) {
+		t.Fatalf("a row projected for the administrator was written after the account was demoted: %s", response.String())
+	}
+}
