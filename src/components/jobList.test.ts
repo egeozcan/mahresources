@@ -14,6 +14,7 @@ import {
     stateChangeAnnouncement,
     stateChanges,
 } from './jobList.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 
 afterEach(() => {
     vi.useRealTimers();
@@ -218,6 +219,30 @@ describe('job list live refresh', () => {
         const before = new Map([['p', { id: 'p', title: 'Sweep', state: 'running' }]]);
         const after = new Map([['p', { id: 'p', title: 'Sweep', state: 'succeeded', phase: 'partial' }]]);
         expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('Sweep partially completed.');
+    });
+
+    test('says a failure with its reason, as the drawer does', () => {
+        const before = new Map([['f', { id: 'f', title: 'sunrise.png', state: 'running' }]]);
+        const after = new Map([['f', { id: 'f', title: 'sunrise.png', state: 'failed', failure: { code: 'http-404', message: 'HTTP 404 Not Found' } }]]);
+        expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('sunrise.png failed: HTTP 404 Not Found.');
+    });
+
+    test('leaves a change the drawer announces to the drawer, and says the rest once', () => {
+        const stop = followJobAnnouncements(job => job.ownerUserId === 7);
+        const list = jobList();
+        const said: string[] = [];
+        list._liveRegion = { announce: (text: string) => said.push(text), destroy() {} } as any;
+        list.announceChanges([
+            { id: 'mine', title: 'mine.bin', state: 'succeeded', ownerUserId: 7 },
+            { id: 'theirs', title: 'theirs.bin', state: 'failed', ownerUserId: 8, failure: { message: 'HTTP 403 Forbidden' } },
+        ]);
+        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.']);
+        list.announceChanges([{ id: 'mine', title: 'mine.bin', state: 'cancelled', ownerUserId: 7 }]);
+        expect(said).toHaveLength(1);
+        stop();
+        // With no drawer on the page, the list says everything itself.
+        list.announceChanges([{ id: 'mine', title: 'mine.bin', state: 'cancelled', ownerUserId: 7 }]);
+        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.', 'mine.bin cancelled.']);
     });
 
     test('keeps a details element the reader opened open across the morph', () => {

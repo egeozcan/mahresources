@@ -737,10 +737,18 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 			row.Result = jobview.ResultLinkFor(snapshot, outputs)
 		}
 	}
-	entity, _ := json.Marshal(map[string]any{
+	// The owner and the failure are for the page's own announcement of a change
+	// (jobList.js announceChanges): whether the drawer says it, and why a Job
+	// failed when the page does.
+	payload := map[string]any{
 		"id": snapshot.ID, "title": title, "kind": snapshot.Kind, "state": snapshot.State,
 		"phase": snapshot.Phase, "version": snapshot.Version, "pinned": snapshot.Pinned, "dismissed": snapshot.Dismissed,
-	})
+		"ownerUserId": snapshot.OwnerUserID,
+	}
+	if snapshot.Failure != nil {
+		payload["failure"] = map[string]string{"code": snapshot.Failure.Code, "message": snapshot.Failure.Message}
+	}
+	entity, _ := json.Marshal(payload)
 	row.Entity = string(entity)
 	return row
 }

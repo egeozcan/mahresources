@@ -723,3 +723,30 @@ func TestTheAccountFiltersNeedAccountsToTellApart(t *testing.T) {
 		t.Fatalf("with authentication off the account filters are offered: %v, %v", implicit["jobAccountFilters"], implicit["jobOwnerOptions"])
 	}
 }
+
+// TestAJobCardSaysWhoOwnsItAndWhyItFailed pins the card payload the page reads
+// when a refresh changes a row: its owner, so the page can tell whether the
+// drawer announces it, and its failure, so the page says why when it does not.
+func TestAJobCardSaysWhoOwnsItAndWhyItFailed(t *testing.T) {
+	owner := uint(8)
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{
+		ID: "failed-card", Kind: "remote-download", State: jobs.StateFailed, Title: "sunrise.png", OwnerUserID: &owner,
+		Failure: &jobs.Failure{Code: "http-404", Class: jobs.FailureClassDependency, Message: "HTTP 404 Not Found"},
+	})
+	var entity struct {
+		OwnerUserID *uint `json:"ownerUserId"`
+		Failure     *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"failure"`
+	}
+	if err := json.Unmarshal([]byte(row.Entity), &entity); err != nil {
+		t.Fatalf("decode %s: %v", row.Entity, err)
+	}
+	if entity.OwnerUserID == nil || *entity.OwnerUserID != owner || entity.Failure == nil || entity.Failure.Message != "HTTP 404 Not Found" || entity.Failure.Code != "http-404" {
+		t.Fatalf("card payload = %s, want its owner and its failure", row.Entity)
+	}
+	if unowned := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "unowned", Kind: "remote-download", State: jobs.StateQueued}); strings.Contains(unowned.Entity, "failure") || !strings.Contains(unowned.Entity, `"ownerUserId":null`) {
+		t.Fatalf("an unowned, unfailed card payload = %s", unowned.Entity)
+	}
+}

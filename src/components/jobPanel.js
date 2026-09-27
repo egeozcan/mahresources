@@ -1,5 +1,6 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 import * as userSettings from '../userSettings.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
@@ -393,6 +394,7 @@ export function jobPanel() {
         _streamTouchSeq: 0,
         _streamTouched: new Map(),
         _ownerViewer: 0,
+        _stopAnnouncing: null,
 
         init() {
             this.finishedLimit = panelFinishedLimit();
@@ -403,6 +405,7 @@ export function jobPanel() {
             this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
             this.adoptPendingOwnerChoice();
             this._liveRegion = createLiveRegion();
+            this.registerAnnouncements();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
             this._keydownHandler = event => this.handleShortcut(event);
@@ -460,6 +463,7 @@ export function jobPanel() {
 
         destroy() {
             this._destroyed = true;
+            this.unregisterAnnouncements();
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
             if (this._onlineHandler) window.removeEventListener('online', this._onlineHandler);
@@ -1403,6 +1407,20 @@ export function jobPanel() {
             this.dropStream();
             this.connect();
             this.refresh();
+        },
+
+        // The drawer announces the Jobs its stream follows, and tells the
+        // page's own Job views so (utils/jobAnnouncements.js), which then say
+        // only the others: one region per change. With My jobs chosen it follows
+        // the administrator's own Jobs; once its stream stopped, none.
+        registerAnnouncements() {
+            this._stopAnnouncing = followJobAnnouncements(job => !this.streamStopped &&
+                (this.ownerScope !== 'me' || (job?.ownerUserId != null && Number(job.ownerUserId) === this._ownerViewer)));
+        },
+
+        unregisterAnnouncements() {
+            this._stopAnnouncing?.();
+            this._stopAnnouncing = null;
         },
 
         // A live progress frame updates the row it names in place. It is not a

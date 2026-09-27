@@ -3,10 +3,11 @@ import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import {
-    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel, nextStreamRetryDelay,
-    progressAccessibleText, progressIndeterminate, progressText, progressValue,
-    reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
+    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel,
+    lifecycleAnnouncement, nextStreamRetryDelay, progressAccessibleText, progressIndeterminate, progressText, progressValue,
+    reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
+import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
 import { applyProgressFrame, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
 import { terminalStates } from './jobStates.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
@@ -182,10 +183,12 @@ export function stateChanges(before, after) {
     return changes;
 }
 
+// A refresh's state changes as one message, each in the words the drawer uses,
+// a failure with its reason.
 export function stateChangeAnnouncement(changes) {
     if (!changes.length) return '';
     if (changes.length > 3) return `${changes.length} jobs changed state.`;
-    return changes.map(job => `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}.`).join(' ');
+    return changes.map(job => lifecycleAnnouncement(job)).join(' ');
 }
 
 const TERMINAL_STATES = new Set(terminalStates());
@@ -301,7 +304,7 @@ export function jobList() {
             this._liveRegion = createLiveRegion();
             localizeJobTimes(this.$root);
             this._refresher = createJobListRefresher({
-                onRowChanges: changes => this._liveRegion?.announce(stateChangeAnnouncement(changes)),
+                onRowChanges: changes => this.announceChanges(changes),
                 onUnavailable: () => {
                     this.connectionStatus = 'unavailable';
                     clearTimeout(this._streamRetryTimer);
@@ -334,6 +337,14 @@ export function jobList() {
             this._liveRegion?.destroy();
             window.removeEventListener('job-list-refresh', this._onRefreshRequest);
             window.removeEventListener('job-list-notice', this._onNotice);
+        },
+
+        // The drawer announces the Jobs it follows, on this page as on every
+        // other; the list says only the changes it does not follow, such as
+        // another account's Job while an administrator's drawer lists their own.
+        announceChanges(changes) {
+            const message = stateChangeAnnouncement(changes.filter(job => !drawerAnnouncesJob(job)));
+            if (message) this._liveRegion?.announce(message);
         },
 
         get connectionText() {

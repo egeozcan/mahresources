@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as userSettings from '../userSettings.js';
 import { epochMicros, jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
+import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -4155,5 +4156,29 @@ describe('Job Center lifecycle event types', () => {
         for (const type of types) {
             if (!NOT_TRANSITIONS.has(type)) expect(panelLifecycleEvents.has(type), type).toBe(true);
         }
+    });
+});
+
+describe('which page region announces a Job', () => {
+    test('the drawer claims the Jobs it follows: every visible one, or an administrator\'s own on My jobs', () => {
+        const panel = jobPanel();
+        (panel as any).registerAnnouncements();
+        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(true);
+        expect(drawerAnnouncesJob({ id: 'b', ownerUserId: null })).toBe(true);
+
+        panel._ownerViewer = 7;
+        panel.ownerScope = 'me';
+        expect(drawerAnnouncesJob({ id: 'mine', ownerUserId: 7 })).toBe(true);
+        expect(drawerAnnouncesJob({ id: 'theirs', ownerUserId: 8 })).toBe(false);
+        expect(drawerAnnouncesJob({ id: 'nobody\'s', ownerUserId: null })).toBe(false);
+
+        // A drawer whose stream stopped says nothing about Jobs.
+        panel.ownerScope = '';
+        panel.streamStopped = true;
+        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(false);
+
+        (panel as any).unregisterAnnouncements();
+        panel.streamStopped = false;
+        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(false);
     });
 });
