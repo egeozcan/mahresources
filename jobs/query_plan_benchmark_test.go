@@ -28,7 +28,10 @@ type jobQueryCapture struct {
 }
 
 func (c *jobQueryCapture) record(db *gorm.DB) {
-	if db.Error != nil || db.Statement == nil || db.Statement.SQL.Len() == 0 {
+	// A subquery is built by a dry run of the query callbacks inside its
+	// parent's statement, numbered in the parent's placeholders; only the
+	// statement that ran is evidence.
+	if db.Error != nil || db.Statement == nil || db.Statement.SQL.Len() == 0 || db.DryRun {
 		return
 	}
 	sqlText := db.Statement.SQL.String()
@@ -103,8 +106,13 @@ func runMillionJobQueryPlanEvidence(t *testing.T, engine string, deps Deps) {
 		if len(statements) == 0 {
 			t.Fatalf("%s list did not capture a jobs SELECT", tc.name)
 		}
-		if len(allStatements) != 2 {
-			t.Fatalf("%s list queried %d tables/statements, want jobs and one page replay lookup: %v", tc.name, len(allStatements), queryTables(allStatements))
+		// A viewer with an account also has their pins read for the page.
+		want := 2
+		if tc.access.UserID != 0 {
+			want = 3
+		}
+		if len(allStatements) != want {
+			t.Fatalf("%s list queried %d tables/statements, want jobs, one page replay lookup and the viewer's pins: %v", tc.name, len(allStatements), queryTables(allStatements))
 		}
 		foundPageReplayLookup := false
 		for _, statement := range allStatements {
@@ -122,6 +130,34 @@ func runMillionJobQueryPlanEvidence(t *testing.T, engine string, deps Deps) {
 		t.Logf("engine=%s rows=%d shape=list access=%s page=%d next=%t elapsed_ms=%.2f", engine, millionJobQueryPlanRows, tc.name, len(page.Jobs), page.Next != nil, float64(elapsed.Microseconds())/1000)
 		t.Logf("query-scope shape=list access=%s statements=%d tables=%s", tc.name, len(allStatements), strings.Join(queryTables(allStatements), ","))
 		logJobQueryPlans(t, deps.DB, engine, "list/"+tc.name, statements)
+	}
+
+	// The Jobs panel reads three groups on every refresh, each undismissed and
+	// in both orders a listing offers.
+	dismissed := false
+	for _, tc := range accesses {
+		for _, group := range []struct {
+			name   string
+			states []string
+			limit  int
+		}{
+			{"attention", []string{"blocked", "failed", "interrupted"}, 50},
+			{"active", []string{"scheduled", "queued", "running", "paused"}, 50},
+			{"finished", []string{"succeeded", "cancelled"}, 10},
+		} {
+			for _, order := range []ListOrder{OrderAccepted, OrderStateEntered} {
+				capture.reset()
+				started := time.Now()
+				page, err := svc.List(deps, tc.access, Filter{States: group.states, Dismissed: &dismissed}, Cursor{Order: order}, group.limit)
+				elapsed := time.Since(started)
+				if err != nil {
+					t.Fatalf("%s %s list: %v", tc.name, group.name, err)
+				}
+				shape := fmt.Sprintf("panel/%s/%s/%s", tc.name, group.name, orderColumn(order))
+				t.Logf("engine=%s rows=%d shape=%s page=%d next=%t elapsed_ms=%.2f", engine, millionJobQueryPlanRows, shape, len(page.Jobs), page.Next != nil, float64(elapsed.Microseconds())/1000)
+				logJobQueryPlans(t, deps.DB, engine, shape, onlyJobQueries(capture.snapshot()))
+			}
+		}
 	}
 
 	for _, tc := range accesses {
@@ -245,7 +281,7 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 	states := []string{"scheduled", "queued", "running", "paused", "blocked", "succeeded", "failed", "cancelled", "interrupted"}
 	kinds := []string{"download", "plugin-action", "import-parse", "import-apply", "export", "reduction", "callback"}
 	const batchSize = 500
-	const columns = 17
+	const columns = 18
 	value := "(" + strings.TrimSuffix(strings.Repeat("?,", columns), ",") + ")"
 	window := 90 * 24 * time.Hour
 	step := time.Duration(int64(window) / millionJobQueryPlanRows)
@@ -265,10 +301,15 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 					startedRows++
 				}
 				var finishedAt, expiresAt any
+				stateEnteredAt := acceptedAt
+				if startedAt != nil {
+					stateEnteredAt = acceptedAt.Add(time.Second)
+				}
 				if state == "succeeded" || state == "failed" || state == "cancelled" || state == "interrupted" {
 					finished := acceptedAt.Add(2 * time.Minute)
 					finishedAt = finished
 					expiresAt = finished.Add(30 * 24 * time.Hour)
+					stateEnteredAt = finished
 				}
 				failureClass := ""
 				if state == "failed" {
@@ -283,10 +324,10 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 					fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1),
 					kinds[i%len(kinds)], uint(1), state, "ui", "owner", "actor", "non-replayable", uint64(1), uint((i/7)%20+1),
 					acceptedAt, startedAt, finishedAt, expiresAt,
-					int64((i*17)%900)*int64(time.Second), int64((i*31)%3600)*int64(time.Second), failureClass,
+					int64((i*17)%900)*int64(time.Second), int64((i*31)%3600)*int64(time.Second), failureClass, stateEnteredAt,
 				)
 			}
-			query := "INSERT INTO jobs (id, kind, kind_version, state, origin, visibility_class, execution_principal, replay_class, version, owner_user_id, accepted_at, started_at, finished_at, expires_at, queue_duration, running_duration, failure_class) VALUES " + strings.Join(values, ",")
+			query := "INSERT INTO jobs (id, kind, kind_version, state, origin, visibility_class, execution_principal, replay_class, version, owner_user_id, accepted_at, started_at, finished_at, expires_at, queue_duration, running_duration, failure_class, state_entered_at) VALUES " + strings.Join(values, ",")
 			if err := tx.Exec(query, args...).Error; err != nil {
 				return fmt.Errorf("insert jobs %d..%d: %w", start, end, err)
 			}

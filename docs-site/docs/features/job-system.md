@@ -206,10 +206,36 @@ scheduled** and **Finished**. A running Job shows its progress bar, the amount
 completed, its speed, the time left, its metrics and a graph for its speed and
 for each graphed metric. A finished Job shows its average speed.
 
-Work that is running, waiting or needs attention is listed up to 50 Jobs per
-group. Finished Jobs are limited by the `download_cockpit_limit` setting
-(default 10); older ones stay on the All jobs page. Progress updates arrive over
-the live stream. They are not announced to screen readers; state changes are,
+Each group lists the Jobs that entered their current state most recently
+first, so a Job that has just finished or failed is at the top of its group
+however long ago it was accepted. Work that is running, waiting or needs
+attention is listed up to 50 Jobs per group, and Finished Jobs up to the
+`download_cockpit_limit` setting (default 10). A group that has more says
+"Showing the 50 most recent." with a link to the same Jobs on the All jobs page,
+its heading reads "(50+)", and so does its badge on the **Jobs** button.
+
+The drawer reads its lists when its live stream has caught up, and again after
+each state change the stream reports. It reads a Job's commands and outputs
+only while it is open, and reads them again only when the Job has changed or
+you (or another of your tabs) pinned, unpinned or forgot it. Dismissing, pinning or forgetting a Job, from the drawer, a Job's page or the
+All jobs page, reaches your other open tabs of the same browser, whose drawers
+and All jobs pages read their lists again; other browsers see it at their next
+change.
+
+If a list cannot be read, the drawer keeps what it showed, says the Jobs could
+not be refreshed, and tries again after 2 seconds, doubling up to a minute, at
+once when you open the drawer or return to the tab, and when you press **Try
+again**. Before any list has been read it shows no counts rather than zeroes. If
+the server answers that your session has ended, the drawer says so and offers
+**Sign in again**, which returns you to the same page. The browser reconnects a
+dropped live stream by itself but gives up on one refused with an error, such
+as a proxy's 502 during a restart or a 401 after signing out; the drawer then
+reopens it after 1 second, doubling up to 30 seconds, and shows
+**Reconnecting** meanwhile. The Job Center and a Job's page reopen their streams
+the same way; the Job Center says when its list could not be refreshed, and a
+Job's page whose read failed offers **Try again** and a link to All jobs.
+
+Progress updates arrive over the live stream. They are not announced to screen readers; state changes are,
 once each, with the reason when a Job fails. That includes a Job accepted and
 finished within a moment of each other, such as a download refused with a 404:
 its outcome is announced even though the drawer never showed it running. A Job
@@ -237,7 +263,10 @@ mr jobs timeline 018f4db1-9b40-7f54-8f16-37a449bcf01d --after-sequence 20
 mr jobs summary --window 30d --json
 ```
 
-`jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
+`jobs list` returns a bounded page with an opaque `nextCursor`. On the API,
+`order=stateEntered` lists Jobs by when each entered its current state
+(`stateEnteredAt` on every Job), newest first, instead of by acceptance; a
+cursor continues the order it was issued in. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
 advertised command, and the viewer's pin and dismissal preferences, which take
 `true`, `false` or `any`. Without `--dismissed` the CLI and the API list
@@ -361,9 +390,17 @@ Each durable event on the canonical stream carries an SSE `id` of the form
 `v2:<n>`, where `n` is its delivery sequence: the order events were published,
 which keeps each Job's own events in their own sequence. A reconnect resumes
 after the cursor in `Last-Event-ID`, or in the `cursor` query parameter when
-that header is absent, and first replays what was published since. The stream
-then sends `job-caught-up` with the cursor it reached, as
-`{"cursor":"v2:<n>"}`. A resume cursor above the highest delivery sequence this
+that header is absent, and first replays what was published since. With
+neither, the stream replays everything published, unless the request sets
+`start=head`: it then starts at the newest delivery sequence the database has
+issued and replays nothing. That is what the Jobs panel, the Job Center and a
+Job's page ask for on their first connection, since they read their Jobs
+themselves once caught up; a reconnect resumes from the cursor they hold. The
+stream then sends `job-caught-up` with the cursor it reached, as
+`{"cursor":"v2:<n>"}`. After `start=head`, that `job-caught-up` also carries the
+cursor as its SSE `id`, so the browser's own reconnect resumes from it. `owner=me`
+narrows the events, the progress frames and a reset's head to the viewer's own
+Jobs, as it narrows a list. A resume cursor above the highest delivery sequence this
 database has ever issued was issued by a different database: one restored from
 an older backup, or an ephemeral server that restarted. The stream then resumes
 at the viewer's last published event and adds `"reset": true` to
@@ -383,9 +420,10 @@ hold input that has not been saved. Reloading is still the right next step: a
 form rendered from the other database can name ids the new one has given to
 different entities.
 
-Two limits are known. A reset reveals the highest sequence the database has
-issued, which every event id a viewer receives already approximates, since
-delivery sequences are shared by every account. And a restored database is
+Two limits are known. A reset, and a stream started with `start=head`, reveal
+the highest sequence the database has issued, which every event id a viewer
+receives already approximates, since delivery sequences are shared by every
+account. And a restored database is
 detected only while its sequence is below the tab's cursor: once it has
 published past that cursor, a tab resuming from it skips the events in between.
 A generation stored in the database cannot close this, because a restore

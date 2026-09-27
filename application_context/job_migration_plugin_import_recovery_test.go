@@ -295,7 +295,7 @@ func TestJobMigrationAppendsBlankImportOutputAfterPublishedSuccess(t *testing.T)
 		t.Fatalf("canonical success event is not published: %+v", success)
 	}
 	cursor := *success.DeliverySequence
-	if tail, err := ctx.JobService().PublishedEvents(ctx.jobDeps(), jobs.Access{Administrator: true}, cursor, 0); err != nil || len(tail) != 0 {
+	if tail, err := ctx.JobService().PublishedEvents(ctx.jobDeps(), jobs.Access{Administrator: true}, jobs.EventFilter{}, cursor, 0); err != nil || len(tail) != 0 {
 		t.Fatalf("stream after existing success before migration = %+v, %v; want no events", tail, err)
 	}
 
@@ -332,7 +332,7 @@ func TestJobMigrationAppendsBlankImportOutputAfterPublishedSuccess(t *testing.T)
 		publication.JobVersion != beforeJob.Version || publication.DeliverySequence == nil || *publication.DeliverySequence <= cursor {
 		t.Fatalf("historical output was not appended after the published timeline: %+v", publication)
 	}
-	tail, err := ctx.JobService().PublishedEvents(ctx.jobDeps(), jobs.Access{Administrator: true}, cursor, 0)
+	tail, err := ctx.JobService().PublishedEvents(ctx.jobDeps(), jobs.Access{Administrator: true}, jobs.EventFilter{}, cursor, 0)
 	if err != nil || len(tail) != 1 || tail[0].ID != publication.ID || tail[0].DeliverySequence == nil || *tail[0].DeliverySequence != *publication.DeliverySequence {
 		t.Fatalf("published stream after prior success cursor = %+v, %v; want only appended output event %+v", tail, err, publication)
 	}

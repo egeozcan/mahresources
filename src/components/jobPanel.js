@@ -1,9 +1,13 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
 import {
+    EVENT_SOURCE_CLOSED,
     advertisedCommands,
+    canonicalStreamURL,
     classifyJobState,
+    nextStreamRetryDelay,
     commandEndpoint,
     commandLocation,
     eventJob,
@@ -41,8 +45,8 @@ import {
 } from './jobProgress.js';
 
 // Work that is running, waiting or needs a person is listed up to this many per
-// group, which is as good as uncapped for a drawer; each row also costs one
-// detail fetch for its commands, so it is not literally unbounded.
+// group. A group with more says so, and so does its badge: the rest are on
+// All jobs.
 const OPEN_WORK_LIMIT = 50;
 // Finished rows follow the deployment's download_cockpit_limit, published on the
 // page as a meta tag; this is the fallback when the tag is missing.
@@ -51,17 +55,45 @@ const DEFAULT_FINISHED_LIMIT = 10;
 // setting, and a page over the ceiling is refused, which would blank the drawer.
 const MAX_FINISHED_LIMIT = 200;
 const PANEL_REFRESH_MAX_WAIT_MS = 500;
+// How long a page waits for its stream to catch up before reading the lists
+// anyway. The catch-up schedules the read that counts, so on a healthy stream
+// the lists are read once per page load, not twice.
+const FIRST_READ_WAIT_MS = 1500;
+// A list read that failed is tried again after a delay that doubles from the
+// first of these to the last.
+const LIST_RETRY_MIN_MS = 2000;
+const LIST_RETRY_MAX_MS = 60000;
+// Detail reads (a row's commands and outputs) in flight at once while the
+// drawer opens, so they leave the browser's per-host connections to the rest
+// of the page.
+const DETAIL_READ_CONCURRENCY = 4;
 // One list page is one bulk dismiss: the server's MaxPageSize and MaxBulkCommandJobs are both 200.
 const FINISHED_PAGE_LIMIT = 200;
 const FINISHED_STATES = ['succeeded', 'cancelled'];
-// Each group is its own bounded page. Only open work asks for the progress
-// series: it is up to 120 points per Job, and a finished row shows no graph.
-function panelGroups(finishedLimit) {
+// Each group is its own bounded page, read by when each job entered its state:
+// a job that has just finished or failed leads its group however long ago it
+// was accepted. Only open work asks for the progress series: it is up to 120
+// points per Job, and a finished row shows no graph.
+export function panelGroups(finishedLimit) {
     return [
         { key: 'attention', states: ['blocked', 'failed', 'interrupted'], limit: OPEN_WORK_LIMIT, series: false },
         { key: 'active', states: ['scheduled', 'queued', 'running', 'paused'], limit: OPEN_WORK_LIMIT, series: true },
         { key: 'finished', states: FINISHED_STATES, limit: finishedLimit, series: false },
     ];
+}
+
+// Where All jobs shows the rest of a group the drawer caps.
+export function panelGroupJobsURL(group, ownerScope = '') {
+    const params = new URLSearchParams();
+    group.states.forEach(state => params.append('state', state));
+    params.set('dismissed', 'false');
+    if (ownerScope === 'me') params.set('owner', 'me');
+    return `/jobs?${params}`;
+}
+
+// A count the drawer shows: the rows it holds, marked when the group has more.
+export function panelBadgeText(count, more) {
+    return more ? `${count}+` : String(count);
 }
 
 export function panelFinishedLimit(doc = globalThis.document) {
@@ -138,11 +170,22 @@ export function panelStateTone(job) {
 }
 
 // The trigger's accessible description: its badges are hidden from assistive
-// technology because the button's aria-label replaces them as its name.
-export function panelCountsText({ active = 0, attention = 0 } = {}) {
+// technology because the button's aria-label replaces them as its name. Before
+// the drawer has read any list it has no counts to give, and says why rather
+// than giving zeroes.
+export function panelCountsText({
+    active = 0, attention = 0, activeMore = false, attentionMore = false,
+    loaded = true, failed = false, signedOut = false,
+} = {}) {
+    if (!loaded) {
+        if (signedOut) return 'Signed out; jobs are not shown';
+        return failed ? 'Jobs could not be loaded' : 'Loading jobs';
+    }
     // "Showing": each group is capped, so these count rows shown, not every job.
-    const activeText = `${active} active or scheduled job${active === 1 ? '' : 's'}`;
-    return `Showing ${activeText} and ${attention} needing attention`;
+    const more = ', more on All jobs';
+    const activeText = `${active} active or scheduled job${active === 1 ? '' : 's'}${activeMore ? more : ''}`;
+    const attentionText = `${attention} needing attention${attentionMore ? more : ''}`;
+    return activeMore ? `Showing ${activeText}, and ${attentionText}` : `Showing ${activeText} and ${attentionText}`;
 }
 
 // What the drawer says, and shows in place of its list, once its stream reset.
@@ -218,12 +261,22 @@ export function jobPanel() {
         // Set when the stream reset: see stopForStreamReset.
         streamStopped: false,
         connectionStatus: 'disconnected',
+        // Why the last list read failed, while no read since has succeeded.
         error: '',
         notice: '',
+        // Whether any list read has succeeded: until one has, the drawer has no
+        // counts to show and says so, rather than showing zeroes.
+        loaded: false,
+        // Set while the server answers that the session has ended.
+        signedOut: false,
+        // '' lists every Job the viewer may see, 'me' only the viewer's own:
+        // an administrator's drawer can hold either. Lists and stream follow it.
+        ownerScope: '',
         _resourceRefreshNotified: new Set(),
         busy: false,
         finishedLimit: DEFAULT_FINISHED_LIMIT,
-        finishedHasMore: false,
+        // Whether each group's list had more than it holds.
+        groupHasMore: { attention: false, active: false, finished: false },
         // Bumped once a second while the drawer is open, so "about 14 s left"
         // counts down between progress frames.
         now: Date.now(),
@@ -239,7 +292,46 @@ export function jobPanel() {
         _panelRefreshMaxTimer: null,
         _panelRefreshRequested: false,
         _panelRefreshPromise: null,
+        // Every list read is numbered as it starts. Its rows apply unless a read
+        // that started later has already applied, or a read started no later
+        // than the floor, which a dismissal and a scope change raise so that
+        // nothing read before them puts their rows back.
         _refreshGeneration: 0,
+        _appliedGeneration: 0,
+        _refreshFloor: 0,
+        _failedGeneration: 0,
+        _firstReadTimer: null,
+        _listRetryTimer: null,
+        _listRetryDelay: 0,
+        _streamRetryTimer: null,
+        _streamRetryDelay: 0,
+        // Detail reads: the rows in flight, the rows waiting for one of the
+        // DETAIL_READ_CONCURRENCY readers the whole drawer shares, and the pass
+        // those readers are working through (see loadStaleDetails).
+        _detailReads: new Set(),
+        _detailQueue: [],
+        _detailReaders: 0,
+        _detailOutcomes: new Set(),
+        _detailDrain: null,
+        _resolveDetailDrain: null,
+        _detailLoad: null,
+        // A pin moves no version, so a read cannot tell by version whether it
+        // predates a preference change. Each Job's epoch moves when a change is
+        // seen (this tab's command, another page's announcement, a list read
+        // that shows a different pin), and a read begun at an older epoch is
+        // older than what the drawer holds.
+        _preferenceEpochs: new Map(),
+        // The epoch each held detail was read at: a detail read before the
+        // latest preference change is stale however its version compares.
+        _detailEpochs: new Map(),
+        _broadcast: null,
+        // Set once the stream has given a cursor (a catch-up), which a reopened
+        // stream then resumes from, even v2:0.
+        _holdsCursor: false,
+        // Set by destroy(): nothing is read, retried or reopened after it.
+        _destroyed: false,
+        _onlineHandler: null,
+        _visibilityHandler: null,
         _streamGeneration: 0,
         // What the reader has been told about each job: its state and version,
         // and the stream generation that was current when it was recorded. See
@@ -273,6 +365,7 @@ export function jobPanel() {
             // Set on an administrator's drawer only: whose Job a row is matters
             // when the drawer lists every account's.
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
+            this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
@@ -280,9 +373,22 @@ export function jobPanel() {
             this._panelOpenHandler = event => this.openFromEvent(event.detail);
             document.addEventListener('keydown', this._keydownHandler);
             window.addEventListener('jobs-panel-open', this._panelOpenHandler);
+            // A network that comes back, or a tab the reader returns to, is
+            // the moment to try again rather than wait out a backoff: the
+            // reader may have signed in again in another tab.
+            this._onlineHandler = () => this.retryNow();
+            this._visibilityHandler = () => { if (document.visibilityState === 'visible') this.retryNow(); };
+            window.addEventListener('online', this._onlineHandler);
+            document.addEventListener('visibilitychange', this._visibilityHandler);
+            this._broadcast = openJobPreferenceChannel(message => this.hearPreferenceBroadcast(message));
             this.$watch?.('isOpen', open => {
                 if (open) {
                     this.startClock();
+                    // A list read that failed is tried again as the reader
+                    // opens the drawer to look; otherwise only the rows whose
+                    // commands the drawer does not hold yet are read.
+                    if (this.error || this._listRetryTimer) this.retryNow();
+                    else this.loadStaleDetails();
                     this.$nextTick?.(() => {
                         focusFirstIn(this.$refs?.panel);
                         this.adoptPendingAnnouncement();
@@ -297,24 +403,51 @@ export function jobPanel() {
             this.$watch?.('finishedCount > 0 || busy', shown => {
                 if (!shown) this.$nextTick?.(() => this.keepFocusWhenDismissHides());
             });
+            // The lists are read once the stream has caught up, which is at
+            // once now that a fresh page replays nothing; a stream that has not
+            // caught up by FIRST_READ_WAIT_MS does not hold the lists back.
             this.connect();
-            this.refresh();
+            if (this.eventSource) {
+                this._firstReadTimer = setTimeout(() => {
+                    this._firstReadTimer = null;
+                    this.startScheduledPanelRefresh();
+                }, FIRST_READ_WAIT_MS);
+            } else {
+                this.refresh();
+            }
         },
 
         destroy() {
+            this._destroyed = true;
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
+            if (this._onlineHandler) window.removeEventListener('online', this._onlineHandler);
+            if (this._visibilityHandler) document.removeEventListener('visibilitychange', this._visibilityHandler);
+            this._broadcast?.close();
+            this._broadcast = null;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this.stopClock();
+            this.clearRetryTimers();
             this._refreshGeneration += 1;
+            this._refreshFloor = this._refreshGeneration;
             this._streamGeneration += 1;
             this._panelRefreshRequested = false;
             this.eventSource?.close();
+            this.eventSource = null;
             this._liveRegion?.destroy();
             clearTimeout(this._drawerAnnounceTimer);
             clearTimeout(this._unsaidOutcomesTimer);
             clearTimeout(this._landTimer);
+        },
+
+        clearRetryTimers() {
+            clearTimeout(this._firstReadTimer);
+            clearTimeout(this._listRetryTimer);
+            clearTimeout(this._streamRetryTimer);
+            this._firstReadTimer = null;
+            this._listRetryTimer = null;
+            this._streamRetryTimer = null;
         },
 
         startClock() {
@@ -334,16 +467,48 @@ export function jobPanel() {
         get finishedJobs() { return this.jobs.filter(job => classifyJobState(job) === 'finished'); },
         // The drawer's sections, in the order a person acts on them. An empty
         // section is left out rather than drawn with nothing under it.
+        // A group that holds fewer rows than its list had carries `more`, says
+        // so (`moreText`), and links to where All jobs shows the rest.
         get groups() {
+            const lists = new Map(panelGroups(this.finishedLimit).map(group => [group.key, group]));
             return [
-                { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs },
-                { key: 'active', title: 'Active and scheduled', jobs: this.activeJobs },
-                { key: 'finished', title: 'Finished', jobs: this.finishedJobs },
-            ].filter(group => group.jobs.length > 0);
+                { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs, moreLabel: 'See every job that needs attention' },
+                { key: 'active', title: 'Active and scheduled', jobs: this.activeJobs, moreLabel: 'See every active and scheduled job' },
+                { key: 'finished', title: 'Finished', jobs: this.finishedJobs, moreLabel: 'See every finished job' },
+            ].filter(group => group.jobs.length > 0).map(group => ({
+                ...group,
+                more: !!this.groupHasMore[group.key],
+                countText: panelBadgeText(group.jobs.length, !!this.groupHasMore[group.key]),
+                moreText: group.key === 'finished'
+                    ? `Showing the ${group.jobs.length} most recently finished.`
+                    : `Showing the ${group.jobs.length} most recent.`,
+                moreURL: panelGroupJobsURL(lists.get(group.key), this.ownerScope),
+            }));
         },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
-        get countsText() { return panelCountsText(this.counts); },
+        get activeBadge() { return panelBadgeText(this.counts.active, this.groupHasMore.active); },
+        get attentionBadge() { return panelBadgeText(this.counts.attention, this.groupHasMore.attention); },
+        get finishedHasMore() { return !!this.groupHasMore.finished; },
+        get countsText() {
+            return panelCountsText({
+                ...this.counts,
+                activeMore: this.groupHasMore.active, attentionMore: this.groupHasMore.attention,
+                loaded: this.loaded, failed: !!this.error, signedOut: this.signedOut,
+            });
+        },
+        get connectionText() {
+            if (this.connectionStatus === 'stopped') return 'Live updates stopped';
+            if (this.signedOut) return 'Signed out';
+            if (this.connectionStatus === 'connected') return 'Live updates connected';
+            if (this.connectionStatus === 'reconnecting') return 'Reconnecting';
+            return 'Connecting to live updates';
+        },
+        // Back to this page once signed in again.
+        get signInURL() {
+            const here = `${globalThis.location?.pathname || '/'}${globalThis.location?.search || ''}`;
+            return `/login?next=${encodeURIComponent(here)}`;
+        },
         get finishedCount() {
             return this.jobs.filter(job => classifyJobState(job) === 'finished' &&
                 this.commandsFor(job).some(command => command.key === 'dismiss')).length;
@@ -456,11 +621,42 @@ export function jobPanel() {
                 error.payload = payload;
                 throw error;
             }
+            const changed = preferenceCommand(url, init, payload)?.jobIds;
+            if (changed?.length) {
+                // This tab changed them: what it holds about them is older now,
+                // and so is every list read begun before, whose rows carry the
+                // old pin at the same version. Those reads are fenced, the
+                // lists read again, and the open drawer's details too (Forget
+                // takes Retry away, with no version to say so).
+                this.movePreferenceEpochs(changed);
+                this.fenceEarlierReads();
+                this.startScheduledPanelRefresh();
+                this.loadStaleDetails();
+            }
+            announcePreferenceCommand(url, init, payload, this._broadcast);
             return payload;
         },
 
+        // A page of this viewer (another tab, or a Job page in this one)
+        // dismissed, pinned or forgot these jobs. Dismissed rows leave at once,
+        // as they do in the tab that dismissed them, and every read begun
+        // before the change is fenced, so none of them puts a row back.
+        hearPreferenceBroadcast(message) {
+            if (this.streamStopped || this._destroyed) return;
+            const ids = new Set(Array.isArray(message?.jobIds) ? message.jobIds.map(String) : []);
+            this.movePreferenceEpochs([...ids]);
+            for (const id of ids) delete this.details[id];
+            if (message?.command === 'dismiss') this.jobs = this.jobs.filter(job => !ids.has(String(job.id)));
+            this.refresh();
+        },
+
+        // Reads the lists now, superseding every read already in flight: what
+        // they read is older than whatever made this read necessary (a
+        // dismissal, a scope change, the reader asking). The reads the stream
+        // schedules go through startScheduledPanelRefresh and supersede nothing.
         async refresh() {
-            if (this.streamStopped) return;
+            if (this.streamStopped || this._destroyed) return;
+            this.fenceEarlierReads();
             const generation = ++this._refreshGeneration;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
@@ -468,53 +664,258 @@ export function jobPanel() {
             return this.refreshAtGeneration(generation);
         },
 
+        fenceEarlierReads() {
+            this._refreshFloor = this._refreshGeneration;
+        },
+
+        movePreferenceEpochs(ids) {
+            for (const id of ids || []) this._preferenceEpochs.set(String(id), this.preferenceEpoch(id) + 1);
+        },
+
+        preferenceEpoch(id) {
+            return this._preferenceEpochs.get(String(id)) || 0;
+        },
+
+        // Whether a list read's answer may still apply: no read that started
+        // after it has applied, and nothing since it started has fenced it. A
+        // slow read is not thrown away because a newer one is still on its way:
+        // rows from the older answer beat an empty drawer, and the newer answer
+        // replaces them when it lands.
+        readStillCurrent(generation) {
+            return generation > this._appliedGeneration && generation > this._refreshFloor;
+        },
+
         async refreshAtGeneration(generation) {
-            this.error = '';
             const streamGeneration = this._streamGeneration;
             const touchedFrom = this._streamTouchSeq;
+            const ownerScope = this.ownerScope;
+            const groups = panelGroups(this.finishedLimit);
+            let pages;
             try {
-                const groups = panelGroups(this.finishedLimit);
-                const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group))));
-                if (generation !== this._refreshGeneration) return;
-                const byId = new Map();
-                pages.forEach((payload, index) => {
-                    if (groups[index].key === 'finished') this.finishedHasMore = !!payload.nextCursor;
-                    for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
-                });
-                // A list read before a stream snapshot the panel has since
-                // applied is older than the row it would replace; the newer row
-                // stays, rather than the row rolling back.
-                const shown = new Map(this.jobs.map(job => [job.id, job]));
-                const listed = [...byId.values()].map(job => {
-                    const held = shown.get(job.id);
-                    return held && Number(held.version || 0) > Number(job.version || 0) ? held : job;
-                });
-                // A row the stream changed during the reads can fall between two
-                // groups' lists, read before and after its move. It stays; a job
-                // that is really gone leaves on the next refresh, which that
-                // stream change scheduled.
-                for (const [jobId, touchedAt] of this._streamTouched) {
-                    if (touchedAt > touchedFrom && !byId.has(jobId) && shown.has(jobId)) listed.push(shown.get(jobId));
-                    if (touchedAt <= touchedFrom) this._streamTouched.delete(jobId);
-                }
-                // One announcement for everything this refresh finds, its detail
-                // reads included: two made in a row would each cancel the one
-                // before it. It is said even if a newer refresh supersedes this
-                // one, since what it heard is already recorded and nothing else
-                // would say it.
-                const spoken = [];
-                for (const job of listed) this.hearFromRead(job, streamGeneration, spoken, { hold: true });
-                const nextJobs = this.bounded(listed);
-                nextJobs.forEach(job => this.trackResourceCompletion(job));
-                this.jobs = nextJobs;
-                try {
-                    await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation, spoken, streamGeneration).catch(() => null)));
-                } finally {
-                    this.announceHeld(spoken, streamGeneration);
-                }
+                pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group, ownerScope))));
             } catch (error) {
-                if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
+                // Only the newest read's failure is the drawer's state: an older
+                // one failing says nothing a newer answer will not.
+                if (!this.streamStopped && generation === this._refreshGeneration) this.listReadFailed(error, generation);
+                return;
             }
+            if (!this.readStillCurrent(generation) || ownerScope !== this.ownerScope) return;
+            this._appliedGeneration = generation;
+            this.listReadSucceeded(generation);
+            const byId = new Map();
+            const hasMore = {};
+            pages.forEach((payload, index) => {
+                hasMore[groups[index].key] = !!payload.nextCursor;
+                for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
+            });
+            this.groupHasMore = hasMore;
+            // A list read before a stream snapshot the panel has since
+            // applied is older than the row it would replace; the newer row
+            // stays, rather than the row rolling back.
+            const shown = new Map(this.jobs.map(job => [job.id, job]));
+            // A pin this read shows differently from a row no newer than it was
+            // changed somewhere the drawer did not hear (another browser). A
+            // row newer than the read keeps its own pin.
+            this.movePreferenceEpochs([...byId.values()]
+                .filter(job => {
+                    const held = shown.get(job.id);
+                    return held && Object.hasOwn(job, 'pinned') && !!held.pinned !== !!job.pinned &&
+                        Number(held.version || 0) <= Number(job.version || 0);
+                })
+                .map(job => job.id));
+            const listed = [...byId.values()].map(job => {
+                const held = shown.get(job.id);
+                return held && Number(held.version || 0) > Number(job.version || 0) ? held : job;
+            });
+            // A row the stream changed during the reads can fall between two
+            // groups' lists, read before and after its move. It stays; a job
+            // that is really gone leaves on the next refresh, which that
+            // stream change scheduled.
+            for (const [jobId, touchedAt] of this._streamTouched) {
+                if (touchedAt > touchedFrom && !byId.has(jobId) && shown.has(jobId)) listed.push(shown.get(jobId));
+                if (touchedAt <= touchedFrom) this._streamTouched.delete(jobId);
+            }
+            // One announcement for everything the lists found, said now: two
+            // made in a row would each cancel the one before it. Detail reads
+            // that follow say their own news, so none of this waits on them.
+            const spoken = [];
+            for (const job of listed) this.hearFromRead(job, streamGeneration, spoken);
+            const nextJobs = this.bounded(listed);
+            nextJobs.forEach(job => this.trackResourceCompletion(job));
+            this.jobs = nextJobs;
+            this.forgetDetailsOfGoneRows();
+            this.announceNews(spoken);
+            // Not awaited: a read never waits on detail reads, so one that
+            // stalls holds up neither the next read nor anything after it.
+            this._detailLoad = this.loadStaleDetails();
+        },
+
+        // Rows from a read that started before a failed one still apply, but
+        // they are older than what the failed read was for: the failure, and
+        // the retry it scheduled, stand until a read started after it succeeds.
+        listReadSucceeded(generation) {
+            this.loaded = true;
+            if (generation < this._failedGeneration) return;
+            this.error = '';
+            this.signedOut = false;
+            this._listRetryDelay = 0;
+            clearTimeout(this._listRetryTimer);
+            this._listRetryTimer = null;
+        },
+
+        // A failed read keeps the rows the drawer holds and says why above
+        // them, and the drawer reads again after a delay that doubles up to
+        // LIST_RETRY_MAX_MS, and at once when the reader opens the drawer, asks
+        // to, or comes back to the tab. A 401 means the session ended: the
+        // drawer says so and offers to sign in rather than a server message.
+        listReadFailed(error, generation) {
+            this._failedGeneration = generation;
+            this.signedOut = error?.status === 401;
+            this.error = this.signedOut ? '' : error?.message || 'Could not load jobs.';
+            this.scheduleListRetry();
+        },
+
+        scheduleListRetry() {
+            if (this.streamStopped || this._destroyed || this._listRetryTimer) return;
+            const delay = this._listRetryDelay || LIST_RETRY_MIN_MS;
+            this._listRetryDelay = Math.min(delay * 2, LIST_RETRY_MAX_MS);
+            this._listRetryTimer = setTimeout(() => {
+                this._listRetryTimer = null;
+                this.startScheduledPanelRefresh();
+            }, delay);
+        },
+
+        // Try again now: the reader asked, opened the drawer, or came back.
+        retryNow() {
+            if (this.streamStopped) return;
+            if (!this.eventSource) {
+                clearTimeout(this._streamRetryTimer);
+                this._streamRetryTimer = null;
+                this.connect();
+            }
+            if (this.error || this.signedOut || this._listRetryTimer || !this.loaded) {
+                clearTimeout(this._listRetryTimer);
+                this._listRetryTimer = null;
+                this.startScheduledPanelRefresh();
+            }
+        },
+
+        // A row's detail (its commands and outputs) is read only while the
+        // drawer is open, where the controls it carries are shown, and only
+        // again once the row's version or its pin has moved on: a detail read
+        // for every row on every refresh was most of what a page load cost.
+        // A command is re-checked by the server against the version it names,
+        // so an offer read for an older version is refused, not run.
+        detailStale(job) {
+            const detail = this.details[job?.id];
+            return !detail || Number(detail.version || 0) < Number(job.version || 0) ||
+                (Object.hasOwn(job, 'pinned') && !!detail.pinned !== !!job.pinned) ||
+                (this._detailEpochs.get(String(job.id)) || 0) !== this.preferenceEpoch(job.id);
+        },
+
+        forgetDetailsOfGoneRows() {
+            const shown = new Set(this.jobs.map(job => job.id));
+            for (const id of Object.keys(this.details)) {
+                if (!shown.has(id)) {
+                    delete this.details[id];
+                    this._detailEpochs.delete(String(id));
+                }
+            }
+        },
+
+        // Queues the rows whose detail is stale and starts readers for them, at
+        // most DETAIL_READ_CONCURRENCY across every pass, and answers when the
+        // pass in progress has drained. A pass that ends with a failed read
+        // tries again after the list retry's delay; one that ends with a row
+        // that moved on while it was read starts another.
+        loadStaleDetails() {
+            if (!this.isOpen || this.streamStopped || this._destroyed) return this._detailDrain || Promise.resolve();
+            for (const job of this.jobs) {
+                if (advertisedCommands(job).length) {
+                    // A row that carries its commands (a stream snapshot or a
+                    // command's answer) is its own detail.
+                    if (this.detailStale(job)) {
+                        this.details[job.id] = job;
+                        this._detailEpochs.set(String(job.id), this.preferenceEpoch(job.id));
+                    }
+                    continue;
+                }
+                if (this.detailStale(job) && !this._detailReads.has(job.id) && !this._detailQueue.includes(job.id)) {
+                    this._detailQueue.push(job.id);
+                }
+            }
+            while (this._detailReaders < DETAIL_READ_CONCURRENCY && this._detailQueue.length) this.startDetailReader();
+            return this._detailDrain || Promise.resolve();
+        },
+
+        startDetailReader() {
+            this._detailReaders += 1;
+            if (!this._detailDrain) this._detailDrain = new Promise(resolve => { this._resolveDetailDrain = resolve; });
+            (async () => {
+                for (let id = this._detailQueue.shift(); id !== undefined; id = this._detailQueue.shift()) {
+                    const job = this.jobs.find(row => row.id === id);
+                    if (!job || !this.detailStale(job) || this.streamStopped || this._destroyed) continue;
+                    this._detailOutcomes.add(await this.loadDetail(job));
+                }
+                this._detailReaders -= 1;
+                if (this._detailReaders === 0) this.finishDetailPass();
+            })();
+        },
+
+        finishDetailPass() {
+            const outcomes = this._detailOutcomes;
+            const resolve = this._resolveDetailDrain;
+            this._detailOutcomes = new Set();
+            this._detailDrain = null;
+            this._resolveDetailDrain = null;
+            if (!this.streamStopped && !this._destroyed) {
+                if (outcomes.has('failed')) this.scheduleListRetry();
+                else if (outcomes.has('moved')) this.loadStaleDetails();
+            }
+            resolve?.();
+        },
+
+        // Reads one row's detail and merges it into the row, heard as any read
+        // is. Answers 'moved' when the row moved on while it was read, and
+        // 'failed' when the read failed or answered older than the row it was
+        // asked for (a lagging replica): the drawer tries those again after a
+        // delay rather than at once, or a replica that stays behind would be
+        // asked in a loop.
+        async loadDetail(job) {
+            this._detailReads.add(job.id);
+            const streamGeneration = this._streamGeneration;
+            const askedFor = Number(job.version || 0);
+            const epoch = this.preferenceEpoch(job.id);
+            let detail;
+            try {
+                detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
+            } catch {
+                return 'failed';
+            } finally {
+                this._detailReads.delete(job.id);
+            }
+            const current = this.jobs.find(row => row.id === job.id);
+            // A row a newer list read dropped stays dropped.
+            if (!current) return 'read';
+            // A detail older than the row shown would roll it back. A pin
+            // moves no version, so a pin that changed while the detail was read
+            // makes it older too, however its version compares.
+            if (Number(detail.version || 0) < Number(current.version || 0)) {
+                return Number(current.version || 0) > askedFor ? 'moved' : 'failed';
+            }
+            if (this.preferenceEpoch(job.id) !== epoch) return 'moved';
+            this.details[job.id] = detail;
+            this._detailEpochs.set(String(job.id), epoch);
+            const spoken = [];
+            this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
+            // The row takes the detail's state, not its commands, outputs or
+            // lineage: those live in `details`, fenced by version and epoch. A
+            // row carrying commands counts as its own detail (loadStaleDetails),
+            // which a copied list would make true long after it went stale.
+            const { commands: _commands, outputs: _outputs, lineage: _lineage, ...state } = detail;
+            this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? { ...row, ...state } : row));
+            this.announceNews(spoken);
+            return 'read';
         },
 
         // Announcements are made against what the reader has been told, not
@@ -567,7 +968,7 @@ export function jobPanel() {
         // `proofOnly` is for a command's answer: the reader asked for the change
         // and hears the command's notice, so it speaks only for a change a live
         // event already proved happened on its own.
-        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false, holdFor = null } = {}) {
+        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false } = {}) {
             if (!job?.id || !job.state) return '';
             const version = Number(job.version || 0);
             const shown = this._heard.has(job.id) ? null : this.jobs.find(row => row.id === job.id);
@@ -576,9 +977,8 @@ export function jobPanel() {
             if (entry && version > 0 && version < entry.version) return '';
             const changed = !!entry && entry.state !== job.state;
             const firstSeenOutcome = !entry && ['attention', 'finished'].includes(classifyJobState(job));
-            // A held proof already stands for news on its way to be said.
             const proof = this._liveVersions.get(job.id);
-            const liveFrom = proof && !proof.held ? proof.version : undefined;
+            const liveFrom = proof ? proof.version : undefined;
             const provenLive = liveFrom !== undefined && version >= liveFrom;
             let said = this.streamCaughtUp && (changed || firstSeenOutcome) && (
                 proofOnly ? provenLive
@@ -595,16 +995,10 @@ export function jobPanel() {
                 said = withheldIn.withheld;
             }
             // Only an observation that could speak uses the proof up; a stale
-            // read must leave it for the live one that follows. An outcome a
-            // refresh holds until its detail reads finish (`holdFor`, that
-            // refresh's list of what it will say) is still owed to the reader
-            // until it is handed to say(): its proof stays, marked with its
-            // holder, so a drop before then counts it (dropStream) instead of
-            // losing it, and that refresh alone releases it (announceHeld).
-            if (provenLive && this.streamCaughtUp && (live || proofOnly)) {
-                if (holdFor && said && ['attention', 'finished'].includes(classifyJobState(job))) proof.held = holdFor;
-                else this._liveVersions.delete(job.id);
-            }
+            // read must leave it for the live one that follows. What it says
+            // goes back to the caller, which says it: a read at once, a command
+            // with its own notice.
+            if (provenLive && this.streamCaughtUp && (live || proofOnly)) this._liveVersions.delete(job.id);
             // It stays while the job is still in that state, whatever versions a
             // same-state change (a control request) adds; saying it, or a change
             // of state, retires it.
@@ -652,11 +1046,10 @@ export function jobPanel() {
         },
 
         // A proof leaves the store in three ways only: its job is heard (hearJob
-        // uses it up, or for news a refresh holds, announceHeld once it is
-        // said), the store is past HEARD_LIMIT, or the stream drops
-        // (dropStream), which counts every outcome still owed. Nothing else drops one: not a list read that left the
-        // job out, which a later read after a dismissal may list, and not a
-        // failed read. When the store is full, a proof that is not an outcome
+        // uses it up), the store is past HEARD_LIMIT, or the stream drops
+        // (dropStream), which counts every outcome still owed. Nothing else
+        // drops one: not a list read that left the job out, which a later read
+        // after a dismissal may list, and not a failed read. When the store is full, a proof that is not an outcome
         // goes first: without it
         // a job's first read withholds its outcome, and the job's own outcome
         // event, still to come, releases it. Only when every proof is an
@@ -669,11 +1062,9 @@ export function jobPanel() {
         // harm.
         boundLiveProofs() {
             while (this._liveVersions.size > HEARD_LIMIT) {
-                // A held proof is about to be said by its refresh; it goes last.
                 let dropped = null;
                 let oldestOutcome = null;
                 for (const [jobId, proof] of this._liveVersions) {
-                    if (proof.held) continue;
                     if (!proof.outcome) { dropped = jobId; break; }
                     oldestOutcome ??= jobId;
                 }
@@ -702,28 +1093,13 @@ export function jobPanel() {
         },
 
         // A list or detail read, which may speak only if no reconnect happened
-        // since the read began; what it says is held for the refresh to say.
-        hearFromRead(job, streamGeneration, spoken, { hold = false } = {}) {
+        // since the read began. What it says joins `spoken`, for the caller to
+        // say.
+        hearFromRead(job, streamGeneration, spoken) {
             const said = this.hearJob(job, {
                 live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration,
-                holdFor: hold ? spoken : null,
             });
             if (said) spoken.push(this.newsEntry(job.id, said));
-        },
-
-        // Says what a refresh held back while its detail reads ran, less
-        // anything the ledger has since moved past: the stream will have said
-        // the newer news already, and older news must not be the last word, even
-        // when the job has come back to the same state. Nothing is said once the
-        // stream has dropped since the refresh began: that is no longer live.
-        announceHeld(spoken, streamGeneration) {
-            if (streamGeneration !== this._streamGeneration) return;
-            this.announceNews(spoken);
-            // Handed to say(), or superseded by newer news: no longer owed. Only
-            // the proofs this refresh holds; another may hold a newer one.
-            for (const entry of spoken) {
-                if (this._liveVersions.get(entry.jobId)?.held === spoken) this._liveVersions.delete(entry.jobId);
-            }
         },
 
         // A piece of news about a job, as the ledger holds it now.
@@ -815,7 +1191,7 @@ export function jobPanel() {
         },
 
         startScheduledPanelRefresh() {
-            if (this.streamStopped) return;
+            if (this.streamStopped || this._destroyed) return;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._panelRefreshTimer = null;
@@ -834,42 +1210,65 @@ export function jobPanel() {
                 });
         },
 
-        // A detail read after the list can find the job already moved on; it is
-        // heard like the list, and what it says joins the refresh's `spoken`.
-        // It is part of that refresh's read, so it is heard under the stream
-        // generation the refresh began on (`heardAs`), even when it starts
-        // after a catch-up: the refresh says nothing begun before one
-        // (announceHeld), so a detail read speaking for the new generation
-        // would use its news up unsaid, and a later read would not say it.
-        async loadAdvertisedCommands(job, generation = this._refreshGeneration, spoken = null, heardAs = undefined) {
-            if (advertisedCommands(job).length) {
-                this.details[job.id] = job;
-                return job;
+        connect() {
+            if (this.eventSource || this.streamStopped || this._destroyed || typeof EventSource === 'undefined') return;
+            clearTimeout(this._streamRetryTimer);
+            this._streamRetryTimer = null;
+            if (this.connectionStatus !== 'reconnecting') this.connectionStatus = 'connecting';
+            // What a reconnect replays is recorded, not said: it arrives
+            // before the catch-up.
+            const source = new EventSource(canonicalStreamURL(this.lastSequence, this.ownerScope, this._holdsCursor));
+            this.eventSource = source;
+            // A source this drawer has replaced (a scope change, a retry) may
+            // still deliver what it had queued; only the current one counts.
+            const current = handler => event => { if (this.eventSource === source) handler(event); };
+            source.addEventListener('open', current(() => { this.connectionStatus = 'connected'; }));
+            source.addEventListener('error', current(() => this.handleStreamError(source)));
+            source.addEventListener('job-caught-up', current(event => this.markStreamCaughtUp(event)));
+            source.addEventListener('job-progress', current(event => this.handleProgressFrame(event)));
+            for (const eventName of ['message', 'job']) {
+                source.addEventListener(eventName, current(event => this.handleStreamMessage(event)));
             }
-            const streamGeneration = this._streamGeneration;
-            const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
-            if (generation !== this._refreshGeneration || streamGeneration !== this._streamGeneration ||
-                !this.jobs.some(current => current.id === job.id)) return null;
-            const current = this.jobs.find(currentJob => currentJob.id === job.id);
-            if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
-            this.details[job.id] = detail;
-            if (spoken) this.hearFromRead({ ...current, ...detail }, heardAs ?? streamGeneration, spoken, { hold: true });
-            else this.hearJob({ ...current, ...detail });
-            this.jobs = this.bounded(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
-            return detail;
         },
 
-        connect() {
-            if (this.eventSource || this.streamStopped || typeof EventSource === 'undefined') return;
-            this.connectionStatus = 'connecting';
-            this.eventSource = new EventSource('/v1/jobs/events?version=2');
-            this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => this.dropStream());
-            this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
-            this.eventSource.addEventListener('job-progress', event => this.handleProgressFrame(event));
-            for (const eventName of ['message', 'job']) {
-                this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
-            }
+        // The browser reconnects a stream that dropped, but not one answered
+        // with anything other than 200 (a proxy's 502, a 401 once the session
+        // ended): it closes it for good. The drawer then opens a new one itself,
+        // after a growing delay (nextStreamRetryDelay), and reads the lists
+        // meanwhile, which also says whether the session ended.
+        handleStreamError(source) {
+            this.dropStream();
+            if (source.readyState !== EVENT_SOURCE_CLOSED) return;
+            source.close();
+            this.eventSource = null;
+            this.scheduleStreamRetry();
+            this.startScheduledPanelRefresh();
+        },
+
+        scheduleStreamRetry() {
+            if (this.streamStopped || this._destroyed || this._streamRetryTimer) return;
+            const delay = this._streamRetryDelay = nextStreamRetryDelay(this._streamRetryDelay);
+            this._streamRetryTimer = setTimeout(() => {
+                this._streamRetryTimer = null;
+                this.connect();
+            }, delay);
+        },
+
+        // Lists every Job the viewer may see (''), or only their own ('me').
+        // The stream is reopened with the new scope, resuming from its cursor,
+        // and the lists are read again; reads for the old scope never apply.
+        // What the new scope brings in is recorded, not said: the stream
+        // generation changes, as on a reconnect.
+        setOwnerScope(scope) {
+            const next = scope === 'me' ? 'me' : '';
+            if (next === this.ownerScope || this.streamStopped) return;
+            this.ownerScope = next;
+            const source = this.eventSource;
+            this.eventSource = null;
+            source?.close();
+            this.dropStream();
+            this.connect();
+            this.refresh();
         },
 
         // A live progress frame updates the row it names in place. It is not a
@@ -903,13 +1302,14 @@ export function jobPanel() {
         // read cannot tell a transition proved live from one made while
         // disconnected. An outcome still unheard was delivered live, though,
         // so it goes into the count (sayUnsaidOutcomes) rather than silently.
+        // A list read in flight still applies its rows: what it saw is history
+        // to the stream that follows, and is recorded as such (hearFromRead).
         dropStream() {
             this.connectionStatus = 'reconnecting';
             this.streamCaughtUp = false;
-            this._refreshGeneration += 1;
             this._streamGeneration += 1;
             for (const proof of this._liveVersions.values()) {
-                if (proof.outcome || proof.held) this.countUnsaidOutcome();
+                if (proof.outcome) this.countUnsaidOutcome();
             }
             this._liveVersions.clear();
             // News said just before the drop must not be said again with the
@@ -935,8 +1335,14 @@ export function jobPanel() {
             }
             const wasCaughtUp = this.streamCaughtUp;
             this.lastSequence = Math.max(this.lastSequence, sequence);
+            this._holdsCursor = true;
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
+            this._streamRetryDelay = 0;
+            // The read after a catch-up is the one that counts: it replaces the
+            // first page load's fallback.
+            clearTimeout(this._firstReadTimer);
+            this._firstReadTimer = null;
             if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
@@ -954,7 +1360,9 @@ export function jobPanel() {
             this.streamCaughtUp = false;
             this.connectionStatus = 'stopped';
             this._refreshGeneration += 1;
+            this._refreshFloor = this._refreshGeneration;
             this._streamGeneration += 1;
+            this.clearRetryTimers();
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._panelRefreshTimer = null;
@@ -962,9 +1370,10 @@ export function jobPanel() {
             this._panelRefreshRequested = false;
             this.jobs = [];
             this.details = {};
-            this.finishedHasMore = false;
+            this.groupHasMore = { attention: false, active: false, finished: false };
             this.notice = '';
             this.error = '';
+            this.signedOut = false;
             // What the reader was, or was about to be, told about Jobs belongs to
             // the other database too: the ledger, the proofs, every message not
             // yet landed and every timer that would say one. Only the stop is
@@ -1104,10 +1513,19 @@ export function jobPanel() {
         ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
 
         async refreshJobPreference(id, spoken = null) {
+            const epoch = this.preferenceEpoch(id);
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
+            // A preference changed elsewhere while this was read: the answer is
+            // older than the row, and a fresh read replaces it.
+            if (this.preferenceEpoch(id) !== epoch) {
+                delete this.details[id];
+                this.startScheduledPanelRefresh();
+                return freshJob;
+            }
             if (freshJob?.id) {
                 this.details[id] = freshJob;
+                this._detailEpochs.set(String(id), epoch);
                 // A read: any change of state in it is someone else's.
                 this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
             }
@@ -1276,7 +1694,7 @@ export function jobPanel() {
             try {
                 let cursor = '';
                 do {
-                    const page = await this.requestJSON(buildFinishedPageURL(cursor));
+                    const page = await this.requestJSON(buildFinishedPageURL(cursor, this.ownerScope));
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1286,10 +1704,9 @@ export function jobPanel() {
                             body: JSON.stringify({ jobIds, idempotencyKey: key }),
                         });
                         // A refresh issued before this dismissal committed
-                        // would put its rows back; the generation fence
-                        // discards it. One issued from here on already sees
-                        // the dismissal.
-                        this._refreshGeneration += 1;
+                        // would put its rows back; the fence discards it. One
+                        // issued from here on already sees the dismissal.
+                        this.fenceEarlierReads();
                         const confirmed = new Set();
                         for (const result of payload.results || []) {
                             total += 1;
@@ -1400,26 +1817,48 @@ export function jobPanel() {
     };
 }
 
-function buildPanelListURL(group) {
+function buildPanelListURL(group, ownerScope = '') {
     const params = new URLSearchParams();
     group.states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
     params.set('limit', String(group.limit));
+    params.set('order', 'stateEntered');
+    if (ownerScope === 'me') params.set('owner', 'me');
     if (group.series) params.set('include', 'progressSeries');
     return `/v1/jobs?${params}`;
 }
 
-function buildFinishedPageURL(cursor) {
+// The drawer's finished Jobs, in its owner scope: Dismiss finished dismisses
+// what the drawer lists, not every account's.
+function buildFinishedPageURL(cursor, ownerScope = '') {
     const params = new URLSearchParams();
     FINISHED_STATES.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
     params.set('limit', String(FINISHED_PAGE_LIMIT));
+    if (ownerScope === 'me') params.set('owner', 'me');
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
 }
 
-// Newest first, each group held to its own limit: a burst of new running work
-// must not push the failures a person has to act on out of the drawer.
+// When a job entered the state it is shown in, in milliseconds: the order the
+// lists are read in. A row from an older server does not carry it; acceptance
+// stands in. Compared as instants, since the text of two instants need not sort
+// as they do (a shorter fraction, another offset).
+function stateSince(job) {
+    const at = Date.parse(job?.stateEnteredAt || job?.acceptedAt || '');
+    return Number.isFinite(at) ? at : 0;
+}
+
+// Identity breaks a tie as the server's listing breaks it: by the bytes.
+function compareIDsDescending(a, b) {
+    const left = String(a.id);
+    const right = String(b.id);
+    return left < right ? 1 : left > right ? -1 : 0;
+}
+
+// Newest state change first, each group held to its own limit: a burst of new
+// running work must not push the failures a person has to act on out of the
+// drawer, and a job that has just finished or failed leads its group.
 function boundedPanelJobs(jobs, finishedLimit = DEFAULT_FINISHED_LIMIT) {
     const unique = new Map();
     for (const job of jobs || []) {
@@ -1428,7 +1867,7 @@ function boundedPanelJobs(jobs, finishedLimit = DEFAULT_FINISHED_LIMIT) {
     const limits = { attention: OPEN_WORK_LIMIT, active: OPEN_WORK_LIMIT, finished: finishedLimit };
     const kept = { attention: 0, active: 0, finished: 0, other: 0 };
     return [...unique.values()]
-        .sort((a, b) => String(b.acceptedAt || '').localeCompare(String(a.acceptedAt || '')) || String(b.id).localeCompare(String(a.id)))
+        .sort((a, b) => stateSince(b) - stateSince(a) || compareIDsDescending(a, b))
         .filter(job => {
             const group = classifyJobState(job);
             if (!(group in limits)) return false;

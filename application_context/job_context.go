@@ -193,12 +193,12 @@ func (ctx *MahresourcesContext) GetJobTimeline(jobID string, afterSequence uint6
 }
 
 // GetPublishedJobEvents returns the resumable stream's next visible events.
-func (ctx *MahresourcesContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+func (ctx *MahresourcesContext) GetPublishedJobEvents(filter jobs.EventFilter, afterDelivery uint64, limit int) ([]jobs.Event, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
 		return nil, err
 	}
-	return service.PublishedEvents(ctx.jobDeps(), ctx.jobAccess(), afterDelivery, limit)
+	return service.PublishedEvents(ctx.jobDeps(), ctx.jobAccess(), filter, afterDelivery, limit)
 }
 
 // GetJobEventSequenceHead returns the highest delivery cursor this database has
@@ -213,22 +213,22 @@ func (ctx *MahresourcesContext) GetJobEventSequenceHead() (uint64, error) {
 
 // GetPublishedJobEventHead returns the delivery cursor of the last published
 // event this context's principal may see: where a reset stream resumes.
-func (ctx *MahresourcesContext) GetPublishedJobEventHead() (uint64, error) {
+func (ctx *MahresourcesContext) GetPublishedJobEventHead(filter jobs.EventFilter) (uint64, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
 		return 0, err
 	}
-	return service.PublishedEventHead(ctx.jobDeps(), ctx.jobAccess())
+	return service.PublishedEventHead(ctx.jobDeps(), ctx.jobAccess(), filter)
 }
 
 // GetLiveJobProgress returns the visible Jobs whose progress changed after
 // since: the live feed beside the durable event stream.
-func (ctx *MahresourcesContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+func (ctx *MahresourcesContext) GetLiveJobProgress(filter jobs.EventFilter, since time.Time, limit int) ([]jobs.Snapshot, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
 		return nil, err
 	}
-	return service.LiveProgress(ctx.jobDeps(), ctx.jobAccess(), since, limit)
+	return service.LiveProgress(ctx.jobDeps(), ctx.jobAccess(), filter, since, limit)
 }
 
 // GetJobOutputs returns one visible Job's typed outputs.

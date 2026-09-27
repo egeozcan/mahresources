@@ -119,6 +119,7 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	)
 	listOnlyParams := append(append([]openapi.QueryParam(nil), listParams...),
 		openapi.QueryParam{Name: "include", Type: "string", Description: "Set to progressSeries to include each Job's bounded progress history (progress.series). Any other value is refused with 400."},
+		openapi.QueryParam{Name: "order", Type: "string", Description: "accepted (the default) lists newest accepted first; stateEntered lists by when each Job entered its current state (stateEnteredAt), newest first. A cursor continues the order it was issued in; naming another order beside it is refused with 400."},
 	)
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs", OperationID: "listCanonicalJobs",
@@ -171,11 +172,13 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs/events", OperationID: "streamCanonicalJobEvents",
 		Summary: "Stream resumable canonical Job events", Tags: []string{"jobs"},
-		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. A resume cursor above the highest delivery sequence this database has issued (one issued by a database since restored or wiped) is answered from the viewer's own head, and job-caught-up then also carries a reset field set to true and, that once, the new cursor as its SSE id: nothing missed is replayed, so the client discards its cursor state and reads again. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like an ordinary job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream.",
+		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. With start=head and neither of those, the stream starts at the newest delivery sequence this database has issued and replays nothing; its job-caught-up then carries that cursor as its SSE id. owner=me narrows every event, progress frame and reset to the viewer's own Jobs. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. A resume cursor above the highest delivery sequence this database has issued (one issued by a database since restored or wiped) is answered from the viewer's own head, and job-caught-up then also carries a reset field set to true and, that once, the new cursor as its SSE id: nothing missed is replayed, so the client discards its cursor state and reads again. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like an ordinary job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream.",
 		LegacyJobCompatibility: true,
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "version", Type: "string", Description: "Set to 2 for the canonical stream; omit to retain the legacy compatibility stream."},
 			{Name: "cursor", Type: "string", Description: "Resume at a canonical v2 delivery cursor."},
+			{Name: "start", Type: "string", Description: "Set to head to start at the newest delivery sequence when no cursor or Last-Event-ID is given, replaying nothing. Any other value is refused with 400."},
+			{Name: "owner", Type: "string", Description: "Set to me to receive only the viewer's own Jobs. Any other value is refused with 400."},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentType("text/event-stream")},
 		ErrorResponses:       jobAPIErrorResponses(),

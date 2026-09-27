@@ -192,19 +192,56 @@ func RequestErrorMessage(err error) string {
 	return strings.TrimPrefix(message, "jobs: ")
 }
 
+// encodedCursor is a cursor on the wire. A token without an order, which every
+// token did before there was a second order, continues acceptance order.
 type encodedCursor struct {
-	AcceptedAt time.Time `json:"acceptedAt"`
-	ID         string    `json:"id"`
+	AcceptedAt     time.Time      `json:"acceptedAt"`
+	ID             string         `json:"id"`
+	Order          jobs.ListOrder `json:"order,omitempty"`
+	StateEnteredAt time.Time      `json:"stateEnteredAt,omitzero"`
 }
 
 // EncodeCursor renders a keyset position as the opaque token the list API and
 // the /jobs page carry in their `cursor` and `before` parameters.
 func EncodeCursor(cursor jobs.Cursor) (string, error) {
-	encoded, err := json.Marshal(encodedCursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID})
+	token := encodedCursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID, Order: cursor.Order}
+	if cursor.Order == jobs.OrderStateEntered {
+		token.AcceptedAt = time.Time{}
+		token.StateEnteredAt = cursor.StateEnteredAt.UTC()
+	}
+	encoded, err := json.Marshal(token)
 	if err != nil {
 		return "", err
 	}
 	return "list-v1." + base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+// listOrders are the spellings of the list API's order parameter.
+var listOrders = map[string]jobs.ListOrder{
+	"accepted":     jobs.OrderAccepted,
+	"stateEntered": jobs.OrderStateEntered,
+}
+
+// ApplyListOrder reads the list API's order parameter onto a decoded cursor.
+// A cursor carries the order it was issued in, so a request that names a
+// different order beside it is refused rather than read in either one.
+func ApplyListOrder(values url.Values, cursor jobs.Cursor) (jobs.Cursor, error) {
+	raw, present := values["order"]
+	if !present {
+		return cursor, nil
+	}
+	if len(raw) != 1 {
+		return jobs.Cursor{}, fmt.Errorf("order must be supplied once")
+	}
+	order, known := listOrders[raw[0]]
+	if !known {
+		return jobs.Cursor{}, fmt.Errorf("order must be accepted or stateEntered")
+	}
+	if cursor.ID != "" && cursor.Order != order {
+		return jobs.Cursor{}, fmt.Errorf("cursor continues another order than %s", raw[0])
+	}
+	cursor.Order = order
+	return cursor, nil
 }
 
 // DecodeCursor reads a token EncodeCursor produced. The empty token is the start
@@ -221,8 +258,20 @@ func DecodeCursor(value string) (jobs.Cursor, error) {
 		return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
 	}
 	var cursor encodedCursor
-	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.ID == "" || cursor.AcceptedAt.IsZero() {
+	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.ID == "" {
 		return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
 	}
-	return jobs.Cursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID}, nil
+	switch cursor.Order {
+	case jobs.OrderAccepted:
+		if cursor.AcceptedAt.IsZero() {
+			return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
+		}
+		return jobs.Cursor{AcceptedAt: cursor.AcceptedAt.UTC(), ID: cursor.ID}, nil
+	case jobs.OrderStateEntered:
+		if cursor.StateEnteredAt.IsZero() {
+			return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
+		}
+		return jobs.Cursor{Order: cursor.Order, StateEnteredAt: cursor.StateEnteredAt.UTC(), ID: cursor.ID}, nil
+	}
+	return jobs.Cursor{}, fmt.Errorf("cursor is invalid")
 }

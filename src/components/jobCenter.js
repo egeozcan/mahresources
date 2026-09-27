@@ -1,3 +1,4 @@
+import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import {
     applyProgressFrame,
@@ -353,6 +354,35 @@ export function streamCursorSequence(value) {
     return Number.isFinite(sequence) ? sequence : null;
 }
 
+// The canonical stream for a page that shows Jobs. One that holds no cursor
+// starts at the head: it reads (or was rendered with) its Jobs itself and
+// reconciles once caught up, so the history published before it would only be
+// replayed to be ignored, on every page load. One that holds a cursor resumes
+// from it, v2:0 included (a database that had published nothing when the page
+// caught up), so what it missed while disconnected is replayed and a database
+// restored under it is still recognised. owner=me narrows it to the viewer's
+// own Jobs, as the lists take it.
+export function canonicalStreamURL(lastSequence = 0, ownerScope = '', caughtUpOnce = false) {
+    const params = new URLSearchParams({ version: '2' });
+    if (caughtUpOnce || lastSequence > 0) params.set('cursor', `v2:${lastSequence}`);
+    else params.set('start', 'head');
+    if (ownerScope === 'me') params.set('owner', 'me');
+    return `/v1/jobs/events?${params}`;
+}
+
+// EventSource.CLOSED: the browser gave up on the stream, as it does on any
+// answer but a 200 (a proxy's 502, a 401 once the session ended), and will not
+// reconnect by itself.
+export const EVENT_SOURCE_CLOSED = 2;
+const STREAM_RETRY_MIN_MS = 1000;
+const STREAM_RETRY_MAX_MS = 30000;
+
+// How long a page waits before opening its stream again after the browser gave
+// up on it, doubling from one attempt to the next.
+export function nextStreamRetryDelay(previous = 0) {
+    return previous > 0 ? Math.min(previous * 2, STREAM_RETRY_MAX_MS) : STREAM_RETRY_MIN_MS;
+}
+
 // Answers a `job-caught-up` whose `reset` says the cursor this page resumed from
 // was never issued by the database now serving it: one restored from an older
 // backup, or wiped. Everything the page holds, every answer still on its way
@@ -455,6 +485,22 @@ export function jobCenter(options = {}) {
         eventSource: null,
         lastSequence: 0,
         streamCaughtUp: false,
+        _streamRetryTimer: null,
+        _streamRetryDelay: 0,
+        _reconcileOnCatchUp: true,
+        _reconcileAfterLoad: false,
+        _reconcileTimer: null,
+        _reconcileDelay: 0,
+        // Moves when this Job's viewer preferences change (a pin here or on
+        // another page): a read begun before is older than what the page
+        // holds, since a pin moves no version.
+        _preferenceEpoch: 0,
+        _preferences: null,
+        // Set by destroy(): nothing is read or retried after it.
+        _destroyed: false,
+        // Set once the stream has given a cursor (a catch-up), which a reopened
+        // stream then resumes from, even v2:0.
+        _holdsCursor: false,
         now: Date.now(),
         _clockTimer: null,
         _liveRegion: null,
@@ -464,6 +510,7 @@ export function jobCenter(options = {}) {
                 this.detailId = new URLSearchParams(globalThis.location?.search || '').get('id') || '';
             }
             this._liveRegion = createLiveRegion();
+            this._preferences = openJobPreferenceChannel(message => this.hearPreferenceChange(message));
             // Keeps "about 14 s left" counting down between progress frames.
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
             this.connect();
@@ -471,8 +518,15 @@ export function jobCenter(options = {}) {
         },
 
         destroy() {
+            this._destroyed = true;
             if (this._clockTimer) clearInterval(this._clockTimer);
-            this.eventSource?.close();
+            clearTimeout(this._streamRetryTimer);
+            clearTimeout(this._reconcileTimer);
+            this._preferences?.close();
+            this._preferences = null;
+            const source = this.eventSource;
+            this.eventSource = null;
+            source?.close();
             this._liveRegion?.destroy();
         },
 
@@ -488,18 +542,33 @@ export function jobCenter(options = {}) {
                 error.payload = payload;
                 throw error;
             }
+            const changed = preferenceCommand(url, init, payload);
+            if (changed?.jobIds.includes(this.detailId)) this._preferenceEpoch += 1;
+            // Sent on the channel this page listens on, which does not hear
+            // its own messages; every other page, this tab's drawer included,
+            // does.
+            announcePreferenceCommand(url, init, payload, this._preferences);
             return payload;
         },
 
         async load() {
             this.loading = true;
             this.error = '';
+            const epoch = this._preferenceEpoch;
             try {
                 await this.loadDetail(this.detailId);
+                // A preference changed while the page read its Job: the read
+                // may predate it, so it is read again.
+                if (epoch !== this._preferenceEpoch) this._reconcileAfterLoad = true;
             } catch (error) {
                 this.error = error.message || 'Could not load this job.';
             } finally {
                 this.loading = false;
+                // A failed read keeps the obligation for the read that succeeds.
+                if (this._reconcileAfterLoad && this.detail) {
+                    this._reconcileAfterLoad = false;
+                    this.reconcileDetail();
+                }
             }
         },
 
@@ -507,6 +576,10 @@ export function jobCenter(options = {}) {
             if (!id) throw new Error('A job ID is required.');
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             this.detail = payload.job || payload;
+            // The Job is followed from here, before its timeline is read: a
+            // stream message about it while that read runs must find it.
+            this.details[id] = this.detail;
+            this.jobs = this.detail ? [this.detail] : [];
             this.timelineError = '';
             this.timeline = [];
             if (this.detail?.id) {
@@ -517,16 +590,30 @@ export function jobCenter(options = {}) {
                     this.timelineError = error.message || 'Timeline is unavailable.';
                 }
             }
-            this.details[id] = this.detail;
-            this.jobs = this.detail ? [this.detail] : [];
             return this.detail;
         },
 
         async refreshJobPreference(id) {
+            const epoch = this._preferenceEpoch;
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id) this.updateJob(freshJob);
+            // A pin changed elsewhere while this was read: read it again.
+            if (epoch !== this._preferenceEpoch) this.reconcileDetail();
+            else if (freshJob?.id) this.updateJob(freshJob);
             return freshJob;
+        },
+
+        // Another page (or this page's drawer) changed this Job's viewer
+        // preferences: no Job event says so, so the page reads it again.
+        hearPreferenceChange(message) {
+            if (!Array.isArray(message?.jobIds) || !message.jobIds.map(String).includes(String(this.detailId))) return;
+            this._preferenceEpoch += 1;
+            // The page's own read is still on its way: load() reads again
+            // once it lands, because the epoch moved under it.
+            // Whichever read applies a change of state first says it, once
+            // the stream is live: this one may overtake the read the change's
+            // own event started, which then finds nothing new.
+            if (this.detail) this.reconcileDetail({ announce: this.streamCaughtUp });
         },
 
         detailURL(job) {
@@ -582,17 +669,28 @@ export function jobCenter(options = {}) {
 
         connect() {
             if (this.eventSource || typeof EventSource === 'undefined') return;
-            this.connectionStatus = 'connecting';
-            this.eventSource = new EventSource('/v1/jobs/events?version=2');
-            this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => {
+            clearTimeout(this._streamRetryTimer);
+            this._streamRetryTimer = null;
+            if (this.connectionStatus !== 'reconnecting') this.connectionStatus = 'connecting';
+            const source = new EventSource(canonicalStreamURL(this.lastSequence, '', this._holdsCursor));
+            this.eventSource = source;
+            const current = handler => event => { if (this.eventSource === source) handler(event); };
+            source.addEventListener('open', current(() => { this.connectionStatus = 'connected'; }));
+            source.addEventListener('error', current(() => {
                 this.connectionStatus = 'reconnecting';
                 this.streamCaughtUp = false;
-            });
-            this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
-            this.eventSource.addEventListener('job-progress', event => this.handleProgressFrame(event));
+                if (source.readyState !== EVENT_SOURCE_CLOSED) return;
+                // The browser will not try again; the page does, resuming from
+                // its cursor.
+                source.close();
+                this.eventSource = null;
+                this._streamRetryDelay = nextStreamRetryDelay(this._streamRetryDelay);
+                this._streamRetryTimer = setTimeout(() => this.connect(), this._streamRetryDelay);
+            }));
+            source.addEventListener('job-caught-up', current(event => this.markStreamCaughtUp(event)));
+            source.addEventListener('job-progress', current(event => this.handleProgressFrame(event)));
             for (const eventName of ['message', 'job']) {
-                this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
+                source.addEventListener(eventName, current(event => this.handleStreamMessage(event)));
             }
         },
 
@@ -619,7 +717,44 @@ export function jobCenter(options = {}) {
             if (sequence === null) return;
             if (reloadAfterStreamReset(boundary, this.eventSource)) return;
             this.lastSequence = Math.max(this.lastSequence, sequence);
+            this._holdsCursor = true;
             this.streamCaughtUp = true;
+            this._streamRetryDelay = 0;
+            // The page read its Job while the stream was connecting at the
+            // head, so a change made between the two is in neither: it is read
+            // again once, now, or once the page's own read has finished.
+            if (this._reconcileOnCatchUp) {
+                this._reconcileOnCatchUp = false;
+                if (this.loading || !this.detail) this._reconcileAfterLoad = true;
+                else this.reconcileDetail();
+            }
+        },
+
+        // Reads this page's Job again and applies it through the snapshot
+        // guard. The obligation outlives a failed read: it is tried again after
+        // a delay that doubles up to a minute, and a read begun before a
+        // preference change is read again rather than applied.
+        reconcileDetail({ announce = false } = {}) {
+            if (!this.detailId || this._destroyed) return;
+            clearTimeout(this._reconcileTimer);
+            this._reconcileTimer = null;
+            const epoch = this._preferenceEpoch;
+            this.fetchJSON(`/v1/jobs/${encodeURIComponent(this.detailId)}`)
+                .then(payload => {
+                    if (this._destroyed) return;
+                    this._reconcileDelay = 0;
+                    if (epoch !== this._preferenceEpoch) {
+                        this.reconcileDetail({ announce });
+                        return;
+                    }
+                    const snapshot = payload.job || payload;
+                    if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announce);
+                })
+                .catch(() => {
+                    if (this._destroyed) return;
+                    this._reconcileDelay = Math.min(Math.max(this._reconcileDelay * 2, 2000), 60000);
+                    this._reconcileTimer = setTimeout(() => this.reconcileDetail({ announce }), this._reconcileDelay);
+                });
         },
 
         handleStreamMessage(event) {
@@ -635,13 +770,31 @@ export function jobCenter(options = {}) {
                 return;
             }
             if (result.needsSnapshot) {
-                if (!this.jobs.some(job => job.id === result.jobId)) return;
+                if (!this.jobs.some(job => job.id === result.jobId)) {
+                    // This page's Job, while its own read has not landed: that
+                    // read may predate the change, so it is read again after.
+                    if (String(result.jobId) === String(this.detailId)) this._reconcileAfterLoad = true;
+                    return;
+                }
+                const epoch = this._preferenceEpoch;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
                         const snapshot = payload.job || payload;
-                        if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announceSnapshot);
+                        if (!this.jobs.some(job => job.id === snapshot.id)) return;
+                        // A preference changed during the read (a pin, or
+                        // Forget taking Retry away): none of this answer is
+                        // applied, and a fresh read carries the Job's change,
+                        // said as this one would have been.
+                        if (epoch !== this._preferenceEpoch && String(snapshot.id) === String(this.detailId)) {
+                            this.reconcileDetail({ announce: announceSnapshot });
+                            return;
+                        }
+                        this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
-                    .catch(() => {});
+                    // A read that failed repairs nothing: this page's Job is
+                    // read again until it answers, and the change it carries
+                    // is still said.
+                    .catch(() => { if (String(result.jobId) === String(this.detailId)) this.reconcileDetail({ announce: announceSnapshot }); });
                 return;
             }
             this.jobs = result.jobs;
@@ -655,6 +808,10 @@ export function jobCenter(options = {}) {
 
         applyStreamSnapshot(job, previousResult = null, announce = false) {
             if (!job?.id) return;
+            // A snapshot older than the one the page shows (a read answered
+            // after a live update) replaces nothing.
+            const shown = this.detail?.id === job.id ? this.detail : this.details[job.id];
+            if (Number(job.version || 0) < Number(shown?.version || 0)) return;
             const result = previousResult || reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
             const held = new Map(this.jobs.map(current => [current.id, current]));
             if (result.changed) this.jobs = result.jobs.map(next => mergeFetchedProgress(next, held.get(next.id)));

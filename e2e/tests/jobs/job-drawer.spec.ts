@@ -122,13 +122,18 @@ function mentions(said: Announcement[], name: string) {
 }
 
 // The panel's own word on whether the stream is live: after its catch-up, a
-// lifecycle event is news; before it, replay.
+// lifecycle event is news; before it, replay. Live also means the read the
+// catch-up schedules has run and nothing else is due: a job submitted while
+// that read is pending is read in whatever state it has reached then, so a
+// test about a job whose first sight is its outcome would sometimes see it
+// running instead.
 async function waitUntilLive(page: import('@playwright/test').Page) {
   await expect.poll(() => page.evaluate(() => {
     const root = document.querySelector('[data-testid="job-panel-root"]');
     const panel = root && (window as any).Alpine?.$data(root);
-    return !!panel?.streamCaughtUp && panel.connectionStatus === 'connected';
-  }), { timeout: 15_000 }).toBe(true);
+    return !!panel?.streamCaughtUp && panel.connectionStatus === 'connected' && panel.loaded &&
+      !panel._panelRefreshPromise && !panel._panelRefreshTimer && !panel._panelRefreshMaxTimer;
+  }), { timeout: 30_000 }).toBe(true);
 }
 
 async function submitDownload(
@@ -587,11 +592,15 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
 
       // Chromium's offline emulation leaves a stream that is already open
       // alone, so the drop is made the way the browser reports one: the stream
-      // closes and fires error. The panel's own connect() then opens a new
-      // stream, and everything published meanwhile arrives as replay before its
-      // catch-up. That is the boundary under test; the browser's own automatic
+      // closes and fires error. A proxy refusing the stream meanwhile keeps the
+      // panel's own reopening failing until the missed job is published; once
+      // it lets go, the panel reopens the stream from its cursor, and
+      // everything published meanwhile arrives as replay before its catch-up.
+      // That is the boundary under test; the browser's own automatic
       // reconnect, resuming from Last-Event-ID, is not exercised here: it
       // replays less, but everything it replays also comes before catch-up.
+      const streams = /\/v1\/jobs\/events\?/;
+      await page.route(streams, route => route.fulfill({ status: 503, body: 'unavailable' }));
       await page.evaluate(() => {
         const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
         panel.eventSource.close();
@@ -603,9 +612,8 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
       await page.evaluate(() => {
         const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
         if (panel.streamCaughtUp) throw new Error('the dropped stream still reads as live');
-        panel.eventSource = null;
-        panel.connect();
       });
+      await page.unroute(streams);
       await waitUntilLive(page);
       await recordFirstSights(page);
       // The catch-up refresh has read the missed job before the next one is submitted.

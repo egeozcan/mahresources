@@ -574,7 +574,7 @@ func listRowsStatement(t *testing.T, svc *Service, deps Deps, access Access, fil
 	if !desc {
 		position = func(q *gorm.DB) *gorm.DB { return continueBefore(q, cursor) }
 	}
-	query, _, union, err := svc.listRowsQuery(deps, access, filter, 0, false, desc, position)
+	query, _, union, err := svc.listRowsQuery(deps, access, filter, cursor.Order, 0, false, desc, position)
 	if err != nil {
 		t.Fatalf("listRowsQuery: %v", err)
 	}
@@ -1693,7 +1693,7 @@ func TestVisibilityHidesAJobFromEveryOtherReadPath(t *testing.T) {
 	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
 		t.Fatalf("publish events: %v", err)
 	}
-	events, err := svc.PublishedEvents(deps, ordinary, 0, 0)
+	events, err := svc.PublishedEvents(deps, ordinary, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	}
@@ -1922,7 +1922,7 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 
 	// Nothing has been published yet: acceptance records the event, the
 	// publisher assigns its delivery sequence afterwards.
-	events, err := svc.PublishedEvents(deps, admin, 0, 0)
+	events, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	}
@@ -1933,7 +1933,7 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	events, err = svc.PublishedEvents(deps, admin, 0, 0)
+	events, err = svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	}
@@ -1962,7 +1962,7 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 	}
 
 	cursor := *events[0].DeliverySequence
-	tail, err := svc.PublishedEvents(deps, admin, cursor, 0)
+	tail, err := svc.PublishedEvents(deps, admin, EventFilter{}, cursor, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents from a cursor: %v", err)
 	}
@@ -1977,7 +1977,7 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 	}
 
 	// A viewer who may not see the Jobs is told nothing at all.
-	hidden, err := svc.PublishedEvents(deps, Access{UserID: 9}, 0, 0)
+	hidden, err := svc.PublishedEvents(deps, Access{UserID: 9}, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents for a foreign viewer: %v", err)
 	}
@@ -1985,10 +1985,10 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 		t.Fatalf("a foreign viewer received %d events", len(hidden))
 	}
 
-	if _, err := svc.PublishedEvents(deps, admin, 0, MaxEventPageSize+1); !errors.Is(err, ErrInvalidPage) {
+	if _, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, MaxEventPageSize+1); !errors.Is(err, ErrInvalidPage) {
 		t.Fatalf("an oversized catch-up = %v, want ErrInvalidPage", err)
 	}
-	bounded, err := svc.PublishedEvents(deps, admin, 0, 1)
+	bounded, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 1)
 	if err != nil {
 		t.Fatalf("bounded PublishedEvents: %v", err)
 	}
@@ -2508,7 +2508,7 @@ func TestPublishedEventHeadIsTheHighestCursorTheAskerCouldHold(t *testing.T) {
 	owner := Access{UserID: 7}
 	stranger := Access{UserID: 9}
 
-	if head, err := svc.PublishedEventHead(deps, admin); err != nil || head != 0 {
+	if head, err := svc.PublishedEventHead(deps, admin, EventFilter{}); err != nil || head != 0 {
 		t.Fatalf("head of an empty stream = %d, %v; want 0", head, err)
 	}
 	owned := accept(7)
@@ -2531,13 +2531,64 @@ func TestPublishedEventHeadIsTheHighestCursorTheAskerCouldHold(t *testing.T) {
 		{"an administrator", admin, ownedDelivery + 1},
 		{"an account with no Jobs", stranger, 0},
 	} {
-		head, err := svc.PublishedEventHead(deps, tt.access)
+		head, err := svc.PublishedEventHead(deps, tt.access, EventFilter{})
 		if err != nil {
 			t.Fatalf("%s: %v", tt.name, err)
 		}
 		if head != tt.want {
 			t.Errorf("%s: head = %d, want %d", tt.name, head, tt.want)
 		}
+	}
+}
+
+// TestStreamOwnerFilterNarrowsAnAdministratorsReads pins the stream's owner
+// filter: an administrator who asks for their own Jobs gets their events and
+// their head, not every account's, and the filter never widens what an
+// ordinary account sees.
+func TestStreamOwnerFilterNarrowsAnAdministratorsReads(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	accept := func(owner uint) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(owner), Title: "download", Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	mine := accept(1)
+	accept(8)
+	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	admin := Access{UserID: 1, Administrator: true}
+	own := EventFilter{OwnedByViewer: true}
+
+	events, err := svc.PublishedEvents(deps, admin, own, 0, 0)
+	if err != nil {
+		t.Fatalf("PublishedEvents: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("the administrator's own Job delivered nothing")
+	}
+	for _, event := range events {
+		if event.JobID != mine.ID {
+			t.Fatalf("an owner-filtered stream delivered %s's event", event.JobID)
+		}
+	}
+	all, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0)
+	if err != nil || len(all) <= len(events) {
+		t.Fatalf("unfiltered stream = %d events, %v; want more than the %d owned ones", len(all), err, len(events))
+	}
+
+	head, err := svc.PublishedEventHead(deps, admin, own)
+	if err != nil {
+		t.Fatalf("PublishedEventHead: %v", err)
+	}
+	if want := *events[len(events)-1].DeliverySequence; head != want {
+		t.Fatalf("owner-filtered head = %d, want %d", head, want)
+	}
+
+	if others, err := svc.PublishedEvents(deps, Access{UserID: 9}, own, 0, 0); err != nil || len(others) != 0 {
+		t.Fatalf("an account with no Jobs got %d events, %v", len(others), err)
 	}
 }
 
@@ -2574,7 +2625,7 @@ func TestEventSequenceHeadNeverFallsWhenEventsAreDeleted(t *testing.T) {
 	if head, err := svc.EventSequenceHead(deps); err != nil || head != 2 {
 		t.Fatalf("head after the events were deleted = %d, %v; want it to stay 2", head, err)
 	}
-	if visible, err := svc.PublishedEventHead(deps, Access{UserID: 1, Administrator: true}); err != nil || visible != 0 {
+	if visible, err := svc.PublishedEventHead(deps, Access{UserID: 1, Administrator: true}, EventFilter{}); err != nil || visible != 0 {
 		t.Fatalf("visible head after the events were deleted = %d, %v; want 0", visible, err)
 	}
 }

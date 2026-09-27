@@ -3094,8 +3094,14 @@
   .decoration-amber-300 {
     text-decoration-color: var(--color-amber-300);
   }
+  .decoration-amber-400 {
+    text-decoration-color: var(--color-amber-400);
+  }
   .decoration-indigo-300 {
     text-decoration-color: var(--color-indigo-300);
+  }
+  .decoration-red-300 {
+    text-decoration-color: var(--color-red-300);
   }
   .decoration-red-400 {
     text-decoration-color: var(--color-red-400);
@@ -3920,6 +3926,13 @@
     &:hover {
       @media (hover: hover) {
         text-decoration-color: var(--color-amber-900);
+      }
+    }
+  }
+  .hover\:decoration-red-800 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-red-800);
       }
     }
   }

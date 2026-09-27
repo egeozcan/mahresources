@@ -3,7 +3,14 @@
 {% block body %}
 <div x-data="jobCenter()" data-testid="job-detail" class="mx-auto max-w-5xl space-y-5">
     <p x-show="loading" x-cloak role="status" class="py-6 text-sm text-stone-600">Loading job…</p>
-    <p x-show="error" x-cloak role="alert" class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800" x-text="error"></p>
+    {# A failed read offers a way on: read again, or go back to the list. #}
+    <div x-show="error" x-cloak class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800" data-job-detail-error>
+        <p role="alert" x-text="error"></p>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            <button type="button" @click="load()" class="inline-flex min-h-6 items-center rounded font-medium text-red-900 underline decoration-red-300 underline-offset-2 hover:decoration-red-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Try again</button>
+            <a href="/jobs?dismissed=false" class="inline-flex min-h-6 items-center rounded font-medium text-red-900 underline decoration-red-300 underline-offset-2 hover:decoration-red-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">All jobs</a>
+        </div>
+    </div>
     <template x-if="detail && !loading">
         <div class="space-y-6">
             <header class="flex flex-wrap items-start justify-between gap-3 border-b border-stone-300 pb-4">
