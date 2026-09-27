@@ -428,7 +428,10 @@ includes them.
 A succeeded download publishes the Resource it created as its `resource` entity
 output. Plugin actions that return a local Resource, Note, or Group redirect
 publish an entity output too, and a succeeded import apply publishes the first
-group it created, a root of the import, as its `group` entity output. An entity output is offered, and opened, only
+group it created, a root of the import, as its `group` entity output. A
+succeeded import parse publishes a `review` entity output that opens
+`/admin/import?job={handle}` and is offered while the import's plan or its
+apply's report is on disk. An entity output is offered, and opened, only
 while the viewer can see the entity it names: once the entity is deleted or
 leaves the viewer's scope, the Job no longer lists it and its link disappears
 from every surface. The Jobs panel, the Job Center list, and the Job
