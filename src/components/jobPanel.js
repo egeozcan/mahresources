@@ -70,6 +70,14 @@ export function panelFinishedLimit(doc = globalThis.document) {
     return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_FINISHED_LIMIT) : DEFAULT_FINISHED_LIMIT;
 }
 
+// When the server began rendering this page, as epoch milliseconds, or null
+// when the page does not say.
+export function panelRenderedAt(doc = globalThis.document) {
+    const raw = doc?.querySelector?.('meta[name="x-jobs-panel-rendered-at"]')?.getAttribute('content');
+    const parsed = raw ? Date.parse(raw) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 // The owner line an administrator's drawer shows on somebody else's Job. The
 // viewer's own Jobs, and work that never had an owner, show none; a viewer who is
 // not an administrator (no viewer id) sees only their own Jobs and is told
@@ -220,11 +228,9 @@ export function jobPanel() {
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
-        // Downloads by what this page has seen of them, for the resource lists:
-        // 'open' (seen before it succeeded), 'live' (named by a live lifecycle
-        // message), 'withheld' (first read already succeeded, with no live word of
-        // it yet) or 'done' (its success was handled). See trackResourceCompletion.
-        _resourceDownloads: new Map(),
+        _resourceRefreshNotified: new Set(),
+        // When the server began rendering this page; see trackResourceCompletion.
+        _renderedAt: null,
         busy: false,
         finishedLimit: DEFAULT_FINISHED_LIMIT,
         finishedHasMore: false,
@@ -274,6 +280,7 @@ export function jobPanel() {
 
         init() {
             this.finishedLimit = panelFinishedLimit();
+            this._renderedAt = panelRenderedAt();
             // Set on an administrator's drawer only: whose Job a row is matters
             // when the drawer lists every account's.
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
@@ -1019,7 +1026,6 @@ export function jobPanel() {
                 ? this.hearJob({ ...this.jobs.find(job => job.id === incoming.id), ...incoming }, { live: !message.replay })
                 : this.hearLiveEvent(message);
             const saidAbout = incoming?.id || message.jobId || message.jobID;
-            if (!message.replay && (incoming || panelLifecycleEvents.has(message.type))) this.noteLiveJob(saidAbout);
             if (result.changed && !result.needsSnapshot) {
                 const jobId = result.jobId || incoming?.id || '';
                 this.jobs = this.bounded(result.jobs);
@@ -1029,51 +1035,28 @@ export function jobPanel() {
             if (said) this.announceNews([this.newsEntry(saidAbout, said)]);
         },
 
-        // The resource lists refresh for a download this page saw finish: one it
-        // saw before it succeeded, or one a live lifecycle message names. A read
-        // can find a download already succeeded before the stream has said
-        // anything about it (its whole life fits inside one publish tick), so that
-        // first sight is withheld until a live message releases it. A download
-        // that finished before the page connected never gets one: its resource is
-        // already rendered, and refreshing for it would morph the lists under
-        // whatever the reader has open in them, on every page load while it is
-        // still in the drawer.
+        // The resource lists refresh for a download that succeeded after the server
+        // began rendering this page: the page cannot hold its resource. One that
+        // succeeded before the render is already in the page, and refreshing for
+        // it would morph the lists under whatever the reader has open in them
+        // every time the drawer first read it (and it stays in the drawer's
+        // Finished group, so that is every page load). The two times are both the
+        // server's, so the rule holds whenever and however the drawer first sees
+        // the download: a read before or after the stream's catch-up, after a
+        // reconnect, or in a command's answer. A page that does not say when it
+        // was rendered refreshes for nothing, since it cannot tell.
         trackResourceCompletion(job) {
-            if (!job?.id || (job.kind !== 'remote-download' && job.kind !== 'deferred-download')) return;
-            const seen = this._resourceDownloads.get(job.id);
-            if (seen === 'done' || seen === 'withheld') return;
-            if (job.state !== 'succeeded') {
-                if (!seen) this.noteResourceDownload(job.id, 'open');
-                return;
+            if (!job?.id || job.state !== 'succeeded' ||
+                (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||
+                this._resourceRefreshNotified.has(job.id)) return;
+            this._resourceRefreshNotified.add(job.id);
+            if (this._resourceRefreshNotified.size > 256) {
+                this._resourceRefreshNotified.delete(this._resourceRefreshNotified.values().next().value);
             }
-            if (!seen) {
-                this.noteResourceDownload(job.id, 'withheld');
-                return;
-            }
-            this.refreshResourceLists(job.id);
-        },
-
-        // A live lifecycle message is about a Job whose state changed after this
-        // page connected; a replayed one may be about anything the stream carried.
-        noteLiveJob(jobId) {
-            if (!jobId) return;
-            const seen = this._resourceDownloads.get(jobId);
-            if (seen === 'withheld') this.refreshResourceLists(jobId);
-            else if (!seen) this.noteResourceDownload(jobId, 'live');
-        },
-
-        refreshResourceLists(jobId) {
-            this.noteResourceDownload(jobId, 'done');
+            const finishedAt = Date.parse(job.finishedAt || '');
+            if (this._renderedAt === null || !Number.isFinite(finishedAt) || finishedAt < this._renderedAt) return;
             if (globalThis.window?.dispatchEvent && globalThis.CustomEvent) {
-                globalThis.window.dispatchEvent(new CustomEvent('download-completed', { detail: { jobId } }));
-            }
-        },
-
-        noteResourceDownload(jobId, mark) {
-            this._resourceDownloads.delete(jobId);
-            this._resourceDownloads.set(jobId, mark);
-            if (this._resourceDownloads.size > 256) {
-                this._resourceDownloads.delete(this._resourceDownloads.keys().next().value);
+                globalThis.window.dispatchEvent(new CustomEvent('download-completed', { detail: { jobId: job.id } }));
             }
         },
 

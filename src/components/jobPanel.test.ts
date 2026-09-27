@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
+import { jobPanel, panelCounts, panelRenderedAt, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -161,11 +161,12 @@ describe('Job Center panel', () => {
             constructor(type: string, init: { detail: unknown }) { this.type = type; this.detail = init.detail; }
         });
         const panel = jobPanel();
-        panel.streamCaughtUp = true;
+        panel._renderedAt = Date.parse('2026-09-26T10:00:00Z');
+        const finishedAt = '2026-09-26T10:00:05Z';
         panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'running' });
-        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
-        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
-        panel.trackResourceCompletion({ id: 'export-1', kind: 'group-export', state: 'succeeded' });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded', finishedAt });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded', finishedAt });
+        panel.trackResourceCompletion({ id: 'export-1', kind: 'group-export', state: 'succeeded', finishedAt });
         expect(dispatchEvent).toHaveBeenCalledOnce();
         expect(dispatchEvent.mock.calls[0][0]).toMatchObject({ type: 'download-completed', detail: { jobId: 'download-1' } });
     });
@@ -706,74 +707,59 @@ describe('Job Center panel accessibility hooks', () => {
         return () => dispatchEvent.mock.calls.map(call => call[0].detail);
     }
 
-    test('a download that finished before the page connected refreshes no list, however late the read', async () => {
+    test('a download that succeeded before the page was rendered refreshes no list, however the drawer first sees it', async () => {
         const completions = recordDownloadCompletions();
-        const done = { id: 'dl-old', title: 'old.bin', kind: 'remote-download', state: 'succeeded', version: 4, acceptedAt: '2026-09-26T10:00:00Z' };
+        const done = { id: 'dl-old', title: 'old.bin', kind: 'remote-download', state: 'succeeded', version: 4, acceptedAt: '2026-09-26T09:59:00Z', finishedAt: '2026-09-26T09:59:59.999Z' };
         const panel = refreshingPanel([done]);
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
+        panel._renderedAt = Date.parse('2026-09-26T10:00:00Z');
+        vi.stubGlobal('setTimeout', vi.fn());
 
+        // Read after the catch-up, as a slow first read is, and again after a
+        // live event about it, which a success published on the next tick is.
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
         await panel.refresh();
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'dl-old', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 21 }),
+            lastEventId: 'v2:21',
+        });
         await panel.refresh();
 
         expect(panel.jobs.map(job => job.id)).toEqual(['dl-old']);
         expect(completions()).toEqual([]);
     });
 
-    test('a download a live lifecycle event names refreshes the lists when a read finds it succeeded', async () => {
+    test('a download that succeeded after the page was rendered refreshes the lists once, from a read alone', async () => {
         const completions = recordDownloadCompletions();
-        const done = { id: 'dl-new', title: 'new.bin', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        // Started and finished while the stream was down: nothing live said so.
+        const done = { id: 'dl-new', title: 'new.bin', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z', finishedAt: '2026-09-26T10:00:00.000Z' };
         const panel = refreshingPanel([done]);
-        vi.stubGlobal('setTimeout', vi.fn());
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
+        panel._renderedAt = Date.parse('2026-09-26T10:00:00Z');
 
-        // Its whole life fit between two reads: the stream named it, and the read
-        // that followed found it already succeeded.
-        await panel.handleStreamMessage({
-            data: JSON.stringify({ jobId: 'dl-new', jobVersion: 3, type: 'succeeded', sequence: 3, deliverySequence: 21 }),
-            lastEventId: 'v2:21',
-        });
         await panel.refresh();
         await panel.refresh();
 
         expect(completions()).toEqual([{ jobId: 'dl-new' }]);
     });
 
-    test('a read that finds a download succeeded before its live events waits for them to refresh the lists', async () => {
+    test('a page that does not say when it was rendered refreshes for no download', async () => {
         const completions = recordDownloadCompletions();
-        const done = { id: 'dl-quick', title: 'quick.bin', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
-        const panel = refreshingPanel([done]);
-        vi.stubGlobal('setTimeout', vi.fn());
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
-
-        // The catch-up's own read runs after the download's whole life and before
-        // the publish tick that delivers its events.
-        await panel.refresh();
+        const panel = jobPanel();
+        expect(panel._renderedAt).toBeNull();
+        panel.trackResourceCompletion({ id: 'dl-1', kind: 'remote-download', state: 'succeeded', finishedAt: '2026-09-26T10:00:05Z' });
+        panel._renderedAt = Date.parse('2026-09-26T10:00:00Z');
+        panel.trackResourceCompletion({ id: 'dl-2', kind: 'deferred-download', state: 'succeeded' });
         expect(completions()).toEqual([]);
-
-        for (const [type, version, delivery] of [['accepted', 1, 21], ['started', 2, 22], ['succeeded', 3, 23]] as const) {
-            await panel.handleStreamMessage({
-                data: JSON.stringify({ jobId: 'dl-quick', jobVersion: version, type, sequence: version, deliverySequence: delivery }),
-                lastEventId: `v2:${delivery}`,
-            });
-        }
-        await panel.refresh();
-
-        expect(completions()).toEqual([{ jobId: 'dl-quick' }]);
     });
 
-    test('a replayed event does not make an old download news for the lists', async () => {
-        const completions = recordDownloadCompletions();
-        const done = { id: 'dl-replayed', title: 'replayed.bin', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
-        const panel = refreshingPanel([done]);
-
-        await panel.handleStreamMessage({
-            data: JSON.stringify({ jobId: 'dl-replayed', jobVersion: 3, type: 'succeeded', sequence: 3, deliverySequence: 5 }),
-            lastEventId: 'v2:5',
+    test('reads the render time the page publishes', () => {
+        const page = (content: string | null) => ({
+            querySelector: (selector: string) => selector === 'meta[name="x-jobs-panel-rendered-at"]' && content !== null
+                ? { getAttribute: () => content } : null,
         });
-        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:5' }) });
-        await panel.refresh();
-
-        expect(completions()).toEqual([]);
+        expect(panelRenderedAt(page('2026-09-26T10:00:00.123Z') as any)).toBe(Date.parse('2026-09-26T10:00:00.123Z'));
+        expect(panelRenderedAt(page('') as any)).toBeNull();
+        expect(panelRenderedAt(page('not a time') as any)).toBeNull();
+        expect(panelRenderedAt(page(null) as any)).toBeNull();
     });
 
     test('a stream reset stops the drawer instead of reloading the page it sits on', async () => {
