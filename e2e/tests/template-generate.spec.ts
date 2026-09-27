@@ -80,6 +80,7 @@ test.describe('Template section generation', () => {
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>[property path="Name"]</h1>');
     await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
     await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('applied');
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
   test('an invalid slot draft stays out of the editor until "Use anyway"', async ({ page }) => {
