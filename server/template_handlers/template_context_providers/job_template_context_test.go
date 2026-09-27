@@ -469,8 +469,8 @@ func TestJobFilterFormKeepsWhatTheURLAsked(t *testing.T) {
 		"acceptedAfter":  {time.Date(2026, 9, 1, 14, 0, 0, 0, time.Local).UTC().Format(time.RFC3339)},
 		"acceptedBefore": {"2026-09-02"},
 	})
-	if form.OriginText != "api, plugin, schedule" {
-		t.Errorf("origins = %q", form.OriginText)
+	if !slices.Equal(form.Origins, []string{"api", "plugin", "schedule"}) {
+		t.Errorf("origins = %q", form.Origins)
 	}
 	if form.AcceptedAfter != "2026-09-01T14:00" {
 		t.Errorf("after = %q, want the instant's local minute", form.AcceptedAfter)
@@ -525,6 +525,23 @@ func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
 	form := jobFilterForm(url.Values{"inboundRelationship": {"repeat-of"}, "noInboundRelationship": {"retry-of"}})
 	if form.InboundRelationship != "repeat-of" || form.NoInboundRelationship != "retry-of" {
 		t.Fatalf("form = %+v", form)
+	}
+}
+
+// TestJobOriginOptionsOfferTheHostsOriginsAndKeepAnyTheURLNames pins the Origin
+// checkboxes: every origin the host records is offered by name, so a reader
+// picks one rather than guessing an exact spelling, and an origin a client chose
+// itself stays offered when the URL names it, or resubmitting would drop it.
+func TestJobOriginOptionsOfferTheHostsOriginsAndKeepAnyTheURLNames(t *testing.T) {
+	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?origin=my-script&origin=api&dismissed=false")
+	options, _ := ctx["jobOriginOptions"].([]string)
+	for _, origin := range []string{"api", "cli", "plugin", "schedule", "admin", "my-script"} {
+		if !slices.Contains(options, origin) {
+			t.Errorf("origin options = %v, missing %q", options, origin)
+		}
+	}
+	if slices.Index(options, "my-script") < slices.Index(options, "admin") {
+		t.Errorf("origin options = %v: an origin only the URL names belongs after the host's own", options)
 	}
 }
 

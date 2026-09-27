@@ -87,7 +87,10 @@ test.describe('Job Center', () => {
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'blocked' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'queued' })).not.toBeChecked();
-    await expect(form.getByRole('searchbox', { name: 'Origin' })).toHaveValue('api, plugin');
+    const origins = form.getByRole('group', { name: 'Origin' });
+    await expect(origins.getByRole('checkbox', { name: 'api', exact: true })).toBeChecked();
+    await expect(origins.getByRole('checkbox', { name: 'plugin', exact: true })).toBeChecked();
+    await expect(origins.getByRole('checkbox', { name: 'schedule', exact: true })).not.toBeChecked();
     await expect(form.getByLabel('Accepted after')).toHaveValue('2026-09-01T14:30');
     await expect(form.getByLabel('Accepted before')).toHaveValue('2026-09-20T23:59');
     await expect(form.getByRole('combobox', { name: 'Relationship' })).toHaveValue('retry-of');
@@ -102,7 +105,7 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('kind')).toBe('remote-download');
     expect(url.searchParams.get('command')).toBe('retry');
     expect(url.searchParams.get('dismissed')).toBe('any');
-    expect(url.searchParams.get('origin')).toBe('api, plugin');
+    expect(url.searchParams.getAll('origin')).toEqual(['api', 'plugin']);
     // With JavaScript the bounds travel as instants: an untouched one exactly as
     // it arrived, so neither the time of day nor the end of the range moves.
     const [after, before] = await page.evaluate(() => [

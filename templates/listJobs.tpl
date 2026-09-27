@@ -81,7 +81,17 @@
             </select>
             <p id="job-filter-command-help" class="mt-0.5 text-xs text-stone-500">Jobs currently offering this command.</p>
 
-            {% include "/partials/form/textInput.tpl" with name='origin' label='Origin' value=jobFilter.OriginText %}
+            {% if jobOriginOptions %}
+            <fieldset class="mt-2">
+                <legend class="block text-xs font-mono font-medium text-stone-600">Origin</legend>
+                {% for origin in jobOriginOptions %}
+                <label class="flex items-center gap-2 min-h-7 cursor-pointer">
+                    <input type="checkbox" name="origin" value="{{ origin }}"{% if origin in jobFilter.Origins %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
+                    <span class="text-xs font-mono font-medium text-stone-600">{{ origin }}</span>
+                </label>
+                {% endfor %}
+            </fieldset>
+            {% endif %}
             {% if jobOwnerOptions %}
             {# An administrator sees every account's Jobs, so they pick a person rather than type a user number. #}
             <label for="job-filter-owner" class="block text-xs font-mono font-medium text-stone-600 mt-2">Owner</label>

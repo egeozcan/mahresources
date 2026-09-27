@@ -390,7 +390,9 @@ or interrupted), **Active** (scheduled, queued, running, or paused),
 me**. A failed or interrupted Job is both Finished and Needs attention. Each count is how many Jobs the list shows with that link selected,
 under your other filters. Select an active link again to clear it. The **Filter** form narrows
 the list by text, state, Kind, currently available command, origin, owner,
-actor, and acceptance time. Times are in your browser's time zone, and an
+actor, and acceptance time. **Origin** lists where a Job came from: `api` (a
+page or an API request), `cli`, `plugin`, `schedule` and `admin`. Times are in
+your browser's time zone, and an
 **Accepted before** time includes the whole minute it names. **Dismissed** starts
 at **Not dismissed**; choose **Any** to include dismissed Jobs, or **Dismissed**
 to see only those Jobs. The address always names this choice: opening `/jobs`

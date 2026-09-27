@@ -147,12 +147,11 @@ type JobQuickFilter struct {
 
 // JobFilterForm is what the sidebar form shows as currently chosen.
 type JobFilterForm struct {
-	Search     string
-	Command    string
-	Kinds      []string
-	States     []string
-	Origins    []string
-	OriginText string
+	Search  string
+	Command string
+	Kinds   []string
+	States  []string
+	Origins []string
 	// Owner is the administrator's Owner select: "me", an account id, or
 	// "deleted" (jobOwnerChoice). OwnerID is the plain owner id field others see.
 	Owner          string
@@ -202,6 +201,7 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
+		base["jobOriginOptions"] = jobOriginOptions(jobFilterForm(query).Origins)
 
 		filter, err := jobListFilter(query)
 		if err != nil {
@@ -303,10 +303,30 @@ func jobAccountSelectOptions(accounts []application_context.JobAccountOption, cu
 // plus any Kind the URL names that is not among them — a retained Job of a
 // retired Kind — so resubmitting the form does not silently drop it.
 func jobKindOptions(registered, requested []string) []string {
-	options := append([]string(nil), registered...)
-	for _, kind := range requested {
-		if !slices.Contains(options, kind) {
-			options = append(options, kind)
+	return withRequestedTokens(registered, requested)
+}
+
+// jobOrigins are the origins the host records on the Jobs it accepts: a request
+// to the API or a page ("api"), the CLI's commands ("cli"), a plugin ("plugin"),
+// a schedule or a deferred start ("schedule"), and administrative maintenance
+// ("admin"). A client may name its own origin on a command, so the vocabulary is
+// not closed; a successor from the page keeps its ancestor's.
+var jobOrigins = []string{"api", "cli", "plugin", "schedule", "admin"}
+
+// jobOriginOptions is the Origin checkboxes: the host's origins, plus any origin
+// the URL names that is not among them — one a client chose itself — so
+// resubmitting the form does not silently drop it.
+func jobOriginOptions(requested []string) []string {
+	return withRequestedTokens(jobOrigins, requested)
+}
+
+// withRequestedTokens is a checkbox list's values: the known ones, then each
+// value the URL names that is not among them.
+func withRequestedTokens(known, requested []string) []string {
+	options := append([]string(nil), known...)
+	for _, token := range requested {
+		if !slices.Contains(options, token) {
+			options = append(options, token)
 		}
 	}
 	return options
@@ -475,9 +495,6 @@ func jobFilterForm(query url.Values) JobFilterForm {
 	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
-	// Every origin stays in the one field, comma-separated as the parser reads
-	// it; showing only the first would drop the rest on the next submit.
-	form.OriginText = strings.Join(form.Origins, ", ")
 	return form
 }
 
