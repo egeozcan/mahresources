@@ -271,7 +271,7 @@ func TestCommandAdvertisementFollowsTheAdapterAndTheHostOwnedVocabulary(t *testi
 	// honor — while the host's own dismissal, pinning, forgetting and the
 	// adapter's Retry are there.
 	requireCommandKeys(t, "a failed job with sealed input", commands,
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRetry, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, CommandForget, CommandRetry, "inspect")
 
 	forget := onlyCommand(t, commands, CommandForget)
 	if !forget.Destructive || strings.TrimSpace(forget.Confirmation) == "" {
@@ -620,7 +620,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	succeeded := h.acceptReplayable(&owner)
 	h.succeed(succeeded.ID)
 	requireCommandKeys(t, "a successful job", h.advertise(succeeded.ID, viewer),
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, CommandForget, CommandRepeat, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(succeeded.ID, CommandRetry, "idem-succeeded", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("retrying successful work = %v, want ErrCommandNotAdvertised", err)
@@ -637,7 +637,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 		t.Fatalf("forget the input: %v", err)
 	}
 	requireCommandKeys(t, "a job whose input was forgotten", h.advertise(forgotten.ID, viewer),
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(forgotten.ID, CommandRetry, "idem-forgotten", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("retrying forgotten input = %v, want ErrCommandNotAdvertised", err)
@@ -648,7 +648,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	plain := h.acceptPlain(testKind, &owner)
 	h.fail(plain.ID)
 	requireCommandKeys(t, "a job with non-replayable input", h.advertise(plain.ID, viewer),
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, "inspect")
 
 	// A successor exists: the ancestor is no longer the leaf, so a second Retry is
 	// no longer offered — and the chain stays linear by advancing the leaf instead.
@@ -660,7 +660,7 @@ func TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput(t *testing.T) {
 	}
 	leaf := jobLinks(t, h.deps, ancestor.ID, LinkRetryOf, false)[0]
 	requireCommandKeys(t, "a job that already has a successor", h.advertise(ancestor.ID, viewer),
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, CommandForget, "inspect")
 	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(ancestor.ID, CommandRetry, "idem-linear-2", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
 		t.Fatalf("a second retry of a non-leaf = %v, want ErrCommandNotAdvertised", err)
@@ -754,7 +754,7 @@ func TestRepeatBranchesFromSuccessfulWorkWithItsOwnRelation(t *testing.T) {
 	// Branching is what Repeat is for, so the command is still offered after one
 	// repeat has already created a Job.
 	requireCommandKeys(t, "a repeated job", h.advertise(successful.ID, viewer),
-		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandForget, CommandRepeat, "inspect")
+		CommandPin, CommandUnpin, CommandPinLineage, CommandDismiss, CommandUndismiss, CommandForget, CommandRepeat, "inspect")
 	second, err := h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(successful.ID, CommandRepeat, "idem-repeat-2", viewer))
 	if err != nil {
@@ -978,6 +978,93 @@ func TestDismissAndPinChangeOnlyTheViewersOwnRelationship(t *testing.T) {
 	}
 	if _, err := h.svc.Get(h.deps, viewer, finished.ID); err != nil {
 		t.Fatalf("a pinned job was swept: %v", err)
+	}
+}
+
+// TestUndismissReturnsAJobToTheViewersDefaultList: a dismissal is one viewer's
+// preference, so the viewer can take it back, and every reader of the Job tells
+// that viewer whether they dismissed it, as it tells them whether they pinned it.
+func TestUndismissReturnsAJobToTheViewersDefaultList(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	other := Access{UserID: 8, Administrator: true}
+
+	finished := h.acceptReplayable(&owner)
+	h.fail(finished.ID)
+	listed := func(access Access, dismissed bool) []string {
+		t.Helper()
+		return pageIDs(listFor(t, h.svc, h.deps, access, Filter{Dismissed: boolPtr(dismissed)}, Cursor{}, 0))
+	}
+	dismissedIn := func(access Access) (bool, bool) {
+		t.Helper()
+		snapshot, err := h.svc.Get(h.deps, access, finished.ID)
+		if err != nil {
+			t.Fatalf("read the job: %v", err)
+		}
+		page, err := h.svc.List(h.deps, access, Filter{}, Cursor{}, 10)
+		if err != nil {
+			t.Fatalf("list the jobs: %v", err)
+		}
+		inList := false
+		for _, listed := range page.Jobs {
+			if listed.ID == finished.ID {
+				inList = listed.Dismissed
+			}
+		}
+		return snapshot.Dismissed, inList
+	}
+
+	commands, err := h.svc.AdvertisedCommands(context.Background(), h.deps, viewer, finished.ID)
+	if err != nil {
+		t.Fatalf("read the command surface: %v", err)
+	}
+	if !hasCommand(commands, CommandDismiss) || !hasCommand(commands, CommandUndismiss) {
+		t.Fatalf("finished command surface = %#v, want Dismiss and Undismiss, both idempotent", commands)
+	}
+
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(finished.ID, CommandDismiss, "idem-dismiss", viewer))
+	if err != nil {
+		t.Fatalf("dismissing a finished job: %v", err)
+	}
+	requireResult(t, "a dismissal", result, CommandStatusSucceeded, CommandCodeApplied)
+	if !result.Job.Dismissed {
+		t.Fatal("the dismissal's answer does not show the viewer's dismissal")
+	}
+	if got, inList := dismissedIn(viewer); !got || !inList {
+		t.Fatalf("dismissed as read = %v, as listed = %v; want both true", got, inList)
+	}
+	if got, inList := dismissedIn(other); got || inList {
+		t.Fatal("one viewer's dismissal leaked into another viewer's snapshot")
+	}
+	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUndismiss}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("a dismissed job is missing from the Undismiss command filter")
+	}
+
+	result, err = h.svc.ExecuteCommand(context.Background(), h.deps, h.request(finished.ID, CommandUndismiss, "idem-undismiss", viewer))
+	if err != nil {
+		t.Fatalf("undismissing a job: %v", err)
+	}
+	requireResult(t, "an undismissal", result, CommandStatusSucceeded, CommandCodeApplied)
+	if result.Job.Dismissed {
+		t.Fatal("the undismissal's answer still shows the viewer's dismissal")
+	}
+	if !slices.Contains(listed(viewer, false), finished.ID) || slices.Contains(listed(viewer, true), finished.ID) {
+		t.Fatal("an undismissed job did not return to its viewer's default list")
+	}
+	if got, inList := dismissedIn(viewer); got || inList {
+		t.Fatal("the viewer's dismissal remained after Undismiss")
+	}
+
+	// Running work cannot be dismissed, so it offers neither.
+	running := h.acceptReplayable(&owner)
+	commands, err = h.svc.AdvertisedCommands(context.Background(), h.deps, viewer, running.ID)
+	if err != nil {
+		t.Fatalf("read a nonterminal job's command surface: %v", err)
+	}
+	if hasCommand(commands, CommandDismiss) || hasCommand(commands, CommandUndismiss) {
+		t.Fatalf("nonterminal command surface = %#v, want neither Dismiss nor Undismiss", commands)
 	}
 }
 
@@ -2114,7 +2201,7 @@ func TestAReadOnlyViewerIsOfferedNoCommand(t *testing.T) {
 
 	writer := Access{UserID: owner}
 	requireCommandKeys(t, "a finished job, to its owner", h.advertise(failed.ID, writer),
-		CommandRetry, "inspect", CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget)
+		CommandRetry, "inspect", CommandDismiss, CommandUndismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget)
 
 	readOnly := Access{UserID: owner, ReadOnly: true}
 	requireCommandKeys(t, "a running job, to a read-only owner", h.advertise(running.ID, readOnly))

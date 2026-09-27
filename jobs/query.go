@@ -314,7 +314,7 @@ func (s *Service) finishPage(deps Deps, access Access, page Page) (Page, error) 
 	if err := s.fillReplayAvailability(deps, page.Jobs); err != nil {
 		return Page{}, err
 	}
-	if err := fillViewerPinState(deps.DB, access, page.Jobs); err != nil {
+	if err := fillViewerPreferences(deps.DB, access, page.Jobs); err != nil {
 		return Page{}, err
 	}
 	return page, nil
@@ -324,12 +324,14 @@ func cursorOf(row models.Job) *Cursor {
 	return &Cursor{AcceptedAt: row.AcceptedAt, ID: row.ID}
 }
 
-// fillViewerPinState projects one viewer's pin preference onto a bounded set of
-// snapshots with one query. Pinning belongs to the viewer, so callers must not
-// infer it from retention state or another user's preference row.
-func fillViewerPinState(db *gorm.DB, access Access, snapshots []Snapshot) error {
+// fillViewerPreferences projects one viewer's own preferences, pinned and
+// dismissed, onto a bounded set of snapshots with one query. Both belong to the
+// viewer, so callers must not infer them from retention state or another user's
+// preference row.
+func fillViewerPreferences(db *gorm.DB, access Access, snapshots []Snapshot) error {
 	for i := range snapshots {
 		snapshots[i].Pinned = false
+		snapshots[i].Dismissed = false
 	}
 	if access.UserID == 0 || len(snapshots) == 0 {
 		return nil
@@ -339,28 +341,31 @@ func fillViewerPinState(db *gorm.DB, access Access, snapshots []Snapshot) error 
 	for _, snapshot := range snapshots {
 		ids = append(ids, snapshot.ID)
 	}
-	var pinnedIDs []string
+	var rows []models.JobPreference
 	if err := db.Model(&models.JobPreference{}).
-		Where("user_id = ? AND pinned_at IS NOT NULL AND job_id IN ?", access.UserID, ids).
-		Pluck("job_id", &pinnedIDs).Error; err != nil {
-		return fmt.Errorf("jobs: read viewer pin state: %w", err)
+		Select("job_id", "pinned_at", "dismissed_at").
+		Where("user_id = ? AND job_id IN ? AND (pinned_at IS NOT NULL OR dismissed_at IS NOT NULL)", access.UserID, ids).
+		Find(&rows).Error; err != nil {
+		return fmt.Errorf("jobs: read viewer preferences: %w", err)
 	}
-	pinned := make(map[string]bool, len(pinnedIDs))
-	for _, id := range pinnedIDs {
-		pinned[id] = true
+	byJob := make(map[string]models.JobPreference, len(rows))
+	for _, row := range rows {
+		byJob[row.JobID] = row
 	}
 	for i := range snapshots {
-		snapshots[i].Pinned = pinned[snapshots[i].ID]
+		row := byJob[snapshots[i].ID]
+		snapshots[i].Pinned = row.PinnedAt != nil
+		snapshots[i].Dismissed = row.DismissedAt != nil
 	}
 	return nil
 }
 
-// viewerSnapshotWithPin projects one stored Job for a viewer and attaches that
-// viewer's pin state. Refusal responses use it so a stale command cannot replace
-// a correct badge with the zero value.
-func viewerSnapshotWithPin(db *gorm.DB, access Access, job models.Job) (Snapshot, error) {
+// viewerSnapshotWithPreferences projects one stored Job for a viewer and
+// attaches that viewer's preferences. Refusal responses use it so a stale
+// command cannot replace a correct badge with the zero value.
+func viewerSnapshotWithPreferences(db *gorm.DB, access Access, job models.Job) (Snapshot, error) {
 	snapshots := []Snapshot{viewerSnapshot(job, access)}
-	if err := fillViewerPinState(db, access, snapshots); err != nil {
+	if err := fillViewerPreferences(db, access, snapshots); err != nil {
 		return Snapshot{}, err
 	}
 	return snapshots[0], nil
@@ -753,7 +758,7 @@ func (s *Service) applyHostOnlyCommandFilter(base *gorm.DB, deps Deps, access Ac
 		return base, false, nil
 	}
 	switch key {
-	case CommandDismiss:
+	case CommandDismiss, CommandUndismiss:
 		if access.UserID == 0 {
 			return base.Where("1 = 0"), true, nil
 		}
@@ -1329,7 +1334,7 @@ func visibleLinks(db *gorm.DB, access Access, condition string, jobID string) ([
 	for _, row := range rows {
 		snapshots = append(snapshots, viewerSnapshot(row, access))
 	}
-	if err := fillViewerPinState(db, access, snapshots); err != nil {
+	if err := fillViewerPreferences(db, access, snapshots); err != nil {
 		return nil, err
 	}
 	for _, snapshot := range snapshots {

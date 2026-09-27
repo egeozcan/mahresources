@@ -359,6 +359,7 @@ func JobCommandFilterOptions() []JobCommandFilterOption {
 		{pluginCommandInspectKey, "Inspect command history"},
 		{pluginCommandImportRetryKey, "Retry import"},
 		{jobs.CommandDismiss, "Dismiss"},
+		{jobs.CommandUndismiss, "Undismiss"},
 		{jobs.CommandPin, "Pin"},
 		{jobs.CommandUnpin, "Unpin"},
 		{jobs.CommandPinLineage, "Pin visible lineage"},
