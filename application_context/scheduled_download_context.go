@@ -662,9 +662,10 @@ func cancelDeferredDownloadRowTx(tx *gorm.DB, job jobs.Snapshot, at time.Time) e
 // line with a Job that was cancelled, or otherwise ended, before anything ran it:
 // a row still pending behind it, and one the sweep marked submitted naming it.
 // Both are recorded as the Job ended, with the submit attempt the sweep counted
-// taken back. A row whose Job started, or has not ended, is left alone. Startup
-// runs it once; it pages by row id, so a large table costs one bounded query per
-// page.
+// taken back. A pending row whose Job retention has deleted is closed as well,
+// with its outcome unknown (deferredRowEnd). A row whose Job started, or has not
+// ended, is left alone. Startup runs it once; it pages by row id, so a large table
+// costs one bounded query per page.
 func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 	if ctx == nil || ctx.db == nil || ctx.JobService() == nil {
 		return 0, nil
@@ -795,8 +796,9 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	// A row whose Job already ended without running, as an earlier release left a
 	// pending row behind a cancelled Job, records that end before anything else is
 	// checked: a refusal found now would record the failure of a deferral that was
-	// never going to run.
-	if state, ended, err := ctx.deferredJobEndedUnrun(row.ID); err != nil {
+	// never going to run. So does a row whose Job retention has deleted, which is
+	// never submitted again.
+	if state, ended, err := ctx.deferredJobEnded(row.ID); err != nil {
 		return false, err
 	} else if ended {
 		return false, ctx.markScheduledDownloadEnded(row.ID, claim, state, now)
@@ -883,7 +885,8 @@ func (ctx *MahresourcesContext) scheduledDownloadPluginAvailable(pluginName stri
 //
 // materialized is false when the row has no durable Job — one written before there
 // was a control plane — and the caller falls back to submitting the payload itself.
-// A row whose Job is named but gone has one: retention deleted it after it ended.
+// A row whose Job is named but gone has one: retention deleted it after it ended,
+// whether or not it ran.
 // A Job that has moved on (already queued by an earlier tick, running, blocked for a
 // person) is left exactly as it is: the row's own claim is what stops a second
 // materialization, and a Job in any other state has already been decided about.
@@ -943,10 +946,13 @@ func movedOnDeferredJob(job jobs.Snapshot) (string, bool, error) {
 	return job.ID, true, nil
 }
 
-// deferredJobEndedUnrun reports the end state of a row's deferred Job when it
-// ended before anything ran it, and an empty state when retention has deleted it
-// (it deletes only ended Jobs). A row with no durable Job has none.
-func (ctx *MahresourcesContext) deferredJobEndedUnrun(rowID uint) (jobs.State, bool, error) {
+// deferredJobEnded reports that a row's deferred Job ended in a way the row must
+// record instead of submitting: with the Job's end state when it ended before
+// anything ran it, and with an empty state when retention has deleted it. Retention
+// deletes only ended Jobs, but it keeps nothing of how they ended, and the dispatch
+// loop can run a Job before the sweep records its row, so a deleted Job may have
+// run. A row with no durable Job has none.
+func (ctx *MahresourcesContext) deferredJobEnded(rowID uint) (jobs.State, bool, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return "", false, nil
@@ -969,33 +975,32 @@ func (ctx *MahresourcesContext) deferredJobEndedUnrun(rowID uint) (jobs.State, b
 }
 
 // deferredJobEndedError reports a deferred Job that ended before anything ran it,
-// or, with no state, one retention has deleted.
+// or, with no state, one retention deleted before the row recorded how it ended.
 type deferredJobEndedError struct {
 	state jobs.State
 }
 
 func (e *deferredJobEndedError) Error() string {
 	if e.state == "" {
-		return "the deferred download's Job ended and was removed from Job history before the row came due"
+		return "the deferred download's Job ended and was removed from Job history before this row recorded its outcome, so whether it ran is not known; the row does not submit it again"
 	}
 	return fmt.Sprintf("the deferred download's Job ended %s before it started", e.state)
 }
 
-// deferredRowEnd is what a row records when its Job ended before the row came due:
-// cancelled when the Job was cancelled, or is gone and so can no longer say how it
-// ended; failed, with the Job's end state, otherwise.
+// deferredRowEnd is what a row records when its Job ended before the row recorded
+// a submission: cancelled when the Job was cancelled before it ran, and failed,
+// with the reason, otherwise. That includes a Job retention has deleted: whether
+// it ran is not known, so the row is refused the way every other row the sweep
+// will not submit is, rather than said to be cancelled or submitted.
 func deferredRowEnd(state jobs.State) (status, lastError string) {
-	switch state {
-	case jobs.StateCancelled:
+	if state == jobs.StateCancelled {
 		return models.ScheduledDownloadStatusCancelled, ""
-	case "":
-		return models.ScheduledDownloadStatusCancelled, (&deferredJobEndedError{}).Error()
 	}
 	return models.ScheduledDownloadStatusFailed, (&deferredJobEndedError{state: state}).Error()
 }
 
 // markScheduledDownloadEnded records, on a row this sweep holds, that its Job
-// ended before the row came due (deferredRowEnd). A reservation counted a submit
+// ended before the row recorded a submission (deferredRowEnd). A reservation counted a submit
 // attempt the row never made, so it is taken back.
 func (ctx *MahresourcesContext) markScheduledDownloadEnded(id uint, claimToken string, state jobs.State, at time.Time) error {
 	status, lastError := deferredRowEnd(state)

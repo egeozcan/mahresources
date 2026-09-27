@@ -505,13 +505,39 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 	}
 }
 
-// An earlier release could cancel a deferred Job and leave its row pending, and
-// a row due further out than the Job's history is kept outlives the Job.
-// Retention removes only ended Jobs, so the row's download was decided under a
-// Job nobody can read any more: the row is recorded cancelled, with that reason,
-// and never submitted from the payload it still stores. Both startup and the
-// due-time sweep reach it, with the sources retired or not.
+// A pending row can outlive its Job. An earlier release could cancel the Job and
+// leave the row pending; and the dispatch loop runs a Job at its time whether or
+// not the row sweep has recorded it, so the Job can also start and end first.
+// Either Job can then be deleted by retention, which keeps nothing of how it
+// ended. The row is closed without submitting its stored payload again, and says
+// that the outcome is not known rather than that the Job was cancelled before it
+// ran. Both startup and the due-time sweep reach it, with the sources retired or
+// not.
 func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
+	endings := map[string]func(*testing.T, *MahresourcesContext, jobs.Snapshot){
+		"cancelled while it waited": func(t *testing.T, ctx *MahresourcesContext, job jobs.Snapshot) {
+			if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+				JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+			}); err != nil {
+				t.Fatalf("cancel the Job alone: %v", err)
+			}
+		},
+		"started and failed": func(t *testing.T, ctx *MahresourcesContext, job jobs.Snapshot) {
+			execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+				Kind: JobKindDeferredDownload, KindVersion: 1, Claimant: "deferred-outlived-test",
+			})
+			if err != nil || !claimed || execution.JobID != job.ID {
+				t.Fatalf("start the Job = %s, %v, %v; want %s", execution.JobID, claimed, err, job.ID)
+			}
+			if _, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+				ExecutionRef:    jobs.ExecutionRef{JobID: job.ID, ExecutionToken: execution.ExecutionToken},
+				ExpectedVersion: execution.Version, Outcome: jobs.StateFailed,
+				Failure: &jobs.Failure{Code: "unreachable", Class: jobs.FailureClassDependency, Message: "the origin did not answer"},
+			}); err != nil {
+				t.Fatalf("fail the started Job: %v", err)
+			}
+		},
+	}
 	settle := map[string]func(*testing.T, *MahresourcesContext){
 		"at startup": func(t *testing.T, ctx *MahresourcesContext) {
 			if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
@@ -522,56 +548,59 @@ func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
 			fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
 		},
 	}
-	for _, retired := range []bool{false, true} {
-		for name, settle := range settle {
-			t.Run(fmt.Sprintf("%s, sources retired %v", name, retired), func(t *testing.T) {
-				ctx := newJobHarnessContext(t, false)
-				key := sharedReplayKey(t)
-				holdJobReplayKey(t, ctx, key)
-				enableDownloadTestPlugin(t, ctx)
-				actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
-				if err != nil {
-					t.Fatalf("create the acting user: %v", err)
-				}
-				row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-					&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/outlived.bin?token=private"}, time.Now().Add(time.Hour))
-				if err != nil {
-					t.Fatalf("create the deferred download: %v", err)
-				}
-				if retired {
-					if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 50, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
-						t.Fatalf("retire the job sources = %+v, %v", result, err)
+	for ending, end := range endings {
+		for _, retired := range []bool{false, true} {
+			for when, settle := range settle {
+				t.Run(fmt.Sprintf("%s, %s, sources retired %v", ending, when, retired), func(t *testing.T) {
+					ctx := newJobHarnessContext(t, false)
+					key := sharedReplayKey(t)
+					holdJobReplayKey(t, ctx, key)
+					enableDownloadTestPlugin(t, ctx)
+					actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+					if err != nil {
+						t.Fatalf("create the acting user: %v", err)
 					}
-				}
-				job := deferredDownloadJob(t, ctx, row.ID)
-				if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
-					JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
-				}); err != nil {
-					t.Fatalf("cancel the Job alone: %v", err)
-				}
-				if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).
-					Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
-					t.Fatalf("expire the cancelled Job: %v", err)
-				}
-				if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
-					t.Fatalf("retention = %+v, %v; want the cancelled Job pruned", sweep, err)
-				}
-				if retired {
-					ctx = restartJobProcess(t, ctx, key)
-					requireCleanBoot(t, ctx)
-				}
+					// Due already, so the dispatch loop could claim its Job.
+					row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+						&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/outlived.bin?token=private"}, time.Now().Add(-time.Second))
+					if err != nil {
+						t.Fatalf("create the deferred download: %v", err)
+					}
+					if retired {
+						if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 50, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+							t.Fatalf("retire the job sources = %+v, %v", result, err)
+						}
+					}
+					job := deferredDownloadJob(t, ctx, row.ID)
+					end(t, ctx, job)
+					if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending {
+						t.Fatalf("setup: the row is %s, want still pending behind its ended Job", got.Status)
+					}
+					if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).
+						Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+						t.Fatalf("expire the ended Job: %v", err)
+					}
+					if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+						t.Fatalf("retention = %+v, %v; want the ended Job pruned", sweep, err)
+					}
+					if retired {
+						ctx = restartJobProcess(t, ctx, key)
+						requireCleanBoot(t, ctx)
+					}
 
-				settle(t, ctx)
-				got := scheduledDownloadRow(t, ctx, row.ID)
-				if got.Status != models.ScheduledDownloadStatusCancelled || got.JobID != "" || got.Attempts != 0 || got.LastError == "" {
-					t.Fatalf("the row is %s naming job %q after %d attempts (%q), want cancelled with its reason, never submitted",
-						got.Status, got.JobID, got.Attempts, got.LastError)
-				}
-				if retired {
-					ctx = restartJobProcess(t, ctx, key)
-					requireCleanBoot(t, ctx)
-				}
-			})
+					settle(t, ctx)
+					got := scheduledDownloadRow(t, ctx, row.ID)
+					if got.Status != models.ScheduledDownloadStatusFailed || got.JobID != "" || got.Attempts != 0 ||
+						!strings.Contains(got.LastError, "not known") || strings.Contains(got.LastError, "before it started") {
+						t.Fatalf("the row is %s naming job %q after %d attempts (%q), want closed with an unknown outcome and never submitted",
+							got.Status, got.JobID, got.Attempts, got.LastError)
+					}
+					if retired {
+						ctx = restartJobProcess(t, ctx, key)
+						requireCleanBoot(t, ctx)
+					}
+				})
+			}
 		}
 	}
 }
