@@ -93,8 +93,8 @@ type JobRow struct {
 	// for that time.
 	ScheduledFor JobRowTime
 	Version      uint64
-	Progress *JobRowProgress
-	Result   jobview.ResultLink
+	Progress     *JobRowProgress
+	Result       jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
