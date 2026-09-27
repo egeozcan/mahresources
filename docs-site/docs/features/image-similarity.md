@@ -20,7 +20,7 @@ Three perceptual hashes are computed from a single decode:
 | **Difference Hash (dHash)** | Secondary. Compares brightness gradients between adjacent pixels |
 | **Average Hash (aHash)** | Secondary. Compares the average brightness of image blocks |
 
-The **pHash** drives similarity matching. For each newly hashed image the database finds candidates that share an indexed pHash chunk, then verifies each candidate with a full-width Hamming distance. The dHash and aHash distances are recorded alongside every stored pair; the aHash distance also feeds a secondary guard (see `-hash-ahash-threshold`) against solid-color false positives.
+The **pHash** drives similarity matching. For each newly hashed image the database finds candidates that share an indexed pHash chunk, then verifies each candidate with a full-width Hamming distance. The dHash and aHash distances are recorded alongside every stored pair; the aHash distance also feeds a secondary guard (see `-hash-ahash-threshold`) against solid-color false positives. The similar-resources list, MRQL `SIMILAR TO` and a Resource Reduction's Near-Identical tier all apply the same threshold and guard. All three hashes are computed from brightness alone, so images that differ only in colour can match.
 
 Before hashing, the image is normalized: EXIF orientation is applied, and any alpha channel is flattened onto white, so a rotated or transparent copy hashes like its upright or white-matted twin.
 

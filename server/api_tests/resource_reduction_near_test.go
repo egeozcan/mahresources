@@ -180,3 +180,32 @@ func TestAPairBeyondTheThresholdIsNotClustered(t *testing.T) {
 
 	assert.Empty(t, plan.Clusters)
 }
+
+// A pair the aHash guard keeps out of the similar-resources list and MRQL
+// SIMILAR TO is not a Near-Identical match for a Reduction either: every read of
+// the pair table asks the same question. A legacy pair with no aHash distance
+// passes, as it does there.
+func TestAPairTheAHashGuardRejectsIsNotClustered(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	a := addImage(t, tc, "guard-a.jpg", 800, 800)
+	b := addImage(t, tc, "guard-b.jpg", 400, 400)
+	c := addImage(t, tc, "guard-c.jpg", 300, 300)
+	seedSimPair(t, tc, a.ID, b.ID, u8(2), u8(40), 2)
+	seedSimPair(t, tc, a.ID, c.ID, u8(3), nil, 3)
+
+	similar, err := tc.AppCtx.GetSimilarResources(a.ID)
+	require.NoError(t, err)
+	ids := make([]uint, 0, len(similar))
+	for _, r := range similar {
+		ids = append(ids, r.ID)
+	}
+	require.Equal(t, []uint{c.ID}, ids, "precondition: the similar list applies the aHash guard")
+
+	red := createReduction(t, tc, "aHash guard", []uint{a.ID, b.ID, c.ID})
+	plan := computeReduction(t, tc, red.ID)
+
+	require.Len(t, plan.Clusters, 1)
+	assert.ElementsMatch(t, []uint{a.ID, c.ID}, memberIDs(plan.Clusters[0]),
+		"the pair the aHash guard rejects must not be proposed")
+}

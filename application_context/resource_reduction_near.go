@@ -9,6 +9,7 @@ import (
 
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/mrql"
 )
 
 // similarPair is one stored perceptual edge as the clustering reads it: the
@@ -253,7 +254,12 @@ func (ctx *MahresourcesContext) similarWithin(resourceID uint, threshold int) ([
 // Postgres-only, like every other lock here: SQLite serializes writers and rejects
 // the clause.
 func (ctx *MahresourcesContext) similarWithinLocking(resourceID uint, threshold int, lock bool) ([]similarPair, error) {
-	distance := "COALESCE(resource_similarities.p_distance, resource_similarities.hamming_distance)"
+	// The pair qualifies by the rule every read of the pair table applies, the
+	// aHash guard included, so a Reduction never proposes a match the similar list
+	// and SIMILAR TO would reject.
+	_, aThreshold := ctx.similarityThresholds()
+	distance := mrql.SimilarPairDistance("resource_similarities")
+	within := mrql.SimilarPairPredicate("resource_similarities", threshold, aThreshold)
 
 	var out []similarPair
 	for _, direction := range []struct{ self, other string }{
@@ -271,7 +277,7 @@ func (ctx *MahresourcesContext) similarWithinLocking(resourceID uint, threshold 
 			Joins("INNER JOIN resources ON resources.id = resource_similarities."+direction.other).
 			Select("resource_similarities."+direction.other+" AS resource_id, "+distance+" AS distance").
 			Where("resource_similarities."+direction.self+" = ?", resourceID).
-			Where(distance+" <= ?", threshold).
+			Where(within).
 			Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("reading similarity pairs for resource %d: %w", resourceID, err)
 		}

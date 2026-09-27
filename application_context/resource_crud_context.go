@@ -59,20 +59,17 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 	// large near-duplicate cluster. ORDER BY + LIMIT apply to the whole compound query in
 	// both SQLite and Postgres.
 	//
-	// The aHash secondary filter only applies when its threshold is nonzero, and it
-	// never excludes legacy pairs (a_distance IS NULL passes) so v1 matches survive.
-	aClause := ""
-	if aThreshold > 0 {
-		aClause = fmt.Sprintf(" AND (a_distance IS NULL OR a_distance <= %d)", aThreshold)
-	}
-	filter := fmt.Sprintf("COALESCE(p_distance, hamming_distance) <= %d%s", pThreshold, aClause)
+	// The same predicate SIMILAR TO and a Reduction's Near-Identical tier apply,
+	// aHash guard included (mrql.SimilarPairPredicate).
+	filter := mrql.SimilarPairPredicate("resource_similarities", pThreshold, aThreshold)
+	distance := mrql.SimilarPairDistance("resource_similarities")
 	query := fmt.Sprintf(`
 		SELECT similar_id, dist FROM (
-		SELECT resource_id2 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id1 = ? AND %s
+		SELECT resource_id2 as similar_id, %s as dist FROM resource_similarities WHERE resource_id1 = ? AND %s
 		UNION ALL
-		SELECT resource_id1 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id2 = ? AND %s
+		SELECT resource_id1 as similar_id, %s as dist FROM resource_similarities WHERE resource_id2 = ? AND %s
 		) matches JOIN resources ON resources.id = matches.similar_id
-		WHERE resources.id <> ?`, filter, filter)
+		WHERE resources.id <> ?`, distance, filter, distance, filter)
 	queryArgs := []interface{}{id, id, id}
 	// Raw SQL bypasses scope callbacks. Filter before LIMIT so inaccessible
 	// neighbors cannot consume the bounded caller's evidence window.
