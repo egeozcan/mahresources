@@ -423,6 +423,7 @@ export function jobCenter(options = {}) {
         lastSequence: 0,
         streamCaughtUp: false,
         now: Date.now(),
+        _loadGeneration: 0,
         _clockTimer: null,
         _liveRegion: null,
 
@@ -458,12 +459,17 @@ export function jobCenter(options = {}) {
             return payload;
         },
 
+        // Each load supersedes the ones before it: a read that answers after a
+        // newer one began, such as one begun before a stream reset, is dropped
+        // rather than put back on the page.
         async load() {
+            const generation = ++this._loadGeneration;
             this.loading = true;
             this.error = '';
             try {
-                await this.loadDetail(this.detailId);
+                await this.loadDetail(this.detailId, generation);
             } catch (error) {
+                if (generation !== this._loadGeneration) return;
                 // A Job that is not there any more, or no longer this viewer's,
                 // leaves nothing of itself on the page.
                 if (error.status === 404) {
@@ -474,23 +480,25 @@ export function jobCenter(options = {}) {
                 }
                 this.error = error.message || 'Could not load this job.';
             } finally {
-                this.loading = false;
+                if (generation === this._loadGeneration) this.loading = false;
             }
         },
 
-        async loadDetail(id) {
+        async loadDetail(id, generation = this._loadGeneration) {
             if (!id) throw new Error('A job ID is required.');
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
+            if (generation !== this._loadGeneration) return this.detail;
             this.detail = payload.job || payload;
             this.timelineError = '';
             this.timeline = [];
             if (this.detail?.id) {
                 try {
                     const timelinePayload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/events?limit=100`);
-                    this.timeline = timelinePayload.events || [];
+                    if (generation === this._loadGeneration) this.timeline = timelinePayload.events || [];
                 } catch (error) {
-                    this.timelineError = error.message || 'Timeline is unavailable.';
+                    if (generation === this._loadGeneration) this.timelineError = error.message || 'Timeline is unavailable.';
                 }
+                if (generation !== this._loadGeneration) return this.detail;
             }
             this.details[id] = this.detail;
             this.jobs = this.detail ? [this.detail] : [];

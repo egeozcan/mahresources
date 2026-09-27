@@ -411,6 +411,30 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center.error).toBe('job not found');
     });
 
+    test('a detail read begun before a reset cannot bring the old Job back', async () => {
+        const center = jobCenter({ detailId: 'gone-job' });
+        let answerOld: (value: unknown) => void = () => {};
+        const oldRead = new Promise(resolve => { answerOld = resolve; });
+        center.fetchJSON = vi.fn()
+            .mockImplementationOnce(() => oldRead)
+            .mockImplementationOnce(async () => {
+                const error: any = new Error('job not found');
+                error.status = 404;
+                throw error;
+            });
+
+        const first = center.load();
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:0', reset: true }) });
+        await vi.waitFor(() => expect(center.error).toBe('job not found'));
+        answerOld({ id: 'gone-job', title: 'Private export', kind: 'group-export', state: 'failed', version: 10 });
+        await first;
+
+        expect(center.detail).toBeNull();
+        expect(center.jobs).toEqual([]);
+        expect(center.error).toBe('job not found');
+        expect(center.loading).toBe(false);
+    });
+
     test('an ordinary boundary never moves the cursor back', () => {
         const center = jobCenter();
         center.load = vi.fn();
