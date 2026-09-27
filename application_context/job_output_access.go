@@ -242,6 +242,12 @@ func (ctx *MahresourcesContext) openStandardJobOutput(output jobs.Output) (contr
 // deleted or that the principal cannot see answers jobs.ErrNotFound; a read that
 // failed answers its own error, because it proves neither.
 func (ctx *MahresourcesContext) resolveJobEntityOutput(reference json.RawMessage) (string, error) {
+	// An import review is the one entity named by a handle rather than an id. The
+	// output was offered (openableJobOutput) only for a parse whose review page has
+	// something to show; the page's own reads authorize the viewer again.
+	if handle, ok := importReviewTarget(reference); ok {
+		return importReviewLocation(handle), nil
+	}
 	page, id, err := jobEntityTarget(reference)
 	if err != nil {
 		return "", err

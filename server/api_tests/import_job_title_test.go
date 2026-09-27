@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 
 	"mahresources/jobs"
@@ -97,6 +98,50 @@ func TestAnImportTitleKeepsOnlyTheUploadedFilesOwnName(t *testing.T) {
 		parse := waitForCanonicalState(t, tc, canonicalID, "the parse to be recorded", func(jobs.Snapshot) bool { return true })
 		if parse.Title != want {
 			t.Errorf("an upload named %q is titled %q, want %q", fileName, parse.Title, want)
+		}
+	}
+}
+
+// The owner of a parsed import reopens its review from the parse's Job, and another
+// user can learn nothing about it: the link, the plan and the handle answer them
+// exactly as a handle that does not exist does.
+func TestTheOwnerReopensAnImportReviewAndAStrangerFindsNothing(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	ownerBearer, _ := plainUserBearer(t, tc, "import-review-owner")
+	strangerBearer, _ := plainUserBearer(t, tc, "import-review-stranger")
+
+	handle, canonicalID := submitImportParseForTest(t, tc, map[string]string{"Authorization": ownerBearer})
+	if parse := waitForCanonicalState(t, tc, canonicalID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	}); parse.State != jobs.StateSucceeded {
+		t.Fatalf("the parse ended %s (%+v)", parse.State, parse.Failure)
+	}
+
+	as := func(bearer string) map[string]string {
+		return map[string]string{"Authorization": bearer, "Accept": "application/json"}
+	}
+	link := doReq(tc, http.MethodGet, "/v1/jobs/"+canonicalID+"/outputs?key=review", as(ownerBearer), nil, nil)
+	if link.Code != http.StatusSeeOther || link.Header().Get("Location") != "/admin/import?job="+handle {
+		t.Fatalf("the owner's review link answered %d to %q, want a redirect to the review",
+			link.Code, link.Header().Get("Location"))
+	}
+	if plan := doReq(tc, http.MethodGet, "/v1/imports/"+handle+"/plan", as(ownerBearer), nil, nil); plan.Code != http.StatusOK {
+		t.Fatalf("the owner could not read the plan the review restores: %d %s", plan.Code, plan.Body.String())
+	}
+
+	for _, probe := range []struct{ path, missing string }{
+		{"/v1/jobs/" + canonicalID + "/outputs?key=review", "/v1/jobs/01a0e1d9-0000-7000-8000-000000000000/outputs?key=review"},
+		{"/v1/imports/" + handle + "/plan", "/v1/imports/imp-does-not-exist/plan"},
+		{"/v1/imports/" + handle + "/result", "/v1/imports/imp-does-not-exist/result"},
+		{"/v1/jobs/get?id=" + handle, "/v1/jobs/get?id=imp-does-not-exist"},
+	} {
+		stranger := doReq(tc, http.MethodGet, probe.path, as(strangerBearer), nil, nil)
+		missing := doReq(tc, http.MethodGet, probe.missing, as(strangerBearer), nil, nil)
+		if stranger.Code != http.StatusNotFound || stranger.Code != missing.Code ||
+			strings.TrimSpace(stranger.Body.String()) != strings.TrimSpace(missing.Body.String()) {
+			t.Errorf("GET %s answered a stranger %d %q, want what a missing one answers: %d %q",
+				probe.path, stranger.Code, stranger.Body.String(), missing.Code, missing.Body.String())
 		}
 	}
 }
