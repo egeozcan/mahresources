@@ -41,11 +41,12 @@ plugin = { name = "` + pluginActionTestPlugin + `", version = "1.0", api_version
            settings = { { name = "api_key", type = "password", label = "API key" } } }
 
 -- Puts the operator's password-typed setting into every surface a handler's text
--- reaches: a log line, a progress report and its error.
+-- reaches: a log line, a progress report, a started job's title and its error.
 function setting_leaking_work(ctx)
     local key = ctx.settings.api_key or ""
     mah.log("error", "calling upstream with " .. key, { key = key })
     mah.job_progress(ctx.job_id, 10, "authenticating with " .. key)
+    mah.start_job("retrying with " .. key, function(job_id) end)
     error("the upstream refused key " .. key)
 end
 
@@ -2307,6 +2308,18 @@ func TestAPluginSecretIsRedactedFromEveryPublishedSurface(t *testing.T) {
 		t.Fatalf("the failure is %s (%+v), want failed naming the refusal with the key redacted", job.State, job.Failure)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, jobID, secret)
+	listed, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+		jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 50)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	titled := false
+	for _, listedJob := range listed.Jobs {
+		titled = titled || listedJob.Title == "retrying with [redacted]"
+	}
+	if !titled {
+		t.Fatal("the job the handler started is not listed with its title redacted")
+	}
 	if strings.Contains(job.Failure.Message, secret) {
 		t.Fatalf("the failure carries the secret: %q", job.Failure.Message)
 	}

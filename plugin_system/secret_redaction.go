@@ -3,6 +3,8 @@ package plugin_system
 import (
 	"sort"
 	"strings"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 // A plugin's password-typed settings are operator secrets: an API key the
@@ -105,4 +107,11 @@ func (e redactedError) Unwrap() error { return e.err }
 // error's redacted text.
 func (pm *PluginManager) pluginCallError(pluginName, prefix string, err error) error {
 	return redactedError{text: prefix + ": " + pm.RedactPluginSecrets(pluginName, err.Error()), err: err}
+}
+
+// redactorFor answers a function that redacts the secrets of the plugin that
+// owns L, for a path that holds a Lua state rather than a plugin's name.
+func (pm *PluginManager) redactorFor(L *lua.LState) func(string) string {
+	name := pm.pluginNameFor(L)
+	return func(text string) string { return pm.RedactPluginSecrets(name, text) }
 }

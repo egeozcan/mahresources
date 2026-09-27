@@ -244,12 +244,13 @@ func egressErrorForPlugin(err error) string {
 // holds if the detail goes SOMEWHERE, otherwise "we tell the operator instead"
 // is a claim with nothing behind it and a real misconfiguration (a host the
 // plugin legitimately needs) becomes undiagnosable from either side.
-func logEgressRefusal(err error, pluginName, method, rawURL string) {
+func (pm *PluginManager) logEgressRefusal(err error, pluginName, method, rawURL string) {
 	var blocked *errEgressBlocked
 	if !errors.As(err, &blocked) {
 		return
 	}
-	log.Printf("[plugin] %s: refused %s %s: %s", pluginName, method, rawURL, blocked.Error())
+	log.Printf("[plugin] %s: refused %s %s: %s", pluginName, method,
+		pm.RedactPluginSecrets(pluginName, rawURL), pm.RedactPluginSecrets(pluginName, blocked.Error()))
 }
 
 // hostFromURL extracts the host of a request URL.

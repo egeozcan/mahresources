@@ -199,10 +199,16 @@ plugin = {
 
 Required settings must be configured before the plugin can be enabled.
 
-A `password` setting is a secret the plugin's code receives. Wherever the server
-shows or stores text the plugin produced (a job's failure reason, progress and
-result, an action's or a page's error, a hook's refusal, `mah.log` entries and
-the server log), every occurrence of its value is replaced with `[redacted]`.
+A `password` setting is a secret the plugin's code receives. Every occurrence of
+its value is replaced with `[redacted]` in what the server itself shows or stores
+from the plugin's work: a job's title, progress, failure reason, result and
+timeline, the jobs panel, an action's answer, error messages, `mah.log` entries,
+and the server's log lines about a plugin's errors, failed loads and refused
+requests. It is not removed from what the plugin itself sends to the person using
+it, such as its pages, blocks, shortcodes or API responses: a plugin is trusted
+code, and what it chooses to show is its own. The redaction knows the setting's current
+value; after changing a key, revoke the old one where it was issued, because
+work that started with the old key is not redacted of it.
 
 ### Reading Settings at Runtime
 

@@ -371,12 +371,12 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 
 	resp, err := pm.httpClientFor(egress).Do(req)
 	if err != nil {
-		logEgressRefusal(err, pm.pluginNameFor(L), method, url)
+		pm.logEgressRefusal(err, pm.pluginNameFor(L), method, url)
 		return buildSyncErrorResponse(L, method, url, egressErrorForPlugin(err))
 	}
 	defer resp.Body.Close()
 
-	bodyStr, truncated, err := readCappedBody(resp.Body, method, url)
+	bodyStr, truncated, err := readCappedBody(resp.Body, method, url, pm.redactorFor(L))
 	if err != nil {
 		return buildSyncErrorResponse(L, method, url, fmt.Sprintf("reading response body: %v", err))
 	}
@@ -419,7 +419,7 @@ func buildSyncErrorResponse(L *lua.LState, method, url, errMsg string) *lua.LTab
 // long. Sized at the cap exactly, a complete body and a cut one are the same
 // read, and nothing would ever be reported cut. The extra byte never reaches
 // the plugin.
-func readCappedBody(body io.Reader, method, url string) (string, bool, error) {
+func readCappedBody(body io.Reader, method, url string, redact func(string) string) (string, bool, error) {
 	bodyBytes, err := io.ReadAll(io.LimitReader(body, maxHttpResponseBody+1))
 	if err != nil {
 		return "", false, err
@@ -429,7 +429,7 @@ func readCappedBody(body io.Reader, method, url string) (string, bool, error) {
 		return string(bodyBytes), false, nil
 	}
 
-	log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
+	log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, redact(url))
 	return string(bodyBytes[:maxHttpResponseBody]), true, nil
 }
 
@@ -543,7 +543,7 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 		// Sanitized for the plugin, logged in full for the operator: the
 		// argument for telling the plugin less only holds if the detail is not
 		// simply lost.
-		logEgressRefusal(err, pm.pluginNameFor(vm), method, url)
+		pm.logEgressRefusal(err, pm.pluginNameFor(vm), method, url)
 		pm.queueHttpCallback(httpCallback{
 			vm:    vm,
 			fn:    callback,
@@ -558,7 +558,7 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 	}
 	defer resp.Body.Close()
 
-	bodyStr, truncated, err := readCappedBody(resp.Body, method, url)
+	bodyStr, truncated, err := readCappedBody(resp.Body, method, url, pm.redactorFor(vm))
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
 			vm:    vm,
@@ -732,6 +732,6 @@ func (pm *PluginManager) runOneCallback(cb httpCallback) {
 	cancel()
 
 	if err != nil {
-		log.Printf("[plugin] warning: HTTP callback error: %v", err)
+		log.Printf("[plugin] warning: HTTP callback error: %v", pm.pluginCallError(pm.pluginNameFor(cb.vm), "callback", err))
 	}
 }

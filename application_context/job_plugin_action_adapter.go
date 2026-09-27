@@ -414,11 +414,13 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 	}
 
 	handle := download_queue.NewJobID()
+	// The label is the Job's title, which its owner and every listing read.
+	label := pm.RedactPluginSecrets(pluginName, action.Label)
 	input, err := json.Marshal(pluginActionJobInput{
 		Subtype:     pluginActionSubtypeRegistered,
 		Plugin:      pluginName,
 		Action:      actionID,
-		Label:       truncateTo(action.Label, jobs.MaxTitleBytes),
+		Label:       truncateTo(label, jobs.MaxTitleBytes),
 		EntityID:    entityID,
 		EntityType:  action.Entity,
 		Params:      params,
@@ -430,7 +432,7 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 		return "", "", err
 	}
 
-	title := action.Label
+	title := label
 	if title == "" {
 		title = pluginName + ": " + actionID
 	}
@@ -2070,6 +2072,11 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 		return nil, nil
 	}
 	label := request.Label
+	if pm := h.ctx.PluginManager(); pm != nil {
+		// Redacted where plugin_system took it, and again here, because the title
+		// is what every listing of the Job shows.
+		label = pm.RedactPluginSecrets(request.PluginName, label)
+	}
 	if strings.TrimSpace(label) == "" {
 		label = "Plugin background work"
 	}

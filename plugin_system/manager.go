@@ -942,7 +942,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	if err != nil {
 		cancelLoad()
 		abandon()
-		return fmt.Errorf("executing plugin.lua: %w", err)
+		return pm.pluginCallError(dp.Name, "executing plugin.lua", err)
 	}
 	L.Push(fn)
 	err = L.PCall(0, lua.MultRet, nil)
@@ -960,7 +960,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	cancelLoad()
 	if err != nil {
 		abandon()
-		return fmt.Errorf("executing plugin.lua: %w", err)
+		return pm.pluginCallError(dp.Name, "executing plugin.lua", err)
 	}
 
 	// Both runs saw the same bytes in the same environment, so a disagreement
@@ -1025,7 +1025,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 			// next render of one calls into a closed LState — a segfault
 			// inside gopher-lua, from a plugin that merely failed to load.
 			abandon()
-			return fmt.Errorf("calling init(): %w", err)
+			return pm.pluginCallError(dp.Name, "calling init()", err)
 		}
 	}
 
@@ -1651,10 +1651,19 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			next = parsed
 		}
 		next.Message = redactSecrets(next.Message, secrets)
-		for i := range next.Metrics {
-			next.Metrics[i].Label = redactSecrets(next.Metrics[i].Label, secrets)
-			next.Metrics[i].Unit = redactSecrets(next.Metrics[i].Unit, secrets)
+		next.Unit = redactSecrets(next.Unit, secrets)
+		// A metric key is restricted to a-z, 0-9, _ and -, so a redacted one is no
+		// longer a key: the metric is left out, as the durable plane leaves it out.
+		kept := next.Metrics[:0]
+		for _, metric := range next.Metrics {
+			if redactSecrets(metric.Key, secrets) != metric.Key {
+				continue
+			}
+			metric.Label = redactSecrets(metric.Label, secrets)
+			metric.Unit = redactSecrets(metric.Unit, secrets)
+			kept = append(kept, metric)
 		}
+		next.Metrics = kept
 		job.Progress = next.Percent
 		job.Message = next.Message
 		job.Completed, job.Total, job.Unit = next.Completed, next.Total, next.Unit
@@ -1763,7 +1772,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		if pm.refuseDocsPreview(L, "mah.start_job") {
 			return 0
 		}
-		label := L.CheckString(1)
+		label := pm.RedactPluginSecrets(*pluginNamePtr, L.CheckString(1))
 		fn := L.CheckFunction(2)
 
 		// A revoked plugin may not start new work. Without this the job is

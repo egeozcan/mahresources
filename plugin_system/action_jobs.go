@@ -371,7 +371,7 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 		Source:      "plugin",
 		PluginName:  pluginName,
 		ActionID:    actionID,
-		Label:       action.Label,
+		Label:       pm.RedactPluginSecrets(pluginName, action.Label),
 		EntityID:    entityID,
 		EntityType:  action.Entity,
 		Status:      "pending",
@@ -527,7 +527,7 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	started := false
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			log.Printf("[plugin] panic in %s: %s", logLabel, pm.RedactPluginSecrets(job.PluginName, fmt.Sprint(r)))
 			if !started {
 				// Nothing was admitted, so there is no Job of this execution's to
 				// fail: the host still holds it waiting.
@@ -864,8 +864,13 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 	}
 
 	stopReason, timedOut := "", false
+	// What a handler that ended in an error failed of, worked out before the
+	// job's lock is taken: it reads the plugin's settings to redact them, which
+	// takes pm.mu, and nothing takes pm.mu while holding a job's lock.
+	var errFailure HostFailure
 	if workErr != nil {
 		stopReason, timedOut = h.ended()
+		errFailure = pm.handlerFailure(job.PluginName, workErr, timedOut)
 	}
 
 	job.mu.Lock()
@@ -889,7 +894,7 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 		message = stoppedMessage(stopReason)
 	default:
 		status = "failed"
-		failure = pm.handlerFailure(job.PluginName, workErr, timedOut)
+		failure = errFailure
 		message = failure.Message
 	}
 	job.Status = status

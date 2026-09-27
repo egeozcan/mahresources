@@ -480,7 +480,7 @@ func (pm *PluginManager) renderShortcodeForDocs(reqCtx context.Context, pluginNa
 	cancel()
 
 	if err != nil {
-		return "", fmt.Errorf("shortcode preview render error: %w", err)
+		return "", pm.pluginCallError(pluginName, "shortcode preview render error", err)
 	}
 
 	ret := L.Get(-1)
