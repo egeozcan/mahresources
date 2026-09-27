@@ -262,6 +262,7 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 		Controls:        download_queue.JobControls{Cancel: true},
 		Cancel:          cancel,
 		AuthoritativeID: spec.RunID,
+		CanonicalJobID:  spec.JobID,
 	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
 		workCtx, stop := j.ctx.heartbeatManagedCommand(ctx, execution, claimed)
 		defer stop()
@@ -295,7 +296,7 @@ func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run
 	job, err := j.manager.SubmitManagedJob(download_queue.ManagedJobOptions{JobOptions: download_queue.JobOptions{
 		Source: pluginImportJobSource, InitialPhase: plugin_commands.ImportStatusRunning,
 		OwnerUserID: clonePluginCommandActor(spec.OwnerUserID),
-	}}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
+	}, CanonicalJobID: spec.JobID}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
 		workCtx, stop := j.ctx.heartbeatManagedCommand(ctx, execution, claimed)
 		defer stop()
 		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress}))

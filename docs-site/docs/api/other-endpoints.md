@@ -877,13 +877,16 @@ Legacy alias: `GET /v1/download/queue`
       "totalSize": 1048576,
       "progressPercent": 45.0,
       "createdAt": "2024-01-15T10:00:00Z",
-      "source": "download"
+      "source": "download",
+      "canonicalJobId": "01999f2c-6b1e-7c3a-9d42-1f0e8b7a6c55"
     }
   ]
 }
 ```
 
 `progress` is the number of bytes downloaded and `progressPercent` is `progress / totalSize * 100`, or `-1` when the total size is unknown.
+
+`canonicalJobId` names the Job a row stands for, on the Job Center API (`GET /v1/jobs/{id}`). A plugin command run or command import that is running in this process is listed by its live entry and names its Job the same way. Every row states `createdAt`, `startedAt` and `completedAt` in UTC.
 
 A row whose transfer this server process no longer holds in its queue, after a
 restart or once the entry was cleared, is projected from the durable Job. A Job
