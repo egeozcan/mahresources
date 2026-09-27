@@ -208,6 +208,7 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
+		base["jobSummaryQuery"] = jobAPIQuery(query)
 		base["jobOriginOptions"] = jobOriginOptions(jobFilterForm(query).Origins)
 
 		filter, err := jobListFilter(query)
@@ -246,6 +247,8 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		// filters are not offered at all.
 		viewer := auth.PrincipalFromContext(request.Context())
 		base["jobAccountFilters"] = viewer == nil || !viewer.SuperUser
+		// An export is a write: an account that cannot write is not offered one.
+		base["jobSummaryExportOffered"] = viewer == nil || viewer.CanWrite()
 		if accounts, ok := reader.(JobAccountReader); ok && base["jobAccountFilters"] == true {
 			if viewer.IsAdmin() {
 				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
@@ -438,15 +441,7 @@ func undismissedDefaultRedirect(request *http.Request) string {
 // lists what the viewer has not dismissed unless they ask otherwise;
 // `dismissed=any` is that asking, and reads as it does on the API.
 func jobListFilter(query url.Values) (jobs.Filter, error) {
-	query = withoutEmptyValues(query)
-	switch owner := query.Get("owner"); {
-	case owner == jobOwnerDeletedOption:
-		query.Del("owner")
-		query.Set("ownerDeleted", "true")
-	case owner != "" && owner != jobOwnerMineOption && query.Get("ownerId") == "":
-		query.Del("owner")
-		query.Set("ownerId", owner)
-	}
+	query = withAPIOwner(withoutEmptyValues(query))
 	filter, err := jobview.ParseFilter(query)
 	if err != nil {
 		return jobs.Filter{}, err
@@ -456,6 +451,32 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 		filter.Dismissed = &undismissed
 	}
 	return filter, nil
+}
+
+// jobAPIQuery is the list's filter as the Job API reads it, for the summary
+// panel and the summary export: the page position dropped, and the Owner
+// select's choice spelled as the API reads it.
+func jobAPIQuery(query url.Values) string {
+	values := withAPIOwner(withoutEmptyValues(query))
+	for _, position := range []string{"cursor", "before", "view"} {
+		values.Del(position)
+	}
+	return values.Encode()
+}
+
+// withAPIOwner spells the Owner select's choice as the API reads it: an account
+// id as ownerId and a deleted account as ownerDeleted=true, leaving "me", the
+// API's own owner=me, as it is.
+func withAPIOwner(values url.Values) url.Values {
+	switch owner := values.Get("owner"); {
+	case owner == jobOwnerDeletedOption:
+		values.Del("owner")
+		values.Set("ownerDeleted", "true")
+	case owner != "" && owner != jobOwnerMineOption && values.Get("ownerId") == "":
+		values.Del("owner")
+		values.Set("ownerId", owner)
+	}
+	return values
 }
 
 func withoutEmptyValues(values url.Values) url.Values {

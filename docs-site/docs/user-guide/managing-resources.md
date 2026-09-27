@@ -400,6 +400,16 @@ without it adds `dismissed=false`, so a copied Job Center address lists the same
 Jobs through the API and the CLI, which include dismissed Jobs unless asked not
 to. Dismissal does not delete Job history. **Saved searches** keep a filter for reuse.
 
+Below the filters, **Summary of these jobs** reads the figures of the Jobs the
+filters select, accepted in the last day, 7, 30 or 90 days: how many there are,
+how many succeeded of those finished, how many failed, the median and 95th
+percentile of the time they waited and ran, and their failures by class. It is
+read only when you open it. **Export a summary** queues a CSV or JSON export of
+the same filter for a range of whole days longer than 90 days, and links the
+export's Job, whose page offers the file once it is ready; a filter an export
+cannot take is refused with the reason. An account that cannot write is not
+offered the export.
+
 Each card's **Details** lists when the Job was accepted, started and finished,
 and the fields of its summary, such as a download's host. Open a Job to see its
 progress, timeline, outputs, and related Jobs. Use only

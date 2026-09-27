@@ -3,6 +3,7 @@ package template_context_providers
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -748,5 +749,32 @@ func TestAJobCardSaysWhoOwnsItAndWhyItFailed(t *testing.T) {
 	}
 	if unowned := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "unowned", Kind: "remote-download", State: jobs.StateQueued}); strings.Contains(unowned.Entity, "failure") || !strings.Contains(unowned.Entity, `"ownerUserId":null`) {
 		t.Fatalf("an unowned, unfailed card payload = %s", unowned.Entity)
+	}
+}
+
+// TestTheSummaryAsksTheAPIForTheListsOwnFilter pins the query the summary panel
+// and the summary export send: the list's filter in the API's own parameters,
+// with the page position dropped and the Owner select's choices spelled as the
+// API reads them.
+func TestTheSummaryAsksTheAPIForTheListsOwnFilter(t *testing.T) {
+	for target, want := range map[string]url.Values{
+		"/jobs?state=failed&kind=remote-download&dismissed=false&cursor=list-v1.x&view=all&search=": {
+			"state": {"failed"}, "kind": {"remote-download"}, "dismissed": {"false"},
+		},
+		"/jobs?owner=7&dismissed=any":       {"ownerId": {"7"}, "dismissed": {"any"}},
+		"/jobs?owner=deleted&dismissed=any": {"ownerDeleted": {"true"}, "dismissed": {"any"}},
+		"/jobs?owner=me&dismissed=false":    {"owner": {"me"}, "dismissed": {"false"}},
+	} {
+		ctx := renderJobList(t, &fakeJobListReader{}, target)
+		got, err := url.ParseQuery(ctx["jobSummaryQuery"].(string))
+		if err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s summarizes %v, want %v", target, got, want)
+		}
+		if _, err := jobview.ParseFilter(got); err != nil {
+			t.Errorf("%s summarizes a query the API refuses: %v", target, err)
+		}
 	}
 }

@@ -504,6 +504,38 @@ test.describe('Job Center', () => {
     }
   });
 
+  test('summarizes the listed jobs on request and queues a summary export of the same filter', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-summary-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const failed = await submitFailingDownload(request, groupId, `${name}.bin`);
+    await waitForJobState(request, failed.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
+    const panel = page.getByTestId('job-summary');
+    await panel.getByText('Summary of these jobs', { exact: true }).click();
+    const figures = panel.locator('[data-job-summary-figures]');
+    await expect(figures).toContainText('Jobs: 1');
+    await expect(figures).toContainText('Failed: 1');
+
+    await panel.getByText('Export a summary', { exact: true }).click();
+    const form = panel.getByRole('form', { name: 'Export a summary of these jobs' });
+    await form.getByLabel('From').fill('2026-01-01');
+    await form.getByLabel('To').fill('2026-01-10');
+    await form.getByRole('button', { name: 'Export summary' }).click();
+    await expect(panel.getByRole('alert')).toHaveText('summary export range must exceed 90 days');
+
+    await form.getByLabel('From').fill('2025-01-01');
+    await form.getByRole('button', { name: 'Export summary' }).click();
+    // The range is whole local days, so its UTC title depends on the zone.
+    const queued = panel.getByRole('link', { name: /^Job summary, \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}$/ });
+    await expect(queued).toBeVisible();
+    const href = await queued.getAttribute('href');
+    const exported = await readJob(request, new URL(href!, 'http://localhost').searchParams.get('id')!);
+    expect((exported as any)?.kind).toBe('job-summary-export');
+    expect(JSON.stringify((exported as any)?.summary)).toContain(name);
+  });
+
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {
     const stamp = Date.now();
     const name = `job-center-retry-${stamp}.bin`;

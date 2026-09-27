@@ -8,7 +8,7 @@ import {
     reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
 import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
-import { applyProgressFrame, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
+import { applyProgressFrame, formatDuration, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
 import { terminalStates } from './jobStates.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
@@ -782,6 +782,95 @@ function bulkFocusTarget(root, key) {
         document.querySelector('main'),
     ];
     return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
+}
+
+// A summary duration, which the API gives in nanoseconds.
+function summaryDuration(stats) {
+    return `median ${formatDuration((stats?.median || 0) / 1e9)}, 95% within ${formatDuration((stats?.p95 || 0) / 1e9)}`;
+}
+
+async function answerOf(response, what) {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `${what} failed (${response.status}).`);
+    return payload;
+}
+
+/**
+ * The Job Center's summary panel: the figures of the Jobs the list's filter
+ * selects, read when the reader asks for them, and a summary export of the
+ * same filter over a longer range. `query` is that filter as the API reads it
+ * (jobAPIQuery in job_template_context.go).
+ */
+export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
+    return {
+        query: '',
+        window: '30d',
+        loading: false,
+        error: '',
+        summary: null,
+        exportFrom: '',
+        exportTo: '',
+        exportFormat: 'csv',
+        exporting: false,
+        exportError: '',
+        exported: null,
+
+        init() {
+            this.query = this.$root?.dataset.summaryQuery || '';
+        },
+
+        async load() {
+            this.loading = true;
+            this.error = '';
+            try {
+                const separator = this.query ? '&' : '';
+                const response = await fetchImpl(`/v1/jobs/summary?${this.query}${separator}window=${encodeURIComponent(this.window)}`, { headers: { Accept: 'application/json' } });
+                this.summary = await answerOf(response, 'Reading the summary');
+            } catch (error) {
+                this.summary = null;
+                this.error = error.message;
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        figures() {
+            const summary = this.summary;
+            if (!summary) return [];
+            const failures = (summary.failures || []).map(failure => `${failure.class} ${failure.count}`).join(', ');
+            return [
+                { label: 'Jobs', value: String(summary.total) },
+                { label: 'Succeeded', value: `${summary.succeeded} of ${summary.terminal} finished (${Math.round((summary.successRate || 0) * 100)}%)` },
+                { label: 'Failed', value: String(summary.failed) },
+                { label: 'Time queued', value: summaryDuration(summary.queue) },
+                { label: 'Time running', value: summaryDuration(summary.run) },
+                ...(failures ? [{ label: 'Failures by class', value: failures }] : []),
+            ];
+        },
+
+        // The range is whole days in the reader's zone: from the first day's
+        // start to the end of the last.
+        async exportSummary() {
+            this.exporting = true;
+            this.exportError = '';
+            this.exported = null;
+            try {
+                const to = new Date(`${this.exportTo}T00:00`);
+                to.setDate(to.getDate() + 1);
+                const response = await fetchImpl(`/v1/jobs/summary/export${this.query ? `?${this.query}` : ''}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    body: JSON.stringify({ from: new Date(`${this.exportFrom}T00:00`).toISOString(), to: to.toISOString(), format: this.exportFormat }),
+                });
+                const job = (await answerOf(response, 'The summary export')).job || {};
+                this.exported = { url: `/job?id=${encodeURIComponent(job.id)}`, title: job.title || 'Job summary export' };
+            } catch (error) {
+                this.exportError = error.message;
+            } finally {
+                this.exporting = false;
+            }
+        },
+    };
 }
 
 function pad(value, width = 2) {

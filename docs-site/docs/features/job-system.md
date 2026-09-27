@@ -390,8 +390,10 @@ name instead. `mr jobs queue` returns the legacy queue response explicitly.
 
 ## Summary analytics and exports
 
-Interactive `summary` is capped at 90 days. For an explicit range longer than
-90 days, queue an owner-visible export:
+Interactive `summary` is capped at 90 days. The Job Center shows it for the
+list's current filter under **Summary of these jobs**, and queues an export of
+that filter from **Export a summary**. For an explicit range longer than 90
+days, queue an owner-visible export:
 
 ```bash
 mr jobs summary export \

@@ -173,4 +173,46 @@
         </div>
         {% include "/partials/form/searchButton.tpl" %}
     </form>
+    {% if jobQuickFilters %}
+    {# The figures are read only when the reader opens them: a summary scans every Job the filter selects. #}
+    <div class="sidebar-group w-full mt-3 text-sm" x-data="jobSummary()" data-summary-query="{{ jobSummaryQuery }}" data-testid="job-summary">
+        <details @toggle="$event.target.open && !summary && !loading && load()">
+            <summary class="cursor-pointer font-mono font-medium text-stone-700">Summary of these jobs</summary>
+            <label for="job-summary-window" class="block text-xs font-mono font-medium text-stone-600 mt-2">Accepted in the last</label>
+            <select id="job-summary-window" x-model="window" @change="load()" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="1d">day</option>
+                <option value="7d">7 days</option>
+                <option value="30d">30 days</option>
+                <option value="90d">90 days</option>
+            </select>
+            <p x-show="loading" class="mt-2 text-xs text-stone-600">Reading the summary…</p>
+            <p x-show="error" x-text="error" class="mt-2 text-xs text-red-800"></p>
+            <dl x-show="summary && !loading" class="mt-2 grid gap-1 text-xs" data-job-summary-figures>
+                <template x-for="figure in figures()" :key="figure.label">
+                    <div><dt class="inline font-medium text-stone-700" x-text="figure.label + ':'"></dt> <dd class="inline text-stone-800" x-text="figure.value"></dd></div>
+                </template>
+            </dl>
+        </details>
+        {% if jobSummaryExportOffered %}
+        <details class="mt-2">
+            <summary class="cursor-pointer font-mono font-medium text-stone-700">Export a summary</summary>
+            <p class="mt-1 text-xs text-stone-600">Queues a CSV or JSON summary of these jobs over a range longer than 90 days.</p>
+            <form class="mt-1 grid gap-1" aria-label="Export a summary of these jobs" @submit.prevent="exportSummary()">
+                <label for="job-summary-from" class="text-xs font-mono font-medium text-stone-600">From</label>
+                <input id="job-summary-from" type="date" required x-model="exportFrom" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                <label for="job-summary-to" class="text-xs font-mono font-medium text-stone-600">To</label>
+                <input id="job-summary-to" type="date" required x-model="exportTo" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                <label for="job-summary-format" class="text-xs font-mono font-medium text-stone-600">Format</label>
+                <select id="job-summary-format" x-model="exportFormat" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                </select>
+                <button type="submit" :aria-disabled="exporting" class="mt-1 py-1.5 px-3 border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-amber-600">Export summary</button>
+            </form>
+            <p x-show="exportError" x-text="exportError" role="alert" class="mt-1 text-xs text-red-800"></p>
+            <p x-show="exported" role="status" class="mt-1 text-xs text-stone-800"><a :href="exported?.url" class="underline" x-text="exported?.title"></a> is queued.</p>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
 {% endblock %}

@@ -9,6 +9,7 @@ import {
     bulkCommandReport,
     jobFilterTimes,
     jobList,
+    jobSummary,
     localizeJobTimes,
     keepDetailsOpen,
     stateChangeAnnouncement,
@@ -688,6 +689,64 @@ describe('job list stream', () => {
         list.connectionStatus = 'connected';
         list.refreshFailed = true;
         expect(list.connectionText).toBe('The list could not be refreshed and may be out of date; trying again');
+    });
+});
+
+describe('job summary panel', () => {
+    const summary = {
+        total: 120, succeeded: 90, failed: 10, terminal: 100, successRate: 0.9,
+        queue: { median: 1_500_000_000, p95: 12_000_000_000 }, run: { median: 65_000_000_000, p95: 600_000_000_000 },
+        failures: [{ class: 'dependency', count: 7 }, { class: 'timeout', count: 3 }],
+    };
+
+    test('reads the list\'s own filter over the chosen window and says the figures in words', async () => {
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => summary }));
+        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'state=failed&dismissed=false' });
+        panel.window = '7d';
+        await panel.load();
+        expect(fetchImpl.mock.calls[0][0]).toBe('/v1/jobs/summary?state=failed&dismissed=false&window=7d');
+        expect(panel.figures()).toEqual([
+            { label: 'Jobs', value: '120' },
+            { label: 'Succeeded', value: '90 of 100 finished (90%)' },
+            { label: 'Failed', value: '10' },
+            { label: 'Time queued', value: 'median 2 s, 95% within 12 s' },
+            { label: 'Time running', value: 'median 1 min, 95% within 10 min' },
+            { label: 'Failures by class', value: 'dependency 7, timeout 3' },
+        ]);
+    });
+
+    test('says why a summary could not be read', async () => {
+        const panel = Object.assign(jobSummary({ fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'window may not exceed 90 days' }) })) }), { query: '' });
+        await panel.load();
+        expect(panel.error).toBe('window may not exceed 90 days');
+        expect(panel.summary).toBe(null);
+    });
+
+    test('queues an export of the list\'s filter for the chosen days, and links the Job it made', async () => {
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ job: { id: 'export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' } }) }));
+        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'kind=remote-download' });
+        panel.exportFrom = '2025-01-01';
+        panel.exportTo = '2025-12-31';
+        panel.exportFormat = 'json';
+        await panel.exportSummary();
+        const [url, init] = fetchImpl.mock.calls[0];
+        expect(url).toBe('/v1/jobs/summary/export?kind=remote-download');
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body)).toEqual({
+            from: new Date('2025-01-01T00:00').toISOString(), to: new Date('2026-01-01T00:00').toISOString(), format: 'json',
+        });
+        expect(panel.exported).toEqual({ url: '/job?id=export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' });
+    });
+
+    test('shows an export\'s refusal as the server words it', async () => {
+        const panel = Object.assign(jobSummary({
+            fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'summary export range must exceed 90 days' }) })),
+        }), { query: '' });
+        panel.exportFrom = '2026-01-01';
+        panel.exportTo = '2026-01-02';
+        await panel.exportSummary();
+        expect(panel.exportError).toBe('summary export range must exceed 90 days');
+        expect(panel.exported).toBe(null);
     });
 });
 
