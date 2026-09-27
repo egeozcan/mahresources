@@ -309,6 +309,11 @@ export function jobPanel() {
         _detailReads: new Set(),
         _detailLoad: null,
         _broadcast: null,
+        // Set once the stream has given a cursor (a catch-up), which a reopened
+        // stream then resumes from, even v2:0.
+        _holdsCursor: false,
+        // Set by destroy(): nothing is read, retried or reopened after it.
+        _destroyed: false,
         _onlineHandler: null,
         _visibilityHandler: null,
         _streamGeneration: 0,
@@ -397,6 +402,7 @@ export function jobPanel() {
         },
 
         destroy() {
+            this._destroyed = true;
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
             if (this._onlineHandler) window.removeEventListener('online', this._onlineHandler);
@@ -599,16 +605,20 @@ export function jobPanel() {
                 error.payload = payload;
                 throw error;
             }
-            announcePreferenceCommand(url, init, this._broadcast);
+            announcePreferenceCommand(url, init, payload, this._broadcast);
             return payload;
         },
 
-        // Another tab of this viewer dismissed, pinned or forgot these jobs. A
-        // tab only hears other tabs' messages, never its own.
+        // A page of this viewer (another tab, or a Job page in this one)
+        // dismissed, pinned or forgot these jobs. Dismissed rows leave at once,
+        // as they do in the tab that dismissed them, and every read begun
+        // before the change is fenced, so none of them puts a row back.
         hearPreferenceBroadcast(message) {
-            if (this.streamStopped) return;
-            for (const id of Array.isArray(message?.jobIds) ? message.jobIds : []) delete this.details[id];
-            this.startScheduledPanelRefresh();
+            if (this.streamStopped || this._destroyed) return;
+            const ids = new Set(Array.isArray(message?.jobIds) ? message.jobIds.map(String) : []);
+            for (const id of ids) delete this.details[id];
+            if (message?.command === 'dismiss') this.jobs = this.jobs.filter(job => !ids.has(String(job.id)));
+            this.refresh();
         },
 
         // Reads the lists now, superseding every read already in flight: what
@@ -616,7 +626,7 @@ export function jobPanel() {
         // dismissal, a scope change, the reader asking). The reads the stream
         // schedules go through startScheduledPanelRefresh and supersede nothing.
         async refresh() {
-            if (this.streamStopped) return;
+            if (this.streamStopped || this._destroyed) return;
             this.fenceEarlierReads();
             const generation = ++this._refreshGeneration;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
@@ -719,7 +729,7 @@ export function jobPanel() {
         },
 
         scheduleListRetry() {
-            if (this.streamStopped || this._listRetryTimer) return;
+            if (this.streamStopped || this._destroyed || this._listRetryTimer) return;
             const delay = this._listRetryDelay || LIST_RETRY_MIN_MS;
             this._listRetryDelay = Math.min(delay * 2, LIST_RETRY_MAX_MS);
             this._listRetryTimer = setTimeout(() => {
@@ -761,7 +771,7 @@ export function jobPanel() {
         },
 
         async loadStaleDetails() {
-            if (!this.isOpen || this.streamStopped) return;
+            if (!this.isOpen || this.streamStopped || this._destroyed) return;
             const stale = [];
             for (const job of this.jobs) {
                 if (advertisedCommands(job).length) {
@@ -778,7 +788,7 @@ export function jobPanel() {
                 for (let job = next(); job; job = next()) outcomes.push(await this.loadDetail(job));
             };
             await Promise.all(Array.from({ length: Math.min(DETAIL_READ_CONCURRENCY, stale.length) }, worker));
-            if (this.streamStopped) return;
+            if (this.streamStopped || this._destroyed) return;
             if (outcomes.includes('failed')) this.scheduleListRetry();
             // A row that moved on while its detail was read was skipped by the
             // pass its move started: it is read again now.
@@ -795,6 +805,7 @@ export function jobPanel() {
             this._detailReads.add(job.id);
             const streamGeneration = this._streamGeneration;
             const askedFor = Number(job.version || 0);
+            const pinnedWhenAsked = !!job.pinned;
             let detail;
             try {
                 detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
@@ -806,10 +817,13 @@ export function jobPanel() {
             const current = this.jobs.find(row => row.id === job.id);
             // A row a newer list read dropped stays dropped.
             if (!current) return 'read';
-            // A detail older than the row shown would roll it back.
+            // A detail older than the row shown would roll it back. A pin
+            // moves no version, so a pin that changed while the detail was read
+            // makes it older too, however its version compares.
             if (Number(detail.version || 0) < Number(current.version || 0)) {
                 return Number(current.version || 0) > askedFor ? 'moved' : 'failed';
             }
+            if (!!current.pinned !== pinnedWhenAsked) return 'moved';
             this.details[job.id] = detail;
             const spoken = [];
             this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
@@ -1091,7 +1105,7 @@ export function jobPanel() {
         },
 
         startScheduledPanelRefresh() {
-            if (this.streamStopped) return;
+            if (this.streamStopped || this._destroyed) return;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._panelRefreshTimer = null;
@@ -1111,13 +1125,13 @@ export function jobPanel() {
         },
 
         connect() {
-            if (this.eventSource || this.streamStopped || typeof EventSource === 'undefined') return;
+            if (this.eventSource || this.streamStopped || this._destroyed || typeof EventSource === 'undefined') return;
             clearTimeout(this._streamRetryTimer);
             this._streamRetryTimer = null;
             if (this.connectionStatus !== 'reconnecting') this.connectionStatus = 'connecting';
             // What a reconnect replays is recorded, not said: it arrives
             // before the catch-up.
-            const source = new EventSource(canonicalStreamURL(this.lastSequence, this.ownerScope));
+            const source = new EventSource(canonicalStreamURL(this.lastSequence, this.ownerScope, this._holdsCursor));
             this.eventSource = source;
             // A source this drawer has replaced (a scope change, a retry) may
             // still deliver what it had queued; only the current one counts.
@@ -1146,7 +1160,7 @@ export function jobPanel() {
         },
 
         scheduleStreamRetry() {
-            if (this.streamStopped || this._streamRetryTimer) return;
+            if (this.streamStopped || this._destroyed || this._streamRetryTimer) return;
             const delay = this._streamRetryDelay = nextStreamRetryDelay(this._streamRetryDelay);
             this._streamRetryTimer = setTimeout(() => {
                 this._streamRetryTimer = null;
@@ -1235,6 +1249,7 @@ export function jobPanel() {
             }
             const wasCaughtUp = this.streamCaughtUp;
             this.lastSequence = Math.max(this.lastSequence, sequence);
+            this._holdsCursor = true;
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
             this._streamRetryDelay = 0;
@@ -1584,7 +1599,7 @@ export function jobPanel() {
             try {
                 let cursor = '';
                 do {
-                    const page = await this.requestJSON(buildFinishedPageURL(cursor));
+                    const page = await this.requestJSON(buildFinishedPageURL(cursor, this.ownerScope));
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1718,11 +1733,14 @@ function buildPanelListURL(group, ownerScope = '') {
     return `/v1/jobs?${params}`;
 }
 
-function buildFinishedPageURL(cursor) {
+// The drawer's finished Jobs, in its owner scope: Dismiss finished dismisses
+// what the drawer lists, not every account's.
+function buildFinishedPageURL(cursor, ownerScope = '') {
     const params = new URLSearchParams();
     FINISHED_STATES.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
     params.set('limit', String(FINISHED_PAGE_LIMIT));
+    if (ownerScope === 'me') params.set('owner', 'me');
     if (cursor) params.set('cursor', cursor);
     return `/v1/jobs?${params}`;
 }

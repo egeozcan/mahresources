@@ -503,6 +503,23 @@ describe('Job detail stream connection', () => {
         expect(reads).toEqual([1, 2]);
     });
 
+    test('a stream that caught up at v2:0 is reopened from v2:0', () => {
+        vi.useFakeTimers();
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter();
+        center.loading = false;
+        center.connect();
+        const first = ClosingEventSource.made[0];
+        first.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:0' }) });
+        first.readyState = 2;
+        first.listeners.get('error')?.({});
+        vi.advanceTimersByTime(1000);
+        expect(new URL(ClosingEventSource.made[1].url, 'http://localhost').searchParams.get('cursor')).toBe('v2:0');
+        center.destroy();
+        vi.useRealTimers();
+    });
+
     test('a stream the browser gave up on is opened again from its cursor, after a growing delay', () => {
         vi.useFakeTimers();
         ClosingEventSource.made = [];

@@ -27,6 +27,6 @@ describe('Job preference channel', () => {
         const center = jobCenter();
         await center.fetchJSON('/v1/jobs/j-9/commands/dismiss', { method: 'POST', body: '{}' });
         await center.fetchJSON('/v1/jobs/j-9', {});
-        expect(posted).toEqual([{ name: 'mahresources-job-preferences', message: { jobIds: ['j-9'] } }]);
+        expect(posted).toEqual([{ name: 'mahresources-job-preferences', message: { command: 'dismiss', jobIds: ['j-9'] } }]);
     });
 });

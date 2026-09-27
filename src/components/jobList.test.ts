@@ -547,6 +547,18 @@ describe('job list stream', () => {
         list.destroy();
     });
 
+    test('a stream that caught up at v2:0 is reopened from v2:0', () => {
+        vi.useFakeTimers();
+        const { list, stream, send } = connected();
+        send('job-caught-up', { cursor: 'v2:0' });
+        (stream as any).readyState = 2;
+        stream.listeners.get('error')?.({});
+        vi.advanceTimersByTime(1000);
+        const reopened = list.eventSource as unknown as FakeEventSource;
+        expect(new URL(reopened.url, 'http://localhost').searchParams.get('cursor')).toBe('v2:0');
+        vi.useRealTimers();
+    });
+
     test('says when the list could not be refreshed, until a refresh succeeds', async () => {
         document.body.innerHTML = '<div class="list-container"></div>';
         const failed = vi.fn();

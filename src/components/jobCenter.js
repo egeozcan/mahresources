@@ -358,12 +358,13 @@ export function streamCursorSequence(value) {
 // starts at the head: it reads (or was rendered with) its Jobs itself and
 // reconciles once caught up, so the history published before it would only be
 // replayed to be ignored, on every page load. One that holds a cursor resumes
-// from it, so what it missed while disconnected is replayed and a database
+// from it, v2:0 included (a database that had published nothing when the page
+// caught up), so what it missed while disconnected is replayed and a database
 // restored under it is still recognised. owner=me narrows it to the viewer's
 // own Jobs, as the lists take it.
-export function canonicalStreamURL(lastSequence = 0, ownerScope = '') {
+export function canonicalStreamURL(lastSequence = 0, ownerScope = '', caughtUpOnce = false) {
     const params = new URLSearchParams({ version: '2' });
-    if (lastSequence > 0) params.set('cursor', `v2:${lastSequence}`);
+    if (caughtUpOnce || lastSequence > 0) params.set('cursor', `v2:${lastSequence}`);
     else params.set('start', 'head');
     if (ownerScope === 'me') params.set('owner', 'me');
     return `/v1/jobs/events?${params}`;
@@ -488,6 +489,9 @@ export function jobCenter(options = {}) {
         _streamRetryDelay: 0,
         _reconcileOnCatchUp: true,
         _reconcileAfterLoad: false,
+        // Set once the stream has given a cursor (a catch-up), which a reopened
+        // stream then resumes from, even v2:0.
+        _holdsCursor: false,
         now: Date.now(),
         _clockTimer: null,
         _liveRegion: null,
@@ -524,7 +528,7 @@ export function jobCenter(options = {}) {
                 error.payload = payload;
                 throw error;
             }
-            announcePreferenceCommand(url, init);
+            announcePreferenceCommand(url, init, payload);
             return payload;
         },
 
@@ -626,7 +630,7 @@ export function jobCenter(options = {}) {
             clearTimeout(this._streamRetryTimer);
             this._streamRetryTimer = null;
             if (this.connectionStatus !== 'reconnecting') this.connectionStatus = 'connecting';
-            const source = new EventSource(canonicalStreamURL(this.lastSequence));
+            const source = new EventSource(canonicalStreamURL(this.lastSequence, '', this._holdsCursor));
             this.eventSource = source;
             const current = handler => event => { if (this.eventSource === source) handler(event); };
             source.addEventListener('open', current(() => { this.connectionStatus = 'connected'; }));
@@ -671,6 +675,7 @@ export function jobCenter(options = {}) {
             if (sequence === null) return;
             if (reloadAfterStreamReset(boundary, this.eventSource)) return;
             this.lastSequence = Math.max(this.lastSequence, sequence);
+            this._holdsCursor = true;
             this.streamCaughtUp = true;
             this._streamRetryDelay = 0;
             // The page read its Job while the stream was connecting at the

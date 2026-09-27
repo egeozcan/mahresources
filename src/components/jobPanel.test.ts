@@ -2855,6 +2855,86 @@ describe('Job Center drawer connection and list reads', () => {
         vi.useRealTimers();
     });
 
+    test('a stream that caught up at v2:0 is reopened from v2:0, not from the head', async () => {
+        vi.useFakeTimers();
+        const { panel } = listingPanel([]);
+        panel.connect();
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:0' }) });
+        ClosingEventSource.made[0].refuse();
+        await vi.advanceTimersByTimeAsync(1000);
+        const reopened = new URL(ClosingEventSource.made[1].url, 'http://localhost').searchParams;
+        expect(reopened.get('cursor')).toBe('v2:0');
+        expect(reopened.has('start')).toBe(false);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a destroyed drawer reads, retries and reopens nothing', async () => {
+        vi.useFakeTimers();
+        const { panel } = listingPanel([{ id: 'a', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }]);
+        panel.isOpen = true;
+        await panel.refresh();
+        let failDetail = () => {};
+        panel.requestJSON = vi.fn(() => new Promise((_resolve, reject) => { failDetail = () => reject(new Error('gone')); }));
+        panel.details = {};
+        const pending = panel.loadStaleDetails();
+        panel.connect();
+        panel.destroy();
+        failDetail();
+        await pending;
+        ClosingEventSource.made.at(-1)?.refuse();
+        await vi.advanceTimersByTimeAsync(120000);
+        expect(panel._listRetryTimer).toBe(null);
+        expect(panel.requestJSON).toHaveBeenCalledTimes(1);
+        expect(ClosingEventSource.made).toHaveLength(1);
+        vi.useRealTimers();
+    });
+
+    test('a detail read answered after the row\'s pin changed is read again rather than undoing the pin', async () => {
+        const rows = [{ id: 'p', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:00:00Z', pinned: false }];
+        const { panel } = listingPanel(rows);
+        panel.isOpen = true;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        const list = panel.requestJSON;
+        const answers: boolean[] = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) return list(raw);
+            const pinned = rows[0].pinned;
+            if (answers.push(pinned) === 1) await firstHeld;
+            return { ...rows[0], pinned, commands: [{ key: pinned ? 'unpin' : 'pin', jobVersion: 2 }] };
+        });
+
+        await panel.refresh();
+        await vi.waitFor(() => expect(answers).toEqual([false]));
+        // Pinned in another tab: no version moves, and a read lists it pinned.
+        rows[0] = { ...rows[0], pinned: true };
+        await panel.refresh();
+        releaseFirst();
+        await vi.waitFor(() => expect(answers).toEqual([false, true]));
+        await vi.waitFor(() => expect(panel.commandsFor(panel.jobs[0])).toEqual([{ key: 'unpin', jobVersion: 2 }]));
+        expect(panel.jobs[0].pinned).toBe(true);
+    });
+
+    test('Dismiss finished dismisses what the drawer lists, in its owner scope', async () => {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
+        panel.ownerScope = 'me';
+        panel.jobs = [{ id: 'mine', state: 'succeeded', version: 1, commands: [{ key: 'dismiss', jobVersion: 1 }] }];
+        panel.details.mine = panel.jobs[0];
+        const lists: URL[] = [];
+        panel.requestJSON = vi.fn(async (raw: string, init: any = {}) => {
+            if (init.method === 'POST') return { results: [{ jobId: 'mine', status: 'succeeded', code: 'applied' }] };
+            const url = new URL(String(raw), 'http://localhost');
+            lists.push(url);
+            return { jobs: url.searchParams.get('limit') === '200' ? [{ id: 'mine', state: 'succeeded', version: 1 }] : [] };
+        });
+        await panel.dismissFinished();
+        const walk = lists.filter(url => url.searchParams.get('limit') === '200');
+        expect(walk.length).toBeGreaterThan(0);
+        expect(walk.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
+    });
+
     test('a stream the browser reconnects itself is left to the browser', async () => {
         vi.useFakeTimers();
         const { panel } = listingPanel([]);
@@ -3133,17 +3213,40 @@ describe('Job Center drawer connection and list reads', () => {
         const posted: any[] = [];
         const panel = jobPanel();
         panel._broadcast = { postMessage: (message: any) => posted.push(message), close: vi.fn() } as any;
-        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ results: [] }) })));
-        await panel.requestJSON('/v1/jobs/commands/dismiss', { method: 'POST', body: JSON.stringify({ jobIds: ['x'] }) });
+        // The bulk answer says which Jobs it applied to; a refused one is not reported.
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ results: [
+            { jobId: 'x', status: 'succeeded', code: 'applied' },
+            { jobId: 'y', status: 'failed', code: 'conflict' },
+        ] }) })));
+        await panel.requestJSON('/v1/jobs/commands/dismiss', { method: 'POST', body: JSON.stringify({ jobIds: ['x', 'y'] }) });
         await panel.requestJSON('/v1/jobs/x/commands/retry', { method: 'POST', body: '{}' });
-        expect(posted).toEqual([{ jobIds: ['x'] }]);
+        expect(posted).toEqual([{ command: 'dismiss', jobIds: ['x'] }]);
 
-        const other = listingPanel([]).panel;
+        // The receiving tab takes the dismissed row away at once, and fences
+        // every read begun before, so none of them puts it back.
+        const { panel: other } = listingPanel([]);
+        other.jobs = [{ id: 'x', state: 'succeeded', version: 1 }, { id: 'z', state: 'succeeded', version: 1 }];
         other.details.x = { id: 'x', version: 1 };
-        other.hearPreferenceBroadcast({ jobIds: ['x'] });
+        let releaseStale = () => {};
+        const staleHeld = new Promise<void>(resolve => { releaseStale = resolve; });
+        const current = other.requestJSON;
+        let reads = 0;
+        other.requestJSON = vi.fn(async (raw: string) => {
+            reads += 1;
+            if (reads <= 3) {
+                await staleHeld;
+                return { jobs: [{ id: 'x', state: 'succeeded', version: 1 }] };
+            }
+            return current(raw);
+        });
+        const stale = other.startScheduledPanelRefresh();
+        other.hearPreferenceBroadcast({ command: 'dismiss', jobIds: ['x'] });
         expect(other.details.x).toBeUndefined();
-        await other._panelRefreshPromise;
-        expect(other.requestJSON).toHaveBeenCalled();
+        expect(other.jobs.map((job: any) => job.id)).toEqual(['z']);
+        releaseStale();
+        await stale;
+        await vi.waitFor(() => expect(reads).toBe(6));
+        expect(other.jobs.some((job: any) => job.id === 'x')).toBe(false);
     });
 
     test('a scope change reads the lists and reopens the stream for that scope, and older reads never apply', async () => {

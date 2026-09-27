@@ -205,6 +205,9 @@ export function jobList() {
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
         _preferences: null,
+        // Set once the stream has given a cursor, which a reopened stream then
+        // resumes from, even v2:0.
+        _holdsCursor: false,
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -258,7 +261,7 @@ export function jobList() {
             }
             clearTimeout(this._streamRetryTimer);
             this._streamRetryTimer = null;
-            const source = new EventSource(canonicalStreamURL(this.lastSequence));
+            const source = new EventSource(canonicalStreamURL(this.lastSequence, '', this._holdsCursor));
             this.eventSource = source;
             const current = handler => event => { if (this.eventSource === source) handler(event); };
             source.addEventListener('open', current(() => { this.connectionStatus = 'connected'; }));
@@ -281,6 +284,7 @@ export function jobList() {
                 if (sequence === null) return;
                 if (reloadAfterStreamReset(boundary, source)) return;
                 this.lastSequence = Math.max(this.lastSequence, sequence);
+                this._holdsCursor = true;
                 this.streamCaughtUp = true;
                 this._streamRetryDelay = 0;
                 if (this._missedWhileCatchingUp) {
@@ -456,7 +460,7 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                 if (response.ok) {
                     announcePreferenceCommand(`/v1/jobs/commands/${encodeURIComponent(command.key)}`, {
                         method: 'POST', body: JSON.stringify({ jobIds: ids }),
-                    });
+                    }, payload);
                 }
                 this.outcomes = payload.results || payload.outcomes || [];
                 const applied = this.outcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;

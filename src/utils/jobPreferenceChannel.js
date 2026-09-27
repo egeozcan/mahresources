@@ -19,34 +19,50 @@ export function openJobPreferenceChannel(onMessage) {
     }
 }
 
-// The Jobs a request changed a viewer preference of, or null when it was not
-// such a command: a single Job's command names its Job in the path, a bulk one
-// in its body.
-export function preferenceCommandJobIDs(url, init = {}) {
+// The preference command a request ran, or null when it ran none: its key, and
+// the Jobs it applied to. A single Job's command names its Job in the path; a
+// bulk one names its Jobs in its body, and its answer says which of them it
+// applied to, so a refused Job is not reported changed.
+export function preferenceCommand(url, init = {}, payload = null) {
     if (String(init.method || 'GET').toUpperCase() !== 'POST') return null;
     const path = new URL(String(url), 'http://localhost').pathname;
     const match = COMMAND_PATH.exec(path);
-    if (!match || !PREFERENCE_COMMANDS.has(decodeURIComponent(match[2]))) return null;
-    if (match[1]) return [decodeURIComponent(match[1])];
+    const command = match ? decodeURIComponent(match[2]) : '';
+    if (!PREFERENCE_COMMANDS.has(command)) return null;
+    if (match[1]) return { command, jobIds: [decodeURIComponent(match[1])] };
+    if (Array.isArray(payload?.results)) {
+        return {
+            command,
+            jobIds: payload.results
+                .filter(result => result?.status === 'succeeded' || result?.code === 'applied')
+                .map(result => String(result.jobId)),
+        };
+    }
     try {
         const ids = JSON.parse(init.body || '{}').jobIds;
-        return Array.isArray(ids) ? ids.map(String) : [];
+        return { command, jobIds: Array.isArray(ids) ? ids.map(String) : [] };
     } catch {
-        return [];
+        return { command, jobIds: [] };
     }
+}
+
+// The Jobs a request changed a viewer preference of, or null when it was not
+// such a command.
+export function preferenceCommandJobIDs(url, init = {}, payload = null) {
+    return preferenceCommand(url, init, payload)?.jobIds ?? null;
 }
 
 let sender = null;
 
-// Says, after a request succeeded, that it changed these Jobs' preferences.
+// Says, after a request succeeded, which Jobs' preferences it changed and how.
 // A channel does not hear its own messages, so a page that also listens passes
 // the channel it listens on.
-export function announcePreferenceCommand(url, init = {}, channel = null) {
-    const jobIds = preferenceCommandJobIDs(url, init);
-    if (!jobIds) return;
+export function announcePreferenceCommand(url, init = {}, payload = null, channel = null) {
+    const change = preferenceCommand(url, init, payload);
+    if (!change) return;
     const target = channel || (sender ??= openJobPreferenceChannel());
     try {
-        target?.postMessage({ jobIds });
+        target?.postMessage(change);
     } catch {
         // A closed channel has nobody to tell.
     }
