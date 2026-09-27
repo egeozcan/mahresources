@@ -532,11 +532,10 @@ func restartScopeDeniedForCreator(ctx DownloadSubmitter, request *http.Request, 
 // GetDownloadPauseHandler handles POST /v1/download/pause
 // Pauses a download job by ID
 //
-// Pause stays the queue's own control rather than a canonical command, and that is
-// the honest shape: this Kind cannot confirm a resumable checkpoint, so it does not
-// advertise `pause` at all, and the Job records the hold as blocked-by-choice once
-// the executor has confirmed it. The route still works for the legacy panel that
-// has always offered the button.
+// The route pauses the transfer this process's queue is running, and the Job
+// records the hold as `paused` once the executor has confirmed it. The canonical
+// `pause` command is the same hold, reached from any process: the one running the
+// transfer delivers it.
 func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID, _ := legacyControlInput(request)

@@ -1132,6 +1132,11 @@ type Transition struct {
 	Phase          string
 	Event          EventInput
 	Failure        *Failure
+	// Progress, when set, replaces the progress snapshot in the same write as the
+	// state change. A state that stops the work is where its row says what happens
+	// next, and a separate progress write under the execution's token could not
+	// follow it: leaving running clears the token.
+	Progress *Progress
 }
 
 // EventInput is a significant event to record alongside a transition (or on its

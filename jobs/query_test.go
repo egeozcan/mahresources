@@ -1329,7 +1329,7 @@ func testCommandHostSelectorsMatchAdvertisedCommands(t *testing.T, deps Deps) {
 				t.Fatalf("commands for %s: %v", snapshot.ID, err)
 			}
 			for _, command := range commands {
-				if command.Key == key {
+				if command.Key == key && offeredToOneJob(key, snapshot.Pinned) {
 					want[snapshot.ID] = true
 				}
 			}
@@ -1345,6 +1345,20 @@ func testCommandHostSelectorsMatchAdvertisedCommands(t *testing.T, deps Deps) {
 		if !equalStringSets(got, want) {
 			t.Fatalf("%s selector IDs = %v, Commands IDs = %v", key, got, want)
 		}
+	}
+}
+
+// offeredToOneJob is the one narrowing a single Job's surface makes of what it
+// advertises: of Pin and Unpin, which both stay advertised for mixed bulk
+// selections, it offers only the one that changes the viewer's pin.
+func offeredToOneJob(key string, pinned bool) bool {
+	switch key {
+	case CommandPin:
+		return !pinned
+	case CommandUnpin:
+		return pinned
+	default:
+		return true
 	}
 }
 

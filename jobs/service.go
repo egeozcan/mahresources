@@ -950,6 +950,11 @@ func (s *Service) Transition(deps Deps, transition Transition) (Snapshot, error)
 	if err != nil {
 		return Snapshot{}, err
 	}
+	if transition.Progress != nil {
+		if err := applyFinalProgress(&prepared, *transition.Progress, deps.now()); err != nil {
+			return Snapshot{}, err
+		}
+	}
 	return s.commitTransition(deps, prepared, successVerification(deps, prepared, transition.To))
 }
 
@@ -1443,6 +1448,12 @@ func validateTransition(transition *Transition) error {
 		}
 		if !json.Valid(transition.Event.Detail) {
 			return invalid("event detail is not valid JSON")
+		}
+	}
+
+	if transition.Progress != nil {
+		if err := validateProgress(*transition.Progress); err != nil {
+			return err
 		}
 	}
 

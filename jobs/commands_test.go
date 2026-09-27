@@ -932,6 +932,9 @@ func TestDismissAndPinChangeOnlyTheViewersOwnRelationship(t *testing.T) {
 	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUnpin}, Cursor{}, 0)), finished.ID) {
 		t.Fatal("a pinned job is missing from the Unpin command filter")
 	}
+	if slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandPin}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("a pinned job is listed by the Pin command filter, which lists the jobs a viewer can pin")
+	}
 
 	result, err = h.svc.ExecuteCommand(context.Background(), h.deps,
 		h.request(finished.ID, CommandUnpin, "idem-unpin", viewer))
@@ -956,8 +959,11 @@ func TestDismissAndPinChangeOnlyTheViewersOwnRelationship(t *testing.T) {
 	if !hasCommand(commands, CommandUnpin) || !hasCommand(commands, CommandPin) {
 		t.Fatalf("unpinned command surface = %#v, want both idempotent bulk commands", commands)
 	}
-	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUnpin}, Cursor{}, 0)), finished.ID) {
-		t.Fatal("an unpinned job is missing from the idempotent Unpin bulk command filter")
+	if slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandUnpin}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("an unpinned job is listed by the Unpin command filter, which lists the jobs a viewer can unpin")
+	}
+	if !slices.Contains(pageIDs(listFor(t, h.svc, h.deps, viewer, Filter{Command: CommandPin}, Cursor{}, 0)), finished.ID) {
+		t.Fatal("an unpinned job is missing from the Pin command filter")
 	}
 	// Pinning again leaves the test's retention assertion below meaningful.
 	result, err = h.svc.ExecuteCommand(context.Background(), h.deps,

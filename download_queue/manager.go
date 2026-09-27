@@ -1538,11 +1538,9 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	}
 
 	dm.notifyJob("updated", job)
-	// The durable Job says a person is holding this transfer. It is not `paused`:
-	// §1 defines that as an executor's confirmed resumable checkpoint, and this
-	// queue's resume starts the transfer again from the beginning, so the honest
-	// record is that the transfer is waiting for a person — which is what the
-	// mirror decides, not this call.
+	// The durable Job records the hold this call confirmed: it is paused, and its
+	// Resume starts the transfer again from the beginning, since the queue keeps no
+	// partial bytes. How the hold is recorded is the mirror's decision.
 	dm.mirrorHeld(job)
 
 	return nil

@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,24 +36,33 @@ func legacyJobHandler(handler http.HandlerFunc) http.HandlerFunc {
 // legacyDownloadsLocation carries filters the Job Center can represent to its
 // canonical query vocabulary. Filters with no equivalent are intentionally
 // omitted rather than rewritten into a query with different meaning.
+//
+// Both download Kinds are listed: a download scheduled for later was a download on
+// the page this address used to show, and a legacy status names every canonical
+// state the legacy projection reads as that status (downloadStatusFromState): so
+// "pending" includes scheduled work, and "paused" includes blocked work, which a
+// Resume lifts as it lifts a pause.
 func legacyDownloadsLocation(values url.Values) string {
 	query := make(url.Values)
-	query.Set("kind", "remote-download")
+	query.Add("kind", "remote-download")
+	query.Add("kind", "deferred-download")
 	// The Job Center's default, written out so the translated address is one the
 	// page shows a list under rather than one it redirects again.
 	query.Set("dismissed", "false")
 	for _, value := range values["Status"] {
-		state := map[string]string{
-			"pending":     "queued",
-			"downloading": "running",
-			"processing":  "running",
-			"paused":      "paused",
-			"completed":   "succeeded",
-			"failed":      "failed",
-			"cancelled":   "cancelled",
+		states := map[string][]string{
+			"pending":     {"queued", "scheduled"},
+			"downloading": {"running"},
+			"processing":  {"running"},
+			"paused":      {"paused", "blocked"},
+			"completed":   {"succeeded"},
+			"failed":      {"failed"},
+			"cancelled":   {"cancelled"},
 		}[strings.ToLower(strings.TrimSpace(value))]
-		if state != "" {
-			query.Add("state", state)
+		for _, state := range states {
+			if !slices.Contains(query["state"], state) {
+				query.Add("state", state)
+			}
 		}
 	}
 	if value := strings.TrimSpace(values.Get("URL")); value != "" {

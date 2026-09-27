@@ -483,11 +483,12 @@ func TestAMultiURLSubmissionAcceptsEachURLIndependently(t *testing.T) {
 	}
 }
 
-// TestHeldWorkIsBlockedAndResumedThroughTheCanonicalSurface pins the honest
-// representation of this queue's pause: it cannot checkpoint, so a held transfer is
-// not `paused` — it is blocked for a person — and the Job advertises resume rather
-// than pause.
-func TestHeldWorkIsBlockedAndResumedThroughTheCanonicalSurface(t *testing.T) {
+// TestAPauseIsPausedAndResumedThroughTheCanonicalSurface pins what a person's pause
+// of a download is: the Job offers Pause while the transfer runs, the executor
+// confirms the hold and the Job is `paused`, not blocked, since nothing is wrong with
+// it and nobody but the person who paused it has to act. Its row says what Resume
+// does, because this queue keeps no partial bytes: Resume starts the transfer again.
+func TestAPauseIsPausedAndResumedThroughTheCanonicalSurface(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 
 	release := make(chan struct{})
@@ -506,37 +507,53 @@ func TestHeldWorkIsBlockedAndResumedThroughTheCanonicalSurface(t *testing.T) {
 	}
 	jobID := submissions[0].CanonicalJobID
 
-	waitForSnapshot(t, ctx, jobID, "the transfer to start",
+	running := waitForSnapshot(t, ctx, jobID, "the transfer to start",
 		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
 
-	// No pause is advertised, because this Kind cannot confirm a checkpoint.
 	commands, err := ctx.AdvertisedJobCommands(context.Background(), jobID)
 	if err != nil {
 		t.Fatalf("advertised commands: %v", err)
 	}
-	if hasCommand(commands, jobs.CommandPause) {
-		t.Fatalf("the download Kind advertises pause, which it cannot honor: %+v", commands)
+	if !hasCommand(commands, jobs.CommandPause) {
+		t.Fatalf("a running download offers no pause: %+v", commands)
+	}
+	if hasCommand(commands, jobs.CommandResume) {
+		t.Fatalf("a running download offers resume: %+v", commands)
 	}
 
-	// The legacy pause holds the transfer, and the Job says so.
-	if err := ctx.DownloadManager().Pause(submissions[0].Job.ID); err != nil {
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandPause, IdempotencyKey: "pause-1", ExpectedVersion: running.Version,
+	})
+	if err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	held := waitForSnapshot(t, ctx, jobID, "the hold to be mirrored",
-		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateBlocked })
-	if held.State != jobs.StateBlocked {
-		t.Fatalf("a held download is %s, want blocked", held.State)
+	if result.Status != jobs.CommandStatusSucceeded {
+		t.Fatalf("pause answered %s/%s: %s", result.Status, result.Code, result.Message)
+	}
+	held := waitForSnapshot(t, ctx, jobID, "the pause to be confirmed",
+		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })
+	if held.State != jobs.StatePaused {
+		t.Fatalf("a paused download is %s/%s, want paused", held.State, held.Phase)
+	}
+	if held.ControlIntent != "" {
+		t.Fatalf("the confirmed pause left the control intent %q outstanding", held.ControlIntent)
+	}
+	if held.Progress.Message != jobDownloadPausedMessage {
+		t.Fatalf("the paused row says %q, want it to say what Resume does", held.Progress.Message)
+	}
+	if entry, found := ctx.DownloadManager().GetJobByCanonicalJobID(jobID); !found || entry.GetStatus() != download_queue.JobStatusPaused {
+		t.Fatalf("the executor did not hold the transfer: %v", entry)
 	}
 
 	commands, err = ctx.AdvertisedJobCommands(context.Background(), jobID)
 	if err != nil {
-		t.Fatalf("advertised commands after the hold: %v", err)
+		t.Fatalf("advertised commands after the pause: %v", err)
 	}
-	if !hasCommand(commands, jobs.CommandResume) {
-		t.Fatalf("held work offers no resume: %+v", commands)
+	if !hasCommand(commands, jobs.CommandResume) || hasCommand(commands, jobs.CommandPause) {
+		t.Fatalf("a paused download offers %+v, want resume and no pause", commands)
 	}
 
-	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+	result, err = ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
 		JobID: jobID, Key: jobs.CommandResume, IdempotencyKey: "resume-1", ExpectedVersion: held.Version,
 	})
 	if err != nil {
@@ -547,6 +564,71 @@ func TestHeldWorkIsBlockedAndResumedThroughTheCanonicalSurface(t *testing.T) {
 	}
 	waitForSnapshot(t, ctx, jobID, "the resumed transfer to run again",
 		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
+}
+
+// TestALegacyPauseIsPaused is the compatibility route's side of the same rule: the
+// queue's own pause is confirmed by the executor, so the Job it mirrors into is
+// paused, and a legacy reader still reads the status it always did.
+func TestALegacyPauseIsPaused(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server, _, _ := heldTransferServer(t)
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/legacy-pause.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	waitForSnapshot(t, ctx, jobID, "the transfer to start",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
+
+	if err := ctx.DownloadManager().Pause(submissions[0].Row.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	held := waitForSnapshot(t, ctx, jobID, "the hold to be mirrored",
+		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })
+	if held.State != jobs.StatePaused || held.Phase != "" {
+		t.Fatalf("a download paused through the queue is %s/%s, want paused", held.State, held.Phase)
+	}
+	if status := downloadStatusFromState(held.State); status != download_queue.JobStatusPaused {
+		t.Fatalf("the legacy status of a paused Job is %s, want paused", status)
+	}
+}
+
+// TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer is the pause half of a
+// control intent crossing processes: the process that receives the command has no
+// transfer to hold, so it records the request, and the process fetching the file
+// holds it when it next reads the Job.
+func TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer(t *testing.T) {
+	first := newJobHarnessContext(t, true)
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, _ := newSecondProcessJobContext(t, first, key)
+
+	server, _, _ := heldTransferServer(t)
+	submissions := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/elsewhere.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	running := waitForSnapshot(t, first, jobID, "the transfer to start",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
+
+	result, err := other.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandPause, IdempotencyKey: "pause-elsewhere", ExpectedVersion: running.Version,
+	})
+	if err != nil {
+		t.Fatalf("pause from the other process: %v", err)
+	}
+	if result.Status != jobs.CommandStatusSucceeded || result.Code != jobs.CommandCodeRequested {
+		t.Fatalf("the other process answered %s/%s: %s, want the pause requested", result.Status, result.Code, result.Message)
+	}
+	held := waitForSnapshot(t, first, jobID, "the owning process to hold the transfer",
+		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })
+	if held.State != jobs.StatePaused {
+		t.Fatalf("the paused download is %s/%s, want paused", held.State, held.Phase)
+	}
+	if entry, found := first.DownloadManager().GetJobByCanonicalJobID(jobID); !found || entry.GetStatus() != download_queue.JobStatusPaused {
+		t.Fatalf("the owning process did not hold the transfer: %v", entry)
+	}
 }
 
 // hasCommand reports whether one advertised set contains a key.
@@ -1248,12 +1330,12 @@ func TestAResumeQueuesWorkRatherThanStartingAnUnbudgetedTransfer(t *testing.T) {
 	}
 
 	// A person holds it. The queue's own pause is the executor's side of that, and the
-	// durable Job is blocked once the mirror has recorded it.
+	// durable Job is paused once the mirror has recorded it.
 	if err := ctx.DownloadManager().Pause(handle); err != nil {
 		t.Fatalf("pause the transfer: %v", err)
 	}
 	held := waitForSnapshot(t, ctx, jobID, "the hold to be recorded", func(s jobs.Snapshot) bool {
-		return s.State == jobs.StateBlocked
+		return s.State == jobs.StatePaused
 	})
 	if storedCapacity(t, ctx, jobs.CapacityGroupGlobal) != 0 {
 		t.Fatalf("a held transfer still occupies the deployment budget")
