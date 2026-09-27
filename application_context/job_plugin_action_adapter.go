@@ -2909,7 +2909,7 @@ func (ctx *MahresourcesContext) ClearVisibleTerminalPluginActionHandles() ([]str
 	}
 	cleared := make([]string, 0)
 	for _, row := range rows {
-		if row.Status != "completed" && row.Status != "failed" && row.Status != "cancelled" {
+		if !plugin_system.ActionJobStatusEnded(row.Status) {
 			continue
 		}
 		marked, err := ctx.ClearPluginActionHandle(row.ID, row.CanonicalJobID)

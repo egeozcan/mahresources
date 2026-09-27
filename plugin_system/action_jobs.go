@@ -1205,7 +1205,7 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 	}
 }
 
-// ClearFinishedActionJobs removes every completed or failed action job the caller
+// ClearFinishedActionJobs removes every ended action job the caller
 // may see and returns the ids that went. Running and pending jobs are kept.
 //
 // UI bug hunt 2026-07-29, finding 40: the jobs panel shows download jobs and
@@ -1247,7 +1247,7 @@ func (pm *PluginManager) ClearFinishedActionJobSnapshots(visible func(owner *uin
 		}
 		job.mu.RUnlock()
 
-		if status != "completed" && status != "failed" {
+		if !ActionJobStatusEnded(status) {
 			continue
 		}
 		if visible != nil && !visible(owner) {
@@ -1266,7 +1266,19 @@ func (pm *PluginManager) ClearFinishedActionJobSnapshots(visible func(owner *uin
 	return cleared
 }
 
-// cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.
+// ActionJobStatusEnded reports whether an action job's in-memory status is an
+// end: completed, failed or cancelled. It is the one statement of which entries a
+// clear and the retention sweep may remove.
+func ActionJobStatusEnded(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// cleanupOldActionJobs removes ended action jobs older than actionJobRetention.
 func (pm *PluginManager) cleanupOldActionJobs() {
 	var removed []*ActionJob
 
@@ -1278,7 +1290,7 @@ func (pm *PluginManager) cleanupOldActionJobs() {
 		created := job.CreatedAt
 		job.mu.RUnlock()
 
-		if (status == "completed" || status == "failed") && created.Before(cutoff) {
+		if ActionJobStatusEnded(status) && created.Before(cutoff) {
 			delete(pm.actionJobs, id)
 			removed = append(removed, job)
 		}

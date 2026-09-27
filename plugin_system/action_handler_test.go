@@ -692,3 +692,45 @@ func TestACancelDuringTheStartReportEndsTheJobUnentered(t *testing.T) {
 		t.Fatalf("the host was told stopped=%v completed=%d failed=%d, want cancelled", sink.stopped, sink.completed, sink.failed)
 	}
 }
+
+// TestACancelledEntryIsClearedAndExpiresLikeAnyEndedOne pins that cancelled is an
+// end for the in-memory list: Clear completed removes a cancelled entry, and the
+// retention sweep expires one, as they do completed and failed ones. Otherwise
+// every cancellation stayed in the process's memory for its lifetime.
+func TestACancelledEntryIsClearedAndExpiresLikeAnyEndedOne(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	cancelOne := func(id string) {
+		t.Helper()
+		sink := &recordingSink{}
+		before := hooks.enteredCount()
+		if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: id, Handle: id, Sink: sink, Cancellable: true},
+			nil, "stoppable", "sleeper", 1, nil, ""); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		waitUntil(t, "the handler to be entered", 5*time.Second, func() bool { return hooks.enteredCount() > before })
+		if !pm.StopHostJob(id) {
+			t.Fatal("the cancel found no running handler")
+		}
+		waitUntil(t, "the entry to read cancelled", 5*time.Second, func() bool {
+			job := pm.GetActionJob(id)
+			return job != nil && job.Status == "cancelled"
+		})
+	}
+
+	cancelOne("cleared")
+	if cleared := pm.ClearFinishedActionJobs(nil); len(cleared) != 1 || cleared[0] != "cleared" {
+		t.Fatalf("Clear completed removed %v, want the cancelled entry", cleared)
+	}
+
+	cancelOne("expired")
+	pm.actionJobsMu.RLock()
+	expired := pm.actionJobs["expired"]
+	pm.actionJobsMu.RUnlock()
+	expired.mu.Lock()
+	expired.CreatedAt = time.Now().Add(-2 * actionJobRetention)
+	expired.mu.Unlock()
+	pm.cleanupOldActionJobs()
+	if pm.GetActionJob("expired") != nil {
+		t.Fatal("the retention sweep kept a cancelled entry past its retention")
+	}
+}
