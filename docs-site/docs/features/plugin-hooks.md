@@ -193,9 +193,14 @@ capability. A plugin holding only `hooks` is refused at load, with an error
 naming the capability it needs.
 :::
 
-A plugin's own action, and a job it starts with `mah.start_job`, does not fire
-one: those run on the plugin job system and report through `mah.job_complete` and
-`mah.job_fail`.
+Plugin jobs fire them too, with `source` set to `plugin`: an action run, a job
+started with `mah.start_job` and a schedule run each fire the event for the
+outcome the job ended with. A job a person cancelled fires `after_job_cancelled`,
+also when it had not started or when its handler finished after the cancel was
+recorded, and so does a job withdrawn because it never started. A job that ends
+`interrupted`, because the server stopped or the plugin was disabled under it,
+fires none. A job started from inside an `after_job_*` handler fires none either,
+and neither do the jobs it starts, so a handler cannot notify itself in a loop.
 
 They are **after-only**: a job that has already finished cannot be vetoed, and
 returning a modified table changes nothing. Delivery is best-effort -- the queue

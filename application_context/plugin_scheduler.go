@@ -321,8 +321,8 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 // why the row's claim is held for the whole run under "skip", and moving them
 // into the executor would make the claim and the execution two different
 // lifetimes. decided, when set, is told once whether the occurrence started, as
-// its handler is entered or as it gives up; the inline run, which has no
-// admission to report entry, tells it after the run.
+// its handler is entered or as it gives up; the inline run hears of entry through
+// a sink that records nothing else (scheduleEntrySink).
 func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, decided func(started bool, refusal string)) pluginActionRun {
 	if s.ctx != nil && s.ctx.JobService() != nil {
 		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, decided)
@@ -341,12 +341,29 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 	if pm == nil {
 		return pluginActionRun{}
 	}
-	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, holdClaim)
+	var host *plugin_system.HostJobRef
+	if decided != nil {
+		host = &plugin_system.HostJobRef{Sink: scheduleEntrySink{entered: func() { decided(true, "") }}}
+	}
+	_, ran, runErr := pm.RunScheduleForHost(reg, actor, s.dispatchWait, holdClaim, host)
 	if !ran {
 		return pluginActionRun{}
 	}
 	return pluginActionRun{Started: true, Failed: runErr != nil, Message: scheduleOutcomeMessage(runErr)}
 }
+
+// scheduleEntrySink is the sink of an occurrence run with no control plane.
+// Nothing durable records such a run, and the one report it carries is that the
+// handler was entered, which is what a manual run's caller waits to hear.
+type scheduleEntrySink struct{ entered func() }
+
+func (s scheduleEntrySink) Started(string)                          { s.entered() }
+func (scheduleEntrySink) Progress(plugin_system.HostProgress) error { return nil }
+func (scheduleEntrySink) Completed(string, map[string]any) error    { return nil }
+func (scheduleEntrySink) Failed(plugin_system.HostFailure) error    { return nil }
+func (scheduleEntrySink) Stopped(string) error                      { return nil }
+func (scheduleEntrySink) NotStarted(string)                         {}
+func (scheduleEntrySink) CallbackLost(string)                       {}
 
 // scheduleRunOutcome turns one occurrence's result into the pair stored on the
 // row. It reads the execution's own outcome rather than an error, because a

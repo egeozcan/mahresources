@@ -463,3 +463,75 @@ func TestOnlyAClaimantOfThisBootSessionIsExpiredEarly(t *testing.T) {
 		t.Fatal("a claimant that is not a runtime identity was treated as gone")
 	}
 }
+
+// announcedFor is what the job-event observer was told about one Job.
+func announcedFor(observer *recordingJobEventSink, jobID string) []string {
+	var statuses []string
+	for _, record := range observer.snapshot() {
+		if record.JobID == jobID {
+			statuses = append(statuses, record.Status)
+		}
+	}
+	return statuses
+}
+
+// TestAPluginJobIsAnnouncedWithTheOutcomeItHas pins that the after_job_* hook a
+// plugin Job fires names the outcome stored for it, whichever path ended it, and
+// fires once: a person's Cancel of queued work, which the host applies with no
+// execution to report it, is announced as cancelled; and a handler's success
+// that a won cancellation turned into a cancellation is announced as cancelled,
+// not completed.
+func TestAPluginJobIsAnnouncedWithTheOutcomeItHas(t *testing.T) {
+	t.Run("a queued job a person cancelled", func(t *testing.T) {
+		ctx := newPluginActionJobContext(t)
+		observer := &recordingJobEventSink{}
+		ctx.SetJobEventSink(observer)
+		release := ctx.PluginManager().FillJobBudgetForTest()
+		defer release()
+
+		_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 1, nil, "")
+		if err != nil {
+			t.Fatalf("run the action: %v", err)
+		}
+		if err := cancelJobForTest(t, ctx, jobID, "cancel-queued-announced"); err != nil {
+			t.Fatalf("cancel the queued action: %v", err)
+		}
+		release()
+		waitFor(t, "the lane to let go of the cancelled job", func() bool {
+			return ctx.PluginManager().LaneDepth(pluginActionTestPlugin) == 0
+		})
+		if got := announcedFor(observer, jobID); len(got) != 1 || got[0] != "cancelled" {
+			t.Fatalf("a queued job a person cancelled was announced %v, want cancelled once", got)
+		}
+	})
+
+	t.Run("a success a cancellation won", func(t *testing.T) {
+		ctx := newPluginActionJobContext(t)
+		observer := &recordingJobEventSink{}
+		ctx.SetJobEventSink(observer)
+		actor := models.User{Username: "announce-actor", Role: models.RoleUser, PasswordHash: "x"}
+		if err := ctx.db.Create(&actor).Error; err != nil {
+			t.Fatalf("seed the actor: %v", err)
+		}
+		accepted, input := acceptCancellableActionForTest(t, ctx, actor.ID)
+		claimed, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+			Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: accepted.ID,
+			Claimant: plugin_system.CurrentRuntimeIdentity().String(),
+		})
+		if err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+		if err := cancelJobForTest(t, ctx, accepted.ID, "cancel-before-success"); err != nil {
+			t.Fatalf("cancel the running job: %v", err)
+		}
+		if err := newPluginActionSink(ctx, claimed, input).Completed("done", nil); err != nil {
+			t.Fatalf("report the success: %v", err)
+		}
+		if got := jobStateForTest(t, ctx, accepted.ID); got != jobs.StateCancelled {
+			t.Fatalf("a success reported after a won cancellation left the job %s, want cancelled", got)
+		}
+		if got := announcedFor(observer, accepted.ID); len(got) != 1 || got[0] != "cancelled" {
+			t.Fatalf("a success a cancellation won was announced %v, want cancelled once", got)
+		}
+	})
+}

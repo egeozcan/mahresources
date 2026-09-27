@@ -330,6 +330,25 @@ func (a *pluginActionAdapter) AdoptWaiting(runCtx context.Context) {
 	a.adoptAfter = a.ctx.adoptWaitingPluginActions(runCtx, a.adoptAfter)
 }
 
+// A signature that drifted from the interface would never be called.
+var _ jobs.HostTransitionCompletion = (*pluginActionAdapter)(nil)
+
+// AfterHostTransition implements jobs.HostTransitionCompletion. A command the
+// host applied to a Job nothing was running (a person's Cancel of queued work)
+// ended it without any execution to report the end, so the end is announced
+// here, once the transition has committed, from the Job as it was stored.
+func (a *pluginActionAdapter) AfterHostTransition(_ context.Context, job jobs.Snapshot, _ string, to jobs.State) {
+	if a == nil || a.ctx == nil || !to.Terminal() {
+		return
+	}
+	ended, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)
+	if err != nil {
+		log.Printf("warning: could not read plugin job %s to announce its end: %v", job.ID, err)
+		return
+	}
+	a.ctx.announcePluginActionEnd(ended)
+}
+
 // Dispatch runs one claimed plugin-action execution.
 //
 // It does not own the Job's lifecycle: it re-validates the execution against
@@ -1539,7 +1558,6 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
 	}
-	s.announceTerminal("completed", "")
 	return publication
 }
 
@@ -1562,7 +1580,6 @@ func (s *pluginActionSink) Failed(failure plugin_system.HostFailure) error {
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
 	}
-	s.announceTerminal("failed", outcome.failure.Message)
 	return nil
 }
 
@@ -1596,9 +1613,6 @@ func (s *pluginActionSink) Stopped(reason string) error {
 	outcome := pluginActionStoppedOutcome(reason)
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
-	}
-	if outcome.state == jobs.StateCancelled {
-		s.announceTerminal("cancelled", "")
 	}
 	return nil
 }
@@ -1677,9 +1691,6 @@ func (s *pluginActionSink) returnClaim(reason string, beforeReturn func()) (retu
 // because a person's cancellation won it.
 func (s *pluginActionSink) endCancelled() error {
 	_, err := s.publishOutcome(pluginActionStoppedOutcome(plugin_system.StopCancelled))
-	if err == nil {
-		s.announceTerminal("cancelled", "")
-	}
 	if settleRefused(err) {
 		return nil
 	}
@@ -1699,9 +1710,13 @@ func pluginActionNotStartedMessage(reason string) string {
 	}
 }
 
-// announceTerminal tells the deployment's job-event observer that one plugin Job
-// ended, so the three after_job_* hooks fire for plugin background work exactly
-// as they do for every other Job.
+// announcePluginActionEnd tells the deployment's job-event observer that one
+// plugin Job ended, so the three after_job_* hooks fire for plugin background
+// work exactly as they do for every other Job. Every write that ends a plugin
+// Job calls it with the Job as that write stored it, and a write that found the
+// Job already ended does not: the hook named is the outcome the Job has, however
+// it got there (a success a won cancellation turned into a cancellation, a
+// person's Cancel of work nothing was running), and it is announced once.
 //
 // The record is the download queue's own type rather than a second one: one
 // observer, one mapping from an outcome to a hook name, and one payload shape —
@@ -1712,20 +1727,46 @@ func pluginActionNotStartedMessage(reason string) string {
 // inventing a fourth name here is exactly the drift the catalogue's own drift
 // test exists to prevent. The fact is not lost — it is on the Job's timeline,
 // where everything else about it is.
-func (s *pluginActionSink) announceTerminal(status, failureMessage string) {
-	if s.input != nil && s.input.NoTerminalHook {
+func (ctx *MahresourcesContext) announcePluginActionEnd(ended jobs.Snapshot) {
+	var status, failure string
+	switch ended.State {
+	case jobs.StateSucceeded:
+		status = "completed"
+	case jobs.StateFailed:
+		status = "failed"
+		if ended.Failure != nil {
+			failure = ended.Failure.Message
+		}
+	case jobs.StateCancelled:
+		status = "cancelled"
+	default:
+		return
+	}
+	if pluginActionJobIsQuietOf(ended.Summary) {
 		// The work came from the hook feed, so its outcome does not go back into
 		// it: announcing here is what would let an after_job_* handler that calls
 		// mah.start_job notify itself, forever.
 		return
 	}
-	var owner *uint
-	if s.execution.Access.UserID != 0 {
-		id := s.execution.Access.UserID
-		owner = &id
+	owner := ended.ActorUserID
+	if owner == nil {
+		owner = ended.OwnerUserID
 	}
-	s.ctx.announcePluginJobTerminal(s.execution.JobID, status, pluginActionJobName(s.input),
-		truncateTo(failureMessage, jobs.MaxFailureMessageBytes), owner)
+	ctx.announcePluginJobTerminal(ended.ID, status, pluginActionJobNameOf(ended),
+		truncateTo(failure, jobs.MaxFailureMessageBytes), owner)
+}
+
+// pluginActionJobNameOf is pluginActionJobName read from a stored Job: its
+// summary names the plugin and what ran, and a closure's label is its title.
+func pluginActionJobNameOf(job jobs.Snapshot) string {
+	summary, ok := pluginActionSummaryDecoded(job.Summary)
+	if !ok {
+		return "plugin"
+	}
+	return pluginActionJobName(&pluginActionJobInput{
+		Subtype: summary.Subtype, Plugin: summary.Plugin, Action: summary.Action,
+		ScheduleID: summary.ScheduleID, Label: job.Title,
+	})
 }
 
 // pluginActionJobName is the human name of one plugin execution, for a hook
@@ -1961,7 +2002,7 @@ func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, eve
 	if current.State.Terminal() {
 		return current, nil
 	}
-	return service.Finish(s.ctx.jobDeps(), jobs.FinishRequest{
+	ended, err := service.Finish(s.ctx.jobDeps(), jobs.FinishRequest{
 		ExecutionRef:    s.ref(),
 		ExpectedVersion: current.Version,
 		Outcome:         outcome,
@@ -1969,6 +2010,10 @@ func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, eve
 		Event:           event,
 		Failure:         failure,
 	})
+	if err == nil {
+		s.ctx.announcePluginActionEnd(ended)
+	}
+	return ended, err
 }
 
 // warn records a bounded, optional warning on the Job's timeline. It never
@@ -2428,12 +2473,16 @@ func (ctx *MahresourcesContext) failPluginActionJob(execution jobs.Execution, co
 	if current.State.Terminal() {
 		return nil
 	}
-	if _, err := service.Finish(ctx.jobDeps(), jobs.FinishRequest{
+	ended, err := service.Finish(ctx.jobDeps(), jobs.FinishRequest{
 		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateFailed,
 		Failure:         &jobs.Failure{Code: code, Class: jobs.FailureClassDependency, Message: message},
-	}); !settleRefused(err) {
+	})
+	if err == nil {
+		ctx.announcePluginActionEnd(ended)
+	}
+	if !settleRefused(err) {
 		return err
 	}
 	return nil
@@ -2466,13 +2515,16 @@ func (ctx *MahresourcesContext) withdrawPluginActionJob(execution jobs.Execution
 	if err != nil {
 		return err
 	}
-	_, err = service.Finish(ctx.jobDeps(), jobs.FinishRequest{
+	ended, err := service.Finish(ctx.jobDeps(), jobs.FinishRequest{
 		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateCancelled,
 		FinalProgress:   &jobs.Progress{Phase: phase, Message: truncateTo(reason, jobs.MaxProgressMessageBytes)},
 		Event:           jobs.EventInput{Type: pluginActionNotStartedEvent, Detail: detail},
 	})
+	if err == nil {
+		ctx.announcePluginActionEnd(ended)
+	}
 	if settleRefused(err) {
 		return nil
 	}
