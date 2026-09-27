@@ -893,7 +893,7 @@ keeps no plaintext URL, so that row's `url` is the scheme and host only
 | Endpoint | Description |
 |----------|-------------|
 | `POST /v1/jobs/cancel?id={job_id}` | Cancel a job that has not finished -- pending, downloading, processing or paused. A finished job answers `409 Conflict`; an unknown id answers `404`. |
-| `POST /v1/jobs/pause?id={job_id}` | Pause a download job. A job in a state that cannot be paused answers `409 Conflict`. |
+| `POST /v1/jobs/pause?id={job_id}` | Pause a download job. Answers once the Job records the pause; a pause not recorded within five seconds, or a job in a state that cannot be paused, answers `409 Conflict`. Pausing a download already paused answers `paused`. |
 | `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
 | `GET /v1/jobs/get?id={job_id}` | Return one job snapshot by id. Answers `404` for an unknown id or a job the caller may not see. No legacy alias. |

@@ -391,6 +391,28 @@ func TestOnlyRunningWorkReadsAsWorking(t *testing.T) {
 	}
 }
 
+// TestAStoppedJobThatReportedOnlyMetricsShowsThem: a metric is a report, on the
+// card as on the Job Center, and the card's text names the first one rather than
+// calling stopped work "Working".
+func TestAStoppedJobThatReportedOnlyMetricsShowsThem(t *testing.T) {
+	total := float64(40)
+	metrics := []jobs.Metric{
+		{Key: "downloaded", Label: "Downloaded", Value: 12 * 1024 * 1024, Unit: "bytes"},
+		{Key: "segments", Label: "Segments", Value: 4, Total: &total},
+	}
+	failed := jobRowProgress(jobs.Snapshot{State: jobs.StateFailed, Progress: jobs.Progress{Metrics: metrics}})
+	if failed == nil || failed.Indeterminate || failed.Text != "Downloaded: 12.0 MB" {
+		t.Fatalf("a failed Job that reported only metrics = %+v", failed)
+	}
+	if got := jobMetricSummary(metrics[1]); got != "Segments: 4 of 40" {
+		t.Fatalf("a metric with a total reads %q", got)
+	}
+	running := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Metrics: metrics}})
+	if running == nil || running.Text != "Working" || !running.Indeterminate {
+		t.Fatalf("running work that reported only metrics = %+v", running)
+	}
+}
+
 // TestJobRowSaysWhenScheduledWorkStarts: the time is what tells one scheduled
 // Job from another, and the card shows it, in the same zone as its other times.
 func TestJobRowSaysWhenScheduledWorkStarts(t *testing.T) {

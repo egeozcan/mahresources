@@ -133,6 +133,12 @@ export function formatMetric(metric) {
     return `${formatNumber(metric.value)} of ${formatNumber(metric.total)}${suffix}`;
 }
 
+/** One metric as a line of text: its label and its value, as the metric lists show it. */
+export function metricSummary(metric) {
+    if (!metric) return '';
+    return `${metric.label || metric.key}: ${formatMetric(metric)}`;
+}
+
 /**
  * The series a Job's graphs draw: its speed when it counts something in a
  * unit other than percent, then each metric it asked to have graphed.

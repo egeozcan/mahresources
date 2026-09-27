@@ -7,6 +7,7 @@ import {
     liveRateText,
     formatMetric,
     formatRate,
+    metricSummary,
     graphLatest,
     graphSeries,
     graphSummary,
@@ -396,7 +397,10 @@ export function progressText(job) {
     }
     if (progress.phase) return progress.phase;
     if (completed !== null && completed !== undefined) return String(completed);
-    return isWorking(job) ? 'Working' : '';
+    if (isWorking(job)) return 'Working';
+    // Work nobody is doing that reported only metrics names the first of them,
+    // as the /jobs card does.
+    return Array.isArray(progress.metrics) ? metricSummary(progress.metrics[0]) : '';
 }
 
 // Whether a Job has progress to show: something it reported, a success (which

@@ -255,8 +255,11 @@ deployment's policy and limits.
   process or from the compatibility endpoints. A pause that lands after the file
   was saved is too late: the download completes with its resource. The
   compatibility pause endpoints answer once the Job records the pause, and
-  answer `409` when the transfer is still saving its file after five seconds;
-  asking again is safe.
+  answer `409` when it has not after five seconds, typically because the
+  transfer is still saving its file. Asking again is safe: a download already
+  paused answers `paused` once the Job records it. A cancellation that reaches
+  the Job first wins: the download ends cancelled, and the pause is answered
+  `409` naming it as cancelled.
   The queue keeps no partial bytes, so **Resume** starts the download again
   from the beginning. Pause asks for confirmation and says so before it acts,
   and the paused row says it again. When the request reaches a server process

@@ -771,8 +771,9 @@ func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	progress := snapshot.Progress
 	working := jobview.PresentJob(snapshot).Working
-	// A total alone reports no work done, so it is not something to show.
-	hasData := progress.Completed != nil || progress.Message != ""
+	// A total alone reports no work done, so it is not something to show. A
+	// metric is a figure reported, and every surface shows it as one.
+	hasData := progress.Completed != nil || progress.Message != "" || len(progress.Metrics) > 0
 	succeeded := snapshot.State == jobs.StateSucceeded
 	if !hasData && !succeeded && !working {
 		return nil
@@ -806,6 +807,10 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 		out.Text = progress.Phase
 	case progress.Completed != nil:
 		out.Text = fmt.Sprintf("%d", *progress.Completed)
+	case !working && len(progress.Metrics) > 0:
+		// Work nobody is doing that reported only metrics names the first of
+		// them rather than claiming to be working.
+		out.Text = jobMetricSummary(progress.Metrics[0])
 	default:
 		out.Text = "Working"
 	}

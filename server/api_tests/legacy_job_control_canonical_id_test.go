@@ -89,6 +89,23 @@ func TestLegacyJobControlsAcceptTheCanonicalJobID(t *testing.T) {
 	postLegacyControl(t, tc, "cancel", retried.CanonicalJobID)
 }
 
+// TestALegacyPauseAskedAgainIsPaused: a pause is answered once its hold is
+// recorded, and a client whose first ask timed out asks again. Asking again of a
+// download already paused is the same question, so it answers "paused" rather
+// than refusing a download for being in the state the client asked for.
+func TestALegacyPauseAskedAgainIsPaused(t *testing.T) {
+	tc := SetupTestEnv(t)
+	handle := pausedDownloadJob(t, tc)
+
+	answer := postLegacyControl(t, tc, "pause", handle)
+	if answer.Status != "paused" || answer.CanonicalJobID == "" {
+		t.Fatalf("asking again answered %+v, want paused", answer)
+	}
+	waitForCanonicalState(t, tc, answer.CanonicalJobID, "the Job to be paused", func(snap jobs.Snapshot) bool {
+		return snap.State == jobs.StatePaused
+	})
+}
+
 // TestLegacyPauseOfAJobThisProcessDoesNotRunIsAConflict covers a Job that is
 // listed but has no transfer in this server process: queued and not yet
 // dispatched, or running in another process. Pause is the queue's own control,

@@ -165,3 +165,104 @@ func TestPauseSettledAnswersOnceTheHoldIsRecorded(t *testing.T) {
 		t.Fatalf("PauseSettled answered before the hold was published")
 	}
 }
+
+// pauseSettledOverParkedSave asks PauseSettled to pause a transfer parked inside
+// AddResource and lets the save return once the pause has landed, so the attempt
+// the pause stopped is the one that exits.
+func pauseSettledOverParkedSave(t *testing.T, dm *DownloadManager, job *DownloadJob, creator *parkingCreator, wait time.Duration) error {
+	t.Helper()
+	answer := make(chan error, 1)
+	go func() { answer <- dm.PauseSettled(job.ID, wait) }()
+	waitForCanonical(t, "the pause to land", func() bool { return job.GetStatus() == JobStatusPaused })
+	creator.releaseOne(t)
+	return <-answer
+}
+
+// A hold is confirmed only by the durable Job's answer. A publication the Job
+// refused (its execution moved on) or could not write leaves the Job unpaused, so
+// the person who asked is told the pause is not confirmed rather than "paused".
+func TestAHoldTheJobDidNotRecordIsNotConfirmed(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, sink := parkedCanonicalTransfer(t, creator)
+	sink.heldAnswer = func(CanonicalRef) HoldRecord { return HoldNotRecorded }
+	creator.waitParked(t)
+
+	var pending *HoldPendingError
+	if err := pauseSettledOverParkedSave(t, dm, job, creator, 300*time.Millisecond); !errors.As(err, &pending) {
+		t.Fatalf("a pause whose hold the Job did not record answered %v, want a pending hold", err)
+	}
+	if status, recorded := job.holdAnswer(); status != JobStatusPaused || recorded {
+		t.Fatalf("the unrecorded hold reads %s, recorded=%v", status, recorded)
+	}
+}
+
+// A cancellation that ended the Job while the hold was being told to it is the
+// outcome: the entry is cancelled with it, its history row says so, and a pause
+// waiting on the entry answers what the download became rather than "paused".
+func TestAHoldACancellationEndedCancelsTheEntry(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, sink := parkedCanonicalTransfer(t, creator)
+	history := &recordingHistory{}
+	dm.SetHistoryRecorder(history)
+	sink.heldAnswer = func(CanonicalRef) HoldRecord { return HoldCancelled }
+	creator.waitParked(t)
+
+	var conflict *StateConflictError
+	if err := pauseSettledOverParkedSave(t, dm, job, creator, 5*time.Second); !errors.As(err, &conflict) || conflict.Status != JobStatusCancelled {
+		t.Fatalf("a pause a cancellation overtook answered %v, want the cancellation", err)
+	}
+	if status := job.GetStatus(); status != JobStatusCancelled {
+		t.Fatalf("the entry of a cancelled Job is %s, want cancelled", status)
+	}
+	if records := waitForRecords(t, history, 1); records[0].Status != string(JobStatusCancelled) {
+		t.Fatalf("the history row says %q, want cancelled", records[0].Status)
+	}
+}
+
+// Asking again after a pause timed out is safe: the hold is published again under
+// the execution it settled with, and once the Job records it the answer is the
+// same as if the first ask had waited long enough.
+func TestAPauseAskedAgainAfterATimeoutIsConfirmed(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, sink := parkedCanonicalTransfer(t, creator)
+	original, _ := job.CanonicalExecution()
+	answers := make(chan HoldRecord, 2)
+	answers <- HoldNotRecorded
+	answers <- HoldRecorded
+	sink.heldAnswer = func(CanonicalRef) HoldRecord { return <-answers }
+	creator.waitParked(t)
+
+	var pending *HoldPendingError
+	if err := pauseSettledOverParkedSave(t, dm, job, creator, 300*time.Millisecond); !errors.As(err, &pending) {
+		t.Fatalf("the first ask answered %v, want a pending hold", err)
+	}
+	waitForCanonical(t, "the first publication", func() bool { return heldMirrors(sink) == 1 })
+	if err := dm.PauseSettled(job.ID, 5*time.Second); err != nil {
+		t.Fatalf("asking again answered %v, want the hold confirmed", err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.held) != 2 || sink.held[1].ref != original {
+		t.Fatalf("the hold was published %d times, the last under %+v; want twice, under %+v", len(sink.held), sink.held[len(sink.held)-1].ref, original)
+	}
+}
+
+// A retry that arrives while the first publication is still being written waits
+// for it rather than failing because the download is already paused.
+func TestAPauseAskedAgainWhileItsHoldIsWrittenWaitsForIt(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, _ := parkedCanonicalTransfer(t, creator)
+	release := make(chan struct{})
+	holdPublicationHookForTest = func(*DownloadJob) { <-release }
+	t.Cleanup(func() { holdPublicationHookForTest = nil })
+	creator.waitParked(t)
+
+	var pending *HoldPendingError
+	if err := pauseSettledOverParkedSave(t, dm, job, creator, 300*time.Millisecond); !errors.As(err, &pending) {
+		t.Fatalf("the first ask answered %v, want a pending hold", err)
+	}
+	close(release)
+	if err := dm.PauseSettled(job.ID, 5*time.Second); err != nil {
+		t.Fatalf("asking again answered %v, want the hold confirmed", err)
+	}
+}

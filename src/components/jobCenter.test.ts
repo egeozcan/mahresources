@@ -191,6 +191,17 @@ describe('progress on work nobody is doing', () => {
         expect(progressText(paused)).toBe(paused.progress.message);
     });
 
+    test('stopped work that reported only metrics shows them and names the first', () => {
+        const failed = {
+            state: 'failed',
+            progress: { metrics: [{ key: 'downloaded', label: 'Downloaded', value: 12 * 1024 * 1024, unit: 'bytes' }] },
+        };
+        expect(showsProgress(failed)).toBe(true);
+        expect(progressText(failed)).toBe('Downloaded: 12.0 MB');
+        expect(progressIndeterminate(failed)).toBe(false);
+        expect(progressText({ ...failed, state: 'running' })).toBe('Working');
+    });
+
     test('running work with nothing to report is the one bar that says working', () => {
         const running = { state: 'running', progress: {} };
         expect(showsProgress(running)).toBe(true);
