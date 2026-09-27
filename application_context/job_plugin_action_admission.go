@@ -590,13 +590,19 @@ func (a *pluginActionAdmission) liveSink() *pluginActionSink {
 	return a.sink
 }
 
-// Started implements plugin_system.HostJobSink. It is reported as the handler
-// is entered, which is the one moment "it started" is true.
+// Started implements plugin_system.HostJobSink: the Job's progress says it is
+// starting. It decides nothing, because the handler can still be stopped before
+// it is entered.
 func (a *pluginActionAdmission) Started(message string) {
-	a.decide(true)
 	if sink := a.liveSink(); sink != nil {
 		sink.Started(message)
 	}
+}
+
+// Entered implements plugin_system.HostEntryObserver. It is reported as the
+// handler's Lua call is made, which is the one moment "it started" is true.
+func (a *pluginActionAdmission) Entered() {
+	a.decide(true)
 }
 
 // Progress implements plugin_system.HostJobSink.

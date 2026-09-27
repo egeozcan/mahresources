@@ -489,8 +489,11 @@ their callbacks do not run. It then gives a running handler 5 seconds to finish 
 itself. Then it
 is stopped at its next step and has 5 more seconds to unwind, and its job ends
 `interrupted` with the reason "The server shut down while this was running." A
-handler waiting inside a call that does not end when it is stopped is left behind
-when the server exits, and its job ends the same way. The plugins' part of a
+handler waiting inside a call that does not end when it is stopped is not ended
+by the shutdown, because nothing proves the call has finished: its job keeps
+running, and offers no Retry that could run the work a second time beside it. It
+ends when the handler returns, or, if the server exits first, when the next
+server process resolves it as after a crash. The plugins' part of a
 shutdown takes at most 15 seconds, recording those outcomes included; a job whose
 outcome could not be recorded in that time is resolved by the next server
 process, as after a crash. Work still waiting for its

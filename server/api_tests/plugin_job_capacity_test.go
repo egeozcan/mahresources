@@ -117,6 +117,23 @@ func capacityKV(t *testing.T, tc *TestContext, plugin, key string) string {
 	return decoded
 }
 
+// capacityStates reads the states of several Jobs in one query, so they are one
+// moment's states: read one at a time, a Job read as running and another read
+// running after the first had already finished count two running that never ran
+// together.
+func capacityStates(t *testing.T, tc *TestContext, ids []string) map[string]jobs.State {
+	t.Helper()
+	var rows []models.Job
+	if err := tc.DB.Select("id", "state").Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		t.Fatalf("read the jobs' states: %v", err)
+	}
+	states := make(map[string]jobs.State, len(rows))
+	for _, row := range rows {
+		states[row.ID] = jobs.State(row.State)
+	}
+	return states
+}
+
 func capacityJob(t *testing.T, tc *TestContext, id string) jobs.Snapshot {
 	t.Helper()
 	snap, err := tc.AppCtx.JobService().Get(jobs.Deps{DB: tc.DB}, jobs.Access{Administrator: true}, id)
@@ -229,8 +246,8 @@ func TestAPluginBacklogHoldsOneSlotAndLeavesTheRestToOtherWork(t *testing.T) {
 	capacityWait(t, "the backlog to drain", 20*time.Second, func() bool {
 		busyRunning := 0
 		finished := 0
-		for _, id := range ids {
-			switch capacityJob(t, tc, id).State {
+		for _, state := range capacityStates(t, tc, ids) {
+			switch state {
 			case jobs.StateRunning:
 				busyRunning++
 			case jobs.StateSucceeded:

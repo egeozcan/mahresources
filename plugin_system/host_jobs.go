@@ -104,8 +104,19 @@ const (
 // holding the deployment's capacity, unclassifiable by reconciliation, and hiding the
 // work from the person waiting for it. A non-nil answer means "not durable yet"; the
 // caller keeps the outcome and reports it again.
+// HostEntryObserver is implemented by a sink that needs to know the moment an
+// execution's handler is entered: its Lua call is made, with nothing left
+// between it and the call that could stop it first. A caller waiting to hear
+// whether a run started is answered from this, never from Started, because a
+// stop that lands during Started's write keeps the handler from being entered.
+type HostEntryObserver interface {
+	Entered()
+}
+
 type HostJobSink interface {
-	// Started reports that the handler is about to be entered.
+	// Started reports that the handler is about to be entered, as its progress:
+	// it may still not be, if it is stopped before its call is made. That the
+	// call is made is HostEntryObserver's.
 	Started(message string)
 	// Progress replaces the Job's bounded progress snapshot. It is not an event:
 	// the caller throttles it, so a plugin that reports every percent of a long

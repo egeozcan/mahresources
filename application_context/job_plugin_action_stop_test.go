@@ -3,8 +3,11 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
+
+	lua "github.com/yuin/gopher-lua"
 
 	"mahresources/jobs"
 	"mahresources/models"
@@ -328,9 +331,9 @@ func unusedPIDForTest(t *testing.T) int {
 	return 0
 }
 
-// TestAHandlerLostAtShutdownSaysWhy pins the last-resort path of a shutdown: a
-// handler that would not stop is reported lost, and its Job says the server shut
-// down rather than ending interrupted with no reason.
+// TestAHandlerLostAtShutdownSaysWhy pins what a claimed execution reported lost
+// at shutdown records: its Job says the server shut down rather than ending
+// interrupted with no reason.
 func TestAHandlerLostAtShutdownSaysWhy(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 	actor := models.User{Username: "lost-actor", Role: models.RoleUser, PasswordHash: "x"}
@@ -544,4 +547,62 @@ func TestAPluginJobIsAnnouncedWithTheOutcomeItHas(t *testing.T) {
 			t.Fatalf("a success a cancellation won was announced %v, want cancelled once", got)
 		}
 	})
+}
+
+// TestAShutdownLeavesAHandlerItCouldNotStopClaimed pins the durable half of the
+// shutdown rule: a handler still inside a call that ignores the stop when the
+// bound runs out is not ended, because nothing proves its work has stopped. Its
+// Job stays running under this runtime's claim, offering no Retry that could run
+// the work beside it, and it ends only once the handler has actually returned —
+// here, because the call returned before the process exited; after a crash, when
+// the next process proves this one gone (runtime-lost).
+func TestAShutdownLeavesAHandlerItCouldNotStopClaimed(t *testing.T) {
+	defer plugin_system.SetShutdownBoundsForTest(100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond)()
+	ctx := newPluginActionJobContext(t)
+	pm := ctx.PluginManager()
+	_, L, err := pm.FindAction(pluginActionTestPlugin, "async-work")
+	if err != nil {
+		t.Fatalf("find the plugin's VM: %v", err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enterOnce, releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	// The handler's first call into the host blocks and does not watch its
+	// context, as a call into a library that takes none does.
+	mu := pm.LockVM(L)
+	kv := L.GetField(L.GetGlobal("mah"), "kv").(*lua.LTable)
+	kv.RawSetString("get", L.NewFunction(func(L *lua.LState) int {
+		enterOnce.Do(func() { close(entered) })
+		<-release
+		L.Push(lua.LNil)
+		return 1
+	}))
+	mu.Unlock()
+
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 1, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	<-entered
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 5*time.Second {
+		t.Fatalf("Close took %s", took)
+	}
+
+	if got := jobStateForTest(t, ctx, jobID); got != jobs.StateRunning {
+		t.Fatalf("a Job whose handler could not be stopped is %s after the shutdown, want still running", got)
+	}
+	if offersCommand(advertisedForTest(t, ctx, jobID), jobs.CommandRetry) {
+		t.Fatal("a Job whose handler may still be running offers Retry")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	ended := waitForJobState(t, ctx, jobID, "the handler to end once its call returned", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if ended.State != jobs.StateInterrupted || ended.Failure == nil || ended.Failure.Code != plugin_system.StopRuntimeStopping {
+		t.Fatalf("the handler that returned after the shutdown ended %s (%+v), want interrupted by the shutdown",
+			ended.State, ended.Failure)
+	}
 }

@@ -54,6 +54,7 @@ func (c stopCause) Error() string { return "the handler was stopped: " + c.reaso
 // and report every unfinished callback as lost — therefore knows this outcome is
 // on its way and must not be reported a second way.
 type handlerRun struct {
+	pm   *PluginManager
 	job  *ActionJob
 	vm   *vmMutex
 	live func() bool
@@ -70,7 +71,7 @@ type handlerRun struct {
 // enterHandler records that job's handler is about to run on the VM it holds.
 func (pm *PluginManager) enterHandler(job *ActionJob, vm *vmMutex, live func() bool) *handlerRun {
 	stopCtx, stop := context.WithCancelCause(context.Background())
-	h := &handlerRun{job: job, vm: vm, live: live, stopCtx: stopCtx, stop: stop}
+	h := &handlerRun{pm: pm, job: job, vm: vm, live: live, stopCtx: stopCtx, stop: stop}
 	if ref := job.hostJobRef(); ref != nil {
 		h.cancellable = ref.Cancellable
 	}
@@ -86,6 +87,45 @@ func (job *ActionJob) cancelledBeforeEntry() bool {
 	job.mu.RLock()
 	defer job.mu.RUnlock()
 	return job.pendingStop == StopCancelled
+}
+
+// errNotEntered is what a work function returns when its handler was not entered
+// after all (enter), with the reason.
+type errNotEntered struct{ reason string }
+
+func (e errNotEntered) Error() string { return "the handler was not entered: " + e.reason }
+
+// enter is the handler's entry: the work function calls it with everything its
+// Lua call needs in place, immediately before making the call. It answers why the
+// handler must not be entered after all, or an empty string when it may, and in
+// that case tells the host the handler has started (HostEntryObserver). The
+// reasons are the ones checked before the execution reported that it was
+// starting, asked again because that report is a write and a person's Cancel, a
+// disable or a shutdown can land while it is made.
+func (h *handlerRun) enter() string {
+	if reason := h.refusal(); reason != "" {
+		return reason
+	}
+	if ref := h.job.hostJobRef(); ref != nil {
+		if observer, ok := ref.Sink.(HostEntryObserver); ok {
+			observer.Entered()
+		}
+	}
+	return ""
+}
+
+// refusal answers why the handler must not be entered, or an empty string when
+// it may: a person cancelled the Job, the host stopped the handler, the server is
+// shutting down, or the VM it holds is no longer its plugin's.
+func (h *handlerRun) refusal() string {
+	var stopped stopCause
+	switch {
+	case h.job.cancelledBeforeEntry():
+		return StopCancelled
+	case errors.As(context.Cause(h.stopCtx), &stopped):
+		return stopped.reason
+	}
+	return h.pm.cannotEnter(asyncWork{live: h.live})
 }
 
 // Context is the context the handler's Lua call runs under: withValues' values

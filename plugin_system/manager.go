@@ -3007,15 +3007,14 @@ func (pm *PluginManager) Close() {
 	pm.httpDraining = make(map[*lua.LState]bool)
 	pm.httpMu.Unlock()
 
-	// Only now can this process say a callback will never finish, and that is what
-	// it says: every execution still unfinished had its VM closed underneath it, so
-	// its *lua.LFunction can never be entered again — or, for a handler that would
-	// not stop, the process is about to exit underneath it. An execution whose
-	// handler returned reports its own outcome and is not named here
-	// (settlesItself), and a Job whose callback never started is named just as one
-	// that was running is: neither can finish. The host decides what that means
-	// per Job, and only the host can, since it is the one holding the durable
-	// record.
+	// Only now can this process say a callback will never run, and it says so
+	// only of executions that never entered their handler: their VM was closed
+	// underneath them, so the *lua.LFunction can never be entered again. An
+	// execution whose handler returned reports its own outcome (settlesItself),
+	// and one whose handler would not stop is not named at all: nothing proves its
+	// call has ended, so its Job is left claimed for the next process to resolve
+	// once it can prove this one gone. The host decides what the rest means per
+	// Job, and only the host can, since it is the one holding the durable record.
 	pm.reportLostCallbacks(StopRuntimeStopping, began.Add(shutdownBudget))
 
 	// Emptied, not niled. init() is unbounded and the wait above is not, so a

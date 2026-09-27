@@ -395,6 +395,10 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 			timeoutCtx, cancel := h.Context(func(parent context.Context) context.Context {
 				return withInvocation(parent, scheduleInvocation(actorUserID, job.hostJobRef()))
 			})
+			if reason := h.enter(); reason != "" {
+				cancel()
+				return errNotEntered{reason: reason}
+			}
 			state.SetContext(timeoutCtx)
 			defer func() {
 				state.RemoveContext()

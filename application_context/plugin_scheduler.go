@@ -360,7 +360,8 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 // handler was entered, which is what a manual run's caller waits to hear.
 type scheduleEntrySink struct{ entered func() }
 
-func (s scheduleEntrySink) Started(string)                          { s.entered() }
+func (s scheduleEntrySink) Entered()                                { s.entered() }
+func (scheduleEntrySink) Started(string)                            {}
 func (scheduleEntrySink) Progress(plugin_system.HostProgress) error { return nil }
 func (scheduleEntrySink) Completed(string, map[string]any) error    { return nil }
 func (scheduleEntrySink) Failed(plugin_system.HostFailure) error    { return nil }
