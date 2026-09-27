@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -821,5 +822,98 @@ func TestRunNowSaysWhetherTheRunStarted(t *testing.T) {
 	scheduler.Stop()
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "1" {
 		t.Fatalf("the handler ran %q times after run now started it, want once", got)
+	}
+}
+
+// TestAScheduleItsOperatorMayNotRunRecordsNoJobs pins what a schedule does while
+// the account it runs as may not run it: its checks refuse each occurrence before
+// a Job exists, so ticks add nothing to the Job Center; the row says it was
+// refused and why, and moves on an interval as a missed window would; Run now
+// says why it did not start. Once the account may run it again, it runs.
+func TestAScheduleItsOperatorMayNotRunRecordsNoJobs(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	keeper := models.User{Username: "schedule-keeper", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&keeper).Error; err != nil {
+		t.Fatalf("seed an administrator: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	scope := models.Group{Name: "refused-operator-scope"}
+	if err := ctx.db.Create(&scope).Error; err != nil {
+		t.Fatalf("seed the scope group: %v", err)
+	}
+	operator := models.User{Username: "refused-operator", Role: models.RoleGuest, PasswordHash: "x", ScopeGroupId: &scope.ID}
+	if err := ctx.db.Create(&operator).Error; err != nil {
+		t.Fatalf("seed the operator: %v", err)
+	}
+	if err := ctx.SyncPluginSchedules(pluginActionTestPlugin, pm.DeclaredSchedules(pluginActionTestPlugin)); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	scheduleRow := func() models.PluginSchedule {
+		t.Helper()
+		var row models.PluginSchedule
+		if err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "tick").First(&row).Error; err != nil {
+			t.Fatalf("read the row: %v", err)
+		}
+		return row
+	}
+	if err := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", scheduleRow().ID).
+		Update("created_by_user_id", operator.ID).Error; err != nil {
+		t.Fatalf("make the guest the schedule's operator: %v", err)
+	}
+	makeDue := func() {
+		if err := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", scheduleRow().ID).
+			Update("next_due_at", time.Now().Add(-time.Minute)).Error; err != nil {
+			t.Fatalf("make the schedule due: %v", err)
+		}
+	}
+
+	for tick := 0; tick < 3; tick++ {
+		makeDue()
+		scheduler := NewPluginScheduler(ctx, time.Minute)
+		scheduler.dispatchWait = time.Second
+		scheduler.Tick(time.Now())
+		scheduler.Stop()
+	}
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("three refused ticks recorded %d occurrence Jobs, want none", got)
+	}
+	if got := pluginKVForTest(t, ctx, "scheduled"); got != "" {
+		t.Fatalf("the handler ran %q times for an operator who may not run it", got)
+	}
+	row := scheduleRow()
+	if row.LastStatus != models.PluginScheduleStatusRefused || !strings.Contains(row.LastError, "may no longer run plugin work") ||
+		row.Runs != 0 || row.ClaimToken != "" || !row.NextDueAt.After(time.Now()) {
+		t.Fatalf("a refused tick left status %q (%q), %d runs, claim %q, next due %s; want refused, not counted, released and moved on",
+			row.LastStatus, row.LastError, row.Runs, row.ClaimToken, row.NextDueAt)
+	}
+
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.dispatchWait = time.Second
+	err := scheduler.RunNow(pluginActionTestPlugin, "tick")
+	scheduler.Stop()
+	if !errors.Is(err, ErrScheduleDidNotStart) || !strings.Contains(err.Error(), "may no longer run plugin work") {
+		t.Fatalf("a refused run now answered %v, want ErrScheduleDidNotStart saying why", err)
+	}
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("a refused run now recorded %d occurrence Jobs, want none", got)
+	}
+
+	if err := ctx.db.Model(&models.User{}).Where("id = ?", operator.ID).
+		Updates(map[string]any{"role": models.RoleUser, "scope_group_id": nil}).Error; err != nil {
+		t.Fatalf("let the operator run plugin work again: %v", err)
+	}
+	makeDue()
+	scheduler = NewPluginScheduler(ctx, time.Minute)
+	scheduler.Tick(time.Now())
+	scheduler.Stop()
+	if got := pluginKVForTest(t, ctx, "scheduled"); got != "1" {
+		t.Fatalf("the handler ran %q times once the operator may run it, want once", got)
+	}
+	if row := scheduleRow(); row.LastStatus != models.PluginScheduleStatusCompleted || row.Runs != 1 {
+		t.Fatalf("the run after the refusal left status %q and %d runs, want completed and one", row.LastStatus, row.Runs)
 	}
 }

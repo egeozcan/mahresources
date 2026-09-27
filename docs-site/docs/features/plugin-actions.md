@@ -458,7 +458,9 @@ handler had already called `mah.job_complete` or finished before the stop reache
 it: once a person asks for a cancellation, the job does not end as succeeded.
 With several server processes, the process running the handler stops it within
 about a second of the request. A job cancelled after it was claimed but before its
-handler started never starts, and ends `cancelled`.
+handler started never starts, and ends `cancelled`, also when the account and
+scope checks it runs before its handler cannot answer: it does not go back to
+the queue to wait for them.
 
 A running `mah.start_job` job has no registration to declare `cancel = true`, so
 it can be cancelled only before it starts.
@@ -488,7 +490,10 @@ itself. Then it
 is stopped at its next step and has 5 more seconds to unwind, and its job ends
 `interrupted` with the reason "The server shut down while this was running." A
 handler waiting inside a call that does not end when it is stopped is left behind
-when the server exits, and its job ends the same way. Work still waiting for its
+when the server exits, and its job ends the same way. The plugins' part of a
+shutdown takes at most 15 seconds, recording those outcomes included; a job whose
+outcome could not be recorded in that time is resolved by the next server
+process, as after a crash. Work still waiting for its
 turn never started: a queued action stays `queued` and the next server process
 runs it, a queued `mah.start_job` job is cancelled as not started, and a schedule
 run that had not started records nothing and runs at a tick after the restart.

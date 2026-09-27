@@ -1010,3 +1010,111 @@ func TestAStalledWaitingNoticeDoesNotHoldTheClaim(t *testing.T) {
 		t.Fatalf("a Job given back to the queue still holds %d slots", held)
 	}
 }
+
+// acceptCancellableActionForTest accepts one queued cancellable-work action as
+// actor, recorded as cancellable so a running claim of it is offered Cancel.
+func acceptCancellableActionForTest(t *testing.T, ctx *MahresourcesContext, actor uint) (jobs.Snapshot, *pluginActionJobInput) {
+	t.Helper()
+	input := &pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "cancellable-work",
+		EntityType: "resource", EntityID: 1, Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+		Cancellable: true,
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("encode the input: %v", err)
+	}
+	owner := actor
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Cancellable Work", OwnerUserID: &owner, ActorUserID: &owner,
+		Replay: jobs.ReplayInput{Input: raw},
+	})
+	return accepted, input
+}
+
+// TestACancelWhileTheChecksCannotAnswerEndsTheJob pins that a person's Cancel
+// ends a Job whose re-checks cannot answer. The Job is running while its claim is
+// re-checked, and a cancellable one is offered Cancel then; if the checks fail,
+// the claim is not returned to the queue with the cancellation on it, where it
+// would wait for checks that may never answer, but ends the Job cancelled. A
+// cancellation that reaches the queue with the Job anyway, recorded as the claim
+// was being returned, ends it at the next claim without asking the checks.
+func TestACancelWhileTheChecksCannotAnswerEndsTheJob(t *testing.T) {
+	t.Run("recorded during the re-check", func(t *testing.T) {
+		setAdmissionBound(t, 1500*time.Millisecond)
+		ctx := newJobHarnessContext(t, false)
+		enableActionPluginForTest(t, ctx)
+		actor := models.User{Username: "cancel-during-recheck", Role: models.RoleUser, PasswordHash: "x"}
+		if err := ctx.db.Create(&actor).Error; err != nil {
+			t.Fatalf("seed the actor: %v", err)
+		}
+		stall := installReadStall(t, ctx.db)
+		accepted, input := acceptCancellableActionForTest(t, ctx, actor.ID)
+		admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+
+		stall.arm(readsTable("users"), false)
+		answered := make(chan plugin_system.AdmitResult, 1)
+		go func() { answered <- admission.Admit(time.Time{}) }()
+		waitFor(t, "the re-check to stall under the claim", func() bool { return stall.hits.Load() > 0 })
+
+		if err := cancelJobForTest(t, ctx, accepted.ID, "cancel-during-recheck"); err != nil {
+			t.Fatalf("cancel the running Job: %v", err)
+		}
+		if snap := jobSnapshot(t, ctx.JobService(), ctx, accepted.ID); snap.State != jobs.StateRunning ||
+			snap.ControlIntent != jobs.ControlIntentCancel {
+			t.Fatalf("the cancel landed on a %s Job with intent %q, want it recorded on the running claim",
+				snap.State, snap.ControlIntent)
+		}
+		if got := <-answered; got != plugin_system.AdmitDeferred {
+			t.Fatalf("an admission whose re-check could not answer said %v, want deferred", got)
+		}
+		stall.disarm()
+		waitFor(t, "the cancelled Job to end", func() bool { return jobStateForTest(t, ctx, accepted.ID).Terminal() })
+		if got := jobStateForTest(t, ctx, accepted.ID); got != jobs.StateCancelled {
+			t.Fatalf("a Job cancelled while its checks could not answer ended %s, want cancelled", got)
+		}
+		if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+			t.Fatalf("the admission of a Job it ended said %v, want withdrawn", got)
+		}
+		if got := pluginKVForTest(t, ctx, "long"); got != "" {
+			t.Fatalf("the handler of a cancelled Job ran (long = %q)", got)
+		}
+	})
+
+	t.Run("returned to the queue with the Job", func(t *testing.T) {
+		setAdmissionBound(t, 300*time.Millisecond)
+		ctx := newJobHarnessContext(t, false)
+		enableActionPluginForTest(t, ctx)
+		actor := models.User{Username: "cancel-in-the-queue", Role: models.RoleUser, PasswordHash: "x"}
+		if err := ctx.db.Create(&actor).Error; err != nil {
+			t.Fatalf("seed the actor: %v", err)
+		}
+		stall := installReadStall(t, ctx.db)
+		accepted, input := acceptCancellableActionForTest(t, ctx, actor.ID)
+		admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+
+		stall.arm(readsTable("users"), true)
+		if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
+			t.Fatalf("an admission whose re-check failed said %v, want deferred", got)
+		}
+		waitFor(t, "the claim to be given back", func() bool { return !admission.stillReturning() })
+		// The interleaving the release cannot see: the cancellation lands after
+		// the release read the Job and goes back to the queue with it.
+		if err := ctx.db.Model(&models.Job{}).Where("id = ?", accepted.ID).
+			Updates(map[string]any{"control_intent": jobs.ControlIntentCancel, "version": gorm.Expr("version + 1")}).Error; err != nil {
+			t.Fatalf("record the cancellation on the waiting Job: %v", err)
+		}
+		// The checks still fail; the cancellation does not wait for them.
+		if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+			t.Fatalf("the admission of a cancelled Job whose checks still fail said %v, want withdrawn", got)
+		}
+		waitFor(t, "the cancelled Job to end", func() bool { return jobStateForTest(t, ctx, accepted.ID).Terminal() })
+		if got := jobStateForTest(t, ctx, accepted.ID); got != jobs.StateCancelled {
+			t.Fatalf("a cancelled Job returned to the queue ended %s, want cancelled", got)
+		}
+		if got := pluginKVForTest(t, ctx, "long"); got != "" {
+			t.Fatalf("the handler of a cancelled Job ran (long = %q)", got)
+		}
+	})
+}

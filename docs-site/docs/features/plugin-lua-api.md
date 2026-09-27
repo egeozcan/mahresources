@@ -1360,7 +1360,8 @@ end
 Each run appears in the job system as an ordinary background job, with progress
 and SSE events, so `mah.job_progress`, `mah.job_complete` and `mah.job_fail` all
 work exactly as they do inside `mah.start_job`. The job is recorded when the run
-starts: a tick whose run cannot start records no job.
+starts: a tick whose run cannot start, or whose operator may not run it (see
+below), records no job.
 
 ### What a schedule survives, and what it does not
 
@@ -1384,9 +1385,14 @@ their jobs panel.
 
 Two consequences worth knowing before relying on a schedule:
 
-- If that account is **deleted or disabled**, the schedule stops. It does not fall
-  back to an administrator. There is no identity left to run it as, and an
-  unattended timer holding an unbound database handle is not a safe default.
+- If that account is **deleted**, the schedule stops. It does not fall back to an
+  administrator. There is no identity left to run it as, and an unattended timer
+  holding an unbound database handle is not a safe default.
+- If that account is **disabled**, loses the role to write, or may no longer use
+  the plugin, each run is refused before it starts and no job is recorded. The
+  schedule's last outcome reads `refused` with the reason, the run is not counted,
+  and it is asked again at the next interval, so it runs again once the account
+  may run it. Run now answers that the run did not start, and why.
 - A plugin enabled at **startup** for the first time -- before any operator has
   enabled it in this deployment -- has no owner and does not run until one does.
   With authentication off this does not arise: every request is the root

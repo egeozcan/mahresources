@@ -9,6 +9,7 @@ import (
 	"log"
 	"mahresources/models/jobmetrics"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -168,7 +169,12 @@ func reportHostJobOnce(job *ActionJob, report func(HostJobSink) error) {
 // failed while its durable Job is still running; settlesItself, recorded before
 // the handler gives its VM back, can. An execution named here is marked lost, so
 // a handler that returns afterwards reports nothing more.
-func (pm *PluginManager) reportLostCallbacks(reason string) {
+//
+// The reports are the host's writes, and a database that does not answer must
+// not hold the process past its supervisor: they are made until deadline, and
+// what is not reported by then is left to the next process, which resolves the
+// Jobs this process held once their claims expire.
+func (pm *PluginManager) reportLostCallbacks(reason string, deadline time.Time) {
 	var running []*ActionJob
 	for _, job := range pm.inFlight() {
 		// Claimed under the job's own lock, which is where an execution whose
@@ -185,8 +191,20 @@ func (pm *PluginManager) reportLostCallbacks(reason string) {
 		}
 	}
 
-	for _, job := range running {
-		_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
+	var reported atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, job := range running {
+			_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
+			reported.Add(1)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Until(deadline)):
+		log.Printf("[plugin] warning: %d of %d unfinished plugin job(s) were not reported before the shutdown's bound; "+
+			"the next server process resolves them", len(running)-int(reported.Load()), len(running))
 	}
 }
 

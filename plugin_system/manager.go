@@ -63,10 +63,10 @@ const (
 	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
 )
 
-// The bounds on a shutdown's wait for plugin handlers (Close). Together they are
-// at most fifteen seconds, which keeps the whole server's stop well inside a
-// supervisor's stop timeout. Variables so a test can observe each one without
-// sitting it out.
+// The bounds on a shutdown's waits (Close). Each wait has its own bound, and all
+// of them together are held to shutdownBudget, which keeps the whole server's stop
+// inside a supervisor's stop timeout. Variables so a test can observe each one
+// without sitting it out.
 var (
 	// shutdownHandlerGrace is how long a handler running when the server begins
 	// shutting down may take to finish by itself before it is stopped.
@@ -77,6 +77,12 @@ var (
 	// shutdownSettleWait bounds the wait at shutdown for the outcomes that
 	// handlers which returned are still recording.
 	shutdownSettleWait = 5 * time.Second
+	// shutdownBudget bounds the whole of Close. Its last shutdownReportWait is
+	// kept for reporting the executions that will never finish, so every wait
+	// before that report ends by shutdownBudget - shutdownReportWait whatever its
+	// own bound says.
+	shutdownBudget     = 15 * time.Second
+	shutdownReportWait = 3 * time.Second
 )
 
 // MaxAsyncJobDuration is how long an async job's Lua may execute before its
@@ -2499,17 +2505,16 @@ func closeStateBy(pm *PluginManager, state *lua.LState, deadline time.Time) bool
 
 // drainHandlers gives the handlers running at shutdown shutdownHandlerGrace to
 // finish by themselves, then stops them and gives them shutdownHandlerStopWait to
-// unwind.
-func (pm *PluginManager) drainHandlers() {
-	if pollUntil(time.Now().Add(shutdownHandlerGrace), func() bool { return pm.runningHandlers() == 0 }) {
+// unwind. within turns each bound into its deadline under the shutdown's budget.
+func (pm *PluginManager) drainHandlers(within func(time.Duration) time.Time) {
+	if pollUntil(within(shutdownHandlerGrace), func() bool { return pm.runningHandlers() == 0 }) {
 		return
 	}
 	stopped := pm.stopHandlers(StopRuntimeStopping, func(*ActionJob, *handlerRun) bool { return true })
-	log.Printf("[plugin] stopping %d plugin handler(s) still running %s after shutdown began",
-		stopped, shutdownHandlerGrace)
-	if !pollUntil(time.Now().Add(shutdownHandlerStopWait), func() bool { return pm.runningHandlers() == 0 }) {
-		log.Printf("[plugin] warning: %d plugin handler(s) did not stop within %s; the server exits without them",
-			pm.runningHandlers(), shutdownHandlerStopWait)
+	log.Printf("[plugin] stopping %d plugin handler(s) still running after the shutdown's grace", stopped)
+	if !pollUntil(within(shutdownHandlerStopWait), func() bool { return pm.runningHandlers() == 0 }) {
+		log.Printf("[plugin] warning: %d plugin handler(s) did not stop in time; the server exits without them",
+			pm.runningHandlers())
 	}
 }
 
@@ -2905,13 +2910,23 @@ func (pm *PluginManager) Close() {
 	// Under pm.mu so it is exclusive with a load registering itself: a load
 	// that got in first is in loadWg and waited for below; one that arrives
 	// after sees closed and stops before creating anything.
+	began := time.Now()
+	waitsEnd := began.Add(shutdownBudget - shutdownReportWait)
+	// within is the deadline of one wait: its own bound, or the end of the waits
+	// shutdownBudget allows, whichever comes first.
+	within := func(bound time.Duration) time.Time {
+		if at := time.Now().Add(bound); at.Before(waitsEnd) {
+			return at
+		}
+		return waitsEnd
+	}
 	pm.mu.Lock()
 	pm.closed.Store(true)
 	pm.mu.Unlock()
 	// Bounded: init() is deliberately unbounded (see loadPlugin), so a plugin
 	// wedged there must not turn shutdown into a hang too. A load that finishes
 	// after this re-checks closed under pm.mu and abandons itself.
-	if !waitWithin(&pm.loadWg, retireDrainTimeout) {
+	if !waitWithin(&pm.loadWg, time.Until(within(retireDrainTimeout))) {
 		log.Printf("[plugin] warning: a plugin load is still running after %s; shutting down without it",
 			retireDrainTimeout)
 	}
@@ -2922,7 +2937,7 @@ func (pm *PluginManager) Close() {
 	// semaphore), so the wait is for their goroutines to notice, and it is
 	// bounded all the same.
 	pm.httpStop()
-	if !waitWithin(&pm.httpWg, shutdownHandlerStopWait) {
+	if !waitWithin(&pm.httpWg, time.Until(within(shutdownHandlerStopWait))) {
 		log.Printf("[plugin] warning: plugin HTTP requests were still ending after %s; shutting down without them",
 			shutdownHandlerStopWait)
 	}
@@ -2937,7 +2952,7 @@ func (pm *PluginManager) Close() {
 	// Work still waiting has left its lane by now (done ends every wait), and
 	// work admitted from here on does not enter its handler (cannotEnter). What
 	// is running is given its grace, then stopped.
-	pm.drainHandlers()
+	pm.drainHandlers(within)
 
 	// Same lifecycle DisablePlugin uses, for the same reason: pm.closed is
 	// checked on the way in, so a render or async action that passed that check
@@ -2953,7 +2968,7 @@ func (pm *PluginManager) Close() {
 	copy(states, pm.states)
 	pm.mu.RUnlock()
 
-	closeBy := time.Now().Add(shutdownHandlerStopWait)
+	closeBy := within(shutdownHandlerStopWait)
 	for _, L := range states {
 		if !closeStateBy(pm, L, closeBy) {
 			log.Printf("[plugin] warning: a plugin VM is still in use after its handlers were stopped; " +
@@ -2964,7 +2979,7 @@ func (pm *PluginManager) Close() {
 	// A handler that returned during the teardown above settles its own outcome,
 	// which reaches the database: that is waited for, bounded, so the record says
 	// what the handler reached rather than that it was lost.
-	if !pollUntil(time.Now().Add(shutdownSettleWait), func() bool { return pm.unsettledOutcomes() == 0 }) {
+	if !pollUntil(within(shutdownSettleWait), func() bool { return pm.unsettledOutcomes() == 0 }) {
 		log.Printf("[plugin] warning: %d plugin job outcome(s) were still being recorded after %s",
 			pm.unsettledOutcomes(), shutdownSettleWait)
 	}
@@ -3001,7 +3016,7 @@ func (pm *PluginManager) Close() {
 	// that was running is: neither can finish. The host decides what that means
 	// per Job, and only the host can, since it is the one holding the durable
 	// record.
-	pm.reportLostCallbacks(StopRuntimeStopping)
+	pm.reportLostCallbacks(StopRuntimeStopping, began.Add(shutdownBudget))
 
 	// Emptied, not niled. init() is unbounded and the wait above is not, so a
 	// load can still be running here — and every registration function writes

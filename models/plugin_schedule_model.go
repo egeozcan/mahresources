@@ -86,13 +86,17 @@ const (
 	PluginScheduleOverlapAllow = "allow"
 )
 
-// Outcomes a completed run records in LastStatus.
+// Outcomes a run records in LastStatus.
 const (
 	PluginScheduleStatusCompleted = "completed"
 	PluginScheduleStatusFailed    = "failed"
 	// PluginScheduleStatusCancelled is a run a person cancelled after its
 	// handler had started: it neither completed nor failed.
 	PluginScheduleStatusCancelled = "cancelled"
+	// PluginScheduleStatusRefused is a run that did not start because the
+	// account the schedule runs as may not run it; LastError says why. It is
+	// not counted as a run.
+	PluginScheduleStatusRefused = "refused"
 )
 
 // ValidPluginScheduleOverlap reports whether a declared overlap policy is one the

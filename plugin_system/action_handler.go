@@ -124,15 +124,21 @@ func (h *handlerRun) requestStop(reason string) {
 // ended says what ended the Lua call before it returned by itself: the reason
 // the host stopped it, or that it ran out of time. Both are empty for a call that
 // was not ended early.
+//
+// It is read from the call's own context, whose cause is fixed by whichever
+// ended it first: a stop that lands after the timeout already ended the call (a
+// handler still inside a Go call when its time ran out) did not end it, and a
+// stop after the call returned finds the context already cancelled by its caller.
 func (h *handlerRun) ended() (stopReason string, timedOut bool) {
-	if h == nil {
+	if h == nil || h.luaCtx == nil {
 		return "", false
 	}
+	cause := context.Cause(h.luaCtx)
 	var stopped stopCause
-	if errors.As(context.Cause(h.stopCtx), &stopped) {
+	switch {
+	case errors.As(cause, &stopped):
 		return stopped.reason, false
-	}
-	if h.luaCtx != nil && errors.Is(context.Cause(h.luaCtx), errHandlerTimeout) {
+	case errors.Is(cause, errHandlerTimeout):
 		return "", true
 	}
 	return "", false

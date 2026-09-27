@@ -27,15 +27,18 @@ rather than as whoever asked for it. And `nextDueAt` does not move: this
 is an extra run, not a re-phasing, so the schedule stays on the cadence
 it was already on.
 
-A run is refused rather than started in five cases, each with its own
+A run is refused rather than started in six cases, each with its own
 message and a non-zero exit. There is no such stored schedule. The
 plugin no longer declares that id, which is what a disabled plugin and a
 renamed schedule both look like. The row has no owner, so the schedule
 has stopped. A run is already in flight, which is the `skip` overlap
-policy doing exactly what it promises. Or the run could not start within
+policy doing exactly what it promises. The run could not start within
 the dispatch wait because the plugin, the job slots or the job budget
 stayed busy: nothing ran, nothing is recorded on the row and no job is
-kept, so running the command again later is safe.
+kept, so running the command again later is safe. Or the account the
+schedule runs as may no longer run it, because it is disabled, lost the
+role to write or may no longer use the plugin: the message says which,
+the row records `refused` without counting a run, and no job is kept.
 
 ## Usage
 

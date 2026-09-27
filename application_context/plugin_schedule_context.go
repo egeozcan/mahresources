@@ -200,6 +200,40 @@ func (ctx *MahresourcesContext) CompletePluginScheduleRun(id uint, claimToken, s
 		}).Error
 }
 
+// RefusePluginScheduleRun records that a run of the schedule was refused before
+// it started, because the account it runs as may not run it, without counting a
+// run. With a claim token it also releases that claim, conditional on holding it;
+// with advance it moves the next due time on as CompletePluginScheduleRun does,
+// because such a refusal lasts until somebody changes the account, and asking
+// again at every tick would only repeat it.
+func (ctx *MahresourcesContext) RefusePluginScheduleRun(id uint, claimToken, message string, now time.Time, advance bool) error {
+	query := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", id)
+	updates := map[string]any{
+		"last_status": models.PluginScheduleStatusRefused,
+		"last_error":  truncateScheduleError(message),
+	}
+	if claimToken != "" {
+		query = query.Where("claim_token = ?", claimToken)
+		updates["claim_token"] = ""
+		updates["claimed_at"] = nil
+	}
+	if advance {
+		var row models.PluginSchedule
+		if err := ctx.db.Select("every_seconds").Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		every := time.Duration(row.EverySeconds) * time.Second
+		if every <= 0 {
+			every = time.Minute
+		}
+		updates["next_due_at"] = now.Add(every)
+	}
+	return query.Updates(updates).Error
+}
+
 // AdvancePluginScheduleAtDispatch is the overlap = "allow" half of the same
 // bookkeeping: the schedule's next due time moves as soon as the run is handed
 // off, and the claim is released immediately, so the following tick may start

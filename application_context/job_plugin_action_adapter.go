@@ -456,7 +456,10 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 			log.Printf("warning: plugin job %s stays queued: %s is not loaded in this process", jobID, input.Plugin)
 			return nil
 		}
-		return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
+		ctx.settlePluginActionWhile(jobID, jobs.StateQueued, func() error {
+			return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
+		})
+		return nil
 	}
 	admission := ctx.newPluginActionAdmission(jobID, input, ctx.registeredActionRefusal)
 	if _, err := pm.RunActionAsyncForHost(admission.hostJobRef(handle, ""), owner, input.Plugin, input.Action,
@@ -496,6 +499,9 @@ type pluginActionRun struct {
 	// Cancelled reports that the handler was entered and a person cancelled the
 	// run: it neither completed nor failed.
 	Cancelled bool
+	// Refused is the reason the run's checks refused it before its Job was
+	// accepted: the account it runs as may not run it. No Job records it.
+	Refused string
 	// Message is the bounded message the run produced.
 	Message string
 }
@@ -1626,22 +1632,58 @@ func pluginActionInterruption(reason string) *jobs.Failure {
 // started.
 func (s *pluginActionSink) NotStarted(reason string) {
 	if s.input != nil && s.input.Subtype == pluginActionSubtypeRegistered {
-		release := func() error {
-			_, err := s.ctx.JobService().ReleaseClaim(s.ctx.jobDeps(), jobs.ReleaseRequest{
-				ExecutionRef: s.ref(), Reason: reason, To: jobs.StateQueued,
-			})
-			if err != nil && mirrorRefusalIsSilent(err) {
-				return nil
-			}
+		s.ctx.settlePluginActionWhile(s.execution.JobID, jobs.StateRunning, func() error {
+			_, err := s.returnClaim(reason, nil)
 			return err
-		}
-		s.ctx.settlePluginActionWhile(s.execution.JobID, jobs.StateRunning, release)
+		})
 		return
 	}
 	execution := s.execution
 	s.ctx.settlePluginActionWhile(execution.JobID, jobs.StateRunning, func() error {
 		return s.ctx.withdrawPluginActionJob(execution, pluginActionNotStartedEvent, pluginActionNotStartedMessage(reason))
 	})
+}
+
+// returnClaim hands this execution's claim back to the queue, its handler not
+// entered, and reports whether it did; beforeReturn, when set, runs first. A Job
+// a cancellation has won is not returned: it ends cancelled instead. Nothing
+// would run it only to stop it, and back in the queue it would wait for whatever
+// kept it from starting, which may never change, while the person who cancelled
+// it was told it was being cancelled. A cancellation recorded after the read here
+// either lands while the release is written, which then fails on the Job's
+// version and is asked again, or lands first and goes back to the queue with the
+// Job, where the admission that claims it next reads it before anything else.
+func (s *pluginActionSink) returnClaim(reason string, beforeReturn func()) (returned bool, err error) {
+	current, err := s.current()
+	if err != nil {
+		return false, err
+	}
+	if current.ControlIntent == jobs.ControlIntentCancel {
+		return false, s.endCancelled()
+	}
+	if beforeReturn != nil {
+		beforeReturn()
+	}
+	_, err = s.ctx.JobService().ReleaseClaim(s.ctx.jobDeps(), jobs.ReleaseRequest{
+		ExecutionRef: s.ref(), Reason: reason, To: jobs.StateQueued,
+	})
+	if settleRefused(err) {
+		return true, nil
+	}
+	return true, err
+}
+
+// endCancelled ends this execution's Job cancelled without entering its handler,
+// because a person's cancellation won it.
+func (s *pluginActionSink) endCancelled() error {
+	_, err := s.publishOutcome(pluginActionStoppedOutcome(plugin_system.StopCancelled))
+	if err == nil {
+		s.announceTerminal("cancelled", "")
+	}
+	if settleRefused(err) {
+		return nil
+	}
+	return err
 }
 
 // pluginActionNotStartedMessage is what a withdrawn Job says about why it never
@@ -2059,7 +2101,7 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 // caller releases it), and no outcome is recorded. decided, when set, is told once
 // whether the occurrence started: true as its handler is entered, false as soon as
 // this attempt gives up without entering it.
-func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.ScheduleRegistration, actorUserID uint, overlap string, wait time.Duration, decided func(started bool)) (pluginActionRun, error) {
+func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.ScheduleRegistration, actorUserID uint, overlap string, wait time.Duration, decided func(started bool, refusal string)) (pluginActionRun, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return pluginActionRun{}, errors.New("this context has no job control plane installed")
@@ -2198,6 +2240,7 @@ func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActio
 	run := pluginActionRun{JobID: jobID}
 	if jobID == "" {
 		// Never admitted, so never accepted: there is nothing to withdraw.
+		run.Refused = admission.refusedBeforeAcceptance()
 		return run, nil
 	}
 	if execution, admitted := admission.admitted(); admitted {
@@ -2365,7 +2408,7 @@ func (ctx *MahresourcesContext) blockPluginActionJob(execution jobs.Execution, r
 		To:              jobs.StateBlocked,
 		Event:           jobs.EventInput{Type: jobs.EventBlocked, Detail: detail},
 	})
-	if err != nil && mirrorRefusalIsSilent(err) {
+	if settleRefused(err) {
 		return nil
 	}
 	return err
@@ -2390,7 +2433,7 @@ func (ctx *MahresourcesContext) failPluginActionJob(execution jobs.Execution, co
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateFailed,
 		Failure:         &jobs.Failure{Code: code, Class: jobs.FailureClassDependency, Message: message},
-	}); err != nil && !mirrorRefusalIsSilent(err) {
+	}); !settleRefused(err) {
 		return err
 	}
 	return nil
@@ -2430,7 +2473,7 @@ func (ctx *MahresourcesContext) withdrawPluginActionJob(execution jobs.Execution
 		FinalProgress:   &jobs.Progress{Phase: phase, Message: truncateTo(reason, jobs.MaxProgressMessageBytes)},
 		Event:           jobs.EventInput{Type: pluginActionNotStartedEvent, Detail: detail},
 	})
-	if err != nil && mirrorRefusalIsSilent(err) {
+	if settleRefused(err) {
 		return nil
 	}
 	return err

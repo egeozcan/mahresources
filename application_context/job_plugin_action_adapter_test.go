@@ -1955,7 +1955,8 @@ func TestAPluginJobsCommandsFollowTheActorsCurrentAuthority(t *testing.T) {
 // authority forward from the moment they enabled the plugin. A schedule is plugin code
 // on a timer — the power the deny on plugin-code endpoints withholds from a
 // group-limited principal — so an operator who has since been confined stops running
-// it, and the occurrence is blocked for a person rather than silently executed.
+// it: the occurrence is refused before a Job is accepted for it, and the schedule's
+// row says it was refused and why, rather than the handler running silently.
 func TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 
@@ -1998,14 +1999,18 @@ func TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority(t *testin
 		t.Fatalf("make the schedule due: %v", err)
 	}
 
-	NewPluginScheduler(ctx, time.Minute).Tick(time.Now())
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.Tick(time.Now())
+	scheduler.Stop()
 
-	job := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
-	job = waitForJobState(t, ctx, job.ID, "the occurrence to be decided", func(s jobs.Snapshot) bool {
-		return s.State.Terminal() || s.State == jobs.StateBlocked
-	})
-	if job.State != jobs.StateBlocked {
-		t.Fatalf("a confined operator's occurrence ended %s, want blocked", job.State)
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("a confined operator's occurrence recorded %d Jobs, want none", got)
+	}
+	if err := ctx.db.First(&row, row.ID).Error; err != nil {
+		t.Fatalf("reload the schedule row: %v", err)
+	}
+	if row.LastStatus != models.PluginScheduleStatusRefused || row.LastError != scheduleRefusalMessage("plugin-refused") {
+		t.Fatalf("a confined operator's occurrence left the row %q (%q), want refused for the plugin", row.LastStatus, row.LastError)
 	}
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "" {
 		t.Fatalf("a confined operator's schedule still ran its handler (%q)", got)

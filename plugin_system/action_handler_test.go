@@ -171,6 +171,37 @@ func TestAHandlerThatRunsOutOfTimeFailsAsATimeout(t *testing.T) {
 	}
 }
 
+// TestAStopAfterTheTimeoutDoesNotRenameIt pins that a handler is classified by
+// what ended its call first. A handler inside a Go call when its time runs out
+// has already been ended by the timeout; a disable that lands before the call
+// returns stops nothing more, and the Job fails as a timeout rather than being
+// recorded as interrupted by the disable.
+func TestAStopAfterTheTimeoutDoesNotRenameIt(t *testing.T) {
+	old := asyncHandlerTimeout
+	asyncHandlerTimeout = 200 * time.Millisecond
+	defer func() { asyncHandlerTimeout = old }()
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "blocker", 1, sink)
+
+	time.Sleep(500 * time.Millisecond)
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	hooks.released.Store(true)
+	waitUntil(t, "the handler to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return sink.failed+len(sink.stopped)+sink.completed > 0
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 0 || sink.failed != 1 || sink.failures[0].Cause != FailureTimeout {
+		t.Fatalf("the host was told stopped=%v failed=%d failures=%+v, want one timeout failure",
+			sink.stopped, sink.failed, sink.failures)
+	}
+}
+
 // TestDisablingAPluginStopsItsRunningHandler pins that a disable stops the
 // plugin's running work rather than leaving it running on a revoked VM for the
 // rest of its allowance, and that the Job is told why: the handler was stopped
@@ -359,6 +390,36 @@ func TestAHandlerThatWillNotStopIsReportedLostOnce(t *testing.T) {
 	if sink.completed != 0 || sink.failed != 0 || len(sink.stopped) != 0 {
 		t.Fatalf("a handler reported lost then reported completed=%d failed=%d stopped=%v: two outcomes",
 			sink.completed, sink.failed, sink.stopped)
+	}
+}
+
+// stalledLostSink records nothing when told a callback is lost: its write waits
+// on a database that does not answer.
+type stalledLostSink struct {
+	recordingSink
+	release chan struct{}
+}
+
+func (s *stalledLostSink) CallbackLost(string) { <-s.release }
+
+// TestAShutdownDoesNotWaitOutAHostThatCannotRecordALostCallback pins the last
+// bound on Close: reporting the executions that will never finish is the host's
+// database write, and one that does not answer is given up at the shutdown's
+// budget rather than holding the process past its supervisor.
+func TestAShutdownDoesNotWaitOutAHostThatCannotRecordALostCallback(t *testing.T) {
+	shortenShutdown(t, 100*time.Millisecond, 100*time.Millisecond, 100*time.Millisecond)
+	oldBudget, oldReport := shutdownBudget, shutdownReportWait
+	shutdownBudget, shutdownReportWait = 1500*time.Millisecond, 500*time.Millisecond
+	t.Cleanup(func() { shutdownBudget, shutdownReportWait = oldBudget, oldReport })
+	pm, hooks := newStoppablePlugin(t)
+	sink := &stalledLostSink{release: make(chan struct{})}
+	t.Cleanup(func() { close(sink.release); hooks.released.Store(true) })
+	runStoppable(t, pm, hooks, "blocker", 1, sink)
+
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 2500*time.Millisecond {
+		t.Fatalf("Close took %s waiting for a lost callback's report, want it held to the 1.5s budget", took)
 	}
 }
 

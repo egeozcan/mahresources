@@ -241,7 +241,7 @@ Navigate to the plugin management page to see all discovered plugins with their 
 | `POST` | `/v1/plugin/purge-data` | Purge all KV store data for a disabled plugin (form: `name`) |
 | `POST` | `/v1/plugin/scopedAccess` | Allow or refuse group-limited accounts per plugin (form: `name`, `allowed`). See [Plugin Permissions](./plugin-permissions.md) |
 | `GET` | `/v1/plugin/schedules` | List recorded plugin schedules. See [`mah.schedule`](./plugin-lua-api.md#mahschedule----recurring-work) |
-| `POST` | `/v1/plugin/schedule/run` | Run one schedule now; answers once the run has started, or 409 when it could not start within 10 seconds |
+| `POST` | `/v1/plugin/schedule/run` | Run one schedule now; answers once the run has started, or 409 when it could not start within 10 seconds or the account it runs as may not run it |
 | `GET` | `/v1/plugin/scheduled-downloads` | List one-shot deferred downloads for a plugin |
 | `POST` | `/v1/plugin/scheduled-downloads/cancel` | Cancel a pending deferred download |
 
