@@ -254,6 +254,15 @@ type HostDeferral interface {
 	Deferral() time.Duration
 }
 
+// HostJobNamer is implemented by a HostAdmission whose durable Job is accepted
+// only when it is first admitted, rather than before it waited: a scheduled tick
+// that never gets its plugin, a job slot or the deployment's budget leaves no Job
+// behind. JobID answers that Job once it exists, and the execution takes it as
+// its own from the admission on.
+type HostJobNamer interface {
+	JobID() string
+}
+
 // HostAdmission is the durable half of one queued execution: the claim the head
 // of a lane asks for once it holds a job slot.
 //
@@ -286,6 +295,9 @@ const (
 	// asyncRevoked means the VM the work belongs to was revoked — its plugin was
 	// disabled or reloaded — before the work was entered.
 	asyncRevoked
+	// asyncNotEntered means the host admitted the work and it was not entered
+	// after all, and the host has been told so (HostJobSink.NotStarted).
+	asyncNotEntered
 )
 
 // asyncBounds are the waits one execution may spend before its work is entered.
@@ -372,6 +384,9 @@ func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (asyncOut
 	}
 	switch ref.Admission.Admit(deadline) {
 	case Admitted:
+		if namer, ok := ref.Admission.(HostJobNamer); ok && ref.JobID == "" {
+			pm.nameHostJob(job, namer.JobID())
+		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			// Admitted too late: the caller that bounded this wait has stopped
 			// waiting, so the execution does not start. The host holds the claim
@@ -389,6 +404,22 @@ func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (asyncOut
 	default:
 		return asyncRan, admitAgain
 	}
+}
+
+// nameHostJob records the durable Job an execution was admitted into, when the
+// host accepted it only at the admission. The reference is replaced rather than
+// written in place, because readers hold it without the job's lock.
+func (pm *PluginManager) nameHostJob(job *ActionJob, jobID string) {
+	if jobID == "" {
+		return
+	}
+	job.mu.Lock()
+	if job.host != nil {
+		named := *job.host
+		named.JobID = jobID
+		job.host = &named
+	}
+	job.mu.Unlock()
 }
 
 // stepOutOfLane is how the head of a lane waits for a host that deferred it: it

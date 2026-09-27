@@ -151,7 +151,7 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 
 		job, err := submitter.SubmitDownload(name, pm.actorFor(L), url, opts)
 		if err != nil {
-			logEgressRefusal(err, name, "GET", url)
+			pm.logEgressRefusal(err, name, "GET", url)
 			L.Push(lua.LNil)
 			// Sanitized like every other fetch refusal reaching Lua: our own
 			// message and Go's *net.OpError prefix both carry the address a

@@ -36,23 +36,6 @@ import (
 // execution can never be finished is a fact about a process, and this is the
 // process that owns plugin VMs.
 
-// HostJobSink is the durable Job one async plugin execution reports through.
-//
-// Every method is a fact, never a decision: whether a Job may finish, whether an
-// outcome is acceptable, and what a stale execution's publish does are the control
-// plane's answers. A sink is therefore safe to call from the goroutine that runs
-// the Lua, and it must not block that goroutine for long: the method calls are
-// where a worker's time goes if it is slow, and the reports are throttled by the
-// caller rather than here.
-//
-// The two *terminal* reports answer with an error, and that answer is what
-// plugin_system acts on. A terminal outcome is reported exactly once, and "exactly
-// once" has to mean "once the durable plane has it": the host's publish reaches a
-// database, so it can be refused transiently, and a caller that treated a refusal as
-// a delivery would leave a returned callback's Job running and heartbeated forever —
-// holding the deployment's capacity, unclassifiable by reconciliation, and hiding the
-// work from the person waiting for it. A non-nil answer means "not durable yet"; the
-// caller keeps the outcome and reports it again.
 // HostProgress is one progress report a plugin makes: always a percent, and,
 // when the plugin counts something, the count, its total and its unit, which
 // is what gives the Job a speed and an ETA. Metrics are the named figures it
@@ -66,8 +49,76 @@ type HostProgress struct {
 	Metrics   []jobmetrics.Metric
 }
 
+// FailureCause says what kind of thing ended an execution unsuccessfully. The
+// host classifies the Job's failure by it: a plugin that reports its work failed,
+// a handler that broke, and a handler that ran out of time are three different
+// facts for the person reading the Job.
+type FailureCause string
+
+const (
+	// FailureDeclared is a failure the plugin reported itself, through
+	// mah.job_fail or mah.abort. The message is the plugin's own.
+	FailureDeclared FailureCause = "declared"
+	// FailureError is a handler that raised a Lua error, or a host panic while it
+	// ran. The message is the error's first line, without its stack traceback.
+	FailureError FailureCause = "error"
+	// FailureTimeout is a handler that ran longer than MaxAsyncJobDuration and was
+	// stopped. The message is the host's own.
+	FailureTimeout FailureCause = "timeout"
+)
+
+// HostFailure is why one execution ended unsuccessfully.
+//
+// Message is text the plugin produced or the host wrote about the handler. It is
+// never a path on the server: a Lua error names the plugin's file relative to the
+// plugin. Values the host has to keep out of durable history — the execution's
+// own parameters — are the sink's to redact, because only the host knows them.
+type HostFailure struct {
+	Cause   FailureCause
+	Message string
+}
+
+// Reasons an execution's handler was stopped, or never entered, by the host
+// rather than by its own outcome.
+const (
+	// StopCancelled is a person cancelling the Job while its handler ran.
+	StopCancelled = "cancelled"
+	// StopPluginDisabled is the plugin being disabled or reloaded under it.
+	StopPluginDisabled = "plugin-disabled"
+	// StopRuntimeStopping is the server shutting down.
+	StopRuntimeStopping = "plugin-runtime-stopping"
+)
+
+// HostJobSink is the durable Job one async plugin execution reports through.
+//
+// Every method is a fact, never a decision: whether a Job may finish, whether an
+// outcome is acceptable, and what a stale execution's publish does are the control
+// plane's answers. A sink is therefore safe to call from the goroutine that runs
+// the Lua, and it must not block that goroutine for long: the method calls are
+// where a worker's time goes if it is slow, and the reports are throttled by the
+// caller rather than here.
+//
+// The *terminal* reports answer with an error, and that answer is what
+// plugin_system acts on. A terminal outcome is reported exactly once, and "exactly
+// once" has to mean "once the durable plane has it": the host's publish reaches a
+// database, so it can be refused transiently, and a caller that treated a refusal as
+// a delivery would leave a returned callback's Job running and heartbeated forever —
+// holding the deployment's capacity, unclassifiable by reconciliation, and hiding the
+// work from the person waiting for it. A non-nil answer means "not durable yet"; the
+// caller keeps the outcome and reports it again.
+// HostEntryObserver is implemented by a sink that needs to know the moment an
+// execution's handler is entered: its Lua call is made, with nothing left
+// between it and the call that could stop it first. A caller waiting to hear
+// whether a run started is answered from this, never from Started, because a
+// stop that lands during Started's write keeps the handler from being entered.
+type HostEntryObserver interface {
+	Entered()
+}
+
 type HostJobSink interface {
-	// Started reports that the handler is about to be entered.
+	// Started reports that the handler is about to be entered, as its progress:
+	// it may still not be, if it is stopped before its call is made. That the
+	// call is made is HostEntryObserver's.
 	Started(message string)
 	// Progress replaces the Job's bounded progress snapshot. It is not an event:
 	// the caller throttles it, so a plugin that reports every percent of a long
@@ -78,9 +129,19 @@ type HostJobSink interface {
 	// plugin returned one. A non-nil answer means the outcome was not durably
 	// recorded.
 	Completed(message string, result map[string]any) error
-	// Failed reports that the handler ended unsuccessfully, with the message the
-	// plugin or the host produced. A non-nil answer means the same as Completed's.
-	Failed(message string) error
+	// Failed reports that the handler ended unsuccessfully, and why. A non-nil
+	// answer means the same as Completed's.
+	Failed(failure HostFailure) error
+	// Stopped reports that the host ended the handler before it finished, for one
+	// of the Stop reasons: a person cancelled the Job, its plugin was disabled, or
+	// the server is shutting down. The handler has returned by the time this is
+	// called. A non-nil answer means the same as Completed's.
+	Stopped(reason string) error
+	// NotStarted reports that an execution the host admitted will not enter its
+	// handler after all, for one of the Stop reasons: its plugin went away, or the
+	// server is shutting down, between the admission and the handler. Nothing ran,
+	// so the host decides whether the Job waits for another runtime or ends.
+	NotStarted(reason string)
 	// CallbackLost reports that the callback this execution was reporting for can
 	// never run or finish again: the VM that owned it is gone. It is how a
 	// graceful shutdown proves runtime loss, which is a stronger statement than a
@@ -109,6 +170,10 @@ type HostJobRef struct {
 	// was started outside any Job.
 	ParentJobID string
 	Sink        HostJobSink
+	// Cancellable records that the Job was accepted against a registration that
+	// declares its handler may be stopped partway (cancel = true). A person's
+	// Cancel stops a handler that has entered only when this is set.
+	Cancellable bool
 	// Admission, when set, is the claim this execution must be granted before it
 	// starts: the host accepted the Job as waiting and has not claimed it, so the
 	// execution asks from the head of its plugin's lane. Nil means the host

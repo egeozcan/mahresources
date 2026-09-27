@@ -89,8 +89,9 @@ func (pm *PluginManager) RenderDisplay(reqCtx context.Context, pluginName, fullT
 	cancel()
 
 	if err != nil {
+		err = pm.pluginCallError(pluginName, "display render error", err)
 		log.Printf("[plugin] warning: display render %q/%q returned error: %v", pluginName, fullTypeName, err)
-		return "", fmt.Errorf("display render error: %w", err)
+		return "", err
 	}
 
 	ret := L.Get(-1)

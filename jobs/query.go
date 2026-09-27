@@ -1620,8 +1620,9 @@ func p95Index(n int64) int64 {
 	return index
 }
 
-// failureClassCounts groups settled failures by their bounded classification,
-// commonest first. The class is a taxonomy rather than an error message, which
+// failureClassCounts groups the recorded failures — every failed Job's, and an
+// interrupted Job's that said why — by their bounded classification, commonest
+// first. The class is a taxonomy rather than an error message, which
 // is what makes it safe to aggregate and useful to look at.
 func failureClassCounts(base *gorm.DB) ([]FailureClassCount, error) {
 	var rows []struct {

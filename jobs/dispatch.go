@@ -1094,6 +1094,10 @@ func loadClaim(db *gorm.DB, jobID string) (models.JobClaim, error) {
 // store.
 const ReconcileFailureCode = "reconciliation-failed"
 
+// ReconcileRuntimeLostCode is the reason an interrupted Job records when its
+// adapter proved, after its lease expired, that the process running it is gone.
+const ReconcileRuntimeLostCode = "runtime-lost"
+
 // errReconcileSuperseded reports that a Job moved while it was being reconciled:
 // the adapter that was asked no longer owns it, so there is nothing to apply and
 // nothing to record.
@@ -1330,6 +1334,59 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 		})
 	}
 	return report, decisionErr
+}
+
+// ExpireAbandonedClaims ends the lease of each held claim whose claimant gone
+// proves is no longer running, so the next reconciliation pass asks its Kind about
+// it at once rather than after the lease runs out, and answers how many it ended.
+//
+// A lease is what a runtime that may still be alive is given before anybody may
+// decide about its work. A runtime proved gone — the caller's gone answers that,
+// from the claimant's recorded identity — is not coming back to heartbeat, so
+// waiting out its lease only leaves its Jobs reading as running, with frozen
+// progress, for minutes after a restart. Nothing is decided here: the Kind's own
+// reconciliation still decides what the work becomes, exactly as it would have
+// once the lease ran out. gone must answer true only on proof, never on silence.
+//
+// Every held claim is visited, page pages of it at a time in Job order: held
+// claims are the executions running now, which the deployment's budgets bound,
+// and a claimant that died behind more live claims than one page holds must not
+// wait out its lease because the pass never reached it.
+func (s *Service) ExpireAbandonedClaims(deps Deps, gone func(claimant string) bool, page int) (int, error) {
+	if gone == nil {
+		return 0, nil
+	}
+	if page <= 0 {
+		page = DefaultReconcileBatch
+	}
+	now := deps.now()
+	expired := 0
+	after := ""
+	for {
+		var claims []models.JobClaim
+		if err := deps.DB.Where("state = ? AND lease_expires_at > ? AND job_id > ?", models.JobClaimStateHeld, now, after).
+			Order("job_id").Limit(page).Find(&claims).Error; err != nil {
+			return expired, fmt.Errorf("jobs: read held claims: %w", err)
+		}
+		for _, claim := range claims {
+			if !gone(claim.Claimant) {
+				continue
+			}
+			// Guarded by the token and the state the claim was read in: a claim that
+			// was released, settled or replaced meanwhile is not this one any more.
+			result := deps.DB.Model(&models.JobClaim{}).
+				Where("job_id = ? AND state = ? AND execution_token = ?", claim.JobID, models.JobClaimStateHeld, claim.ExecutionToken).
+				Update("lease_expires_at", now)
+			if result.Error != nil {
+				return expired, fmt.Errorf("jobs: expire the claim on %s: %w", claim.JobID, result.Error)
+			}
+			expired += int(result.RowsAffected)
+		}
+		if len(claims) < page {
+			return expired, nil
+		}
+		after = claims[len(claims)-1].JobID
+	}
 }
 
 // ReconcileUnrunnable blocks pending work this process has no adapter for.
@@ -1752,9 +1809,13 @@ func (s *Service) applyReconcileDecision(deps Deps, job models.Job, claim models
 			To: StateBlocked, Event: EventInput{Type: EventBlocked, Detail: detail},
 		})
 	case ReconcileInterrupt:
+		// The adapter has proved the execution's runtime gone, so the reader is told
+		// that, rather than shown an interruption with no reason.
 		snap, err = s.Transition(deps, Transition{
 			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: claim.ExecutionToken,
 			To: StateInterrupted, Event: EventInput{Type: EventInterrupted, Detail: detail},
+			Failure: &Failure{Code: ReconcileRuntimeLostCode, Class: FailureClassInternal,
+				Message: "The server process running this stopped before it finished."},
 		})
 	case ReconcileFail:
 		snap, err = s.Finish(deps, FinishRequest{

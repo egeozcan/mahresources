@@ -420,7 +420,7 @@ func TestCompletingARunRebasesRatherThanCatchingUp(t *testing.T) {
 		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
 	}
 	done := time.Now()
-	if err := ctx.CompletePluginScheduleRun(row.ID, "tick", models.PluginScheduleStatusCompleted, "", done); err != nil {
+	if err := ctx.CompletePluginScheduleRun(row.ID, "tick", models.PluginScheduleStatusCompleted, "", done, done); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -491,5 +491,46 @@ func TestSyncWithNoOperatorLeavesTheScheduleUnownedAndInert(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	} else if claimed {
 		t.Fatal("an unowned schedule was claimed")
+	}
+}
+
+// TestAnOlderRunDoesNotReplaceANewerOutcome pins the order of outcomes under
+// overlap = "allow", where runs hold no claim and finish in any order: the row
+// shows the outcome of the newest run that reported, so an older run refused or
+// finishing late does not replace it, and every run is still counted.
+func TestAnOlderRunDoesNotReplaceANewerOutcome(t *testing.T) {
+	ctx := newScheduleTestContext(t)
+	owner := uint(1)
+	row := seedSchedule(t, ctx, "poller", "tick", time.Now().Add(time.Hour), &owner)
+	base := time.Date(2026, 9, 27, 12, 0, 5, 0, time.Local)
+	older, newer := base.Add(100*time.Millisecond), base.Add(250*time.Millisecond)
+	read := func() models.PluginSchedule {
+		t.Helper()
+		var got models.PluginSchedule
+		if err := ctx.db.First(&got, row.ID).Error; err != nil {
+			t.Fatalf("read the row: %v", err)
+		}
+		return got
+	}
+
+	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusCompleted, "", newer, time.Now()); err != nil {
+		t.Fatalf("record the newer run: %v", err)
+	}
+	if err := ctx.RefusePluginScheduleRun(row.ID, "", "refused late", older, time.Now(), false); err != nil {
+		t.Fatalf("record the older refusal: %v", err)
+	}
+	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusFailed, "failed late", older, time.Now()); err != nil {
+		t.Fatalf("record the older run: %v", err)
+	}
+	if got := read(); got.LastStatus != models.PluginScheduleStatusCompleted || got.LastError != "" || got.Runs != 2 {
+		t.Fatalf("after older outcomes the row reads %q (%q) with %d runs, want the newer completion and both runs counted",
+			got.LastStatus, got.LastError, got.Runs)
+	}
+
+	if err := ctx.RefusePluginScheduleRun(row.ID, "", "refused", base.Add(time.Second), time.Now(), false); err != nil {
+		t.Fatalf("record a newer refusal: %v", err)
+	}
+	if got := read(); got.LastStatus != models.PluginScheduleStatusRefused || got.LastError != "refused" {
+		t.Fatalf("a newer refusal left the row %q (%q), want refused", got.LastStatus, got.LastError)
 	}
 }

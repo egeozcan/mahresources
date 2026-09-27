@@ -9,6 +9,7 @@ import (
 	"log"
 	"mahresources/models/jobmetrics"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -67,6 +68,23 @@ type ActionJob struct {
 	// deployment's capacity — which is exactly the state a graceful shutdown has to
 	// report as a lost callback.
 	hostSettled bool
+	// handler is the handler call in progress, set when the handler is entered
+	// and cleared when its Lua call is over. It is how the host stops it.
+	handler *handlerRun
+	// settlesItself records that this execution's own goroutine reports its
+	// outcome: its handler is over, or it was admitted and will not be entered.
+	// It is set before the plugin's VM is released (handlerRun.Unlock), so a
+	// shutdown that takes the VM next knows the outcome is on its way.
+	settlesItself bool
+	// settleFinished records that the goroutine settling this execution has
+	// finished reporting.
+	settleFinished bool
+	// lost records that the host was told this execution's callback can never
+	// finish. Nothing reports for it after that, so it has one outcome.
+	lost bool
+	// pendingStop is a stop asked for before the handler was entered. The
+	// handler is stopped as soon as it is, rather than the request being lost.
+	pendingStop string
 }
 
 // Owner returns the user that submitted the action job, or nil when it was
@@ -136,34 +154,62 @@ func reportHostJobOnce(job *ActionJob, report func(HostJobSink) error) {
 	job.mu.Unlock()
 }
 
-// reportLostCallbacks tells the host that the callbacks of every execution still
-// running in this process will never finish.
+// reportLostCallbacks tells the host that the callbacks of the executions still
+// in flight in this process that never entered their handler will never run.
 //
 // Called from Close, and only from there: a lease expiry proves nothing about a
-// callback, while stopping the VM proves the *lua.LFunction cannot run again.
-// Both queued and running work is named — a job that never started is as
-// unfinishable as one that did — and the host decides what that means for each.
+// callback, while closing the VM proves the *lua.LFunction cannot be entered
+// again. The host decides what that means for each.
 //
-// What is *not* named is an execution whose outcome has already been reported: the
-// in-memory status cannot answer that question, because a handler that called
-// mah.job_fail and kept running reads as failed while its durable Job is still
-// running.
-func (pm *PluginManager) reportLostCallbacks(reason string) {
-	pm.actionJobsMu.RLock()
-	running := make([]*ActionJob, 0, len(pm.actionJobs))
-	for _, job := range pm.actionJobs {
-		job.mu.RLock()
-		host := job.host
-		settled := job.hostSettled
-		job.mu.RUnlock()
-		if host != nil && host.Sink != nil && !settled {
+// What is *not* named is an execution that reports its own outcome: one whose
+// outcome has already been reported, and one whose handler is over and whose
+// goroutine is reporting it now. The in-memory status cannot answer that
+// question, because a handler that called mah.job_fail and kept running reads as
+// failed while its durable Job is still running; settlesItself, recorded before
+// the handler gives its VM back, can. Nor is a handler still inside its call,
+// one that did not stop within the shutdown's bound: nothing proves that call
+// has ended, and a Job ended while it may still act could be retried beside it.
+// Its Job stays claimed under this runtime's identity; if the handler returns
+// before the process exits it reports its own outcome, and otherwise the next
+// process resolves the claim once it can prove this one gone. An execution
+// named here is marked lost, so nothing it does afterwards reports again.
+//
+// The reports are the host's writes, and a database that does not answer must
+// not hold the process past its supervisor: they are made until deadline, and
+// what is not reported by then is left to the next process, which resolves the
+// Jobs this process held once their claims expire.
+func (pm *PluginManager) reportLostCallbacks(reason string, deadline time.Time) {
+	var running []*ActionJob
+	for _, job := range pm.inFlight() {
+		// Claimed under the job's own lock, which is where an execution whose
+		// handler returns records that it settles itself: exactly one of the two
+		// speaks for the Job.
+		job.mu.Lock()
+		unfinished := job.host != nil && job.host.Sink != nil && !job.hostSettled && !job.settlesItself && !job.lost &&
+			job.handler == nil
+		if unfinished {
+			job.lost = true
+		}
+		job.mu.Unlock()
+		if unfinished {
 			running = append(running, job)
 		}
 	}
-	pm.actionJobsMu.RUnlock()
 
-	for _, job := range running {
-		_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
+	var reported atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, job := range running {
+			_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
+			reported.Add(1)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Until(deadline)):
+		log.Printf("[plugin] warning: %d of %d unfinished plugin job(s) were not reported before the shutdown's bound; "+
+			"the next server process resolves them", len(running)-int(reported.Load()), len(running))
 	}
 }
 
@@ -325,7 +371,7 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 		Source:      "plugin",
 		PluginName:  pluginName,
 		ActionID:    actionID,
-		Label:       action.Label,
+		Label:       pm.RedactPluginSecrets(pluginName, action.Label),
 		EntityID:    entityID,
 		EntityType:  action.Entity,
 		Status:      "pending",
@@ -343,6 +389,7 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
+	pm.trackExecution(job)
 
 	pm.notifyActionJobSubscribers("added", job)
 
@@ -355,12 +402,8 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	go func() {
 		defer wg.Done()
 		defer pm.releaseHostJob(host)
-		switch pm.runAsyncActionGoroutine(job, ticket, revoked, entityID, params, expectFilters) {
-		case asyncGaveUp, asyncWithdrawn:
-			pm.dropUnstartedJob(job)
-		case asyncRevoked:
-			pm.abandonUnstartedJob(job)
-		}
+		defer pm.untrackExecution(job)
+		pm.endUnstarted(job, pm.runAsyncActionGoroutine(job, ticket, revoked, entityID, params, expectFilters))
 	}()
 
 	return jobID, nil
@@ -395,12 +438,13 @@ func (pm *PluginManager) FillJobBudgetForTest() func() {
 // no longer there to run it or ctx ended, or an error wrapping errJobDidNotStart
 // when a bounded wait for the VM ran out.
 // live reports, with the VM held, whether the VM lock answered for is still the
-// plugin's. run enters the handler with the VM held, and releases it before
+// plugin's. run enters the handler with the VM held, runs its Lua call under the
+// handler's Context, and gives the VM back through the handler's Unlock before
 // returning.
 type asyncWork struct {
 	lock func(ctx context.Context, wait bool) (*vmMutex, error)
 	live func() bool
-	run  func(mu *vmMutex) error
+	run  func(h *handlerRun) error
 }
 
 // errPluginGone is asyncWork.lock's answer for a plugin that was disabled or
@@ -483,21 +527,26 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	started := false
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			log.Printf("[plugin] panic in %s: %s", logLabel, pm.RedactPluginSecrets(job.PluginName, fmt.Sprint(r)))
 			if !started {
 				// Nothing was admitted, so there is no Job of this execution's to
 				// fail: the host still holds it waiting.
 				outcome = asyncGaveUp
 				return
 			}
-			message := fmt.Sprintf("panic: %v", r)
 			job.mu.Lock()
 			job.Status = "failed"
-			job.Message = message
+			job.Message = handlerPanicMessage
+			job.settlesItself = !job.lost
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
-			flushHeldProgress(job)
-			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
+			if pm.reportsFor(job) {
+				flushHeldProgress(job)
+				reportHostJobOnce(job, func(sink HostJobSink) error {
+					return sink.Failed(HostFailure{Cause: FailureError, Message: handlerPanicMessage})
+				})
+			}
+			finishSettling(job)
 			// It ran, and it failed, which is a different thing from never starting.
 			outcome = asyncRan
 		}
@@ -587,14 +636,20 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 		}
 	}
 	started = true
-	if !work.live() {
-		// The plugin was disabled or reloaded while the claim was being asked
-		// for: the VM was revoked under the lock this execution holds. The claim
-		// was granted, so the Job ends here, as work whose plugin went away.
-		heldVM.Unlock()
-		heldVM = nil
-		pm.settleActionJob(job, logLabel, fmt.Errorf("plugin %q is no longer available", job.PluginName))
-		return asyncRan
+	// The handler is recorded before it is decided whether it may be entered, so
+	// a disable or a shutdown that revokes the VM from here on finds it and stops
+	// it; one that came before is what the check below sees.
+	h := pm.enterHandler(job, heldVM, work.live)
+	heldVM = nil
+	// The handler gives the VM back from here, on every way out: a panic in the
+	// report just below included, which would otherwise leave it locked for good.
+	defer h.Unlock()
+	if reason := h.refusal(); reason != "" {
+		// Admitted, and not to be entered after all. Unlock claims the outcome as
+		// this execution's to report before the VM is given back.
+		h.Unlock()
+		pm.reportNotEntered(job, reason)
+		return asyncNotEntered
 	}
 	job.mu.Lock()
 	job.Status = "running"
@@ -603,22 +658,86 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	pm.notifyActionJobSubscribers("updated", job)
 	_ = reportHostJob(job, func(sink HostJobSink) error { sink.Started("Running..."); return nil })
 
-	// The VM is handed to the work here and not before: the work releases it
-	// from now on, and until now the deferred hand-back does.
-	mu := heldVM
-	heldVM = nil
-	err := work.run(mu)
+	// The VM is the work's from here: it gives it back through the handler, and
+	// has by the time it returns. The Unlock below covers a work function that
+	// returned without doing so, before its outcome is settled.
+	err := work.run(h)
+	h.Unlock()
 
+	var notEntered errNotEntered
+	if errors.As(err, &notEntered) {
+		// Stopped while it was reporting that it was starting, before its Lua
+		// call was made (handlerRun.enter).
+		pm.reportNotEntered(job, notEntered.reason)
+		return asyncNotEntered
+	}
 	if errors.Is(err, errJobDidNotStart) {
 		// Nothing was entered, so there is no outcome to record and nothing to
 		// tell subscribers: the caller removes the job entry, and a status
 		// written here would be the last word the panel retained about it.
+		finishSettling(job)
 		return asyncNotStarted
 	}
 
-	pm.settleActionJob(job, logLabel, err)
+	pm.settleActionJob(job, logLabel, err, h)
 	return asyncRan
 }
+
+// reportNotEntered reports an admitted execution whose handler will not be
+// entered after all, for reason. A person's cancellation ends the Job cancelled,
+// as it asked: nothing of the handler ran. Otherwise the plugin was disabled or
+// reloaded under the execution, or the server began shutting down; no handler
+// ran, so that is not the Job's outcome, and the host decides whether it waits for
+// another runtime or ends.
+func (pm *PluginManager) reportNotEntered(job *ActionJob, reason string) {
+	if reason == StopCancelled {
+		job.mu.Lock()
+		job.Status = "cancelled"
+		job.Message = stoppedMessage(StopCancelled)
+		job.mu.Unlock()
+		pm.notifyActionJobSubscribers("updated", job)
+		if pm.reportsFor(job) {
+			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Stopped(StopCancelled) })
+		}
+	} else if pm.reportsFor(job) {
+		_ = reportHostJob(job, func(sink HostJobSink) error { sink.NotStarted(reason); return nil })
+	}
+	finishSettling(job)
+}
+
+// cannotEnter answers why an admitted execution must not enter its handler, or
+// an empty string when it may: the server is shutting down, or the VM it holds is
+// no longer its plugin's.
+func (pm *PluginManager) cannotEnter(work asyncWork) string {
+	switch {
+	case pm.closed.Load():
+		return StopRuntimeStopping
+	case !work.live():
+		return StopPluginDisabled
+	default:
+		return ""
+	}
+}
+
+// reportsFor reports whether this execution's own goroutine still speaks for its
+// durable Job: false once a shutdown has reported it lost.
+func (pm *PluginManager) reportsFor(job *ActionJob) bool {
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	return !job.lost
+}
+
+// finishSettling records that the goroutine settling an execution has finished
+// reporting its outcome.
+func finishSettling(job *ActionJob) {
+	job.mu.Lock()
+	job.settleFinished = true
+	job.mu.Unlock()
+}
+
+// handlerPanicMessage is what a Job whose handler ended in a host panic says.
+// The panic's own text names host internals, so it goes to the server log only.
+const handlerPanicMessage = "the handler stopped on an internal error in the server"
 
 // acquireSlotAndVM takes one of the process's job slots and the plugin's VM
 // together, and never waits for one while holding the other: a slot held while
@@ -674,14 +793,40 @@ func isClosed(ch <-chan struct{}) bool {
 	}
 }
 
+// endUnstarted does what an async execution's outcome leaves to do for an
+// execution that never entered its handler: the entry goes, and one whose VM went
+// away or whose manager is closing tells the host its callback is lost.
+func (pm *PluginManager) endUnstarted(job *ActionJob, outcome asyncOutcome) {
+	switch outcome {
+	case asyncGaveUp, asyncWithdrawn, asyncNotEntered:
+		pm.dropUnstartedJob(job)
+	case asyncRevoked, asyncClosing:
+		pm.abandonUnstartedJob(job)
+	}
+}
+
 // abandonUnstartedJob ends the in-memory entry of an execution that will never
-// start because its VM went away while it waited. With a host Job the host is
-// told the callback is lost — it decides whether the Job waits for another
-// process or ends — and the entry goes; without one the entry is the only
-// record, so it ends failed, as work whose plugin disappeared always has.
+// start because its VM went away, or its manager began closing, while it waited.
+// With a host Job the host is told the callback is lost — it decides whether the
+// Job waits for another process or ends — and the entry goes; without one the
+// entry is the only record, so it ends failed, as work whose plugin disappeared
+// always has. The report is claimed under the job's lock, so a shutdown's own
+// lost report and this one are one report.
 func (pm *PluginManager) abandonUnstartedJob(job *ActionJob) {
 	if ref := job.hostJobRef(); ref != nil && ref.Sink != nil {
-		ref.Sink.CallbackLost("plugin-unavailable")
+		reason := "plugin-unavailable"
+		if pm.closed.Load() {
+			reason = StopRuntimeStopping
+		}
+		job.mu.Lock()
+		report := !job.lost && !job.settlesItself
+		if report {
+			job.lost = true
+		}
+		job.mu.Unlock()
+		if report {
+			ref.Sink.CallbackLost(reason)
+		}
 		pm.dropUnstartedJob(job)
 		return
 	}
@@ -707,43 +852,87 @@ func (pm *PluginManager) abandonUnstartedJob(job *ActionJob) {
 //
 // A status the plugin set itself wins over the error the host unwound: the plugin's
 // own report is about work it declared finished, and a Go-level failure raised after
-// it says nothing about whether that work is done.
-func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workErr error) {
-	flushHeldProgress(job)
+// it says nothing about whether that work is done. The same holds for the host's
+// own stop: a handler that declared its outcome and was stopped afterwards reports
+// what it declared, and a handler that returned by itself before the stop reached
+// it reports what it reached. Only a handler the stop actually ended is Stopped.
+func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workErr error, h *handlerRun) {
+	defer finishSettling(job)
+	speaks := pm.reportsFor(job)
+	if speaks {
+		flushHeldProgress(job)
+	}
+
+	stopReason, timedOut := "", false
+	// What a handler that ended in an error failed of, worked out before the
+	// job's lock is taken: it reads the plugin's settings to redact them, which
+	// takes pm.mu, and nothing takes pm.mu while holding a job's lock.
+	var errFailure HostFailure
+	if workErr != nil {
+		stopReason, timedOut = h.ended()
+		errFailure = pm.handlerFailure(job.PluginName, workErr, timedOut)
+	}
 
 	job.mu.Lock()
 	status := job.Status
 	message := job.Message
 	result := job.Result
-	if status != "completed" && status != "failed" {
-		if workErr != nil {
-			status = "failed"
-			if isAbort, reason := parseAbortError(workErr); isAbort {
-				message = reason
-			} else {
-				message = workErr.Error()
-			}
-		} else {
-			status = "completed"
-			message = "Completed"
+	var failure HostFailure
+	switch {
+	case status == "completed":
+	case status == "failed":
+		// mah.job_fail: the plugin's own reason.
+		failure = HostFailure{Cause: FailureDeclared, Message: message}
+	case workErr == nil:
+		status = "completed"
+		message = "Completed"
+	case stopReason != "":
+		status = "failed"
+		if stopReason == StopCancelled {
+			status = "cancelled"
 		}
-		job.Status = status
-		job.Message = message
+		message = stoppedMessage(stopReason)
+	default:
+		status = "failed"
+		failure = errFailure
+		message = failure.Message
 	}
+	job.Status = status
+	job.Message = message
 	if status == "completed" {
 		job.Progress = 100
 	}
 	job.mu.Unlock()
 
 	pm.notifyActionJobSubscribers("updated", job)
-	if status == "failed" {
-		if workErr != nil {
-			log.Printf("[plugin] %s failed: %v", logLabel, workErr)
-		}
-		reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
+	if workErr != nil {
+		log.Printf("[plugin] %s ended: %s", logLabel, pm.RedactPluginSecrets(job.PluginName, workErr.Error()))
+	}
+	if !speaks {
+		// The host was told at shutdown that this callback would never finish,
+		// and its Job already has that outcome.
 		return
 	}
-	reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Completed(message, result) })
+	switch {
+	case stopReason != "" && status != "completed" && failure.Cause != FailureDeclared:
+		reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Stopped(stopReason) })
+	case status == "completed":
+		reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Completed(message, result) })
+	default:
+		reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(failure) })
+	}
+}
+
+// stoppedMessage is what an execution the host stopped says in memory.
+func stoppedMessage(reason string) string {
+	switch reason {
+	case StopCancelled:
+		return "Cancelled"
+	case StopPluginDisabled:
+		return "Stopped: the plugin was disabled"
+	default:
+		return "Stopped: the server is shutting down"
+	}
 }
 
 // resolveQueuedAction finds the registration a queued action runs, once it has
@@ -793,28 +982,27 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 			return mu, nil
 		},
 		live: func() bool { return pm.stillRegistered(L) },
-		run: func(mu *vmMutex) error {
+		run: func(h *handlerRun) error {
 			// The VM is released once, by whichever comes first: the explicit
 			// release below, or this deferred one on a panic.
-			released := false
-			release := func() {
-				if !released {
-					released = true
-					mu.Unlock()
-				}
-			}
+			release := h.Unlock
 			defer release()
 
 			// Resolved again under the lock: the VM cannot be revoked while it is
 			// held, so this is the registration that will run.
 			action, resolved, err := pm.resolveQueuedAction(job, params, expectFilters)
+			if err == nil && resolved != L {
+				err = fmt.Errorf("plugin %q is no longer available", job.PluginName)
+			}
 			if err != nil {
 				release()
+				// A plugin disabled or reloaded under the execution since its
+				// checks is the reason nothing can be resolved: it was not
+				// entered, which is not the handler failing.
+				if reason := h.refusal(); reason != "" {
+					return errNotEntered{reason: reason}
+				}
 				return err
-			}
-			if resolved != L {
-				release()
-				return fmt.Errorf("plugin %q is no longer available", job.PluginName)
 			}
 			handler := action.Handler
 			settings := pm.GetPluginSettings(job.PluginName)
@@ -839,8 +1027,16 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 
 			// The submitter is captured at enqueue (ActionJob.ownerUserID), so an
 			// async action's mah.db writes are attributed to whoever ran the action
-			// rather than to nobody. Background-parented: a job outlives its request.
-			timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
+			// rather than to nobody. Not request-parented: a job outlives its
+			// request, and only the host's stop or the timeout ends it.
+			timeoutCtx, cancel := h.Context(func(parent context.Context) context.Context {
+				return invocationContextForJob(parent, job)
+			})
+			if reason := h.enter(); reason != "" {
+				cancel()
+				release()
+				return errNotEntered{reason: reason}
+			}
 			L.SetContext(timeoutCtx)
 
 			err = L.CallByParam(lua.P{
@@ -871,6 +1067,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 				parsed = luaTableToGoMap(retTbl)
 			}
 			release()
+			parsed = redactResult(parsed, pm.pluginSecrets(job.PluginName))
 
 			// If the handler returned a table, treat it as the result and mark completed.
 			if isTable {
@@ -898,9 +1095,12 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTic
 				// the settle path below publishes the same outcome through the
 				// once-guarded call. Attempting it here is only so a Job is not left
 				// without an outcome if that path is never reached, and a refusal is
-				// swallowed for the settle path to make good on.
-				flushHeldProgress(job)
-				_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
+				// swallowed for the settle path to make good on. Nothing is reported
+				// for an execution a shutdown already reported lost.
+				if pm.reportsFor(job) {
+					flushHeldProgress(job)
+					_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
+				}
 			}
 
 			return nil
@@ -913,10 +1113,16 @@ func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, ticket *laneTicket
 	return pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), ticket, pm.stateRevoked(L), asyncWork{
 		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) { return pm.lockVMFor(waitCtx, L, wait) },
 		live: func() bool { return pm.stillRegistered(L) },
-		run: func(mu *vmMutex) error {
-			defer mu.Unlock()
+		run: func(h *handlerRun) error {
+			defer h.Unlock()
 
-			timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
+			timeoutCtx, cancel := h.Context(func(parent context.Context) context.Context {
+				return invocationContextForJob(parent, job)
+			})
+			if reason := h.enter(); reason != "" {
+				cancel()
+				return errNotEntered{reason: reason}
+			}
 			L.SetContext(timeoutCtx)
 			defer func() {
 				L.RemoveContext()
@@ -1005,7 +1211,7 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 	}
 }
 
-// ClearFinishedActionJobs removes every completed or failed action job the caller
+// ClearFinishedActionJobs removes every ended action job the caller
 // may see and returns the ids that went. Running and pending jobs are kept.
 //
 // UI bug hunt 2026-07-29, finding 40: the jobs panel shows download jobs and
@@ -1047,7 +1253,7 @@ func (pm *PluginManager) ClearFinishedActionJobSnapshots(visible func(owner *uin
 		}
 		job.mu.RUnlock()
 
-		if status != "completed" && status != "failed" {
+		if !ActionJobStatusEnded(status) {
 			continue
 		}
 		if visible != nil && !visible(owner) {
@@ -1066,7 +1272,19 @@ func (pm *PluginManager) ClearFinishedActionJobSnapshots(visible func(owner *uin
 	return cleared
 }
 
-// cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.
+// ActionJobStatusEnded reports whether an action job's in-memory status is an
+// end: completed, failed or cancelled. It is the one statement of which entries a
+// clear and the retention sweep may remove.
+func ActionJobStatusEnded(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// cleanupOldActionJobs removes ended action jobs older than actionJobRetention.
 func (pm *PluginManager) cleanupOldActionJobs() {
 	var removed []*ActionJob
 
@@ -1078,7 +1296,7 @@ func (pm *PluginManager) cleanupOldActionJobs() {
 		created := job.CreatedAt
 		job.mu.RUnlock()
 
-		if (status == "completed" || status == "failed") && created.Before(cutoff) {
+		if ActionJobStatusEnded(status) && created.Before(cutoff) {
 			delete(pm.actionJobs, id)
 			removed = append(removed, job)
 		}

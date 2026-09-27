@@ -239,18 +239,40 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 	}
 
 	actor := scheduleActor(row)
+	// When this run was dispatched, which orders its outcome against the other
+	// runs of this schedule (LastOccurrenceAt).
+	began := time.Now()
 
 	overlapAllows := row.Overlap == models.PluginScheduleOverlapAllow
 	if overlapAllows {
 		// Advance and let go before running, so the following tick may start
 		// another run rather than finding this one still holding the row.
-		if err := s.ctx.AdvancePluginScheduleAtDispatch(row.ID, token, time.Now()); err != nil {
+		if err := s.ctx.AdvancePluginScheduleAtDispatch(row.ID, token, began); err != nil {
 			log.Printf("warning: plugin scheduler could not advance %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 		}
 	}
 
-	run := s.runOccurrence(row, reg, actor, !overlapAllows)
+	run := s.runOccurrence(row, reg, actor, !overlapAllows, nil)
+	if run.Refused != "" {
+		// The account the schedule runs as may not run it, which lasts until
+		// somebody changes that account or re-enables the plugin as another: the
+		// row says so, and the interval passes as a missed window would, rather
+		// than every tick asking again. Under "allow" the row was advanced and
+		// released at dispatch already.
+		claim, advance := token, true
+		if overlapAllows {
+			claim, advance = "", false
+		}
+		if err := s.ctx.RefusePluginScheduleRun(row.ID, claim, scheduleRefusalMessage(run.Refused), began, time.Now(), advance); err != nil {
+			log.Printf("warning: plugin scheduler could not record the refused run of %s/%s: %v",
+				row.PluginName, row.ScheduleID, err)
+			if claim != "" {
+				_ = s.ctx.ReleasePluginScheduleClaim(row.ID, claim)
+			}
+		}
+		return
+	}
 	if !run.Started {
 		// The handler was never entered, so there is nobody to blame and nothing
 		// to record: the honest outcome is "not this tick", and the row gets its
@@ -263,6 +285,11 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		// wait's.
 		if !overlapAllows {
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		} else {
+			// The row was advanced before the run, so this interval is not
+			// coming back and no Job records it: this line is its trace.
+			log.Printf("[plugin] schedule %s/%s could not start within %s; this interval is skipped",
+				row.PluginName, row.ScheduleID, s.dispatchWait)
 		}
 		return
 	}
@@ -271,13 +298,13 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 
 	now := time.Now()
 	if overlapAllows {
-		if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, now); err != nil {
+		if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, began, now); err != nil {
 			log.Printf("warning: plugin scheduler could not record %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 		}
 		return
 	}
-	if err := s.ctx.CompletePluginScheduleRun(row.ID, token, status, message, now); err != nil {
+	if err := s.ctx.CompletePluginScheduleRun(row.ID, token, status, message, began, now); err != nil {
 		log.Printf("warning: plugin scheduler could not complete %s/%s: %v",
 			row.PluginName, row.ScheduleID, err)
 	}
@@ -286,20 +313,22 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 // runOccurrence runs one claimed schedule's handler and answers what happened to
 // it.
 //
-// Two executors, one policy. With a control plane installed the occurrence is
-// first *materialized* as a durable Job — accepted, then claimed by this very
-// process, then dispatched through the plugin-action adapter — so the run has a
-// durable identity, a fenced outcome and a place in the Job Center. Without one
-// the inline run stands alone, which is what the CLI, a bare embedder and this
-// package's own scheduler tests get.
+// Two executors, one policy. With a control plane installed the occurrence runs as
+// a durable Job — accepted and claimed by this very process when it is admitted,
+// and run through the plugin-action adapter — so the run has a durable identity, a
+// fenced outcome and a place in the Job Center. Without one the inline run stands
+// alone, which is what the CLI, a bare embedder and this package's own scheduler
+// tests get.
 //
 // The wait and the holdClaim policy are the scheduler's own either way: they are
 // why the row's claim is held for the whole run under "skip", and moving them
 // into the executor would make the claim and the execution two different
-// lifetimes.
-func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool) pluginActionRun {
+// lifetimes. decided, when set, is told once whether the occurrence started, as
+// its handler is entered or as it gives up; the inline run hears of entry through
+// a sink that records nothing else (scheduleEntrySink).
+func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, decided func(started bool, refusal string)) pluginActionRun {
 	if s.ctx != nil && s.ctx.JobService() != nil {
-		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait)
+		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, holdClaim, decided)
 		if err != nil {
 			// The Job could not be materialized at all. The row is given back
 			// rather than reported as a failed run: nothing was executed, and the
@@ -315,17 +344,38 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 	if pm == nil {
 		return pluginActionRun{}
 	}
-	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, holdClaim)
+	var host *plugin_system.HostJobRef
+	if decided != nil {
+		host = &plugin_system.HostJobRef{Sink: scheduleEntrySink{entered: func() { decided(true, "") }}}
+	}
+	_, ran, runErr := pm.RunScheduleForHost(reg, actor, s.dispatchWait, holdClaim, host)
 	if !ran {
 		return pluginActionRun{}
 	}
 	return pluginActionRun{Started: true, Failed: runErr != nil, Message: scheduleOutcomeMessage(runErr)}
 }
 
+// scheduleEntrySink is the sink of an occurrence run with no control plane.
+// Nothing durable records such a run, and the one report it carries is that the
+// handler was entered, which is what a manual run's caller waits to hear.
+type scheduleEntrySink struct{ entered func() }
+
+func (s scheduleEntrySink) Entered()                                { s.entered() }
+func (scheduleEntrySink) Started(string)                            {}
+func (scheduleEntrySink) Progress(plugin_system.HostProgress) error { return nil }
+func (scheduleEntrySink) Completed(string, map[string]any) error    { return nil }
+func (scheduleEntrySink) Failed(plugin_system.HostFailure) error    { return nil }
+func (scheduleEntrySink) Stopped(string) error                      { return nil }
+func (scheduleEntrySink) NotStarted(string)                         {}
+func (scheduleEntrySink) CallbackLost(string)                       {}
+
 // scheduleRunOutcome turns one occurrence's result into the pair stored on the
 // row. It reads the execution's own outcome rather than an error, because a
 // plugin job reports what happened through its Job rather than by returning.
 func scheduleRunOutcome(run pluginActionRun) (status, message string) {
+	if run.Cancelled {
+		return models.PluginScheduleStatusCancelled, "a person cancelled the run"
+	}
 	if run.Failed {
 		if run.Message == "" {
 			return models.PluginScheduleStatusFailed, "the plugin's handler failed"
@@ -333,6 +383,21 @@ func scheduleRunOutcome(run pluginActionRun) (status, message string) {
 		return models.PluginScheduleStatusFailed, truncateScheduleError(run.Message)
 	}
 	return models.PluginScheduleStatusCompleted, ""
+}
+
+// scheduleRefusalMessage is what the row says about a run its checks refused,
+// for the reasons those checks give.
+func scheduleRefusalMessage(reason string) string {
+	switch reason {
+	case "role-refused":
+		return "the account it runs as may no longer run plugin work"
+	case "plugin-refused":
+		return "the account it runs as may no longer use this plugin"
+	case "registration-changed":
+		return "the plugin changed this schedule as the run was starting"
+	default:
+		return "not run: " + reason
+	}
 }
 
 // scheduleOutcomeMessage is the inline path's message: the error the manager
@@ -345,14 +410,17 @@ func scheduleOutcomeMessage(runErr error) string {
 }
 
 // RunNow executes one schedule immediately, on an operator's say-so, and returns
-// as soon as the run has started rather than when it has finished.
+// as soon as the run has started rather than when it has finished — or, when it
+// could not start, says so.
 //
-// Returning early is not a shortcut. RunSchedule blocks for the whole run, which
-// may be the full MaxAsyncJobDuration, and an HTTP request must not be held open
-// for that. What the caller actually needs to know is whether the run *started*,
-// and the claim answers that synchronously: past the claim the run is going to
-// happen, and its progress and outcome are already reported the way every other
-// plugin job's are, through the action_* events the jobs panel subscribes to.
+// Returning at the start is not a shortcut. RunSchedule blocks for the whole run,
+// which may be the full MaxAsyncJobDuration, and an HTTP request must not be held
+// open for that. What the caller actually needs to know is whether the run
+// *started*, and that is known within the dispatch wait: the occurrence is either
+// admitted — its plugin, a job slot and the deployment's budget all free — or it
+// gives up. The claim alone does not answer it, and answering "started" there told
+// an operator a run had begun that then never did. Past the admission its progress
+// and outcome are reported the way every other plugin job's are.
 //
 // The run goes on the same WaitGroup a ticked run does, so Stop drains a manual
 // run too. Without that, a run started from the page and abandoned at exit would
@@ -398,13 +466,42 @@ func (s *PluginScheduler) RunNow(pluginName, scheduleID string) error {
 		return fmt.Errorf("%w: %s/%s", ErrScheduleBusy, pluginName, scheduleID)
 	}
 
+	decided := make(chan scheduleStart, 1)
 	s.runs.Add(1)
 	go func(row models.PluginSchedule, token string) {
 		defer s.runs.Done()
-		s.dispatchManual(row, token)
+		s.dispatchManual(row, token, decided)
 	}(*row, token)
 
-	return nil
+	select {
+	case start := <-decided:
+		switch {
+		case start.refusal != "":
+			return fmt.Errorf("%w: %s/%s did not start: %s", ErrScheduleDidNotStart, pluginName, scheduleID,
+				scheduleRefusalMessage(start.refusal))
+		case !start.started:
+			return fmt.Errorf("%w: %s/%s did not start because its plugin or the deployment's job budget "+
+				"stayed busy for %s; try again", ErrScheduleDidNotStart, pluginName, scheduleID, s.dispatchWait)
+		}
+		return nil
+	case <-time.After(s.dispatchWait + runNowAnswerMargin):
+		// Every way out of the dispatch wait decides well inside this, so an
+		// answer this late means the database is not answering. That it has not
+		// started is what is known; if it starts after all, its Job reports it.
+		return fmt.Errorf("%w: %s/%s had not started after %s; if it starts later, the jobs panel shows it",
+			ErrScheduleDidNotStart, pluginName, scheduleID, s.dispatchWait+runNowAnswerMargin)
+	}
+}
+
+// runNowAnswerMargin is how much longer than the dispatch wait RunNow waits to
+// learn whether a run started, for the writes that follow the wait.
+const runNowAnswerMargin = 5 * time.Second
+
+// scheduleStart is what a manual run's caller is told once: whether the run
+// started, and the reason its checks refused it if they did.
+type scheduleStart struct {
+	started bool
+	refusal string
 }
 
 // dispatchManual runs one claimed schedule that an operator asked for, and does
@@ -420,42 +517,65 @@ func (s *PluginScheduler) RunNow(pluginName, scheduleID string) error {
 //     there is no advance for "allow" to release early. holdClaim is true, which
 //     keeps the VM wait bounded and keeps ScheduleClaimTTL an honest bound on
 //     this path as well as on the ticked one.
-func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string) {
+//
+// decided is told, once, whether the run started: when it is admitted, or when it
+// gives up. It is buffered, so a caller that has stopped listening does not hold
+// the run.
+func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string, decided chan<- scheduleStart) {
+	var once sync.Once
+	decide := func(started bool, refusal string) {
+		once.Do(func() {
+			if decided != nil {
+				decided <- scheduleStart{started: started, refusal: refusal}
+			}
+		})
+	}
 	pm := s.ctx.PluginManager()
 	if pm == nil {
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
 	reg, found := s.scheduleRegistration(row)
 	if !found {
-		// Disabled between RunNow's check and here. Logged for the same reason
-		// the !ran branch below is: an operator has already been told this
-		// started, and nothing will retry it.
-		log.Printf("[plugin] schedule %s/%s was asked to run now but the plugin stopped "+
-			"declaring it before the run began", row.PluginName, row.ScheduleID)
+		// Disabled between RunNow's check and here.
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
 
-	run := s.runOccurrence(row, reg, scheduleActor(row), true)
+	began := time.Now()
+	// Entry is told at once; a run that did not start is told only once the row
+	// says so and its claim is released, so an operator who asks again at once is
+	// not refused as busy by the attempt that already gave up.
+	entered := func(started bool, _ string) {
+		if started {
+			decide(true, "")
+		}
+	}
+	run := s.runOccurrence(row, reg, scheduleActor(row), true, entered)
+	if run.Refused != "" {
+		// Recorded on the row as a ticked refusal is, but a manual run never
+		// moves next_due_at.
+		if err := s.ctx.RefusePluginScheduleRun(row.ID, token, scheduleRefusalMessage(run.Refused), began, time.Now(), false); err != nil {
+			log.Printf("warning: plugin scheduler could not record the refused manual run of %s/%s: %v",
+				row.PluginName, row.ScheduleID, err)
+			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		}
+		decide(false, run.Refused)
+		return
+	}
 	if !run.Started {
 		// The handler was never entered, so there is no outcome to record — the
 		// same "not this tick" a full job budget or a busy VM gives a ticked run.
 		// Recording a failure here would blame the plugin for a run it did not
-		// have, which is what errJobDidNotStart exists to prevent.
-		//
-		// Logged, unlike the ticked path, and the difference is who is waiting. A
-		// tick that gives up is retried by the next tick a few seconds later, so
-		// there is nothing to tell anyone. Here an operator has already been told
-		// the run started, the job card appears and vanishes, the row gains no
-		// history, and nothing will retry it — so this line is the only trace
-		// that the request went nowhere.
-		log.Printf("[plugin] schedule %s/%s was asked to run now but never started: "+
-			"the job budget or the plugin's VM stayed busy for the whole %s dispatch wait",
-			row.PluginName, row.ScheduleID, s.dispatchWait)
+		// have, which is what errJobDidNotStart exists to prevent. The operator
+		// is told it did not start, which is the answer RunNow is waiting for.
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
+	decide(true, "")
 
 	status, message := scheduleRunOutcome(run)
 	// Record first, release second. While the claim is held nothing else can run
@@ -464,7 +584,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 	// has it overwritten by this older one. That is the stale-outcome shape the
 	// download history carries an explicit ON CONFLICT guard for; here the claim
 	// already excludes it, provided the writes are in this order.
-	if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, time.Now()); err != nil {
+	if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, began, time.Now()); err != nil {
 		log.Printf("warning: plugin scheduler could not record manual run of %s/%s: %v",
 			row.PluginName, row.ScheduleID, err)
 	}

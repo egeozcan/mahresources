@@ -64,6 +64,10 @@ var (
 	ErrScheduleNotDeclared = errors.New("the plugin does not currently declare this schedule")
 	ErrScheduleUnowned     = errors.New("this schedule has stopped because it has no owner")
 	ErrScheduleBusy        = errors.New("this schedule is already running")
+	// ErrScheduleDidNotStart is a run asked for now that could not start within
+	// the dispatch wait: its plugin, a job slot or the deployment's job budget
+	// stayed busy. Nothing ran and nothing was recorded.
+	ErrScheduleDidNotStart = errors.New("the schedule did not start")
 )
 
 // ClaimPluginSchedule takes a due schedule's run slot, and reports whether it
@@ -170,8 +174,10 @@ func (ctx *MahresourcesContext) ReleasePluginScheduleClaim(id uint, claimToken s
 // forty and the value of one.
 //
 // Conditional on holding the claim, for the reason ReleasePluginScheduleClaim
-// is.
-func (ctx *MahresourcesContext) CompletePluginScheduleRun(id uint, claimToken, status, runErr string, now time.Time) error {
+// is. began is when the run was dispatched: a run holding the claim is the newest
+// one dispatched, since no other can be while it holds it, so its outcome is
+// recorded as the row's latest (LastOccurrenceAt).
+func (ctx *MahresourcesContext) CompletePluginScheduleRun(id uint, claimToken, status, runErr string, began, now time.Time) error {
 	var row models.PluginSchedule
 	if err := ctx.db.Where("id = ? AND claim_token = ?", id, claimToken).First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -186,14 +192,60 @@ func (ctx *MahresourcesContext) CompletePluginScheduleRun(id uint, claimToken, s
 	return ctx.db.Model(&models.PluginSchedule{}).
 		Where("id = ? AND claim_token = ?", id, claimToken).
 		Updates(map[string]any{
-			"claim_token": "",
-			"claimed_at":  nil,
-			"next_due_at": now.Add(every),
-			"last_run_at": now,
-			"last_status": status,
-			"last_error":  runErr,
-			"runs":        gorm.Expr("runs + 1"),
+			"claim_token":        "",
+			"claimed_at":         nil,
+			"next_due_at":        now.Add(every),
+			"last_run_at":        now,
+			"last_status":        status,
+			"last_error":         runErr,
+			"last_occurrence_at": began.UTC(),
+			"runs":               gorm.Expr("runs + 1"),
 		}).Error
+}
+
+// scheduleOutcomeIsCurrent is the condition under which an outcome of a run
+// dispatched at the bound time is newer than, or as new as, the one the row
+// records. Times are written and compared in UTC, so the text SQLite compares
+// orders as the instants do.
+const scheduleOutcomeIsCurrent = "(last_occurrence_at IS NULL OR last_occurrence_at <= ?)"
+
+// RefusePluginScheduleRun records that a run of the schedule was refused before
+// it started, because the account it runs as may not run it, without counting a
+// run. With a claim token it also releases that claim, conditional on holding it;
+// with advance it moves the next due time on as CompletePluginScheduleRun does,
+// because such a refusal lasts until somebody changes the account, and asking
+// again at every tick would only repeat it. began is when the refused run was
+// dispatched; without a claim (overlap = "allow", released at dispatch) the
+// refusal is recorded only if no newer run has recorded its outcome.
+func (ctx *MahresourcesContext) RefusePluginScheduleRun(id uint, claimToken, message string, began, now time.Time, advance bool) error {
+	query := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", id)
+	updates := map[string]any{
+		"last_status":        models.PluginScheduleStatusRefused,
+		"last_error":         truncateScheduleError(message),
+		"last_occurrence_at": began.UTC(),
+	}
+	if claimToken != "" {
+		query = query.Where("claim_token = ?", claimToken)
+		updates["claim_token"] = ""
+		updates["claimed_at"] = nil
+	} else {
+		query = query.Where(scheduleOutcomeIsCurrent, began.UTC())
+	}
+	if advance {
+		var row models.PluginSchedule
+		if err := ctx.db.Select("every_seconds").Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		every := time.Duration(row.EverySeconds) * time.Second
+		if every <= 0 {
+			every = time.Minute
+		}
+		updates["next_due_at"] = now.Add(every)
+	}
+	return query.Updates(updates).Error
 }
 
 // AdvancePluginScheduleAtDispatch is the overlap = "allow" half of the same
@@ -341,15 +393,20 @@ func (ctx *MahresourcesContext) DuePluginSchedules(now time.Time, limit int) ([]
 // the schedule at dispatch, so by the time the run finishes it holds nothing,
 // and a claim-conditional write would match no rows. The trade is deliberate:
 // "allow" gives up the ability to say "this exact run finished" in exchange for
-// not skipping an interval when a run overruns.
-func (ctx *MahresourcesContext) RecordPluginScheduleOutcome(id uint, status, runErr string, now time.Time) error {
+// not skipping an interval when a run overruns. What it keeps is order: runs
+// finish in any order, so the outcome is recorded only when this run, dispatched
+// at began, is at least as new as the one the row shows, and the run is counted
+// either way.
+func (ctx *MahresourcesContext) RecordPluginScheduleOutcome(id uint, status, runErr string, began, now time.Time) error {
+	at := began.UTC()
 	return ctx.db.Model(&models.PluginSchedule{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"last_run_at": now,
-			"last_status": status,
-			"last_error":  runErr,
-			"runs":        gorm.Expr("runs + 1"),
+			"last_run_at":        gorm.Expr("CASE WHEN "+scheduleOutcomeIsCurrent+" THEN ? ELSE last_run_at END", at, now),
+			"last_status":        gorm.Expr("CASE WHEN "+scheduleOutcomeIsCurrent+" THEN ? ELSE last_status END", at, status),
+			"last_error":         gorm.Expr("CASE WHEN "+scheduleOutcomeIsCurrent+" THEN ? ELSE last_error END", at, runErr),
+			"last_occurrence_at": gorm.Expr("CASE WHEN "+scheduleOutcomeIsCurrent+" THEN ? ELSE last_occurrence_at END", at, at),
+			"runs":               gorm.Expr("runs + 1"),
 		}).Error
 }
 

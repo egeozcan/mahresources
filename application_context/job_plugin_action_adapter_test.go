@@ -1,9 +1,13 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +37,18 @@ const pluginActionTestPlugin = "action-plugin"
 // closure-backed child job, one that floods progress, and a schedule.
 const pluginActionTestSource = `
 plugin = { name = "` + pluginActionTestPlugin + `", version = "1.0", api_version = 1,
-           capabilities = { "actions", "jobs", "kv", "schedule", "hooks", "job_events" } }
+           capabilities = { "actions", "jobs", "kv", "schedule", "hooks", "job_events" },
+           settings = { { name = "api_key", type = "password", label = "API key" } } }
+
+-- Puts the operator's password-typed setting into every surface a handler's text
+-- reaches: a log line, a progress report, a started job's title and its error.
+function setting_leaking_work(ctx)
+    local key = ctx.settings.api_key or ""
+    mah.log("error", "calling upstream with " .. key, { key = key })
+    mah.job_progress(ctx.job_id, 10, "authenticating with " .. key)
+    mah.start_job("retrying with " .. key, function(job_id) end)
+    error("the upstream refused key " .. key)
+end
 
 local function bump(key)
     local n = tonumber(mah.kv.get(key) or "0") or 0
@@ -98,6 +113,15 @@ function holding_work(ctx)
     mah.kv.set("holding", "returned")
 end
 
+-- Runs for about twenty seconds unless something stops it: long enough to be
+-- running when a test disables its plugin, cancels it or shuts the server down.
+function long_work(ctx)
+    mah.kv.set("long", "running")
+    for i = 1, 400 do mah.sleep(0.05) end
+    mah.kv.set("long", "finished")
+    mah.job_complete(ctx.job_id, { message = "long done" })
+end
+
 function closure_work(job_id)
     mah.kv.set("closure", "ran")
     mah.job_progress(job_id, 35, "closure work")
@@ -114,6 +138,19 @@ function leaky_work(ctx)
     mah.job_progress(ctx.job_id, 10, "touching " .. ctx.params.secret)
     mah.job_fail(ctx.job_id, "failed on " .. ctx.params.secret ..
                  " at https://signed.example/x?token=" .. ctx.params.secret)
+end
+
+-- Raises a Lua error rather than declaring a failure: the Job has to say what
+-- the error was without the stack traceback or the server's path to the plugin.
+function erroring_work(ctx)
+    local broken = nil
+    if ctx.params.secret == "nil-field" then
+        return broken.field
+    end
+    if ctx.params.secret == "multi-line" then
+        error("the first line\nthe second line")
+    end
+    error("the handler broke on " .. ctx.params.secret)
 end
 
 -- Counts, a unit and metrics through the table form. The second report lands
@@ -202,6 +239,15 @@ function init()
     mah.action({ id = "leaky-work", label = "Leaky Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = leaky_work })
+    mah.action({ id = "long-work", label = "Long Work", entity = "resource", async = true,
+                 handler = long_work })
+    mah.action({ id = "setting-leaking-work", label = "Setting Leaking Work", entity = "resource", async = true,
+                 handler = setting_leaking_work })
+    mah.action({ id = "cancellable-work", label = "Cancellable Work", entity = "resource", async = true,
+                 cancel = true, handler = long_work })
+    mah.action({ id = "erroring-work", label = "Erroring Work", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = erroring_work })
     mah.action({ id = "metric-work", label = "Metric Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = metric_work })
@@ -216,6 +262,8 @@ function init()
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
+    mah.schedule({ id = "cancellable-tick", every = "1m", overlap = "skip", cancel = true,
+                   handler = function(job_id) long_work({ job_id = job_id }) end })
     mah.schedule({ id = "retryable-tick", every = "1m", overlap = "skip", retry = true,
                    handler = function(job_id) bump("retryable-scheduled") end })
     -- Runs for longer than the short dispatch budget a test gives it, and
@@ -1291,16 +1339,16 @@ func TestAClosureJobIsNeverClaimableByTheDispatchLoop(t *testing.T) {
 	}
 }
 
-// TestAPluginJobKeepsItsOwnTextOutOfDurableHistory is the redaction boundary for
-// plugin background work.
+// TestAPluginJobKeepsItsOwnTextOutOfDurableHistory is the redaction half of a
+// plugin's failure reason.
 //
 // A Job's input is sealed, but its failure, its progress snapshots, its terminal
 // event and the hook payload built from them are ordinary durable history: a
-// handler whose validator saw `context.params.secret`, or an HTTP error carrying a
-// signed URL, must not be able to write that value into a surface every authorized
-// reader can search. What the Job records is a bounded host-owned classification —
-// the same shape every other Kind records — and the plugin's own words, with the
-// Job's parameter values replaced, stay out of anything a viewer can list.
+// handler that echoes `ctx.params.secret`, or an HTTP error carrying a signed URL
+// built from it, must not be able to write that value into a surface every
+// authorized reader can search. The reason the plugin gave is kept, because it is
+// the only way a reader learns why the work failed, and every value of the Job's
+// own parameters in it is replaced first.
 func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 	const secret = "top-secret-token-value"
 	ctx := newPluginActionJobContext(t)
@@ -1319,12 +1367,14 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 	if job.Failure == nil {
 		t.Fatalf("the failed action records no failure")
 	}
-	if job.Failure.Code != pluginActionFailureCode {
-		t.Fatalf("the failure is classified %q, want %q", job.Failure.Code, pluginActionFailureCode)
+	if job.Failure.Code != pluginActionFailureCode || job.Failure.Class != jobs.FailureClassDependency {
+		t.Fatalf("a declared failure is classified %q/%q, want %q/%q", job.Failure.Code, job.Failure.Class,
+			pluginActionFailureCode, jobs.FailureClassDependency)
 	}
-	if job.Failure.Message != pluginActionFailureMessage {
-		t.Fatalf("the failure message is %q: it has to be host-owned text, not the handler's own",
-			job.Failure.Message)
+	const reason = "failed on [redacted] at https://signed.example/x?token=[redacted]"
+	if job.Failure.Message != reason {
+		t.Fatalf("the failure message is %q, want the plugin's own reason with its parameter values replaced: %q",
+			job.Failure.Message, reason)
 	}
 	if strings.Contains(job.Failure.Message, secret) {
 		t.Fatalf("the durable failure carries a parameter value: %q", job.Failure.Message)
@@ -1361,6 +1411,56 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 		t.Fatalf("forget the chatty action's input: %v", err)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
+}
+
+// TestALuaErrorIsTheFailureReasonWithoutItsTraceback is the other shape a
+// plugin's failure takes: the handler raised a Lua error instead of declaring a
+// failure. The reader is told what the error was, as the Lua error's own first
+// line, which names the plugin's file relative to the plugin rather than by the
+// server's path to it; the stack traceback stays in the server log. The class says
+// the handler broke, which is a different fact from the plugin reporting that its
+// work failed.
+func TestALuaErrorIsTheFailureReasonWithoutItsTraceback(t *testing.T) {
+	const secret = "error-secret-value"
+	ctx := newPluginActionJobContext(t)
+	pluginDir := ctx.PluginManager().GetDiscoveredPlugin(pluginActionTestPlugin).Dir
+
+	cases := []struct {
+		param, want string
+	}{
+		{secret, "the handler broke on [redacted]"},
+		{"nil-field", "attempt to index a non-table object(nil) with key 'field'"},
+		{"multi-line", "the first line"},
+	}
+	for _, tc := range cases {
+		_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "erroring-work", 9,
+			map[string]any{"secret": tc.param}, "")
+		if err != nil {
+			t.Fatalf("run the erroring action: %v", err)
+		}
+		job := waitForJobState(t, ctx, canonical, "the action to fail", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if job.State != jobs.StateFailed || job.Failure == nil {
+			t.Fatalf("the erroring action ended %s (%+v), want failed with a failure", job.State, job.Failure)
+		}
+		if job.Failure.Code != pluginActionErrorCode || job.Failure.Class != jobs.FailureClassInternal {
+			t.Fatalf("a Lua error is classified %q/%q, want %q/%q", job.Failure.Code, job.Failure.Class,
+				pluginActionErrorCode, jobs.FailureClassInternal)
+		}
+		message := job.Failure.Message
+		if !strings.HasPrefix(message, "plugin.lua:") || !strings.HasSuffix(message, tc.want) {
+			t.Fatalf("the failure message is %q, want the Lua error's first line naming plugin.lua and ending %q",
+				message, tc.want)
+		}
+		if strings.Contains(message, "stack traceback") || strings.Contains(message, "\n") {
+			t.Fatalf("the failure message carries the traceback: %q", message)
+		}
+		if strings.Contains(message, pluginDir) {
+			t.Fatalf("the failure message names the server's path to the plugin: %q", message)
+		}
+		assertNoSecretInJobSurfaces(t, ctx, canonical, secret)
+	}
 }
 
 // TestANestedPluginParameterIsRedactedFromEveryReportSurface is the input half of the
@@ -1877,7 +1977,8 @@ func TestAPluginJobsCommandsFollowTheActorsCurrentAuthority(t *testing.T) {
 // authority forward from the moment they enabled the plugin. A schedule is plugin code
 // on a timer — the power the deny on plugin-code endpoints withholds from a
 // group-limited principal — so an operator who has since been confined stops running
-// it, and the occurrence is blocked for a person rather than silently executed.
+// it: the occurrence is refused before a Job is accepted for it, and the schedule's
+// row says it was refused and why, rather than the handler running silently.
 func TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 
@@ -1920,14 +2021,18 @@ func TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority(t *testin
 		t.Fatalf("make the schedule due: %v", err)
 	}
 
-	NewPluginScheduler(ctx, time.Minute).Tick(time.Now())
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.Tick(time.Now())
+	scheduler.Stop()
 
-	job := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
-	job = waitForJobState(t, ctx, job.ID, "the occurrence to be decided", func(s jobs.Snapshot) bool {
-		return s.State.Terminal() || s.State == jobs.StateBlocked
-	})
-	if job.State != jobs.StateBlocked {
-		t.Fatalf("a confined operator's occurrence ended %s, want blocked", job.State)
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("a confined operator's occurrence recorded %d Jobs, want none", got)
+	}
+	if err := ctx.db.First(&row, row.ID).Error; err != nil {
+		t.Fatalf("reload the schedule row: %v", err)
+	}
+	if row.LastStatus != models.PluginScheduleStatusRefused || row.LastError != scheduleRefusalMessage("plugin-refused") {
+		t.Fatalf("a confined operator's occurrence left the row %q (%q), want refused for the plugin", row.LastStatus, row.LastError)
 	}
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "" {
 		t.Fatalf("a confined operator's schedule still ran its handler (%q)", got)
@@ -2169,4 +2274,111 @@ func TestAPluginsCountsAndMetricsReachTheJobAndItsFinalProgress(t *testing.T) {
 			t.Fatalf("series point %+v is missing the graphed metric", point)
 		}
 	}
+}
+
+// TestAPluginSecretIsRedactedFromEveryPublishedSurface pins that an operator's
+// password-typed plugin setting, which a handler receives and can echo, is
+// replaced in every place the host publishes the handler's text, for a Job a
+// non-administrator owns: the Job's failure and timeline, its progress, the
+// in-memory entry the panel and its stream read, the job-event hook payload, the
+// plugin's own log entries, and the server log.
+func TestAPluginSecretIsRedactedFromEveryPublishedSurface(t *testing.T) {
+	const secret = "sk-live-4f8a91c2e7"
+	ctx := newPluginActionJobContext(t)
+	pm := ctx.PluginManager()
+	pm.SetPluginSettings(pluginActionTestPlugin, map[string]any{"api_key": secret})
+	observer := &recordingJobEventSink{}
+	ctx.SetJobEventSink(observer)
+	events := pm.SubscribeActionJobs()
+	t.Cleanup(func() { pm.UnsubscribeActionJobs(events) })
+	var logged bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(io.MultiWriter(previous, &logged))
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	owner := models.User{Username: "secret-owner", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&owner).Error; err != nil {
+		t.Fatalf("seed the owner: %v", err)
+	}
+	handle, jobID, err := ctx.RunPluginActionAsync(&owner.ID, pluginActionTestPlugin, "setting-leaking-work", 1, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, jobID, "the action to fail", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+	if job.State != jobs.StateFailed || job.Failure == nil || !strings.Contains(job.Failure.Message, "the upstream refused key [redacted]") {
+		t.Fatalf("the failure is %s (%+v), want failed naming the refusal with the key redacted", job.State, job.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, secret)
+	listed, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+		jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 50)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	titled := false
+	for _, listedJob := range listed.Jobs {
+		titled = titled || listedJob.Title == "retrying with [redacted]"
+	}
+	if !titled {
+		t.Fatal("the job the handler started is not listed with its title redacted")
+	}
+	if strings.Contains(job.Failure.Message, secret) {
+		t.Fatalf("the failure carries the secret: %q", job.Failure.Message)
+	}
+
+	if entry := pm.GetActionJob(handle); entry != nil && (strings.Contains(entry.Message, secret) || strings.Contains(fmt.Sprint(entry.Result), secret)) {
+		t.Fatalf("the in-memory entry carries the secret: %q %v", entry.Message, entry.Result)
+	}
+	for drained := false; !drained; {
+		select {
+		case event := <-events:
+			if strings.Contains(event.Job.Message, secret) || strings.Contains(fmt.Sprint(event.Job.Result), secret) {
+				t.Fatalf("a %s event carries the secret: %q", event.Type, event.Job.Message)
+			}
+		default:
+			drained = true
+		}
+	}
+	waitFor(t, "the end to be announced", func() bool { return len(observer.snapshot()) > 0 })
+	for _, record := range observer.snapshot() {
+		if strings.Contains(record.Error, secret) || strings.Contains(record.Name, secret) {
+			t.Fatalf("the job-event payload carries the secret: %+v", record)
+		}
+	}
+	var entries []models.LogEntry
+	if err := ctx.db.Find(&entries).Error; err == nil {
+		for _, entry := range entries {
+			if strings.Contains(entry.Message, secret) || strings.Contains(string(entry.Details), secret) {
+				t.Fatalf("a log entry carries the secret: %q %s", entry.Message, entry.Details)
+			}
+		}
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatal("the server log carries the secret")
+	}
+}
+
+// TestAPluginSecretEqualToAResultKeyKeepsTheResultsMeaning pins the durable half
+// of "redaction never changes meaning": a password equal to "redirect" does not
+// rename the result key the host reads the entity output from.
+func TestAPluginSecretEqualToAResultKeyKeepsTheResultsMeaning(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	ctx.PluginManager().SetPluginSettings(pluginActionTestPlugin, map[string]any{"api_key": "redirect"})
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 12, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, jobID, "the action to finish", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the action ended %s (%+v)", job.State, job.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(jobID)
+	if err != nil {
+		t.Fatalf("read the outputs: %v", err)
+	}
+	for _, output := range outputs {
+		if output.Key == "entity" {
+			return
+		}
+	}
+	t.Fatalf("a password equal to \"redirect\" lost the result's entity output: %+v", outputs)
 }

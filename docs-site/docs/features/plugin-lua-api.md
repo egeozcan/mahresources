@@ -1295,7 +1295,7 @@ Writes a log entry to the application activity log.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `level` | string | `"info"`, `"warning"`, or `"error"` |
+| `level` | string | `"info"`, `"warning"`, or `"error"`; any other value is logged as `"info"` |
 | `message` | string | Log message |
 | `details` | table | Optional: additional context (JSON-serialized) |
 
@@ -1332,7 +1332,8 @@ end)
 
 The job appears in the job system and is tracked via SSE events. Three limits apply:
 
-- The callback runs under a 5 minute deadline, after which its context is cancelled. The same bound applies to a `mah.schedule` run.
+- The callback runs under a 5 minute deadline, after which it is stopped and its job fails with the class `timeout`. The same bound applies to a `mah.schedule` run. If the plugin is disabled or the server shuts down while the callback runs, it is stopped at its next step and its job ends `interrupted`; see [When the server stops](./plugin-actions.md#when-the-server-stops).
+- A job that has not started can be cancelled from the Jobs panel or the Job Center, and its callback then never runs. A running `mah.start_job` job cannot be cancelled.
 - The job waits `queued` until its turn comes: in each server process a plugin runs one of its async actions, `mah.start_job` jobs and schedule runs at a time, its actions and jobs start in the order they were submitted, and the job also needs one of the process's 3 plugin job slots and room in the deployment's job budget (`-max-job-concurrency`). A job whose plugin is disabled before its turn comes never runs, and ends as cancelled. A job started from inside an action or another job of the same plugin therefore starts after that handler returns. A full budget never makes the call raise: it returns the job id at once, and the callback runs when a slot frees.
 - The call raises `plugin has been disabled` instead of returning a job id when the plugin was disabled between the call and the registration.
 
@@ -1355,6 +1356,8 @@ retention policy or a nightly rollup cannot be written without it.
 | `every` | string | Interval, as a Go duration: `"30s"`, `"15m"`, `"6h"`. Minimum 30 seconds, maximum 365 days. |
 | `handler` | function | Callback receiving `job_id`, exactly as `mah.start_job` does. |
 | `overlap` | string | `"skip"` (default) or `"allow"`. What to do when a run is still going at the next due time. |
+| `retry` | boolean | `false` (default) or `true`: running the handler again is safe. Offers **Retry** on an unsuccessful run. |
+| `cancel` | boolean | `false` (default) or `true`: the handler may be stopped partway. Offers **Cancel** on a running run, as `cancel = true` does for an action; see [Cancelling a job](./plugin-actions.md#cancelling-a-job). |
 
 `schedule` installs `mah.schedule` and nothing else. The handler's own body needs whatever it calls, so the example below also needs `jobs` (or `actions`) for the `job_*` reporters and `http` for `get_sync`.
 
@@ -1372,9 +1375,11 @@ function init()
 end
 ```
 
-Each run appears in the job system as an ordinary background job, with progress,
-cancellation and SSE events, so `mah.job_progress`, `mah.job_complete` and
-`mah.job_fail` all work exactly as they do inside `mah.start_job`.
+Each run appears in the job system as an ordinary background job, with progress
+and SSE events, so `mah.job_progress`, `mah.job_complete` and `mah.job_fail` all
+work exactly as they do inside `mah.start_job`. The job is recorded when the run
+starts: a tick whose run cannot start, or whose operator may not run it (see
+below), records no job.
 
 ### What a schedule survives, and what it does not
 
@@ -1398,9 +1403,14 @@ their jobs panel.
 
 Two consequences worth knowing before relying on a schedule:
 
-- If that account is **deleted or disabled**, the schedule stops. It does not fall
-  back to an administrator. There is no identity left to run it as, and an
-  unattended timer holding an unbound database handle is not a safe default.
+- If that account is **deleted**, the schedule stops. It does not fall back to an
+  administrator. There is no identity left to run it as, and an unattended timer
+  holding an unbound database handle is not a safe default.
+- If that account is **disabled**, loses the role to write, or may no longer use
+  the plugin, each run is refused before it starts and no job is recorded. The
+  schedule's last outcome reads `refused` with the reason, the run is not counted,
+  and it is asked again at the next interval, so it runs again once the account
+  may run it. Run now answers that the run did not start, and why.
 - A plugin enabled at **startup** for the first time -- before any operator has
   enabled it in this deployment -- has no owner and does not run until one does.
   With authentication off this does not arise: every request is the root
@@ -1421,9 +1431,11 @@ Two consequences worth knowing before relying on a schedule:
   thing at a time. A schedule run goes ahead of the plugin's queued async actions
   and `mah.start_job` jobs, and waits for the one that is running. Under `"skip"`,
   a run that cannot start within 10 seconds (the plugin is busy, or the job budget
-  is full) is not started, and the schedule stays due for the next tick. Under
-  `"allow"` a run waits for the plugin for as long as it takes, and is dropped only
-  if no job slot or budget room frees within 10 seconds after that.
+  is full) is not started and records no job, and the schedule stays due for the
+  next tick. Under `"allow"` a ticked run waits for the plugin for as long as it
+  takes, and is dropped only if no job slot or budget room frees within 10 seconds
+  after that. A run started with Run now waits at most 10 seconds under either
+  policy, and a Retry of a run waits as long as it takes, as a queued action does.
 - **In a multi-process deployment each schedule still runs once.** Processes
   compete for each due run and exactly one wins.
 
@@ -2133,6 +2145,8 @@ Values are returned with their correct Lua type based on the setting definition.
 ## mah.sleep(seconds)
 
 Blocks the calling plugin VM for the given number of seconds. The value is clamped to the range `[0, 30]`: negatives become `0` and anything above `30` becomes `30`. Useful for polling an external async API from within a sync action handler.
+
+The sleep ends early when the call is stopped: its time limit passes (5 seconds for a hook, 5 minutes for an async handler), or the host stops an async handler because the job was cancelled, its plugin was disabled or the server is shutting down. The handler then raises at its next instruction.
 
 ```lua
 mah.sleep(2)  -- pause for 2 seconds

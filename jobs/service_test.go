@@ -803,6 +803,44 @@ func TestJobTransitionRequiresAndRecordsAFailureTaxonomy(t *testing.T) {
 			t.Fatalf("= %v, want ErrInvalidTransition", err)
 		}
 	})
+	t.Run("failure on a cancellation", func(t *testing.T) {
+		job := seedJob(t, deps, StateRunning, clock, 1)
+		_, err := svc.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: 1, To: StateCancelled,
+			Failure: &Failure{Code: "http-403", Class: FailureClassDependency},
+		})
+		if !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("= %v, want ErrInvalidTransition", err)
+		}
+	})
+	// An interrupted Job did not succeed, and its reader needs to know why as
+	// much as a failed Job's does: the server shut down, the plugin was disabled,
+	// the process running it went away. It may carry the same bounded taxonomy,
+	// and is not required to.
+	t.Run("recorded reason for an interruption", func(t *testing.T) {
+		job := seedJob(t, deps, StateRunning, clock, 1)
+		snap, err := svc.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: 1, To: StateInterrupted,
+			Failure: &Failure{Code: "server-stopped", Class: FailureClassCancellation, Message: "The server shut down."},
+		})
+		if err != nil {
+			t.Fatalf("running -> interrupted with a reason: %v", err)
+		}
+		if snap.Failure == nil || snap.Failure.Code != "server-stopped" || snap.Failure.Message != "The server shut down." {
+			t.Fatalf("snapshot failure = %+v", snap.Failure)
+		}
+		bare := seedJob(t, deps, StateRunning, clock, 1)
+		if _, err := svc.Transition(deps, Transition{JobID: bare.ID, ExpectedVersion: 1, To: StateInterrupted}); err != nil {
+			t.Fatalf("running -> interrupted without a reason: %v", err)
+		}
+		invalidClass := seedJob(t, deps, StateRunning, clock, 1)
+		if _, err := svc.Transition(deps, Transition{
+			JobID: invalidClass.ID, ExpectedVersion: 1, To: StateInterrupted,
+			Failure: &Failure{Code: "server-stopped", Class: "shutdown"},
+		}); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("an interruption outside the taxonomy = %v, want ErrInvalidTransition", err)
+		}
+	})
 	t.Run("recorded failure", func(t *testing.T) {
 		job := seedJob(t, deps, StateRunning, clock, 1)
 		snap, err := svc.Transition(deps, Transition{

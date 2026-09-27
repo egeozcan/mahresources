@@ -1,0 +1,736 @@
+package plugin_system
+
+import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	lua "github.com/yuin/gopher-lua"
+)
+
+// This file pins how the host ends a running handler — its timeout, a disable,
+// a shutdown and a person's cancel all go through one stop — and that one
+// execution reports exactly one outcome whichever of them races its own.
+
+const stoppablePlugin = `
+plugin = { name = "stoppable", version = "1.0", api_version = 1, capabilities = { "actions", "jobs" } }
+
+-- sleeps in mah.sleep, which is where a long handler spends its time
+function sleeper(ctx)
+    entered(ctx.entity_id)
+    for i = 1, 100 do mah.sleep(1) end
+    mah.job_complete(ctx.job_id, { message = "slept" })
+end
+
+-- spins without calling into the host
+function spinner(ctx)
+    entered(ctx.entity_id)
+    while true do end
+end
+
+-- waits in a Go call that does not watch its context
+function blocker(ctx)
+    entered(ctx.entity_id)
+    block_until_released()
+    mah.job_complete(ctx.job_id, { message = "released" })
+end
+
+-- reports its outcome, then keeps working: its panel entry reads finished while
+-- its handler still runs
+function lingerer(ctx)
+    mah.job_complete(ctx.job_id, { message = "reported early" })
+    entered(ctx.entity_id)
+    for i = 1, 100 do mah.sleep(1) end
+end
+
+-- finishes by itself
+function quick(ctx)
+    entered(ctx.entity_id)
+    mah.sleep(0.2)
+    mah.job_complete(ctx.job_id, { message = "quick done" })
+end
+
+function init()
+    mah.action({ id = "sleeper", label = "Sleeper", entity = "resource", async = true, handler = sleeper })
+    mah.action({ id = "spinner", label = "Spinner", entity = "resource", async = true, handler = spinner })
+    mah.action({ id = "blocker", label = "Blocker", entity = "resource", async = true, handler = blocker })
+    mah.action({ id = "quick", label = "Quick", entity = "resource", async = true, handler = quick })
+    mah.action({ id = "lingerer", label = "Lingerer", entity = "resource", async = true, handler = lingerer })
+end
+`
+
+// stoppableHooks are the Go functions the stoppable plugin calls: which entities
+// entered their handler, and a release for the blocker.
+type stoppableHooks struct {
+	mu       sync.Mutex
+	entered  []int
+	released atomic.Bool
+}
+
+func (h *stoppableHooks) enteredCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.entered)
+}
+
+// installStoppableHooks installs the Go functions on the plugin's current VM.
+func installStoppableHooks(t *testing.T, pm *PluginManager) *stoppableHooks {
+	t.Helper()
+	_, L, err := pm.FindAction("stoppable", "sleeper")
+	if err != nil {
+		t.Fatalf("find the plugin's VM: %v", err)
+	}
+	hooks := &stoppableHooks{}
+	mu := pm.LockVM(L)
+	if mu == nil {
+		t.Fatal("the plugin has no VM")
+	}
+	L.SetGlobal("entered", L.NewFunction(func(L *lua.LState) int {
+		hooks.mu.Lock()
+		hooks.entered = append(hooks.entered, int(L.CheckNumber(1)))
+		hooks.mu.Unlock()
+		return 0
+	}))
+	L.SetGlobal("block_until_released", L.NewFunction(func(L *lua.LState) int {
+		for !hooks.released.Load() {
+			time.Sleep(5 * time.Millisecond)
+		}
+		return 0
+	}))
+	mu.Unlock()
+	return hooks
+}
+
+func newStoppablePlugin(t *testing.T) (*PluginManager, *stoppableHooks) {
+	t.Helper()
+	dir := t.TempDir()
+	writePlugin(t, dir, "stoppable", stoppablePlugin)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("plugin manager: %v", err)
+	}
+	t.Cleanup(pm.Close)
+	if err := pm.EnablePlugin("stoppable"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	return pm, installStoppableHooks(t, pm)
+}
+
+// runStoppable submits one action with a recording sink and waits for its
+// handler to be entered.
+func runStoppable(t *testing.T, pm *PluginManager, hooks *stoppableHooks, action string, entity uint, sink HostJobSink) {
+	t.Helper()
+	before := hooks.enteredCount()
+	id := action + "-" + time.Now().Format("150405.000000000")
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: id, Handle: id, Sink: sink},
+		nil, "stoppable", action, entity, nil, ""); err != nil {
+		t.Fatalf("run %s: %v", action, err)
+	}
+	waitUntil(t, action+" to enter its handler", 5*time.Second, func() bool { return hooks.enteredCount() > before })
+}
+
+// shortenShutdown makes Close's waits short enough to observe.
+func shortenShutdown(t *testing.T, grace, stopWait, settleWait time.Duration) {
+	t.Helper()
+	oldGrace, oldStop, oldSettle := shutdownHandlerGrace, shutdownHandlerStopWait, shutdownSettleWait
+	shutdownHandlerGrace, shutdownHandlerStopWait, shutdownSettleWait = grace, stopWait, settleWait
+	t.Cleanup(func() {
+		shutdownHandlerGrace, shutdownHandlerStopWait, shutdownSettleWait = oldGrace, oldStop, oldSettle
+	})
+}
+
+// TestAHandlerThatRunsOutOfTimeFailsAsATimeout pins the classification a Job
+// reader sees: a handler stopped by its own time limit failed because it ran too
+// long, which is neither the plugin reporting a failure nor a Lua error — whether
+// it spun without calling the host or waited in mah.sleep.
+func TestAHandlerThatRunsOutOfTimeFailsAsATimeout(t *testing.T) {
+	old := asyncHandlerTimeout
+	asyncHandlerTimeout = 300 * time.Millisecond
+	defer func() { asyncHandlerTimeout = old }()
+	pm, hooks := newStoppablePlugin(t)
+
+	for i, action := range []string{"spinner", "sleeper"} {
+		sink := &recordingSink{}
+		runStoppable(t, pm, hooks, action, uint(i+1), sink)
+		waitUntil(t, action+" to fail", 5*time.Second, func() bool {
+			_, _, failed, _ := sink.counts()
+			return failed == 1
+		})
+		sink.mu.Lock()
+		failure := sink.failures[0]
+		sink.mu.Unlock()
+		if failure.Cause != FailureTimeout {
+			t.Fatalf("%s ended with a %q failure (%q), want a timeout", action, failure.Cause, failure.Message)
+		}
+	}
+}
+
+// TestAStopAfterTheTimeoutDoesNotRenameIt pins that a handler is classified by
+// what ended its call first. A handler inside a Go call when its time runs out
+// has already been ended by the timeout; a disable that lands before the call
+// returns stops nothing more, and the Job fails as a timeout rather than being
+// recorded as interrupted by the disable.
+func TestAStopAfterTheTimeoutDoesNotRenameIt(t *testing.T) {
+	old := asyncHandlerTimeout
+	asyncHandlerTimeout = 200 * time.Millisecond
+	defer func() { asyncHandlerTimeout = old }()
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "blocker", 1, sink)
+
+	time.Sleep(500 * time.Millisecond)
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	hooks.released.Store(true)
+	waitUntil(t, "the handler to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return sink.failed+len(sink.stopped)+sink.completed > 0
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 0 || sink.failed != 1 || sink.failures[0].Cause != FailureTimeout {
+		t.Fatalf("the host was told stopped=%v failed=%d failures=%+v, want one timeout failure",
+			sink.stopped, sink.failed, sink.failures)
+	}
+}
+
+// TestDisablingAPluginStopsItsRunningHandler pins that a disable stops the
+// plugin's running work rather than leaving it running on a revoked VM for the
+// rest of its allowance, and that the Job is told why: the handler was stopped
+// because its plugin was disabled, which is not a failure of the work.
+func TestDisablingAPluginStopsItsRunningHandler(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "sleeper", 1, sink)
+
+	began := time.Now()
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("the disable took %s: it waited for the handler instead of stopping it", took)
+	}
+	waitUntil(t, "the stopped handler to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.stopped[0] != StopPluginDisabled || sink.completed != 0 || sink.failed != 0 || len(sink.lost) != 0 {
+		t.Fatalf("the host was told stopped=%v completed=%d failed=%d lost=%v, want one stop for the disable",
+			sink.stopped, sink.completed, sink.failed, sink.lost)
+	}
+}
+
+// TestAReenabledPluginDoesNotRunBesideItsStoppedHandler pins "one handler of a
+// plugin at a time" across a disable and an enable. A handler inside a Go call
+// cannot be stopped until the call returns, so it is still running on the old VM
+// when the plugin is enabled again; work submitted to the new VM waits for it,
+// because both wait in the plugin's one lane.
+func TestAReenabledPluginDoesNotRunBesideItsStoppedHandler(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	oldSink := &recordingSink{}
+	runStoppable(t, pm, hooks, "blocker", 1, oldSink)
+
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if err := pm.EnablePlugin("stoppable"); err != nil {
+		t.Fatalf("enable again: %v", err)
+	}
+	newHooks := installStoppableHooks(t, pm)
+	newSink := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "after-enable", Handle: "after-enable", Sink: newSink},
+		nil, "stoppable", "quick", 2, nil, ""); err != nil {
+		t.Fatalf("run on the new VM: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if newHooks.enteredCount() != 0 {
+		t.Fatal("the new VM ran the plugin's work while the old VM's handler was still running")
+	}
+
+	hooks.released.Store(true)
+	waitUntil(t, "the new VM's work to run once the old handler returned", 5*time.Second, func() bool {
+		_, completed, _, _ := newSink.counts()
+		return completed == 1
+	})
+	oldSink.mu.Lock()
+	defer oldSink.mu.Unlock()
+	if len(oldSink.stopped) != 1 || oldSink.stopped[0] != StopPluginDisabled || oldSink.completed != 0 {
+		t.Fatalf("the old handler reported stopped=%v completed=%d, want the stop the disable asked for",
+			oldSink.stopped, oldSink.completed)
+	}
+}
+
+// TestAShutdownStopsAHandlerThatOutlivesItsGrace pins the bound on Close: a
+// handler that would run for minutes is given the grace period and then stopped,
+// and its Job is told the server is shutting down — once, as a stop, and not
+// also as a lost callback.
+func TestAShutdownStopsAHandlerThatOutlivesItsGrace(t *testing.T) {
+	shortenShutdown(t, 300*time.Millisecond, 2*time.Second, 2*time.Second)
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "sleeper", 1, sink)
+
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("Close took %s with a handler that had minutes left: the drain is not bounded", took)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 1 || sink.stopped[0] != StopRuntimeStopping {
+		t.Fatalf("the host was told stopped=%v, want one stop for the shutdown", sink.stopped)
+	}
+	if sink.completed != 0 || sink.failed != 0 || len(sink.lost) != 0 {
+		t.Fatalf("the host was also told completed=%d failed=%d lost=%v: one execution, one outcome",
+			sink.completed, sink.failed, sink.lost)
+	}
+}
+
+// TestAShutdownLetsAHandlerFinishWithinItsGrace is the other side of the grace:
+// work that finishes during it is recorded as it finished.
+func TestAShutdownLetsAHandlerFinishWithinItsGrace(t *testing.T) {
+	shortenShutdown(t, 3*time.Second, 2*time.Second, 2*time.Second)
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "quick", 1, sink)
+
+	pm.Close()
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.completed != 1 || len(sink.stopped) != 0 || len(sink.lost) != 0 {
+		t.Fatalf("the host was told completed=%d stopped=%v lost=%v, want the completion the handler reached",
+			sink.completed, sink.stopped, sink.lost)
+	}
+}
+
+// slowCompletionSink takes a while to record a completion, which is what
+// publishing a result output and then finishing the Job looks like from here.
+type slowCompletionSink struct {
+	recordingSink
+	delay time.Duration
+}
+
+func (s *slowCompletionSink) Completed(message string, result map[string]any) error {
+	time.Sleep(s.delay)
+	return s.recordingSink.Completed(message, result)
+}
+
+// TestAnOutcomeBeingRecordedAtShutdownIsNotReportedLost pins the race a shutdown
+// used to lose. A handler returns and gives its VM back; the shutdown, which was
+// waiting for that VM, closes it at once and reports every unfinished callback
+// lost — while the handler's own goroutine is still recording its completion. The
+// execution records that it settles itself before it gives the VM back, so the
+// shutdown waits for that outcome, and when the outcome takes longer than the
+// wait it is still the only one reported.
+func TestAnOutcomeBeingRecordedAtShutdownIsNotReportedLost(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		settleWait time.Duration
+	}{
+		{"recorded within the wait", 3 * time.Second},
+		{"recorded after the wait", 50 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shortenShutdown(t, 3*time.Second, 2*time.Second, tc.settleWait)
+			pm, hooks := newStoppablePlugin(t)
+			sink := &slowCompletionSink{delay: 500 * time.Millisecond}
+			runStoppable(t, pm, hooks, "quick", 1, sink)
+
+			pm.Close()
+			waitUntil(t, "the completion to be recorded", 5*time.Second, func() bool {
+				_, completed, _, _ := sink.counts()
+				return completed == 1
+			})
+			sink.mu.Lock()
+			defer sink.mu.Unlock()
+			if len(sink.lost) != 0 {
+				t.Fatalf("a handler that returned was also reported lost (%v)", sink.lost)
+			}
+		})
+	}
+}
+
+// TestAHandlerThatWillNotStopIsNotEndedByTheShutdown pins the rule a shutdown
+// keeps for a handler it could not stop: it does not end its Job. The handler is
+// inside a Go call that ignores the stop, so nothing proves its work has ended,
+// and a Job ended while it may still act could be retried beside it. Close
+// returns within its bound without reporting it; when the call does return, the
+// handler reports its own outcome, once.
+func TestAHandlerThatWillNotStopIsNotEndedByTheShutdown(t *testing.T) {
+	shortenShutdown(t, 200*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond)
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "blocker", 1, sink)
+
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("Close took %s waiting for a handler that cannot be stopped", took)
+	}
+	sink.mu.Lock()
+	reported := len(sink.lost) + len(sink.stopped) + sink.completed + sink.failed
+	sink.mu.Unlock()
+	if reported != 0 {
+		t.Fatalf("a shutdown reported an outcome for a handler still inside its call: %+v", sink.events)
+	}
+
+	hooks.released.Store(true)
+	waitUntil(t, "the handler to report once its call returned", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) > 0
+	})
+	time.Sleep(200 * time.Millisecond)
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 1 || sink.stopped[0] != StopRuntimeStopping || len(sink.lost) != 0 ||
+		sink.completed != 0 || sink.failed != 0 {
+		t.Fatalf("the handler reported stopped=%v lost=%v completed=%d failed=%d, want one stop for the shutdown",
+			sink.stopped, sink.lost, sink.completed, sink.failed)
+	}
+}
+
+// stalledLostSink records nothing when told a callback is lost: its write waits
+// on a database that does not answer.
+type stalledLostSink struct {
+	recordingSink
+	release chan struct{}
+}
+
+func (s *stalledLostSink) CallbackLost(string) { <-s.release }
+
+// TestAShutdownDoesNotWaitOutAHostThatCannotRecordALostCallback pins the last
+// bound on Close: reporting the executions that will never run is the host's
+// database write, and one that does not answer is given up at the shutdown's
+// budget rather than holding the process past its supervisor. The execution is
+// one in flight that never entered its handler, which is what a shutdown names.
+func TestAShutdownDoesNotWaitOutAHostThatCannotRecordALostCallback(t *testing.T) {
+	shortenShutdown(t, 100*time.Millisecond, 100*time.Millisecond, 100*time.Millisecond)
+	oldBudget, oldReport := shutdownBudget, shutdownReportWait
+	shutdownBudget, shutdownReportWait = 1500*time.Millisecond, 500*time.Millisecond
+	t.Cleanup(func() { shutdownBudget, shutdownReportWait = oldBudget, oldReport })
+	pm, _ := newStoppablePlugin(t)
+	sink := &stalledLostSink{release: make(chan struct{})}
+	t.Cleanup(func() { close(sink.release) })
+	waiting := &ActionJob{ID: "never-entered", PluginName: "stoppable", host: &HostJobRef{JobID: "never-entered", Sink: sink}}
+	pm.trackExecution(waiting)
+
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 2500*time.Millisecond {
+		t.Fatalf("Close took %s waiting for a lost callback's report, want it held to the 1.5s budget", took)
+	}
+}
+
+// TestCancellingARunningHandlerStopsIt pins the host's half of a cancel: the Job
+// named is the one stopped, and it reports that a person cancelled it.
+func TestCancellingARunningHandlerStopsIt(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "to-cancel", Handle: "to-cancel", Sink: sink, Cancellable: true},
+		nil, "stoppable", "sleeper", 1, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	waitUntil(t, "the handler to be entered", 5*time.Second, func() bool { return hooks.enteredCount() == 1 })
+
+	if pm.StopHostJob("another-job") {
+		t.Fatal("a cancel for another Job stopped something")
+	}
+	if !pm.StopHostJob("to-cancel") {
+		t.Fatal("the cancel found no running handler for the Job")
+	}
+	waitUntil(t, "the cancelled handler to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.stopped[0] != StopCancelled || sink.completed != 0 || sink.failed != 0 {
+		t.Fatalf("the host was told stopped=%v completed=%d failed=%d, want one cancellation",
+			sink.stopped, sink.completed, sink.failed)
+	}
+}
+
+// TestACancelDoesNotStopAHandlerTheJobNeverAllowedToStop pins the executor's half
+// of Cancel's authority. Whether a running handler may be stopped is what the Job
+// recorded when it was accepted (HostJobRef.Cancellable); a stop asked of a Job
+// that did not record it leaves the handler running, whichever process asked.
+func TestACancelDoesNotStopAHandlerTheJobNeverAllowedToStop(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "quick", 1, sink)
+	if !pm.StopHostJob(sinkJobIDForTest(t, pm, sink)) {
+		t.Fatal("the cancel found no execution for the Job")
+	}
+	waitUntil(t, "the handler to finish by itself", 5*time.Second, func() bool {
+		_, completed, _, _ := sink.counts()
+		return completed == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 0 {
+		t.Fatalf("a handler whose Job never allowed a stop was stopped (%v)", sink.stopped)
+	}
+}
+
+// sinkJobIDForTest answers the host Job id of the one execution reporting into
+// sink.
+func sinkJobIDForTest(t *testing.T, pm *PluginManager, sink HostJobSink) string {
+	t.Helper()
+	for _, job := range pm.inFlight() {
+		if ref := job.hostJobRef(); ref != nil && ref.Sink == sink {
+			return ref.JobID
+		}
+	}
+	t.Fatal("no execution reports into this sink")
+	return ""
+}
+
+// TestACancelBeforeTheHandlerKeepsItFromStarting pins a cancel that lands between
+// the claim and the handler: nothing of the handler has run, so it is never
+// entered, and the Job ends cancelled rather than started and stopped.
+func TestACancelBeforeTheHandlerKeepsItFromStarting(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	admission := &cancellingAdmission{pm: pm, jobID: "cancelled-in-admission"}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: admission.jobID, Handle: admission.jobID,
+		Sink: sink, Admission: admission}, nil, "stoppable", "quick", 1, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	waitUntil(t, "the cancelled execution to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.stopped[0] != StopCancelled || sink.started != 0 || sink.completed != 0 {
+		t.Fatalf("the host was told stopped=%v started=%d completed=%d, want a cancellation and no start",
+			sink.stopped, sink.started, sink.completed)
+	}
+	if hooks.enteredCount() != 0 {
+		t.Fatal("the handler was entered after its Job was cancelled")
+	}
+}
+
+// cancellingAdmission admits its execution and, in the same moment, has a person
+// cancel the Job: the stop reaches the execution after its claim and before its
+// handler.
+type cancellingAdmission struct {
+	pm    *PluginManager
+	jobID string
+}
+
+func (a *cancellingAdmission) Admit(time.Time) AdmitResult {
+	a.pm.StopHostJob(a.jobID)
+	return Admitted
+}
+
+// TestAStopReachesAHandlerWhosePanelEntryWasCleared pins that the panel's list is
+// not the registry a stop walks. A handler that reported its outcome and kept
+// working reads as finished there, and a person can clear it; the disable must
+// still find it and stop it.
+func TestAStopReachesAHandlerWhosePanelEntryWasCleared(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "lingerer", 1, sink)
+	if cleared := pm.ClearFinishedActionJobs(nil); len(cleared) != 1 {
+		t.Fatalf("cleared %d entries, want the lingering handler's", len(cleared))
+	}
+	if pm.runningHandlers() != 1 {
+		t.Fatalf("%d handlers are known to be running, want the one whose entry was cleared", pm.runningHandlers())
+	}
+	began := time.Now()
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("the disable took %s: it did not find the handler to stop", took)
+	}
+	waitUntil(t, "the handler to settle", 5*time.Second, func() bool {
+		_, completed, _, _ := sink.counts()
+		return completed == 1
+	})
+}
+
+// TestCloseEndsSlowPluginHTTPRequests pins the first wait of a shutdown. An async
+// mah.http request may be allowed 120 seconds; Close ends the requests rather
+// than waiting for them in turn.
+func TestCloseEndsSlowPluginHTTPRequests(t *testing.T) {
+	shortenShutdown(t, 200*time.Millisecond, 2*time.Second, time.Second)
+	release := make(chan struct{})
+	defer close(release)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("test bug: %v", err)
+	}
+	pm := mustEnable(t, t.TempDir(), "slowhttp", `
+plugin = { name = "slowhttp", version = "1.0", api_version = 1, capabilities = { "api", "http" },
+           network = { "`+host+`" }, allow_private_hosts = true }
+function init()
+    mah.api("GET", "fetch", function(ctx)
+        for i = 1, 20 do
+            mah.http.get("`+srv.URL+`/slow", { timeout = 120 }, function(resp) end)
+        end
+        ctx.json({ ok = true })
+    end)
+end
+`)
+	pm.HandleAPI(context.Background(), "slowhttp", "GET", "fetch", PageContext{Path: "/v1/plugins/slowhttp/fetch", Method: "GET"})
+	time.Sleep(200 * time.Millisecond)
+
+	// Shorter than the bounded wait for the requests (2s here): the requests
+	// are ended, not waited out.
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 1500*time.Millisecond {
+		t.Fatalf("Close took %s with slow plugin HTTP requests in flight", took)
+	}
+}
+
+// slowStartSink writes its Started report slowly, as a progress write on a busy
+// database does, and records whether the handler was entered.
+type slowStartSink struct {
+	recordingSink
+	starting chan struct{}
+	proceed  chan struct{}
+	entered  atomic.Int32
+}
+
+func (s *slowStartSink) Started(message string) {
+	close(s.starting)
+	<-s.proceed
+	s.recordingSink.Started(message)
+}
+
+func (s *slowStartSink) Entered() { s.entered.Add(1) }
+
+// TestAStopDuringTheStartReportKeepsTheHandlerFromBeingEntered pins where "it
+// started" is decided: at the handler's Lua call, not at the report that it is
+// starting, which is a write a disable, a Cancel or a shutdown can land during.
+// A plugin disabled while that report is being written is not entered, the host
+// is told it did not start, and nobody is told it started.
+func TestAStopDuringTheStartReportKeepsTheHandlerFromBeingEntered(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &slowStartSink{starting: make(chan struct{}), proceed: make(chan struct{})}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "slow-start", Handle: "slow-start", Sink: sink},
+		nil, "stoppable", "quick", 1, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	<-sink.starting
+	disabled := make(chan error, 1)
+	go func() { disabled <- pm.DisablePlugin("stoppable") }()
+	time.Sleep(200 * time.Millisecond)
+	close(sink.proceed)
+	if err := <-disabled; err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	waitUntil(t, "the execution to report that it did not start", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.unstarted) > 0
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.entered.Load() != 0 || hooks.enteredCount() != 0 {
+		t.Fatalf("a handler stopped during its start report was entered (observer %d, Lua %d)",
+			sink.entered.Load(), hooks.enteredCount())
+	}
+	if sink.unstarted[0] != StopPluginDisabled || len(sink.stopped) != 0 || sink.completed != 0 || sink.failed != 0 {
+		t.Fatalf("the host was told unstarted=%v stopped=%v completed=%d failed=%d, want not started for the disable",
+			sink.unstarted, sink.stopped, sink.completed, sink.failed)
+	}
+}
+
+// TestACancelDuringTheStartReportEndsTheJobUnentered is the Cancel side of the
+// same decision: a person's cancel that lands while the start is being reported
+// keeps the handler from being entered, and the Job ends cancelled without
+// anybody having been told it started.
+func TestACancelDuringTheStartReportEndsTheJobUnentered(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &slowStartSink{starting: make(chan struct{}), proceed: make(chan struct{})}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "slow-cancel", Handle: "slow-cancel", Sink: sink, Cancellable: true},
+		nil, "stoppable", "quick", 1, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	<-sink.starting
+	if !pm.StopHostJob("slow-cancel") {
+		t.Fatal("the execution was not found to cancel")
+	}
+	close(sink.proceed)
+	waitUntil(t, "the cancelled execution to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) > 0
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.entered.Load() != 0 || hooks.enteredCount() != 0 {
+		t.Fatalf("a handler cancelled during its start report was entered (observer %d, Lua %d)",
+			sink.entered.Load(), hooks.enteredCount())
+	}
+	if sink.stopped[0] != StopCancelled || sink.completed != 0 || sink.failed != 0 {
+		t.Fatalf("the host was told stopped=%v completed=%d failed=%d, want cancelled", sink.stopped, sink.completed, sink.failed)
+	}
+}
+
+// TestACancelledEntryIsClearedAndExpiresLikeAnyEndedOne pins that cancelled is an
+// end for the in-memory list: Clear completed removes a cancelled entry, and the
+// retention sweep expires one, as they do completed and failed ones. Otherwise
+// every cancellation stayed in the process's memory for its lifetime.
+func TestACancelledEntryIsClearedAndExpiresLikeAnyEndedOne(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	cancelOne := func(id string) {
+		t.Helper()
+		sink := &recordingSink{}
+		before := hooks.enteredCount()
+		if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: id, Handle: id, Sink: sink, Cancellable: true},
+			nil, "stoppable", "sleeper", 1, nil, ""); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		waitUntil(t, "the handler to be entered", 5*time.Second, func() bool { return hooks.enteredCount() > before })
+		if !pm.StopHostJob(id) {
+			t.Fatal("the cancel found no running handler")
+		}
+		waitUntil(t, "the entry to read cancelled", 5*time.Second, func() bool {
+			job := pm.GetActionJob(id)
+			return job != nil && job.Status == "cancelled"
+		})
+	}
+
+	cancelOne("cleared")
+	if cleared := pm.ClearFinishedActionJobs(nil); len(cleared) != 1 || cleared[0] != "cleared" {
+		t.Fatalf("Clear completed removed %v, want the cancelled entry", cleared)
+	}
+
+	cancelOne("expired")
+	pm.actionJobsMu.RLock()
+	expired := pm.actionJobs["expired"]
+	pm.actionJobsMu.RUnlock()
+	expired.mu.Lock()
+	expired.CreatedAt = time.Now().Add(-2 * actionJobRetention)
+	expired.mu.Unlock()
+	pm.cleanupOldActionJobs()
+	if pm.GetActionJob("expired") != nil {
+		t.Fatal("the retention sweep kept a cancelled entry past its retention")
+	}
+}

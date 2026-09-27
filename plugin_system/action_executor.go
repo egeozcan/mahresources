@@ -594,11 +594,12 @@ func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID str
 		if isAbort, reason := parseAbortError(err); isAbort {
 			return &ActionResult{
 				Success: false,
-				Message: reason,
+				Message: pm.RedactPluginSecrets(pluginName, reason),
 			}, nil
 		}
+		err = pm.pluginCallError(pluginName, "action handler error", err)
 		log.Printf("[plugin] warning: action %q/%q returned error: %v", pluginName, actionID, err)
-		return nil, fmt.Errorf("action handler error: %w", err)
+		return nil, err
 	}
 
 	// Parse the return value.
@@ -607,7 +608,9 @@ func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID str
 
 	result := &ActionResult{}
 	if retTbl, ok := ret.(*lua.LTable); ok {
-		parsed := luaTableToGoMap(retTbl)
+		// The protocol keys stay as the handler wrote them (redactResult keeps
+		// them); what is published from them is redacted.
+		parsed := redactResult(luaTableToGoMap(retTbl), pm.pluginSecrets(pluginName))
 
 		if v, ok := parsed["success"].(bool); ok {
 			result.Success = v

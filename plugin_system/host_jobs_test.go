@@ -59,6 +59,9 @@ type recordingSink struct {
 	completed int
 	failed    int
 	lost      []string
+	stopped   []string
+	unstarted []string
+	failures  []HostFailure
 	progress  int
 	reports   []HostProgress
 	message   string
@@ -99,18 +102,37 @@ func (s *recordingSink) Completed(message string, _ map[string]any) error {
 	return nil
 }
 
-func (s *recordingSink) Failed(string) error {
+func (s *recordingSink) Failed(failure HostFailure) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.refuseTerminal {
 		return errors.New("the durable plane refused this outcome")
 	}
 	s.failed++
+	s.failures = append(s.failures, failure)
+	s.events = append(s.events, "failed")
 	return nil
+}
+func (s *recordingSink) Stopped(reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refuseTerminal {
+		return errors.New("the durable plane refused this outcome")
+	}
+	s.stopped = append(s.stopped, reason)
+	s.events = append(s.events, "stopped:"+reason)
+	return nil
+}
+func (s *recordingSink) NotStarted(reason string) {
+	s.mu.Lock()
+	s.unstarted = append(s.unstarted, reason)
+	s.events = append(s.events, "not-started:"+reason)
+	s.mu.Unlock()
 }
 func (s *recordingSink) CallbackLost(reason string) {
 	s.mu.Lock()
 	s.lost = append(s.lost, reason)
+	s.events = append(s.events, "lost:"+reason)
 	s.mu.Unlock()
 }
 

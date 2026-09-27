@@ -387,7 +387,7 @@
                             <td class="py-1 pr-4 font-mono">{{ schedule.Runs }}</td>
                             <td class="py-1 pr-4">
                                 {% if schedule.LastStatus %}
-                                <span class="{% if schedule.LastStatus == "failed" %}text-red-700{% else %}text-stone-600{% endif %}">{{ schedule.LastStatus }}</span>
+                                <span class="{% if schedule.LastStatus == "failed" or schedule.LastStatus == "refused" %}text-red-700{% else %}text-stone-600{% endif %}">{{ schedule.LastStatus }}</span>
                                 {% if schedule.LastError %}
                                 <span class="text-stone-500">&mdash; {{ schedule.LastError }}</span>
                                 {% endif %}

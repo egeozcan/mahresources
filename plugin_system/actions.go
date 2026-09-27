@@ -115,8 +115,15 @@ type ActionRegistration struct {
 	// arbitrary Lua is idempotent, so a Retry of an undeclared action would be a
 	// second execution of side effects nobody said could be repeated. The host
 	// enforces it by only ever advertising a Retry for an action that declares it.
-	Retryable bool           `json:"retryable,omitempty"`
-	Handler   *lua.LFunction `json:"-"`
+	Retryable bool `json:"retryable,omitempty"`
+	// Cancellable is the author's explicit declaration that stopping this
+	// action's async handler partway is safe: the handler may end between any two
+	// of its Lua instructions, and whatever it did before that is left as it is.
+	// It is off by default for the reason Retryable is. A Job whose handler has
+	// not started yet can always be cancelled, because nothing of it has run;
+	// this is what lets a person cancel one that has.
+	Cancellable bool           `json:"cancellable,omitempty"`
+	Handler     *lua.LFunction `json:"-"`
 
 	// state is the VM that registered this action. Every registration carries
 	// one so teardown can remove exactly what a dying generation registered:
@@ -192,6 +199,16 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 			return nil, fmt.Errorf("retry must be a boolean, got %s", retryVal.Type())
 		}
 		a.Retryable = bool(declared)
+	}
+
+	// Optional: cancel — the author's explicit "this handler may be stopped
+	// partway". Refused by name when it is not a boolean, as retry is.
+	if cancelVal := tbl.RawGetString("cancel"); cancelVal != lua.LNil {
+		declared, ok := cancelVal.(lua.LBool)
+		if !ok {
+			return nil, fmt.Errorf("cancel must be a boolean, got %s", cancelVal.Type())
+		}
+		a.Cancellable = bool(declared)
 	}
 
 	// Optional: confirm

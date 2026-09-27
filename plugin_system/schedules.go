@@ -47,6 +47,9 @@ type ScheduleRegistration struct {
 	// Retry runs the handler once more, so an undeclared schedule offers none for
 	// the reason an undeclared action does not.
 	Retryable bool `json:"retryable,omitempty"`
+	// Cancellable is the author's declaration that an occurrence's handler may
+	// be stopped partway, for the reason an action's is (ActionRegistration).
+	Cancellable bool `json:"cancellable,omitempty"`
 
 	// EverySeconds is the wire form of Every, for the manage page.
 	EverySeconds int64 `json:"everySeconds"`
@@ -137,6 +140,15 @@ func parseScheduleRegistration(L *lua.LState, tbl *lua.LTable, pluginName string
 			return reg, fmt.Errorf("retry must be a boolean, got %s", retryVal.Type())
 		}
 		reg.Retryable = bool(declared)
+	}
+
+	// Optional: cancel — may a running occurrence be stopped partway.
+	if cancelVal := tbl.RawGetString("cancel"); cancelVal != lua.LNil {
+		declared, ok := cancelVal.(lua.LBool)
+		if !ok {
+			return reg, fmt.Errorf("cancel must be a boolean, got %s", cancelVal.Type())
+		}
+		reg.Cancellable = bool(declared)
 	}
 
 	handlerVal := tbl.RawGetString("handler")
@@ -331,6 +343,8 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
+	pm.trackExecution(job)
+	defer pm.untrackExecution(job)
 	pm.notifyActionJobSubscribers("added", job)
 	defer pm.releaseHostJob(host)
 
@@ -373,11 +387,18 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 			return nil, errScheduleVMBusy
 		},
 		live: func() bool { return pm.stillRegistered(state) },
-		run: func(mu *vmMutex) error {
-			defer mu.Unlock()
+		run: func(h *handlerRun) error {
+			defer h.Unlock()
 
-			timeoutCtx, cancel := context.WithTimeout(
-				withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
+			// The reference the job holds now, which names the Job the occurrence
+			// was admitted into when the host accepted it only then.
+			timeoutCtx, cancel := h.Context(func(parent context.Context) context.Context {
+				return withInvocation(parent, scheduleInvocation(actorUserID, job.hostJobRef()))
+			})
+			if reason := h.enter(); reason != "" {
+				cancel()
+				return errNotEntered{reason: reason}
+			}
 			state.SetContext(timeoutCtx)
 			defer func() {
 				state.RemoveContext()

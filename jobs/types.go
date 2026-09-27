@@ -830,8 +830,9 @@ type Summary struct {
 	Queue DurationStats `json:"queue"`
 	Run   DurationStats `json:"run"`
 
-	// Failures groups the settled failures by their bounded classification,
-	// commonest first. It never carries an error message.
+	// Failures groups the Jobs that recorded a failure by its bounded
+	// classification, commonest first: every failed Job, and an interrupted Job
+	// that recorded why. It never carries an error message.
 	Failures []FailureClassCount `json:"failures"`
 }
 

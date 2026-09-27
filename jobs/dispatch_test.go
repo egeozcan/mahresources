@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -1208,6 +1209,7 @@ func TestReconcileAsksTheAdapterAndAppliesOnlyWhatItAnswers(t *testing.T) {
 			name: "interrupt", decision: ReconcileInterrupt,
 			wantState: StateInterrupted, wantClaim: models.JobClaimStateReleased,
 			wantCapacity: 0, wantTokenKept: false, wantEvent: EventInterrupted,
+			wantFailure: ReconcileRuntimeLostCode,
 		},
 		{
 			name: "fail", decision: ReconcileFail,
@@ -2539,5 +2541,84 @@ func TestAQuarantinedClaimIsReaskedAndReleasedOnNewEvidence(t *testing.T) {
 	}
 	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 0 {
 		t.Fatalf("capacity rows = %d after the quarantine was resolved, want none", count)
+	}
+}
+
+// TestAClaimWhoseClaimantIsProvedGoneIsReconciledBeforeItsLeaseRunsOut pins how
+// a restart after a crash stops leaving work "running" with frozen progress for
+// a whole lease. The lease is what a runtime that may still be alive is given;
+// one whose process is proved gone gets nothing from waiting it out, so its claims
+// are expired at once and the next pass asks their Kind. A live claimant, and one
+// the proof cannot answer for, keep their lease.
+func TestAClaimWhoseClaimantIsProvedGoneIsReconciledBeforeItsLeaseRunsOut(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "abandoned.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileInterrupt, nil
+	}
+
+	gone := acceptQueued(t, svc, deps, nil)
+	if _, ok := claimOnce(t, svc, deps, "runtime-gone"); !ok {
+		t.Fatal("the first Job was not claimed")
+	}
+	alive := acceptQueued(t, svc, deps, nil)
+	if _, ok := claimOnce(t, svc, deps, "runtime-alive"); !ok {
+		t.Fatal("the second Job was not claimed")
+	}
+
+	expired, err := svc.ExpireAbandonedClaims(deps, func(claimant string) bool { return claimant == "runtime-gone" }, DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ExpireAbandonedClaims: %v", err)
+	}
+	if expired != 1 {
+		t.Fatalf("expired %d claims, want the one whose claimant is gone", expired)
+	}
+	report := reconcileOnce(t, svc, deps, "runtime-b")
+	if report.Examined != 1 {
+		t.Fatalf("the pass examined %d claims, want only the abandoned one", report.Examined)
+	}
+	if got := jobRow(t, deps, gone.ID).State; got != string(StateInterrupted) {
+		t.Fatalf("the abandoned Job is %s, want interrupted by its Kind", got)
+	}
+	if got := jobRow(t, deps, alive.ID).State; got != string(StateRunning) {
+		t.Fatalf("the Job whose claimant is alive is %s, want still running", got)
+	}
+}
+
+// TestAClaimantThatDiedBehindAFullPageOfLiveClaimsIsStillFound pins that the
+// early expiry visits every held claim rather than one page of them: a deployment
+// running more executions than a page holds must not leave a crashed runtime's
+// claim to its lease because live claims sort ahead of it.
+func TestAClaimantThatDiedBehindAFullPageOfLiveClaimsIsStillFound(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "abandoned-paged.db")
+	svc := NewService()
+	now := time.Now()
+	hold := func(jobID, claimant string, lease time.Duration) {
+		t.Helper()
+		claim := models.JobClaim{
+			JobID: jobID, Kind: testKind, KindVersion: 1, Claimant: claimant,
+			ExecutionToken: "token-" + jobID, State: models.JobClaimStateHeld,
+			ClaimedAt: now, HeartbeatAt: now, LeaseExpiresAt: now.Add(lease),
+		}
+		if err := deps.DB.Create(&claim).Error; err != nil {
+			t.Fatalf("hold the claim on %s: %v", jobID, err)
+		}
+	}
+	const page = 5
+	for i := 0; i < 3*page+2; i++ {
+		hold("job-"+strconv.Itoa(100+i), "runtime-alive", time.Minute)
+	}
+	hold("job-zzz", "runtime-gone", 2*time.Minute)
+
+	expired, err := svc.ExpireAbandonedClaims(deps, func(claimant string) bool { return claimant == "runtime-gone" }, page)
+	if err != nil {
+		t.Fatalf("ExpireAbandonedClaims: %v", err)
+	}
+	if expired != 1 {
+		t.Fatalf("expired %d claims, want the one whose claimant is gone behind %d live ones", expired, 3*page+2)
+	}
+	if lease := claimRow(t, deps, "job-zzz").LeaseExpiresAt; lease.After(time.Now()) {
+		t.Fatalf("the gone claimant's lease still runs to %s", lease)
 	}
 }

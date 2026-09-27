@@ -1446,10 +1446,16 @@ func validateTransition(transition *Transition) error {
 		}
 	}
 
-	if transition.To == StateFailed {
-		if transition.Failure == nil {
-			return invalid("a failed Job must record why it failed")
-		}
+	if transition.To == StateFailed && transition.Failure == nil {
+		return invalid("a failed Job must record why it failed")
+	}
+	// An interrupted Job may say why as well: it did not succeed, and "the server
+	// shut down" or "the plugin was disabled" is what its reader needs to know. A
+	// Job that succeeded or was cancelled has no failure to record.
+	if transition.Failure != nil && transition.To != StateFailed && transition.To != StateInterrupted {
+		return invalid("only a transition to failed or interrupted may record a failure")
+	}
+	if transition.Failure != nil {
 		if strings.TrimSpace(transition.Failure.Code) == "" {
 			return invalid("a failure needs a code")
 		}
@@ -1465,8 +1471,6 @@ func validateTransition(transition *Transition) error {
 		if len(transition.Failure.DiagnosticRef) > MaxFailureDiagnosticBytes {
 			return invalid("failure diagnostic reference is %d bytes, over the %d-byte ceiling", len(transition.Failure.DiagnosticRef), MaxFailureDiagnosticBytes)
 		}
-	} else if transition.Failure != nil {
-		return invalid("only a transition to failed may record a failure")
 	}
 	return nil
 }

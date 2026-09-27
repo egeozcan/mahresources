@@ -391,3 +391,55 @@ func TestSchedulerRunsAnOverlapAllowSchedule(t *testing.T) {
 		t.Error("the schedule was not advanced")
 	}
 }
+
+// TestRunNowAnswersAtEntryWithoutAControlPlane pins that a manual run's caller is
+// told the run started when its handler is entered, on the path with no Job
+// control plane too. Waiting for the run to finish there told an operator a
+// handler longer than the answer's wait had not started while it was running.
+func TestRunNowAnswersAtEntryWithoutAControlPlane(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "slowpoke")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	src := `
+plugin = { api_version = 1, name = "slowpoke", version = "1.0",
+           description = "runs slowly on a schedule", capabilities = { "schedule", "kv" } }
+function init()
+    mah.schedule({ id = "tick", every = "1m", handler = function(job_id)
+        mah.sleep(3)
+        mah.kv.set("runs", "1")
+    end })
+end
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.lua"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write plugin: %v", err)
+	}
+	ctx := schedulerTestContext(t, dir)
+	if ctx.JobService() != nil {
+		t.Fatal("this test needs the path with no Job control plane")
+	}
+	operator := models.User{Username: "op", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&operator).Error; err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin("slowpoke"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := ctx.SyncPluginSchedules("slowpoke", pm.DeclaredSchedules("slowpoke")); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.dispatchWait = 500 * time.Millisecond
+	began := time.Now()
+	if err := scheduler.RunNow("slowpoke", "tick"); err != nil {
+		t.Fatalf("a run whose handler was entered answered %v, want started", err)
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Fatalf("run now answered after %s: it waited for the handler to finish, not to start", took)
+	}
+	scheduler.Stop()
+}

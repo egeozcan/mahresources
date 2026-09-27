@@ -129,7 +129,7 @@ func TestAManualRunRecordsItsOutcomeWithoutRebasingTheCadence(t *testing.T) {
 
 	// What dispatchManual does when a run finishes, in the order it does it:
 	// record while still holding the claim, then release.
-	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusCompleted, "", time.Now()); err != nil {
+	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusCompleted, "", time.Now(), time.Now()); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	if err := ctx.ReleasePluginScheduleClaim(row.ID, "manual"); err != nil {

@@ -106,8 +106,9 @@ func (pm *PluginManager) RenderBlock(reqCtx context.Context, pluginName, fullTyp
 	cancel()
 
 	if err != nil {
+		err = pm.pluginCallError(pluginName, "block render error", err)
 		log.Printf("[plugin] warning: block render %q/%q returned error: %v", pluginName, fullTypeName, err)
-		return "", fmt.Errorf("block render error: %w", err)
+		return "", err
 	}
 
 	ret := L.Get(-1)

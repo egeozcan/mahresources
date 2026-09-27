@@ -94,8 +94,9 @@ func (pm *PluginManager) HandlePage(reqCtx context.Context, pluginName, path str
 	cancel()
 
 	if err != nil {
+		err = pm.pluginCallError(pluginName, "page handler error", err)
 		log.Printf("[plugin] warning: page handler %q/%q returned error: %v", pluginName, path, err)
-		return "", fmt.Errorf("page handler error: %w", err)
+		return "", err
 	}
 
 	ret := L.Get(-1)

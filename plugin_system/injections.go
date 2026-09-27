@@ -76,7 +76,7 @@ func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map
 
 		if err != nil {
 			mu.Unlock()
-			log.Printf("[plugin] warning: injection for slot %q returned error: %v", slot, err)
+			log.Printf("[plugin] warning: injection for slot %q returned error: %s", slot, pm.RedactPluginSecrets(inj.plugin, err.Error()))
 			continue
 		}
 

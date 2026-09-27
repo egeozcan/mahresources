@@ -213,6 +213,8 @@ func maintenanceCommandStates(key string) ([]jobs.State, bool) {
 func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
 	switch request.Key {
 	case jobs.CommandRetry, jobs.CommandContinue:
+	case jobs.CommandCancel:
+		return a.selectCancellable(request)
 	default:
 		return nil, false, nil
 	}
@@ -271,6 +273,34 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 	appendPairs(pluginActionSubtypeRegistered, action, actionPairs)
 	appendPairs(pluginActionSubtypeScheduled, schedule, schedulePairs)
 	query = query.Where("("+strings.Join(clauses, " OR ")+")", args...)
+	if scoped {
+		query = query.Where(pluginScopedAccessPredicate(plugin), true, true)
+	}
+	return query.Select("jobs.id"), true, nil
+}
+
+// selectCancellable is cancelCommands as one predicate: every Job whose handler
+// has not started (queued or scheduled, or blocked or paused with no claim held),
+// and a running Job that records that its handler may be stopped partway.
+func (a *pluginActionAdapter) selectCancellable(request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || a.ctx == nil || a.ctx.PluginManager() == nil {
+		return emptyCommandSelection(request), true, nil
+	}
+	plugin := jobSummaryTextExpr(request.Deps.DB, "plugin")
+
+	clauses := []string{
+		"jobs.state IN ?",
+		"(jobs.state IN ? AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?))",
+	}
+	args := []any{
+		[]jobs.State{jobs.StateQueued, jobs.StateScheduled},
+		[]jobs.State{jobs.StateBlocked, jobs.StatePaused},
+		[]string{models.JobClaimStateHeld, models.JobClaimStateQuarantined},
+	}
+	clauses = append(clauses, "(jobs.state = ? AND "+jobSummaryTrueExpr(request.Deps.DB, "cancellable")+")")
+	args = append(args, jobs.StateRunning)
+	query := request.Jobs.Where("("+strings.Join(clauses, " OR ")+")", args...)
 	if scoped {
 		query = query.Where(pluginScopedAccessPredicate(plugin), true, true)
 	}
@@ -370,6 +400,16 @@ func jobSummaryTextExpr(db *gorm.DB, field string) string {
 		return "(jobs.summary ->> '" + field + "')"
 	}
 	return "(CASE WHEN json_valid(jobs.summary) THEN json_extract(jobs.summary, '$." + field + "') END)"
+}
+
+// jobSummaryTrueExpr is a predicate that one boolean field of the sanitized
+// summary is true. The engines answer the extraction differently: PostgreSQL's
+// ->> is the JSON text "true", SQLite's json_extract is the integer 1.
+func jobSummaryTrueExpr(db *gorm.DB, field string) string {
+	if db != nil && db.Dialector.Name() == "postgres" {
+		return jobSummaryTextExpr(db, field) + " = 'true'"
+	}
+	return jobSummaryTextExpr(db, field) + " = 1"
 }
 
 func pluginScopedAccessPredicate(pluginExpr string) string {
