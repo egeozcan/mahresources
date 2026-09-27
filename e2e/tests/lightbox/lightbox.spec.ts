@@ -61,7 +61,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should open lightbox when clicking an image', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Find a lightbox-enabled image link and click it
@@ -80,7 +80,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should hide loading spinner after image loads (cached media fix)', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Click to open lightbox
@@ -113,7 +113,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should navigate between images using arrow buttons', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first image
@@ -136,7 +136,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should navigate using keyboard arrows', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -158,7 +158,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should close lightbox with Escape key', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -176,7 +176,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should close lightbox when clicking backdrop', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -196,7 +196,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should not scroll the page when opening and closing lightbox', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Pick an image that is not the first one so we can scroll to it
@@ -216,8 +216,10 @@ test.describe('Lightbox Functionality', () => {
     // Let the scroll settle
     await page.waitForTimeout(200);
 
-    // Record the scroll position before opening lightbox
+    // Record the scroll position before opening lightbox. It has to be off the top, or
+    // "the page did not scroll" would hold of a page that cannot scroll at all.
     const scrollBefore = await page.evaluate(() => window.scrollY);
+    expect(scrollBefore).toBeGreaterThan(0);
 
     // Click the image to open lightbox
     await targetImage.click();
@@ -235,7 +237,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should not swallow space bar in text inputs when lightbox is closed', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Focus the search/name input field on the resources page
@@ -250,7 +252,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should navigate with space bar when lightbox is open', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -274,7 +276,7 @@ test.describe('Lightbox Functionality', () => {
   });
 
   test('should show details link that navigates to resource page', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -539,7 +541,7 @@ test.describe('Lightbox Loading State', () => {
 
   test('loading spinner should disappear when navigating between cached images', async ({ page }) => {
     // Navigate to resources and open lightbox on an image we created
-    await page.goto('/resources?sort=ID&order=desc');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}&sort=ID&order=desc`);
     await page.waitForLoadState('load');
 
     // Open lightbox on an actual image (look for preview images in lightbox links)
@@ -638,7 +640,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should open info panel and show resource details', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first image
@@ -677,7 +679,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should close info panel with E key and close lightbox with Escape', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -758,7 +760,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should add a tag from edit tags panel', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first resource
@@ -792,7 +794,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should not show stale tags when reopening lightbox on different resource', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first resource
@@ -905,7 +907,7 @@ test.describe('Lightbox Info Panel', () => {
   test('should refresh page content without full reload after editing in lightbox', async ({ page }) => {
     // This test verifies that editing in lightbox triggers a background refresh
     // without a full page reload (which would lose state)
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Set a marker in window to detect full page reload
@@ -957,7 +959,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should show correct tags when navigating between resources with edit tags panel open', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first resource
@@ -992,7 +994,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should restore focus to the same input after navigating with info panel open', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     // Open lightbox
@@ -1054,7 +1056,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should focus tag editor input when pressing 0', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     const imageLink = page.locator('[data-lightbox-item]').first();
@@ -1079,7 +1081,7 @@ test.describe('Lightbox Info Panel', () => {
   });
 
   test('should blur tag editor on Escape without closing lightbox', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
     const imageLink = page.locator('[data-lightbox-item]').first();
