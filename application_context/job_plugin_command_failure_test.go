@@ -17,6 +17,13 @@ import (
 // state through the same claimed path the dispatcher uses.
 func finishClaimedCommandRun(t *testing.T, runID string, finish plugin_commands.RunFinish) (*MahresourcesContext, *jobs.Service, string) {
 	t.Helper()
+	return finishClaimedCommandRunAfter(t, runID, finish, nil)
+}
+
+// finishClaimedCommandRunAfter runs before between the run starting and its
+// finish, for a test that needs the Job in another state first.
+func finishClaimedCommandRunAfter(t *testing.T, runID string, finish plugin_commands.RunFinish, before func(*MahresourcesContext)) (*MahresourcesContext, *jobs.Service, string) {
+	t.Helper()
 	ctx := newPluginCommandStoreTestContext(t)
 	service := jobs.NewService()
 	ctx.SetJobService(service)
@@ -33,6 +40,9 @@ func finishClaimedCommandRun(t *testing.T, runID string, finish plugin_commands.
 	won, err := ctx.MarkRunRunning(record.ID, now.Add(time.Second))
 	require.NoError(t, err)
 	require.True(t, won)
+	if before != nil {
+		before(ctx)
+	}
 	finish.FinishedAt = now.Add(2 * time.Second)
 	won, err = ctx.FinishRun(record.ID, finish)
 	require.NoError(t, err)
@@ -110,6 +120,30 @@ func TestACancelledOrInterruptedCommandJobKeepsItsHistory(t *testing.T) {
 			require.Equal(t, "command-history", outputs[0].Key)
 		})
 	}
+}
+
+// TestARecoveredCommandJobKeepsItsHistory covers a run whose Job recovery
+// blocked while its process group could not be settled: once the group is
+// gone the run is interrupted, and the blocked Job ends with its history
+// output under the execution token it kept while blocked.
+func TestARecoveredCommandJobKeepsItsHistory(t *testing.T) {
+	ctx, service, jobID := finishClaimedCommandRunAfter(t, "recovered-run",
+		plugin_commands.RunFinish{Status: plugin_commands.RunStatusInterrupted, Error: "server interrupted while command was running"},
+		func(ctx *MahresourcesContext) {
+			require.NoError(t, ctx.QuarantineRun(plugin_commands.RecoveryBlocker{RunID: "recovered-run", ProcessGroupID: 4242, Reason: "alive"}))
+			stored, _, err := ctx.Run("recovered-run")
+			require.NoError(t, err)
+			blocked, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, stored.JobID)
+			require.NoError(t, err)
+			require.Equal(t, jobs.StateBlocked, blocked.State)
+		})
+	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	require.NoError(t, err)
+	require.Equal(t, jobs.StateInterrupted, snapshot.State)
+	outputs, err := service.Outputs(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	require.NoError(t, err)
+	require.Len(t, outputs, 1)
+	require.Equal(t, "command-history", outputs[0].Key)
 }
 
 // TestInspectingACommandJobOpensItsRunHistory pins that "Inspect command
