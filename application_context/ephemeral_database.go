@@ -3,11 +3,14 @@ package application_context
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"mahresources/download_queue"
 )
 
 // An ephemeral database (-memory-db, -ephemeral) is a scratch SQLite file that
@@ -194,12 +197,21 @@ func (eph *ephemeralDatabase) remove() error {
 // deletes its file. It is a no-op for any other context and after the first call.
 // Nothing may use the database afterwards, so it belongs at the very end of
 // shutdown.
+//
+// A queue execution's follower can still be writing when it is called (its Job
+// reads terminal before the follower's last writes land), so it is waited out
+// first, bounded like the queue's own drain. A write that outlived the bound
+// fails against a closed handle, and the file it would have written is removed
+// anyway.
 func (ctx *MahresourcesContext) ReleaseEphemeralDatabase() error {
 	eph := ctx.ephemeralDB
 	if eph == nil {
 		return nil
 	}
 	eph.release.Do(func() {
+		if !ctx.waitQueueFollowers(download_queue.ShutdownDrainTimeout) {
+			log.Printf("warning: a queue execution was still publishing its outcome when the ephemeral database closed")
+		}
 		var errs []error
 		if ctx.db != nil {
 			if sqlDB, err := ctx.db.DB(); err == nil {
