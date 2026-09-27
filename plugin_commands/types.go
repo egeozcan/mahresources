@@ -75,6 +75,10 @@ type RunFinish struct {
 	Status   string
 	ExitCode *int
 	Error    string
+	// Cause says which limit or outcome ended a failed run, when the runner
+	// knows it; empty for any other failure. It classes the run's canonical Job
+	// failure and is not stored on the run, whose Error keeps the words.
+	Cause RunCause
 	// OutputTail is the bounded terminal-filtered capture after the runner has
 	// redacted exact declared-sensitive parameter values and supplied-input
 	// patterns. If input scanning reaches a per-file pattern/parser bound, the
@@ -83,6 +87,18 @@ type RunFinish struct {
 	OutputUnverified bool
 	FinishedAt       time.Time
 }
+
+// RunCause names what ended a failed run.
+type RunCause string
+
+const (
+	// RunCauseExitStatus is a command that exited with a nonzero status.
+	RunCauseExitStatus RunCause = "exit-status"
+	// RunCauseTimeout is a command stopped at its declared timeout.
+	RunCauseTimeout RunCause = "timeout"
+	// RunCauseQuota is a command stopped for exceeding its staging quota.
+	RunCauseQuota RunCause = "quota"
+)
 
 type RunView struct {
 	RunRecord

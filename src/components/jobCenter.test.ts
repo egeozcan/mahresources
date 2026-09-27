@@ -6,6 +6,7 @@ import {
     advertisedOutputs,
     classifyJobState,
     commandEndpoint,
+    commandLocation,
     failureOutput,
     failureText,
     jobCenter,
@@ -152,6 +153,40 @@ describe('Job Center API declarations', () => {
         expect(classifyJobState(unfamiliarJob)).toBe('active');
         expect(classifyJobState({ ...unfamiliarJob, state: 'blocked' })).toBe('attention');
         expect(classifyJobState({ ...unfamiliarJob, state: 'succeeded' })).toBe('finished');
+    });
+});
+
+describe('command locations', () => {
+    const inspect = { key: 'inspect', label: 'Inspect command history', jobVersion: 3 };
+
+    function inspectingCenter(detail: any) {
+        const assign = vi.fn();
+        vi.stubGlobal('location', { origin: 'http://localhost', assign });
+        const center = jobCenter();
+        center._liveRegion = { announce: vi.fn() } as any;
+        center.fetchJSON = vi.fn(async () => ({
+            result: { status: 'succeeded', code: 'applied', message: 'Opening the command history.', detail },
+        })) as any;
+        return { center, assign };
+    }
+
+    test('a command whose outcome names a page on this site opens it', async () => {
+        const { center, assign } = inspectingCenter({ runId: 'abc', location: '/admin/plugin-command-runs?id=abc' });
+
+        await center.runCommand({ id: 'job-command', version: 3 } as any, inspect);
+
+        expect(assign).toHaveBeenCalledWith('/admin/plugin-command-runs?id=abc');
+        expect(center._liveRegion.announce).toHaveBeenCalledWith('Opening the command history.');
+    });
+
+    test('a location that leaves this site, or is not a path, is never followed', async () => {
+        for (const location of ['https://elsewhere.example/x', '//elsewhere.example/x', 'javascript:alert(1)', 'admin', '/x#fragment', 42]) {
+            const { center, assign } = inspectingCenter({ location });
+            await center.runCommand({ id: 'job-command', version: 3 } as any, inspect);
+            expect(assign).not.toHaveBeenCalled();
+        }
+        expect(commandLocation({ detail: 'not an object' })).toBe('');
+        expect(commandLocation(null)).toBe('');
     });
 });
 

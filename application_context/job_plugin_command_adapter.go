@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -292,6 +295,8 @@ func (a *pluginCommandJobAdapter) ExecuteCommand(_ context.Context, execution jo
 		}
 		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "cancellation requested"}, nil
 	case "inspect":
+		// The run's history page is where its exit code, reason and output are;
+		// the detail names it as a location the Job Center opens.
 		var detail map[string]string
 		if a.kind == JobKindPluginCommand {
 			var source models.PluginCommandRun
@@ -306,8 +311,9 @@ func (a *pluginCommandJobAdapter) ExecuteCommand(_ context.Context, execution jo
 			}
 			detail = map[string]string{"importId": source.ID, "runId": source.RunID, "status": source.Status}
 		}
+		detail["location"] = "/admin/plugin-command-runs?id=" + url.QueryEscape(detail["runId"])
 		encoded, _ := json.Marshal(detail)
-		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "command history reference resolved", Detail: encoded}, nil
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "Opening the command history.", Detail: encoded}, nil
 	case "retry-import":
 		return a.retryImport(execution)
 	default:
@@ -646,7 +652,10 @@ func (ctx *MahresourcesContext) acceptPluginCommandImportJob(tx *gorm.DB, run mo
 	return snapshot.ID, nil
 }
 
-func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, token, sourceStatus, runID string) error {
+// finishPluginCommandJobTx ends a command's canonical Job with its run. A run
+// that started keeps its command history output whatever its outcome: it is
+// how a person gets from the Job to the run's exit code, reason and output.
+func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, token, runID string, finish plugin_commands.RunFinish) error {
 	service := ctx.JobService()
 	if service == nil {
 		return fmt.Errorf("plugin command Job service is unavailable")
@@ -655,11 +664,13 @@ func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, tok
 	if err := tx.Where("id = ?", jobID).First(&current).Error; err != nil {
 		return err
 	}
-	outcome := pluginCommandJobState(sourceStatus)
+	outcome := pluginCommandJobState(finish.Status)
 	deps := ctx.jobDeps()
 	deps.DB = tx
 	ref := jobs.ExecutionRef{JobID: jobID, ExecutionToken: token}
-	if outcome == jobs.StateSucceeded {
+	state := jobs.State(current.State)
+	owned := token != "" && (state == jobs.StateRunning || state == jobs.StateBlocked)
+	if owned || outcome == jobs.StateSucceeded {
 		reference, err := json.Marshal(map[string]string{"runId": runID})
 		if err != nil {
 			return err
@@ -669,15 +680,14 @@ func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, tok
 			return err
 		}
 	}
-	state := jobs.State(current.State)
 	if state == outcome {
 		return nil
 	}
+	failure := pluginCommandRunFailure(finish)
 	if state == jobs.StateRunning || state == jobs.StateBlocked {
 		if token == "" {
 			return fmt.Errorf("plugin command Job %s is owned without an execution token", jobID)
 		}
-		failure := pluginCommandFailure(sourceStatus)
 		_, err := service.Finish(deps, jobs.FinishRequest{ExecutionRef: ref, ExpectedVersion: uint64(current.Version), Outcome: outcome, Failure: failure,
 			RequiredOutputs: []string{"command-history"}})
 		return err
@@ -685,11 +695,11 @@ func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, tok
 	if state.Terminal() {
 		return fmt.Errorf("plugin command Job %s is already terminal", jobID)
 	}
-	_, err := service.Transition(deps, jobs.Transition{JobID: jobID, ExpectedVersion: uint64(current.Version), To: outcome, Failure: pluginCommandFailure(sourceStatus)})
+	_, err := service.Transition(deps, jobs.Transition{JobID: jobID, ExpectedVersion: uint64(current.Version), To: outcome, Failure: failure})
 	return err
 }
 
-func (ctx *MahresourcesContext) finishPluginCommandImportJobTx(tx *gorm.DB, jobID, token, sourceStatus, importID string, resourceID *uint) error {
+func (ctx *MahresourcesContext) finishPluginCommandImportJobTx(tx *gorm.DB, jobID, token, sourceStatus, reason, importID string, resourceID *uint) error {
 	service := ctx.JobService()
 	if service == nil {
 		return fmt.Errorf("plugin command Job service is unavailable")
@@ -720,7 +730,7 @@ func (ctx *MahresourcesContext) finishPluginCommandImportJobTx(tx *gorm.DB, jobI
 			return fmt.Errorf("plugin import Job %s is running without an execution token", jobID)
 		}
 		_, err := service.Finish(deps, jobs.FinishRequest{ExecutionRef: ref, ExpectedVersion: uint64(current.Version), Outcome: state,
-			Failure: pluginCommandFailure(sourceStatus), RequiredOutputs: []string{"imported-resource"}})
+			Failure: pluginCommandImportFailure(sourceStatus, reason), RequiredOutputs: []string{"imported-resource"}})
 		return err
 	}
 	if jobs.State(current.State) == state {
@@ -729,7 +739,7 @@ func (ctx *MahresourcesContext) finishPluginCommandImportJobTx(tx *gorm.DB, jobI
 	if jobs.State(current.State).Terminal() {
 		return fmt.Errorf("plugin import Job %s is already terminal", jobID)
 	}
-	_, err := service.Transition(deps, jobs.Transition{JobID: jobID, ExpectedVersion: uint64(current.Version), To: state, Failure: pluginCommandFailure(sourceStatus)})
+	_, err := service.Transition(deps, jobs.Transition{JobID: jobID, ExpectedVersion: uint64(current.Version), To: state, Failure: pluginCommandImportFailure(sourceStatus, reason)})
 	return err
 }
 
@@ -746,9 +756,54 @@ func pluginCommandJobState(status string) jobs.State {
 	}
 }
 
-func pluginCommandFailure(status string) *jobs.Failure {
-	if status != plugin_commands.RunStatusFailed {
+// pluginCommandRunFailure is a failed run's canonical Job failure: the run's own
+// recorded reason, which its history page shows too, classed by what ended it.
+// The Job is admin-only like that page, and the reason is host-written text
+// (an exit status, a limit, a host error), never program output.
+func pluginCommandRunFailure(finish plugin_commands.RunFinish) *jobs.Failure {
+	if finish.Status != plugin_commands.RunStatusFailed {
 		return nil
 	}
-	return &jobs.Failure{Code: "plugin-command-failed", Class: "internal", Message: "the plugin command did not complete successfully"}
+	code, class := "plugin-command-failed", jobs.FailureClassInternal
+	switch finish.Cause {
+	case plugin_commands.RunCauseExitStatus:
+		code, class = "plugin-command-exit-status", jobs.FailureClassDependency
+	case plugin_commands.RunCauseTimeout:
+		code, class = "plugin-command-timeout", jobs.FailureClassTimeout
+	case plugin_commands.RunCauseQuota:
+		code, class = "plugin-command-quota", jobs.FailureClassCapacity
+	}
+	return &jobs.Failure{Code: code, Class: class,
+		Message: pluginCommandFailureMessage(finish.Error, "the plugin command did not complete successfully")}
+}
+
+// pluginCommandImportFailure is a failed import's canonical Job failure, in the
+// words the import's record keeps.
+func pluginCommandImportFailure(status, reason string) *jobs.Failure {
+	if status != plugin_commands.ImportStatusFailed {
+		return nil
+	}
+	return &jobs.Failure{Code: "plugin-command-import-failed", Class: jobs.FailureClassInternal,
+		Message: pluginCommandFailureMessage(reason, "the plugin command import did not complete successfully")}
+}
+
+// pluginCommandFailureMessage makes a recorded reason storable as a failure
+// message: valid text with no NUL, which PostgreSQL refuses in a text column,
+// within the Service's ceiling and cut on a rune boundary, or the fallback when
+// nothing was recorded. A Finish the Service refused would leave the Job
+// running with nothing left to end it.
+func pluginCommandFailureMessage(reason, fallback string) string {
+	message := strings.ToValidUTF8(reason, "")
+	message = strings.TrimSpace(strings.ReplaceAll(message, "\x00", ""))
+	if message == "" {
+		return fallback
+	}
+	if len(message) > jobs.MaxFailureMessageBytes {
+		cut := jobs.MaxFailureMessageBytes - len("…")
+		for cut > 0 && !utf8.RuneStart(message[cut]) {
+			cut--
+		}
+		message = message[:cut] + "…"
+	}
+	return message
 }

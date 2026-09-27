@@ -59,7 +59,7 @@ async function enableCommandFixture(request: APIRequestContext) {
   expect(body).toContain('already enabled');
 }
 
-async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile-output' | 'progress'): Promise<string> {
+async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile-output' | 'progress' | 'fail'): Promise<string> {
   const response = await request.post('/v1/plugins/test-commands/run', {
     data: { mode },
     headers: { Accept: 'application/json' },
@@ -194,6 +194,28 @@ test.describe('administrator plugin command history', () => {
     await page.goto(`/job?id=${jobID}`);
     await expect(page.locator('[data-job-metrics]')).toContainText('Frames per second');
     await expect(page.getByRole('img', { name: /^Frames per second/ })).toBeVisible();
+  });
+
+  test('a failed command\'s Job says why and leads to its run history and back', async ({ page, request }) => {
+    await enableCommandFixture(request);
+    const runID = await submitFixture(request, 'fail');
+    await expect.poll(async () => (await commandRuns(request)).find(run => run.ID === runID)?.Status, { timeout: 30_000 })
+      .toBe('failed');
+    const jobID = (await commandRuns(request)).find(run => run.ID === runID)?.JobID as string;
+    expect(jobID, 'the command run should have a canonical Job').toBeTruthy();
+
+    const job = await (await request.get(`/v1/jobs/${jobID}`)).json();
+    expect(job.failure).toMatchObject({ code: 'plugin-command-exit-status', class: 'dependency', message: 'command exited with status 3' });
+    expect(job.outputs?.map((output: any) => output.key) ?? []).toContain('command-history');
+
+    await page.goto(`/job?id=${jobID}`);
+    await expect(page.getByText('command exited with status 3').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Inspect command history' }).click();
+    await expect(page).toHaveURL(new RegExp(`/admin/plugin-command-runs\\?id=${runID}$`));
+    await expect(page.getByTestId('command-run-output')).toContainText('ffmpeg: Invalid data found when processing input');
+
+    await page.getByTestId('command-run-job-link').click();
+    await expect(page).toHaveURL(new RegExp(`/job\\?id=${jobID}$`));
   });
 
   test('terminal and pruned output use the real escaped detail page', async ({ page, request, commandServer }) => {

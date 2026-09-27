@@ -182,6 +182,8 @@ func TestQuotaPerRunIncludesExchangeAndImportTemps(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
+	var cause RunCause
+	store.beforeFinish = func(_ string, finish RunFinish) { cause = finish.Cause }
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 64, global: 1 << 20}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 	run := seedRunnerRun(t, executor, store, settings, "quota", []string{"mah-helper", helperProcessFlag, "write", "{{exchange_dir}}", "40"}, 5*time.Second)
@@ -202,6 +204,9 @@ func TestQuotaPerRunIncludesExchangeAndImportTemps(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < 800*time.Millisecond {
 		t.Fatalf("sampled quota killed before the one-second sample: %s", elapsed)
 	}
+	if cause != RunCauseQuota {
+		t.Fatalf("sampled quota cause = %q; want %q", cause, RunCauseQuota)
+	}
 	payload, err := os.Stat(filepath.Join(run.ExchangeDir, "payload.bin"))
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +220,8 @@ func TestQuotaFinalSampleRejectsAFastSuccessfulWriter(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
+	var cause RunCause
+	store.beforeFinish = func(_ string, finish RunFinish) { cause = finish.Cause }
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 32, global: 1 << 20}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 	executor.(*commandExecutor).quotaInterval = time.Hour
@@ -223,6 +230,9 @@ func TestQuotaFinalSampleRejectsAFastSuccessfulWriter(t *testing.T) {
 	outcome := executor.Execute(context.Background(), run)
 	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "per-run quota") {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+	if cause != RunCauseQuota {
+		t.Fatalf("final-sample quota cause = %q; want %q", cause, RunCauseQuota)
 	}
 }
 

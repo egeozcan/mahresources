@@ -535,6 +535,8 @@ func TestRunnerExitStatusMappingAndCannotStart(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
+	causes := map[string]RunCause{}
+	store.beforeFinish = func(id string, finish RunFinish) { causes[id] = finish.Cause }
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 	run := seedRunnerRun(t, executor, store, settings, "nonzero", []string{"mah-helper", helperProcessFlag, "exit", "7"}, 5*time.Second)
@@ -546,6 +548,9 @@ func TestRunnerExitStatusMappingAndCannotStart(t *testing.T) {
 	if record.ExitCode == nil || *record.ExitCode != 7 {
 		t.Fatalf("exit code = %v; want 7", record.ExitCode)
 	}
+	if causes[run.RunID] != RunCauseExitStatus {
+		t.Fatalf("nonzero exit cause = %q; want %q", causes[run.RunID], RunCauseExitStatus)
+	}
 
 	badPath := filepath.Join(commandDir, "bad-executable")
 	if err := os.WriteFile(badPath, []byte("not an executable format"), 0o700); err != nil {
@@ -555,6 +560,9 @@ func TestRunnerExitStatusMappingAndCannotStart(t *testing.T) {
 	outcome = executor.Execute(context.Background(), bad)
 	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "start command") {
 		t.Fatalf("cannot-start outcome = %+v", outcome)
+	}
+	if causes[bad.RunID] != "" {
+		t.Fatalf("cannot-start cause = %q; want none", causes[bad.RunID])
 	}
 }
 
@@ -602,12 +610,17 @@ func TestRunnerTimeoutKillsProcessGroupWithScrubbedDescendantBeforePublishingFin
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
+	var cause RunCause
+	store.beforeFinish = func(_ string, finish RunFinish) { cause = finish.Cause }
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 	run := seedRunnerRun(t, executor, store, settings, "descendant", []string{"mah-helper", helperProcessFlag, "spawn-scrubbed-descendant", "{{exchange_dir}}"}, 250*time.Millisecond)
 	outcome := executor.Execute(context.Background(), run)
 	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+	if cause != RunCauseTimeout {
+		t.Fatalf("timeout cause = %q; want %q", cause, RunCauseTimeout)
 	}
 	pidBytes, err := os.ReadFile(filepath.Join(run.ExchangeDir, "descendant.pid"))
 	if err != nil {

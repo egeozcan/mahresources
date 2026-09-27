@@ -108,6 +108,15 @@ function safeResultURL(value) {
     }
 }
 
+// A command may answer with a page to open: its outcome's detail names a
+// location on this site (the run history "Inspect command history" resolves
+// to). Anything that is not a same-origin path is never followed.
+export function commandLocation(outcome) {
+    const detail = outcome?.detail;
+    if (!detail || typeof detail !== 'object') return '';
+    return safeResultURL(detail.location);
+}
+
 // The one link a finished job offers straight from a list: what it made. Any
 // succeeded job's available entity output is that — the Resource a download
 // created, the entity a plugin action returned. The endpoint it names redirects to
@@ -529,7 +538,8 @@ export function jobCenter(options = {}) {
                     }
                 }
                 const successorId = outcome.successorId || outcome.successorID || payload.successorId || payload.successorID;
-                if (successorId) globalThis.location?.assign?.(`/job?id=${encodeURIComponent(successorId)}`);
+                const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
+                if (location) globalThis.location?.assign?.(location);
                 this.notice = preferenceRefreshFailed
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
                     : outcome.message || payload.message || `${commandLabel(command)} requested.`;
