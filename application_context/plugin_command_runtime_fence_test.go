@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,9 +185,11 @@ func TestPluginCommandRuntimeOnAPrivateRootStartsAfterItsPredecessorStopped(t *t
 }
 
 // TestPluginCommandRuntimeOnAMovedDurableRootSaysWhichRootToUse covers the
-// refusal an operator sees after changing -plugin-command-staging-path: /logs
-// names the bound root and the flag, and does not promise a retry that cannot
-// change a binding meant to outlive restarts.
+// refusal an operator sees after changing -plugin-command-staging-path. No retry
+// can move a binding meant to outlive restarts, so the runtime does not retry:
+// /logs names the configured and the bound root and the flag, callers are told
+// commands are unavailable with no time to try again, and the fence is asked
+// once.
 func TestPluginCommandRuntimeOnAMovedDurableRootSaysWhichRootToUse(t *testing.T) {
 	first := newPluginCommandStoreTestContext(t)
 	boundRoot := t.TempDir()
@@ -196,19 +199,33 @@ func TestPluginCommandRuntimeOnAMovedDurableRootSaysWhichRootToUse(t *testing.T)
 	require.NoError(t, first.StopPluginCommands())
 
 	second := newPluginCommandContextOnSameDatabase(t, first)
-	require.NoError(t, second.StartPluginCommands(context.Background(), testPluginCommandSettings{
-		root: t.TempDir(), commandPath: t.TempDir(),
-	}))
+	configuredRoot := t.TempDir()
+	var fenceAttempts atomic.Int32
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.acquireBackoff = []time.Duration{5 * time.Millisecond}
+	cfg.acquireDBFence = func(root string) (string, error) {
+		fenceAttempts.Add(1)
+		return second.acquirePluginCommandDBFenceFor(root, false)
+	}
+	require.NoError(t, second.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: configuredRoot, commandPath: t.TempDir(),
+	}, cfg))
 	t.Cleanup(func() { _ = second.StopPluginCommands() })
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, int32(1), fenceAttempts.Load(), "a durable binding to another root is not retried")
+
 	_, err := second.pluginCommandActive()
-	require.ErrorIs(t, err, plugin_commands.ErrCommandRuntimeQuarantined)
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	require.ErrorAs(t, err, &quarantined)
+	require.Zero(t, quarantined.RetryAfter(), "no retry is scheduled, so none is promised")
 
 	var logs []models.LogEntry
 	require.NoError(t, second.db.Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelWarning).
 		Order("id asc").Find(&logs).Error)
-	require.NotEmpty(t, logs)
-	message := logs[len(logs)-1].Message
+	require.Len(t, logs, 1)
+	message := logs[0].Message
 	require.Contains(t, message, boundRoot)
+	require.Contains(t, message, configuredRoot)
 	require.Contains(t, message, "-plugin-command-staging-path")
 	require.NotContains(t, message, "automatic retry is active")
 }

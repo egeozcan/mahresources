@@ -21,6 +21,10 @@ const (
 	pluginCommandRuntimeQuarantined
 	pluginCommandRuntimeActive
 	pluginCommandRuntimeStopping
+	// pluginCommandRuntimeRefused is a start no retry can complete: the
+	// database is bound to a durable staging root other than the configured one,
+	// and only a restart with that root changes it.
+	pluginCommandRuntimeRefused
 )
 
 type pluginCommandActiveRuntime struct {
@@ -207,7 +211,7 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 	case pluginCommandAttemptLeaseBusy, pluginCommandAttemptRecoveryBlocked:
 		go controller.retryLoop(runCtx, done, recoveryBlockersOf(err))
 		return nil
-	case pluginCommandAttemptStopped:
+	case pluginCommandAttemptStopped, pluginCommandAttemptRefused:
 		close(done)
 		return nil
 	default:
@@ -229,6 +233,7 @@ const (
 	pluginCommandAttemptRecoveryBlocked
 	pluginCommandAttemptActive
 	pluginCommandAttemptStopped
+	pluginCommandAttemptRefused
 )
 
 func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attempt int) (pluginCommandAttemptKind, error) {
@@ -272,12 +277,16 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 			c.mu.Lock()
 			c.lease = nil
 			c.mu.Unlock()
-			message := fmt.Sprintf("plugin command runtime is quarantined because its database fence is unavailable: %v; automatic retry is active; see /logs", fenceErr)
 			if errors.Is(fenceErr, errPluginCommandFenceRootIsDurable) {
-				// No retry can move a binding meant to outlive restarts, so the
-				// message says what will, rather than promising a retry.
-				message = fmt.Sprintf("plugin command runtime is unavailable because its database fence is unavailable: %v", fenceErr)
+				// No retry can move a binding meant to outlive restarts, so none
+				// is made or promised, and the message says what will.
+				message := fmt.Sprintf("plugin command runtime is unavailable: this server's staging root is %q, and the %v", c.settings.StagingRoot(), fenceErr)
+				if !c.enterQuarantine(pluginCommandRuntimeRefused, message, nil, 0) {
+					return pluginCommandAttemptStopped, nil
+				}
+				return pluginCommandAttemptRefused, fenceErr
 			}
+			message := fmt.Sprintf("plugin command runtime is quarantined because its database fence is unavailable: %v; automatic retry is active; see /logs", fenceErr)
 			if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
 				return pluginCommandAttemptStopped, nil
 			}
@@ -485,7 +494,7 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 		kind, err := c.tryActivate(ctx, acquireAttempt+1)
 		blockers = recoveryBlockersOf(err)
 		switch kind {
-		case pluginCommandAttemptActive, pluginCommandAttemptStopped:
+		case pluginCommandAttemptActive, pluginCommandAttemptStopped, pluginCommandAttemptRefused:
 			return
 		case pluginCommandAttemptLeaseBusy:
 			acquireAttempt++

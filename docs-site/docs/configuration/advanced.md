@@ -491,8 +491,8 @@ one such domain.
 The database records which staging root it is bound to. A root chosen by the
 flag, or `<file-save-path>/_plugin_commands`, keeps the database's retained
 command outputs and import sources, so that binding survives every restart: a
-server started with a different root keeps plugin commands unavailable, and
-`/logs` names the bound root to restart with. The private temporary root used
+server started with a different root keeps plugin commands unavailable without
+retrying, and `/logs` names its own root and the bound root to restart with. The private temporary root used
 with MemoryFS is deleted when its process exits, so its binding ends with that
 process: the next server takes the database over with its own private root once
 the previous one has stopped cleanly, or can be shown to have exited because it

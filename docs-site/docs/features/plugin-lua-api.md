@@ -33,7 +33,8 @@ containing `plugin command runtime is unavailable`, and a third value,
 `{unavailable = true, retry_after = <seconds>}`. `retry_after` is the whole
 seconds until the host next checks whether it can recover the runtime (a check
 is not a promise that recovery succeeds then); it is absent when no check is
-scheduled, as while the server stops. Any other refusal returns only
+scheduled, as while the server stops or when the database is bound to another
+staging root. Any other refusal returns only
 `nil` and the error. Quarantined recovery retries automatically, and `/logs`
 records the reason and healing. Once it succeeds, calls begin working without a
 plugin reload. Do not retry in a tight Lua loop; a route should tell its caller
