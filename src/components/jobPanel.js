@@ -283,13 +283,14 @@ export function jobPanel() {
         _ownerViewer: 0,
         // '' lists every Job the viewer may see; 'me' only their own (owner=me).
         // An administrator's drawer starts with the choice the page rendered.
-        ownerScope: '',
+        ownerScope: '', // Stand-in for the drawer stream's ownerScope; replaced at merge.
 
         init() {
             this.finishedLimit = panelFinishedLimit();
             // Set on an administrator's drawer only: whose Job a row is matters
             // when the drawer lists every account's.
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
+            // Stand-in for the drawer stream's own initialization; replaced at merge.
             this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
@@ -572,6 +573,7 @@ export function jobPanel() {
             const touchedFrom = this._streamTouchSeq;
             try {
                 const groups = panelGroups(this.finishedLimit);
+                // Stand-in for the drawer stream's scoped reads; replaced at merge.
                 const ownerScope = this.ownerScope;
                 const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group, ownerScope))));
                 if (ownerScope !== this.ownerScope) return;
@@ -1688,6 +1690,7 @@ function buildPanelListURL(group, ownerScope = '') {
     const params = new URLSearchParams();
     group.states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
+    // Stand-in for the drawer stream's owner=me on its group reads; replaced at merge.
     if (ownerScope === 'me') params.set('owner', 'me');
     if (group.notRetried) params.set('noInboundRelationship', 'retry-of');
     params.set('limit', String(group.limit));
