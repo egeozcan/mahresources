@@ -1096,5 +1096,33 @@ func registerCanonicalJobRoutes(router *mux.Router, appContext *application_cont
 	router.Methods(http.MethodGet).Path("/v1/jobs/{id}/events").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobTimelineHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/{id}/outputs").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobOutputHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/{id}/commands/{command}").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobCommandHandler))
-	router.Methods(http.MethodGet).Path("/v1/jobs/{id}").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobDetailHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs/{id}").MatcherFunc(notARouteName(jobRouteNames(router))).
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetJobDetailHandler))
+}
+
+// jobRouteNames collects the names the routes registered so far give a single
+// segment under /v1/jobs/ (cancel, pause, queue, ...).
+func jobRouteNames(router *mux.Router) map[string]bool {
+	names := map[string]bool{}
+	_ = router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil {
+			return nil
+		}
+		name, ok := strings.CutPrefix(template, "/v1/jobs/")
+		if ok && name != "" && !strings.ContainsAny(name, "/{}") {
+			names[name] = true
+		}
+		return nil
+	})
+	return names
+}
+
+// notARouteName keeps /v1/jobs/{id} from reading a route's own name as a Job id.
+// A GET of a name whose route takes only POST (/v1/jobs/cancel) is a wrong method,
+// answered as every other wrong method on the API is, not "job not found".
+func notARouteName(names map[string]bool) mux.MatcherFunc {
+	return func(request *http.Request, _ *mux.RouteMatch) bool {
+		return !names[strings.TrimPrefix(request.URL.Path, "/v1/jobs/")]
+	}
 }
