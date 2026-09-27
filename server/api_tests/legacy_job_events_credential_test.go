@@ -88,15 +88,15 @@ func createStreamAdmin(t *testing.T, tc *TestContext, username string) *models.U
 }
 
 func TestLegacyJobEventStreamsEndWhenTheCredentialStopsAuthenticating(t *testing.T) {
-	revocations := map[string]func(t *testing.T, tc *TestContext, admin *models.User, cookie *http.Cookie){
-		"logout": func(t *testing.T, tc *TestContext, _ *models.User, cookie *http.Cookie) {
+	revocations := map[string]func(t *testing.T, tc *TestContext, admin *models.User, cookie *http.Cookie, csrf string){
+		"logout": func(t *testing.T, tc *TestContext, _ *models.User, cookie *http.Cookie, csrf string) {
 			response := doReq(tc, http.MethodPost, "/v1/auth/logout",
-				map[string]string{"Accept": "application/json"}, []*http.Cookie{cookie}, nil)
+				map[string]string{"Accept": "application/json", "X-CSRF-Token": csrf}, []*http.Cookie{cookie}, nil)
 			if response.Code >= 300 {
 				t.Fatalf("logout answered %d: %s", response.Code, response.Body.String())
 			}
 		},
-		"disable": func(t *testing.T, tc *TestContext, admin *models.User, _ *http.Cookie) {
+		"disable": func(t *testing.T, tc *TestContext, admin *models.User, _ *http.Cookie, _ string) {
 			if _, err := tc.AppCtx.UpdateUser(admin.ID, &application_context.UserUpdate{
 				Disabled: application_context.UserField[bool]{Set: true, Value: true},
 			}); err != nil {
@@ -110,7 +110,7 @@ func TestLegacyJobEventStreamsEndWhenTheCredentialStopsAuthenticating(t *testing
 				tc := setupAuthEnv(t)
 				t.Cleanup(tc.AppCtx.DownloadManager().Shutdown)
 				admin := createStreamAdmin(t, tc, "stream-admin")
-				cookie, _ := loginSummaryExportSession(t, tc, admin.Username, "password1")
+				cookie, csrf := loginSummaryExportSession(t, tc, admin.Username, "password1")
 				_, otherID := plainUserBearer(t, tc, "stream-other")
 
 				stream := openLegacyJobStream(t, tc, path, withCookie(cookie))
@@ -120,7 +120,7 @@ func TestLegacyJobEventStreamsEndWhenTheCredentialStopsAuthenticating(t *testing
 						before, stream.writer.body())
 				}
 
-				revoke(t, tc, admin, cookie)
+				revoke(t, tc, admin, cookie, csrf)
 				after := submitSSEQueueJob(t, tc, otherID)
 
 				if !stream.closedWithin(legacyStreamRevalidationWait) {
@@ -143,11 +143,11 @@ func TestAnIdleLegacyJobEventStreamClosesAfterLogout(t *testing.T) {
 			tc := setupAuthEnv(t)
 			t.Cleanup(tc.AppCtx.DownloadManager().Shutdown)
 			admin := createStreamAdmin(t, tc, "stream-idle")
-			cookie, _ := loginSummaryExportSession(t, tc, admin.Username, "password1")
+			cookie, csrf := loginSummaryExportSession(t, tc, admin.Username, "password1")
 			stream := openLegacyJobStream(t, tc, path, withCookie(cookie))
 
 			response := doReq(tc, http.MethodPost, "/v1/auth/logout",
-				map[string]string{"Accept": "application/json"}, []*http.Cookie{cookie}, nil)
+				map[string]string{"Accept": "application/json", "X-CSRF-Token": csrf}, []*http.Cookie{cookie}, nil)
 			if response.Code >= 300 {
 				t.Fatalf("logout answered %d: %s", response.Code, response.Body.String())
 			}

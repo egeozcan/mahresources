@@ -569,7 +569,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/login").HandlerFunc(
 		template_handlers.RenderTemplate("login.tpl", template_context_providers.LoginContextProvider(appContext)))
 	router.Methods(http.MethodPost).Path("/login").HandlerFunc(LoginSubmitHandler(appContext, loginLimiter))
-	router.Methods(http.MethodGet, http.MethodPost).Path("/logout").HandlerFunc(LogoutHandler(appContext))
+	// Signing out is a POST with the session's CSRF token. A GET only renders the
+	// form: SameSite=Lax sends the cookie on a cross-site top-level GET, so a GET
+	// that ended the session would let any page sign a person out with a link.
+	router.Methods(http.MethodGet).Path("/logout").HandlerFunc(
+		template_handlers.RenderTemplate("logout.tpl", template_context_providers.LogoutContextProvider(appContext)))
+	router.Methods(http.MethodPost).Path("/logout").HandlerFunc(LogoutHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/auth/login").HandlerFunc(APILoginHandler(appContext, loginLimiter))
 	router.Methods(http.MethodPost).Path("/v1/auth/logout").HandlerFunc(APILogoutHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/auth/me").HandlerFunc(APIMeHandler(appContext))

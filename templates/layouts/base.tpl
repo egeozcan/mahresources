@@ -75,6 +75,7 @@
                     <div class="px-1 py-1 text-stone-500 font-mono">{{ currentUser.Role }}</div>
                     <a href="/account" class="block px-1 py-1 rounded hover:bg-stone-100">Account</a>
                     <form method="POST" action="/logout">
+                        <input type="hidden" name="csrf_token" value="{{ csrfToken }}">
                         <button type="submit" class="w-full text-left px-1 py-1 rounded hover:bg-stone-100">Sign out</button>
                     </form>
                 </div>

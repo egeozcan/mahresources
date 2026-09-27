@@ -1344,7 +1344,7 @@ curl -X POST http://localhost:8181/v1/auth/login \
 POST /v1/auth/logout
 ```
 
-Revokes the current session and clears the cookie. Returns `{"ok": true}`.
+Revokes the current session and clears the cookie. Returns `{"ok": true}`. A cookie-authenticated request must send the session's CSRF token, like every other state change; a request without it answers `403` and the session stays valid.
 
 ### Current Principal
 

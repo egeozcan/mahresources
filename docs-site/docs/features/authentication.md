@@ -84,7 +84,7 @@ There are two ways to present an identity.
 
 ### Browser session (login page)
 
-Visit `/login` and sign in with a username and password. On success the server sets a session cookie, and the browser carries it on subsequent requests. Sign out at `/logout`.
+Visit `/login` and sign in with a username and password. On success the server sets a session cookie, and the browser carries it on subsequent requests. Sign out with **Sign out** in the account menu. Signing out is a `POST` to `/logout` that carries the session's CSRF token; opening `/logout` directly shows a page with the same button and does not end the session by itself, so a link on another site cannot sign you out.
 
 ### API token (Bearer)
 

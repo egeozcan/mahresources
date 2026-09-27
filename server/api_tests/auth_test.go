@@ -182,7 +182,8 @@ func TestAuthEnabled_LogoutRevokesSession(t *testing.T) {
 		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	cookie := sessionCookie(t, login)
 
-	logout := doReq(tc, http.MethodPost, "/v1/auth/logout", nil, []*http.Cookie{cookie}, nil)
+	logout := doReq(tc, http.MethodPost, "/v1/auth/logout",
+		map[string]string{"X-CSRF-Token": csrfFor(t, tc, cookie)}, []*http.Cookie{cookie}, nil)
 	if logout.Code != http.StatusOK {
 		t.Fatalf("logout should be 200, got %d", logout.Code)
 	}

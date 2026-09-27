@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
+
+	"mahresources/auth"
 )
 
 // LoginContextProvider builds the context for the standalone login page. It does
@@ -32,6 +34,19 @@ func LoginContextProvider(_ any) func(request *http.Request) pongo2.Context {
 		default:
 			ctx["loginError"] = "Invalid username or password."
 		}
+		return ctx
+	}
+}
+
+// LogoutContextProvider builds the context for the standalone sign-out page that
+// a GET to /logout renders. Signing out is a POST carrying the session's CSRF
+// token, so the page is that form: a link to /logout from another site reaches
+// this page and ends nothing.
+func LogoutContextProvider(_ any) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		ctx := StaticTemplateCtx(request)
+		ctx["pageTitle"] = "Sign out"
+		ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
 		return ctx
 	}
 }
