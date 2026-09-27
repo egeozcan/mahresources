@@ -7,10 +7,13 @@ relatedCmds: plugin schedules, plugin enable, plugin disable
 # Long
 
 List the one-shot downloads a plugin deferred with `mah.download.submit`.
-A deferred download is stored durably until the plugin scheduler submits it
-to the in-memory download queue. Pending rows have not started yet;
-submitted rows carry the queue `jobId`; failed and cancelled rows are
-terminal.
+A deferred download is stored durably, with a scheduled Job of Kind
+`deferred-download`, until its due time queues that Job. Pending rows have
+not been marked submitted by the scheduler yet (once the due time has come,
+the Job can already be running); submitted rows carry the `jobId` of the Job
+they queued; failed and cancelled rows are terminal. Cancelling the Job
+before it starts cancels its row; retrying it afterwards downloads now, as an
+ordinary download the row does not track.
 
 Every row fires under the plugin name that submitted it, so a restart does
 not turn it into an unrestricted host download. It also fires as the user

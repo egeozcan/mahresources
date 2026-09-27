@@ -81,6 +81,13 @@ func TestStatusCodeForError_LeavesEveryOtherErrorAlone(t *testing.T) {
 // perform the operation. 503 is the honest answer, and the guard has to be typed
 // to get it -- the natural wording ("ffmpeg not found") lands in the "not found"
 // pattern, which would tell the caller their video does not exist.
+func TestStatusCodeForError_ScheduledDownloadThatAlreadyEndedIs409(t *testing.T) {
+	err := fmt.Errorf("scheduled download 3: %w: its Job was removed", application_context.ErrScheduledDownloadEnded)
+	if got := statusCodeForError(err, http.StatusInternalServerError); got != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", got)
+	}
+}
+
 func TestStatusCodeForError_MissingFfmpegIs503(t *testing.T) {
 	for _, tc := range []struct {
 		name string

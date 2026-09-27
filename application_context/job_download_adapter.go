@@ -704,12 +704,25 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 		})
 	}
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
-		commands = append(commands, jobs.Command{
-			Key:   jobs.CommandRetry,
-			Label: "Retry",
-		})
+		commands = append(commands, downloadRetryCommand(commandContext.Snapshot))
 	}
 	return commands, nil
+}
+
+// downloadRetryCommand is the Retry one download offers. A Retry's successor is
+// an ordinary download that starts now. For a deferred download that never
+// started, that drops the time it was scheduled for, so the control says so
+// before it is used instead of reading "Retry"; the plugin's deferred row stays
+// cancelled and does not follow the successor.
+func downloadRetryCommand(snapshot jobs.Snapshot) jobs.Command {
+	if snapshot.ScheduledFor != nil && snapshot.StartedAt == nil {
+		return jobs.Command{
+			Key:          jobs.CommandRetry,
+			Label:        "Download now",
+			Confirmation: "This download was scheduled for later and never started. Download now starts it immediately; it does not wait for the scheduled time.",
+		}
+	}
+	return jobs.Command{Key: jobs.CommandRetry, Label: "Retry"}
 }
 
 // ExecuteCommand runs one control the host decided this Kind owns.
@@ -1054,4 +1067,16 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 		return (&downloadJobAdapter{ctx: ctx, kind: JobKindRemoteDownload}).publishOutcome(admission.Execution, snap)
 	})
 	return result
+}
+
+// ApplyHostTransition keeps a deferred download's row in step when the host
+// cancels its Job while nothing runs it. The row is the plugin's record of the
+// same deferral: left pending, the scheduler would reach it at the due time and
+// record a submission of a download that was cancelled. It runs in the command's
+// own transaction, so the Job and its row cannot disagree.
+func (a *downloadJobAdapter) ApplyHostTransition(_ context.Context, deps jobs.Deps, snapshot jobs.Snapshot, key string, to jobs.State) error {
+	if a.kind != JobKindDeferredDownload || key != jobs.CommandCancel || to != jobs.StateCancelled {
+		return nil
+	}
+	return cancelDeferredDownloadRowTx(deps.DB, snapshot, time.Now())
 }

@@ -213,16 +213,24 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 			updated = current
 			return nil
 		}
-		var handle models.JobLegacyHandle
-		err = tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, current.SourceID).First(&handle).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) && row.JobID != "" {
-			err = tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error
+		// A mapping that names a Job keeps it: that is the Job the row was accepted
+		// with (deferredDownloadJobIDOn), and the row's legacy handle is not, since a
+		// Retry moves it to its successor. The handle only names a Job for a mapping
+		// that has none.
+		jobID := current.JobID
+		if jobID == "" {
+			var handle models.JobLegacyHandle
+			err = tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, current.SourceID).First(&handle).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) && row.JobID != "" {
+				err = tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error
+			}
+			if err != nil {
+				return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-handle-missing")
+			}
+			jobID = handle.JobID
+			current.JobID, current.Origin = jobID, models.JobSourceOriginDualPublished
 		}
-		if err != nil {
-			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-handle-missing")
-		}
-		current.JobID, current.Origin = handle.JobID, models.JobSourceOriginDualPublished
-		purged, reason, err := ctx.downloadReplayPurged(tx, handle.JobID, now)
+		purged, reason, err := ctx.downloadReplayPurged(tx, jobID, now)
 		if err != nil {
 			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-replay-unavailable")
 		}
@@ -230,7 +238,7 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 			at := now
 			current.Status, current.PurgedAt, current.PurgeReason = models.JobSourceMappingPurged, &at, reason
 			current.ScrubbedAt, current.PostScrubHash = nil, ""
-		} else if err := ctx.verifyScheduledDownloadReplay(tx, handle.JobID, row); err != nil {
+		} else if err := ctx.verifyScheduledDownloadReplay(tx, jobID, row); err != nil {
 			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "source-canonical-replay-mismatch")
 		} else {
 			current.Status, current.PurgedAt, current.PurgeReason = models.JobSourceMappingCopied, nil, ""
@@ -313,6 +321,17 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 	checkpoint, err := ctx.ensureJobMigrationCheckpoint(now())
 	if err != nil {
 		return JobMigrationResult{}, err
+	}
+	reinstated, err := ctx.reinstateScrubbedDeferredDownloads(now())
+	if err != nil {
+		return JobMigrationResult{}, err
+	}
+	if reinstated > 0 && checkpoint.LastError != "" {
+		// The drain fence writes this again if any other quarantine remains.
+		checkpoint.LastError = ""
+		if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+			return JobMigrationResult{}, err
+		}
 	}
 	if checkpoint.Phase == models.JobMigrationPhaseDrainFence {
 		sourceKind, _, rearmed, err := ctx.rearmOneFixedQuarantine()
@@ -467,11 +486,11 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 				}
 				return result, nil
 			}
-			_, rearmed, err := ctx.rearmOneRestoredSource(now())
+			rearmed, err := ctx.rearmRestoredSources(now())
 			if err != nil {
 				return result, err
 			}
-			if rearmed {
+			if rearmed > 0 {
 				result.Batches++
 				checkpoint.Phase, checkpoint.SourceKind, checkpoint.CursorID = models.JobMigrationPhaseCopy, jobMigrationSourceKinds[0], ""
 				checkpoint.CompletedAt = nil
@@ -642,6 +661,83 @@ func (ctx *MahresourcesContext) rearmOneFixedQuarantine() (string, string, bool,
 		}
 	}
 	return "", "", false, nil
+}
+
+// reinstateScrubbedDeferredDownloads returns to scrubbed the scheduled-download
+// sources an earlier release quarantined when a deferred download came due.
+//
+// That release read the JobID written at fire time as a source restored from a
+// backup, could not prove the scrubbed URL against the canonical input, and
+// quarantined the mapping, which then stopped every later start at the drain
+// fence. The quarantine kept the scrub marker and post-scrub hash. A row that
+// still matches them (retiredScheduledDownloadMatches) carries no plaintext and is
+// the row that was scrubbed, so there is nothing left for anybody to decide, and
+// the marker is reinstated as it was. A row that does not match stays
+// quarantined: that is the barrier doing its job.
+func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time) (int, error) {
+	codes := []string{"restored-source-not-proven", "source-canonical-replay-mismatch"}
+	reinstated := 0
+	var cursor string
+	for {
+		var candidates []models.JobSourceMapping
+		query := ctx.db.Where("source_kind = ? AND status = ? AND blocker_code IN ? AND scrubbed_at IS NOT NULL AND post_scrub_hash <> ''",
+			jobMigrationScheduledDownload, models.JobSourceMappingQuarantined, codes).
+			Order("source_id ASC").Limit(jobMigrationReadinessBatchSize)
+		if cursor != "" {
+			query = query.Where("source_id > ?", cursor)
+		}
+		if err := query.Find(&candidates).Error; err != nil {
+			return reinstated, errors.New("job migration could not read its scheduled download quarantines")
+		}
+		for _, candidate := range candidates {
+			var restored bool
+			err := ctx.db.Transaction(func(tx *gorm.DB) error {
+				var mapping models.JobSourceMapping
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, candidate.SourceID).
+					First(&mapping).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return errors.New("job migration scheduled download quarantine could not be rechecked")
+				}
+				if mapping.Status != models.JobSourceMappingQuarantined || mapping.ScrubbedAt == nil || mapping.PostScrubHash == "" ||
+					(mapping.BlockerCode != codes[0] && mapping.BlockerCode != codes[1]) {
+					return nil
+				}
+				id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
+				if err != nil {
+					return nil
+				}
+				var row models.ScheduledDownload
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return errors.New("job migration scheduled download source could not be rechecked")
+				}
+				if !retiredScheduledDownloadMatches(row, mapping.PostScrubHash) {
+					return nil
+				}
+				mapping.Status, mapping.BlockerCode, mapping.UpdatedAt = models.JobSourceMappingScrubbed, "", now
+				if err := tx.Save(&mapping).Error; err != nil {
+					return errors.New("job migration scheduled download scrub marker could not be reinstated")
+				}
+				restored = true
+				return nil
+			})
+			if err != nil {
+				return reinstated, err
+			}
+			if restored {
+				reinstated++
+			}
+		}
+		if len(candidates) < jobMigrationReadinessBatchSize {
+			return reinstated, nil
+		}
+		cursor = candidates[len(candidates)-1].SourceID
+	}
 }
 
 func (ctx *MahresourcesContext) migrationRetryableSourceHash(db *gorm.DB, kind, sourceID string) (string, bool, error) {
@@ -1050,6 +1146,27 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 	}{row.ID, row.PluginName, row.JobID, row.URL, append([]byte(nil), row.Payload...)})
 }
 
+// retiredScheduledDownloadMatches reports whether a scrubbed scheduled download is
+// still the row its post-scrub hash was taken from.
+//
+// JobID is the one projected field a live row changes after it was scrubbed: a
+// deferred download is scrubbed at creation once the sources are retired, or by
+// the migration while it is still pending, and its JobID is written when it
+// fires, after the marker was taken. A marker taken with no JobID is therefore
+// accepted when the JobID is all that differs. Which Job a fired row names cannot
+// always be re-established (a Retry moves the row's handle, and retention prunes
+// Retry history), and it need not be: the JobID carries no replay material, so
+// one the check cannot place leaves nothing unscrubbed. Everything the barrier exists for — the empty payload, the URL reduced to its
+// origin, the row's identity and plugin — must still be exactly what was hashed.
+func retiredScheduledDownloadMatches(row models.ScheduledDownload, postScrubHash string) bool {
+	if hashRetiredScheduledDownload(row) == postScrubHash {
+		return true
+	}
+	beforeItFired := row
+	beforeItFired.JobID = ""
+	return row.JobID != "" && hashRetiredScheduledDownload(beforeItFired) == postScrubHash
+}
+
 func hashJobMigrationProjection(value any) string {
 	encoded, _ := json.Marshal(value)
 	sum := sha256.Sum256(encoded)
@@ -1262,6 +1379,16 @@ func (ctx *MahresourcesContext) downloadReplayPurged(db *gorm.DB, jobID string, 
 	var envelope models.JobReplayEnvelope
 	err := db.Where("job_id = ?", jobID).First(&envelope).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Retention deletes the envelope with its Job, and a gone Job has ended
+		// (mappedJobGone): its replay input expired rather than went missing.
+		var job models.Job
+		jobErr := db.Select("id").Where("id = ?", jobID).First(&job).Error
+		if mappedJobGone(jobErr) {
+			return true, models.JobReplayPurgeExpired, nil
+		}
+		if jobErr != nil {
+			return false, "", jobErr
+		}
 		return false, "", fmt.Errorf("canonical download Job %s has no replay envelope", jobID)
 	}
 	if err != nil {
@@ -1351,6 +1478,11 @@ func (ctx *MahresourcesContext) verifyDownloadHistoryBatch(cursor string, limit 
 				continue
 			}
 		}
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("download history mapping could not be expired")
+		} else if expired {
+			continue
+		}
 		if mapping.Status != models.JobSourceMappingPurged {
 			if err := ctx.verifyDownloadReplay(ctx.db, mapping.JobID, row); err != nil {
 				return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "canonical replay did not verify")
@@ -1427,6 +1559,11 @@ func (ctx *MahresourcesContext) verifyScheduledDownloadBatch(cursor string, limi
 			if mapping.Status == models.JobSourceMappingPurged || mapping.Status == models.JobSourceMappingScrubbed {
 				continue
 			}
+		}
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("scheduled download mapping could not be expired")
+		} else if expired {
+			continue
 		}
 		if err := ctx.verifyScheduledDownloadReplay(ctx.db, mapping.JobID, row); err != nil {
 			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "canonical replay did not verify")

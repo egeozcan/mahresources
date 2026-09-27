@@ -158,6 +158,7 @@ func TestDownloadSubmitRejectsInvalidDeferralOptions(t *testing.T) {
 		{"too long delay", `{ delay = "721h" }`, "30 days"},
 		{"past start_at", `{ start_at = 1 }`, "start_at"},
 		{"bad start_at type", `{ start_at = "tomorrow" }`, "start_at"},
+		{"start_at in year 10000", `{ start_at = 253402300800 }`, "start_at"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,3 +183,17 @@ __job, __err = mah.download.submit("https://example.invalid/v.mp4", ` + tc.lua +
 }
 
 func strconvFormatInt(n int64) string { return strconv.FormatInt(n, 10) }
+
+// The last instant a start_at may name is the end of year 9999: SQLite reads a
+// stored time as text, and neither its date functions nor a text comparison
+// order a five-digit year, so a later time would never come due, or come due at
+// once.
+func TestDownloadStartAtAcceptsTheEndOfYear9999AndNothingLater(t *testing.T) {
+	last, err := downloadStartAtFromUnixSeconds(253402300799)
+	if err != nil || last.Year() != 9999 {
+		t.Fatalf("start_at at the end of 9999 = %v, %v; want accepted", last, err)
+	}
+	if _, err := downloadStartAtFromUnixSeconds(253402300800); err == nil {
+		t.Fatal("start_at in year 10000 was accepted")
+	}
+}

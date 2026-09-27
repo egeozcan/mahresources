@@ -301,6 +301,9 @@ func findPluginCommandJob(tx *gorm.DB, namespace, handle, directJobID string) (s
 func (ctx *MahresourcesContext) ensureCommandReplay(tx *gorm.DB, jobID string, expected json.RawMessage, finished *time.Time, terminal bool, now time.Time) (bool, string, error) {
 	var job models.Job
 	if err := tx.Where("id = ?", jobID).First(&job).Error; err != nil {
+		if mappedJobGone(err) {
+			return true, models.JobReplayPurgeExpired, nil
+		}
 		return false, "", err
 	}
 	var envelope models.JobReplayEnvelope
@@ -1017,6 +1020,11 @@ func (ctx *MahresourcesContext) verifyCommandSourceBatch(kind, cursor string, li
 		return false, cursor, errors.New("plugin command mappings could not be read for verification")
 	}
 	for _, mapping := range mappings {
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("plugin command mapping could not be expired")
+		} else if expired {
+			continue
+		}
 		switch kind {
 		case jobMigrationPluginCommandRun:
 			var row models.PluginCommandRun

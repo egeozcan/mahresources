@@ -220,9 +220,12 @@ func downloadStartAtFromUnixSeconds(seconds float64) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("start_at must not be negative")
 	}
 	whole, frac := math.Modf(seconds)
-	const maxUnixSeconds = float64(1<<63 - 1)
-	if whole > maxUnixSeconds {
-		return time.Time{}, fmt.Errorf("start_at is too large")
+	// The end of year 9999. SQLite stores a time as text, and neither its date
+	// functions nor a text comparison order a five-digit year, so a later start
+	// would never come due, or would come due at once.
+	const maxStartAtUnixSeconds = 253402300799
+	if whole > maxStartAtUnixSeconds {
+		return time.Time{}, fmt.Errorf("start_at is too large: it must be before the year 10000")
 	}
 	return time.Unix(int64(whole), int64(frac*float64(time.Second))).UTC(), nil
 }

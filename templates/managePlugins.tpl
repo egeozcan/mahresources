@@ -474,7 +474,7 @@
                     <tbody>
                         {% for scheduled in plugin.ScheduledDownloads %}
                         <tr class="border-t border-stone-100" data-testid="plugin-scheduled-download-{{ plugin.Name }}-{{ scheduled.ID }}">
-                            <td class="py-1 pr-4 font-mono">{{ scheduled.DueAt|date:"2006-01-02 15:04" }}</td>
+                            <td class="py-1 pr-4 font-mono"><time datetime="{{ scheduled.DueAt|date:"2006-01-02T15:04:05Z07:00" }}">{{ scheduled.DueAt|date:"2006-01-02 15:04 -07:00" }}</time></td>
                             <td class="py-1 pr-4 break-all"><span class="font-mono">{{ scheduled.URL }}</span></td>
                             <td class="py-1 pr-4">
                                 {% if scheduled.StatusLabel == "stopped" %}

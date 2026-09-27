@@ -537,6 +537,255 @@ func TestJobMigrationSourceAndMappingWritesAreAtomic(t *testing.T) {
 	})
 }
 
+// Retention deletes an ended Job and keeps the mapping that names it, so a
+// source routinely outlives its Job: after its sources were retired, and also
+// before, while its mapping waits to be verified or scrubbed. Work whose Job was
+// deleted is over (TestRetentionNeverPrunesANonterminalJobWhateverItsDeadline),
+// its replay input expired with it, and the next start must neither ask for that
+// input nor quarantine the source for lacking it.
+func TestJobMigrationStaysReadyAfterRetentionDeletesMappedJobs(t *testing.T) {
+	type seeded struct {
+		ctx *MahresourcesContext
+		// check asserts what the start left of the source, beyond readiness.
+		check func(t *testing.T, ctx *MahresourcesContext)
+	}
+	seeds := map[string]func(t *testing.T) seeded{
+		jobMigrationDownloadHistory: func(t *testing.T) seeded {
+			ctx := newJobHarnessContext(t, false)
+			holdJobReplayKey(t, ctx, sharedReplayKey(t))
+			created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+			started, finished := created.Add(time.Minute), created.Add(2*time.Minute)
+			creator := query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/file.bin?signature=private"}
+			payload, err := json.Marshal(creator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := uint(17)
+			if err := ctx.db.Create(&models.DownloadHistoryEntry{
+				JobID: "legacy-download-outlived", URL: creator.URL, Status: models.DownloadHistoryStatusCompleted,
+				CreatedAt: created, StartedAt: &started, CompletedAt: &finished, CreatedByUserId: &owner, Payload: payload,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			return seeded{ctx: ctx}
+		},
+		// Cancelled alone, as an earlier release could, so the row is still pending
+		// and unchanged since it was mapped.
+		jobMigrationScheduledDownload: func(t *testing.T) seeded {
+			ctx := newJobHarnessContext(t, false)
+			holdJobReplayKey(t, ctx, sharedReplayKey(t))
+			enableDownloadTestPlugin(t, ctx)
+			actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+			if err != nil {
+				t.Fatalf("create the acting user: %v", err)
+			}
+			row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+				&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/outlived.bin?token=private"}, time.Now().Add(time.Hour))
+			if err != nil {
+				t.Fatalf("create the deferred download: %v", err)
+			}
+			job := deferredDownloadJob(t, ctx, row.ID)
+			if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+				JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+			}); err != nil {
+				t.Fatalf("cancel the Job alone: %v", err)
+			}
+			return seeded{ctx: ctx, check: func(t *testing.T, ctx *MahresourcesContext) {
+				got := scheduledDownloadRow(t, ctx, row.ID)
+				if got.Status != models.ScheduledDownloadStatusFailed || !strings.Contains(got.LastError, "not known") || len(got.Payload) != 0 {
+					t.Fatalf("the row is %s (%q) with %d payload bytes, want failed with its outcome unknown and no payload",
+						got.Status, got.LastError, len(got.Payload))
+				}
+			}}
+		},
+		jobMigrationPluginCommandRun: func(t *testing.T) seeded {
+			ctx := newJobHarnessContext(t, false)
+			created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+			started, runFinished, importFinished := created.Add(time.Minute), created.Add(2*time.Minute), created.Add(3*time.Minute)
+			owner := uint(27)
+			run := models.PluginCommandRun{
+				ID: "legacy-command-run-outlived", PluginName: "worker", CommandName: "ingest", ParamsJSON: `{"mode":"private"}`,
+				InputsJSON: `[{"name":"private.csv","bytes":19}]`, Status: plugin_commands.RunStatusSucceeded,
+				CreatedByUserId: &owner, CreatedAt: created, StartedAt: &started, FinishedAt: &runFinished,
+			}
+			imp := models.PluginCommandImport{
+				ID: "legacy-command-import-outlived", RunID: run.ID, FileName: "private.csv", FieldsJSON: `{"title":"secret"}`,
+				PluginGeneration: 8, CreatedByUserId: &owner, Status: plugin_commands.ImportStatusSucceeded,
+				CreatedAt: runFinished, StartedAt: &runFinished, FinishedAt: &importFinished,
+			}
+			if err := ctx.db.Create(&run).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := ctx.db.Create(&imp).Error; err != nil {
+				t.Fatal(err)
+			}
+			return seeded{ctx: ctx}
+		},
+		jobMigrationReduction: func(t *testing.T) seeded {
+			ctx := newJobHarnessContext(t, false)
+			created := time.Now().UTC().Add(-7 * 24 * time.Hour).Truncate(time.Second)
+			accepted, owner := created.Add(6*24*time.Hour), uint(44)
+			started, computed := accepted.Add(time.Minute), accepted.Add(20*time.Minute)
+			ready := models.ResourceReduction{
+				Name: "outlived reduction", Status: models.ReductionStatusReady, MatchingMode: models.MatchingModeIdenticalOnly,
+				CreatedAt: created, UpdatedAt: computed, CreatedByUserId: &owner, ComputeJobID: "outlived-compute-id", ComputedAt: &computed,
+			}
+			if err := ctx.db.Create(&ready).Error; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ctx.JobService().ImportLegacy(ctx.jobDeps(), jobs.LegacyImport{
+				Acceptance: jobs.Acceptance{Kind: JobKindReductionCompute, KindVersion: jobReductionKindVersion,
+					State: jobs.StateSucceeded, ActorUserID: &owner, Origin: "api", Title: "Cluster a Resource Reduction",
+					Replay:     jobs.ReplayInput{NonReplayable: true},
+					LegacyRefs: []jobs.LegacyRef{{Namespace: ReductionComputeHandleNamespace, Handle: ready.ComputeJobID}}},
+				State: jobs.StateSucceeded, AcceptedAt: accepted, StartedAt: &started, FinishedAt: &computed,
+			}); err != nil {
+				t.Fatalf("seed the Reduction's compute Job: %v", err)
+			}
+			return seeded{ctx: ctx}
+		},
+	}
+	copyAndVerify := func(t *testing.T, ctx *MahresourcesContext) {
+		if _, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20}); err != nil {
+			t.Fatalf("copy and verify the sources: %v", err)
+		}
+	}
+	moments := []struct {
+		name string
+		// reach brings the seeded sources to where they are when retention deletes
+		// their Jobs.
+		reach func(t *testing.T, ctx *MahresourcesContext)
+		// changed closes the deferred row at its due time before the next start, so
+		// its source differs from the one that was verified.
+		changed bool
+		// restored brings the deferred row's plaintext back, as restoring the table
+		// from a backup taken before retirement would.
+		restored bool
+	}{
+		{name: "after retirement", reach: retireJobMigrationSources},
+		{name: "after retirement, restored from a backup", reach: retireJobMigrationSources, restored: true},
+		// Copied and verified, waiting at the drain fence for the writers.
+		{name: "before retirement", reach: copyAndVerify},
+		{name: "before retirement, changed since", reach: copyAndVerify, changed: true},
+	}
+	for kind, seed := range seeds {
+		for _, moment := range moments {
+			if (moment.changed || moment.restored) && kind != jobMigrationScheduledDownload {
+				continue
+			}
+			t.Run(kind+", "+moment.name, func(t *testing.T) {
+				source := seed(t)
+				ctx := source.ctx
+				moment.reach(t, ctx)
+				var jobIDs []string
+				if err := ctx.db.Model(&models.JobSourceMapping{}).Where("job_id <> ''").Pluck("job_id", &jobIDs).Error; err != nil || len(jobIDs) == 0 {
+					t.Fatalf("setup: mapped Jobs = %v, %v", jobIDs, err)
+				}
+				if err := ctx.db.Model(&models.Job{}).Where("id IN ?", jobIDs).
+					Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+					t.Fatal(err)
+				}
+				if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != len(jobIDs) {
+					t.Fatalf("retention = %+v, %v; want the %d ended Jobs deleted", sweep, err, len(jobIDs))
+				}
+				if moment.changed {
+					fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
+				}
+				if moment.restored {
+					dropScheduledDownloadBarriers(t, ctx)
+					restoredURL := "https://example.invalid/outlived.bin?token=private"
+					if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id > 0").Updates(map[string]any{
+						"url": restoredURL, "payload": mustScheduledPayload(t, &query_models.ResourceFromRemoteCreator{URL: restoredURL}),
+					}).Error; err != nil {
+						t.Fatalf("restore the row's plaintext: %v", err)
+					}
+					reinstallScheduledDownloadBarriers(t, ctx)
+				}
+
+				startJobSourcesAsMainDoes(t, ctx)
+				if source.check != nil {
+					source.check(t, ctx)
+				}
+			})
+		}
+	}
+}
+
+// A mixed writer can commit a command source and its canonical handle before the
+// mapping, which the migration's copy then backfills from the handle. When
+// retention deleted that handle's Job first, the copy finds an expired replay,
+// not a missing one.
+func TestJobMigrationBackfillsACommandSourceWhoseJobRetentionDeleted(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	started, finished := created.Add(time.Minute), created.Add(2*time.Minute)
+	owner := uint(27)
+	run := models.PluginCommandRun{
+		ID: "legacy-command-run-unmapped", PluginName: "worker", CommandName: "ingest", ParamsJSON: `{"mode":"private"}`,
+		Status: plugin_commands.RunStatusSucceeded, CreatedByUserId: &owner, CreatedAt: created, StartedAt: &started, FinishedAt: &finished,
+	}
+	if err := ctx.db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20}); err != nil {
+		t.Fatalf("copy the source: %v", err)
+	}
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationPluginCommandRun, run.ID).First(&mapping).Error; err != nil {
+		t.Fatalf("setup: the copied mapping: %v", err)
+	}
+	// The state that writer left: a handle to the Job, and no mapping yet.
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationPluginCommandRun, run.ID).Delete(&models.JobSourceMapping{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Model(&models.JobMigrationCheckpoint{}).Where("id = ?", models.JobMigrationCheckpointRowID).
+		Updates(map[string]any{"phase": models.JobMigrationPhaseCopy, "source_kind": jobMigrationSourceKinds[0], "cursor_id": ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", mapping.JobID).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+		t.Fatalf("retention = %+v, %v; want the ended Job deleted", sweep, err)
+	}
+
+	startJobSourcesAsMainDoes(t, ctx)
+}
+
+// startJobSourcesAsMainDoes runs, in main.go's order, what startup does with Job
+// sources before it admits traffic: the bounded migration, the cutover readiness
+// gate, and then deferred-download row reconciliation. Writers are reported
+// drained, so the migration may retire the sources.
+func startJobSourcesAsMainDoes(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
+	result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true})
+	if err != nil || !result.Complete {
+		var mappings []models.JobSourceMapping
+		_ = ctx.db.Order("source_kind, source_id").Find(&mappings).Error
+		summary := make([]string, 0, len(mappings))
+		for _, mapping := range mappings {
+			summary = append(summary, mapping.SourceKind+"/"+mapping.SourceID+": "+mapping.Status+" "+mapping.BlockerCode)
+		}
+		t.Fatalf("startup migration = %+v, %v; want complete %v", result, err, summary)
+	}
+	if readiness, err := ctx.GetJobMigrationReadiness(); err != nil || !readiness.Ready {
+		t.Fatalf("startup readiness = %+v, %v; want ready", readiness, err)
+	}
+	if _, err := ctx.ReconcileDeferredDownloadRows(); err != nil {
+		t.Fatalf("startup reconciliation: %v", err)
+	}
+}
+
+// retireJobMigrationSources runs the migration to its completed gate, which
+// retires every legacy source it copied.
+func retireJobMigrationSources(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
+	if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+		t.Fatalf("retire the sources = %+v, %v", result, err)
+	}
+}
+
 func TestJobMigrationCopiesDownloadHistoryBeforeScrubbingAndIsIdempotent(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {

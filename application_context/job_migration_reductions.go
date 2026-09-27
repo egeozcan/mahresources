@@ -202,6 +202,11 @@ func (ctx *MahresourcesContext) verifyReductionsBatch(cursor string, limit int, 
 		if hashReductionExecution(row) != mapping.SourceHash {
 			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "Resource Reduction execution proof changed")
 		}
+		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
+			return false, mapping.SourceID, errors.New("Resource Reduction mapping could not be expired")
+		} else if expired {
+			continue
+		}
 		if err := verifyReductionJob(ctx.db, ctx.JobService(), ctx.jobDeps(), mapping.JobID, row, requireTerminal); err != nil {
 			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "Resource Reduction Job did not verify")
 		}

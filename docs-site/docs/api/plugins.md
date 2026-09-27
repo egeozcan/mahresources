@@ -284,10 +284,14 @@ curl "http://localhost:8181/v1/plugin/scheduled-downloads?name=image-processor"
 
 Rows are one-shot deferred host downloads created by `mah.download.submit` with
 `delay` or `start_at`. `status` is `pending`, `submitted`, `failed` or
-`cancelled`. A `submitted` row normally carries the queue `jobId`; the accepted
-fail-closed exception is a crash between reserving the row and submitting to the
-queue, which can strand a `submitted` row without a job id until operational
-reconciliation. `claimedAt` appears briefly while a scheduler tick holds the
+`cancelled`. A `submitted` row normally carries the `jobId` of the Job it
+queued; the accepted fail-closed exception is a crash between reserving the
+row and queueing its Job, which can strand a `submitted` row without a job id
+until operational reconciliation. A row whose Job ended before it ran, because
+it was cancelled while it waited, is `cancelled` rather than `submitted`. A
+pending row whose Job was removed from Job history before the row recorded its
+outcome is `failed`, with a `lastError` saying that whether the download ran is
+not known; the row does not submit it again. `claimedAt` appears briefly while a scheduler tick holds the
 submit claim. `owned: false` on a pending row means the submitting user was
 deleted and the row has stopped rather than firing as an administrator. Naming
 a plugin that has no rows returns an empty array.
@@ -318,8 +322,13 @@ curl -X POST http://localhost:8181/v1/plugin/scheduled-downloads/cancel \
 }
 ```
 
-Only pending rows can be cancelled. A row that has already been submitted,
-failed or cancelled answers `409 Conflict`.
+Only pending rows can be cancelled, and cancelling a row cancels its
+`deferred-download` Job in the same transaction, so the download does not run at
+its due time. A row that has already been submitted, failed or cancelled, or
+whose Job has already started, answers `409 Conflict`; stop a started download
+with the Job's own `cancel` command. A pending row whose Job was removed from Job
+history also answers `409 Conflict`, saying it already ended, and is recorded
+`failed` as described above.
 
 ## Command Run History
 

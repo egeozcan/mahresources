@@ -151,11 +151,11 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 					} else if mapping.PostScrubHash == "" {
 						report.Blockers["source-scrub-hash-missing/"+safeJobMigrationKind(kind)]++
 					} else {
-						exists, currentHash, err := currentRetiredSourceHash(tx, kind, mapping.SourceID)
+						exists, matches, err := retiredSourceMatchesScrub(tx, mapping)
 						if err != nil {
 							return errors.New("job migration retired source could not be checked")
 						}
-						if exists && currentHash != mapping.PostScrubHash {
+						if exists && !matches {
 							report.Blockers["source-retirement-hash-mismatch/"+safeJobMigrationKind(kind)]++
 						}
 					}
@@ -315,57 +315,61 @@ func countUnmappedJobMigrationSourceRows(tx *gorm.DB, source jobMigrationReadine
 	return count, query.Count(&count).Error
 }
 
-func currentRetiredSourceHash(db *gorm.DB, kind, sourceID string) (bool, string, error) {
-	switch kind {
+// retiredSourceMatchesScrub reports whether a scrubbed source row is still the row
+// its mapping's post-scrub hash was taken from. exists is false when the row is
+// gone.
+func retiredSourceMatchesScrub(db *gorm.DB, mapping models.JobSourceMapping) (bool, bool, error) {
+	sourceID, postScrubHash := mapping.SourceID, mapping.PostScrubHash
+	switch mapping.SourceKind {
 	case jobMigrationDownloadHistory:
 		id, err := strconv.ParseUint(sourceID, 10, 64)
 		if err != nil {
-			return false, "", nil
+			return false, false, nil
 		}
 		var row models.DownloadHistoryEntry
 		err = db.First(&row, uint(id)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
+			return false, false, nil
 		}
-		return err == nil, hashRetiredDownloadHistory(row), err
+		return err == nil, hashRetiredDownloadHistory(row) == postScrubHash, err
 	case jobMigrationScheduledDownload:
 		id, err := strconv.ParseUint(sourceID, 10, 64)
 		if err != nil {
-			return false, "", nil
+			return false, false, nil
 		}
 		var row models.ScheduledDownload
 		err = db.First(&row, uint(id)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
+			return false, false, nil
 		}
-		return err == nil, hashRetiredScheduledDownload(row), err
+		return err == nil, retiredScheduledDownloadMatches(row, postScrubHash), err
 	case jobMigrationPluginCommandRun:
 		var row models.PluginCommandRun
 		err := db.Where("id = ?", sourceID).First(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
+			return false, false, nil
 		}
-		return err == nil, hashRetiredPluginCommandRun(row), err
+		return err == nil, hashRetiredPluginCommandRun(row) == postScrubHash, err
 	case jobMigrationPluginCommandImport:
 		var row models.PluginCommandImport
 		err := db.Where("id = ?", sourceID).First(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
+			return false, false, nil
 		}
-		return err == nil, hashRetiredPluginCommandImport(row), err
+		return err == nil, hashRetiredPluginCommandImport(row) == postScrubHash, err
 	case jobMigrationReduction:
 		id, err := strconv.ParseUint(sourceID, 10, 64)
 		if err != nil {
-			return false, "", nil
+			return false, false, nil
 		}
 		var row models.ResourceReduction
 		err = db.First(&row, uint(id)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
+			return false, false, nil
 		}
-		return err == nil, hashReductionExecution(row), err
+		return err == nil, hashReductionExecution(row) == postScrubHash, err
 	default:
-		return false, "", errors.New("unknown job migration source")
+		return false, false, errors.New("unknown job migration source")
 	}
 }
 
@@ -380,12 +384,18 @@ func totalMigrationReadinessBlockers(report JobMigrationReadiness) int {
 	return total
 }
 
-// rearmOneRestoredSource detects one source whose scrubbed safety projection was
+// rearmRestoredSources detects every source whose scrubbed safety projection was
 // restored from a pre-retirement backup. It re-proves ordinary input against the
-// canonical envelope before making the source eligible for scrub again. A purge
-// marker wins and schedules immediate deletion without reopening or recreating
-// the purged input.
-func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, bool, error) {
+// canonical envelope before making the source eligible for scrub again, and
+// quarantines one it cannot prove. A purge marker wins and schedules immediate
+// deletion without reopening or recreating the purged input.
+//
+// Every restored source is examined in the one pass and the count returned. The
+// caller restarts the migration from copy once for all of them, and a source that
+// cannot be proved does not leave the ones after it behind a mapping that still
+// says they are scrubbed.
+func (ctx *MahresourcesContext) rearmRestoredSources(now time.Time) (int, error) {
+	rearmedSources := 0
 	for _, kind := range jobMigrationSourceKinds {
 		var cursor string
 		for {
@@ -397,7 +407,7 @@ func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, b
 				query = query.Where("source_id > ?", cursor)
 			}
 			if err := query.Find(&mappings).Error; err != nil {
-				return "", false, errors.New("job migration restored source scan failed")
+				return rearmedSources, errors.New("job migration restored source scan failed")
 			}
 			for _, candidate := range mappings {
 				needsRepair := false
@@ -405,13 +415,12 @@ func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, b
 				if candidate.Status == models.JobSourceMappingPurged {
 					needsRepair, _, err = retiredSourceNeedsScrub(ctx.db, kind, candidate.SourceID)
 				} else {
-					var exists bool
-					var currentProjection string
-					exists, currentProjection, err = currentRetiredSourceHash(ctx.db, kind, candidate.SourceID)
-					needsRepair = exists && currentProjection != candidate.PostScrubHash
+					var exists, matches bool
+					exists, matches, err = retiredSourceMatchesScrub(ctx.db, candidate)
+					needsRepair = exists && !matches
 				}
 				if err != nil {
-					return "", false, errors.New("job migration restored source check failed")
+					return rearmedSources, errors.New("job migration restored source check failed")
 				}
 				if !needsRepair {
 					continue
@@ -440,11 +449,19 @@ func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, b
 						rearmed = true
 						return nil
 					}
-					exists, currentProjection, err := currentRetiredSourceHash(tx, kind, mapping.SourceID)
+					exists, matches, err := retiredSourceMatchesScrub(tx, mapping)
 					if err != nil {
 						return errors.New("job migration restored source could not be rechecked")
 					}
-					if !exists || currentProjection == mapping.PostScrubHash {
+					if !exists || matches {
+						return nil
+					}
+					// A restored copy of a source whose Job is gone has nothing to be
+					// proved against, and its input expired: the scrub pass clears it.
+					if expired, err := expireMappingOfGoneJob(tx, &mapping, now); err != nil {
+						return errors.New("job migration restored source could not be expired")
+					} else if expired {
+						rearmed = true
 						return nil
 					}
 					fullHash, valid, err := verifyRestoredMigrationSource(ctx, tx, kind, mapping)
@@ -473,10 +490,10 @@ func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, b
 					return nil
 				})
 				if err != nil {
-					return "", false, err
+					return rearmedSources, err
 				}
 				if rearmed {
-					return kind, true, nil
+					rearmedSources++
 				}
 			}
 			if len(mappings) < jobMigrationReadinessBatchSize {
@@ -485,7 +502,7 @@ func (ctx *MahresourcesContext) rearmOneRestoredSource(now time.Time) (string, b
 			cursor = mappings[len(mappings)-1].SourceID
 		}
 	}
-	return "", false, nil
+	return rearmedSources, nil
 }
 
 func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind string, mapping models.JobSourceMapping) (string, bool, error) {
@@ -552,10 +569,46 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 	}
 }
 
+// mappedJobGone reports that reading the Job a source mapping names found no Job.
+//
+// Retention is the only thing that deletes a Job: it deletes only ended ones, it
+// keeps the mappings that name them, and it keeps nothing of how they ended
+// (TestRetentionNeverPrunesANonterminalJobWhateverItsDeadline pins the first two).
+// A gone Job has therefore ended, with an outcome nobody can know any more. Every
+// reader of a mapped Job answers a missing one through this, and anything that
+// comes to delete a nonterminal Job makes all of their answers wrong.
+func mappedJobGone(err error) bool {
+	return errors.Is(err, jobs.ErrNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+// expireMappingOfGoneJob records, on a mapping whose Job is gone (mappedJobGone),
+// what purging the Job's expired replay input records: the mapping becomes purged
+// as expired, with its scrub marker cleared, so the scrub pass clears whatever
+// replay copy the source row still holds. That purge usually reaches a mapping
+// before retention deletes its Job, but nothing guarantees it, and the envelope
+// goes with the Job. It reports false, touching nothing, while the Job exists.
+func expireMappingOfGoneJob(db *gorm.DB, mapping *models.JobSourceMapping, now time.Time) (bool, error) {
+	if mapping.JobID == "" {
+		return false, nil
+	}
+	var job models.Job
+	err := db.Select("id").Where("id = ?", mapping.JobID).First(&job).Error
+	if err == nil || !mappedJobGone(err) {
+		return false, err
+	}
+	at := now
+	mapping.Status, mapping.PurgedAt, mapping.PurgeReason = models.JobSourceMappingPurged, &at, models.JobReplayPurgeExpired
+	mapping.ScrubbedAt, mapping.PostScrubHash, mapping.BlockerCode, mapping.UpdatedAt = nil, "", "", now
+	return true, db.Save(mapping).Error
+}
+
+// migrationJobReplayReady reports whether a mapped source's Job can still run from
+// its canonical input when it needs to. A Job that is gone (mappedJobGone) has
+// ended and needs nothing.
 func migrationJobReplayReady(db *gorm.DB, service *jobs.Service, deps jobs.Deps, kind, jobID string) bool {
 	var job models.Job
 	if err := db.Where("id = ?", jobID).First(&job).Error; err != nil {
-		return false
+		return mappedJobGone(err)
 	}
 	if jobs.State(job.State).Terminal() || jobs.ReplayClass(job.ReplayClass) == jobs.ReplayClassNonReplayable {
 		return true
@@ -644,7 +697,7 @@ func safeJobMigrationBlockerCode(code string) string {
 		"source-row-missing", "canonical-handle-missing", "source-canonical-replay-mismatch",
 		"input-not-encodable", "canonical-job-import-failed", "source-input-unreadable",
 		"source-input-changed-after-copy", "canonical-replay-mismatch", "running-source-without-canonical-job",
-		"reduction-outcome-unprovable", "reduction-handle-missing":
+		"reduction-outcome-unprovable", "reduction-handle-missing", "restored-source-not-proven":
 		return code
 	default:
 		return "other"
