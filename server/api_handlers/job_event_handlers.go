@@ -18,6 +18,8 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
+	GetJobEventSequenceHead() (uint64, error)
+	GetPublishedJobEventHead() (uint64, error)
 	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
 }
 
@@ -111,8 +113,18 @@ func GetJobTimelineHandler(ctx JobTimelineContext) func(http.ResponseWriter, *ht
 		for _, event := range events {
 			response.Events = append(response.Events, jobEventResponse(event))
 		}
+		// A full page offers a continuation only when an event follows it, so the
+		// last page never points at an empty one.
 		if len(events) == limit && len(events) > 0 {
-			response.NextSequence = events[len(events)-1].Sequence
+			last := events[len(events)-1].Sequence
+			following, err := ctx.GetJobTimeline(jobID, last, 1)
+			if err != nil {
+				writeJobServiceError(w, err)
+				return
+			}
+			if len(following) > 0 {
+				response.NextSequence = last
+			}
 		}
 		writeJobJSON(w, http.StatusOK, response)
 	}
@@ -163,6 +175,32 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 
+		// A resume cursor above the highest this database ever issued was issued
+		// by another database: a tab that outlived a restore from an older
+		// backup, or an ephemeral restart. Waiting for the sequence to catch up
+		// would deliver nothing until it did, so the stream resumes at the
+		// viewer's own head and its caught-up marker says it reset, which tells
+		// the client to drop what it holds and read again. The test is the
+		// allocator's head rather than the viewer's: retention deleting the
+		// viewer's newest events, or the viewer's visibility narrowing, leaves a
+		// cursor this database did issue above the viewer's head, and a reset
+		// there would reload pages for nothing. A failed read closes the stream,
+		// as a failed poll does, and the client reconnects.
+		reset := false
+		if cursor > 0 {
+			issued, err := ctx.GetJobEventSequenceHead()
+			if err != nil {
+				return
+			}
+			if cursor > issued {
+				head, err := ctx.GetPublishedJobEventHead()
+				if err != nil {
+					return
+				}
+				cursor, reset = head, true
+			}
+		}
+
 		const catchupPageSize = jobs.DefaultEventPageSize
 		// The progress snapshot this connection last sent for each Job.
 		sentProgress := map[string]time.Time{}
@@ -199,13 +237,21 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			if !caughtUp {
 				data, err := json.Marshal(struct {
 					Cursor string `json:"cursor"`
-				}{Cursor: fmt.Sprintf("v2:%d", cursor)})
+					Reset  bool   `json:"reset,omitempty"`
+				}{Cursor: fmt.Sprintf("v2:%d", cursor), Reset: reset})
 				if err != nil {
 					return
 				}
 				// This control frame marks the boundary between replay and live
 				// delivery. It is not a durable Job event, so it deliberately has no
-				// SSE id and never enters the timeline or delivery cursor.
+				// SSE id and never enters the timeline or delivery cursor — except
+				// on a reset, where moving the browser's cursor is the point: the
+				// id it holds was never issued here, and a reconnect before the
+				// next event would otherwise resume from it again and, once this
+				// database's sequence had passed it, skip everything in between.
+				if reset {
+					fmt.Fprintf(w, "id: v2:%d\n", cursor)
+				}
 				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
 				flusher.Flush()
 				caughtUp = true

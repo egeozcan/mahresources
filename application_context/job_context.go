@@ -201,6 +201,26 @@ func (ctx *MahresourcesContext) GetPublishedJobEvents(afterDelivery uint64, limi
 	return service.PublishedEvents(ctx.jobDeps(), ctx.jobAccess(), afterDelivery, limit)
 }
 
+// GetJobEventSequenceHead returns the highest delivery cursor this database has
+// ever issued: a resume cursor above it was issued by another database.
+func (ctx *MahresourcesContext) GetJobEventSequenceHead() (uint64, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return 0, err
+	}
+	return service.EventSequenceHead(ctx.jobDeps())
+}
+
+// GetPublishedJobEventHead returns the delivery cursor of the last published
+// event this context's principal may see: where a reset stream resumes.
+func (ctx *MahresourcesContext) GetPublishedJobEventHead() (uint64, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return 0, err
+	}
+	return service.PublishedEventHead(ctx.jobDeps(), ctx.jobAccess())
+}
+
 // GetLiveJobProgress returns the visible Jobs whose progress changed after
 // since: the live feed beside the durable event stream.
 func (ctx *MahresourcesContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {

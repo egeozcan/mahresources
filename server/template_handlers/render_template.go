@@ -7,6 +7,7 @@ import (
 	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
+	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/loaders"
 	"mahresources/server/template_handlers/template_context_providers"
 	_ "mahresources/server/template_handlers/template_filters"
@@ -46,7 +47,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
-		if accept := request.Header.Get("Accept"); strings.Contains(accept, constants.JSON) || strings.HasSuffix(request.URL.Path, ".json") {
+		if http_utils.TemplateRequestWantsJSON(request) {
 			writer.Header().Set("Content-Type", constants.JSON)
 			if statusCode, ok := context["_statusCode"].(int); ok && statusCode != http.StatusOK {
 				writer.WriteHeader(statusCode)

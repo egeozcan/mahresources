@@ -340,6 +340,20 @@ These routes preserve their existing download queue and handle shapes. They
 remain available during the documented compatibility window; they are not the
 canonical Job Center API.
 
+The `id` of a control or of `/v1/jobs/get`, here and on the download aliases
+above, is either a legacy handle or the canonical Job id that `/v1/jobs` lists,
+for downloads, group exports and imports, Resource Reduction computation and
+similarity recomputes. A legacy handle names the current Retry leaf; a
+canonical id names exactly that Job and never follows a Retry, so a control sent
+to an ancestor's id acts on the ancestor, and a Retry of an ancestor that
+already has a successor is refused. Either id resolves only to a Job the caller
+can see, and answers 404 otherwise.
+
+A row for a transfer this process's queue no longer holds is projected from the
+durable Job, which keeps no plaintext URL: its `url` is the scheme and host only
+and it has no `name`. The same holds for download history rows once legacy
+plaintext inputs are retired.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
@@ -349,7 +363,7 @@ canonical Job Center API.
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
 | `GET` | `/v1/jobs/get` | Return one job snapshot by id |
-| `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
+| `POST` | `/v1/jobs/clearCompleted` | Clear every finished job (completed, failed, cancelled) from the legacy queue; canonical Jobs are not dismissed |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
 
 Canonical list, detail, command, timeline, output, summary, and export routes

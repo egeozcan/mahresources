@@ -59,8 +59,8 @@ mr jobs summary export --from 2024-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --f
 | `--no-inbound-relationship` | string | `` | Filter Jobs no visible Job links to with this relationship (for example, not yet retried) |
 | `--search` | string | `` | Search visible Job text and output labels |
 | `--command` | string | `` | Filter Jobs currently advertising this command key |
-| `--pinned` | string | `` | Filter this viewer's pin preference (true or false) |
-| `--dismissed` | string | `` | Filter this viewer's dismissal preference (true or false) |
+| `--pinned` | string | `` | Filter this viewer's pin preference (true, false or any) |
+| `--dismissed` | string | `` | Filter this viewer's dismissal preference (true, false or any) |
 | `--from` | string | `` | Inclusive start time in RFC3339 form (required) **(required)** |
 | `--to` | string | `` | Inclusive end time in RFC3339 form (required) **(required)** |
 | `--format` | string | `json` | Artifact format: csv or json |

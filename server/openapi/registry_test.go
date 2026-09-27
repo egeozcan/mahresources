@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -293,6 +294,24 @@ func TestGenerateSpec_ExtraQueryParams(t *testing.T) {
 	}
 	if !paramMap["tags"] {
 		t.Error("expected 'tags' parameter")
+	}
+}
+
+// A string parameter that takes a closed set of values publishes the set, so a
+// generated client can send every value the server accepts.
+func TestGenerateSpec_ExtraQueryParamEnum(t *testing.T) {
+	r := NewRegistry()
+	r.Register(RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs", OperationID: "listJobs", Summary: "List", Tags: []string{"jobs"},
+		ExtraQueryParams: []QueryParam{{Name: "dismissed", Type: "string", Enum: []string{"true", "false", "any"}}},
+	})
+	spec := r.GenerateSpec()
+	param := spec.Paths.Find("/v1/jobs").Get.Parameters[0].Value
+	if !param.Schema.Value.Type.Is("string") {
+		t.Fatalf("dismissed schema type = %v, want string", param.Schema.Value.Type)
+	}
+	if got := fmt.Sprint(param.Schema.Value.Enum); got != "[true false any]" {
+		t.Fatalf("dismissed enum = %s, want [true false any]", got)
 	}
 }
 

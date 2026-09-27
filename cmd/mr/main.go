@@ -41,6 +41,8 @@ func main() {
 			opts.Quiet = quiet
 		},
 		SilenceUsage: true,
+		// main prints the error once; cobra printing it too wrote every error twice.
+		SilenceErrors: true,
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "http://localhost:8181", "mahresources server URL (env: MAHRESOURCES_URL)")
@@ -88,7 +90,7 @@ func main() {
 	commands.ApplyHelpCustomizations(rootCmd)
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }

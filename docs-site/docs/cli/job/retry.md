@@ -6,14 +6,20 @@ sidebar_label: retry
 
 # mr job retry
 
-Re-queue a failed or cancelled download job for another attempt.
-Retry only works against jobs in the `failed` or `cancelled` state;
-the server rejects retry on jobs that are still active, paused, or
-already completed. A retry is also refused with HTTP 409 while any queued
-or running job is already fetching the same URL, so one URL is never
-transferred twice. The existing job's ID is reused: progress, error
-message, and completion times are cleared, then the worker re-runs the
-original URL fetch.
+Queue another attempt of a failed or cancelled download. Retry creates
+a new Job linked to the one it retries and leaves the original Job's
+outcome as it was; the answer's `canonicalJobId` names the new Job.
+`<id>` is the Job id `jobs list` prints, or the legacy handle `job
+submit` returns as `id`. A legacy handle moves to the new Job, so the
+same handle can be retried again later; a Job id keeps naming the Job
+it was, and a Job that already has a Retry cannot be retried again
+through its own id.
+
+Retry only works against a Job that failed or was cancelled; the
+server rejects it for a Job that is still active, paused, or
+succeeded. A retry is also refused with HTTP 409 while any queued or
+running job is already fetching the same URL, so one URL is never
+transferred twice.
 
 Useful when a transient network error blew up the first attempt.
 Persistent failures need an updated URL, which means calling
@@ -32,16 +38,16 @@ Positional arguments:
 
 ## Examples
 
-**Retry a specific failed job**
+**Retry a specific failed Job**
 
 ```bash
-mr job retry a1b2c3d4
+mr job retry 018f4db1-9b40-7f54-8f16-37a449bcf01d
 ```
 
-**Retry every failed job in the queue**
+**Retry every visible Job that currently offers Retry**
 
 ```bash
-mr jobs list --json | jq -r '.jobs[] | select(.status == "failed") | .id' | xargs -I {} mr job retry {}
+mr jobs list --command retry --json | jq -r '.jobs[].id' | xargs -I {} mr job retry {}
 ```
 
 
@@ -59,7 +65,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with status set to "retrying"
+Object with status set to "retrying" and canonicalJobId naming the new Retry Job
 
 ## Exit Codes
 

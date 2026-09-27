@@ -547,8 +547,10 @@ func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.Response
 		}
 		if projection.Entry == nil {
 			// The transfer is not in this process's queue: there is no executor to
-			// confirm a hold, and "paused" would be a state nothing agreed to.
-			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			// confirm a hold, and "paused" would be a state nothing agreed to. The
+			// Job itself is there and visible — the caller may just have listed
+			// it — so this is a refusal, not a missing Job.
+			http_utils.HandleError(fmt.Errorf("this job is not running in this server process, so it cannot be paused here"), writer, request, http.StatusConflict)
 			return
 		}
 

@@ -1171,6 +1171,45 @@ func (s *Service) PublishedEvents(deps Deps, access Access, afterDelivery uint64
 	return eventsOf(rows), nil
 }
 
+// EventSequenceHead returns the last delivery sequence the allocator handed out,
+// or zero when it has handed out none: the highest cursor this database has ever
+// issued. Nothing lowers it. Retention deletes ended Jobs and their events, and a
+// viewer's visibility can narrow, but the allocator row keeps its value, so a
+// resume cursor above it was issued by a different database, one since restored
+// from an older backup or wiped, and never by this one.
+func (s *Service) EventSequenceHead(deps Deps) (uint64, error) {
+	var values []uint64
+	if err := deps.DB.Model(&models.JobEventSequence{}).
+		Where("id = ?", models.JobEventSequenceRowID).
+		Pluck("value", &values).Error; err != nil {
+		return 0, fmt.Errorf("jobs: read event sequence head: %w", err)
+	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+	return values[0], nil
+}
+
+// PublishedEventHead returns the delivery sequence of the last published event
+// the asker may see, or zero when there is none. A stream that resets a cursor
+// this database never issued resumes from here: nothing below it is news to a
+// client starting over, and nothing above it has been published for this asker.
+func (s *Service) PublishedEventHead(deps Deps, access Access) (uint64, error) {
+	var heads []uint64
+	err := deps.DB.Model(&models.JobEvent{}).
+		Where("delivery_sequence IS NOT NULL").
+		Where("job_id IN (?)", visibleJobIDs(deps.DB, access)).
+		Order("delivery_sequence DESC").Limit(1).
+		Pluck("delivery_sequence", &heads).Error
+	if err != nil {
+		return 0, fmt.Errorf("jobs: read published event head: %w", err)
+	}
+	if len(heads) == 0 {
+		return 0, nil
+	}
+	return heads[0], nil
+}
+
 // Outputs returns one visible Job's typed outputs.
 //
 // The Job's visibility is the gate and the output is then authorized on its own:

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
 
@@ -693,6 +694,148 @@ describe('Job Center panel accessibility hooks', () => {
         });
         return panel;
     }
+
+    test('a stream reset stops the drawer instead of reloading the page it sits on', async () => {
+        const reload = vi.fn();
+        vi.stubGlobal('location', { reload });
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const close = vi.fn();
+        panel.eventSource = { close } as any;
+        panel.jobs = [{ id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 }];
+        panel.details = { 'dl-1': panel.jobs[0] };
+        panel.requestJSON = vi.fn(async () => ({ jobs: [] }));
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+
+        expect(reload).not.toHaveBeenCalled();
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(panel.streamStopped).toBe(true);
+        expect(panel.jobs).toEqual([]);
+        expect(panel.details).toEqual({});
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith(expect.stringContaining('Job updates stopped'));
+
+        // Nothing reads or repairs the list from here on, and a stream cannot
+        // be reopened under it.
+        panel.schedulePanelRefresh();
+        await panel.refresh();
+        panel.connect();
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        expect(panel.eventSource).toBeNull();
+
+        panel.reloadPage();
+        expect(reload).toHaveBeenCalledTimes(1);
+        vi.unstubAllGlobals();
+    });
+
+    test('a command confirmed after the drawer stopped is never sent', async () => {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        let answerConfirmation: (value: boolean) => void = () => {};
+        vi.stubGlobal('Alpine', { store: () => ({ ask: () => new Promise(resolve => { answerConfirmation = resolve; }) }) });
+        panel.requestJSON = vi.fn(async () => ({ result: {} }));
+        const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 };
+
+        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget replay input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answerConfirmation(true);
+        await running;
+
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    test('a stopped drawer says only that it stopped, and nothing about Jobs after', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), cancel: vi.fn(), destroy: vi.fn() } as any;
+        // A count of outcomes still on its way, and one scheduled to be said.
+        panel._countNews = { jobId: null, count: 2, text: '2 jobs finished or need attention; see the Jobs panel.' };
+        panel.countUnsaidOutcome();
+
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        panel.announceNews([{ jobId: 'dl-1', state: 'failed', version: 3, text: 'old.bin failed.' }]);
+        panel.countUnsaidOutcome();
+        await vi.advanceTimersByTimeAsync(5000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(["Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs."]);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    // An answer to a request the drawer sent before it stopped lands on a
+    // stopped drawer: it must change nothing and say nothing.
+    function lateAnswers(panel: any) {
+        const pending: Array<(value: unknown) => void> = [];
+        const fetchMock = vi.fn(() => new Promise(resolve => {
+            pending.push(body => resolve({ ok: true, status: 200, json: async () => body }));
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        return { fetchMock, answer: (body: unknown) => pending.shift()!(body) };
+    }
+
+    test('a command answered after the drawer stopped changes and says nothing', async () => {
+        const panel = jobPanel();
+        const { answer } = lateAnswers(panel);
+        const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'running', version: 10 };
+        panel.jobs = [job];
+
+        const running = panel.runCommandUnfocused(job, { key: 'cancel', label: 'Cancel', endpoint: '/v1/jobs/dl-1/commands/cancel', jobVersion: 10 });
+        await Promise.resolve();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ result: { job: { ...job, state: 'cancelled', version: 11 }, message: 'Cancelled' } });
+        await running;
+
+        expect(panel.notice).toBe('');
+        expect(panel.jobs).toEqual([]);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        vi.unstubAllGlobals();
+    });
+
+    test('a pin refresh answered after the drawer stopped keeps no detail', async () => {
+        const panel = jobPanel();
+        const { answer } = lateAnswers(panel);
+        const reading = panel.refreshJobPreference('old-job').catch(() => null);
+        await Promise.resolve();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ id: 'old-job', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10, pinned: true });
+        await reading;
+
+        expect(panel.details).toEqual({});
+        vi.unstubAllGlobals();
+    });
+
+    test('a dismissal answered after the drawer stopped changes and says nothing', async () => {
+        const panel = jobPanel();
+        const { fetchMock, answer } = lateAnswers(panel);
+        panel.jobs = [{ id: 'dl-2', title: 'done.bin', kind: 'remote-download', state: 'succeeded', version: 4, commands: [{ key: 'dismiss', label: 'Dismiss', bulk: true, jobVersion: 4 }] }];
+
+        const dismissing = panel.dismissFinished();
+        await Promise.resolve();
+        answer({ jobs: [{ id: 'dl-2' }], nextCursor: '' });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ results: [{ jobId: 'dl-2', status: 'succeeded', code: 'applied' }] });
+        await dismissing;
+
+        expect(panel.notice).toBe('');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        vi.unstubAllGlobals();
+    });
+
+    test('the stopped drawer says why and offers a reload in place of its list', () => {
+        const template = readFileSync(fileURLToPath(new URL('../../templates/partials/jobPanel.tpl', import.meta.url)), 'utf8');
+        const at = template.indexOf('<div x-show="streamStopped"');
+        expect(at).toBeGreaterThan(-1);
+        const stopped = template.slice(at, template.indexOf('</div>', at));
+        expect(stopped).toContain('data-job-panel-stopped');
+        expect(stopped).toContain("Job updates stopped because this server's database was restored or replaced.");
+        expect(stopped).toContain('@click="reloadPage()"');
+        expect(template).toContain('jobs.length === 0 && !error && !streamStopped');
+    });
 
     test('announces a transition a refresh reads before the job\'s own event arrives', async () => {
         const panel = refreshingPanel([{ id: 'dl-1', title: 'clip.mp4', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' }]);
@@ -2651,11 +2794,44 @@ describe('Job Center lifecycle event types', () => {
         }
     });
 
-    test('every literal event type a transition or finish carries is known to the panel', () => {
-        const { execSync } = require('node:child_process');
-        const hits = execSync(`grep -rhoE 'EventInput\\{Type: *"[^"]+"' --include='*.go' --exclude='*_test.go' ${repo('application_context')} ${repo('jobs')} ${repo('download_queue')} ${repo('plugin_system')} || true`, { encoding: 'utf8' });
-        const literals = [...hits.matchAll(/"([^"]+)"/g)].map(match => match[1]);
-        expect(literals).toContain('not-started');
-        for (const type of literals) expect(panelLifecycleEvents.has(type), type).toBe(true);
+    // The non-test Go sources of one package directory and its subpackages, each
+    // package's files joined so its own constants can be resolved.
+    const goPackages = (dir: string): string[] => {
+        const own = readdirSync(dir, { withFileTypes: true });
+        const files = own.filter(entry => entry.isFile() && entry.name.endsWith('.go') && !entry.name.endsWith('_test.go'));
+        const nested = own.filter(entry => entry.isDirectory()).flatMap(entry => goPackages(join(dir, entry.name)));
+        return [files.map(file => readFileSync(join(dir, file.name), 'utf8')).join('\n'), ...nested];
+    };
+
+    // Every type an EventInput is built with, whether a transition, a finish or
+    // an appended event: a string literal, or a constant of the package that
+    // builds it, read to its value, whatever the constant is called. Only a
+    // qualified jobs.EventX from another package is left to the test above; an
+    // operand of any other shape fails, so a new way of naming an event cannot
+    // slip past this unread.
+    const eventInputTypes = (): Set<string> => {
+        const types = new Set<string>();
+        for (const dir of ['application_context', 'jobs', 'download_queue', 'plugin_system', 'plugin_commands']) {
+            for (const source of goPackages(repo(dir))) {
+                const constants = new Map([...source.matchAll(/^\s*(?:const\s+)?(\w+)\s*(?:string\s*)?=\s*"([^"]*)"/gm)].map(match => [match[1], match[2]]));
+                for (const [, raw] of source.matchAll(/EventInput\{\s*Type:\s*([^,}]+)/g)) {
+                    const operand = raw.trim();
+                    const literal = operand.match(/^"([^"]+)"$/);
+                    if (literal) types.add(literal[1]);
+                    else if (constants.has(operand)) types.add(constants.get(operand)!);
+                    else if (/^jobs\.Event[A-Z]\w*$/.test(operand)) continue;
+                    else throw new Error(`${dir}: EventInput type ${operand} is neither a literal nor a constant of its package`);
+                }
+            }
+        }
+        return types;
+    };
+
+    test('every event type a transition or finish carries is known to the panel', () => {
+        const types = eventInputTypes();
+        expect([...types]).toContain('not-started');
+        for (const type of types) {
+            if (!NOT_TRANSITIONS.has(type)) expect(panelLifecycleEvents.has(type), type).toBe(true);
+        }
     });
 });

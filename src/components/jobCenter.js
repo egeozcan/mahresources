@@ -353,6 +353,19 @@ export function streamCursorSequence(value) {
     return Number.isFinite(sequence) ? sequence : null;
 }
 
+// Answers a `job-caught-up` whose `reset` says the cursor this page resumed from
+// was never issued by the database now serving it: one restored from an older
+// backup, or wiped. Everything the page holds, every answer still on its way
+// and every dialog still open belongs to the database that did, so the page is
+// loaded again rather than repaired in place, and the stream is closed first so
+// nothing it says in the meantime is applied. Returns whether it reloaded.
+export function reloadAfterStreamReset(boundary, eventSource) {
+    if (boundary?.reset !== true) return false;
+    eventSource?.close?.();
+    globalThis.location?.reload?.();
+    return true;
+}
+
 // A succeeded job is complete whatever its last progress row says. Producers
 // publish progress while they work and none rewrites it on the way out, so a
 // finished job keeps whatever was current when the work ended: a plugin action's
@@ -604,6 +617,7 @@ export function jobCenter(options = {}) {
             catch { return; }
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
+            if (reloadAfterStreamReset(boundary, this.eventSource)) return;
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
         },

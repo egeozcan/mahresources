@@ -402,6 +402,24 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
     });
 
+    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+        const reload = vi.fn();
+        vi.stubGlobal('location', { reload });
+        const center = jobCenter();
+        const close = vi.fn();
+        center.eventSource = { close } as any;
+        center.lastSequence = 5000;
+        center.load = vi.fn();
+
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(center.lastSequence).toBe(5000);
+        expect(center.load).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
     test('does not announce a replay snapshot that finishes loading after the catch-up boundary', async () => {
         let resolveDetail: (value: unknown) => void = () => {};
         const detailRequest = new Promise(resolve => { resolveDetail = resolve; });

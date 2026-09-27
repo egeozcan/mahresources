@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -70,6 +71,180 @@ func TestCanonicalJobSSEPublishesHTTPSubmission(t *testing.T) {
 	}
 	if frame.SSEID != "v2:"+strconv.FormatUint(frame.DeliverySequence, 10) {
 		t.Fatalf("SSE id = %q, want cursor v2:%d", frame.SSEID, frame.DeliverySequence)
+	}
+}
+
+// TestCanonicalJobSSEResetsACursorThisDatabaseNeverIssued drives the reconnect a
+// tab makes after the database behind it was restored or wiped: its
+// Last-Event-ID is beyond anything this database published. The stream must say
+// it reset and then deliver the next Job, rather than filtering everything up to
+// a sequence this database has not reached.
+func TestCanonicalJobSSEResetsACursorThisDatabaseNeverIssued(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	response := newCanonicalSSEWriter()
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(streamCtx)
+	request.Header.Set("Last-Event-ID", "v2:999999")
+	finished := make(chan struct{})
+	go func() {
+		tc.Router.ServeHTTP(response, request)
+		close(finished)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("canonical Job SSE did not stop after the client disconnected")
+		}
+	}()
+
+	if !response.waitForText(`"reset":true`, 2*time.Second) {
+		t.Fatalf("a cursor beyond the head was resumed without a reset; stream was %s", response.body())
+	}
+
+	from := time.Now().UTC().Add(-181 * 24 * time.Hour)
+	submitted := tc.MakeRequest(http.MethodPost, "/v1/jobs/summary/export", map[string]any{
+		"from": from, "to": time.Now().UTC(), "format": "json",
+	})
+	if submitted.Code != http.StatusAccepted {
+		t.Fatalf("submit Job answered %d: %s", submitted.Code, submitted.Body.String())
+	}
+	var body struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &body); err != nil || body.Job.ID == "" {
+		t.Fatalf("decode accepted Job %s: %v", submitted.Body.String(), err)
+	}
+	if _, ok := response.waitForAcceptedEvent(t, body.Job.ID, 5*time.Second); !ok {
+		t.Fatalf("the reset stream never delivered the next Job's accepted event; stream was %s", response.body())
+	}
+}
+
+// submitPublishedExport queues a summary export as the given session (none for
+// an auth-off server) and waits for its accepted event to be published,
+// answering the Job id and that event's delivery cursor.
+func submitPublishedExport(t *testing.T, tc *TestContext, cookie *http.Cookie, csrf string) (string, uint64) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"from": time.Now().UTC().Add(-181 * 24 * time.Hour), "to": time.Now().UTC(), "format": "json"})
+	if err != nil {
+		t.Fatalf("encode export: %v", err)
+	}
+	headers := map[string]string{"Accept": "application/json", "Content-Type": "application/json"}
+	var cookies []*http.Cookie
+	if cookie != nil {
+		headers["X-CSRF-Token"] = csrf
+		cookies = []*http.Cookie{cookie}
+	}
+	submitted := doReq(tc, http.MethodPost, "/v1/jobs/summary/export", headers, cookies, bytes.NewReader(body))
+	if submitted.Code != http.StatusAccepted {
+		t.Fatalf("submit export answered %d: %s", submitted.Code, submitted.Body.String())
+	}
+	var accepted struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &accepted); err != nil || accepted.Job.ID == "" {
+		t.Fatalf("decode export acceptance %s: %v", submitted.Body.String(), err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var deliveries []uint64
+		if err := tc.DB.Model(&models.JobEvent{}).Where("job_id = ? AND delivery_sequence IS NOT NULL", accepted.Job.ID).
+			Order("delivery_sequence DESC").Limit(1).Pluck("delivery_sequence", &deliveries).Error; err != nil {
+			t.Fatalf("read delivery: %v", err)
+		}
+		if len(deliveries) == 1 {
+			return accepted.Job.ID, deliveries[0]
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the export's events were never published")
+	return "", 0
+}
+
+// caughtUpFrame opens the canonical stream resuming from lastEventID and answers
+// the data of its job-caught-up frame.
+func caughtUpFrame(t *testing.T, tc *TestContext, lastEventID string, cookie *http.Cookie) string {
+	t.Helper()
+	streamCtx, cancel := context.WithCancel(context.Background())
+	response := newCanonicalSSEWriter()
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(streamCtx)
+	request.Header.Set("Last-Event-ID", lastEventID)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	finished := make(chan struct{})
+	go func() {
+		tc.Router.ServeHTTP(response, request)
+		close(finished)
+	}()
+	caughtUp := response.waitForText("event: job-caught-up", 3*time.Second)
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Error("canonical Job SSE did not stop after the client disconnected")
+	}
+	if !caughtUp {
+		t.Fatalf("the stream never caught up; it was %s", response.body())
+	}
+	body := response.body()
+	frame := body[strings.Index(body, "event: job-caught-up\ndata: ")+len("event: job-caught-up\ndata: "):]
+	return frame[:strings.Index(frame, "\n")]
+}
+
+// TestCanonicalJobSSEDoesNotResetACursorWhoseEventsWereDeleted covers the viewer's
+// newest events leaving the database without the database changing: retention
+// deletes ended Jobs and their events. The viewer's cursor is now above anything
+// it can see, but this database issued it, and a reset would reload every open
+// page for nothing.
+func TestCanonicalJobSSEDoesNotResetACursorWhoseEventsWereDeleted(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	jobID, cursor := submitPublishedExport(t, tc, nil, "")
+	if err := tc.DB.Where("job_id = ?", jobID).Delete(&models.JobEvent{}).Error; err != nil {
+		t.Fatalf("delete the Job's events: %v", err)
+	}
+	if err := tc.DB.Where("id = ?", jobID).Delete(&models.Job{}).Error; err != nil {
+		t.Fatalf("delete the Job: %v", err)
+	}
+
+	want := fmt.Sprintf(`{"cursor":"v2:%d"}`, cursor)
+	if got := caughtUpFrame(t, tc, fmt.Sprintf("v2:%d", cursor), nil); got != want {
+		t.Fatalf("a cursor whose events were deleted was answered %s, want %s", got, want)
+	}
+}
+
+// TestCanonicalJobSSEDoesNotResetACursorAboveANarrowedView covers a viewer whose
+// cursor names events it cannot see: its visibility narrowed, or the cursor was
+// another account's. This database issued it, so it is resumed, not reset. A
+// cursor above anything this database issued is reset.
+func TestCanonicalJobSSEDoesNotResetACursorAboveANarrowedView(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	viewer, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "sse-narrowed-viewer", Password: "password1", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+	viewerCookie, _ := loginSummaryExportSession(t, tc, viewer.Username, "password1")
+	rootCookie, rootCSRF := loginSummaryExportSession(t, tc, "admin", "adminpw1")
+	_, cursor := submitPublishedExport(t, tc, rootCookie, rootCSRF)
+
+	want := fmt.Sprintf(`{"cursor":"v2:%d"}`, cursor)
+	if got := caughtUpFrame(t, tc, fmt.Sprintf("v2:%d", cursor), viewerCookie); got != want {
+		t.Fatalf("a cursor above the viewer's view was answered %s, want %s", got, want)
+	}
+	if got := caughtUpFrame(t, tc, fmt.Sprintf("v2:%d", cursor+1000), viewerCookie); got != `{"cursor":"v2:0","reset":true}` {
+		t.Fatalf("a cursor above the allocator was answered %s, want a reset to the viewer's head", got)
 	}
 }
 

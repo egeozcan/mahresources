@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +47,8 @@ func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(jobsHelpFS, "jobs_help/job_submit.md")
-	var urlsStr, tagsStr, groupsStr, name string
+	var urlLists, singleURLs []string
+	var tagsStr, groupsStr, name string
 	var ownerID uint
 
 	cmd := &cobra.Command{
@@ -58,13 +60,9 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Server expects ResourceFromRemoteCreator with a single URL field.
 			// Multiple URLs are separated by newlines; the server splits them.
-			urlParts := strings.Split(urlsStr, ",")
-			var urls []string
-			for _, u := range urlParts {
-				u = strings.TrimSpace(u)
-				if u != "" {
-					urls = append(urls, u)
-				}
+			urls := submitURLs(urlLists, singleURLs)
+			if len(urls) == 0 {
+				return errors.New("no URL given: pass --url or --urls")
 			}
 
 			body := map[string]any{
@@ -97,17 +95,51 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 
+			// A batch is answered per URL: the server queues what it accepts and
+			// names what it refuses, so a refusal is this command's failure even
+			// though the request succeeded.
+			var answer struct {
+				Jobs []struct {
+					ID             string `json:"id"`
+					CanonicalJobID string `json:"canonicalJobId"`
+				} `json:"jobs"`
+				Refused []struct {
+					URL    string `json:"url"`
+					Reason string `json:"reason"`
+				} `json:"refused"`
+			}
+			_ = json.Unmarshal(raw, &answer)
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
-			} else {
+			} else if len(answer.Refused) == 0 {
 				output.PrintMessage("Download job submitted successfully.")
+			} else if len(answer.Jobs) > 0 {
+				// A partly refused batch is resubmitted by hand, so the Jobs that
+				// were queued are named: resubmitting them would fetch them twice.
+				output.PrintMessage(fmt.Sprintf("Queued %d download job(s):", len(answer.Jobs)))
+				for _, job := range answer.Jobs {
+					id := job.CanonicalJobID
+					if id == "" {
+						id = job.ID
+					}
+					output.PrintMessage("  " + id)
+				}
+			}
+			if len(answer.Refused) > 0 {
+				lines := make([]string, 0, len(answer.Refused))
+				for _, refused := range answer.Refused {
+					lines = append(lines, fmt.Sprintf("  %s: %s", refused.URL, refused.Reason))
+				}
+				return fmt.Errorf("%d of %d URLs were refused:\n%s",
+					len(answer.Refused), len(answer.Refused)+len(answer.Jobs), strings.Join(lines, "\n"))
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&urlsStr, "urls", "", "Comma-separated URLs to download (required)")
-	cmd.MarkFlagRequired("urls")
+	cmd.Flags().StringArrayVar(&urlLists, "urls", nil, "URLs to download, separated by newlines or by a comma that starts another http(s) URL (repeatable)")
+	cmd.Flags().StringArrayVar(&singleURLs, "url", nil, "One URL to download, taken as written, commas included (repeatable)")
+	cmd.MarkFlagsOneRequired("urls", "url")
 	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs")
 	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs")
 	cmd.Flags().StringVar(&name, "name", "", "Job name")
@@ -116,67 +148,74 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return cmd
 }
 
-func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_cancel.md")
-	return &cobra.Command{
-		Use:         "cancel <id>",
-		Short:       "Cancel a job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
-
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/cancel", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job cancelled successfully.")
-			}
-			return nil
-		},
+// submitURLs reads the URLs one submission names. A --url value is one URL, taken
+// as written. A --urls value is a list, split at newlines (the server's own
+// separator) and at a comma that begins another http:// or https:// URL. Commas
+// are legal in URL paths and queries, so a comma anywhere else belongs to the URL.
+func submitURLs(lists, singles []string) []string {
+	var urls []string
+	add := func(raw string) {
+		if raw = strings.TrimSpace(raw); raw != "" {
+			urls = append(urls, raw)
+		}
 	}
+	for _, list := range lists {
+		for line := range strings.SplitSeq(list, "\n") {
+			start := 0
+			for i := 0; i < len(line); i++ {
+				if line[i] == ',' && startsHTTPURL(line[i+1:]) {
+					add(line[start:i])
+					start = i + 1
+				}
+			}
+			add(line[start:])
+		}
+	}
+	for _, single := range singles {
+		add(single)
+	}
+	return urls
+}
+
+// startsHTTPURL reports whether text, after leading blanks, begins an http or
+// https URL.
+func startsHTTPURL(text string) bool {
+	text = strings.ToLower(strings.TrimLeft(text, " \t"))
+	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
+}
+
+// jobControlVerb is one of the singular control verbs: the legacy route it posts
+// to, which is also the command key a Job advertises for it, the status that
+// route answers with, and what the command prints on success.
+type jobControlVerb struct {
+	action, status, done string
+}
+
+func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return newJobControlCmd(c, opts, "jobs_help/job_cancel.md", "cancel <id>", "Cancel a job",
+		jobControlVerb{action: "cancel", status: "cancelled", done: "Job cancelled successfully."})
 }
 
 func newJobPauseCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_pause.md")
-	return &cobra.Command{
-		Use:         "pause <id>",
-		Short:       "Pause a job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
-
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/pause", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job paused successfully.")
-			}
-			return nil
-		},
-	}
+	return newJobControlCmd(c, opts, "jobs_help/job_pause.md", "pause <id>", "Pause a job",
+		jobControlVerb{action: "pause", status: "paused", done: "Job paused successfully."})
 }
 
 func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_resume.md")
+	return newJobControlCmd(c, opts, "jobs_help/job_resume.md", "resume <id>", "Resume a job",
+		jobControlVerb{action: "resume", status: "resumed", done: "Job resumed successfully."})
+}
+
+func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return newJobControlCmd(c, opts, "jobs_help/job_retry.md", "retry <id>", "Retry a failed job",
+		jobControlVerb{action: "retry", status: "retrying", done: "Job retried successfully."})
+}
+
+func newJobControlCmd(c *client.Client, opts *output.Options, helpFile, use, short string, verb jobControlVerb) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, helpFile)
 	return &cobra.Command{
-		Use:         "resume <id>",
-		Short:       "Resume a job",
+		Use:         use,
+		Short:       short,
 		Long:        help.Long,
 		Example:     help.Example,
 		Annotations: help.Annotations,
@@ -186,46 +225,85 @@ func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			q.Set("id", args[0])
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/resume", q, nil, &raw); err != nil {
-				return err
+			if err := c.Post("/v1/jobs/"+verb.action, q, nil, &raw); err != nil {
+				// The legacy route projects downloads and the other queue-backed
+				// Kinds. A Job id it does not know may still name a Job of another
+				// Kind, which is controlled by the command it advertises.
+				var apiErr *client.APIError
+				if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || !canonicalJobIDPattern.MatchString(args[0]) {
+					return err
+				}
+				if raw, err = runAdvertisedJobControl(c, args[0], verb, err); err != nil {
+					return err
+				}
 			}
 
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
 			} else {
-				output.PrintMessage("Job resumed successfully.")
+				output.PrintMessage(verb.done)
 			}
 			return nil
 		},
 	}
 }
 
-func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	help := helptext.Load(jobsHelpFS, "jobs_help/job_retry.md")
-	return &cobra.Command{
-		Use:         "retry <id>",
-		Short:       "Retry a failed job",
-		Long:        help.Long,
-		Example:     help.Example,
-		Annotations: help.Annotations,
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+// canonicalJobIDPattern matches a canonical Job id, the UUID `jobs list` prints.
+// A legacy handle is never one.
+var canonicalJobIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-			var raw json.RawMessage
-			if err := c.Post("/v1/jobs/retry", q, nil, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Job retried successfully.")
-			}
-			return nil
-		},
+// runAdvertisedJobControl runs a control verb as the command a Job advertises, and
+// answers in the shape the legacy route would have. The verb names the command,
+// so it needs no --confirm. A Job the viewer cannot see answers the legacy
+// route's own not-found, and one that does not offer the command says so.
+func runAdvertisedJobControl(c *client.Client, jobID string, verb jobControlVerb, notFound error) (json.RawMessage, error) {
+	job, err := getCLIJobDetail(c, jobID)
+	if err != nil {
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return nil, notFound
+		}
+		return nil, err
 	}
+	advertised, found := findCLIJobCommand(job, verb.action)
+	if !found {
+		return nil, fmt.Errorf("Job %s does not offer %s", jobID, verb.action)
+	}
+	endpoint, err := validateCLIJobCommandEndpoint(advertised.Endpoint, job.ID, advertised.Key)
+	if err != nil {
+		return nil, err
+	}
+	expectedVersion := advertised.JobVersion
+	if expectedVersion == 0 {
+		expectedVersion = job.Version
+	}
+	key, err := commandIdempotencyKey("")
+	if err != nil {
+		return nil, err
+	}
+	var result json.RawMessage
+	body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
+	if err := c.Post(endpoint, nil, body, &result); err != nil {
+		// This verb takes no --idempotency-key, so the rerun that can send the
+		// same key again is the equivalent job command, with the confirmation
+		// job command asks for when the command is advertised as needing one.
+		confirm := ""
+		if advertised.Destructive || advertised.Confirmation != "" {
+			confirm = " --confirm"
+		}
+		return nil, fmt.Errorf("%w\nThe request was sent with idempotency key %s. To retry it without applying it twice, run: mr job command %s %s%s --idempotency-key %s",
+			err, key, jobID, verb.action, confirm, key)
+	}
+	var outcome struct {
+		JobID       string `json:"jobId"`
+		SuccessorID string `json:"successorId"`
+	}
+	_ = json.Unmarshal(result, &outcome)
+	canonicalJobID := outcome.SuccessorID
+	if canonicalJobID == "" {
+		canonicalJobID = job.ID
+	}
+	return json.Marshal(map[string]any{"status": verb.status, "canonicalJobId": canonicalJobID, "result": result})
 }
 
 // NewJobsCmd returns the canonical plural Job Center commands.
@@ -259,6 +337,11 @@ func newJobsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Example:     help.Example,
 		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The global --page numbers offset pages, and this list is keyset-paged:
+			// a page number it silently ignored would repeat the first page.
+			if cmd.Flags().Changed("page") {
+				return errors.New("jobs list pages with --cursor, not --page: pass the nextCursor the previous page printed")
+			}
 			query, err := filters.query(cmd)
 			if err != nil {
 				return err
@@ -291,8 +374,10 @@ func newJobsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				rows = append(rows, []string{job.ID, string(job.State), job.Kind, job.Phase, job.Title, job.AcceptedAt.Format(time.RFC3339)})
 			}
 			output.Print(*opts, []string{"ID", "STATE", "KIND", "PHASE", "TITLE", "ACCEPTED"}, rows, raw)
+			// The continuation is a note for the reader, not a row: stdout carries
+			// only rows, so `--quiet` output can be piped as ids.
 			if !opts.JSON && page.NextCursor != "" {
-				output.PrintMessage("More Jobs are available; continue with --cursor " + page.NextCursor)
+				fmt.Fprintln(cmd.ErrOrStderr(), "More Jobs are available; continue with --cursor "+page.NextCursor)
 			}
 			return nil
 		},
@@ -374,8 +459,8 @@ func (f *jobFilterFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.noInboundRelationship, "no-inbound-relationship", "", "Filter Jobs no visible Job links to with this relationship (for example, not yet retried)")
 	cmd.Flags().StringVar(&f.search, "search", "", "Search visible Job text and output labels")
 	cmd.Flags().StringVar(&f.command, "command", "", "Filter Jobs currently advertising this command key")
-	cmd.Flags().StringVar(&f.pinned, "pinned", "", "Filter this viewer's pin preference (true or false)")
-	cmd.Flags().StringVar(&f.dismissed, "dismissed", "", "Filter this viewer's dismissal preference (true or false)")
+	cmd.Flags().StringVar(&f.pinned, "pinned", "", "Filter this viewer's pin preference (true, false or any)")
+	cmd.Flags().StringVar(&f.dismissed, "dismissed", "", "Filter this viewer's dismissal preference (true, false or any)")
 }
 
 func (f cliJobFilterFlags) query(cmd *cobra.Command) (url.Values, error) {
@@ -424,8 +509,8 @@ func (f cliJobFilterFlags) query(cmd *cobra.Command) (url.Values, error) {
 		if value == "" {
 			continue
 		}
-		if _, err := strconv.ParseBool(value); err != nil {
-			return nil, fmt.Errorf("--%s must be true or false", flag)
+		if _, err := strconv.ParseBool(value); err != nil && value != "any" {
+			return nil, fmt.Errorf("--%s must be true, false or any", flag)
 		}
 		query.Set(flag, value)
 	}
@@ -472,7 +557,7 @@ func newJobsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().Uint64Var(&after, "after-sequence", 0, "Return events after this per-Job sequence")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Events per page (server maximum: 500)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Events per page (default 200, server maximum: 1000)")
 	return cmd
 }
 
@@ -583,7 +668,7 @@ func newJobCommandCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			var raw json.RawMessage
 			body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
 			if err := c.Post(endpoint, nil, body, &raw); err != nil {
-				return err
+				return commandRequestFailed(err, key)
 			}
 			printCLIJobCommandResult(opts, key, raw)
 			return nil
@@ -644,7 +729,7 @@ func newJobBulkCommandCmd(c *client.Client, opts *output.Options) *cobra.Command
 			var raw json.RawMessage
 			body := map[string]any{"jobIds": jobIDs, "idempotencyKey": key, "origin": "cli"}
 			if err := c.Post(endpoint, nil, body, &raw); err != nil {
-				return err
+				return commandRequestFailed(err, key)
 			}
 			printCLIJobCommandResult(opts, key, raw)
 			return nil
@@ -703,6 +788,14 @@ func commandIdempotencyKey(provided string) (string, error) {
 		return "", fmt.Errorf("generate command idempotency key: %w", err)
 	}
 	return hex.EncodeToString(random[:]), nil
+}
+
+// commandRequestFailed names the idempotency key a failed command request was
+// sent with. A request whose answer was lost may already have been applied, and
+// sending the same key again is how a retry avoids applying it twice, so a key the
+// CLI generated is printed when the request fails as well as when it succeeds.
+func commandRequestFailed(err error, key string) error {
+	return fmt.Errorf("%w\nThe request was sent with idempotency key %s. To retry it without applying it twice, rerun with --idempotency-key %s", err, key, key)
 }
 
 func printCLIJobCommandResult(opts *output.Options, key string, raw json.RawMessage) {

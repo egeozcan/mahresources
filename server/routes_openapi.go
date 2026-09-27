@@ -171,7 +171,7 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs/events", OperationID: "streamCanonicalJobEvents",
 		Summary: "Stream resumable canonical Job events", Tags: []string{"jobs"},
-		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream.",
+		Description:            "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. A resume cursor above the highest delivery sequence this database has issued (one issued by a database since restored or wiped) is answered from the viewer's own head, and job-caught-up then also carries a reset field set to true and, that once, the new cursor as its SSE id: nothing missed is replayed, so the client discards its cursor state and reads again. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like an ordinary job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream.",
 		LegacyJobCompatibility: true,
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "version", Type: "string", Description: "Set to 2 for the canonical stream; omit to retain the legacy compatibility stream."},
@@ -273,8 +273,8 @@ func canonicalJobFilterQueryParams() []openapi.QueryParam {
 		{Name: "ownerDeleted", Type: "boolean", Description: "true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it."},
 		{Name: "acceptedAfter", Type: "string", Description: "Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second."},
 		{Name: "acceptedBefore", Type: "string", Description: "Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second."},
-		{Name: "pinned", Type: "boolean", Description: "Filter this viewer's pin state."},
-		{Name: "dismissed", Type: "boolean", Description: "Filter this viewer's dismissal state."},
+		{Name: "pinned", Type: "string", Enum: []string{"true", "false", "any"}, Description: "Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter."},
+		{Name: "dismissed", Type: "string", Enum: []string{"true", "false", "any"}, Description: "Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter."},
 		{Name: "command", Type: "string", Description: "Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation."},
 	}
 }
@@ -2957,7 +2957,8 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Method:                 http.MethodPost,
 		Path:                   "/v1/jobs/clearCompleted",
 		OperationID:            "jobsClearCompleted",
-		Summary:                "Dismiss every finished job (completed, failed or cancelled)",
+		Summary:                "Clear every finished job (completed, failed or cancelled) from the legacy queue",
+		Description:            "Clears the legacy queue entries and plugin action handles the caller can see. It does not dismiss canonical Jobs, which the Jobs panel and /jobs keep listing until they are dismissed.",
 		Tags:                   []string{"jobs"},
 		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
 		LegacyJobCompatibility: true,

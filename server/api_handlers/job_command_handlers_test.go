@@ -189,3 +189,45 @@ func TestJobCommandMalformedBodyIsBadRequest(t *testing.T) {
 		t.Fatalf("status = %d called=%t, want 400 and no command: %s", recorder.Code, ctx.called, recorder.Body.String())
 	}
 }
+
+// TestEveryJobCommandConflictCarriesItsCode pins that a single-command 409 is
+// machine-readable whatever path produced it, including a version conflict the
+// service answered with an empty result, which the recheck under the command's
+// transaction does when a concurrent write wins.
+func TestEveryJobCommandConflictCarriesItsCode(t *testing.T) {
+	for _, tt := range []struct {
+		err  error
+		code string
+	}{
+		{jobs.ErrVersionConflict, jobs.CommandCodeConflict},
+		{jobs.ErrCommandKeyReused, jobs.CommandCodeKeyReused},
+		{jobs.ErrCommandInFlight, jobs.CommandCodeInFlight},
+		{jobs.ErrCommandChainConflict, jobs.CommandCodeChainConflict},
+		{jobs.ErrCommandNotAdvertised, jobs.CommandCodeNotAdvertised},
+	} {
+		ctx := &jobCommandContextStub{
+			err:      tt.err,
+			snapshot: jobs.Snapshot{ID: "job-123", Kind: "download", State: jobs.StateRunning, Version: 8},
+		}
+		request := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/v1/jobs/job-123/commands/cancel", strings.NewReader(`{"expectedVersion":7}`)), map[string]string{
+			"id": "job-123", "command": "cancel",
+		})
+		request.Header.Set("Idempotency-Key", "cancel-1")
+		recorder := httptest.NewRecorder()
+
+		GetJobCommandHandler(ctx)(recorder, request)
+
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("%v: status = %d: %s", tt.err, recorder.Code, recorder.Body.String())
+		}
+		var response struct {
+			Result JobCommandResultResponse `json:"result"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("%v: decode: %v", tt.err, err)
+		}
+		if response.Result.Code != tt.code || response.Result.JobID != "job-123" || response.Result.Key != "cancel" || response.Result.Status != jobs.CommandStatusFailed {
+			t.Fatalf("%v: result = %+v, want code %q for job-123 cancel", tt.err, response.Result, tt.code)
+		}
+	}
+}

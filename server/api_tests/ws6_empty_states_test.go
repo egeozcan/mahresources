@@ -223,6 +223,14 @@ func TestOutOfRangePage_JSONContractUnchanged(t *testing.T) {
 		}
 	})
 
+	t.Run("an Accept naming JSON among others still answers 200", func(t *testing.T) {
+		resp := tc.requestWithAccept(http.MethodGet, "/notes?page=99", "application/json, text/html", "")
+		if resp.Code != http.StatusOK {
+			t.Errorf("the renderer answers this Accept with JSON, so it must not be redirected; got %d to %q",
+				resp.Code, resp.Header().Get("Location"))
+		}
+	})
+
 	t.Run(".body fragment still answers 200", func(t *testing.T) {
 		resp := tc.requestWithAccept(http.MethodGet, "/notes.body?page=99", browserAccept, "")
 		if resp.Code != http.StatusOK {

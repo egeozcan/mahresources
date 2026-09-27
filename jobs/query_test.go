@@ -2490,3 +2490,91 @@ func TestPreferenceRowsGoWithTheJobTheyAreAbout(t *testing.T) {
 		t.Fatalf("the viewer's row outlived the Job: %d rows", rows)
 	}
 }
+
+// TestPublishedEventHeadIsTheHighestCursorTheAskerCouldHold pins the head a stream
+// checks a resume cursor against: the last published event the asker may see.
+// An unpublished event is not a cursor anybody holds yet, and another account's
+// events are not ones this asker was ever given.
+func TestPublishedEventHeadIsTheHighestCursorTheAskerCouldHold(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	accept := func(owner uint) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(owner), Title: "download", Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	admin := Access{UserID: 1, Administrator: true}
+	owner := Access{UserID: 7}
+	stranger := Access{UserID: 9}
+
+	if head, err := svc.PublishedEventHead(deps, admin); err != nil || head != 0 {
+		t.Fatalf("head of an empty stream = %d, %v; want 0", head, err)
+	}
+	owned := accept(7)
+	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	accept(8)
+	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	accept(7) // accepted, not yet published
+
+	ownedDelivery := *jobEvents(t, deps, owned.ID)[0].DeliverySequence
+	for _, tt := range []struct {
+		name   string
+		access Access
+		want   uint64
+	}{
+		{"the owner", owner, ownedDelivery},
+		{"an administrator", admin, ownedDelivery + 1},
+		{"an account with no Jobs", stranger, 0},
+	} {
+		head, err := svc.PublishedEventHead(deps, tt.access)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if head != tt.want {
+			t.Errorf("%s: head = %d, want %d", tt.name, head, tt.want)
+		}
+	}
+}
+
+// TestEventSequenceHeadNeverFallsWhenEventsAreDeleted pins the value a stream
+// tells a cursor this database issued from one it never did: the allocator's.
+// Retention deletes ended Jobs and their events, and a viewer's visibility can
+// narrow, and neither may make a cursor this database handed out look foreign.
+func TestEventSequenceHeadNeverFallsWhenEventsAreDeleted(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 0 {
+		t.Fatalf("head before anything was published = %d, %v; want 0", head, err)
+	}
+	for i := 0; i < 2; i++ {
+		acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "download", Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 2 {
+		t.Fatalf("head after two published events = %d, %v; want 2", head, err)
+	}
+
+	if err := deps.DB.Where("1 = 1").Delete(&models.JobEvent{}).Error; err != nil {
+		t.Fatalf("delete events: %v", err)
+	}
+	if err := deps.DB.Where("1 = 1").Delete(&models.Job{}).Error; err != nil {
+		t.Fatalf("delete jobs: %v", err)
+	}
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 2 {
+		t.Fatalf("head after the events were deleted = %d, %v; want it to stay 2", head, err)
+	}
+	if visible, err := svc.PublishedEventHead(deps, Access{UserID: 1, Administrator: true}); err != nil || visible != 0 {
+		t.Fatalf("visible head after the events were deleted = %d, %v; want 0", visible, err)
+	}
+}

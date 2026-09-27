@@ -17,6 +17,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/jobs"
+	"mahresources/server/http_utils"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
 )
@@ -26,12 +27,6 @@ const JobCenterCutoverEnabled = true
 
 // jobListPageSize is how many Jobs one /jobs page shows.
 const jobListPageSize = jobs.DefaultPageSize
-
-// dismissedAny is the page-only value of the Dismissed filter that asks for
-// every Job whatever the viewer dismissed. The page's default list is the
-// undismissed one, so "not asked" cannot also mean "any" here as it does on the
-// API.
-const dismissedAny = "any"
 
 // The administrator's Owner select is one field, owner, so it submits one choice:
 // "Mine" (jobOwnerMineOption), an account's id, or a deleted account
@@ -195,6 +190,9 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		}.Update(StaticTemplateCtx(request))
 		if reader == nil {
 			return base
+		}
+		if target := undismissedDefaultRedirect(request); target != "" {
+			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
 
@@ -368,17 +366,40 @@ func jobStateOptions() []JobStateOption {
 	return options
 }
 
+// undismissedDefaultRedirect answers the URL a page navigation to /jobs without a
+// dismissed parameter is sent to: the same URL, every other parameter kept, with
+// the page's default written into it as dismissed=false. It answers "" when the
+// URL already names a value, and for the .json and .body variants, which a client
+// fetches rather than navigates to.
+//
+// The page lists what the viewer has not dismissed unless asked otherwise, while
+// the API reads an absent dismissed as no filter. Writing the default into the
+// address means every URL the page shows a list under, and every link, form,
+// pagination and live-refresh request built from it, names its dismissal filter,
+// so the same query string gives the same Jobs on /jobs, /v1/jobs and the CLI.
+func undismissedDefaultRedirect(request *http.Request) string {
+	if strings.TrimSpace(request.URL.Query().Get("dismissed")) != "" {
+		return ""
+	}
+	if strings.HasSuffix(request.URL.Path, ".body") || http_utils.TemplateRequestWantsJSON(request) {
+		return ""
+	}
+	target := *request.URL
+	values := target.Query()
+	values.Set("dismissed", "false")
+	target.RawQuery = values.Encode()
+	// RequestURI, not String: the absolute form would let a proxied Host header
+	// steer the redirect off-site.
+	return target.RequestURI()
+}
+
 // jobListFilter reads the page's filter. The sidebar form submits every field,
 // so an empty value means "not asked" and is dropped before parsing — the API
 // refuses `command=` and an empty origin, which a person never typed. The page
 // lists what the viewer has not dismissed unless they ask otherwise;
-// `dismissed=any` is that asking.
+// `dismissed=any` is that asking, and reads as it does on the API.
 func jobListFilter(query url.Values) (jobs.Filter, error) {
 	query = withoutEmptyValues(query)
-	dismissed := query.Get("dismissed")
-	if dismissed == dismissedAny {
-		query.Del("dismissed")
-	}
 	switch owner := query.Get("owner"); {
 	case owner == jobOwnerDeletedOption:
 		query.Del("owner")
@@ -391,7 +412,7 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 	if err != nil {
 		return jobs.Filter{}, err
 	}
-	if dismissed == "" {
+	if query.Get("dismissed") == "" {
 		undismissed := false
 		filter.Dismissed = &undismissed
 	}
@@ -413,7 +434,7 @@ func withoutEmptyValues(values url.Values) url.Values {
 func addJobListError(err error, ctx pongo2.Context) pongo2.Context {
 	if errors.Is(err, jobs.ErrInvalidFilter) || errors.Is(err, jobs.ErrInvalidCursor) ||
 		errors.Is(err, jobs.ErrInvalidPage) || errors.Is(err, jobs.ErrInvalidCommand) {
-		return addMessageErrContext(err.Error(), http.StatusBadRequest, ctx)
+		return addMessageErrContext(jobview.RequestErrorMessage(err), http.StatusBadRequest, ctx)
 	}
 	return addErrContext(err, ctx)
 }
@@ -440,14 +461,16 @@ func jobFilterForm(query url.Values) JobFilterForm {
 	if owner := query.Get("owner"); form.OwnerID == "" && owner != jobOwnerMineOption && owner != jobOwnerDeletedOption {
 		form.OwnerID = owner
 	}
+	// The select shows the filter in effect, and with no value that is the
+	// page's default.
+	if strings.TrimSpace(form.Dismissed) == "" {
+		form.Dismissed = "false"
+	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
 	// Every origin stays in the one field, comma-separated as the parser reads
 	// it; showing only the first would drop the rest on the next submit.
 	form.OriginText = strings.Join(form.Origins, ", ")
-	if form.Dismissed == "false" {
-		form.Dismissed = ""
-	}
 	return form
 }
 

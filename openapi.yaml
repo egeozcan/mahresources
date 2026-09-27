@@ -858,6 +858,8 @@ components:
                     nullable: true
                     type: integer
                 blockedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 commands:
                     items:
@@ -903,6 +905,8 @@ components:
                     nullable: true
                     type: integer
                 pausedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 phase:
                     type: string
@@ -911,6 +915,8 @@ components:
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 queuedAt:
                     format: date-time
@@ -921,6 +927,8 @@ components:
                 replayClass:
                     type: string
                 runningDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 scheduledFor:
                     format: date-time
@@ -945,8 +953,12 @@ components:
         JobDurationStatsResponse:
             properties:
                 median:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 p95:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
             type: object
         JobEventResponsePartial:
@@ -1146,6 +1158,8 @@ components:
                     nullable: true
                     type: integer
                 blockedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 controlIntent:
                     type: string
@@ -1181,6 +1195,8 @@ components:
                     nullable: true
                     type: integer
                 pausedDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 phase:
                     type: string
@@ -1189,6 +1205,8 @@ components:
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 queuedAt:
                     format: date-time
@@ -1199,6 +1217,8 @@ components:
                 replayClass:
                     type: string
                 runningDuration:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
                 scheduledFor:
                     format: date-time
@@ -1282,6 +1302,8 @@ components:
                 total:
                     type: integer
                 window:
+                    description: Duration in nanoseconds.
+                    format: int64
                     type: integer
             type: object
         JobTimelineResponse:
@@ -6082,16 +6104,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command
@@ -6659,7 +6689,7 @@ paths:
     /v1/jobs/clearCompleted:
         post:
             deprecated: true
-            description: This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.
+            description: Clears the legacy queue entries and plugin action handles the caller can see. It does not dismiss canonical Jobs, which the Jobs panel and /jobs keep listing until they are dismissed. This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.
             operationId: jobsClearCompleted
             responses:
                 "200":
@@ -6769,7 +6799,7 @@ paths:
                             description: Planned retirement date in HTTP-date form.
                             schema:
                                 type: string
-            summary: Dismiss every finished job (completed, failed or cancelled)
+            summary: Clear every finished job (completed, failed or cancelled) from the legacy queue
             tags:
                 - jobs
     /v1/jobs/commands/{command}:
@@ -6949,7 +6979,7 @@ paths:
     /v1/jobs/events:
         get:
             deprecated: true
-            description: Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream. This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.
+            description: 'Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. A resume cursor above the highest delivery sequence this database has issued (one issued by a database since restored or wiped) is answered from the viewer''s own head, and job-caught-up then also carries a reset field set to true and, that once, the new cursor as its SSE id: nothing missed is replayed, so the client discards its cursor state and reads again. From then on, each poll also emits a job-progress event (a JobProgressFrame) for every visible Job whose progress changed; like an ordinary job-caught-up it has no SSE id, never moves the cursor, and is not replayed on reconnect. Omit version to retain the legacy compatibility stream. This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.'
             operationId: streamCanonicalJobEvents
             parameters:
                 - description: Set to 2 for the canonical stream; omit to retain the legacy compatibility stream.
@@ -7791,16 +7821,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command
@@ -7926,16 +7964,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command

@@ -986,7 +986,7 @@ func (s *Service) executeBulkEntry(ctx context.Context, deps Deps, request BulkC
 	// machine-readable however the Job was refused.
 	if settled.Status == "" {
 		settled.Status = CommandStatusFailed
-		settled.Code = commandCodeForError(commandErr)
+		settled.Code = CommandCodeForError(commandErr)
 		if settled.Message == "" {
 			settled.Message = "the command did not run"
 		}
@@ -1013,9 +1013,9 @@ func refusalDetail(refusal CommandRefusal) json.RawMessage {
 	return detail
 }
 
-// commandCodeForError classifies a command refusal that carried no result of its
-// own, so a bulk answer is machine-readable whichever way the Job was refused.
-func commandCodeForError(err error) string {
+// CommandCodeForError classifies a command refusal that carried no result of its
+// own, so an answer is machine-readable whichever way the Job was refused.
+func CommandCodeForError(err error) string {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return CommandCodeNotFound

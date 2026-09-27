@@ -659,3 +659,48 @@ func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.
 		t.Fatalf("the ancestor's entry is missing or names another job: %v", entry)
 	}
 }
+
+// TestAProjectionResolvesACanonicalJobIDAsExactlyThatJob pins the other identifier
+// a legacy route is handed: the id `/v1/jobs` and `mr jobs list` print. A canonical
+// id is immutable, so unlike a handle it never follows a Retry and carries no
+// handle for the command to recheck. It resolves only for the Kinds the legacy
+// routes project, and only as the asker may see the Job.
+func TestAProjectionResolvesACanonicalJobIDAsExactlyThatJob(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+
+	owned := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindRemoteDownload, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7), Title: "an owned download",
+		Replay:     jobs.ReplayInput{NonReplayable: true},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: DownloadHandleNamespace, Handle: "owned-handle"}},
+	})
+
+	owner := ctx.WithPrincipal(&auth.Principal{UserID: 7, Username: "owner", Role: models.RoleUser})
+	projection, err := owner.ProjectDownloadJob(owned.ID)
+	if err != nil {
+		t.Fatalf("the owner's canonical id did not resolve: %v", err)
+	}
+	if projection.CanonicalJobID != owned.ID || projection.CanonicalVersion != owned.Version {
+		t.Fatalf("the canonical id resolved to %s v%d, want %s v%d",
+			projection.CanonicalJobID, projection.CanonicalVersion, owned.ID, owned.Version)
+	}
+	if projection.LegacyNamespace != "" {
+		t.Fatalf("a canonical id projected with legacy namespace %q; its command would recheck a handle it was never given", projection.LegacyNamespace)
+	}
+	if projection.Row == nil || projection.Row.ID != owned.ID || projection.Row.Source != download_queue.JobSourceDownload {
+		t.Fatalf("the canonical id projects as %+v, want a download row under the id asked for", projection.Row)
+	}
+
+	other := ctx.WithPrincipal(&auth.Principal{UserID: 8, Username: "other", Role: models.RoleUser})
+	if _, err := other.ProjectDownloadJob(owned.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("a canonical id resolved a Job its asker may not see: %v", err)
+	}
+
+	unprojected := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		Title: "work the legacy routes do not project", Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if _, err := ctx.ProjectDownloadJob(unprojected.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("a Kind the legacy routes do not project resolved through them: %v", err)
+	}
+}

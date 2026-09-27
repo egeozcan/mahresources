@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -32,6 +33,22 @@ type jobEventContextStub struct {
 	progressErr   error
 	progressSince []time.Time
 	progressMu    sync.Mutex
+	// issued is the allocator's head, the highest cursor the database ever
+	// issued; nil means every cursor is within it. head is the viewer's own
+	// published head, which a reset resumes from.
+	issued *uint64
+	head   uint64
+}
+
+func (s *jobEventContextStub) GetJobEventSequenceHead() (uint64, error) {
+	if s.issued == nil {
+		return math.MaxUint64, nil
+	}
+	return *s.issued, nil
+}
+
+func (s *jobEventContextStub) GetPublishedJobEventHead() (uint64, error) {
+	return s.head, nil
 }
 
 func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
@@ -485,5 +502,110 @@ func TestCanonicalJobSSESendsLiveProgressWithoutACursor(t *testing.T) {
 		if age := time.Since(since); age < liveProgressWindow-5*time.Second || age > liveProgressWindow+5*time.Second {
 			t.Fatalf("a live read started %v back; want the %v window from the stream's own clock", age, liveProgressWindow)
 		}
+	}
+}
+
+// timelineStub pages a fixed timeline the way the service does: after a
+// sequence, at most limit events.
+type timelineStub struct{ events []jobs.Event }
+
+func (s timelineStub) GetJobTimeline(_ string, after uint64, limit int) ([]jobs.Event, error) {
+	var page []jobs.Event
+	for _, event := range s.events {
+		if event.Sequence > after && len(page) < limit {
+			page = append(page, event)
+		}
+	}
+	return page, nil
+}
+
+// TestJobTimelineOffersANextPageOnlyWhenOneExists pins the continuation a page
+// hands out. A page that happens to end exactly at the limit is the last page
+// when nothing follows it, and a continuation there sends a client to read an
+// empty page it had no reason to ask for.
+func TestJobTimelineOffersANextPageOnlyWhenOneExists(t *testing.T) {
+	stub := timelineStub{}
+	for sequence := uint64(1); sequence <= 4; sequence++ {
+		stub.events = append(stub.events, jobs.Event{ID: "event-" + strconv.FormatUint(sequence, 10), JobID: "job-123", Sequence: sequence})
+	}
+	for _, tt := range []struct {
+		query string
+		want  uint64
+	}{
+		{"limit=2", 2},
+		{"limit=3", 3},
+		{"limit=4", 0},
+		{"limit=5", 0},
+		{"afterSequence=2&limit=2", 0},
+	} {
+		request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/events?"+tt.query, nil), map[string]string{"id": "job-123"})
+		recorder := httptest.NewRecorder()
+		GetJobTimelineHandler(stub)(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d: %s", tt.query, recorder.Code, recorder.Body.String())
+		}
+		var page JobTimelineResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+			t.Fatalf("%s: decode: %v", tt.query, err)
+		}
+		if page.NextSequence != tt.want {
+			t.Fatalf("%s: nextSequence = %d, want %d", tt.query, page.NextSequence, tt.want)
+		}
+	}
+}
+
+// TestCanonicalJobSSEResetsOnlyACursorThisDatabaseNeverIssued covers a tab that
+// outlived a restore or a wipe: it reconnects with a cursor above the highest
+// this database ever issued. Resuming from it delivers nothing until the new
+// sequence passes the old one, so the stream resumes at the viewer's own head
+// and says it reset. A cursor this database did issue is never reset, however
+// far above the viewer's head it is now: retention deletes the newest events
+// and a viewer's visibility narrows, and neither is another database.
+func TestCanonicalJobSSEResetsOnlyACursorThisDatabaseNeverIssued(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		lastID     string
+		issued     uint64
+		head       uint64
+		wantAfter  uint64
+		wantMarker string
+	}{
+		// A reset marker carries the cursor as its SSE id too, so the browser
+		// resumes from the new head rather than the cursor it was reset from.
+		{"a cursor above the allocator", "v2:5000", 875, 800, 800, "id: v2:800\nevent: job-caught-up\ndata: " + `{"cursor":"v2:800","reset":true}`},
+		{"a cursor above an empty database", "v2:12", 0, 0, 0, "id: v2:0\nevent: job-caught-up\ndata: " + `{"cursor":"v2:0","reset":true}`},
+		{"a cursor above the viewer's head but issued here", "v2:850", 875, 800, 850, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:850"}`},
+		{"a cursor at the allocator", "v2:875", 875, 875, 875, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875"}`},
+		{"a cursor below the head", "v2:874", 875, 875, 874, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:874"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			issued := tt.issued
+			ctx := &jobEventContextStub{issued: &issued, head: tt.head}
+			response := newSSETestWriter()
+			requestCtx, cancel := context.WithCancel(context.Background())
+			request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(requestCtx)
+			request.Header.Set("Last-Event-ID", tt.lastID)
+			finished := make(chan struct{})
+			go func() {
+				GetCanonicalJobEventsHandler(ctx)(response, request)
+				close(finished)
+			}()
+			select {
+			case <-response.caughtUpWritten:
+			case <-time.After(2 * time.Second):
+				cancel()
+				t.Fatal("SSE did not announce the catch-up boundary")
+			}
+			cancel()
+			<-finished
+
+			if len(ctx.after) == 0 || ctx.after[0] != tt.wantAfter {
+				t.Fatalf("catch-up read from %v, want %d", ctx.after, tt.wantAfter)
+			}
+			body := "\n\n" + response.String()
+			if want := tt.wantMarker + "\n\n"; !strings.Contains(body, want) {
+				t.Fatalf("SSE body = %q, want the marker %q", response.String(), want)
+			}
+		})
 	}
 }

@@ -13,7 +13,9 @@ per-Job result, so some Jobs can succeed while others are refused. Commands
 marked destructive or requiring confirmation need `--confirm`.
 
 Provide `--idempotency-key` to safely retry the same request after a network
-failure. Otherwise a key is generated and printed with the result.
+failure. Otherwise a key is generated and printed with the result, and when
+the request fails the error names it: rerun with `--idempotency-key <key>` to
+retry the request without applying it twice.
 
 ## Usage
 

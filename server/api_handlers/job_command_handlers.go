@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"mahresources/jobs"
+	"mahresources/server/jobview"
 )
 
 const maxJobCommandRequestBytes = 64 << 10
@@ -88,7 +89,7 @@ func GetJobCommandHandler(ctx JobCommandContext) func(http.ResponseWriter, *http
 			ExpectedVersion: body.ExpectedVersion, Origin: body.Origin,
 		})
 		if commandErr != nil {
-			writeJobCommandError(w, ctx, jobID, result, commandErr)
+			writeJobCommandError(w, ctx, jobID, command, result, commandErr)
 			return
 		}
 		writeJobJSON(w, http.StatusOK, jobCommandResultResponse(result))
@@ -198,7 +199,43 @@ func jobCommandResultResponse(result jobs.CommandResult) JobCommandResultRespons
 	return response
 }
 
-func writeJobCommandError(w http.ResponseWriter, ctx JobCommandContext, jobID string, result jobs.CommandResult, err error) {
+func writeJobCommandError(w http.ResponseWriter, ctx JobCommandContext, jobID, command string, result jobs.CommandResult, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, jobs.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, jobs.ErrInvalidCommand):
+		status = http.StatusBadRequest
+	case errors.Is(err, jobs.ErrVersionConflict), errors.Is(err, jobs.ErrCommandNotAdvertised),
+		errors.Is(err, jobs.ErrCommandKeyReused), errors.Is(err, jobs.ErrCommandInFlight),
+		errors.Is(err, jobs.ErrCommandFailed), errors.Is(err, jobs.ErrCommandChainConflict),
+		errors.Is(err, jobs.ErrCommandRefused):
+		status = http.StatusConflict
+	}
+	message := "job command failed"
+	switch {
+	case status == http.StatusBadRequest:
+		message = jobview.RequestErrorMessage(err)
+	case errors.Is(err, jobs.ErrCommandRefused):
+		// The Kind's own reason, written for the person who asked: a refusal they
+		// can act on is only useful if it says what it is. Its result already
+		// carries the refused code.
+		message = result.Message
+		if message == "" {
+			message = strings.TrimPrefix(jobs.ErrCommandRefused.Error(), "jobs: ")
+		}
+	case status == http.StatusConflict:
+		// Each conflict asks for something different of the caller, so each one
+		// says which it is and carries the code a bulk answer gives it, whatever
+		// path produced it: a refusal the service answered with no result of its
+		// own, a version conflict included, is given one here.
+		message = conflictMessage(err)
+		if result.Code == "" {
+			result.JobID, result.Key, result.Status = jobID, command, jobs.CommandStatusFailed
+			result.Code, result.Message = jobs.CommandCodeForError(err), message
+		}
+	}
+
 	if errors.Is(err, jobs.ErrVersionConflict) {
 		snapshot := result.Job
 		if snapshot.ID == "" {
@@ -218,30 +255,23 @@ func writeJobCommandError(w http.ResponseWriter, ctx JobCommandContext, jobID st
 		return
 	}
 
-	status := http.StatusInternalServerError
-	switch {
-	case errors.Is(err, jobs.ErrNotFound):
-		status = http.StatusNotFound
-	case errors.Is(err, jobs.ErrInvalidCommand):
-		status = http.StatusBadRequest
-	case errors.Is(err, jobs.ErrCommandNotAdvertised), errors.Is(err, jobs.ErrCommandKeyReused),
-		errors.Is(err, jobs.ErrCommandInFlight), errors.Is(err, jobs.ErrCommandFailed),
-		errors.Is(err, jobs.ErrCommandChainConflict):
-		status = http.StatusConflict
-	}
-	message := "job command failed"
-	if status == http.StatusBadRequest {
-		message = err.Error()
-	}
-	if errors.Is(err, jobs.ErrCommandRefused) {
-		// The Kind's own reason, written for the person who asked: a refusal they
-		// can act on is only useful if it says what it is.
-		status = http.StatusConflict
-		message = result.Message
-	}
 	body := map[string]any{"error": message}
 	if result.JobID != "" || result.Code != "" {
 		body["result"] = jobCommandResultResponse(result)
 	}
 	writeJobJSON(w, status, body)
+}
+
+// conflictMessage names which command conflict refused a request: the matched
+// refusal's own text, without the package prefix or the ids the service added.
+func conflictMessage(err error) string {
+	for _, conflict := range []error{
+		jobs.ErrVersionConflict, jobs.ErrCommandKeyReused, jobs.ErrCommandInFlight,
+		jobs.ErrCommandChainConflict, jobs.ErrCommandNotAdvertised, jobs.ErrCommandFailed,
+	} {
+		if errors.Is(err, conflict) {
+			return strings.TrimPrefix(conflict.Error(), "jobs: ")
+		}
+	}
+	return "job command failed"
 }

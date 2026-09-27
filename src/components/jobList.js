@@ -1,7 +1,7 @@
 import { findListContainer } from '../utils/listContainer.js';
 import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { commandConfirmation, commandLabel, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
+import { commandConfirmation, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
 // After a failed refetch: long enough not to hammer a struggling server, short
@@ -236,6 +236,7 @@ export function jobList() {
                 let boundary;
                 try { boundary = JSON.parse(event.data); } catch { return; }
                 if (streamCursorSequence(boundary?.cursor) === null) return;
+                if (reloadAfterStreamReset(boundary, this.eventSource)) return;
                 this.streamCaughtUp = true;
                 if (this._missedWhileCatchingUp) {
                     this._missedWhileCatchingUp = false;

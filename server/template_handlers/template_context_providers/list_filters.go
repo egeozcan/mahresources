@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
+	"mahresources/server/http_utils"
 )
 
 // WS6, findings 54 and 68/77 — every list view's zero-result state.
@@ -105,11 +106,7 @@ func outOfRangePageRedirect(request *http.Request, numResults int64, pageSize in
 	// /resources.json?page=99 instead of 200 with an empty array. The .body
 	// fragment fetches are excluded for the same reason: a morph target that
 	// redirects would splice another page's rows in under the current URL.
-	if p := request.URL.Path; strings.HasSuffix(p, ".json") || strings.HasSuffix(p, ".body") {
-		return nil
-	}
-	if accept := request.Header.Get("Accept"); strings.Contains(accept, "application/json") &&
-		!strings.Contains(accept, "text/html") {
+	if strings.HasSuffix(request.URL.Path, ".body") || http_utils.TemplateRequestWantsJSON(request) {
 		return nil
 	}
 

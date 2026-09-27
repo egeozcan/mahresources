@@ -335,6 +335,15 @@ func isSafeRedirect(rawURL string) bool {
 	return true
 }
 
+// TemplateRequestWantsJSON reports whether a template route answers this request
+// with its page context as JSON rather than a rendered page: a `.json` path, or
+// an Accept header that names JSON at all, whatever else it names. It is the
+// renderer's own rule, and a page route that redirects must exempt exactly these
+// requests, so there is one copy of it.
+func TemplateRequestWantsJSON(request *http.Request) bool {
+	return strings.HasSuffix(request.URL.Path, ".json") || strings.Contains(request.Header.Get("Accept"), constants.JSON)
+}
+
 // RequestAcceptsHTML reports whether the request's Accept header includes text/html.
 func RequestAcceptsHTML(request *http.Request) bool {
 	accepts := request.Header["Accept"]

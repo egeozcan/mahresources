@@ -225,9 +225,12 @@ mr jobs summary --window 30d --json
 
 `jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
-advertised command, and the viewer's pin and dismissal preferences. On the API,
-`owner=me` lists the asking account's own Jobs without naming its id, and
-`ownerDeleted=true` lists Jobs whose owner's account was deleted.
+advertised command, and the viewer's pin and dismissal preferences, which take
+`true`, `false` or `any`. Without `--dismissed` the CLI and the API list
+dismissed Jobs too; the `/jobs` page instead writes its default,
+`dismissed=false`, into its address. On the API, `owner=me` lists the asking
+account's own Jobs without naming its id, and `ownerDeleted=true` lists Jobs
+whose owner's account was deleted.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent
@@ -255,11 +258,15 @@ commands with an advertised confirmation require `--confirm`. `mr job
 bulk-command` checks that every selected Job advertises the same bulk-capable
 key at its current version, then reports the server's per-Job results. Pass
 `--idempotency-key` to retry the same request after a network failure; the CLI
-generates and prints a key if none is supplied.
+generates a key if none is supplied and prints it with the result, or in the
+error when the request fails.
 
 The singular `mr job submit`, `cancel`, `pause`, `resume`, and `retry` commands
-remain compatibility aliases for existing download scripts. `mr jobs queue`
-returns the legacy queue response explicitly.
+remain compatibility aliases for existing download scripts. `cancel`, `pause`,
+`resume`, and `retry` accept the Job id `mr jobs list` prints as well as the
+legacy handle `mr job submit` returns. A Job of a Kind the legacy routes do not
+project, such as a plugin command run, is sent the advertised command of the same
+name instead. `mr jobs queue` returns the legacy queue response explicitly.
 
 ## Summary analytics and exports
 
@@ -332,13 +339,50 @@ unit each graphed key was reported in; a key that comes back in another unit
 starts a fresh history. A tick that reports no measure at all, such as an HLS
 stream while it muxes, leaves the history as it was.
 
+Each durable event on the canonical stream carries an SSE `id` of the form
+`v2:<n>`, where `n` is its delivery sequence: the order events were published,
+which keeps each Job's own events in their own sequence. A reconnect resumes
+after the cursor in `Last-Event-ID`, or in the `cursor` query parameter when
+that header is absent, and first replays what was published since. The stream
+then sends `job-caught-up` with the cursor it reached, as
+`{"cursor":"v2:<n>"}`. A resume cursor above the highest delivery sequence this
+database has ever issued was issued by a different database: one restored from
+an older backup, or an ephemeral server that restarted. The stream then resumes
+at the viewer's last published event and adds `"reset": true` to
+`job-caught-up`. That one `job-caught-up` also carries the new cursor as its SSE
+`id`, so a browser that reconnects before the next event resumes from it.
+Nothing the client missed is replayed, so on a reset it discards the sequences
+it holds, takes the new cursor, and reads its Jobs again. A cursor this database
+did issue is never reset, even when the viewer can no longer see anything at or
+above it because retention deleted those Jobs or the viewer's access narrowed.
+
+In the browser, the Job Center and a Job's detail page reload themselves on a
+reset: they show nothing but Jobs from the other database and hold no input. On
+every other page the Jobs panel stops instead, empties its list, and says that
+job updates stopped because the database was restored or replaced, with a
+**Reload page** button. It does not reload the page itself, because the page may
+hold input that has not been saved. Reloading is still the right next step: a
+form rendered from the other database can name ids the new one has given to
+different entities.
+
+Two limits are known. A reset reveals the highest sequence the database has
+issued, which every event id a viewer receives already approximates, since
+delivery sequences are shared by every account. And a restored database is
+detected only while its sequence is below the tab's cursor: once it has
+published past that cursor, a tab resuming from it skips the events in between.
+A generation stored in the database cannot close this, because a restore
+brings back the old generation with the old rows. After a restore, an
+administrator must pass the migration-readiness check before admitting traffic
+(see [Backup and Restore](../deployment/backups.md)), so a tab has to outlive that and then
+reconnect after enough new events to be affected.
+
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
 `job-progress` event for every visible Job whose progress changed in the last
 30 seconds and whose current snapshot this connection has not sent yet, up to
 the 500 most recently changed Jobs. Its
 data is `{jobId, version, state, progress, point, intervalMs}`, where `point` is
-the latest series point. Like `job-caught-up`, it has no SSE `id` and never
-moves the delivery cursor. A new connection can therefore receive frames for
+the latest series point. Like an ordinary `job-caught-up`, it has no SSE `id`
+and never moves the delivery cursor. A new connection can therefore receive frames for
 changes an earlier connection already delivered. Each frame replaces the Job's
 progress, so a reader treats a repeat as a no-op: it ignores a frame whose
 `progress.updatedAt` is older than the progress it holds, and replaces rather

@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,23 @@ func TestGenerateSchema_TimeType(t *testing.T) {
 	}
 	if schema.Value.Format != "date-time" {
 		t.Errorf("expected format date-time, got %s", schema.Value.Format)
+	}
+}
+
+// A time.Duration is encoded as its integer count of nanoseconds, which a bare
+// integer schema leaves a client to guess.
+func TestGenerateSchema_DurationTypeNamesItsUnit(t *testing.T) {
+	g := NewSchemaGenerator()
+
+	schema := g.GenerateSchema(reflect.TypeOf(time.Duration(0)))
+	if schema == nil || schema.Value == nil {
+		t.Fatal("expected non-nil schema")
+	}
+	if schema.Value.Type.Slice()[0] != "integer" || schema.Value.Format != "int64" {
+		t.Errorf("expected an int64 integer for time.Duration, got %v %q", schema.Value.Type, schema.Value.Format)
+	}
+	if !strings.Contains(schema.Value.Description, "nanoseconds") {
+		t.Errorf("the time.Duration schema does not name its unit: %q", schema.Value.Description)
 	}
 }
 

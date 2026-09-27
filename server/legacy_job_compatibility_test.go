@@ -26,6 +26,9 @@ func TestLegacyDownloadsLocationCarriesOnlyEquivalentFilters(t *testing.T) {
 	if got := query.Get("kind"); got != "remote-download" {
 		t.Fatalf("kind = %q, want remote-download", got)
 	}
+	if got := query.Get("dismissed"); got != "false" {
+		t.Fatalf("dismissed = %q, want the Job Center's default written out", got)
+	}
 	if got := query["state"]; len(got) != 2 || got[0] != "failed" || got[1] != "succeeded" {
 		t.Fatalf("state filters = %v, want [failed succeeded]", got)
 	}

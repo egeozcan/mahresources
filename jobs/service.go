@@ -1494,7 +1494,9 @@ func knownFailureClass(class string) bool {
 // cursor can be built on.
 //
 // Per-Job timelines are unaffected: they are ordered by their own sequence and
-// are readable the instant the domain transaction commits.
+// are readable the instant the domain transaction commits. Delivery keeps that
+// order too: one Job's facts are published in their own sequence, whatever
+// their timestamps say (unsequencedEventsInDeliveryOrder).
 func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 	if limit <= 0 {
 		limit = DefaultPublishBatch
@@ -1521,12 +1523,9 @@ func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 			return err
 		}
 
-		var pending []models.JobEvent
-		if err := tx.Where("delivery_sequence IS NULL").
-			Order("created_at, id").
-			Limit(limit).
-			Find(&pending).Error; err != nil {
-			return fmt.Errorf("jobs: read unsequenced events: %w", err)
+		pending, err := unsequencedEventsInDeliveryOrder(tx, limit)
+		if err != nil {
+			return err
 		}
 		if len(pending) == 0 {
 			return nil
@@ -1563,4 +1562,120 @@ func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 		return 0, err
 	}
 	return published, nil
+}
+
+// unsequencedEventsInDeliveryOrder reads one batch of unpublished events in the
+// order they are to be delivered.
+//
+// A Job's own sequence is the causal order of its facts, and delivery must never
+// contradict it: a subscriber that applies events as they arrive would otherwise
+// see a Job run before it was accepted. Timestamps cannot be trusted for that.
+// Facts recorded in the same instant tie, and an event id breaks a tie at random
+// past the millisecond; a timestamp is also read before the transaction that
+// records the fact, so racing writers on one Job, or two processes' clocks, can
+// give a later fact the earlier time. Timestamps only interleave the facts of
+// different Jobs.
+//
+// So the batch is chosen by time, and each fact is taken together with every
+// earlier unpublished fact of its own Job: a Job's earlier fact is never left for
+// a later batch while its successor is published. Those prefixes are taken in
+// the order their facts came up until the batch reaches its limit, and a prefix
+// that does not fit is cut to its earliest facts, which is still a prefix, so a
+// batch always makes progress. The limit bounds what is read as well as what is
+// published: a Job's earlier facts are read only when the window skipped them,
+// and never more of them than the batch has room for, because this runs while
+// the allocator is held. Each fact is then delivered no earlier than the facts
+// before it on its own Job: its time is raised to the latest time among them.
+func unsequencedEventsInDeliveryOrder(tx *gorm.DB, limit int) ([]models.JobEvent, error) {
+	var window []models.JobEvent
+	if err := tx.Where("delivery_sequence IS NULL").
+		Order("created_at, id").
+		Limit(limit).
+		Find(&window).Error; err != nil {
+		return nil, fmt.Errorf("jobs: read unsequenced events: %w", err)
+	}
+	if len(window) == 0 {
+		return nil, nil
+	}
+
+	// next is, per Job, the lowest sequence that may still be unpublished and
+	// untaken: every unpublished fact below it is already in the batch.
+	next := make(map[string]uint64, len(window))
+	jobIDs := make([]string, 0, len(window))
+	for _, event := range window {
+		if _, seen := next[event.JobID]; !seen {
+			next[event.JobID] = 0
+			jobIDs = append(jobIDs, event.JobID)
+		}
+	}
+	var lowest []struct {
+		JobID    string
+		Sequence uint64
+	}
+	if err := tx.Model(&models.JobEvent{}).
+		Select("job_id, MIN(sequence) AS sequence").
+		Where("delivery_sequence IS NULL AND job_id IN ?", jobIDs).
+		Group("job_id").
+		Find(&lowest).Error; err != nil {
+		return nil, fmt.Errorf("jobs: read earliest unsequenced events: %w", err)
+	}
+	for _, row := range lowest {
+		next[row.JobID] = row.Sequence
+	}
+
+	var batch []models.JobEvent
+	for _, event := range window {
+		room := limit - len(batch)
+		if room <= 0 {
+			break
+		}
+		from := next[event.JobID]
+		switch {
+		case event.Sequence < from:
+			// Taken already, as a predecessor of an earlier fact of its Job.
+			continue
+		case event.Sequence == from:
+			batch = append(batch, event)
+			next[event.JobID] = event.Sequence + 1
+			continue
+		}
+		var prefix []models.JobEvent
+		if err := tx.Where("delivery_sequence IS NULL AND job_id = ? AND sequence >= ? AND sequence <= ?", event.JobID, from, event.Sequence).
+			Order("sequence").
+			Limit(room).
+			Find(&prefix).Error; err != nil {
+			return nil, fmt.Errorf("jobs: read earlier unsequenced events: %w", err)
+		}
+		if len(prefix) == 0 {
+			continue
+		}
+		batch = append(batch, prefix...)
+		next[event.JobID] = prefix[len(prefix)-1].Sequence + 1
+	}
+
+	sort.Slice(batch, func(i, j int) bool {
+		if batch[i].JobID != batch[j].JobID {
+			return batch[i].JobID < batch[j].JobID
+		}
+		return batch[i].Sequence < batch[j].Sequence
+	})
+	deliverAt := make([]time.Time, len(batch))
+	for i, event := range batch {
+		deliverAt[i] = event.CreatedAt
+		if i > 0 && batch[i-1].JobID == event.JobID && deliverAt[i-1].After(deliverAt[i]) {
+			deliverAt[i] = deliverAt[i-1]
+		}
+	}
+	order := make([]int, len(batch))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return deliverAt[order[a]].Before(deliverAt[order[b]])
+	})
+	ordered := make([]models.JobEvent, len(batch))
+	for i, index := range order {
+		ordered[i] = batch[index]
+	}
+	return ordered, nil
 }

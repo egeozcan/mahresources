@@ -475,6 +475,19 @@ describe('job list stream', () => {
         expect(list._refresher.request).toHaveBeenCalledTimes(2);
     });
 
+    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+        const reload = vi.fn();
+        const { list, stream, send } = connected();
+        vi.stubGlobal('location', { reload });
+        const close = vi.fn();
+        (stream as any).close = close;
+        send('job-caught-up', { cursor: 'v2:875', reset: true });
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(list._refresher.request).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
     test('a reconnect that replays what it missed reconciles the page', () => {
         const { list, stream, send } = connected();
         send('job-caught-up', { cursor: 'v2:4' });

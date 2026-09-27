@@ -6,12 +6,12 @@ sidebar_label: resume
 
 # mr job resume
 
-Restart a previously paused download job. Resume only works against
-jobs currently in the `paused` state -- jobs that are pending, running,
-finished, or cancelled return an error. The server opens a fresh HTTP
-request, resets the progress counters, and marks the job `pending`; the
-worker starts immediately, queueing behind the concurrency limit if the
-queue is busy.
+Restart a previously paused download job. `<id>` is the Job id `jobs
+list` prints, or the legacy handle `job submit` returns as `id`. Resume
+only works against a paused download; a Job that is queued, running,
+finished, or cancelled returns an error. The server opens a fresh HTTP
+request and queues the Job again; the transfer starts when the
+deployment's job budget has room.
 
 Because the server does not keep partial bytes across pauses, resume
 effectively restarts the download from the beginning.
@@ -29,16 +29,16 @@ Positional arguments:
 
 ## Examples
 
-**Resume a specific paused job**
+**Resume a specific paused download**
 
 ```bash
-mr job resume a1b2c3d4
+mr job resume 018f4db1-9b40-7f54-8f16-37a449bcf01d
 ```
 
-**Resume every paused job in one pass**
+**Resume every visible Job that currently offers resume**
 
 ```bash
-mr jobs list --json | jq -r '.jobs[] | select(.status == "paused") | .id' | xargs -I {} mr job resume {}
+mr jobs list --command resume --json | jq -r '.jobs[].id' | xargs -I {} mr job resume {}
 ```
 
 
@@ -56,7 +56,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with status set to "resumed"
+Object with status set to "resumed" and canonicalJobId naming the resumed Job
 
 ## Exit Codes
 

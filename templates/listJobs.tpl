@@ -151,7 +151,7 @@
 
             <label for="job-filter-dismissed" class="block text-xs font-mono font-medium text-stone-600 mt-2">Dismissed</label>
             <select name="dismissed" id="job-filter-dismissed" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
-                <option value="">Not dismissed</option>
+                <option value="false"{% if jobFilter.Dismissed == "false" %} selected{% endif %}>Not dismissed</option>
                 <option value="any"{% if jobFilter.Dismissed == "any" %} selected{% endif %}>Any</option>
                 <option value="true"{% if jobFilter.Dismissed == "true" %} selected{% endif %}>Dismissed</option>
             </select>

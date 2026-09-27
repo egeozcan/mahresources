@@ -145,6 +145,15 @@ export function panelCountsText({ active = 0, attention = 0 } = {}) {
     return `Showing ${activeText} and ${attention} needing attention`;
 }
 
+// What the drawer says, and shows in place of its list, once its stream reset.
+const STREAM_STOPPED_NOTICE = "Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs.";
+
+function streamStoppedError() {
+    const error = new Error('Job updates stopped.');
+    error.streamStopped = true;
+    return error;
+}
+
 // How many jobs the announcement ledger remembers. A job older than this that
 // changes is recorded again without being said, which is the safe side.
 const HEARD_LIMIT = 1000;
@@ -206,6 +215,8 @@ export function jobPanel() {
         eventSource: null,
         lastSequence: 0,
         streamCaughtUp: false,
+        // Set when the stream reset: see stopForStreamReset.
+        streamStopped: false,
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
@@ -426,12 +437,19 @@ export function jobPanel() {
             return region?.isConnected ? region : null;
         },
 
+        // Every request the drawer makes goes through here, so this is where a
+        // stopped drawer is fenced: nothing is sent once it stopped, and an
+        // answer to a request sent before is refused rather than returned, so
+        // no continuation after an await applies it or announces anything.
+        // Callers' failure paths check streamStopped before they say anything.
         async requestJSON(url, init = {}) {
+            if (this.streamStopped) throw streamStoppedError();
             const response = await fetch(url, {
                 ...init,
                 headers: { Accept: 'application/json', ...(init.headers || {}) },
             });
             const payload = await response.json().catch(() => ({}));
+            if (this.streamStopped) throw streamStoppedError();
             if (!response.ok) {
                 const error = new Error(payload.error || `Request failed (${response.status})`);
                 error.status = response.status;
@@ -442,6 +460,7 @@ export function jobPanel() {
         },
 
         async refresh() {
+            if (this.streamStopped) return;
             const generation = ++this._refreshGeneration;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
@@ -667,6 +686,7 @@ export function jobPanel() {
         },
 
         countUnsaidOutcome() {
+            if (this.streamStopped) return;
             this._unsaidOutcomes += 1;
             if (!this._unsaidOutcomesTimer) {
                 this._unsaidOutcomesTimer = setTimeout(() => this.sayUnsaidOutcomes(), UNSAID_OUTCOMES_COALESCE_MS);
@@ -753,6 +773,10 @@ export function jobPanel() {
         // outcomes is carried until its message has actually landed, whatever
         // the clock says and across a drop: nothing else would say it again.
         say(entries = [], notice = '') {
+            // A stopped drawer says nothing about Jobs: they came from the
+            // database a reset replaced. A notice, such as the stop itself, is
+            // still said.
+            if (this.streamStopped) entries = [];
             const carried = this._countNews ? [this._countNews] : [];
             const news = this.currentNews([...carried, ...this.pendingNews(), ...entries]);
             const text = notice || this.pendingNotice();
@@ -773,6 +797,7 @@ export function jobPanel() {
         },
 
         schedulePanelRefresh() {
+            if (this.streamStopped) return;
             this._panelRefreshRequested = true;
             if (this._panelRefreshPromise) {
                 if (!this._panelRefreshMaxTimer) {
@@ -790,6 +815,7 @@ export function jobPanel() {
         },
 
         startScheduledPanelRefresh() {
+            if (this.streamStopped) return;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._panelRefreshTimer = null;
@@ -834,7 +860,7 @@ export function jobPanel() {
         },
 
         connect() {
-            if (this.eventSource || typeof EventSource === 'undefined') return;
+            if (this.eventSource || this.streamStopped || typeof EventSource === 'undefined') return;
             this.connectionStatus = 'connecting';
             this.eventSource = new EventSource('/v1/jobs/events?version=2');
             this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
@@ -851,6 +877,7 @@ export function jobPanel() {
         // list did not return, and is never announced — a screen reader told
         // every second that a download moved would hear nothing else.
         handleProgressFrame(event) {
+            if (this.streamStopped) return;
             let frame;
             try { frame = JSON.parse(event.data); }
             catch { return; }
@@ -902,6 +929,10 @@ export function jobPanel() {
             catch { return; }
             const sequence = streamCursorSequence(boundary?.cursor);
             if (sequence === null) return;
+            if (boundary.reset === true) {
+                this.stopForStreamReset();
+                return;
+            }
             const wasCaughtUp = this.streamCaughtUp;
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
@@ -909,7 +940,61 @@ export function jobPanel() {
             if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
+        // A reset stream is served by a database that did not issue the cursor
+        // this drawer resumed from: one restored from an older backup, or wiped.
+        // The drawer sits on every page, and the page around it may hold input
+        // nobody has saved, so it does not reload the page: it stops. It closes
+        // the stream, drops every row and every read in flight, reads and sends
+        // nothing more, and says so with a way to reload. Nothing it held is
+        // repaired in place, since all of it came from the other database.
+        stopForStreamReset() {
+            this.eventSource?.close();
+            this.eventSource = null;
+            this.streamStopped = true;
+            this.streamCaughtUp = false;
+            this.connectionStatus = 'stopped';
+            this._refreshGeneration += 1;
+            this._streamGeneration += 1;
+            if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+            if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
+            this._panelRefreshTimer = null;
+            this._panelRefreshMaxTimer = null;
+            this._panelRefreshRequested = false;
+            this.jobs = [];
+            this.details = {};
+            this.finishedHasMore = false;
+            this.notice = '';
+            this.error = '';
+            // What the reader was, or was about to be, told about Jobs belongs to
+            // the other database too: the ledger, the proofs, every message not
+            // yet landed and every timer that would say one. Only the stop is
+            // said, and say() says nothing about a Job from here on.
+            clearTimeout(this._drawerAnnounceTimer);
+            clearTimeout(this._unsaidOutcomesTimer);
+            clearTimeout(this._landTimer);
+            this._drawerAnnounceTimer = null;
+            this._unsaidOutcomesTimer = null;
+            this._landTimer = null;
+            this._unsaidOutcomes = 0;
+            this._countNews = null;
+            this._recentNews = [];
+            this._recentNotice = '';
+            this._newsAt = 0;
+            this._heard = new Map();
+            this._liveVersions = new Map();
+            this._streamTouched = new Map();
+            this._liveRegion?.cancel?.();
+            const inside = this._drawerAnnouncer();
+            if (inside) inside.textContent = '';
+            this.announceNotice(STREAM_STOPPED_NOTICE);
+        },
+
+        reloadPage() {
+            globalThis.location?.reload?.();
+        },
+
         async handleStreamMessage(event) {
+            if (this.streamStopped) return;
             let message;
             try { message = JSON.parse(event.data); }
             catch { return; }
@@ -1116,6 +1201,9 @@ export function jobPanel() {
                 });
                 if (!accepted) return null;
             }
+            // A confirmation answered after the drawer stopped would send a
+            // command about a Job the other database described.
+            if (this.streamStopped) return null;
             const key = commandKey();
             // Changes a live event proved, said with the command's notice.
             const proved = [];
@@ -1139,6 +1227,7 @@ export function jobPanel() {
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try { await this.refreshJobPreference(job.id, proved); }
                     catch { preferenceRefreshFailed = true; }
+                    if (this.streamStopped) return null;
                 }
                 // Dismissing records a preference and emits no job event, so no
                 // refresh would take the row away: it leaves now, and a fresh
@@ -1150,7 +1239,7 @@ export function jobPanel() {
                 }
                 const successorId = outcome.successorId || outcome.successorID || result.successorId || result.successorID;
                 const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
-                if (location) globalThis.location?.assign?.(location);
+                if (location && !this.streamStopped) globalThis.location?.assign?.(location);
                 const rowShowsIt = Object.hasOwn(ROW_SHOWN_COMMANDS, command?.key);
                 this.notice = preferenceRefreshFailed
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
@@ -1158,6 +1247,7 @@ export function jobPanel() {
                 this.announceNotice(this.notice || commandDoneText(job, command), proved);
                 return outcome;
             } catch (error) {
+                if (this.streamStopped) return null;
                 const freshJob = error.payload?.job;
                 if (error.status === 409 && freshJob?.id) {
                     this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
@@ -1178,7 +1268,7 @@ export function jobPanel() {
         // jobs may be dismissed. Only counts are kept: a backlog can be far larger
         // than anything worth holding in the page.
         async dismissFinished() {
-            if (this.busy || this.finishedCount === 0) return { dismissed: 0, total: 0 };
+            if (this.busy || this.streamStopped || this.finishedCount === 0) return { dismissed: 0, total: 0 };
             this.busy = true;
             let dismissed = 0;
             let total = 0;
@@ -1224,6 +1314,10 @@ export function jobPanel() {
                     : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
                 this.announceNotice(this.notice || `${dismissed} finished job${plural} dismissed.`);
             } catch (error) {
+                if (this.streamStopped) {
+                    this.busy = false;
+                    return { dismissed, total };
+                }
                 const reason = error.message || 'Could not dismiss finished jobs.';
                 this.notice = dismissed > 0
                     ? `${dismissed} finished job${dismissed === 1 ? '' : 's'} dismissed before an error: ${reason}`
