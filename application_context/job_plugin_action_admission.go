@@ -363,11 +363,27 @@ func (a *pluginActionAdmission) Completed(message string, result map[string]any)
 }
 
 // Failed implements plugin_system.HostJobSink.
-func (a *pluginActionAdmission) Failed(message string) error {
+func (a *pluginActionAdmission) Failed(failure plugin_system.HostFailure) error {
 	if sink := a.liveSink(); sink != nil {
-		return sink.Failed(message)
+		return sink.Failed(failure)
 	}
 	return nil
+}
+
+// Stopped implements plugin_system.HostJobSink.
+func (a *pluginActionAdmission) Stopped(reason string) error {
+	if sink := a.liveSink(); sink != nil {
+		return sink.Stopped(reason)
+	}
+	return nil
+}
+
+// NotStarted implements plugin_system.HostJobSink. It is only reported for an
+// admitted execution, whose own sink decides.
+func (a *pluginActionAdmission) NotStarted(reason string) {
+	if sink := a.liveSink(); sink != nil {
+		sink.NotStarted(reason)
+	}
 }
 
 // CallbackLost implements plugin_system.HostJobSink.

@@ -1010,6 +1010,10 @@ func loadClaim(db *gorm.DB, jobID string) (models.JobClaim, error) {
 // store.
 const ReconcileFailureCode = "reconciliation-failed"
 
+// ReconcileRuntimeLostCode is the reason an interrupted Job records when its
+// adapter proved, after its lease expired, that the process running it is gone.
+const ReconcileRuntimeLostCode = "runtime-lost"
+
 // errReconcileSuperseded reports that a Job moved while it was being reconciled:
 // the adapter that was asked no longer owns it, so there is nothing to apply and
 // nothing to record.
@@ -1668,9 +1672,13 @@ func (s *Service) applyReconcileDecision(deps Deps, job models.Job, claim models
 			To: StateBlocked, Event: EventInput{Type: EventBlocked, Detail: detail},
 		})
 	case ReconcileInterrupt:
+		// The adapter has proved the execution's runtime gone, so the reader is told
+		// that, rather than shown an interruption with no reason.
 		snap, err = s.Transition(deps, Transition{
 			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: claim.ExecutionToken,
 			To: StateInterrupted, Event: EventInput{Type: EventInterrupted, Detail: detail},
+			Failure: &Failure{Code: ReconcileRuntimeLostCode, Class: FailureClassInternal,
+				Message: "The server process running this stopped before it finished."},
 		})
 	case ReconcileFail:
 		snap, err = s.Finish(deps, FinishRequest{

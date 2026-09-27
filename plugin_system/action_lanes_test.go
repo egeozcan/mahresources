@@ -679,10 +679,11 @@ func (a *revokingAdmission) Admit(time.Time) AdmitResult {
 
 // TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler pins the re-check
 // after the claim. The VM is locked before the claim is asked for, and a disable
-// revokes the VM without waiting for that lock; a claim granted meanwhile must
-// end the Job as work whose plugin went away rather than enter a revoked VM. A
-// scheduled tick is the case to pin, because it runs the handler it captured
-// rather than resolving the registration again.
+// revokes the VM without waiting for that lock; a claim granted meanwhile must not
+// enter a revoked VM. Nothing ran, so the host is told the admitted execution did
+// not start, which is not a failure: it decides whether the Job waits for the
+// plugin's next VM or ends. A scheduled tick is the case to pin, because it runs
+// the handler it captured rather than resolving the registration again.
 func TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler(t *testing.T) {
 	pm := newLanePluginManager(t)
 	gate := installLaneGate(t, pm, "busy", "work")
@@ -693,14 +694,20 @@ func TestAPluginDisabledDuringAdmissionDoesNotStartTheHandler(t *testing.T) {
 	_, ran, err := pm.RunScheduleForHost(regs[0], 1, 5*time.Second, true,
 		&HostJobRef{JobID: "revoked-job", Handle: "revoked-handle", Sink: sink,
 			Admission: &revokingAdmission{pm: pm, plugin: "busy"}})
-	if !ran || err == nil {
-		t.Fatalf("a tick whose plugin was disabled during admission answered ran=%v err=%v, want a failed run", ran, err)
+	if ran || err != nil {
+		t.Fatalf("a tick whose plugin was disabled during admission answered ran=%v err=%v, want not run", ran, err)
 	}
 	if got := gate.order(); len(got) != 0 {
 		t.Fatalf("the handler was entered (%v) after its VM was revoked", got)
 	}
-	if _, completed, failed, _ := sink.counts(); completed != 0 || failed != 1 {
-		t.Fatalf("the host was told completed=%d failed=%d, want one failure", completed, failed)
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.started != 0 || sink.completed != 0 || sink.failed != 0 || len(sink.stopped) != 0 {
+		t.Fatalf("the host was told started=%d completed=%d failed=%d stopped=%v, want nothing but that it did not start",
+			sink.started, sink.completed, sink.failed, sink.stopped)
+	}
+	if len(sink.unstarted) != 1 || sink.unstarted[0] != StopPluginDisabled {
+		t.Fatalf("the host was told %v, want one not-started report for the disabled plugin", sink.unstarted)
 	}
 }
 

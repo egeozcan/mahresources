@@ -1527,14 +1527,14 @@ function init() end
 }
 
 func TestARevokedPluginCannotStillWriteTheDatabase(t *testing.T) {
-	// Revocation stops new dispatch and new registrations, but a worker already
-	// inside keeps its fully-installed mah table until it finishes — up to five
-	// minutes. Without a liveness check on the DB accessors, DisablePlugin
-	// returns, the UI shows the plugin off, and mah.db.create_tag still
-	// succeeds.
+	// Revocation stops new dispatch and new registrations, and it stops a running
+	// async handler at its next instruction — but a synchronous call already
+	// inside keeps its fully-installed mah table until it returns: a disable
+	// revokes the VM without waiting for its lock. Without a liveness check on
+	// the DB accessors, the plugin is off and mah.db.create_tag still succeeds.
 	//
-	// The worker reports through mah.log, because by the time it runs its VM is
-	// closed and its globals are unreadable.
+	// The call reports through mah.log, because by the time it writes its VM has
+	// been revoked and its globals are no longer anybody's to read.
 	var buf syncBuffer
 	old := log.Writer()
 	log.SetOutput(&buf)
@@ -1542,13 +1542,13 @@ func TestARevokedPluginCannotStillWriteTheDatabase(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "lingerer", `
-plugin = { name = "lingerer", version = "1.0", api_version = 1, capabilities = { "jobs", "db:write" } }
+plugin = { name = "lingerer", version = "1.0", api_version = 1, capabilities = { "api", "db:write" } }
 function init()
-    mah.start_job("linger", function(id)
-        mah.sleep(7)
+    mah.api("GET", "linger", function(ctx)
+        mah.sleep(1)
         local result, err = mah.db.create_tag({ name = "written-after-disable" })
         mah.log("info", "after-revocation write succeeded: " .. tostring(result ~= nil))
-        mah.job_complete(id)
+        ctx.json({ ok = true })
     end)
 end
 `)
@@ -1566,24 +1566,29 @@ end
 		t.Fatal(err)
 	}
 
-	// Let the worker acquire the VM lock and get inside its sleep. Revoked
-	// before it starts, it simply never runs — which is correct, and proves
-	// nothing about a worker that is already executing.
-	time.Sleep(500 * time.Millisecond)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		pm.HandleAPI(context.Background(), "lingerer", "GET", "linger", PageContext{
+			Path: "/v1/plugins/lingerer/linger", Method: "GET",
+		})
+	}()
+	// Let the call get inside its sleep. Revoked before it starts, it simply
+	// never runs — which is correct, and proves nothing about a call that is
+	// already executing.
+	time.Sleep(300 * time.Millisecond)
 
-	if err := pm.DisablePlugin("lingerer"); err != nil { // drains 5s, then returns
+	if err := pm.DisablePlugin("lingerer"); err != nil {
 		t.Fatal(err)
 	}
-
-	// Let the worker reach its write, well after the disable returned.
-	time.Sleep(5 * time.Second)
+	<-served
 
 	out := buf.String()
 	if !strings.Contains(out, "after-revocation write succeeded:") {
-		t.Fatalf("the worker never reached its write, so this test proved nothing. log:\n%s", out)
+		t.Fatalf("the call never reached its write, so this test proved nothing. log:\n%s", out)
 	}
 	if strings.Contains(out, "after-revocation write succeeded: true") {
-		t.Error("a revoked plugin wrote to the database after DisablePlugin returned")
+		t.Error("a revoked plugin wrote to the database after it was disabled")
 	}
 }
 
@@ -1709,9 +1714,9 @@ function init() end
 func TestARevokedPluginCannotReachTheNetwork(t *testing.T) {
 	// The DB and KV accessors refuse a revoked VM; egress was the one channel
 	// that did not. A plugin an operator has just disabled could keep making
-	// arbitrary outbound requests for the rest of its async allowance, carrying
-	// whatever it already held in Lua locals — including a key it read from
-	// mah.get_setting before the disable. That is the channel a plugin gets
+	// arbitrary outbound requests from a call that was already running,
+	// carrying whatever it already held in Lua locals — including a key it read
+	// from mah.get_setting before the disable. That is the channel a plugin gets
 	// disabled *for*.
 	var buf syncBuffer
 	old := log.Writer()
@@ -1733,29 +1738,36 @@ func TestARevokedPluginCannotReachTheNetwork(t *testing.T) {
 	}
 
 	pm := mustEnable(t, t.TempDir(), "exfil", `
-plugin = { name = "exfil", version = "1.0", api_version = 1, capabilities = { "jobs", "http" },
+plugin = { name = "exfil", version = "1.0", api_version = 1, capabilities = { "api", "http" },
            network = { "`+host+`" }, allow_private_hosts = true }
 function init()
-    mah.start_job("linger", function(id)
-        mah.sleep(7)
+    mah.api("GET", "linger", function(ctx)
+        mah.sleep(1)
         local resp = mah.http.get_sync("`+srv.URL+`/after-disable")
         mah.log("info", "after-revocation request reached the server: " .. tostring(resp.error == nil))
-        mah.job_complete(id)
+        ctx.json({ ok = true })
     end)
 end
 `)
-	time.Sleep(500 * time.Millisecond) // let the worker get inside
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		pm.HandleAPI(context.Background(), "exfil", "GET", "linger", PageContext{
+			Path: "/v1/plugins/exfil/linger", Method: "GET",
+		})
+	}()
+	time.Sleep(300 * time.Millisecond) // let the call get inside
 
 	if err := pm.DisablePlugin("exfil"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(5 * time.Second)
+	<-served
 
 	out := buf.String()
 	if !strings.Contains(out, "after-revocation request reached the server:") {
-		t.Fatal("the worker never reached its request, so this test proved nothing")
+		t.Fatal("the call never reached its request, so this test proved nothing")
 	}
 	if strings.Contains(out, "after-revocation request reached the server: true") {
-		t.Error("a revoked plugin made an outbound request after DisablePlugin returned")
+		t.Error("a revoked plugin made an outbound request after it was disabled")
 	}
 }

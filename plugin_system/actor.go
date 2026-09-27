@@ -285,14 +285,15 @@ func ownerFromInvocation(inv *Invocation) *uint {
 	return &owner
 }
 
-// invocationContextForJob returns the Background-derived context an async job's
-// Lua call runs under, carrying the job's submitter as the actor and the durable
-// Job it is executing as its parent.
+// invocationContextForJob returns the context an async job's Lua call runs
+// under, carrying the job's submitter as the actor and the durable Job it is
+// executing as its parent, on parent — the handler's own context, which only the
+// host's stop and the job's timeout end.
 //
-// Background, not a request: the job outlives whatever submitted it, so tying it
-// to request cancellation would kill work the user explicitly backgrounded. The
-// chain starts empty because a job is a fresh entry into the VM, not a nested one.
-func invocationContextForJob(job *ActionJob) context.Context {
+// Not a request's: the job outlives whatever submitted it, so tying it to request
+// cancellation would kill work the user explicitly backgrounded. The chain starts
+// empty because a job is a fresh entry into the VM, not a nested one.
+func invocationContextForJob(parent context.Context, job *ActionJob) context.Context {
 	var actor uint
 	if owner := job.Owner(); owner != nil {
 		actor = *owner
@@ -301,7 +302,7 @@ func invocationContextForJob(job *ActionJob) context.Context {
 	if host := job.hostJobRef(); host != nil {
 		jobID = host.JobID
 	}
-	return withInvocation(context.Background(), NewJobInvocation(actor, jobID))
+	return withInvocation(parent, NewJobInvocation(actor, jobID))
 }
 
 // mainState returns the LState that owns L's VM: L itself for a plugin's main

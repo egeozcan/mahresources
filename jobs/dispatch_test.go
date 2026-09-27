@@ -1208,6 +1208,7 @@ func TestReconcileAsksTheAdapterAndAppliesOnlyWhatItAnswers(t *testing.T) {
 			name: "interrupt", decision: ReconcileInterrupt,
 			wantState: StateInterrupted, wantClaim: models.JobClaimStateReleased,
 			wantCapacity: 0, wantTokenKept: false, wantEvent: EventInterrupted,
+			wantFailure: ReconcileRuntimeLostCode,
 		},
 		{
 			name: "fail", decision: ReconcileFail,

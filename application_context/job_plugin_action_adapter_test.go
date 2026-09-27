@@ -98,6 +98,15 @@ function holding_work(ctx)
     mah.kv.set("holding", "returned")
 end
 
+-- Runs for about twenty seconds unless something stops it: long enough to be
+-- running when a test disables its plugin, cancels it or shuts the server down.
+function long_work(ctx)
+    mah.kv.set("long", "running")
+    for i = 1, 400 do mah.sleep(0.05) end
+    mah.kv.set("long", "finished")
+    mah.job_complete(ctx.job_id, { message = "long done" })
+end
+
 function closure_work(job_id)
     mah.kv.set("closure", "ran")
     mah.job_progress(job_id, 35, "closure work")
@@ -114,6 +123,16 @@ function leaky_work(ctx)
     mah.job_progress(ctx.job_id, 10, "touching " .. ctx.params.secret)
     mah.job_fail(ctx.job_id, "failed on " .. ctx.params.secret ..
                  " at https://signed.example/x?token=" .. ctx.params.secret)
+end
+
+-- Raises a Lua error rather than declaring a failure: the Job has to say what
+-- the error was without the stack traceback or the server's path to the plugin.
+function erroring_work(ctx)
+    local broken = nil
+    if ctx.params.secret == "nil-field" then
+        return broken.field
+    end
+    error("the handler broke on " .. ctx.params.secret)
 end
 
 -- Counts, a unit and metrics through the table form. The second report lands
@@ -202,6 +221,11 @@ function init()
     mah.action({ id = "leaky-work", label = "Leaky Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = leaky_work })
+    mah.action({ id = "long-work", label = "Long Work", entity = "resource", async = true,
+                 handler = long_work })
+    mah.action({ id = "erroring-work", label = "Erroring Work", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = erroring_work })
     mah.action({ id = "metric-work", label = "Metric Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = metric_work })
@@ -1290,16 +1314,16 @@ func TestAClosureJobIsNeverClaimableByTheDispatchLoop(t *testing.T) {
 	}
 }
 
-// TestAPluginJobKeepsItsOwnTextOutOfDurableHistory is the redaction boundary for
-// plugin background work.
+// TestAPluginJobKeepsItsOwnTextOutOfDurableHistory is the redaction half of a
+// plugin's failure reason.
 //
 // A Job's input is sealed, but its failure, its progress snapshots, its terminal
 // event and the hook payload built from them are ordinary durable history: a
-// handler whose validator saw `context.params.secret`, or an HTTP error carrying a
-// signed URL, must not be able to write that value into a surface every authorized
-// reader can search. What the Job records is a bounded host-owned classification —
-// the same shape every other Kind records — and the plugin's own words, with the
-// Job's parameter values replaced, stay out of anything a viewer can list.
+// handler that echoes `ctx.params.secret`, or an HTTP error carrying a signed URL
+// built from it, must not be able to write that value into a surface every
+// authorized reader can search. The reason the plugin gave is kept, because it is
+// the only way a reader learns why the work failed, and every value of the Job's
+// own parameters in it is replaced first.
 func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 	const secret = "top-secret-token-value"
 	ctx := newPluginActionJobContext(t)
@@ -1318,12 +1342,14 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 	if job.Failure == nil {
 		t.Fatalf("the failed action records no failure")
 	}
-	if job.Failure.Code != pluginActionFailureCode {
-		t.Fatalf("the failure is classified %q, want %q", job.Failure.Code, pluginActionFailureCode)
+	if job.Failure.Code != pluginActionFailureCode || job.Failure.Class != jobs.FailureClassDependency {
+		t.Fatalf("a declared failure is classified %q/%q, want %q/%q", job.Failure.Code, job.Failure.Class,
+			pluginActionFailureCode, jobs.FailureClassDependency)
 	}
-	if job.Failure.Message != pluginActionFailureMessage {
-		t.Fatalf("the failure message is %q: it has to be host-owned text, not the handler's own",
-			job.Failure.Message)
+	const reason = "failed on [redacted] at https://signed.example/x?token=[redacted]"
+	if job.Failure.Message != reason {
+		t.Fatalf("the failure message is %q, want the plugin's own reason with its parameter values replaced: %q",
+			job.Failure.Message, reason)
 	}
 	if strings.Contains(job.Failure.Message, secret) {
 		t.Fatalf("the durable failure carries a parameter value: %q", job.Failure.Message)
@@ -1360,6 +1386,55 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 		t.Fatalf("forget the chatty action's input: %v", err)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
+}
+
+// TestALuaErrorIsTheFailureReasonWithoutItsTraceback is the other shape a
+// plugin's failure takes: the handler raised a Lua error instead of declaring a
+// failure. The reader is told what the error was, as the Lua error's own first
+// line, which names the plugin's file relative to the plugin rather than by the
+// server's path to it; the stack traceback stays in the server log. The class says
+// the handler broke, which is a different fact from the plugin reporting that its
+// work failed.
+func TestALuaErrorIsTheFailureReasonWithoutItsTraceback(t *testing.T) {
+	const secret = "error-secret-value"
+	ctx := newPluginActionJobContext(t)
+	pluginDir := ctx.PluginManager().GetDiscoveredPlugin(pluginActionTestPlugin).Dir
+
+	cases := []struct {
+		param, want string
+	}{
+		{secret, "the handler broke on [redacted]"},
+		{"nil-field", "attempt to index a non-table object(nil) with key 'field'"},
+	}
+	for _, tc := range cases {
+		_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "erroring-work", 9,
+			map[string]any{"secret": tc.param}, "")
+		if err != nil {
+			t.Fatalf("run the erroring action: %v", err)
+		}
+		job := waitForJobState(t, ctx, canonical, "the action to fail", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if job.State != jobs.StateFailed || job.Failure == nil {
+			t.Fatalf("the erroring action ended %s (%+v), want failed with a failure", job.State, job.Failure)
+		}
+		if job.Failure.Code != pluginActionErrorCode || job.Failure.Class != jobs.FailureClassInternal {
+			t.Fatalf("a Lua error is classified %q/%q, want %q/%q", job.Failure.Code, job.Failure.Class,
+				pluginActionErrorCode, jobs.FailureClassInternal)
+		}
+		message := job.Failure.Message
+		if !strings.HasPrefix(message, "plugin.lua:") || !strings.HasSuffix(message, tc.want) {
+			t.Fatalf("the failure message is %q, want the Lua error's first line naming plugin.lua and ending %q",
+				message, tc.want)
+		}
+		if strings.Contains(message, "stack traceback") || strings.Contains(message, "\n") {
+			t.Fatalf("the failure message carries the traceback: %q", message)
+		}
+		if strings.Contains(message, pluginDir) {
+			t.Fatalf("the failure message names the server's path to the plugin: %q", message)
+		}
+		assertNoSecretInJobSurfaces(t, ctx, canonical, secret)
+	}
 }
 
 // TestANestedPluginParameterIsRedactedFromEveryReportSurface is the input half of the

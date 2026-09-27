@@ -286,6 +286,9 @@ const (
 	// asyncRevoked means the VM the work belongs to was revoked — its plugin was
 	// disabled or reloaded — before the work was entered.
 	asyncRevoked
+	// asyncNotEntered means the host admitted the work and it was not entered
+	// after all, and the host has been told so (HostJobSink.NotStarted).
+	asyncNotEntered
 )
 
 // asyncBounds are the waits one execution may spend before its work is entered.

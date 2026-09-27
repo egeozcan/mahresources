@@ -122,12 +122,15 @@ const (
 	// succeeds — the output is optional by construction, so a result nobody can
 	// store must not fail the work that produced it.
 	maxPluginActionResultBytes = 6 << 10
-	// pluginActionFailureCode and pluginActionFailureMessage are the bounded,
-	// host-owned failure one plugin execution records. The code is what a reader
-	// groups on and the message is what the Job Center shows: neither is derived
-	// from what the plugin said, because a script's own words are arbitrary text
-	// and a Job's failure is durable history the sealed input cannot protect.
-	pluginActionFailureCode    = "plugin-action-failed"
+	// pluginActionFailureCode is the failure a plugin reported itself, through
+	// mah.job_fail or mah.abort; pluginActionErrorCode a handler that raised a Lua
+	// error; pluginActionTimeoutCode a handler that ran out of time. The code is
+	// what a reader groups on and the class says whose failure it was. The message
+	// is the plugin's own reason (see pluginActionFailure).
+	pluginActionFailureCode = "plugin-action-failed"
+	pluginActionErrorCode   = "plugin-handler-error"
+	pluginActionTimeoutCode = "plugin-handler-timeout"
+	// pluginActionFailureMessage stands in for a reason the plugin left empty.
 	pluginActionFailureMessage = "the plugin's handler failed"
 	// pluginActionRedactionMarker replaces any value of the Job's own parameters
 	// that a plugin puts into a message the host persists.
@@ -1428,7 +1431,7 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 			}
 		}
 	}
-	outcome := pluginActionOutcome{succeeded: true, message: s.safeText(message, jobs.MaxProgressMessageBytes), phase: phase}
+	outcome := pluginActionOutcome{state: jobs.StateSucceeded, message: s.safeText(message, jobs.MaxProgressMessageBytes), phase: phase}
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
 	}
@@ -1436,31 +1439,115 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) erro
 	return publication
 }
 
-// Failed records an unsuccessful execution.
+// Failed records an unsuccessful execution, with the reason the plugin gave.
 //
-// The failure is a *bounded host-owned classification*, not the plugin's text.
-// A handler's message is arbitrary Lua — `error(ctx.params.secret)`, a signed URL
-// out of an HTTP error — and a Job's failure is durable, searchable history that
-// outlives the sealed envelope the secret was supposed to live in. Every other
-// Kind in this tree already does this ("the download did not complete"); this is
-// the same rule applied to the one executor whose text comes from a script.
-//
-// The executor's own words are not lost: they go to the process's own log, which
-// is not the Job Center and is not a searchable surface, with the Job id that
-// ties them back here.
-func (s *pluginActionSink) Failed(message string) error {
+// The reason is shown because it is the only way a reader learns why the work
+// failed, and a plugin's progress and completion messages, which are text of the
+// same origin, have always been shown. It is held to the same rule as they are:
+// every value of the Job's own parameters in it is replaced before it is stored
+// (safeText), because the failure is durable, searchable history and the sealed
+// input is the only place those values may live. A Lua error arrives as its first
+// line, without its traceback and naming the plugin's file relative to the
+// plugin (plugin_system does that, because only it knows the plugin's
+// directory), and the traceback stays in the server log.
+func (s *pluginActionSink) Failed(failure plugin_system.HostFailure) error {
 	if s.settled() {
 		return nil
 	}
-	if raw := s.safeText(message, jobs.MaxFailureMessageBytes); raw != "" {
-		log.Printf("plugin job %s failed: %s", s.execution.JobID, raw)
-	}
-	outcome := pluginActionOutcome{}
+	outcome := pluginActionOutcome{state: jobs.StateFailed, failure: s.pluginActionFailure(failure)}
 	if _, err := s.publishOutcome(outcome); err != nil {
 		return s.retainUnsettled(outcome, err)
 	}
-	s.announceTerminal("failed", pluginActionFailureMessage)
+	s.announceTerminal("failed", outcome.failure.Message)
 	return nil
+}
+
+// pluginActionFailure is the Job failure one plugin execution records.
+func (s *pluginActionSink) pluginActionFailure(failure plugin_system.HostFailure) *jobs.Failure {
+	message := s.safeText(strings.TrimSpace(failure.Message), jobs.MaxFailureMessageBytes)
+	if message == "" {
+		message = pluginActionFailureMessage
+	}
+	switch failure.Cause {
+	case plugin_system.FailureError:
+		return &jobs.Failure{Code: pluginActionErrorCode, Class: jobs.FailureClassInternal, Message: message}
+	case plugin_system.FailureTimeout:
+		return &jobs.Failure{Code: pluginActionTimeoutCode, Class: jobs.FailureClassTimeout, Message: message}
+	default:
+		// The plugin said its work failed. What failed is outside the host — an
+		// upstream the plugin called, or the entity it acted on — which is what a
+		// dependency is from here.
+		return &jobs.Failure{Code: pluginActionFailureCode, Class: jobs.FailureClassDependency, Message: message}
+	}
+}
+
+// Stopped records that the host ended the handler before it finished. A person's
+// cancellation ends the Job cancelled; a disable or a shutdown ends it
+// interrupted, with the reason on its failure, because nothing about the work
+// failed — it lost its runtime.
+func (s *pluginActionSink) Stopped(reason string) error {
+	if s.settled() {
+		return nil
+	}
+	outcome := pluginActionStoppedOutcome(reason)
+	if _, err := s.publishOutcome(outcome); err != nil {
+		return s.retainUnsettled(outcome, err)
+	}
+	if outcome.state == jobs.StateCancelled {
+		s.announceTerminal("cancelled", "")
+	}
+	return nil
+}
+
+// pluginActionStoppedOutcome is the outcome of a handler the host stopped.
+func pluginActionStoppedOutcome(reason string) pluginActionOutcome {
+	if reason == plugin_system.StopCancelled {
+		return pluginActionOutcome{state: jobs.StateCancelled, reason: reason}
+	}
+	return pluginActionOutcome{state: jobs.StateInterrupted, reason: reason, failure: pluginActionInterruption(reason)}
+}
+
+// pluginActionInterruption is the failure an interrupted plugin execution
+// records: why its runtime stopped under it, in words a reader can act on.
+func pluginActionInterruption(reason string) *jobs.Failure {
+	switch reason {
+	case plugin_system.StopPluginDisabled:
+		return &jobs.Failure{Code: reason, Class: jobs.FailureClassCancellation,
+			Message: "The plugin was disabled while this was running."}
+	default:
+		return &jobs.Failure{Code: plugin_system.StopRuntimeStopping, Class: jobs.FailureClassCancellation,
+			Message: "The server shut down while this was running."}
+	}
+}
+
+// NotStarted records that this claimed execution will not enter its handler after
+// all. Nothing ran, so nothing failed: a registered action's claim goes back to
+// the queue, where the next process that has the plugin runs it (or, with the
+// plugin disabled everywhere, adoption blocks it); a closure's function and an
+// occurrence's tick die with this runtime, so those are withdrawn as never
+// started.
+func (s *pluginActionSink) NotStarted(reason string) {
+	if s.input != nil && s.input.Subtype == pluginActionSubtypeRegistered {
+		release := func() error {
+			_, err := s.ctx.JobService().ReleaseClaim(s.ctx.jobDeps(), jobs.ReleaseRequest{
+				ExecutionRef: s.ref(), Reason: reason, To: jobs.StateQueued,
+			})
+			if err != nil && mirrorRefusalIsSilent(err) {
+				return nil
+			}
+			return err
+		}
+		s.ctx.settlePluginActionWhile(s.execution.JobID, jobs.StateRunning, release)
+		return
+	}
+	message := "the server shut down before this ran"
+	if reason == plugin_system.StopPluginDisabled {
+		message = "the plugin was disabled before this ran"
+	}
+	execution := s.execution
+	s.ctx.settlePluginActionWhile(execution.JobID, jobs.StateRunning, func() error {
+		return s.ctx.withdrawPluginActionJob(execution, pluginActionNotStartedEvent, message)
+	})
 }
 
 // announceTerminal tells the deployment's job-event observer that one plugin Job
@@ -1621,30 +1708,62 @@ func (s *pluginActionSink) retrySettlement() {
 }
 
 // pluginActionOutcome is one execution's terminal outcome in its publishable form.
-// The success message is carried already redacted: an outcome that is retried is
-// published later, and a value that was safe to store once must not depend on the
-// retry path redacting it a second time.
+// Its text is carried already redacted: an outcome that is retried is published
+// later, and a value that was safe to store once must not depend on the retry path
+// redacting it a second time.
 type pluginActionOutcome struct {
-	succeeded bool
-	message   string
+	state jobs.State
+	// message is a successful completion's text.
+	message string
 	// phase is the Job phase a successful completion records, or empty for the
 	// ordinary complete outcome. It is how "succeeded with work left" reaches the
 	// Job row without a second state.
 	phase string
+	// failure is why a failed or interrupted execution did not succeed.
+	failure *jobs.Failure
+	// reason is the terminal event's reason for a stopped execution.
+	reason string
 }
 
 // publishOutcome records one terminal outcome through the sink's own finish path,
 // reporting the refusal when there is one.
+//
+// A success refused because a cancellation already won the Job ends it cancelled:
+// the person asked for it to stop, the handler happened to finish first, and §4
+// makes a later success unrepresentable over that request.
 func (s *pluginActionSink) publishOutcome(outcome pluginActionOutcome) (jobs.Snapshot, error) {
-	if outcome.succeeded {
+	switch outcome.state {
+	case jobs.StateSucceeded:
 		progress := s.finalProgress(outcome.message, outcome.phase)
-		return s.finish(jobs.StateSucceeded, nil, outcome.message, &progress)
+		event := jobs.EventInput{}
+		if outcome.message != "" && outcome.message != "Completed" {
+			if detail, err := json.Marshal(map[string]string{"message": truncateTo(outcome.message, 1500)}); err == nil {
+				event = jobs.EventInput{Detail: detail}
+			}
+		}
+		snap, err := s.finish(jobs.StateSucceeded, nil, event, &progress)
+		if errors.Is(err, jobs.ErrControlIntentWon) {
+			return s.finish(jobs.StateCancelled, nil, pluginActionReasonEvent(plugin_system.StopCancelled), nil)
+		}
+		return snap, err
+	case jobs.StateFailed:
+		return s.finish(jobs.StateFailed, outcome.failure, jobs.EventInput{}, nil)
+	default:
+		return s.finish(outcome.state, outcome.failure, pluginActionReasonEvent(outcome.reason), nil)
 	}
-	return s.finish(jobs.StateFailed, &jobs.Failure{
-		Code:    pluginActionFailureCode,
-		Class:   jobs.FailureClassInternal,
-		Message: pluginActionFailureMessage,
-	}, pluginActionFailureMessage, nil)
+}
+
+// pluginActionReasonEvent is a terminal event whose detail names why the host
+// ended the Job.
+func pluginActionReasonEvent(reason string) jobs.EventInput {
+	if reason == "" {
+		return jobs.EventInput{}
+	}
+	detail, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		return jobs.EventInput{}
+	}
+	return jobs.EventInput{Detail: detail}
 }
 
 // settleRefused reports whether an answer ends this execution's attempts to publish,
@@ -1674,7 +1793,10 @@ func (s *pluginActionSink) finished() bool {
 	return s.settled()
 }
 
-func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, message string, finalProgress *jobs.Progress) (jobs.Snapshot, error) {
+// finish ends the Job with one outcome. The event's *type* stays the derived
+// terminal one — the timeline says "succeeded", which is what a reader filters
+// on — and what the plugin or the host said rides in its bounded detail.
+func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, event jobs.EventInput, finalProgress *jobs.Progress) (jobs.Snapshot, error) {
 	service := s.ctx.JobService()
 	if service == nil {
 		return jobs.Snapshot{}, nil
@@ -1688,15 +1810,6 @@ func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, mes
 	}
 	if current.State.Terminal() {
 		return current, nil
-	}
-	// The event's *type* stays the derived terminal one — the timeline says
-	// "succeeded", which is what a reader filters on — and the plugin's own
-	// message rides in its bounded detail.
-	event := jobs.EventInput{}
-	if outcome == jobs.StateSucceeded && message != "" && message != "Completed" {
-		if detail, err := json.Marshal(map[string]string{"message": truncateTo(message, 1500)}); err == nil {
-			event = jobs.EventInput{Detail: detail}
-		}
 	}
 	return service.Finish(s.ctx.jobDeps(), jobs.FinishRequest{
 		ExecutionRef:    s.ref(),

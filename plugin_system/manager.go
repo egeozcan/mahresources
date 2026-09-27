@@ -63,6 +63,22 @@ const (
 	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
 )
 
+// The bounds on a shutdown's wait for plugin handlers (Close). Together they are
+// at most fifteen seconds, which keeps the whole server's stop well inside a
+// supervisor's stop timeout. Variables so a test can observe each one without
+// sitting it out.
+var (
+	// shutdownHandlerGrace is how long a handler running when the server begins
+	// shutting down may take to finish by itself before it is stopped.
+	shutdownHandlerGrace = 5 * time.Second
+	// shutdownHandlerStopWait is how long a stopped handler may take to unwind,
+	// and bounds the wait for the VMs' locks at shutdown.
+	shutdownHandlerStopWait = 5 * time.Second
+	// shutdownSettleWait bounds the wait at shutdown for the outcomes that
+	// handlers which returned are still recording.
+	shutdownSettleWait = 5 * time.Second
+)
+
 // MaxAsyncJobDuration is how long an async job's Lua may execute before its
 // context is cancelled.
 //
@@ -1802,7 +1818,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			// not in vmLocks — the worker would fail the job it just created with
 			// "plugin is no longer available".
 			switch pm.runStartJobGoroutine(job, ticket, mainState(L), fn, jobID) {
-			case asyncGaveUp, asyncWithdrawn:
+			case asyncGaveUp, asyncWithdrawn, asyncNotEntered:
 				pm.dropUnstartedJob(job)
 			case asyncRevoked:
 				pm.abandonUnstartedJob(job)
@@ -1843,6 +1859,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	// mah.sleep(seconds) - blocks the current Lua VM for the given duration.
 	// Bounded to [0, 30] seconds to prevent abuse. Useful for polling external
 	// async APIs (e.g. fal.ai queue) from within a sync action handler.
+	//
+	// It ends early when the call's context does — its timeout, or the host
+	// stopping an async handler — and the VM raises at the next instruction: a
+	// sleep is where a long handler spends most of its time, so one that ignored
+	// the context would hold a cancel, a disable or a shutdown for up to 30
+	// seconds per call.
 	setIf("", "sleep", func(L *lua.LState) int {
 		if pm.refuseDocsPreview(L, "mah.sleep") {
 			return 0
@@ -1862,7 +1884,18 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		if secs > 30 {
 			secs = 30
 		}
-		time.Sleep(time.Duration(float64(secs) * float64(time.Second)))
+		duration := time.Duration(float64(secs) * float64(time.Second))
+		ctx := L.Context()
+		if ctx == nil {
+			time.Sleep(duration)
+			return 0
+		}
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		}
 		return 0
 	})
 
@@ -2311,6 +2344,14 @@ func (pm *PluginManager) stateRevoked(L *lua.LState) <-chan struct{} {
 //
 // The caller must already have revoked the state.
 func (pm *PluginManager) finishTeardown(name string, state *lua.LState, mu *vmMutex) {
+	// A disabled plugin's running handlers are stopped, not waited out: the
+	// operator asked for the plugin to stop, and a handler left running on a
+	// revoked VM keeps writing through mah.db for up to MaxAsyncJobDuration with
+	// nothing on its Job to say its plugin is gone. Each ends at its next
+	// instruction and records that it was stopped because the plugin was
+	// disabled. Handlers of a VM enabled since are live and are left alone.
+	pm.stopRevokedHandlers(name)
+
 	pm.actionJobsMu.Lock()
 	wg := pm.actionInFlight[name]
 	delete(pm.actionInFlight, name)
@@ -2412,6 +2453,53 @@ func closeState(pm *PluginManager, state *lua.LState) {
 		return
 	}
 	state.Close()
+}
+
+// closeStateBy is closeState for a shutdown: it waits for the VM's lock no
+// later than deadline, and reports false, leaving the state revoked but open,
+// when something still holds the lock then. Nothing can enter a revoked state,
+// and the process that owns it is exiting.
+func closeStateBy(pm *PluginManager, state *lua.LState, deadline time.Time) bool {
+	pm.mu.Lock()
+	mu, owned := pm.revokeLocked(state)
+	pm.mu.Unlock()
+	if !owned {
+		return true
+	}
+	if mu == nil {
+		state.Close()
+		return true
+	}
+	acquired := false
+	if remaining := time.Until(deadline); remaining > 0 {
+		acquired = mu.LockWithin(context.Background(), remaining)
+	} else {
+		// LockWithin reads a zero wait as "no deadline", which is the one wait
+		// a shutdown must not make.
+		acquired = mu.TryLock()
+	}
+	if !acquired {
+		return false
+	}
+	state.Close()
+	mu.Unlock()
+	return true
+}
+
+// drainHandlers gives the handlers running at shutdown shutdownHandlerGrace to
+// finish by themselves, then stops them and gives them shutdownHandlerStopWait to
+// unwind.
+func (pm *PluginManager) drainHandlers() {
+	if pollUntil(time.Now().Add(shutdownHandlerGrace), func() bool { return pm.runningHandlers() == 0 }) {
+		return
+	}
+	stopped := pm.stopHandlers(StopRuntimeStopping, func(*ActionJob, *handlerRun) bool { return true })
+	log.Printf("[plugin] stopping %d plugin handler(s) still running %s after shutdown began",
+		stopped, shutdownHandlerGrace)
+	if !pollUntil(time.Now().Add(shutdownHandlerStopWait), func() bool { return pm.runningHandlers() == 0 }) {
+		log.Printf("[plugin] warning: %d plugin handler(s) did not stop within %s; the server exits without them",
+			pm.runningHandlers(), shutdownHandlerStopWait)
+	}
 }
 
 // GenerationForState returns the generation assigned to the VM's root state.
@@ -2779,13 +2867,15 @@ func (pm *PluginManager) TryLockVMWithin(ctx context.Context, L *lua.LState, wai
 // Close shuts down all Lua VMs. After Close returns, hooks and injections
 // are no-ops.
 //
-// Close now blocks on in-flight plugin work, because it acquires each VM lock
-// before closing that state. Shutdown latency is therefore bounded by whatever
-// is running: up to asyncActionTimeout (5m) for a wedged async action, since
-// nothing here waits on actionInFlight the way it waits on httpWg. That is
-// deliberate for now (waiting is strictly better than the use-after-close crash
-// it replaces), but if shutdown needs a hard ceiling it should get one of its
-// own, in the shape DownloadManager.ShutdownDrainTimeout already uses.
+// Its length is bounded, because a supervisor's stop timeout is (systemd's is 90
+// seconds by default) and a process killed partway through its teardown loses
+// every outcome it was about to record. A running handler gets
+// shutdownHandlerGrace to finish by itself, which is when a short action is
+// recorded as it completed; then it is stopped (StopRuntimeStopping) and given
+// shutdownHandlerStopWait to unwind. A VM whose lock is still held after that —
+// a handler inside a Go call that does not watch its context — is revoked and
+// left open for the process's exit rather than waited for, and its execution is
+// reported lost.
 func (pm *PluginManager) Close() {
 	// Admissions stop first, and the callbacks that were already running are given
 	// their chance to finish before anything is declared lost.
@@ -2795,9 +2885,11 @@ func (pm *PluginManager) Close() {
 	// Job whose handler is about to complete and about to mutate data. The record
 	// then says `interrupted` for work that succeeded, and — because an interrupted
 	// Job is terminal and unsuccessful — a Kind that declares safe replay can be
-	// Retried while the original handler is still executing. Stopping the VMs first
-	// makes the statement true: after the teardown below, no *lua.LFunction can be
-	// entered again, so what is still unfinished is what can never finish.
+	// Retried while the original handler is still executing. Stopping the handlers
+	// and the VMs first makes the statement true for every VM this closes: no
+	// *lua.LFunction can be entered on it again, so what is still unfinished is
+	// what can never finish. A handler that would not stop is the exception, and
+	// the process is exiting underneath it.
 	//
 	// Under pm.mu so it is exclusive with a load registering itself: a load
 	// that got in first is in loadWg and waited for below; one that arrives
@@ -2824,12 +2916,17 @@ func (pm *PluginManager) Close() {
 	// tests, so it gets called twice — and closing a closed channel panics.
 	pm.closeDone.Do(func() { close(pm.done) })
 
+	// Work still waiting has left its lane by now (done ends every wait), and
+	// work admitted from here on does not enter its handler (cannotEnter). What
+	// is running is given its grace, then stopped.
+	pm.drainHandlers()
+
 	// Same lifecycle DisablePlugin uses, for the same reason: pm.closed is
 	// checked on the way in, so a render or async action that passed that check
 	// can still be inside L.CallByParam here. Closing under it is a data race and
 	// then a nil dereference inside gopher-lua. Take each VM lock (which waits for
-	// whatever is running), drop the vmLocks entry while holding it so anyone
-	// queued behind us backs out of LockVM, then close.
+	// whatever is running, bounded), drop the vmLocks entry so anyone queued behind
+	// us backs out of LockVM, then close.
 	//
 	// pm.mu is not held across the VM lock: LockVM takes pm.mu.RLock while holding
 	// the VM lock, so the reverse order would deadlock.
@@ -2838,8 +2935,20 @@ func (pm *PluginManager) Close() {
 	copy(states, pm.states)
 	pm.mu.RUnlock()
 
+	closeBy := time.Now().Add(shutdownHandlerStopWait)
 	for _, L := range states {
-		closeState(pm, L)
+		if !closeStateBy(pm, L, closeBy) {
+			log.Printf("[plugin] warning: a plugin VM is still in use after its handlers were stopped; " +
+				"leaving it open until the server exits")
+		}
+	}
+
+	// A handler that returned during the teardown above settles its own outcome,
+	// which reaches the database: that is waited for, bounded, so the record says
+	// what the handler reached rather than that it was lost.
+	if !pollUntil(time.Now().Add(shutdownSettleWait), func() bool { return pm.unsettledOutcomes() == 0 }) {
+		log.Printf("[plugin] warning: %d plugin job outcome(s) were still being recorded after %s",
+			pm.unsettledOutcomes(), shutdownSettleWait)
 	}
 
 	// Undelivered callbacks are dropped here rather than left in the maps.
@@ -2867,13 +2976,14 @@ func (pm *PluginManager) Close() {
 
 	// Only now can this process say a callback will never finish, and that is what
 	// it says: every execution still unfinished had its VM closed underneath it, so
-	// its *lua.LFunction can never be entered again. An execution that completed
-	// during the teardown above has already reported its own outcome — the
-	// in-memory entry is terminal, so it is not named here — and a Job whose
-	// callback never started is named just as one that was running is: neither can
-	// finish. The host decides what that means per Job, and only the host can, since
-	// it is the one holding the durable record.
-	pm.reportLostCallbacks("plugin-runtime-stopping")
+	// its *lua.LFunction can never be entered again — or, for a handler that would
+	// not stop, the process is about to exit underneath it. An execution whose
+	// handler returned reports its own outcome and is not named here
+	// (settlesItself), and a Job whose callback never started is named just as one
+	// that was running is: neither can finish. The host decides what that means
+	// per Job, and only the host can, since it is the one holding the durable
+	// record.
+	pm.reportLostCallbacks(StopRuntimeStopping)
 
 	// Emptied, not niled. init() is unbounded and the wait above is not, so a
 	// load can still be running here — and every registration function writes

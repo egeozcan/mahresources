@@ -373,11 +373,12 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 			return nil, errScheduleVMBusy
 		},
 		live: func() bool { return pm.stillRegistered(state) },
-		run: func(mu *vmMutex) error {
-			defer mu.Unlock()
+		run: func(h *handlerRun) error {
+			defer h.Unlock()
 
-			timeoutCtx, cancel := context.WithTimeout(
-				withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
+			timeoutCtx, cancel := h.Context(func(parent context.Context) context.Context {
+				return withInvocation(parent, scheduleInvocation(actorUserID, host))
+			})
 			state.SetContext(timeoutCtx)
 			defer func() {
 				state.RemoveContext()
