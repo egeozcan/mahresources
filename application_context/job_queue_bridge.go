@@ -548,12 +548,19 @@ func (ctx *MahresourcesContext) renewQueueExecutionClaim(execution jobs.Executio
 // publishes no completion signal to select on — its cancellation is a context and its
 // completion is a field. It answers stopped=true when the deployment began shutting
 // down underneath it, which is the one case its caller must write nothing about.
+//
+// A hold the queue published and the Job did not record (a write that failed) is
+// written again from here, under this execution's token, until the Job answers
+// (recordOwnedHold). This owner renews the claim for as long as it waits, so a Job
+// left running over a paused entry would otherwise never reach the lease expiry
+// that settles it elsewhere.
 func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, bool) {
 	ticker := time.NewTicker(queueJobPollInterval)
 	defer ticker.Stop()
 
 	var published jobs.Progress
 	var nextIntentCheck time.Time
+	var hold ownedHold
 	for {
 		if ctx.queueIsShuttingDown() {
 			return nil, true
@@ -581,7 +588,48 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 			}
 		}
 		ctx.deliverControlIntent(execution, entry, &nextIntentCheck)
+		if snap.Status == download_queue.JobStatusPaused {
+			ctx.recordOwnedHold(execution, entry, snap, &hold)
+		}
 		<-ticker.C
+	}
+}
+
+// ownedHoldRetryInterval spaces the owner's writes of a hold the Job has not
+// recorded, so a database that refuses writes is asked once a second rather than
+// at every poll.
+const ownedHoldRetryInterval = time.Second
+
+// ownedHold is what an owner knows about the hold of its execution: whether the
+// Job has answered it, and when to ask again after a write that failed.
+type ownedHold struct {
+	answered  bool
+	nextWrite time.Time
+	warned    bool
+}
+
+// recordOwnedHold writes a hold the queue published and the Job did not record,
+// under this execution's token, and applies the Job's answer to the entry. It
+// waits for the queue's own publication first, so it retries that write rather
+// than racing it. It stops once the Job has answered: recorded, cancelled, or not
+// this execution's to record (the token moved on, or the Job left running). A
+// write that failed is asked again after ownedHoldRetryInterval.
+func (ctx *MahresourcesContext) recordOwnedHold(execution jobs.Execution, entry *download_queue.DownloadJob, snap *download_queue.DownloadJob, hold *ownedHold) {
+	if hold.answered || !entry.HoldUnrecorded() || time.Now().Before(hold.nextWrite) {
+		return
+	}
+	record, err := ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, snap)
+	if err != nil && !mirrorRefusalIsSilent(err) {
+		if !hold.warned {
+			log.Printf("warning: the pause of download Job %s could not be recorded (%v); asking again", execution.JobID, err)
+			hold.warned = true
+		}
+		hold.nextWrite = time.Now().Add(ownedHoldRetryInterval)
+		return
+	}
+	hold.answered = true
+	if err == nil {
+		ctx.downloadManager.ApplyHoldRecord(entry, execution.ExecutionToken, record)
 	}
 }
 

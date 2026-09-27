@@ -1598,6 +1598,7 @@ func (dm *DownloadManager) publishHold(job *DownloadJob, held heldAttempt) {
 		}
 	}
 	dm.applyHoldRecord(job, held.run, record)
+	job.markHoldPublished(held.run)
 }
 
 // ApplyHoldRecord applies the durable Job's answer to a hold that the dispatch

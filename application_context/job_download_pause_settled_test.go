@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -115,5 +117,41 @@ func TestAPauseAskedAgainAfterItTimedOutIsConfirmed(t *testing.T) {
 	}
 	if snap := jobSnapshot(t, ctx.JobService(), ctx, jobID); snap.State != jobs.StatePaused {
 		t.Fatalf("the Job is %s after the pause was confirmed, want paused", snap.State)
+	}
+}
+
+// A hold whose write failed does not leave the Job running over a paused entry.
+// The execution that owns the Job renews its claim for as long as it waits, so no
+// lease expiry would ever settle it elsewhere: the owner writes the hold again,
+// under its own token, until the Job answers.
+func TestAHoldWhoseWriteFailedIsWrittenAgainByItsOwner(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server, requests, _ := heldTransferServer(t)
+	jobID, entry := runningHeldDownload(t, ctx, server.URL+"/hold-write-failed.bin", requests)
+
+	var armed atomic.Bool
+	armed.Store(true)
+	const name = "test:fail-the-first-hold-write"
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if ok && db.Statement.Table == "jobs" && updates["state"] == string(jobs.StatePaused) && armed.CompareAndSwap(true, false) {
+			_ = db.AddError(errors.New("injected write failure"))
+		}
+	}); err != nil {
+		t.Fatalf("register the failing write: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
+
+	if err := ctx.DownloadManager().Pause(entry.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	waitForSnapshot(t, ctx, jobID, "the hold to be recorded after its first write failed",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StatePaused })
+	if armed.Load() {
+		t.Fatalf("the hold's first write was never attempted, so nothing failed")
+	}
+	// The entry heard the Job's answer: a pause asked of it now is confirmed.
+	if err := ctx.DownloadManager().PauseSettled(entry.ID, 5*time.Second); err != nil {
+		t.Fatalf("a pause of the recorded hold answered %v, want it confirmed", err)
 	}
 }
