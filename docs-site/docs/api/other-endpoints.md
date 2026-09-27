@@ -54,11 +54,11 @@ Until then, use the compatibility routes listed under
 
 | Method | Endpoint | Behavior |
 |--------|----------|----------|
-| `GET` | `/v1/jobs` | List visible Jobs newest first; accepts filters and an opaque `cursor` |
+| `GET` | `/v1/jobs` | List visible Jobs newest first; accepts filters and an opaque `cursor`, and `order=stateEntered` to order by when each Job entered its current state |
 | `GET` | `/v1/jobs/{id}` | Return detail, current advertised commands, outputs, and lineage |
 | `GET` | `/v1/jobs/{id}/events?afterSequence={n}&limit={n}` | Read ordered durable timeline events |
 | `GET` | `/v1/jobs/{id}/outputs?key={key}` | Reauthorize and open a typed output |
-| `GET` | `/v1/jobs/events?version=2&cursor={cursor}` | Resume the canonical SSE stream |
+| `GET` | `/v1/jobs/events?version=2&cursor={cursor}` | Resume the canonical SSE stream; `start=head` without a cursor replays nothing, and `owner=me` narrows it to the caller's own Jobs |
 | `POST` | `/v1/jobs/{id}/commands/{command}` | Recheck and run one advertised command |
 | `POST` | `/v1/jobs/commands/{command}` | Run a bulk-advertised command on up to 200 Jobs |
 | `GET` | `/v1/jobs/summary` | Summarize visible Jobs over a window up to 90 days |

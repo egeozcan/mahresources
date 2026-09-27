@@ -375,7 +375,7 @@ map.
 |------|--------------|---------|-------------|
 | `-download-failed-retention` | `DOWNLOAD_FAILED_RETENTION` | 168h | How long a failed or cancelled download stays in the download history |
 | `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | 24h | How long a completed download stays in the download history |
-| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | 10 | How many finished jobs the Jobs drawer shows; running, waiting and failed jobs are always listed |
+| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | 10 | How many finished jobs the Jobs drawer shows, most recently finished first; running, waiting and failed jobs are listed up to 50 per group |
 
 All three are editable at runtime via `/admin/settings`. A zero value falls back to the default rather than expiring on write.
 
