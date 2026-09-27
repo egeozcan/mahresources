@@ -84,6 +84,10 @@ func TestAPendingPauseSurvivesTheLossOfTheProcessHoldingTheTransfer(t *testing.T
 // person's pause is on its way to the transfer it is running. The shutdown hands
 // running downloads back to the queue, and one the person asked to pause would then
 // start again elsewhere; it ends paused instead.
+//
+// The hand-back is driven directly: the transfer's own wait loop delivers a pause
+// within a second, so a real shutdown races that delivery, and either answer ends
+// the Job paused (the second part checks that end to end).
 func TestAPendingPauseSurvivesAShutdownHandBack(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	server := stallingDownloadServer(t)
@@ -95,15 +99,33 @@ func TestAPendingPauseSurvivesAShutdownHandBack(t *testing.T) {
 	waitForSnapshot(t, ctx, jobID, "the transfer to run", func(snap jobs.Snapshot) bool {
 		return snap.State == jobs.StateRunning && submissions[0].Job.GetStatus() == download_queue.JobStatusDownloading
 	})
+	token := storedClaim(t, ctx, jobID).ExecutionToken
 	recordPauseIntentForTest(t, ctx, jobID)
 
-	ctx.downloadManager.Shutdown()
-
-	snap, err := ctx.GetJob(jobID)
-	if err != nil {
-		t.Fatalf("read the job: %v", err)
+	if err := ctx.requeueDownloadExecution(jobs.Execution{JobID: jobID, ExecutionToken: token},
+		JobDownloadServerShutdownReason, downloadPhaseQueued, "Stopped by a server shutdown; it starts again from the beginning"); err != nil {
+		t.Fatalf("hand the Job back: %v", err)
 	}
+	snap := jobSnapshot(t, ctx.JobService(), ctx, jobID)
 	if snap.State != jobs.StatePaused || snap.ControlIntent != "" || snap.Progress.Message != jobDownloadPausedMessage {
-		t.Fatalf("after the shutdown the job is %s (intent %q) saying %q, want paused", snap.State, snap.ControlIntent, snap.Progress.Message)
+		t.Fatalf("the handed-back Job is %s (intent %q) saying %q, want paused", snap.State, snap.ControlIntent, snap.Progress.Message)
+	}
+
+	// End to end: a second download, paused and then caught by the shutdown.
+	second := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/paused-at-shutdown-2.bin"}, nil, "", "api")
+	if len(second) != 1 || second[0].Err != nil || second[0].Job == nil {
+		t.Fatalf("submit the second: %+v", second)
+	}
+	secondID := second[0].CanonicalJobID
+	waitForSnapshot(t, ctx, secondID, "the second transfer to run", func(snap jobs.Snapshot) bool {
+		return snap.State == jobs.StateRunning && second[0].Job.GetStatus() == download_queue.JobStatusDownloading
+	})
+	recordPauseIntentForTest(t, ctx, secondID)
+	ctx.downloadManager.Shutdown()
+	ended := waitForSnapshot(t, ctx, secondID, "the second Job to leave running", func(snap jobs.Snapshot) bool {
+		return snap.State != jobs.StateRunning
+	})
+	if ended.State != jobs.StatePaused {
+		t.Fatalf("a download paused as the server stopped is %s, want paused", ended.State)
 	}
 }

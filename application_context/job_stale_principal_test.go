@@ -111,8 +111,9 @@ func (f staleDownloadFixture) assertNothingRan(t *testing.T) {
 // that read its candidate before a deletion's sweep committed, or a Job an
 // in-flight request accepted after the sweep. Neither carries the deleted-account
 // marker, so the claim does not end it as principal-missing; the dispatch check
-// resolves the id through the stored account, which binds deny-all, and blocks
-// it before anything runs.
+// finds no account behind the id and ends it the way the claim would have,
+// failed as principal-missing, before anything runs. A block would offer a Resume
+// that could never run it.
 func TestAnExecutionNamingADeletedAccountNeverRuns(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	user, err := ctx.CreateUser(&UserInput{Username: "stale-actor", Password: "password1", Role: models.RoleUser})
@@ -134,8 +135,8 @@ func TestAnExecutionNamingADeletedAccountNeverRuns(t *testing.T) {
 	if access.UserID != user.ID || access.Administrator {
 		t.Fatalf("the claim carried %+v, want the deleted account's id and no administrator", access)
 	}
-	if snapshot.State != jobs.StateBlocked || !strings.Contains(fixture.blockedReason(t), "role-refused") {
-		t.Fatalf("the Job is %s (%s), want blocked as role-refused", snapshot.State, fixture.blockedReason(t))
+	if snapshot.State != jobs.StateFailed || snapshot.Failure == nil || snapshot.Failure.Code != "principal-missing" {
+		t.Fatalf("the Job is %s (%+v, blocked %s), want failed as principal-missing", snapshot.State, snapshot.Failure, fixture.blockedReason(t))
 	}
 	fixture.assertNothingRan(t)
 }
