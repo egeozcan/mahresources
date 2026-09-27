@@ -689,7 +689,17 @@ func (a *groupExportAdapter) publishOutcome(execution jobs.Execution, request *E
 			// immutable `export-artifact-missing`.
 			return err
 		}
-		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobExportArtifactOutput})
+		// The count the export reported stops before its tar and gzip trailers,
+		// and its total was an estimate: a finished export reads as its archive.
+		var final func(jobs.Progress) jobs.Progress
+		if info, err := a.ctx.GetDefaultFs().Stat(path); err == nil {
+			size := info.Size()
+			final = func(progress jobs.Progress) jobs.Progress {
+				progress.Completed, progress.Total, progress.Unit, progress.ETA = &size, &size, "bytes", nil
+				return progress
+			}
+		}
+		return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobExportArtifactOutput}, final)
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
 	default:

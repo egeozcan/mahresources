@@ -30,7 +30,7 @@ func jobRowStats(snapshot jobs.Snapshot, now time.Time) string {
 			}
 		}
 	} else if snapshot.State.Terminal() {
-		if rate := formatJobRate(snapshot.ProgressSeries.AverageRate(), unit); rate != "" {
+		if rate := formatJobRate(snapshot.AverageRate(), unit); rate != "" {
 			parts = append(parts, "average "+rate)
 		}
 	}

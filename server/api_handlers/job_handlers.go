@@ -487,8 +487,9 @@ type JobProgressResponse struct {
 	// than reported by the executor.
 	ETAEstimated bool `json:"etaEstimated,omitempty"`
 	// Rate is the current speed in Unit per second, present only while the Job
-	// runs and its progress is fresh. AverageRate is the rate across the Job's
-	// recorded history, which is what a finished Job reports.
+	// runs and its progress is fresh. AverageRate is what a Job that is not
+	// running reports instead: the amount it counted per second of running
+	// (jobs.Snapshot.AverageRate).
 	Rate        *float64                   `json:"rate,omitempty"`
 	AverageRate *float64                   `json:"averageRate,omitempty"`
 	UpdatedAt   *time.Time                 `json:"updatedAt,omitempty"`
@@ -534,7 +535,7 @@ func jobProgressResponse(snap jobs.Snapshot, now time.Time, withSeries bool) Job
 	progress := JobProgressResponse{
 		Phase: snap.Progress.Phase, Completed: snap.Progress.Completed, Total: snap.Progress.Total,
 		Unit: snap.Progress.Unit, Message: snap.Progress.Message,
-		Rate: snap.LiveRate(now), AverageRate: snap.ProgressSeries.AverageRate(),
+		Rate: snap.LiveRate(now), AverageRate: snap.AverageRate(),
 		UpdatedAt: snap.ProgressUpdatedAt,
 	}
 	progress.ETA, progress.ETAEstimated = snap.ExpectedFinish(now)

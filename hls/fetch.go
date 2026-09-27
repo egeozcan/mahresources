@@ -149,12 +149,16 @@ func (opt Options) withDefaults() Options {
 }
 
 // Progress reports what the download is doing, for a caller that has somewhere
-// to display it. done and total are segments during PhaseSegments and are both
-// zero during PhaseMuxing, whose length is not knowable in advance.
+// to display it. done and total count segments across the video and any
+// separate audio rendition, so the count never restarts; they are both zero
+// until the playlist is read, and during PhaseMuxing every segment is done. The
+// mux's own length is not knowable in advance, so it has no count of its own.
+// received is every byte fetched so far, playlists and keys included: the
+// figure the download's byte budget is charged with.
 //
 // **Called concurrently**, from each segment worker. A callback touching shared
 // state must guard it.
-type Progress func(phase string, done, total int64)
+type Progress func(phase string, done, total, received int64)
 
 // The phases reported to Progress. They are the job Phase strings the download
 // queue renders, so they are worded for a person watching a progress panel.
@@ -164,9 +168,18 @@ const (
 	PhaseMuxing   = "assembling video"
 )
 
-func (p Progress) report(phase string, done, total int64) {
-	if p != nil {
-		p(phase, done, total)
+// segmentTally counts one download's segments across every media playlist it
+// fetches, and reports through its Progress.
+type segmentTally struct {
+	p     Progress
+	spent *atomic.Int64
+	total int64
+	done  atomic.Int64
+}
+
+func (t *segmentTally) report(phase string, done int64) {
+	if t.p != nil {
+		t.p(phase, done, t.total, t.spent.Load())
 	}
 }
 
@@ -210,14 +223,14 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	ctx, cancelAll := context.WithTimeout(ctx, opt.OverallTimeout)
 	defer cancelAll()
 
-	p.report(PhasePlaylist, 0, 0)
-
 	// One budget for the whole download, opened before the first playlist is
 	// read. Playlists are not free: a master can point at a media playlist that
 	// points at another, and each is read up to maxPlaylistBytes, so starting
 	// the count at the first segment let tens of megabytes cross the network
 	// outside a limit the operator set.
 	var spent atomic.Int64
+	tally := &segmentTally{p: p, spent: &spent}
+	tally.report(PhasePlaylist, 0)
 
 	m, err := resolveMedia(ctx, d, playlistURL, head, body, opt, &spent)
 	if err != nil {
@@ -242,8 +255,12 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	if m.audio != nil && len(m.segments)+len(m.audio.segments) > opt.MaxSegments {
 		return nil, overLimit("this HLS stream has more than %d segments across its video and audio, which is over this server's limit", opt.MaxSegments)
 	}
+	tally.total = int64(len(m.segments))
+	if m.audio != nil {
+		tally.total += int64(len(m.audio.segments))
+	}
 
-	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, p, &spent)
+	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, tally)
 	if err != nil {
 		return nil, err
 	}
@@ -252,12 +269,12 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	if m.audio != nil {
 		// Its own subdirectory: both playlists number their segments from zero,
 		// and one directory would have the audio overwrite the video.
-		if audioPath, err = downloadInto(ctx, d, m.audio, dir, "audio", opt, p, &spent); err != nil {
+		if audioPath, err = downloadInto(ctx, d, m.audio, dir, "audio", opt, tally); err != nil {
 			return nil, fmt.Errorf("could not download this stream's audio: %w", err)
 		}
 	}
 
-	p.report(PhaseMuxing, 0, 0)
+	tally.report(PhaseMuxing, tally.total)
 	outPath := filepath.Join(dir, "output.mp4")
 	if err := mux(ctx, d, playlistPath, audioPath, outPath, opt); err != nil {
 		return nil, err
@@ -521,12 +538,12 @@ func get(ctx context.Context, d Deps, t fetchTarget) (body io.ReadCloser, resp *
 
 // downloadInto fetches one media playlist's parts into its own subdirectory of
 // dir and writes the local playlist ffmpeg will read, returning its path.
-func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt Options, p Progress, spent *atomic.Int64) (string, error) {
+func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt Options, tally *segmentTally) (string, error) {
 	sub := filepath.Join(dir, name)
 	if err := os.Mkdir(sub, 0o700); err != nil {
 		return "", fmt.Errorf("could not create a working directory for the download: %w", err)
 	}
-	local, err := downloadParts(ctx, d, m, sub, opt, p, spent)
+	local, err := downloadParts(ctx, d, m, sub, opt, tally)
 	if err != nil {
 		return "", err
 	}
@@ -539,9 +556,10 @@ func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt O
 
 // downloadParts fetches the initialization segment, the keys and every media
 // segment into dir, and returns the text of the local playlist that names them.
-func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Options, p Progress, total *atomic.Int64) (string, error) {
+func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Options, tally *segmentTally) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	total := tally.spent
 
 	if m.initSegment != nil {
 		if _, err := fetchToFile(ctx, d, *m.initSegment, filepath.Join(dir, "init.mp4"), opt, total); err != nil {
@@ -578,7 +596,7 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 		keyFiles[key.uri] = name
 	}
 
-	p.report(PhaseSegments, 0, int64(len(m.segments)))
+	tally.report(PhaseSegments, tally.done.Load())
 
 	names := make([]string, len(m.segments))
 	for i := range m.segments {
@@ -588,7 +606,6 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 	var (
 		mu       sync.Mutex
 		firstErr error
-		done     atomic.Int64
 		wg       sync.WaitGroup
 	)
 	fail := func(err error) {
@@ -619,7 +636,7 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 				fail(fmt.Errorf("could not download segment %d of %d: %w", i+1, len(m.segments), err))
 				return
 			}
-			p.report(PhaseSegments, done.Add(1), int64(len(m.segments)))
+			tally.report(PhaseSegments, tally.done.Add(1))
 		}(i, seg)
 	}
 	wg.Wait()

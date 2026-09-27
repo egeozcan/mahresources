@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -653,8 +654,8 @@ func (g *gatedExportFs) unblock() { g.released.Do(func() { close(g.release) }) }
 
 // TestDispatchPersistsProgressForAnAlreadyTerminalExport covers the runtime path
 // where the queue entry finishes before Dispatch reaches its wait. The terminal
-// queue snapshot still owns the byte counts that the durable Job and legacy export
-// page must expose.
+// queue snapshot is still published before the outcome, and the refused write of
+// it is retried; the durable Job then finishes on its archive's size.
 func TestDispatchPersistsProgressForAnAlreadyTerminalExport(t *testing.T) {
 	ctx := newClaimableExportContext(t)
 	groupID := createExportGroupForTest(t, ctx, "terminal-dispatch-progress")
@@ -686,10 +687,21 @@ func TestDispatchPersistsProgressForAnAlreadyTerminalExport(t *testing.T) {
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
 	}
-	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress ||
-		finished.Progress.Total == nil || *finished.Progress.Total != terminal.TotalSize {
-		t.Fatalf("finished Job progress = %+v, want %d/%d bytes from terminal queue snapshot",
-			finished.Progress, terminal.Progress, terminal.TotalSize)
+	assertExportReportsItsArchiveForTest(t, ctx, finished)
+}
+
+// assertExportReportsItsArchiveForTest checks that a finished export's progress
+// is its archive's size, which replaces the byte count the queue last reported.
+func assertExportReportsItsArchiveForTest(t *testing.T, ctx *MahresourcesContext, finished jobs.Snapshot) {
+	t.Helper()
+	info, err := ctx.GetDefaultFs().Stat(exportArchivePath(finished.ID, false))
+	if err != nil {
+		t.Fatalf("stat the archive: %v", err)
+	}
+	progress := finished.Progress
+	if progress.Unit != "bytes" || progress.Completed == nil || *progress.Completed != info.Size() ||
+		progress.Total == nil || *progress.Total != info.Size() {
+		t.Fatalf("finished Job progress = %+v, want the archive's %d bytes", progress, info.Size())
 	}
 }
 
@@ -733,11 +745,7 @@ func TestWaitForQueueExecutionPublishesAnAlreadyTerminalSnapshot(t *testing.T) {
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
 	}
-	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress ||
-		finished.Progress.Total == nil || *finished.Progress.Total != terminal.TotalSize {
-		t.Fatalf("finished Job progress = %+v, want %d/%d bytes from terminal queue snapshot",
-			finished.Progress, terminal.Progress, terminal.TotalSize)
-	}
+	assertExportReportsItsArchiveForTest(t, ctx, finished)
 }
 
 // TestTerminalExportRetriesProgressAfterQuarantineConflict makes the guarded
@@ -801,9 +809,7 @@ func TestTerminalExportRetriesProgressAfterQuarantineConflict(t *testing.T) {
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("the export ended %s (%+v), want its owner to publish success", finished.State, finished.Failure)
 	}
-	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress {
-		t.Fatalf("finished Job progress = %+v, want %d bytes after the quarantine conflict", finished.Progress, terminal.Progress)
-	}
+	assertExportReportsItsArchiveForTest(t, ctx, finished)
 	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateReleased {
 		t.Fatalf("the quarantined claim ended %s, want released after its owner settled", claim.State)
 	}
@@ -1026,5 +1032,57 @@ func TestARefusedProgressWriteDoesNotEndAnExportThatIsStillRunning(t *testing.T)
 	}
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the deployment budget still holds %d slots after the export ended", held)
+	}
+}
+
+// TestAFinishedExportReportsItsArchiveSize. An export counts the bytes it writes
+// against an estimate made before it started, and neither is the archive: the
+// estimate is of the uncompressed tree, and the count stops before the tar and
+// gzip trailers are flushed. A finished export reads as its archive's size, so a
+// success never stands beside "10 B of 5.0 KB" or "38.6 KB of 17.0 KB".
+func TestAFinishedExportReportsItsArchiveSize(t *testing.T) {
+	for _, gzip := range []bool{false, true} {
+		ctx := newWorkflowJobContext(t)
+		groupID := createExportGroupForTest(t, ctx, fmt.Sprintf("sized-export-%v", gzip))
+		request := exportRequestForTest(groupID)
+		request.Gzip = gzip
+		submission := ctx.SubmitGroupExport(request, "api")
+		if submission.Err != nil {
+			t.Fatalf("submit the export: %v", submission.Err)
+		}
+		snap := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the export to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if snap.State != jobs.StateSucceeded {
+			t.Fatalf("gzip=%v: the export ended %s (%+v)", gzip, snap.State, snap.Failure)
+		}
+		info, err := ctx.GetDefaultFs().Stat(exportArchivePath(snap.ID, gzip))
+		if err != nil {
+			t.Fatalf("stat the archive: %v", err)
+		}
+		progress := snap.Progress
+		if progress.Unit != "bytes" || progress.Completed == nil || progress.Total == nil ||
+			*progress.Completed != info.Size() || *progress.Total != info.Size() {
+			t.Fatalf("gzip=%v: final progress = %+v (%v of %v); want the archive's %d bytes of %d",
+				gzip, progress, progress.Completed, progress.Total, info.Size(), info.Size())
+		}
+	}
+}
+
+// While it runs, an export's estimate is its total only until the count passes
+// it: past that it was an estimate that turned out low, and "38.6 KB of 17.0 KB"
+// is a total nobody should read.
+func TestAnExportsEstimateIsATotalOnlyUntilTheCountPassesIt(t *testing.T) {
+	within := queueJobProgress(&download_queue.DownloadJob{
+		Source: download_queue.JobSourceGroupExport, Phase: "resources", Progress: 2048, TotalSize: 8192,
+	})
+	if within.Total == nil || *within.Total != 8192 {
+		t.Fatalf("progress within the estimate = %+v; want the estimate as its total", within)
+	}
+	past := queueJobProgress(&download_queue.DownloadJob{
+		Source: download_queue.JobSourceGroupExport, Phase: "resources", Progress: 39564, TotalSize: 17439,
+	})
+	if past.Total != nil || past.Completed == nil || *past.Completed != 39564 || past.Unit != "bytes" {
+		t.Fatalf("progress past the estimate = %+v; want the bytes written with no total", past)
 	}
 }

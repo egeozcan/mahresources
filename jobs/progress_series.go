@@ -86,11 +86,23 @@ func (s ProgressSeries) CurrentRate(now time.Time) *float64 {
 	return &rate
 }
 
-// AverageRate is Completed's change per second across the whole series: the
-// figure a finished Job reports in place of a current speed. It is nil when
-// the series has no two comparable counts.
+// AverageRate is Completed's change per second across the whole series. It is
+// nil when the series has no two comparable counts, or when nothing was counted
+// between them: an average of zero says less than the amount beside it does.
+// Snapshot.AverageRate, which measures over the Job's running time, is what a
+// finished Job reports; this is its measure for a Job with no running time
+// banked.
 func (s ProgressSeries) AverageRate() *float64 {
-	var first, last *SeriesPoint
+	first, last := s.countedEnds()
+	if first == nil || last == first || last.At <= first.At || *last.Completed <= *first.Completed {
+		return nil
+	}
+	rate := (*last.Completed - *first.Completed) / (float64(last.At-first.At) / 1000)
+	return &rate
+}
+
+// countedEnds is the first and the last point that hold a count.
+func (s ProgressSeries) countedEnds() (first, last *SeriesPoint) {
 	for i := range s.Points {
 		if s.Points[i].Completed == nil {
 			continue
@@ -100,11 +112,7 @@ func (s ProgressSeries) AverageRate() *float64 {
 		}
 		last = &s.Points[i]
 	}
-	if first == nil || last == first || last.At <= first.At || *last.Completed < *first.Completed {
-		return nil
-	}
-	rate := (*last.Completed - *first.Completed) / (float64(last.At-first.At) / 1000)
-	return &rate
+	return first, last
 }
 
 // EstimateETA estimates when a Job whose total is known finishes at the given
@@ -202,7 +210,12 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		changed = true
 	case nowMs-series.Points[count-1].At >= series.IntervalMs:
 		previous := series.Points[count-1]
-		point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
+		// A Job that ends with nothing counted since the last point ended
+		// there; it did not slow to zero, so the closing point records no
+		// speed rather than a plunge.
+		if !final || !sameCount(previous.Completed, point.Completed) {
+			point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
+		}
 		series.Points = append(series.Points, point)
 		changed = true
 	case final:
@@ -334,6 +347,14 @@ func mergePoints(a, b SeriesPoint) SeriesPoint {
 	return merged
 }
 
+// sameCount reports whether two points hold the same count, or neither holds one.
+func sameCount(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func graphedValues(metrics []Metric) map[string]float64 {
 	var values map[string]float64
 	for _, metric := range metrics {
@@ -425,6 +446,38 @@ func decodeSeries(raw types.JSON) ProgressSeries {
 		return ProgressSeries{}
 	}
 	return series
+}
+
+// AverageRate is what a Job that is not running reports in place of a speed:
+// the amount it counted per second of running. Time spent queued, paused or
+// blocked is left out, and work done before the first report is kept in: the
+// count starts from zero unless the Job's first report already carried one,
+// which is where a Job that picks up earlier work (a Continue) began. It is nil
+// while the Job runs, since the running time of the current stint is banked only
+// when it ends; nil when the Job counted nothing; and measured across the series
+// (ProgressSeries.AverageRate) when no running time was banked.
+func (s Snapshot) AverageRate() *float64 {
+	if s.State == StateRunning {
+		return nil
+	}
+	running := s.RunningDuration.Seconds()
+	if running <= 0 {
+		return s.ProgressSeries.AverageRate()
+	}
+	first, last := s.ProgressSeries.countedEnds()
+	if last == nil {
+		return nil
+	}
+	baseline := 0.0
+	if first == &s.ProgressSeries.Points[0] {
+		baseline = *first.Completed
+	}
+	counted := *last.Completed - baseline
+	if counted <= 0 {
+		return nil
+	}
+	rate := counted / running
+	return &rate
 }
 
 // LiveRate is the Job's current speed, answered only while it runs: a paused

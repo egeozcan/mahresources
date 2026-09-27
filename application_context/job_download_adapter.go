@@ -1363,42 +1363,31 @@ func (s *jobDownloadSink) mirrorRefusal(err error) error {
 	}
 }
 
-// downloadPhase is the canonical phase label for one queue status. The queue's own
-// statuses are finer than a normalized state and never redefine one.
 // downloadJobProgress is the durable progress one transfer snapshot describes.
 //
-// Bytes are the primary measure whenever the size is known, and also when it is
-// not but bytes are arriving — a chunked response still has a speed worth
-// showing. An HLS stream's size is unknown until its last segment lands, so its
-// segment counter is the measure there: it has a total, which is what gives the
-// bar a percentage and the Job an ETA. Whichever measure is not primary is kept
-// as a metric rather than dropped.
+// An HLS stream counts its segments (the queue's phase counters) from the moment
+// its playlist is read to the end, the assembly included, with the bytes
+// received as a metric: its size is unknown until its last segment lands, and
+// the segments have a total, which is what gives the bar a percentage and the
+// Job an ETA. Once assembled the queue records the video's size in its byte
+// counters too, and the segments still come first: a Job that changed its unit
+// at the end would lose the history its speed and graph are drawn from. Any
+// other download counts bytes, of the total when the size is known and alone
+// when it is not, since a chunked response still has a speed worth showing.
 func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 	progress := jobs.Progress{Phase: downloadPhase(snap), Message: snap.Phase}
-	bytesMetric := func() {
+	switch {
+	case snap.PhaseTotal > 0:
+		completed, total := snap.PhaseCount, snap.PhaseTotal
+		progress.Completed, progress.Total, progress.Unit = &completed, &total, "items"
 		if snap.Progress > 0 {
 			progress.Metrics = append(progress.Metrics, jobs.Metric{
 				Key: "downloaded", Label: "Downloaded", Value: float64(snap.Progress), Unit: "bytes",
 			})
 		}
-	}
-	segmentsMetric := func() {
-		if snap.PhaseTotal > 0 {
-			total := float64(snap.PhaseTotal)
-			progress.Metrics = append(progress.Metrics, jobs.Metric{
-				Key: "segments", Label: "Segments", Value: float64(snap.PhaseCount), Total: &total, Unit: "items",
-			})
-		}
-	}
-	switch {
 	case snap.TotalSize > 0:
 		completed, total := snap.Progress, snap.TotalSize
 		progress.Completed, progress.Total, progress.Unit = &completed, &total, "bytes"
-		segmentsMetric()
-	case snap.PhaseTotal > 0:
-		completed, total := snap.PhaseCount, snap.PhaseTotal
-		progress.Completed, progress.Total, progress.Unit = &completed, &total, "items"
-		bytesMetric()
 	case snap.Progress > 0:
 		completed := snap.Progress
 		progress.Completed, progress.Unit = &completed, "bytes"
@@ -1406,6 +1395,8 @@ func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 	return progress
 }
 
+// downloadPhase is the canonical phase label for one queue status. The queue's own
+// statuses are finer than a normalized state and never redefine one.
 func downloadPhase(snap *download_queue.DownloadJob) string {
 	switch snap.Status {
 	case download_queue.JobStatusPending:

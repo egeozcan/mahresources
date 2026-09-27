@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"mahresources/contracts"
+	"mahresources/hls"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -282,5 +283,60 @@ func TestATruncatedTransferIsNotStoredAsASuccess(t *testing.T) {
 	}
 	if created.body != nil {
 		t.Errorf("stored %d bytes from a failed transfer", len(created.body))
+	}
+}
+
+// TestAnHLSDownloadMirrorsItsSegmentsNotThePlaylistSize. The playlist response's
+// Content-Length is the size of a few lines of text; once the body is known to be
+// a playlist it must not stand as the download's total, the assembly must report
+// every segment done rather than none, and the assembled result must reach the
+// durable Job rather than stop at whatever the last throttled report said.
+func TestAnHLSDownloadMirrorsItsSegmentsNotThePlaylistSize(t *testing.T) {
+	ffmpeg := hlsFfmpeg(t)
+	dm := createTestManager()
+	dm.resourceCtx = &recordingResourceCreator{}
+	dm.ffmpegPath = func() string { return ffmpeg }
+	sink := &recordingCanonicalSink{}
+	dm.SetCanonicalSink(sink)
+	srv := buildAndServeStreamOf(t, ffmpeg, 4)
+
+	ref := CanonicalRef{JobID: "0192f0aa-0000-7000-8000-0000000000h1", ExecutionToken: "0192f0aa-0000-7000-8000-0000000000h2"}
+	if _, err := dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: srv.URL + "/index.m3u8"},
+		nil, "", SubmissionOptions{JobID: "legacy-hls", Canonical: &ref}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForCanonical(t, "the HLS download to finish", func() bool { return len(sink.finishedFor(ref.JobID)) > 0 })
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var sawMux, sawAssembled bool
+	for _, mirror := range sink.progress {
+		snap := mirror.snap
+		if snap.Phase == "" {
+			continue
+		}
+		if snap.Status == JobStatusProcessing {
+			sawAssembled = true
+			if snap.TotalSize <= 0 || snap.Progress != snap.TotalSize || snap.PhaseCount != snap.PhaseTotal {
+				t.Fatalf("assembled mirror: %d of %d bytes, %d of %d segments; want the video's size and every segment",
+					snap.Progress, snap.TotalSize, snap.PhaseCount, snap.PhaseTotal)
+			}
+			continue
+		}
+		if snap.TotalSize > 0 {
+			t.Fatalf("mirror in phase %q carries a total of %d bytes, the playlist's own size", snap.Phase, snap.TotalSize)
+		}
+		if snap.Phase == hls.PhaseMuxing {
+			sawMux = true
+			if snap.PhaseTotal == 0 || snap.PhaseCount != snap.PhaseTotal {
+				t.Fatalf("assembly mirror: %d of %d segments; want every segment done", snap.PhaseCount, snap.PhaseTotal)
+			}
+			if snap.Progress == 0 {
+				t.Fatal("assembly mirror carries no bytes received")
+			}
+		}
+	}
+	if !sawMux || !sawAssembled {
+		t.Fatalf("mirrors saw the assembly %v and its result %v; want both", sawMux, sawAssembled)
 	}
 }

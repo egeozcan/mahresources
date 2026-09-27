@@ -1106,16 +1106,19 @@ func (c *cancelableReader) Read(p []byte) (int, error) {
 // the submitted URL was. ffmpeg is handed local files only and cannot open a
 // socket.
 //
-// Progress is reported through the job's phase counters rather than its byte
-// counters, because the size of an HLS stream is not known until every segment
-// has been fetched -- TotalSize stays -1, which is what the queue already
-// means by "unknown".
+// Progress is reported through the job's phase counters, the segments of the
+// total, because the size of an HLS stream is not known until every segment has
+// been fetched: the byte counters carry the bytes received, and TotalSize stays
+// -1, which is what the queue already means by "unknown". The caller has reset
+// them from the playlist response's own Content-Length, which is the size of a
+// few lines of text.
 func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, checkURL func(string) error, base string, head []byte, body io.Reader) (*hls.Result, error) {
 	// Guarded because hls reports from each of its segment workers: the
 	// throttle is shared mutable state read and written from several
 	// goroutines at once.
 	var notifyMu sync.Mutex
 	var lastNotify time.Time
+	var lastPhase string
 	// Serializes the durable progress mirror across segment workers. Each
 	// mirror takes its snapshot once it holds this, so two workers that both
 	// found a notification due cannot commit in the wrong order and leave the
@@ -1139,11 +1142,11 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 		opts.OverallTimeout = overall
 	}
 	result, err := hls.Fetch(ctx, deps, base, head, body, opts,
-		func(phase string, done, total int64) {
+		func(phase string, done, total, received int64) {
 			// Guarded by the attempt, like every other write about this job: a
 			// callback unwinding from an abandoned attempt must not relabel the
 			// one that replaced it.
-			if !job.setPhaseForRun(runID, phase, done, total) {
+			if !job.setPhaseForRun(runID, phase, done, total) || !job.updateProgressForRun(runID, received, -1) {
 				return
 			}
 			// Throttled like the byte progress, and for the same reason: a
@@ -1151,9 +1154,10 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			// events. A phase change is always sent, since those are rare and
 			// are the part a watcher is actually waiting for.
 			notifyMu.Lock()
-			due := done == 0 || time.Since(lastNotify) >= progressNotifyInterval
+			due := phase != lastPhase || time.Since(lastNotify) >= progressNotifyInterval
 			if due {
 				lastNotify = time.Now()
+				lastPhase = phase
 			}
 			notifyMu.Unlock()
 			if due {
@@ -1174,6 +1178,11 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	job.updateProgressForRun(runID, result.Size, result.Size)
 	if job.setStatusForRun(runID, JobStatusProcessing) {
 		dm.notifyJob("updated", job)
+		// The last segment report was throttled, and the assembled size is new:
+		// without this the Job keeps whatever the last report before the mux
+		// said, as attemptReporter.onComplete keeps it from doing for a plain
+		// transfer.
+		dm.mirrorProgressForRun(job, runID)
 	}
 	return result, nil
 }
@@ -1366,6 +1375,11 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	var progressBody contracts.File
 	assembledHLS := false
 	if hls.IsPlaylist(head) {
+		// The response's Content-Length is the playlist's, a few lines of text;
+		// the stream's own size is unknown until its last segment is in.
+		if job.updateProgressForRun(runID, 0, -1) {
+			dm.notifyJob("updated", job)
+		}
 		// The URL the playlist was served from, not the one submitted: a
 		// redirect moves the base every relative reference resolves against.
 		base := job.URL

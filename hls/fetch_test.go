@@ -123,10 +123,15 @@ func TestFetchAssemblesSegmentsIntoOneVideo(t *testing.T) {
 	srv, counter := serve(t, dir)
 
 	var phases []string
-	res, err := fetchAll(t, deps(), srv.URL+"/index.m3u8", Options{}, func(phase string, done, total int64) {
+	var reports []progressReport
+	var mu sync.Mutex
+	res, err := fetchAll(t, deps(), srv.URL+"/index.m3u8", Options{}, func(phase string, done, total, received int64) {
+		mu.Lock()
+		defer mu.Unlock()
 		if len(phases) == 0 || phases[len(phases)-1] != phase {
 			phases = append(phases, phase)
 		}
+		reports = append(reports, progressReport{phase, done, total, received})
 	})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
@@ -148,6 +153,55 @@ func TestFetchAssemblesSegmentsIntoOneVideo(t *testing.T) {
 	want := []string{PhasePlaylist, PhaseSegments, PhaseMuxing}
 	if strings.Join(phases, ",") != strings.Join(want, ",") {
 		t.Errorf("phases reported %v, want %v", phases, want)
+	}
+	checkProgressReports(t, reports)
+}
+
+type progressReport struct {
+	phase                 string
+	done, total, received int64
+}
+
+// checkProgressReports holds the promises Progress makes: once the playlist is
+// read the segment total never changes and the count starts from zero only
+// once (a separate audio rendition continues it), the bytes received only
+// grow, and the assembly reports every segment done rather than a count of
+// zero. Segment workers report as they finish, so two reports can arrive out
+// of order; the count is not checked for order.
+func checkProgressReports(t *testing.T, reports []progressReport) {
+	t.Helper()
+	var total, received int64
+	zeros := 0
+	for i, report := range reports {
+		if report.received < received {
+			t.Fatalf("report %d: received went back from %d to %d", i, received, report.received)
+		}
+		received = report.received
+		if report.phase == PhasePlaylist {
+			continue
+		}
+		if total == 0 {
+			total = report.total
+		}
+		if report.total != total || total == 0 {
+			t.Fatalf("report %d: total %d, want the %d segments counted from the start", i, report.total, total)
+		}
+		if report.done < 0 || report.done > total {
+			t.Fatalf("report %d: %d of %d", i, report.done, total)
+		}
+		if report.done == 0 {
+			zeros++
+		}
+	}
+	if zeros != 1 {
+		t.Fatalf("the segment count started from zero %d times; want once", zeros)
+	}
+	last := reports[len(reports)-1]
+	if last.phase != PhaseMuxing || last.done != last.total || last.total == 0 {
+		t.Fatalf("last report = %+v; want the assembly with every segment done", last)
+	}
+	if last.received == 0 {
+		t.Fatalf("last report = %+v; want the bytes received", last)
 	}
 }
 

@@ -47,6 +47,19 @@ func TestDownloadJobProgressChoosesAMeasureWithATotalWhenThereIsOne(t *testing.T
 		t.Fatalf("HLS phase/message = %q/%q", hls.Phase, hls.Message)
 	}
 
+	// Once assembled the queue knows the video's size, and the segments still
+	// come first: switching to bytes at the end would erase the Job's history.
+	assembled := downloadJobProgress(&download_queue.DownloadJob{
+		Status: download_queue.JobStatusProcessing, Progress: 9 << 20, TotalSize: 9 << 20,
+		Phase: "assembling video", PhaseCount: 40, PhaseTotal: 40,
+	})
+	if assembled.Unit != "items" || *assembled.Completed != 40 || *assembled.Total != 40 {
+		t.Fatalf("assembled HLS transfer = %+v; want 40 of 40 segments", assembled)
+	}
+	if downloaded := metricByKey(assembled.Metrics, "downloaded"); downloaded == nil || downloaded.Value != 9<<20 {
+		t.Fatalf("assembled HLS metrics = %+v; want the video's bytes", assembled.Metrics)
+	}
+
 	queued := downloadJobProgress(&download_queue.DownloadJob{Status: download_queue.JobStatusPending})
 	if queued.Completed != nil || queued.Total != nil || len(queued.Metrics) != 0 {
 		t.Fatalf("a queued transfer reported progress: %+v", queued)
