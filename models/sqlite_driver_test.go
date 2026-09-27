@@ -182,3 +182,79 @@ func TestSQLiteDoesNotWarnAboutTransactionsThatWroteOrWereReadOnly(t *testing.T)
 	}))
 	require.Empty(t, *warnings)
 }
+
+// failTransactionControl makes the named transaction statements (COMMIT, ROLLBACK)
+// fail without running, as an I/O error would, until the test ends.
+func failTransactionControl(t *testing.T, statements ...string) {
+	t.Helper()
+	previous := execTransactionControl
+	execTransactionControl = func(ctx context.Context, c *sqliteConn, statement string) error {
+		for _, failing := range statements {
+			if statement == failing {
+				return errors.New("injected failure of " + statement)
+			}
+		}
+		return previous(ctx, c, statement)
+	}
+	t.Cleanup(func() { execTransactionControl = previous })
+}
+
+// A transaction whose ROLLBACK failed may still be open, holding the writer lock;
+// its connection must be discarded rather than pooled, which closes it and ends the
+// transaction.
+func TestSQLiteConnectionLeftInATransactionIsNotPooled(t *testing.T) {
+	errAbandon := errors.New("abandon")
+	for name, tc := range map[string]struct {
+		failing []string
+		outcome error
+	}{
+		"a rollback that failed":                     {[]string{"ROLLBACK"}, errAbandon},
+		"a commit and then its rollback that failed": {[]string{"COMMIT", "ROLLBACK"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, other := openProductionSQLite(t)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			failTransactionControl(t, tc.failing...)
+
+			err = db.Transaction(func(tx *gorm.DB) error {
+				require.NoError(t, tx.Exec("INSERT INTO t (v) VALUES ('never committed')").Error)
+				return tc.outcome
+			})
+			require.Error(t, err)
+
+			_, err = other.Exec("INSERT INTO t (v) VALUES ('another connection')")
+			require.NoError(t, err, "a connection still in its transaction went back to the pool holding the writer lock")
+			require.NoError(t, db.Exec("INSERT INTO t (v) VALUES ('the pool')").Error)
+			require.EqualValues(t, 2, countRows(t, db))
+		})
+	}
+}
+
+// A BEGIN reported as failed after it took effect (a context cancelled as it
+// returned) must not leave its transaction on a pooled connection either.
+func TestSQLiteBeginReportedFailedAfterTakingEffectLeavesNothingOpen(t *testing.T) {
+	db, other := openProductionSQLite(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previous := execTransactionControl
+	execTransactionControl = func(ctx context.Context, c *sqliteConn, statement string) error {
+		if err := previous(ctx, c, statement); err != nil || statement != "BEGIN IMMEDIATE" {
+			return err
+		}
+		return errors.New("injected failure after BEGIN IMMEDIATE ran")
+	}
+	t.Cleanup(func() { execTransactionControl = previous })
+
+	require.Error(t, db.Transaction(func(tx *gorm.DB) error { return nil }))
+	execTransactionControl = previous
+
+	_, err = other.Exec("INSERT INTO t (v) VALUES ('another connection')")
+	require.NoError(t, err, "the BEGIN reported as failed left its transaction holding the writer lock")
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec("INSERT INTO t (v) VALUES ('the pool')").Error
+	}))
+	require.EqualValues(t, 2, countRows(t, db))
+}

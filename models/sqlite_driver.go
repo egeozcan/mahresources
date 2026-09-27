@@ -78,7 +78,8 @@ var warnIdleWriterLock = log.Printf
 type sqliteConn struct {
 	*sqlite3.SQLiteConn
 	// broken marks a connection that may still be query_only because clearing it
-	// failed; database/sql discards it instead of handing it to the next caller.
+	// failed, or still inside a transaction because rolling it back failed;
+	// database/sql discards it instead of handing it to the next caller.
 	broken bool
 	// writeTx is the write transaction open on this connection, if any, watched
 	// until its first write.
@@ -91,14 +92,16 @@ func (c *sqliteConn) Begin() (driver.Tx, error) {
 
 func (c *sqliteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	if !opts.ReadOnly {
-		if _, err := c.SQLiteConn.ExecContext(ctx, "BEGIN IMMEDIATE", nil); err != nil {
+		if err := execTransactionControl(ctx, c, "BEGIN IMMEDIATE"); err != nil {
+			c.abandonFailedBegin()
 			return nil, err
 		}
 		tx := &sqliteTx{conn: c, locked: time.Now()}
 		c.writeTx = tx
 		return tx, nil
 	}
-	if _, err := c.SQLiteConn.ExecContext(ctx, "BEGIN", nil); err != nil {
+	if err := execTransactionControl(ctx, c, "BEGIN"); err != nil {
+		c.abandonFailedBegin()
 		return nil, err
 	}
 	tx := &sqliteTx{conn: c, readOnly: true}
@@ -162,19 +165,49 @@ type sqliteTx struct {
 	wrote  bool
 }
 
+// execTransactionControl runs BEGIN, COMMIT and ROLLBACK; a test replaces it to
+// make one fail.
+var execTransactionControl = func(ctx context.Context, c *sqliteConn, statement string) error {
+	_, err := c.SQLiteConn.ExecContext(ctx, statement, nil)
+	return err
+}
+
 // Commit follows go-sqlite3's own: a COMMIT that fails may leave the transaction
 // open, and database/sql considers it finished either way, so it is rolled back.
 func (tx *sqliteTx) Commit() error {
-	_, err := tx.conn.SQLiteConn.ExecContext(context.Background(), "COMMIT", nil)
+	err := execTransactionControl(context.Background(), tx.conn, "COMMIT")
 	if err != nil {
-		_, _ = tx.conn.SQLiteConn.ExecContext(context.Background(), "ROLLBACK", nil)
+		tx.conn.afterRollback(execTransactionControl(context.Background(), tx.conn, "ROLLBACK"))
 	}
 	return errors.Join(err, tx.finish())
 }
 
 func (tx *sqliteTx) Rollback() error {
-	_, err := tx.conn.SQLiteConn.ExecContext(context.Background(), "ROLLBACK", nil)
+	err := execTransactionControl(context.Background(), tx.conn, "ROLLBACK")
+	tx.conn.afterRollback(err)
 	return errors.Join(err, tx.finish())
+}
+
+// abandonFailedBegin ends a transaction a BEGIN reported as failed yet began: a
+// BEGIN still waiting for the writer lock when its context ends can take the lock
+// before the error reaches here. database/sql believes no transaction exists and
+// pools the connection.
+func (c *sqliteConn) abandonFailedBegin() {
+	if !c.SQLiteConn.AutoCommit() {
+		c.afterRollback(execTransactionControl(context.Background(), c, "ROLLBACK"))
+	}
+}
+
+// afterRollback discards a connection a failed ROLLBACK left inside its
+// transaction: database/sql considers the transaction over and would pool the
+// connection, still holding whatever the transaction held (for a write
+// transaction, the writer lock). Closing it ends the transaction. A ROLLBACK that
+// failed because SQLite had already ended the transaction itself leaves nothing
+// behind, and the connection stays.
+func (c *sqliteConn) afterRollback(err error) {
+	if err != nil && !c.SQLiteConn.AutoCommit() {
+		c.broken = true
+	}
 }
 
 // finish returns the connection to use outside a transaction: a read-only one's
