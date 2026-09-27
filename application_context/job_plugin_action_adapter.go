@@ -772,11 +772,11 @@ func (ctx *MahresourcesContext) pluginActionRefusalWithin(bounded context.Contex
 		target = &models.Group{}
 	}
 	if target != nil && scoped.isScopedPrincipal() {
-		visible, err := scoped.entityVisibleChecked(target, input.EntityID)
+		reachable, err := scoped.entityVisibleChecked(target, input.EntityID)
 		if err != nil {
 			return "target-out-of-scope", err
 		}
-		if !visible {
+		if !reachable {
 			return "target-out-of-scope", nil
 		}
 	}
