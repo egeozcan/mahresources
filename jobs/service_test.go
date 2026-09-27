@@ -1026,6 +1026,118 @@ func TestJobPublishIsBoundedAndIdempotent(t *testing.T) {
 	}
 }
 
+// deliveryOf reads the delivery sequence the publisher gave one Job's event at
+// the given per-Job sequence.
+func deliveryOf(t *testing.T, deps Deps, jobID string, sequence uint64) uint64 {
+	t.Helper()
+	for _, event := range jobEvents(t, deps, jobID) {
+		if event.Sequence != sequence {
+			continue
+		}
+		if event.DeliverySequence == nil {
+			t.Fatalf("event %d of job %s was not published", sequence, jobID)
+		}
+		return *event.DeliverySequence
+	}
+	t.Fatalf("job %s has no event %d", jobID, sequence)
+	return 0
+}
+
+// TestJobPublishDeliversOneJobsEventsInTheirOwnOrderAtEqualTimestamps pins the
+// tie a busy Job produces: two facts recorded in the same instant. Their event
+// ids are random past the millisecond, so an id tie-break delivers the later
+// fact first about half the time, and a subscriber reading the stream in
+// delivery order sees the Job run before it was accepted.
+func TestJobPublishDeliversOneJobsEventsInTheirOwnOrderAtEqualTimestamps(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := seededExecution(t, deps, StateRunning, "claim-tie")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-tie"}
+	for _, eventType := range []string{"first-fact", "second-fact"} {
+		if err := svc.AppendEvent(deps, ref, EventInput{Type: eventType}); err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+	}
+	// Make the id order disagree with the Job's own order, which is what a
+	// random sub-millisecond suffix does to roughly half of all such pairs.
+	events := jobEvents(t, deps, job.ID)
+	if len(events) != 2 {
+		t.Fatalf("seeded %d events, want 2", len(events))
+	}
+	for _, rename := range []struct {
+		from, to string
+	}{
+		{events[0].ID, "ffffffff-ffff-7fff-bfff-ffffffffffff"},
+		{events[1].ID, "00000000-0000-7000-8000-000000000000"},
+	} {
+		if err := deps.DB.Model(&models.JobEvent{}).Where("id = ?", rename.from).Update("id", rename.to).Error; err != nil {
+			t.Fatalf("reorder event ids: %v", err)
+		}
+	}
+
+	if _, err := svc.PublishPendingEvents(deps, DefaultPublishBatch); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if first, second := deliveryOf(t, deps, job.ID, 1), deliveryOf(t, deps, job.ID, 2); first >= second {
+		t.Fatalf("event 1 was delivered as %d and event 2 as %d: the stream would announce the second fact first", first, second)
+	}
+}
+
+// TestJobPublishDeliversOneJobsEventsInTheirOwnOrderWhateverTheirTimestamps
+// covers the timestamps disagreeing with the Job's own order. A timestamp is
+// read before the transaction that records the fact, so two writers racing on
+// one Job — or two processes whose clocks differ — can give the later fact the
+// earlier time. The per-Job sequence is the causal order; a timestamp is only
+// how facts of different Jobs are interleaved. The batch limit is one here, so
+// the publisher must also bring the earlier fact forward rather than publish the
+// later one alone.
+func TestJobPublishDeliversOneJobsEventsInTheirOwnOrderWhateverTheirTimestamps(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := seededExecution(t, deps, StateRunning, "claim-skew")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-skew"}
+	if err := svc.AppendEvent(deps, ref, EventInput{Type: "first-fact"}); err != nil {
+		t.Fatalf("append first: %v", err)
+	}
+	clock = clock.Add(-time.Second)
+	if err := svc.AppendEvent(deps, ref, EventInput{Type: "second-fact"}); err != nil {
+		t.Fatalf("append second: %v", err)
+	}
+	// Another Job's fact falls between the two, so it has to be interleaved
+	// by time without splitting the first Job's order.
+	other := seededExecution(t, deps, StateRunning, "claim-other")
+	clock = clock.Add(500 * time.Millisecond)
+	if err := svc.AppendEvent(deps, ExecutionRef{JobID: other.ID, ExecutionToken: "claim-other"}, EventInput{Type: "other-fact"}); err != nil {
+		t.Fatalf("append other: %v", err)
+	}
+
+	for round := 0; round < 4; round++ {
+		if _, err := svc.PublishPendingEvents(deps, 1); err != nil {
+			t.Fatalf("publish round %d: %v", round, err)
+		}
+	}
+	if first, second := deliveryOf(t, deps, job.ID, 1), deliveryOf(t, deps, job.ID, 2); first >= second {
+		t.Fatalf("event 1 was delivered as %d and event 2 as %d: the stream would announce the second fact first", first, second)
+	}
+	deliveryOf(t, deps, other.ID, 1)
+
+	var sequences []uint64
+	if err := deps.DB.Model(&models.JobEvent{}).Order("delivery_sequence").Pluck("delivery_sequence", &sequences).Error; err != nil {
+		t.Fatalf("read sequences: %v", err)
+	}
+	for i, sequence := range sequences {
+		if sequence != uint64(i+1) {
+			t.Fatalf("delivery sequences = %v, want consecutive values from 1", sequences)
+		}
+	}
+}
+
 func TestJobPublishWithoutPendingEventsDoesNotAcquireWriterLock(t *testing.T) {
 	deps := newTestDeps(t)
 	svc := NewService()
