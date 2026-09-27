@@ -2,8 +2,10 @@ package archive
 
 import (
 	"archive/tar"
+	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -56,7 +58,7 @@ func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
 	if len(header) >= 2 && header[0] == 0x1f && header[1] == 0x8b {
 		gz, err := gzip.NewReader(pr)
 		if err != nil {
-			return nil, fmt.Errorf("archive: gzip header invalid: %w", err)
+			return nil, formatOrRead(fmt.Errorf("archive: gzip header invalid: %w", err))
 		}
 		r.gz = gz
 		r.tr = tar.NewReader(gz)
@@ -80,13 +82,17 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	// reader needs belongs here, where the file is first found not to be ours.
 	hdr, err := r.tr.Next()
 	if err != nil {
-		return nil, fmt.Errorf("this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry is manifest.json")
+		if !isFormatFailure(err) {
+			// The file could not be read, which says nothing about what is in it.
+			return nil, fmt.Errorf("archive: read the first entry: %w", err)
+		}
+		return nil, &FormatError{Err: fmt.Errorf("this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry is manifest.json")}
 	}
 	if hdr.Name != "manifest.json" {
-		return nil, fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)
+		return nil, &FormatError{Err: fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)}
 	}
 	if r.maxManifestBytes > 0 && hdr.Size > r.maxManifestBytes {
-		return nil, fmt.Errorf("archive: manifest exceeds %d byte limit", r.maxManifestBytes)
+		return nil, &FormatError{Err: fmt.Errorf("archive: manifest exceeds %d byte limit", r.maxManifestBytes)}
 	}
 	// BH-017: read the manifest body once so we can parse it twice — once as
 	// a map to presence-check required fields, once into the typed Manifest.
@@ -95,28 +101,63 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	// misled users who had simply omitted the field.
 	raw, err := io.ReadAll(r.tr)
 	if err != nil {
-		return nil, fmt.Errorf("archive: read manifest body: %w", err)
+		return nil, formatOrRead(fmt.Errorf("archive: read manifest body: %w", err))
 	}
 
 	var rawFields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &rawFields); err != nil {
-		return nil, fmt.Errorf("archive: parse manifest: %w", err)
+		return nil, &FormatError{Err: fmt.Errorf("archive: parse manifest: %w", err)}
 	}
 	if _, hasVersion := rawFields["schema_version"]; !hasVersion {
-		return nil, &ErrMissingSchemaVersion{}
+		return nil, &FormatError{Err: &ErrMissingSchemaVersion{}}
 	}
 
 	var m Manifest
 	// Do NOT call DisallowUnknownFields — §6.4 requires forward compatibility
 	// with unknown top-level keys.
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("archive: parse manifest: %w", err)
+		return nil, &FormatError{Err: fmt.Errorf("archive: parse manifest: %w", err)}
 	}
 	if !isSupportedVersion(m.SchemaVersion) {
-		return nil, &ErrUnsupportedSchemaVersion{Got: m.SchemaVersion, Supported: SupportedVersions}
+		return nil, &FormatError{Err: &ErrUnsupportedSchemaVersion{Got: m.SchemaVersion, Supported: SupportedVersions}}
 	}
 	r.manifest = &m
 	return &m, nil
+}
+
+// FormatError is an archive the reader refused on its content: not a tar, a
+// manifest it cannot read or whose schema version it does not support, an entry
+// that is truncated or malformed. Reading the same bytes again reads them the
+// same way. A read that failed under the reader is never one: it says nothing
+// about the archive, and is returned with its own cause instead.
+type FormatError struct {
+	Err error
+}
+
+func (e *FormatError) Error() string { return e.Err.Error() }
+func (e *FormatError) Unwrap() error { return e.Err }
+
+// isFormatFailure reports whether err is what the archive's own bytes produce
+// when they are not a well-formed archive, as against a failure to read them: a
+// stream that ends early, a header or checksum tar or gzip refuses, a compressed
+// stream that does not decode, or JSON that does not parse.
+func isFormatFailure(err error) bool {
+	var corrupt flate.CorruptInputError
+	var syntax *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, tar.ErrHeader) || errors.Is(err, tar.ErrFieldTooLong) ||
+		errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) ||
+		errors.As(err, &corrupt) || errors.As(err, &syntax) || errors.As(err, &typeErr)
+}
+
+// formatOrRead marks err as a FormatError when it is the archive's own.
+func formatOrRead(err error) error {
+	var format *FormatError
+	if err == nil || errors.As(err, &format) || !isFormatFailure(err) {
+		return err
+	}
+	return &FormatError{Err: err}
 }
 
 // Manifest returns the already-parsed manifest, or nil if ReadManifest has
@@ -184,10 +225,10 @@ func (r *Reader) Walk(v any) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("archive: walk entry: %w", err)
+			return formatOrRead(fmt.Errorf("archive: walk entry: %w", err))
 		}
 		if err := r.dispatch(hdr, v); err != nil {
-			return err
+			return formatOrRead(err)
 		}
 	}
 }

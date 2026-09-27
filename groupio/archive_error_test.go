@@ -14,10 +14,10 @@ import (
 // file is kept, so it is not marked as the archive's.
 func TestArchiveContentErrorMarksOnlyTheArchivesOwnRefusals(t *testing.T) {
 	var archiveErr *ArchiveError
-	if err := archiveContentError(errors.New("this file is not a mahresources export archive")); !errors.As(err, &archiveErr) || archiveErr.Unsupported() {
+	if err := archiveContentError(&archive.FormatError{Err: errors.New("this file is not a mahresources export archive")}); !errors.As(err, &archiveErr) || archiveErr.Unsupported() {
 		t.Fatalf("a malformed archive was not marked as the archive's: %v", err)
 	}
-	unsupported := fmt.Errorf("walk archive: %w", &archive.ErrUnsupportedSchemaVersion{Got: 99, Supported: []int{1}})
+	unsupported := &archive.FormatError{Err: &archive.ErrUnsupportedSchemaVersion{Got: 99, Supported: []int{1}}}
 	if err := archiveContentError(unsupported); !errors.As(err, &archiveErr) || !archiveErr.Unsupported() {
 		t.Fatalf("an unsupported schema version was not marked unsupported: %v", err)
 	}

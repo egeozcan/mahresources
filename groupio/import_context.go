@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,13 +27,13 @@ type ArchiveError struct {
 	Err error
 }
 
-// archiveContentError marks err as the archive's own when it is, and returns it
-// unchanged when the staged file could not be read at all: a read that failed is
-// the server's failure, and its text names where the file is staged.
+// archiveContentError marks err as the archive's own when the reader refused the
+// archive on its content (archive.FormatError), and returns it unchanged
+// otherwise: a read of the staged file that failed is the server's failure, may
+// not fail again, and its text can name where the file is staged.
 func archiveContentError(err error) error {
-	var pathErr *fs.PathError
-	var syscallErr *os.SyscallError
-	if errors.As(err, &pathErr) || errors.As(err, &syscallErr) {
+	var format *archive.FormatError
+	if !errors.As(err, &format) {
 		return err
 	}
 	return &ArchiveError{Err: err}
