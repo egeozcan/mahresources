@@ -72,7 +72,9 @@ List, summary, and export share these optional filters: `state`/`states`,
 deleted) and `owner=me` (the asking account's own Jobs, without naming its id);
 an export refuses those four, and `state=partial`, with a `400`.
 Repeating a token parameter or comma-separating its values is supported.
-`pinned` and `dismissed` take `true`, `false` or `any`; `any` applies no
+A Job's `pinned` and `dismissed` fields are the asking viewer's own
+preferences; the `dismiss` and `undismiss` commands set and clear the second.
+As filters, `pinned` and `dismissed` take `true`, `false` or `any`; `any` applies no
 preference, exactly as omitting the parameter does. The Job Center page is the
 one place that reads an omitted `dismissed` differently: opening `/jobs` without
 it redirects to the same address with `dismissed=false`, its default, so every
