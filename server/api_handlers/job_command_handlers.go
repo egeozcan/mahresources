@@ -233,6 +233,12 @@ func writeJobCommandError(w http.ResponseWriter, ctx JobCommandContext, jobID st
 	if status == http.StatusBadRequest {
 		message = err.Error()
 	}
+	if errors.Is(err, jobs.ErrCommandRefused) {
+		// The Kind's own reason, written for the person who asked: a refusal they
+		// can act on is only useful if it says what it is.
+		status = http.StatusConflict
+		message = result.Message
+	}
 	body := map[string]any{"error": message}
 	if result.JobID != "" || result.Code != "" {
 		body["result"] = jobCommandResultResponse(result)

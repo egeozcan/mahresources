@@ -1352,6 +1352,10 @@ var (
 	// retry lineage: a successor already exists, so a second one would fork the
 	// chain and make "the current leaf" mean two things.
 	ErrCommandChainConflict = errors.New("jobs: the retry lineage already has a successor")
+	// ErrCommandRefused means the Job's Kind refused the command before it took
+	// effect, because its dispatch would refuse the work the command starts. The
+	// result carries the Kind's reason; nothing was written.
+	ErrCommandRefused = errors.New("jobs: the job's kind refused the command")
 	// ErrCommandFailed means a command was attempted and did not succeed. The
 	// recorded outcome is returned beside it, and a repeat of the same request is
 	// answered with that record rather than by running the executor again.
@@ -1867,6 +1871,9 @@ const (
 	CommandCodeInFlight = "in-flight"
 	// CommandCodeChainConflict means the retry lineage already has a successor.
 	CommandCodeChainConflict = "chain-conflict"
+	// CommandCodeRefused means the Job's Kind refused the command: the work it
+	// starts would be refused at dispatch. The message says why.
+	CommandCodeRefused = "refused"
 	// CommandCodeFailed means the command was attempted and did not succeed.
 	CommandCodeFailed = "failed"
 	// CommandCodeInvalid means the request itself is malformed, which is the one

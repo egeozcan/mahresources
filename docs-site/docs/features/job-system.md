@@ -328,7 +328,12 @@ absorbs clock skew between those processes.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
-version. Bulk requests accept at most 200 Job IDs; each result commits
+version. A Retry, Continue, Repeat or Resume whose work the Job's Kind would
+refuse when it came to run is refused up front with `409`, result code
+`refused` and the reason in `message`, and nothing is created: for example a
+download or an export whose target group has left the scope of the account it
+would run as. A Retry, Continue or Repeat runs as the account that asks for it;
+a Resume runs as the account the Job was accepted for. Bulk requests accept at most 200 Job IDs; each result commits
 independently, so a response can contain both successes and refusals.
 
 ## Replay keys and writer epoch
