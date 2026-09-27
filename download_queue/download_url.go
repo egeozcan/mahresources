@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +61,11 @@ func ValidateDownloadURL(raw string) error {
 	}
 	if parsed.Host == "" || parsed.Hostname() == "" {
 		return &invalidDownloadURLError{url: trimmed, reason: "it names no host"}
+	}
+	if port := parsed.Port(); port != "" {
+		if number, err := strconv.Atoi(port); err != nil || number < 1 || number > 65535 {
+			return &invalidDownloadURLError{url: trimmed, reason: "its port is not between 1 and 65535"}
+		}
 	}
 	return nil
 }

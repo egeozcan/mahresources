@@ -52,7 +52,7 @@ func NewReaderWithManifestLimit(src io.Reader, maxBytes int64) (*Reader, error) 
 }
 
 func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
-	pr := &peekedReader{r: sourceReader{src}}
+	pr := &peekedReader{r: &sourceReader{r: src}}
 	header, err := pr.Peek(2)
 	if err != nil && !isFormatFailure(err) {
 		// A read that failed says nothing about what the file holds. Carrying on
@@ -382,12 +382,25 @@ func isSupportedVersion(v int) bool {
 // read as what the archive's bytes say: a source may fail with
 // io.ErrUnexpectedEOF, which from the tar or gzip reader means a truncated
 // archive.
-type sourceReader struct{ r io.Reader }
+//
+// The failure is kept and answered to every later read. A source may return it
+// together with its last bytes, and io.ReadFull, which the peek, tar and gzip all
+// read through, keeps those bytes and drops the error when they complete its
+// read; the source may then report a plain end, which would read as an archive
+// cut short.
+type sourceReader struct {
+	r   io.Reader
+	err error
+}
 
-func (s sourceReader) Read(p []byte) (int, error) {
+func (s *sourceReader) Read(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
 	n, err := s.r.Read(p)
 	if err != nil && err != io.EOF {
-		err = &sourceError{err: err}
+		s.err = &sourceError{err: err}
+		return n, s.err
 	}
 	return n, err
 }

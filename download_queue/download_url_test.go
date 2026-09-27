@@ -12,12 +12,13 @@ import (
 // refused where it is submitted, naming the line, rather than accepted and failed
 // later by a worker with no one left to tell.
 func TestOnlyAnAbsoluteHTTPURLIsADownload(t *testing.T) {
-	for _, ok := range []string{"http://example.com/a.bin", "HTTPS://Example.com", "https://[::1]:8443/x?y=1"} {
+	for _, ok := range []string{"http://example.com/a.bin", "HTTPS://Example.com", "https://[::1]:8443/x?y=1", "http://example.com:1/a", "http://example.com:65535/a"} {
 		if err := ValidateDownloadURL(ok); err != nil {
 			t.Errorf("%q was refused: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"b.txt", "ftp://example.com/a.bin", "file:///etc/passwd", "https://", "http:///path", "//example.com/a", "", "https://exa mple.com/"} {
+	for _, bad := range []string{"b.txt", "ftp://example.com/a.bin", "file:///etc/passwd", "https://", "http:///path", "//example.com/a", "", "https://exa mple.com/",
+		"http://example.com:0/a.bin", "http://example.com:65536/a.bin", "http://example.com:99999/a.bin"} {
 		err := ValidateDownloadURL(bad)
 		if !errors.Is(err, ErrInvalidDownloadURL) {
 			t.Errorf("%q answered %v, want ErrInvalidDownloadURL", bad, err)

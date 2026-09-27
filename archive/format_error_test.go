@@ -47,6 +47,32 @@ func (f *failingOnceReader) Read(p []byte) (int, error) {
 	return f.failingReader.Read(p)
 }
 
+// failingWithBytesReader hands over the first n bytes of an archive, returning
+// its failure in the same call as the last of them, and then reports the end of
+// the stream. io.ReadFull keeps the bytes and drops such an error.
+type failingWithBytesReader struct {
+	data   []byte
+	n      int
+	err    error
+	failed bool
+}
+
+func (f *failingWithBytesReader) Read(p []byte) (int, error) {
+	if f.failed || f.n <= 0 {
+		return 0, io.EOF
+	}
+	if len(p) > f.n {
+		p = p[:f.n]
+	}
+	k := copy(p, f.data)
+	f.data, f.n = f.data[k:], f.n-k
+	if f.n == 0 {
+		f.failed = true
+		return k, f.err
+	}
+	return k, nil
+}
+
 func readWhole(src io.Reader) error {
 	r, err := NewReader(src)
 	if err != nil {
@@ -86,6 +112,7 @@ func TestAFormatErrorIsTheArchivesOwnAndAReadFailureIsNot(t *testing.T) {
 			// A source may name its own failure with the error a truncated archive
 			// produces; it is still the read's, not the archive's.
 			"with an unexpected EOF of its own": {&failingReader{data: whole, n: at, err: io.ErrUnexpectedEOF}, io.ErrUnexpectedEOF},
+			"with its last bytes and then ends": {&failingWithBytesReader{data: whole, n: at + 2, err: io.ErrClosedPipe}, io.ErrClosedPipe},
 		} {
 			err := readWhole(src.r)
 			var format *FormatError
