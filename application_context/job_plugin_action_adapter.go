@@ -456,20 +456,14 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 	return nil
 }
 
-// registeredActionRefusal is a registered action's re-check under its fresh claim:
-// the registration, and what the acting principal may do, asked again now.
-func (ctx *MahresourcesContext) registeredActionRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (func() error, error) {
-	reason := "plugins-unavailable"
-	if current := ctx.PluginManager(); current != nil {
-		var err error
-		if reason, err = ctx.pluginActionRefusalWithin(bounded, current, execution, claimed); err != nil {
-			return nil, err
-		}
+// registeredActionRefusal is a registered action's re-check: the registration,
+// and what the acting principal may do, asked again now.
+func (ctx *MahresourcesContext) registeredActionRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (string, error) {
+	current := ctx.PluginManager()
+	if current == nil {
+		return "plugins-unavailable", nil
 	}
-	if reason == "" {
-		return nil, nil
-	}
-	return func() error { return ctx.blockPluginActionJob(execution, reason) }, nil
+	return ctx.pluginActionRefusalWithin(bounded, current, execution, claimed)
 }
 
 // pluginActionRun is what running one execution produced, for callers that need
@@ -1918,21 +1912,14 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 	return ctx.settleUnstartedOccurrence(admission)
 }
 
-// occurrenceActorRefusal is a scheduled occurrence's re-check under its fresh
-// claim: whether the operator it runs as may still run its plugin's work.
-func (ctx *MahresourcesContext) occurrenceActorRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (func() error, error) {
+// occurrenceActorRefusal is a scheduled occurrence's re-check: whether the
+// operator it runs as may still run its plugin's work.
+func (ctx *MahresourcesContext) occurrenceActorRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (string, error) {
 	deps := ctx.jobDeps()
 	if deps.DB != nil {
 		deps.DB = deps.DB.WithContext(bounded)
 	}
-	reason, err := ctx.commandActorRefusalChecked(deps, execution.Access, claimed.Plugin)
-	if err != nil {
-		return nil, err
-	}
-	if reason == "" {
-		return nil, nil
-	}
-	return func() error { return ctx.blockPluginActionJob(execution, reason) }, nil
+	return ctx.commandActorRefusalChecked(deps, execution.Access, claimed.Plugin)
 }
 
 // settleUnstartedOccurrence ends an occurrence whose handler was never entered
@@ -1951,11 +1938,16 @@ func (ctx *MahresourcesContext) occurrenceActorRefusal(bounded context.Context, 
 // What this process did under its own claim is known without reading the Job,
 // whose state may not show it yet. An occurrence it refused or failed before the
 // handler ran did not start, and the write recording why lands on its own. One
-// whose claim it gave back is withdrawn once the claim is back in the queue.
+// whose claim it gave back is withdrawn once the claim is back in the queue. One
+// it was granted too late to run holds that claim, heartbeated, until the
+// withdrawal lands, so the withdrawal is retried until it does.
 func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActionAdmission) (pluginActionRun, error) {
 	run := pluginActionRun{JobID: admission.jobID}
 	if execution, admitted := admission.admitted(); admitted {
-		return run, ctx.withdrawPluginActionJob(execution, "not-started", "the plugin's execution budget or VM stayed busy")
+		ctx.settlePluginActionWhile(execution.JobID, jobs.StateRunning, func() error {
+			return ctx.withdrawPluginActionJob(execution, "not-started", "the plugin's execution budget or VM stayed busy")
+		})
+		return run, nil
 	}
 	if admission.endedByItself() {
 		return run, nil

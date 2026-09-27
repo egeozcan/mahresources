@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -69,8 +70,9 @@ type laneWaiter struct {
 
 // laneTicket is one execution's place in its plugin's lane.
 type laneTicket struct {
-	lane *pluginLane
-	turn chan struct{}
+	lane  *pluginLane
+	turn  chan struct{}
+	ahead bool
 }
 
 // join takes a place at the back of the lane. The ticket's turn has already come
@@ -99,12 +101,12 @@ func (l *pluginLane) enter(ahead bool) *laneTicket {
 		l.held = true
 		l.servedAhead = ahead
 		close(turn)
-		return &laneTicket{lane: l, turn: turn}
+		return &laneTicket{lane: l, turn: turn, ahead: ahead}
 	}
 	waiter := laneWaiter{turn: turn, ahead: ahead}
 	if !ahead {
 		l.waiters = append(l.waiters, waiter)
-		return &laneTicket{lane: l, turn: turn}
+		return &laneTicket{lane: l, turn: turn, ahead: ahead}
 	}
 	at := 0
 	for at < len(l.waiters) && l.waiters[at].ahead {
@@ -113,7 +115,12 @@ func (l *pluginLane) enter(ahead bool) *laneTicket {
 	l.waiters = append(l.waiters, laneWaiter{})
 	copy(l.waiters[at+1:], l.waiters[at:])
 	l.waiters[at] = waiter
-	return &laneTicket{lane: l, turn: turn}
+	return &laneTicket{lane: l, turn: turn, ahead: ahead}
+}
+
+// rejoin takes a new place in the same lane, the way this ticket took its own.
+func (t *laneTicket) rejoin() *laneTicket {
+	return t.lane.enter(t.ahead)
 }
 
 // depth is how many executions hold or wait for the lane.
@@ -233,7 +240,23 @@ const (
 	// ended, it was blocked, or another runtime owns it. The host has recorded
 	// whatever needed recording, and the execution leaves without starting.
 	AdmitWithdrawn
+	// AdmitDeferred means the Job is still waiting, and the host cannot admit it
+	// until it has found out something it could not find out under a claim. The
+	// execution gives up its place in the lane, so the plugin's other work is not
+	// held behind it, and the host asks again (HostRecheck) before it next claims.
+	AdmitDeferred
 )
+
+// HostRecheck is implemented by a HostAdmission that answers AdmitDeferred.
+//
+// Recheck is asked with nothing held but the head of the lane: no job slot, no
+// VM and no claim, so it may take as long as its own bound allows. It is asked
+// immediately before the slot and the VM are taken for the next claim, which is
+// what makes its answer fresh when that claim is made. ready false asks the
+// execution to stay out of the lane for retryAfter before asking again.
+type HostRecheck interface {
+	Recheck(ctx context.Context) (ready bool, retryAfter time.Duration)
+}
 
 // HostAdmission is the durable half of one queued execution: the claim the head
 // of a lane asks for once it holds a job slot.
@@ -325,19 +348,29 @@ func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time, revoked <-chan 
 	}
 }
 
+// admitNext is what the head of a lane does after asking the host once.
+type admitNext int
+
+const (
+	// admitDone: the outcome stands, asyncRan meaning the work may start.
+	admitDone admitNext = iota
+	// admitAgain: ask again once the VM and the slot have been given back.
+	admitAgain
+	// admitRecheck: give up the lane until the host has asked again (HostRecheck).
+	admitRecheck
+)
+
 // admitOnce asks the host for the durable claim once. It is asked with the
 // plugin's VM already held, so the claim is only ever taken by work that can
 // start at once: waiting for the VM with a claim held would hold a slot of the
-// deployment's budget for work that is doing nothing. retry reports AdmitLater,
-// which may be asked about again once the VM and the slot have been given back;
-// otherwise outcome is asyncRan when the work may start.
-func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (outcome asyncOutcome, retry bool) {
+// deployment's budget for work that is doing nothing.
+func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (asyncOutcome, admitNext) {
 	ref := job.hostJobRef()
 	if ref == nil || ref.Admission == nil {
-		return asyncRan, false
+		return asyncRan, admitDone
 	}
 	if pm.closed.Load() {
-		return asyncClosing, false
+		return asyncClosing, admitDone
 	}
 	switch ref.Admission.Admit(deadline) {
 	case Admitted:
@@ -345,13 +378,68 @@ func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (outcome 
 			// Admitted too late: the caller that bounded this wait has stopped
 			// waiting, so the execution does not start. The host holds the claim
 			// it granted and settles it on the way out.
-			return asyncGaveUp, false
+			return asyncGaveUp, admitDone
 		}
-		return asyncRan, false
+		return asyncRan, admitDone
 	case AdmitWithdrawn:
-		return asyncWithdrawn, false
+		return asyncWithdrawn, admitDone
+	case AdmitDeferred:
+		if _, ok := ref.Admission.(HostRecheck); ok {
+			return asyncRan, admitRecheck
+		}
+		return asyncRan, admitAgain
 	default:
-		return asyncRan, true
+		return asyncRan, admitAgain
+	}
+}
+
+// recheckOutsideLane is how the head of a lane waits for a host that deferred
+// it: the host asks again from the head of the lane, holding no slot and no VM,
+// and while it cannot find out the execution leaves the lane, so the plugin's
+// other work goes first, and comes back to its end. It answers asyncRan holding
+// the lane again, with the host ready to be asked for its claim at once.
+func (pm *PluginManager) recheckOutsideLane(job *ActionJob, ticket **laneTicket, laneHeld *bool, waitCtx context.Context, deadline time.Time, revoked <-chan struct{}) asyncOutcome {
+	recheck := job.hostJobRef().Admission.(HostRecheck)
+	ctx := waitCtx
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(waitCtx, deadline)
+		defer cancel()
+	}
+	for {
+		ready, retryAfter := recheck.Recheck(ctx)
+		if ready {
+			return asyncRan
+		}
+		(*ticket).lane.release()
+		*laneHeld = false
+		if retryAfter <= 0 {
+			retryAfter = hostAdmissionPollInterval
+		}
+		timer := time.NewTimer(retryAfter)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return pm.abandonedWait(revoked)
+		}
+		*ticket = (*ticket).rejoin()
+		if !(*ticket).wait(pm.done, deadline, revoked) {
+			return pm.abandonedWait(revoked)
+		}
+		*laneHeld = true
+	}
+}
+
+// abandonedWait says why a wait that did not end in its turn ended.
+func (pm *PluginManager) abandonedWait(revoked <-chan struct{}) asyncOutcome {
+	switch {
+	case pm.closed.Load():
+		return asyncClosing
+	case isClosed(revoked):
+		return asyncRevoked
+	default:
+		return asyncGaveUp
 	}
 }
 

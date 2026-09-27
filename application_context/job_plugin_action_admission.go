@@ -41,28 +41,40 @@ type pluginActionAdmission struct {
 	// closure's input is not replayable, so the claim opens nothing and the
 	// accepting call's own description stands in for it.
 	input *pluginActionJobInput
-	// refusal re-checks, under the fresh claim and within bounded, that the
-	// execution may still run as the principal it acts as. It answers nil when it
-	// may, and otherwise the write that records what stops it (a block or a
-	// failure); an error means it could not find out, which is not a refusal. A nil
-	// refusal re-checks nothing.
+	// refusal re-checks, within bounded, that the execution may still run as the
+	// principal it acts as. It answers the reason it may not, or an empty string
+	// when it may; an error means it could not find out, which is not a refusal. A
+	// nil refusal re-checks nothing.
 	refusal pluginActionRefusalCheck
 
 	mu        sync.Mutex
 	execution jobs.Execution
 	sink      *pluginActionSink
 	// returning is open while a claim this admission gave back is still being
-	// handed back. Nothing is asked for until it closes: the Job is running under
-	// the returned token until then, and a claim asked for meanwhile would read
-	// that as a Job some other execution owns and leave the lane.
+	// handed back: the Job is running under the returned token until it closes.
 	returning chan struct{}
 	// ending is set once this admission has refused or failed the Job under its
 	// own claim. The write that records it runs, and is retried, on its own.
 	ending bool
+	// gaveBack is set once this admission has given a claim back because the
+	// re-checks under it could not answer. It never gives one back again: from
+	// then on it claims only with a fresh answer from Recheck, and acts on that
+	// answer when the re-checks under the claim still cannot answer.
+	gaveBack bool
+	// checkedAs and checkedInput are the principal and the input the re-checks are
+	// asked about without a claim: the ones the given-back claim ran with.
+	checkedAs    jobs.Execution
+	checkedInput *pluginActionJobInput
+	// answer is Recheck's last answer, and answeredAt when it was taken.
+	answer     *string
+	answeredAt time.Time
+	// unanswered counts the rechecks in a row that could not answer, for their
+	// backoff.
+	unanswered int
 }
 
-// pluginActionRefusalCheck is an admission's re-check under a fresh claim.
-type pluginActionRefusalCheck func(bounded context.Context, execution jobs.Execution, input *pluginActionJobInput) (record func() error, err error)
+// pluginActionRefusalCheck is an admission's re-check of the acting principal.
+type pluginActionRefusalCheck func(bounded context.Context, execution jobs.Execution, input *pluginActionJobInput) (reason string, err error)
 
 func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pluginActionJobInput, refusal pluginActionRefusalCheck) *pluginActionAdmission {
 	return &pluginActionAdmission{ctx: ctx, jobID: jobID, subtype: input.Subtype, input: input, refusal: refusal}
@@ -86,10 +98,11 @@ func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_s
 // It is asked with the plugin's VM held, so everything it does is bounded by one
 // deadline: the caller's, or one attempt's bound, whichever comes first. That
 // covers the claim, the read of the claimed input and the re-checks of the
-// acting principal. A claim granted but not finished within it is given back to
-// the queue (returnClaim) and answered "later": a read that ran out, or failed,
-// found nothing out, and is never recorded as a refusal. Recording what ends a
-// claimed Job, or gives its claim back, happens after the VM is released.
+// acting principal. A read that ran out, or failed, found nothing out, and is
+// never recorded as a refusal: the first time the re-checks cannot answer, the
+// claim is given back and the admission is deferred until Recheck can answer
+// them without one. That happens once. Recording what ends a claimed Job, or
+// gives its claim back, happens after the VM is released.
 //
 // A panic here is contained: before the claim the execution asks again later,
 // and after it the Job is ended, since the claim would otherwise leave it running
@@ -98,8 +111,9 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	if _, admitted := a.admitted(); admitted {
 		return plugin_system.Admitted
 	}
-	if a.stillReturning() {
-		return plugin_system.AdmitLater
+	answer, deferred := a.freshAnswer()
+	if deferred {
+		return plugin_system.AdmitDeferred
 	}
 	if attempt := time.Now().Add(pluginActionAdmissionAttempt); deadline.IsZero() || attempt.Before(deadline) {
 		deadline = attempt
@@ -127,10 +141,16 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, a.jobID)
 	switch {
 	case err == nil:
+	case errors.Is(err, jobs.ErrExecutionNotLoaded) && jobs.ReplayBlocked(jobs.StateRunning, err):
+		// The sealed input cannot be opened, and the control plane could not
+		// record that within the bound. The block is recorded from here instead.
+		claimed = &execution
+		a.endClaimed(execution, func() error { return a.ctx.blockPluginActionJob(execution, "input-unavailable") })
+		return plugin_system.AdmitWithdrawn
 	case errors.Is(err, jobs.ErrExecutionNotLoaded):
-		log.Printf("warning: could not load plugin job %s after claiming it; asking again: %v", a.jobID, err)
-		a.returnClaim(execution, stopHeartbeat)
-		return plugin_system.AdmitLater
+		// The sealed input could not be read in time. The admission holds the
+		// same input in memory, as it was sealed or opened, and runs with that.
+		log.Printf("warning: could not read the input of plugin job %s after claiming it; running with the one it was queued with: %v", a.jobID, err)
 	case errors.Is(err, jobs.ErrCapacityExhausted):
 		return plugin_system.AdmitLater
 	case errors.Is(err, jobs.ErrJobNotWaiting):
@@ -153,14 +173,18 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		return plugin_system.AdmitWithdrawn
 	}
 	if a.refusal != nil {
-		record, err := a.refusal(bounded, execution, input)
+		reason, err := a.refusal(bounded, execution, input)
 		if err != nil {
-			log.Printf("warning: could not re-check plugin job %s before it runs; asking again: %v", a.jobID, err)
-			a.returnClaim(execution, stopHeartbeat)
-			return plugin_system.AdmitLater
+			if answer == nil {
+				log.Printf("warning: could not re-check plugin job %s before it runs; asking again without a claim: %v", a.jobID, err)
+				a.giveBack(execution, input, stopHeartbeat)
+				return plugin_system.AdmitDeferred
+			}
+			log.Printf("warning: could not re-check plugin job %s under its claim; acting on the check made just before it: %v", a.jobID, err)
+			reason = *answer
 		}
-		if record != nil {
-			a.endClaimed(execution, record)
+		if reason != "" {
+			a.endClaimed(execution, func() error { return a.ctx.blockPluginActionJob(execution, reason) })
 			return plugin_system.AdmitWithdrawn
 		}
 	}
@@ -171,15 +195,73 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	return plugin_system.Admitted
 }
 
-// returnClaim hands a claim this admission could not finish back to the queue,
-// the Job to `queued` under the claim's own token, and keeps trying until that
-// lands or the Job has left running. The heartbeat keeps the claim alive until
-// it does, and stops once it has. It runs after the VM is released; until it is
-// over, the admission answers "later" without asking.
-func (a *pluginActionAdmission) returnClaim(execution jobs.Execution, stopHeartbeat func()) {
+// freshAnswer is the answer a claim may be made with. Before any give-back there
+// is none to need. After one, only Recheck's answer counts, and only while it is
+// fresh: taken no longer before this claim than one admission's own bound, which
+// is the head of the lane asking it and then taking the slot and the VM. An
+// answer from an earlier turn is not used: the principal may have been disabled
+// or narrowed since, so the admission defers and Recheck asks again.
+func (a *pluginActionAdmission) freshAnswer() (answer *string, deferred bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.gaveBack {
+		return nil, false
+	}
+	if a.answer == nil || time.Since(a.answeredAt) > pluginActionAdmissionAttempt {
+		return nil, true
+	}
+	return a.answer, false
+}
+
+// Recheck implements plugin_system.HostRecheck: the re-checks a given-back claim
+// could not answer, asked again without a claim, holding nothing. The claim it
+// gave back has to be in the queue before anything else, or the next claim would
+// read the Job as another runtime's. A check that cannot answer asks the lane to
+// wait before asking again, doubling each time up to pluginActionRecheckBackoffCap.
+func (a *pluginActionAdmission) Recheck(ctx context.Context) (bool, time.Duration) {
+	if returning := a.returningClaim(); returning != nil {
+		select {
+		case <-returning:
+		case <-ctx.Done():
+			return false, 0
+		}
+	}
+	a.mu.Lock()
+	checkedAs, checkedInput := a.checkedAs, a.checkedInput
+	a.mu.Unlock()
+	checkCtx, cancel := context.WithTimeout(ctx, pluginActionRecheckAttempt)
+	reason, err := a.refusal(checkCtx, checkedAs, checkedInput)
+	cancel()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.unanswered++
+		backoff := pluginActionRecheckBackoffCap
+		if a.unanswered <= 6 {
+			if doubled := time.Second << (a.unanswered - 1); doubled < backoff {
+				backoff = doubled
+			}
+		}
+		log.Printf("warning: could not re-check plugin job %s; asking again in %s: %v", a.jobID, backoff, err)
+		return false, backoff
+	}
+	a.unanswered = 0
+	a.answer = &reason
+	a.answeredAt = time.Now()
+	return true, 0
+}
+
+// giveBack hands a claim whose re-checks could not answer back to the queue, the
+// Job to `queued` under the claim's own token, and keeps trying until that lands
+// or the Job has left running. The heartbeat keeps the claim alive until it does,
+// and stops once it has. It runs after the VM is released.
+func (a *pluginActionAdmission) giveBack(execution jobs.Execution, input *pluginActionJobInput, stopHeartbeat func()) {
 	done := make(chan struct{})
 	a.mu.Lock()
 	a.returning = done
+	a.gaveBack = true
+	a.checkedAs = execution
+	a.checkedInput = input
 	a.mu.Unlock()
 	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
 	release := func() error {
@@ -398,6 +480,15 @@ func (ctx *MahresourcesContext) pluginDisabledEverywhere(pluginName string) bool
 		return !state.Enabled
 	}
 }
+
+// pluginActionRecheckAttempt bounds one Recheck. It holds nothing another piece of
+// work is waiting for but the head of its plugin's lane, so it can wait for a
+// check that is slow but answers, which the admission's own bound cannot.
+var pluginActionRecheckAttempt = time.Minute
+
+// pluginActionRecheckBackoffCap is the longest a deferred execution stays out of
+// its lane between rechecks that could not answer.
+const pluginActionRecheckBackoffCap = 30 * time.Second
 
 // pluginActionAdmissionAttempt bounds one admission's database work: the claim,
 // the read of the claimed input and the re-checks of the acting principal. It is

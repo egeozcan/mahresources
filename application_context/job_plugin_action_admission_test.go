@@ -586,7 +586,7 @@ func TestAPanicAfterTheClaimEndsTheJob(t *testing.T) {
 	occurrence := acceptOccurrenceForTest(t, ctx)
 	admission := ctx.newPluginActionAdmission(occurrence.ID,
 		&pluginActionJobInput{Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin},
-		func(context.Context, jobs.Execution, *pluginActionJobInput) (func() error, error) {
+		func(context.Context, jobs.Execution, *pluginActionJobInput) (string, error) {
 			panic("refusal check failed")
 		})
 

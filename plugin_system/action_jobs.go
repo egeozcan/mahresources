@@ -507,16 +507,14 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 		ticket = pm.laneFor(job.PluginName).join()
 	}
 	if !ticket.wait(pm.done, bounds.lane, bounds.revoked) {
-		switch {
-		case pm.closed.Load():
-			return asyncClosing
-		case isClosed(bounds.revoked):
-			return asyncRevoked
-		default:
-			return asyncGaveUp
-		}
+		return pm.abandonedWait(bounds.revoked)
 	}
-	defer ticket.lane.release()
+	laneHeld := true
+	defer func() {
+		if laneHeld {
+			ticket.lane.release()
+		}
+	}()
 
 	// The VM wait ends when the VM it waits for is revoked or the manager
 	// closes: a head waiting on a revoked VM behind a long synchronous call would
@@ -552,19 +550,25 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 			return got
 		}
 		heldVM, slotHeld = held, true
-		got, retry := pm.admitOnce(job, slotDeadline)
-		if !retry && got == asyncRan {
+		got, next := pm.admitOnce(job, slotDeadline)
+		if next == admitDone && got == asyncRan {
 			break
 		}
 		heldVM.Unlock()
 		heldVM = nil
 		<-pm.actionSemaphore
 		slotHeld = false
-		if !retry {
+		switch next {
+		case admitAgain:
+			if paused := pm.pauseBeforeAdmission(slotDeadline, bounds.revoked); paused != asyncRan {
+				return paused
+			}
+		case admitRecheck:
+			if rechecked := pm.recheckOutsideLane(job, &ticket, &laneHeld, waitCtx, slotDeadline, bounds.revoked); rechecked != asyncRan {
+				return rechecked
+			}
+		default:
 			return got
-		}
-		if paused := pm.pauseBeforeAdmission(slotDeadline, bounds.revoked); paused != asyncRan {
-			return paused
 		}
 	}
 	started = true

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -253,5 +254,66 @@ func TestAClaimJobDeadlineBoundsTheLoadAfterItsCommit(t *testing.T) {
 	}
 	if _, err := claimNamed(svc, deps, waiting.ID, budget); err != nil {
 		t.Fatalf("the handed-back job could not be claimed again: %v", err)
+	}
+}
+
+// TestAClaimJobDeadlineBoundsBlockingAnInputItCannotOpen pins the other write a
+// claim makes before its execution is handed over. An input that cannot be opened
+// blocks the Job, and that block is written inside the claim's bound: a caller
+// holding a plugin's VM must not wait on it past its budget. A block that could
+// not be written in the bound answers ErrExecutionNotLoaded with the claimed
+// execution, so the caller holds the token and can record the block itself.
+func TestAClaimJobDeadlineBoundsBlockingAnInputItCannotOpen(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-block-deadline.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	registerTestCodec(t, svc)
+
+	sealing := Deps{DB: deps.DB, Now: deps.Now, Replay: &ReplayConfig{Keys: replayKeyringFromSeeds(t, "the-key-that-sealed-it")}}
+	accepted, err := svc.Accept(sealing, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: json.RawMessage(`{"secret":"sealed"}`)},
+	})
+	if err != nil {
+		t.Fatalf("accept with replay input: %v", err)
+	}
+
+	var stalled atomic.Bool
+	if err := deps.DB.Callback().Update().Before("gorm:update").Register("stall-the-block", func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if !ok || db.Statement.Table != "jobs" || updates["state"] != string(StateBlocked) {
+			return
+		}
+		stalled.Store(true)
+		select {
+		case <-db.Statement.Context.Done():
+		case <-time.After(5 * time.Second):
+		}
+	}); err != nil {
+		t.Fatalf("register the stalled block: %v", err)
+	}
+
+	// A runtime holding no key for the input: it cannot be opened here.
+	blind := Deps{DB: deps.DB, Now: deps.Now}
+	claimCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	blind.DB = deps.DB.WithContext(claimCtx)
+	started := time.Now()
+	execution, err := svc.ClaimJob(context.Background(), blind, ClaimRequest{
+		Kind: testKind, KindVersion: 1, JobID: accepted.ID, Claimant: "blind-runtime",
+	})
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("blocking the unopenable input took %v: the claim's deadline did not reach it", elapsed)
+	}
+	if !stalled.Load() {
+		t.Fatal("the block was never written: the test did not reach it")
+	}
+	if !errors.Is(err, ErrExecutionNotLoaded) || !ReplayBlocked(StateRunning, err) {
+		t.Fatalf("a block that could not be written answered %v, want ErrExecutionNotLoaded with the reason the input could not be opened", err)
+	}
+	row := jobRow(t, deps, accepted.ID)
+	if State(row.State) != StateRunning || row.ExecutionToken == "" || row.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the claim handed back does not own the running job (row %s token %q, execution %q)",
+			row.State, row.ExecutionToken, execution.ExecutionToken)
 	}
 }

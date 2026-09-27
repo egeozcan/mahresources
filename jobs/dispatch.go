@@ -212,12 +212,13 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	}
 	// The execution publishes through ctx, never through whatever bound the
 	// claim's own queries: a deadline there would cut short every write the work
-	// makes after its caller stopped waiting to start it.
-	load := deps.withContext(ctx)
+	// makes after its caller stopped waiting to start it. What happens before it
+	// is handed over — the read of its input, and blocking a Job whose input
+	// cannot be opened — stays inside the claim's bound when the caller set one.
 	if loadOnClaimHandle {
-		load = deps
+		return s.executionLoadedOn(ctx, deps, deps, claimed, claim, State(job.State), claimFromWaiting)
 	}
-	return s.executionLoadedOn(ctx, load, deps.withContext(ctx), claimed, claim, State(job.State), claimFromWaiting)
+	return s.executionFor(ctx, deps.withContext(ctx), claimed, claim, State(job.State), claimFromWaiting)
 }
 
 // validateClaimRequest checks a claim and normalizes the budgets it occupies.
@@ -609,7 +610,9 @@ func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, c
 // cannot run settled through settle. A read that fails for any reason but an
 // input that cannot be opened answers ErrExecutionNotLoaded with the execution
 // the claim created: the Job is running under its token, and whoever holds the
-// token is the only one who can hand it back.
+// token is the only one who can hand it back. So does an input that cannot be
+// opened when recording that failed, wrapping the reason the input could not be
+// opened.
 func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job models.Job, claim models.JobClaim, claimedFrom State, origin claimOrigin) (Execution, error) {
 	// Who the work acts as is settled before what it runs with: a Job whose
 	// recorded principal has been deleted may not be handed to an adapter at all,
@@ -623,8 +626,13 @@ func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job 
 	input, err := s.executionInput(load, job)
 	if err != nil {
 		if ReplayBlocked(State(job.State), err) {
-			return Execution{}, s.unrunnableClaim(settle, origin, job, claim,
+			settled := s.unrunnableClaim(settle, origin, job, claim,
 				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, err)
+			if errors.Is(settled, errUnrunnableUnrecorded) {
+				return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
+					fmt.Errorf("%w: %w", ErrExecutionNotLoaded, settled)
+			}
+			return Execution{}, settled
 		}
 		return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
 			fmt.Errorf("%w: %w", ErrExecutionNotLoaded, err)
@@ -652,10 +660,15 @@ func (s *Service) unrunnableClaim(deps Deps, origin claimOrigin, job models.Job,
 // reconciliation that finds evidence the runtime is gone, is what resolves it.
 func (s *Service) quarantineUnrunnableClaim(deps Deps, job models.Job, claim models.JobClaim, reason string, cause error) error {
 	if _, err := s.quarantineClaim(deps, job, claim, reason, deps.now()); err != nil {
-		return fmt.Errorf("%w (and the job could not be quarantined either: %v)", cause, err)
+		return fmt.Errorf("%w (and the job could not be quarantined either: %v; %w)", cause, err, errUnrunnableUnrecorded)
 	}
 	return cause
 }
+
+// errUnrunnableUnrecorded marks a claim that could not run and whose block or
+// quarantine could not be recorded either: the Job is still running under the
+// claim's token.
+var errUnrunnableUnrecorded = errors.New("jobs: the claim is still held")
 
 // Reasons a claimed Job is blocked by the control plane itself rather than by
 // its adapter. They are stable codes on the Job's own timeline.
@@ -706,7 +719,7 @@ func (s *Service) blockUnrunnableJob(deps Deps, job models.Job, claim models.Job
 		Event:           EventInput{Type: EventBlocked, Detail: detail},
 	})
 	if err != nil {
-		return fmt.Errorf("%w (and the job could not be blocked either: %v)", cause, err)
+		return fmt.Errorf("%w (and the job could not be blocked either: %v; %w)", cause, err, errUnrunnableUnrecorded)
 	}
 	return cause
 }
