@@ -69,9 +69,9 @@ func acceptAndClaimExportForTest(t *testing.T, ctx *MahresourcesContext, handle 
 	if err != nil {
 		t.Fatalf("encode the export input: %v", err)
 	}
-	// Accepted and claimed in one transaction: these fixtures run on a context
-	// whose dispatch loop is live, and a separate Accept then Claim left it a
-	// window to claim the queued export first under load.
+	// Accepted and claimed in one transaction, so nothing can claim the queued
+	// export first. The claimant below is a process that is gone, which a dispatch
+	// loop expires on its next tick, so these fixtures run on contexts without one.
 	execution, accepted, err := service.AcceptClaimed(context.Background(), ctx.jobDeps(), jobs.Acceptance{
 		Kind:        JobKindGroupExport,
 		KindVersion: jobExportKindVersion,
@@ -296,7 +296,10 @@ func TestLargeGroupExportScopeManifestKeepsOutputReferenceBounded(t *testing.T) 
 // executor's confirmation — a cancellation that won lifecycle ownership is not the same
 // fact as work that is no longer running.
 func TestAnExportCancelAsksTheExecutorRatherThanEndingTheJob(t *testing.T) {
-	ctx := newWorkflowJobContext(t)
+	// No dispatch loop: the claim below is held in the name of a process that is
+	// gone, which a loop expires on its next tick, under the execution this test
+	// goes on to cancel and dispatch.
+	ctx := newClaimableExportContext(t)
 	groupID := createExportGroupForTest(t, ctx, "cancel-me")
 	accepted, execution := acceptAndClaimExportForTest(t, ctx, "export-cancel-1", groupID, time.Minute)
 
