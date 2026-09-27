@@ -8,8 +8,9 @@
         </svg>
         <span>Jobs</span>
         {# The button's aria-label replaces its contents as its name, so the badges are read through its description instead. #}
-        <span aria-hidden="true" class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-700" data-job-panel-active-badge x-text="activeCount"></span>
-        <span aria-hidden="true" x-show="attentionCount > 0" class="rounded-full border border-amber-700 px-1.5 py-0.5 text-xs font-medium text-amber-900" data-job-panel-attention-badge x-text="attentionCount"></span>
+        {# No count until a list has been read: a zero would claim there is nothing. "50+" when a group holds only its first page. #}
+        <span aria-hidden="true" x-show="loaded" x-cloak class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-700" data-job-panel-active-badge x-text="activeBadge"></span>
+        <span aria-hidden="true" x-show="attentionCount > 0" class="rounded-full border border-amber-700 px-1.5 py-0.5 text-xs font-medium text-amber-900" data-job-panel-attention-badge x-text="attentionBadge"></span>
     </button>
     <span id="job-panel-trigger-counts" class="sr-only" x-text="countsText"></span>
 
@@ -36,8 +37,8 @@
                         <p id="job-center-panel-counts" class="sr-only" x-text="countsText"></p>
                         <p class="flex items-center gap-1.5 text-xs text-stone-600">
                             <span aria-hidden="true" class="h-2 w-2 shrink-0 rounded-full"
-                                  :class="{ 'bg-green-600': connectionStatus === 'connected', 'bg-red-600': connectionStatus === 'reconnecting' || connectionStatus === 'stopped', 'bg-amber-500 motion-safe:animate-pulse': connectionStatus !== 'connected' && connectionStatus !== 'reconnecting' && connectionStatus !== 'stopped' }"></span>
-                            <span role="status" aria-live="polite" x-text="connectionStatus === 'connected' ? 'Live updates connected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus === 'stopped' ? 'Live updates stopped' : 'Connecting to live updates'"></span>
+                                  :class="{ 'bg-green-600': connectionStatus === 'connected' && !signedOut, 'bg-red-600': signedOut || connectionStatus === 'reconnecting' || connectionStatus === 'stopped', 'bg-amber-500 motion-safe:animate-pulse': !signedOut && connectionStatus !== 'connected' && connectionStatus !== 'reconnecting' && connectionStatus !== 'stopped' }"></span>
+                            <span role="status" aria-live="polite" x-text="connectionText"></span>
                         </p>
                     </div>
                     <button type="button" @click="close()" class="rounded p-1 text-stone-500 hover:text-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" aria-label="Close Jobs panel">
@@ -48,7 +49,16 @@
                 {# Announcements while the drawer is open: it is aria-modal, so the page's own live region may go unheard. #}
                 <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-job-panel-announcer></div>
 
-                <p x-show="error" x-cloak role="alert" class="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800" x-text="error"></p>
+                {# A failed read keeps the rows it had; the drawer reads again by itself, and at once on Try again. #}
+                <div x-show="error && !streamStopped" x-cloak class="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800" data-job-panel-error>
+                    <p role="alert"><span x-text="loaded ? 'Jobs could not be refreshed: ' : 'Jobs could not be loaded: '"></span><span x-text="error"></span>. <span x-text="loaded ? 'The list below may be out of date.' : ''"></span></p>
+                    <button type="button" @click="retryNow()" class="mt-1 inline-flex min-h-6 items-center rounded font-medium text-red-900 underline decoration-red-300 underline-offset-2 hover:decoration-red-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Try again</button>
+                </div>
+                {# A 401: the session ended. Signing in again comes back to this page; the drawer also recovers by itself once this tab is signed in again. #}
+                <div x-show="signedOut && !streamStopped" x-cloak class="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-job-panel-signed-out>
+                    <p role="alert">Your session has ended, so jobs are not updating.</p>
+                    <a :href="signInURL" class="mt-1 inline-flex min-h-6 items-center rounded font-medium text-amber-900 underline decoration-amber-400 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Sign in again</a>
+                </div>
                 <p x-show="notice" x-cloak class="border-b border-stone-200 px-4 py-2 text-sm text-stone-700" data-job-panel-notice x-text="notice"></p>
                 {# After a stream reset the drawer holds nothing from the other database, and the page around it may hold unsaved input, so it offers a reload rather than reloading. #}
                 <div x-show="streamStopped" x-cloak class="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-job-panel-stopped>
@@ -61,7 +71,7 @@
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
                             <h3 :id="'job-panel-group-' + group.key" class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
                                 <span x-text="group.title"></span>
-                                <span class="font-normal text-stone-500" x-text="'(' + group.jobs.length + ')'"></span>
+                                <span class="font-normal text-stone-500" x-text="'(' + group.countText + ')'"></span>
                             </h3>
                             {# role="list": Safari drops list semantics from a list styled without markers. #}
                             <ul role="list" class="divide-y divide-stone-100 border-b border-stone-200">
@@ -190,14 +200,19 @@
                                 </li>
                             </template>
                             </ul>
+                            {# A group holds its most recent page; the rest are on All jobs, filtered to the group. #}
+                            <p x-show="group.more" class="border-b border-stone-200 px-4 py-2 text-xs text-stone-600" :data-job-panel-group-more="group.key">
+                                <span x-text="group.moreText"></span>
+                                <a :href="group.moreURL" class="rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" x-text="group.moreLabel"></a>
+                            </p>
                         </section>
                     </template>
-                    <div x-show="jobs.length === 0 && !error && !streamStopped" class="flex flex-col items-center justify-center p-8 text-center text-stone-600">
+                    <p x-show="!loaded && !error && !signedOut && !streamStopped" class="p-8 text-center text-sm text-stone-600" data-job-panel-loading>Loading jobs…</p>
+                    <div x-show="loaded && jobs.length === 0 && !error && !streamStopped" class="flex flex-col items-center justify-center p-8 text-center text-stone-600">
                         <svg aria-hidden="true" class="mb-3 h-12 w-12 text-stone-300" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h10M4 18h16" /><circle cx="18" cy="12" r="2" /></svg>
                         <p class="text-sm">No visible jobs yet.</p>
                         <p class="mt-1 text-xs text-stone-500">Downloads, exports, imports and plugin work appear here while they run.</p>
                     </div>
-                    <p x-show="finishedHasMore" x-cloak class="px-4 py-2 text-xs text-stone-600" data-job-panel-finished-more>Showing the newest <span x-text="finishedLimit"></span> finished jobs. Older ones are on All jobs.</p>
                 </div>
 
                 <footer class="border-t border-stone-200 text-xs text-stone-600">

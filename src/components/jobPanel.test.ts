@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
+import { jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelStateTone, preferenceCommandJobIDs } from './jobPanel.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -134,7 +134,7 @@ describe('Job Center panel', () => {
         expect(panel.isOpen).toBe(true);
     });
 
-    test('connects to the canonical version 2 event stream', () => {
+    test('connects at the head of the canonical stream, and resumes from its cursor in its owner scope', () => {
         class FakeEventSource {
             url: string;
             listeners = new Map<string, Function>();
@@ -147,9 +147,18 @@ describe('Job Center panel', () => {
 
         panel.connect();
 
-        expect(panel.eventSource?.url).toBe('/v1/jobs/events?version=2');
+        expect(panel.eventSource?.url).toBe('/v1/jobs/events?version=2&start=head');
         expect(panel.eventSource?.listeners.has('job')).toBe(true);
         expect(panel.eventSource?.listeners.has('job-caught-up')).toBe(true);
+
+        panel.eventSource = null;
+        panel.lastSequence = 42;
+        panel.ownerScope = 'me';
+        panel.connect();
+        const resumed = new URL(String(panel.eventSource?.url), 'http://localhost').searchParams;
+        expect(resumed.get('cursor')).toBe('v2:42');
+        expect(resumed.has('start')).toBe(false);
+        expect(resumed.get('owner')).toBe('me');
     });
 
     test('refreshes resource lists once when a download Job succeeds', () => {
@@ -994,6 +1003,7 @@ describe('Job Center panel accessibility hooks', () => {
         const failed = { ...running, state: 'failed', version: 3, failure: { message: 'HTTP 403 Forbidden' } };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
+        panel.isOpen = true;
         showHeard(panel, [running]);
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
@@ -1018,6 +1028,7 @@ describe('Job Center panel accessibility hooks', () => {
     test('on a first load, a detail newer than its list row is history, not news', async () => {
         const running = { id: 'dl-9', title: 'first.bin', kind: 'remote-download', state: 'running', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([]);
+        panel.isOpen = true;
         // The drawer's first load runs while the stream is still catching up.
         panel.streamCaughtUp = false;
         panel.requestJSON = vi.fn(async raw => {
@@ -1040,12 +1051,13 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
-    test('a held refresh announcement is dropped once the row has moved past it', async () => {
+    test('a refresh says what its lists found at once, however long a detail read takes', async () => {
         const running = { id: 'dl-10', title: 'late.bin', kind: 'remote-download', state: 'running', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
         const failed = { ...running, state: 'failed', version: 3 };
         const other = { id: 'dl-11', title: 'slow.bin', kind: 'remote-download', state: 'running', version: 1, acceptedAt: '2026-09-26T09:00:00Z' };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
+        panel.isOpen = true;
         showHeard(panel, [running, other]);
         let releaseDetail = () => {};
         const detailHeld = new Promise<void>(resolve => { releaseDetail = resolve; });
@@ -1055,23 +1067,17 @@ describe('Job Center panel accessibility hooks', () => {
                 const states = new URL(url, 'http://localhost').searchParams.getAll('state');
                 return { jobs: [failed, other].filter(job => states.includes(job.state)) };
             }
-            // One row's detail stalls, holding the refresh's announcement.
+            // One row's detail stalls; nothing waits on it.
             if (url.endsWith('dl-11')) await detailHeld;
             return { ...(url.endsWith('dl-11') ? other : failed), commands: [] };
         });
 
         const refreshing = panel.refresh();
-        await vi.waitFor(() => expect(panel.jobs[0].state).toBe('failed'));
-        // Meanwhile the job moved on, and the stream said so.
-        await panel.handleStreamMessage({
-            data: JSON.stringify({ job: { ...running, state: 'succeeded', version: 4 }, sequence: 4, deliverySequence: 11 }),
-            lastEventId: 'v2:11',
-        });
+        await vi.waitFor(() => expect(panel._liveRegion.announce).toHaveBeenCalledWith('late.bin failed.'));
         releaseDetail();
         await refreshing;
 
-        const spoken = panel._liveRegion.announce.mock.calls.map(call => call[0]);
-        expect(spoken).toEqual(['late.bin succeeded.']);
+        expect(panel._liveRegion.announce.mock.calls.map(call => call[0])).toEqual(['late.bin failed.']);
     });
 
     test('a list read begun before catch-up is recorded as history, even when it answers after', async () => {
@@ -1099,62 +1105,66 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
-    test('a refresh held across a disconnect says nothing it found before it', async () => {
+    test('a detail read that answers after a disconnect records what it found without saying it', async () => {
         const running = { id: 'dl-15', title: 'held.bin', kind: 'remote-download', state: 'running', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
         const failed = { ...running, state: 'failed', version: 3 };
-        const other = { id: 'dl-16', title: 'slow.bin', kind: 'remote-download', state: 'running', version: 1, acceptedAt: '2026-09-26T09:00:00Z' };
         const panel = refreshingPanel([]);
-        showHeard(panel, [running, other]);
+        panel.isOpen = true;
+        showHeard(panel, [running]);
         let releaseDetail = () => {};
         const detailHeld = new Promise<void>(resolve => { releaseDetail = resolve; });
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url.startsWith('/v1/jobs?')) {
                 const states = new URL(url, 'http://localhost').searchParams.getAll('state');
-                return { jobs: [failed, other].filter(job => states.includes(job.state)) };
+                return { jobs: [running].filter(job => states.includes(job.state)) };
             }
-            if (url.endsWith('dl-16')) await detailHeld;
-            return { ...(url.endsWith('dl-16') ? other : failed), commands: [] };
+            // The job failed after the lists were read; its detail says so.
+            await detailHeld;
+            return { ...failed, commands: [] };
         });
 
         const refreshing = panel.refresh();
-        await vi.waitFor(() => expect(panel.jobs[0].state).toBe('failed'));
-        // The stream drops while the refresh waits on another row's detail.
+        await vi.waitFor(() => expect(panel._detailReads.has('dl-15')).toBe(true));
+        // The stream drops while the detail read is in flight.
         panel.streamCaughtUp = false;
         panel._streamGeneration += 1;
         releaseDetail();
         await refreshing;
+        await panel._detailLoad;
 
+        expect(panel.jobs[0].state).toBe('failed');
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
-    test('a held message is not said once newer news has returned the job to the same state', async () => {
+    test('news is said in the order it is learned, and a detail read that answers late says nothing stale', async () => {
         const base = { id: 'dl-17', title: 'again.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
-        const other = { id: 'dl-18', title: 'slow.bin', kind: 'remote-download', state: 'running', version: 1, acceptedAt: '2026-09-26T09:00:00Z' };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
-        showHeard(panel, [{ ...base, state: 'queued', version: 1 }, other]);
+        panel.isOpen = true;
+        showHeard(panel, [{ ...base, state: 'queued', version: 1 }]);
         let releaseDetail = () => {};
         const detailHeld = new Promise<void>(resolve => { releaseDetail = resolve; });
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url.startsWith('/v1/jobs?')) {
                 const states = new URL(url, 'http://localhost').searchParams.getAll('state');
-                return { jobs: [{ ...base, state: 'running', version: 2 }, other].filter(job => states.includes(job.state)) };
+                return { jobs: [{ ...base, state: 'running', version: 2 }].filter(job => states.includes(job.state)) };
             }
-            if (url.endsWith('dl-18')) await detailHeld;
-            return { ...(url.endsWith('dl-18') ? other : { ...base, state: 'running', version: 2 }), commands: [] };
+            await detailHeld;
+            return { ...base, state: 'running', version: 2, commands: [] };
         });
 
         const refreshing = panel.refresh();
-        await vi.waitFor(() => expect(panel.jobs.find(job => job.id === 'dl-17')?.state).toBe('running'));
+        await vi.waitFor(() => expect(panel._detailReads.has('dl-17')).toBe(true));
         await panel.handleStreamMessage({ data: JSON.stringify({ job: { ...base, state: 'paused', version: 3 }, sequence: 3, deliverySequence: 11 }), lastEventId: 'v2:11' });
         await panel.handleStreamMessage({ data: JSON.stringify({ job: { ...base, state: 'running', version: 4 }, sequence: 4, deliverySequence: 12 }), lastEventId: 'v2:12' });
         releaseDetail();
         await refreshing;
 
         const spoken = panel._liveRegion.announce.mock.calls.map(call => call[0]);
-        expect(spoken).toEqual(['again.bin paused.', 'again.bin running.']);
+        expect(spoken).toEqual(['again.bin running.', 'again.bin paused.', 'again.bin running.']);
+        expect(panel.jobs[0].version).toBe(4);
     });
 
     test('after a reconnect, a live lifecycle event makes the refresh that reads it news', async () => {
@@ -1259,12 +1269,12 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
-    test('a held message is dropped once a live event-only update has superseded it', async () => {
+    test('a detail read that answers after a live event-only update says nothing stale', async () => {
         const base = { id: 'dl-24', title: 'superseded.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
-        const other = { id: 'dl-25', title: 'slow.bin', kind: 'remote-download', state: 'running', version: 1, acceptedAt: '2026-09-26T09:00:00Z' };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
-        showHeard(panel, [{ ...base, state: 'running', version: 2 }, other]);
+        panel.isOpen = true;
+        showHeard(panel, [{ ...base, state: 'running', version: 2 }]);
         let releaseDetail = () => {};
         const detailHeld = new Promise<void>(resolve => { releaseDetail = resolve; });
         const succeeded = { ...base, state: 'succeeded', version: 3 };
@@ -1272,19 +1282,19 @@ describe('Job Center panel accessibility hooks', () => {
             const url = String(raw);
             if (url.startsWith('/v1/jobs?')) {
                 const states = new URL(url, 'http://localhost').searchParams.getAll('state');
-                return { jobs: [succeeded, other].filter(job => states.includes(job.state)) };
+                return { jobs: [succeeded].filter(job => states.includes(job.state)) };
             }
-            if (url.endsWith('dl-25')) await detailHeld;
-            return { ...(url.endsWith('dl-25') ? other : succeeded), commands: [] };
+            await detailHeld;
+            return { ...succeeded, commands: [] };
         });
 
         const refreshing = panel.refresh();
-        await vi.waitFor(() => expect(panel.jobs.find(job => job.id === 'dl-24')?.state).toBe('succeeded'));
+        await vi.waitFor(() => expect(panel._detailReads.has('dl-24')).toBe(true));
         await panel.handleStreamMessage({ data: JSON.stringify({ id: 'e-7', jobId: 'dl-24', jobVersion: 4, type: 'failed', deliverySequence: 11 }), lastEventId: 'v2:11' });
         releaseDetail();
         await refreshing;
 
-        expect(panel._liveRegion.announce).not.toHaveBeenCalledWith('superseded.bin succeeded.');
+        expect(panel._liveRegion.announce.mock.calls.map(call => call[0])).toEqual(['superseded.bin succeeded.']);
     });
 
     test('a plugin action cancelled through its not-started event is news after a reconnect', async () => {
@@ -1397,16 +1407,16 @@ describe('Job Center panel accessibility hooks', () => {
         expect(spoken.map(entry => entry.text)).toEqual(['ranged.bin failed.']);
     });
 
-    test('held news survives a same-state version and is still said', async () => {
+    test('news survives a same-state version and is still said', async () => {
         const base = { id: 'dl-34', title: 'bump.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([]);
         showHeard(panel, [{ ...base, state: 'running', version: 2 }]);
         const spoken: any[] = [];
         panel.hearFromRead({ ...base, state: 'failed', version: 3 }, panel._streamGeneration, spoken);
-        // A command answer records a same-state version before the refresh speaks.
+        // A command answer records a same-state version before the news is said.
         panel.hearJob({ ...base, state: 'failed', version: 4 });
 
-        panel.announceHeld(spoken, panel._streamGeneration);
+        panel.announceNews(spoken);
 
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('bump.bin failed.');
     });
@@ -1852,7 +1862,7 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
-    test('a live outcome a refresh holds while its detail reads run is counted if the stream drops first', async () => {
+    test('a live outcome a refresh reads is said when its lists land, whatever happens to its detail reads', async () => {
         vi.useFakeTimers();
         const failed = { id: 'dl-59', title: 'held-out.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([failed]);
@@ -1869,12 +1879,13 @@ describe('Job Center panel accessibility hooks', () => {
             return list(raw);
         });
         panel.lastSequence = 10;
+        panel.isOpen = true;
         showHeard(panel, []);
 
         await deliverLive(panel, 'dl-59', fastLife, 11);
         const refreshing = panel.refresh();
         await detailStarted;
-        // The list has been read; the stream drops before the detail answers.
+        // The lists have been read and said; the stream drops before the detail answers.
         panel.dropStream();
         releaseDetail();
         await refreshing;
@@ -1884,7 +1895,8 @@ describe('Job Center panel accessibility hooks', () => {
         await vi.advanceTimersByTimeAsync(1000);
 
         const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
-        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
+        expect(said).toEqual(['held-out.bin failed.']);
+        expect(panel._unsaidOutcomes).toBe(0);
         panel.destroy();
         vi.useRealTimers();
     });
@@ -1904,11 +1916,12 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._unsaidOutcomes).toBe(0);
     });
 
-    test('an older refresh does not release the outcome a newer refresh holds', async () => {
+    test('overlapping refreshes say a live outcome once, and a drop after it is said counts nothing', async () => {
         vi.useFakeTimers();
         const base = { id: 'dl-61', title: 'overlap.bin', kind: 'remote-download', acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
+        panel.isOpen = true;
         showHeard(panel, [{ ...base, state: 'queued', version: 1 }]);
         let listed: any[] = [{ ...base, state: 'running', version: 2 }];
         const gates: Array<() => void> = [];
@@ -1923,24 +1936,21 @@ describe('Job Center panel accessibility hooks', () => {
             return answer;
         });
 
-        // The first refresh hears "running" and waits on its detail read.
         const first = panel.refresh();
         await vi.waitFor(() => expect(gates).toHaveLength(1));
         await deliverLive(panel, 'dl-61', [['failed', 3]], 11);
-        // A second refresh hears the live-proven failure and holds it.
         listed = [{ ...base, state: 'failed', version: 3 }];
         const second = panel.refresh();
-        await vi.waitFor(() => expect(gates).toHaveLength(2));
-        gates[0]();
-        await first;
-        // The stream drops before the second refresh's detail answers.
+        await vi.waitFor(() => expect(panel.jobs[0]?.state).toBe('failed'));
         panel.dropStream();
-        gates[1]();
+        gates.forEach(release => release());
+        await first;
         await second;
+        gates.forEach(release => release());
         await vi.advanceTimersByTimeAsync(1000);
 
         const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
-        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
+        expect(said).toEqual(['overlap.bin running.', 'overlap.bin failed.']);
         panel.destroy();
         vi.useRealTimers();
     });
@@ -2187,17 +2197,17 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledTimes(2);
     });
 
-    test('does not announce replay events or apply page details loaded before the catch-up boundary', async () => {
+    test('a detail read that straddles the catch-up records its job as history', async () => {
         let resolveDetail: (value: unknown) => void = () => {};
         let markDetailStarted: () => void = () => {};
         const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
         const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
         const panel = jobPanel();
+        panel.isOpen = true;
         const visibleJob = { id: 'job-1', title: 'Index rebuild', state: 'queued', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
-            if (url === '/v1/jobs/summary') return { byState: { queued: 1 } };
             if (url.startsWith('/v1/jobs?')) {
                 const query = new URL(url, 'http://localhost').searchParams;
                 return { jobs: query.getAll('state').includes('queued') ? [visibleJob] : [] };
@@ -2275,7 +2285,12 @@ describe('Job Center panel accessibility hooks', () => {
 
         expect(listRequests).toHaveLength(3);
         expect(listRequests.map(url => new URL(url, 'http://localhost').searchParams.get('limit'))).toEqual(['50', '50', '10']);
+        expect(listRequests.every(url => new URL(url, 'http://localhost').searchParams.get('order') === 'stateEntered')).toBe(true);
         expect(panel.jobs).toHaveLength(15);
+        // Closed, the drawer shows no commands, so it reads none.
+        expect(detailRequests).toEqual([]);
+        panel.isOpen = true;
+        await panel.loadStaleDetails();
         expect(detailRequests).toHaveLength(15);
         expect(detailRequests.some(path => path.includes('historic-'))).toBe(false);
         expect(panel.counts).toEqual({ active: 5, attention: 5 });
@@ -2360,8 +2375,11 @@ describe('Job Center panel accessibility hooks', () => {
         await vi.advanceTimersByTimeAsync(150);
         await panel._panelRefreshPromise;
         expect(listRequests).toHaveLength(3);
-        expect(detailRequests).toHaveLength(15);
+        expect(detailRequests).toEqual([]);
         expect(panel.jobs).toHaveLength(15);
+        panel.isOpen = true;
+        await panel.loadStaleDetails();
+        expect(detailRequests).toHaveLength(15);
         panel.destroy();
         vi.useRealTimers();
     });
@@ -2373,6 +2391,7 @@ describe('Job Center panel accessibility hooks', () => {
         const visibleJob = { id: 'visible-job', kind: 'maintenance', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
         const detailRequests: string[] = [];
         const listRequests: string[] = [];
+        panel.isOpen = true;
         panel.jobs = [visibleJob];
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
@@ -2411,6 +2430,7 @@ describe('Job Center panel accessibility hooks', () => {
         const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
         const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
         const panel = jobPanel();
+        panel.isOpen = true;
         const visibleJob = { id: 'job-1', title: 'Old job', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
         let pageCall = 0;
         panel.requestJSON = vi.fn(async raw => {
@@ -2449,6 +2469,7 @@ describe('Job Center panel accessibility hooks', () => {
         const visibleJob = { id: 'visible-job', kind: 'maintenance', state: 'running', version: 4, acceptedAt: '2026-09-23T10:00:00Z' };
         const commands = [{ key: 'pause', label: 'Pause', endpoint: '/v1/jobs/visible-job/commands/pause', jobVersion: 4 }];
         const panel = jobPanel();
+        panel.isOpen = true;
         panel.streamCaughtUp = true;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
@@ -2471,7 +2492,7 @@ describe('Job Center panel accessibility hooks', () => {
         resolveDetail({ ...visibleJob, commands });
         await refresh;
 
-        expect(panel.commandsFor(panel.jobs[0])).toEqual(commands);
+        await vi.waitFor(() => expect(panel.commandsFor(panel.jobs[0])).toEqual(commands));
         panel.destroy();
         vi.useRealTimers();
     });
@@ -2759,6 +2780,353 @@ describe('Job Center trigger counts', () => {
         expect(panelCountsText({ active: 0, attention: 0 })).toBe('Showing 0 active or scheduled jobs and 0 needing attention');
         expect(panelCountsText({ active: 1, attention: 9 })).toBe('Showing 1 active or scheduled job and 9 needing attention');
         expect(panelCountsText(undefined)).toBe('Showing 0 active or scheduled jobs and 0 needing attention');
+    });
+});
+
+describe('Job Center drawer connection and list reads', () => {
+    class ClosingEventSource {
+        static made: ClosingEventSource[] = [];
+        listeners = new Map<string, Function>();
+        readyState = 1;
+        closed = false;
+        constructor(public url: string) { ClosingEventSource.made.push(this); }
+        addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+        close() { this.closed = true; this.readyState = 2; }
+        // The browser answering a non-200 response: the source closes for good.
+        refuse() { this.readyState = 2; this.listeners.get('error')?.({}); }
+        // A dropped connection the browser reconnects itself.
+        drop() { this.readyState = 0; this.listeners.get('error')?.({}); }
+    }
+
+    beforeEach(() => {
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+    });
+
+    function listingPanel(rows: any[]) {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
+        const listURLs: URL[] = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs') {
+                listURLs.push(url);
+                return { jobs: rows.filter(job => url.searchParams.getAll('state').includes(job.state)) };
+            }
+            const id = decodeURIComponent(url.pathname.slice('/v1/jobs/'.length));
+            return { ...rows.find(job => job.id === id), commands: [] };
+        });
+        return { panel, listURLs };
+    }
+
+    test('a stream the browser gave up on is opened again, resuming from its cursor, and the lists are read meanwhile', async () => {
+        vi.useFakeTimers();
+        const { panel, listURLs } = listingPanel([{ id: 'a', state: 'running', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }]);
+        panel.connect();
+        const first = ClosingEventSource.made[0];
+        first.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:40' }) });
+        await vi.advanceTimersByTimeAsync(200);
+        const readsBefore = listURLs.length;
+
+        first.refuse();
+        expect(first.closed).toBe(true);
+        expect(panel.eventSource).toBe(null);
+        expect(panel.connectionText).toBe('Reconnecting');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(listURLs.length).toBe(readsBefore + 3);
+
+        await vi.advanceTimersByTimeAsync(1000);
+        const second = ClosingEventSource.made[1];
+        expect(second).toBeDefined();
+        expect(new URL(second.url, 'http://localhost').searchParams.get('cursor')).toBe('v2:40');
+
+        // Refused again, it waits twice as long before the next attempt.
+        second.refuse();
+        await vi.advanceTimersByTimeAsync(1500);
+        expect(ClosingEventSource.made).toHaveLength(2);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(ClosingEventSource.made).toHaveLength(3);
+
+        // A catch-up resets the delay.
+        ClosingEventSource.made[2].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:41' }) });
+        expect(panel._streamRetryDelay).toBe(0);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a stream the browser reconnects itself is left to the browser', async () => {
+        vi.useFakeTimers();
+        const { panel } = listingPanel([]);
+        panel.connect();
+        ClosingEventSource.made[0].drop();
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(ClosingEventSource.made).toHaveLength(1);
+        expect(panel.eventSource).toBe(ClosingEventSource.made[0]);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a 401 says the session ended and offers a sign-in back to this page, and a later read recovers', async () => {
+        vi.useFakeTimers();
+        vi.stubGlobal('location', { pathname: '/notes', search: '?tag=3' });
+        const panel = jobPanel();
+        let signedIn = false;
+        panel.requestJSON = vi.fn(async () => {
+            if (!signedIn) {
+                const error: any = new Error('authentication required');
+                error.status = 401;
+                throw error;
+            }
+            return { jobs: [] };
+        });
+
+        await panel.refresh();
+        expect(panel.signedOut).toBe(true);
+        expect(panel.error).toBe('');
+        expect(panel.connectionText).toBe('Signed out');
+        expect(panel.countsText).toBe('Signed out; jobs are not shown');
+        expect(panel.signInURL).toBe('/login?next=%2Fnotes%3Ftag%3D3');
+
+        signedIn = true;
+        await vi.advanceTimersByTimeAsync(2000);
+        await panel._panelRefreshPromise;
+        expect(panel.signedOut).toBe(false);
+        expect(panel.loaded).toBe(true);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a failed read keeps its rows, says why, and is read again after a growing delay', async () => {
+        vi.useFakeTimers();
+        const rows = [{ id: 'a', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }];
+        const { panel } = listingPanel(rows);
+        await panel.refresh();
+        expect(panel.jobs).toHaveLength(1);
+
+        const good = panel.requestJSON;
+        let attempts = 0;
+        panel.requestJSON = vi.fn(async () => {
+            attempts += 1;
+            throw new Error('database is locked');
+        });
+        await panel.refresh();
+        expect(panel.error).toBe('database is locked');
+        expect(panel.jobs).toHaveLength(1);
+        expect(panel.countsText).toBe('Showing 0 active or scheduled jobs and 1 needing attention');
+
+        const afterFirst = attempts;
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(attempts).toBeGreaterThan(afterFirst);
+        const afterSecond = attempts;
+        // The next attempt waits twice as long.
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(attempts).toBe(afterSecond);
+        panel.requestJSON = good;
+        await vi.advanceTimersByTimeAsync(1100);
+        await panel._panelRefreshPromise;
+        expect(panel.error).toBe('');
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a first read that fails leaves no counts, not zeroes, and opening the drawer tries again', async () => {
+        const { panel } = listingPanel([{ id: 'a', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }]);
+        const good = panel.requestJSON;
+        panel.requestJSON = vi.fn(async () => { throw new Error('job request failed'); });
+        await panel.refresh();
+        expect(panel.loaded).toBe(false);
+        expect(panel.countsText).toBe('Jobs could not be loaded');
+
+        panel.requestJSON = good;
+        panel.retryNow();
+        await panel._panelRefreshPromise;
+        expect(panel.loaded).toBe(true);
+        expect(panel.attentionCount).toBe(1);
+        expect(panel.countsText).toBe('Showing 0 active or scheduled jobs and 1 needing attention');
+        panel.destroy();
+    });
+
+    test('a read in flight when the stream drops still applies its rows', async () => {
+        const rows = [{ id: 'a', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }];
+        const { panel } = listingPanel(rows);
+        const list = panel.requestJSON;
+        let release = () => {};
+        const held = new Promise<void>(resolve => { release = resolve; });
+        panel.requestJSON = vi.fn(async (raw: string) => { await held; return list(raw); });
+
+        const reading = panel.refresh();
+        panel.dropStream();
+        release();
+        await reading;
+
+        expect(panel.jobs.map(job => job.id)).toEqual(['a']);
+        expect(panel.loaded).toBe(true);
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+    });
+
+    test('a slow first read is applied when a newer one is still on its way, and the newer one replaces it', async () => {
+        const { panel } = listingPanel([]);
+        const answers: Array<(rows: any[]) => void> = [];
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const states = new URL(String(raw), 'http://localhost').searchParams.getAll('state');
+            const rows: any[] = await new Promise(resolve => answers.push(resolve));
+            return { jobs: rows.filter(job => states.includes(job.state)) };
+        });
+        const old = [{ id: 'old', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }];
+        const fresh = [{ id: 'fresh', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:01:00Z' }];
+
+        const first = panel.startScheduledPanelRefresh();
+        await vi.waitFor(() => expect(answers).toHaveLength(3));
+        panel._panelRefreshPromise = null;
+        panel.startScheduledPanelRefresh();
+        await vi.waitFor(() => expect(answers).toHaveLength(6));
+        answers.slice(0, 3).forEach(answer => answer(old));
+        await vi.waitFor(() => expect(panel.jobs.map(job => job.id)).toEqual(['old']));
+        answers.slice(3).forEach(answer => answer(fresh));
+        await vi.waitFor(() => expect(panel.jobs.map(job => job.id)).toEqual(['fresh']));
+        await first;
+
+        // An answer to a read older than one already applied is dropped.
+        expect(panel._appliedGeneration).toBe(2);
+    });
+
+    test('a group holding only its first page says so, and its badge never shows the page as the total', async () => {
+        const failures = Array.from({ length: 50 }, (_, index) => ({
+            id: `f-${String(index).padStart(2, '0')}`, state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z',
+        }));
+        const panel = jobPanel();
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const states = new URL(String(raw), 'http://localhost').searchParams.getAll('state');
+            return states.includes('failed') ? { jobs: failures, nextCursor: 'more' } : { jobs: [] };
+        });
+        await panel.refresh();
+
+        expect(panel.attentionBadge).toBe('50+');
+        expect(panel.activeBadge).toBe('0');
+        expect(panel.countsText).toBe('Showing 0 active or scheduled jobs and 50 needing attention, more on All jobs');
+        const [attention] = panel.groups;
+        expect(attention).toMatchObject({ key: 'attention', more: true, countText: '50+', moreText: 'Showing the 50 most recent.' });
+        expect(new URL(attention.moreURL, 'http://localhost').searchParams.getAll('state')).toEqual(['blocked', 'failed', 'interrupted']);
+        expect(new URL(attention.moreURL, 'http://localhost').searchParams.get('dismissed')).toBe('false');
+    });
+
+    test('groups are read and ordered by when each job entered its state, and the badge text marks a capped group', () => {
+        expect(panelBadgeText(3, false)).toBe('3');
+        expect(panelBadgeText(50, true)).toBe('50+');
+        expect(panelGroupJobsURL(panelGroups(10)[2], 'me')).toBe('/jobs?state=succeeded&state=cancelled&dismissed=false&owner=me');
+        const panel = jobPanel();
+        // Accepted long ago, finished last: it leads Finished.
+        panel.jobs = panel.bounded([
+            { id: 'quick', state: 'succeeded', version: 3, acceptedAt: '2026-09-27T10:05:00Z', stateEnteredAt: '2026-09-27T10:05:01Z' },
+            { id: 'long', state: 'succeeded', version: 3, acceptedAt: '2026-09-27T10:00:00Z', stateEnteredAt: '2026-09-27T10:30:00.1Z' },
+            { id: 'tie', state: 'succeeded', version: 3, acceptedAt: '2026-09-27T10:00:00Z', stateEnteredAt: '2026-09-27T10:30:00.10Z' },
+        ]);
+        expect(panel.finishedJobs.map(job => job.id)).toEqual(['tie', 'long', 'quick']);
+    });
+
+    test('a closed drawer reads no detail; an open one reads each row once, and again only when its version or pin moves', async () => {
+        const rows = [
+            { id: 'a', state: 'running', version: 1, acceptedAt: '2026-09-27T10:00:00Z', pinned: false },
+            { id: 'b', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:01:00Z', pinned: false },
+        ];
+        const { panel } = listingPanel(rows);
+        const details = () => panel.requestJSON.mock.calls.map(([raw]: any[]) => String(raw)).filter((url: string) => !url.startsWith('/v1/jobs?'));
+
+        await panel.refresh();
+        expect(details()).toEqual([]);
+
+        panel.isOpen = true;
+        await panel.loadStaleDetails();
+        expect(details().sort()).toEqual(['/v1/jobs/a', '/v1/jobs/b']);
+
+        await panel.refresh();
+        expect(details()).toHaveLength(2);
+
+        rows[0].version = 2;
+        rows[1].pinned = true;
+        await panel.refresh();
+        expect(details().sort()).toEqual(['/v1/jobs/a', '/v1/jobs/a', '/v1/jobs/b', '/v1/jobs/b']);
+    });
+
+    test('a record-keeping command tells the other tabs, which read their lists again', async () => {
+        expect(preferenceCommandJobIDs('/v1/jobs/j-1/commands/dismiss', { method: 'POST' })).toEqual(['j-1']);
+        expect(preferenceCommandJobIDs('/v1/jobs/j-1/commands/pin', { method: 'POST' })).toEqual(['j-1']);
+        expect(preferenceCommandJobIDs('/v1/jobs/commands/dismiss', { method: 'POST', body: JSON.stringify({ jobIds: ['x', 'y'] }) })).toEqual(['x', 'y']);
+        expect(preferenceCommandJobIDs('/v1/jobs/j-1/commands/cancel', { method: 'POST' })).toBe(null);
+        expect(preferenceCommandJobIDs('/v1/jobs/j-1', {})).toBe(null);
+
+        const posted: any[] = [];
+        const panel = jobPanel();
+        panel._broadcast = { postMessage: (message: any) => posted.push(message), close: vi.fn() } as any;
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ results: [] }) })));
+        await panel.requestJSON('/v1/jobs/commands/dismiss', { method: 'POST', body: JSON.stringify({ jobIds: ['x'] }) });
+        await panel.requestJSON('/v1/jobs/x/commands/retry', { method: 'POST', body: '{}' });
+        expect(posted).toEqual([{ jobIds: ['x'] }]);
+
+        const other = listingPanel([]).panel;
+        other.details.x = { id: 'x', version: 1 };
+        other.hearPreferenceBroadcast({ jobIds: ['x'] });
+        expect(other.details.x).toBeUndefined();
+        await other._panelRefreshPromise;
+        expect(other.requestJSON).toHaveBeenCalled();
+    });
+
+    test('a scope change reads the lists and reopens the stream for that scope, and older reads never apply', async () => {
+        const { panel, listURLs } = listingPanel([]);
+        panel.connect();
+        panel.lastSequence = 9;
+        const before = panel.requestJSON;
+        let release = () => {};
+        const held = new Promise<void>(resolve => { release = resolve; });
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (!String(raw).includes('owner=me')) {
+                await held;
+                return { jobs: [{ id: 'someone-else', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }] };
+            }
+            return before(raw);
+        });
+        const stale = panel.refresh();
+
+        panel.setOwnerScope('me');
+        release();
+        await stale;
+        await panel._panelRefreshPromise;
+        await vi.waitFor(() => expect(listURLs.length).toBe(3));
+
+        expect(listURLs.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
+        expect(panel.jobs).toEqual([]);
+        expect(ClosingEventSource.made).toHaveLength(2);
+        expect(ClosingEventSource.made[0].closed).toBe(true);
+        const reopened = new URL(ClosingEventSource.made[1].url, 'http://localhost').searchParams;
+        expect(reopened.get('owner')).toBe('me');
+        expect(reopened.get('cursor')).toBe('v2:9');
+    });
+
+    test('a page reads its lists once its stream catches up, or after a wait when it does not', async () => {
+        vi.useFakeTimers();
+        const element = () => ({ setAttribute: vi.fn(), style: {}, remove: vi.fn(), textContent: '' });
+        vi.stubGlobal('document', {
+            addEventListener: vi.fn(), removeEventListener: vi.fn(), querySelector: vi.fn(() => null),
+            createElement: element, body: { appendChild: vi.fn() },
+        });
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+        const slow = listingPanel([]);
+        slow.panel.$el = { dataset: {}, querySelector: () => null };
+        slow.panel.init();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(slow.listURLs).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(slow.listURLs).toHaveLength(3);
+        slow.panel.destroy();
+
+        const quick = listingPanel([]);
+        quick.panel.$el = { dataset: {}, querySelector: () => null };
+        quick.panel.init();
+        ClosingEventSource.made.at(-1)!.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:5' }) });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(quick.listURLs).toHaveLength(3);
+        quick.panel.destroy();
+        vi.useRealTimers();
     });
 });
 

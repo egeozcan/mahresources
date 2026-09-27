@@ -441,6 +441,63 @@ describe('Job Center event stream catch-up boundary', () => {
     });
 });
 
+describe('Job detail stream connection', () => {
+    class ClosingEventSource {
+        static made: ClosingEventSource[] = [];
+        listeners = new Map<string, Function>();
+        readyState = 1;
+        constructor(public url: string) { ClosingEventSource.made.push(this); }
+        addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+        close() { this.readyState = 2; }
+    }
+
+    test('starts at the head and reads its Job again once caught up', async () => {
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter({ detailId: 'job-3' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.jobs = [{ id: 'job-3', title: 'Export', state: 'running', version: 2 }];
+        center.detail = center.jobs[0];
+        center.fetchJSON = vi.fn(async () => ({ id: 'job-3', title: 'Export', state: 'succeeded', version: 3 }));
+        center.connect();
+        expect(ClosingEventSource.made[0].url).toBe('/v1/jobs/events?version=2&start=head');
+
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:30' }) });
+        await vi.waitFor(() => expect(center.detail.state).toBe('succeeded'));
+        expect(center.fetchJSON).toHaveBeenCalledTimes(1);
+        expect(center._liveRegion.announce).not.toHaveBeenCalled();
+
+        // A later catch-up, after a reconnect that replayed nothing, reads nothing.
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:30' }) });
+        expect(center.fetchJSON).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stream the browser gave up on is opened again from its cursor, after a growing delay', () => {
+        vi.useFakeTimers();
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter();
+        center.lastSequence = 12;
+        center.connect();
+        const first = ClosingEventSource.made[0];
+        first.readyState = 2;
+        first.listeners.get('error')?.({});
+        expect(center.eventSource).toBe(null);
+        expect(center.connectionStatus).toBe('reconnecting');
+        vi.advanceTimersByTime(1000);
+        expect(ClosingEventSource.made).toHaveLength(2);
+        expect(new URL(ClosingEventSource.made[1].url, 'http://localhost').searchParams.get('cursor')).toBe('v2:12');
+        ClosingEventSource.made[1].readyState = 2;
+        ClosingEventSource.made[1].listeners.get('error')?.({});
+        vi.advanceTimersByTime(1500);
+        expect(ClosingEventSource.made).toHaveLength(2);
+        vi.advanceTimersByTime(500);
+        expect(ClosingEventSource.made).toHaveLength(3);
+        center.destroy();
+        vi.useRealTimers();
+    });
+});
+
 describe('Job detail live progress', () => {
     test('a frame for this Job updates its figures and graph without an announcement', () => {
         class FakeEventSource {

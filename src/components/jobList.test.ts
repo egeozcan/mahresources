@@ -488,15 +488,74 @@ describe('job list stream', () => {
         vi.unstubAllGlobals();
     });
 
+    test('the first catch-up reconciles the page it was rendered with, and a quiet one after that does not', () => {
+        const { list, stream, send } = connected();
+        expect(stream.url).toBe('/v1/jobs/events?version=2&start=head');
+        send('job-caught-up', { cursor: 'v2:4' });
+        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+
+        stream.listeners.get('error')?.({});
+        send('job-caught-up', { cursor: 'v2:4' });
+        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+    });
+
     test('a reconnect that replays what it missed reconciles the page', () => {
         const { list, stream, send } = connected();
         send('job-caught-up', { cursor: 'v2:4' });
-        expect(list._refresher.request).not.toHaveBeenCalled();
+        expect(list._refresher.request).toHaveBeenCalledTimes(1);
 
         stream.listeners.get('error')?.({});
         send('message', { jobId: 'a', deliverySequence: 5 });
         send('job-caught-up', { cursor: 'v2:5' });
-        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+        expect(list._refresher.request).toHaveBeenCalledTimes(2);
+    });
+
+    test('a stream the browser gave up on is opened again from its cursor, and the page reconciles', () => {
+        vi.useFakeTimers();
+        const { list, stream, send } = connected();
+        stream.listeners.get('job')?.({ data: JSON.stringify({ jobId: 'a' }), lastEventId: 'v2:7' });
+        send('job-caught-up', { cursor: 'v2:7' });
+        const requests = (list._refresher.request as any).mock.calls.length;
+
+        (stream as any).readyState = 2;
+        stream.listeners.get('error')?.({});
+        expect(list.eventSource).toBe(null);
+        expect(list.connectionText).toBe('Reconnecting to live updates');
+        vi.advanceTimersByTime(1000);
+        const reopened = list.eventSource as unknown as FakeEventSource;
+        expect(new URL(reopened.url, 'http://localhost').searchParams.get('cursor')).toBe('v2:7');
+        reopened.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:7' }) });
+        expect((list._refresher.request as any).mock.calls.length).toBe(requests + 1);
+        vi.useRealTimers();
+    });
+
+    test('says when the list could not be refreshed, until a refresh succeeds', async () => {
+        document.body.innerHTML = '<div class="list-container"></div>';
+        const failed = vi.fn();
+        const recovered = vi.fn();
+        let ok = false;
+        const refresher = createJobListRefresher({
+            fetchImpl: vi.fn(async () => ok
+                ? { ok: true, redirected: false, text: async () => '<div class="list-container"></div>' }
+                : { ok: false, redirected: false, status: 500 }) as any,
+            currentURL: () => 'http://localhost/jobs?dismissed=false',
+            morph: () => {},
+            onFailed: failed,
+            onRecovered: recovered,
+            logger: { error: () => {} } as any,
+            debounceMs: 0,
+            retryMs: 10,
+        });
+        refresher.request();
+        await vi.waitFor(() => expect(failed).toHaveBeenCalled());
+        ok = true;
+        await vi.waitFor(() => expect(recovered).toHaveBeenCalled());
+        refresher.destroy();
+
+        const list = jobList();
+        list.connectionStatus = 'connected';
+        list.refreshFailed = true;
+        expect(list.connectionText).toBe('The list could not be refreshed and may be out of date; trying again');
     });
 });
 

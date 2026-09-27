@@ -1,7 +1,10 @@
 import { findListContainer } from '../utils/listContainer.js';
 import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { commandConfirmation, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
+import {
+    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandLabel, nextStreamRetryDelay,
+    reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
+} from './jobCenter.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
 // After a failed refetch: long enough not to hammer a struggling server, short
@@ -59,6 +62,10 @@ export function createJobListRefresher({
     morph = (from, to) => morphAndReinitChangedComponents(from, to, keepDetailsOpen()),
     onRowChanges = () => {},
     onUnavailable = () => {},
+    // Told when a refresh fails, and when one succeeds again, so the page can
+    // say that what it shows may be out of date.
+    onFailed = () => {},
+    onRecovered = () => {},
     logger = console,
     debounceMs = JOB_LIST_REFRESH_DEBOUNCE_MS,
     retryMs = JOB_LIST_REFRESH_RETRY_MS,
@@ -100,8 +107,10 @@ export function createJobListRefresher({
             }
             morphRegion(root, refreshed, QUICK_FILTERS_SELECTOR, morph, null);
             morphRegion(root, refreshed, PAGINATION_SELECTOR, morph, 'footer');
+            onRecovered();
         } catch (error) {
             logger.error('Failed to refresh the job list:', error);
+            onFailed(error);
             // The change that asked for this refresh is still unshown, and the next
             // event may never come: try again rather than leave the page stale.
             dirty = true;
@@ -182,11 +191,18 @@ export function jobList() {
     return {
         connectionStatus: 'connecting',
         notice: '',
+        // Set while the list could not be refreshed; the refresher keeps trying.
+        refreshFailed: false,
         eventSource: null,
         streamCaughtUp: false,
-        _missedWhileCatchingUp: false,
+        lastSequence: 0,
+        // The page was rendered before its stream connected at the head, so
+        // what changed in between is in neither: the first catch-up reconciles.
+        _missedWhileCatchingUp: true,
         _refresher: null,
         _liveRegion: null,
+        _streamRetryTimer: null,
+        _streamRetryDelay: 0,
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -195,8 +211,13 @@ export function jobList() {
                 onRowChanges: changes => this._liveRegion?.announce(stateChangeAnnouncement(changes)),
                 onUnavailable: () => {
                     this.connectionStatus = 'unavailable';
-                    this.eventSource?.close();
+                    clearTimeout(this._streamRetryTimer);
+                    const source = this.eventSource;
+                    this.eventSource = null;
+                    source?.close();
                 },
+                onFailed: () => { this.refreshFailed = true; },
+                onRecovered: () => { this.refreshFailed = false; },
             });
             this._onRefreshRequest = () => this._refresher.request();
             this._onNotice = event => { this.notice = event.detail?.message || ''; };
@@ -206,7 +227,10 @@ export function jobList() {
         },
 
         destroy() {
-            this.eventSource?.close();
+            clearTimeout(this._streamRetryTimer);
+            const source = this.eventSource;
+            this.eventSource = null;
+            source?.close();
             this._refresher?.destroy();
             this._liveRegion?.destroy();
             window.removeEventListener('job-list-refresh', this._onRefreshRequest);
@@ -214,41 +238,59 @@ export function jobList() {
         },
 
         get connectionText() {
+            if (this.connectionStatus === 'unavailable') return 'Live updates stopped; reload the page';
+            if (this.refreshFailed) return 'The list could not be refreshed and may be out of date; trying again';
             if (this.connectionStatus === 'connected') return 'Live updates connected';
             if (this.connectionStatus === 'reconnecting') return 'Reconnecting to live updates';
-            if (this.connectionStatus === 'unavailable') return 'Live updates stopped; reload the page';
             return 'Connecting to live updates';
         },
 
         connect() {
-            if (this.eventSource) return;
+            if (this.eventSource || this.connectionStatus === 'unavailable') return;
             if (typeof EventSource === 'undefined') {
                 this.connectionStatus = 'unavailable';
                 return;
             }
-            this.eventSource = new EventSource('/v1/jobs/events?version=2');
-            this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => {
+            clearTimeout(this._streamRetryTimer);
+            this._streamRetryTimer = null;
+            const source = new EventSource(canonicalStreamURL(this.lastSequence));
+            this.eventSource = source;
+            const current = handler => event => { if (this.eventSource === source) handler(event); };
+            source.addEventListener('open', current(() => { this.connectionStatus = 'connected'; }));
+            source.addEventListener('error', current(() => {
                 this.connectionStatus = 'reconnecting';
                 this.streamCaughtUp = false;
-            });
-            this.eventSource.addEventListener('job-caught-up', (event) => {
+                if (source.readyState !== EVENT_SOURCE_CLOSED) return;
+                // The browser will not try again; the page does, resuming from
+                // its cursor, and reconciles once caught up.
+                source.close();
+                this.eventSource = null;
+                this._missedWhileCatchingUp = true;
+                this._streamRetryDelay = nextStreamRetryDelay(this._streamRetryDelay);
+                this._streamRetryTimer = setTimeout(() => this.connect(), this._streamRetryDelay);
+            }));
+            source.addEventListener('job-caught-up', current((event) => {
                 let boundary;
                 try { boundary = JSON.parse(event.data); } catch { return; }
-                if (streamCursorSequence(boundary?.cursor) === null) return;
-                if (reloadAfterStreamReset(boundary, this.eventSource)) return;
+                const sequence = streamCursorSequence(boundary?.cursor);
+                if (sequence === null) return;
+                if (reloadAfterStreamReset(boundary, source)) return;
+                this.lastSequence = Math.max(this.lastSequence, sequence);
                 this.streamCaughtUp = true;
+                this._streamRetryDelay = 0;
                 if (this._missedWhileCatchingUp) {
                     this._missedWhileCatchingUp = false;
                     this._refresher.request();
                 }
-            });
+            }));
             for (const name of ['message', 'job']) {
-                this.eventSource.addEventListener(name, (event) => this.handleStreamMessage(event));
+                source.addEventListener(name, current((event) => this.handleStreamMessage(event)));
             }
         },
 
         handleStreamMessage(event) {
+            const sequence = streamCursorSequence(event?.lastEventId);
+            if (sequence !== null) this.lastSequence = Math.max(this.lastSequence, sequence);
             let message;
             try { message = JSON.parse(event.data); } catch { return; }
             // A replayed message is not announced as it arrives, but it is still a
