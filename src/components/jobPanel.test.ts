@@ -2991,6 +2991,80 @@ describe('Job Center drawer connection and list reads', () => {
         expect(panel._appliedGeneration).toBe(2);
     });
 
+    test('an older read that succeeds after a newer one failed keeps the failure and its retry', async () => {
+        vi.useFakeTimers();
+        const { panel } = listingPanel([]);
+        let releaseOld = () => {};
+        const oldHeld = new Promise<void>(resolve => { releaseOld = resolve; });
+        let calls = 0;
+        panel.requestJSON = vi.fn(async () => {
+            calls += 1;
+            if (calls <= 3) { await oldHeld; return { jobs: [] }; }
+            throw new Error('database is locked');
+        });
+        const older = panel.startScheduledPanelRefresh();
+        panel._panelRefreshPromise = null;
+        await panel.refresh();
+        expect(panel.error).toBe('database is locked');
+        releaseOld();
+        await older;
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(panel.loaded).toBe(false);
+        expect(panel.error).toBe('database is locked');
+        expect(panel._listRetryTimer).not.toBe(null);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a row that moves on while its detail is read has its detail read again', async () => {
+        const rows = [{ id: 'm', state: 'running', version: 1, acceptedAt: '2026-09-27T10:00:00Z' }];
+        const { panel } = listingPanel(rows);
+        panel.isOpen = true;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        const detailVersions: number[] = [];
+        const list = panel.requestJSON;
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) return list(raw);
+            const version = rows[0].version;
+            if (detailVersions.push(version) === 1) await firstHeld;
+            return { ...rows[0], version, commands: [{ key: 'cancel', jobVersion: version }] };
+        });
+
+        await panel.refresh();
+        await vi.waitFor(() => expect(detailVersions).toEqual([1]));
+        // The job moves on, a read lists it at version 2 while its version-1
+        // detail is still in flight.
+        rows[0] = { ...rows[0], state: 'failed', version: 2 };
+        await panel.refresh();
+        releaseFirst();
+        await vi.waitFor(() => expect(panel.details.m?.version).toBe(2));
+        expect(detailVersions).toEqual([1, 2]);
+        expect(panel.commandsFor(panel.jobs[0])).toEqual([{ key: 'cancel', jobVersion: 2 }]);
+    });
+
+    test('a detail that keeps answering older than its row is asked again after a delay, not in a loop', async () => {
+        vi.useFakeTimers();
+        const rows = [{ id: 'lag', state: 'failed', version: 3, acceptedAt: '2026-09-27T10:00:00Z' }];
+        const { panel } = listingPanel(rows);
+        panel.isOpen = true;
+        const list = panel.requestJSON;
+        let details = 0;
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) return list(raw);
+            details += 1;
+            return { ...rows[0], version: 1, commands: [] };
+        });
+        await panel.refresh();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(details).toBe(1);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(details).toBe(2);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('a group holding only its first page says so, and its badge never shows the page as the total', async () => {
         const failures = Array.from({ length: 50 }, (_, index) => ({
             id: `f-${String(index).padStart(2, '0')}`, state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z',

@@ -299,6 +299,7 @@ export function jobPanel() {
         _refreshGeneration: 0,
         _appliedGeneration: 0,
         _refreshFloor: 0,
+        _failedGeneration: 0,
         _firstReadTimer: null,
         _listRetryTimer: null,
         _listRetryDelay: 0,
@@ -648,12 +649,12 @@ export function jobPanel() {
             } catch (error) {
                 // Only the newest read's failure is the drawer's state: an older
                 // one failing says nothing a newer answer will not.
-                if (!this.streamStopped && generation === this._refreshGeneration) this.listReadFailed(error);
+                if (!this.streamStopped && generation === this._refreshGeneration) this.listReadFailed(error, generation);
                 return;
             }
             if (!this.readStillCurrent(generation) || ownerScope !== this.ownerScope) return;
             this._appliedGeneration = generation;
-            this.listReadSucceeded();
+            this.listReadSucceeded(generation);
             const byId = new Map();
             const hasMore = {};
             pages.forEach((payload, index) => {
@@ -692,8 +693,12 @@ export function jobPanel() {
             this._detailLoad = this.loadStaleDetails();
         },
 
-        listReadSucceeded() {
+        // Rows from a read that started before a failed one still apply, but
+        // they are older than what the failed read was for: the failure, and
+        // the retry it scheduled, stand until a read started after it succeeds.
+        listReadSucceeded(generation) {
             this.loaded = true;
+            if (generation < this._failedGeneration) return;
             this.error = '';
             this.signedOut = false;
             this._listRetryDelay = 0;
@@ -706,7 +711,8 @@ export function jobPanel() {
         // LIST_RETRY_MAX_MS, and at once when the reader opens the drawer, asks
         // to, or comes back to the tab. A 401 means the session ended: the
         // drawer says so and offers to sign in rather than a server message.
-        listReadFailed(error) {
+        listReadFailed(error, generation) {
+            this._failedGeneration = generation;
             this.signedOut = error?.status === 401;
             this.error = this.signedOut ? '' : error?.message || 'Could not load jobs.';
             this.scheduleListRetry();
@@ -766,40 +772,50 @@ export function jobPanel() {
                 }
                 if (this.detailStale(job) && !this._detailReads.has(job.id)) stale.push(job);
             }
-            let failed = false;
+            const outcomes = [];
             const next = () => stale.shift();
             const worker = async () => {
-                for (let job = next(); job; job = next()) {
-                    if (!(await this.loadDetail(job))) failed = true;
-                }
+                for (let job = next(); job; job = next()) outcomes.push(await this.loadDetail(job));
             };
             await Promise.all(Array.from({ length: Math.min(DETAIL_READ_CONCURRENCY, stale.length) }, worker));
-            if (failed && !this.streamStopped) this.scheduleListRetry();
+            if (this.streamStopped) return;
+            if (outcomes.includes('failed')) this.scheduleListRetry();
+            // A row that moved on while its detail was read was skipped by the
+            // pass its move started: it is read again now.
+            else if (outcomes.includes('moved')) this._detailLoad = this.loadStaleDetails();
         },
 
-        // Reads one row's detail and merges it into the row, heard as any
-        // read is. Answers false when the read failed, so the drawer tries again.
+        // Reads one row's detail and merges it into the row, heard as any read
+        // is. Answers 'moved' when the row moved on while it was read, and
+        // 'failed' when the read failed or answered older than the row it was
+        // asked for (a lagging replica): the drawer tries those again after a
+        // delay rather than at once, or a replica that stays behind would be
+        // asked in a loop.
         async loadDetail(job) {
             this._detailReads.add(job.id);
             const streamGeneration = this._streamGeneration;
+            const askedFor = Number(job.version || 0);
             let detail;
             try {
                 detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
             } catch {
-                return false;
+                return 'failed';
             } finally {
                 this._detailReads.delete(job.id);
             }
             const current = this.jobs.find(row => row.id === job.id);
-            // A row a newer list read dropped stays dropped, and a detail older
-            // than the row shown would roll it back: the next pass reads again.
-            if (!current || Number(detail.version || 0) < Number(current.version || 0)) return true;
+            // A row a newer list read dropped stays dropped.
+            if (!current) return 'read';
+            // A detail older than the row shown would roll it back.
+            if (Number(detail.version || 0) < Number(current.version || 0)) {
+                return Number(current.version || 0) > askedFor ? 'moved' : 'failed';
+            }
             this.details[job.id] = detail;
             const spoken = [];
             this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
             this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? { ...row, ...detail } : row));
             this.announceNews(spoken);
-            return true;
+            return 'read';
         },
 
         // Announcements are made against what the reader has been told, not
