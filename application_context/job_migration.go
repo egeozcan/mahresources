@@ -1371,6 +1371,16 @@ func (ctx *MahresourcesContext) downloadReplayPurged(db *gorm.DB, jobID string, 
 	var envelope models.JobReplayEnvelope
 	err := db.Where("job_id = ?", jobID).First(&envelope).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Retention deletes the envelope with its Job, and a gone Job has ended
+		// (mappedJobGone): its replay input expired rather than went missing.
+		var job models.Job
+		jobErr := db.Select("id").Where("id = ?", jobID).First(&job).Error
+		if mappedJobGone(jobErr) {
+			return true, models.JobReplayPurgeExpired, nil
+		}
+		if jobErr != nil {
+			return false, "", jobErr
+		}
 		return false, "", fmt.Errorf("canonical download Job %s has no replay envelope", jobID)
 	}
 	if err != nil {

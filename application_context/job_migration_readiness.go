@@ -561,17 +561,25 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 	}
 }
 
-// migrationJobReplayReady reports whether a mapped source's Job can still run from
-// its canonical input when it needs to.
+// mappedJobGone reports that reading the Job a source mapping names found no Job.
 //
-// A mapping whose Job no longer exists needs nothing: retention is the only thing
-// that deletes a Job, it deletes only ended ones, and it keeps their mappings
+// Retention is the only thing that deletes a Job: it deletes only ended ones, it
+// keeps the mappings that name them, and it keeps nothing of how they ended
 // (TestRetentionNeverPrunesANonterminalJobWhateverItsDeadline pins the first two).
-// Anything that comes to delete a nonterminal Job makes this answer wrong.
+// A gone Job has therefore ended, with an outcome nobody can know any more. Every
+// reader of a mapped Job answers a missing one through this, and anything that
+// comes to delete a nonterminal Job makes all of their answers wrong.
+func mappedJobGone(err error) bool {
+	return errors.Is(err, jobs.ErrNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+// migrationJobReplayReady reports whether a mapped source's Job can still run from
+// its canonical input when it needs to. A Job that is gone (mappedJobGone) has
+// ended and needs nothing.
 func migrationJobReplayReady(db *gorm.DB, service *jobs.Service, deps jobs.Deps, kind, jobID string) bool {
 	var job models.Job
 	if err := db.Where("id = ?", jobID).First(&job).Error; err != nil {
-		return errors.Is(err, gorm.ErrRecordNotFound)
+		return mappedJobGone(err)
 	}
 	if jobs.State(job.State).Terminal() || jobs.ReplayClass(job.ReplayClass) == jobs.ReplayClassNonReplayable {
 		return true

@@ -723,13 +723,13 @@ func main() {
 			return
 		}
 	}
-	// Rows an earlier release left disagreeing with a deferred Job cancelled
-	// before it ran. A failure here leaves them as they were and is not a reason
-	// to refuse traffic.
+	// Deferred download rows still open behind a Job that already ended: one an
+	// earlier release cancelled before it ran, or one retention has deleted. A
+	// failure here leaves them as they were and is not a reason to refuse traffic.
 	if reconciled, err := context.ReconcileDeferredDownloadRows(); err != nil {
 		log.Printf("[jobs] WARNING: deferred download rows could not be reconciled with their Jobs: %v", err)
 	} else if reconciled > 0 {
-		log.Printf("[jobs] recorded %d deferred download row(s) whose Job was cancelled before it ran", reconciled)
+		log.Printf("[jobs] reconciled %d deferred download row(s) with the Jobs they name", reconciled)
 	}
 
 	// Recovery must settle every durable command/import writer before a plugin

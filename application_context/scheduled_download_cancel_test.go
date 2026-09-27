@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -511,8 +512,8 @@ func TestStartupReconcilesDeferredRowsWhoseJobWasCancelledBeforeItRan(t *testing
 // Either Job can then be deleted by retention, which keeps nothing of how it
 // ended. The row is closed without submitting its stored payload again, and says
 // that the outcome is not known rather than that the Job was cancelled before it
-// ran. Both startup and the due-time sweep reach it, with the sources retired or
-// not.
+// ran. Startup, the due-time sweep and a cancel of the row all reach it, with the
+// sources retired or not; the cancel answers that the row had already ended.
 func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
 	endings := map[string]func(*testing.T, *MahresourcesContext, jobs.Snapshot){
 		"cancelled while it waited": func(t *testing.T, ctx *MahresourcesContext, job jobs.Snapshot) {
@@ -538,14 +539,19 @@ func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
 			}
 		},
 	}
-	settle := map[string]func(*testing.T, *MahresourcesContext){
-		"at startup": func(t *testing.T, ctx *MahresourcesContext) {
+	settle := map[string]func(*testing.T, *MahresourcesContext, uint){
+		"at startup": func(t *testing.T, ctx *MahresourcesContext, _ uint) {
 			if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
 				t.Fatalf("reconcile = %d, %v; want the row whose Job is gone", reconciled, err)
 			}
 		},
-		"at its due time": func(t *testing.T, ctx *MahresourcesContext) {
+		"at its due time": func(t *testing.T, ctx *MahresourcesContext, _ uint) {
 			fireDueDeferredDownloads(t, ctx, time.Now().Add(2*time.Hour))
+		},
+		"by a row cancel": func(t *testing.T, ctx *MahresourcesContext, rowID uint) {
+			if cancelled, err := ctx.CancelScheduledDownload(rowID); cancelled || !errors.Is(err, ErrScheduledDownloadEnded) {
+				t.Fatalf("cancel = %v, %v; want the answer that the row already ended", cancelled, err)
+			}
 		},
 	}
 	for ending, end := range endings {
@@ -588,7 +594,7 @@ func TestAPendingRowWhoseJobRetentionRemovedIsNeverSubmitted(t *testing.T) {
 						requireCleanBoot(t, ctx)
 					}
 
-					settle(t, ctx)
+					settle(t, ctx, row.ID)
 					got := scheduledDownloadRow(t, ctx, row.ID)
 					if got.Status != models.ScheduledDownloadStatusFailed || got.JobID != "" || got.Attempts != 0 ||
 						!strings.Contains(got.LastError, "not known") || strings.Contains(got.LastError, "before it started") {

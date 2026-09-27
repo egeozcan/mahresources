@@ -61,6 +61,12 @@ func statusCodeForError(err error, fallback int) int {
 		errors.Is(err, application_context.ErrScheduleBusy) {
 		return http.StatusConflict
 	}
+	// A cancel of a deferred download that had already ended. Its wording matches
+	// nothing in the scan below, so it would fall through to 500 for an answer
+	// that is simply no; 409 because what refuses is the state of the row.
+	if errors.Is(err, application_context.ErrScheduledDownloadEnded) {
+		return http.StatusConflict
+	}
 
 	// A dependency the deployment does not have. Not the caller's fault and not
 	// a missing resource, so neither 400 nor 404: the request is well formed and

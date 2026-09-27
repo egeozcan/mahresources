@@ -326,7 +326,9 @@ Only pending rows can be cancelled, and cancelling a row cancels its
 `deferred-download` Job in the same transaction, so the download does not run at
 its due time. A row that has already been submitted, failed or cancelled, or
 whose Job has already started, answers `409 Conflict`; stop a started download
-with the Job's own `cancel` command.
+with the Job's own `cancel` command. A pending row whose Job was removed from Job
+history also answers `409 Conflict`, saying it already ended, and is recorded
+`failed` as described above.
 
 ## Command Run History
 

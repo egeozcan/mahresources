@@ -638,6 +638,54 @@ func TestJobMigrationStaysReadyAfterRetentionDeletesMappedJobs(t *testing.T) {
 	}
 }
 
+// Before the sources are retired, a changed source row is re-proved against its
+// Job's replay input. A deferred row whose Job retention deleted changes when the
+// row is closed, and its replay input went with the Job, which is an expired
+// replay rather than one nobody can find: the migration must still complete.
+func TestJobMigrationRetiresASourceWhoseJobRetentionDeletedFirst(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	holdJobReplayKey(t, ctx, sharedReplayKey(t))
+	enableDownloadTestPlugin(t, ctx)
+	actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the acting user: %v", err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/outlived.bin?token=private"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	if _, err := ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, To: jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("cancel the Job alone: %v", err)
+	}
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100); err != nil || sweep.Pruned != 1 {
+		t.Fatalf("retention = %+v, %v; want the ended Job deleted", sweep, err)
+	}
+	if reconciled, err := ctx.ReconcileDeferredDownloadRows(); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile = %d, %v; want the row closed", reconciled, err)
+	}
+
+	result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true})
+	if err != nil || !result.Complete {
+		var mapping models.JobSourceMapping
+		_ = ctx.db.Where("source_kind = ?", jobMigrationScheduledDownload).First(&mapping).Error
+		t.Fatalf("retire the sources = %+v, %v; mapping %s (%s)", result, err, mapping.Status, mapping.BlockerCode)
+	}
+	if readiness, err := ctx.GetJobMigrationReadiness(); err != nil || !readiness.Ready {
+		t.Fatalf("readiness = %+v, %v; want ready", readiness, err)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); len(got.Payload) != 0 {
+		t.Fatalf("the retired row still holds its payload")
+	}
+}
+
 // retireJobMigrationSources runs the migration to its completed gate, which
 // retires every legacy source it copied.
 func retireJobMigrationSources(t *testing.T, ctx *MahresourcesContext) {

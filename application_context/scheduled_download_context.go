@@ -464,10 +464,13 @@ func (ctx *MahresourcesContext) markScheduledDownloadFailed(id uint, claimToken 
 // Job at its due time without consulting the row, so the Job is cancelled in the
 // same transaction. A Job that an execution already holds, or that has run, is
 // a download that started: the row is then left alone and false returned, and
-// the Job's own Cancel is what stops it.
+// the Job's own Cancel is what stops it. A Job that already ended in a way the row
+// records instead (deferredRowJob.ended), other than by being cancelled, is
+// recorded on the row, and the cancel answers ErrScheduledDownloadEnded.
 func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 	now := time.Now()
 	errStarted := errors.New("the deferred download has started")
+	var ended error
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// PostgreSQL: the Job is locked before the row, the order a cancel of the
 		// Job takes them in (the Job, then this row through ApplyHostTransition).
@@ -476,11 +479,10 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 		// transaction's first statement, so it takes the writer lock before
 		// anything is read.
 		postgres := tx.Dialector.Name() == "postgres"
-		hasJobs := ctx.JobService() != nil
-		jobID := ""
-		if postgres && hasJobs {
+		var rowJob deferredRowJob
+		if postgres {
 			var err error
-			if jobID, err = deferredDownloadJobIDTx(tx, id, true); err != nil {
+			if rowJob, err = ctx.loadDeferredRowJob(tx, id, true); err != nil {
 				return err
 			}
 		}
@@ -500,20 +502,36 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 		if res.RowsAffected != 1 {
 			return errScheduledDownloadNotCancellable
 		}
-		if !postgres && hasJobs {
+		if !postgres {
 			var err error
-			if jobID, err = deferredDownloadJobIDTx(tx, id, false); err != nil {
+			if rowJob, err = ctx.loadDeferredRowJob(tx, id, false); err != nil {
 				return err
 			}
 		}
-		stopped, err := ctx.cancelDeferredDownloadJobTx(tx, jobID)
-		if err != nil {
-			return err
+		if state, isEnded := rowJob.ended(); isEnded {
+			status, lastError := deferredRowEnd(state)
+			if status == models.ScheduledDownloadStatusCancelled {
+				return nil
+			}
+			ended = fmt.Errorf("scheduled download %d: %w: %s", id, ErrScheduledDownloadEnded, lastError)
+			return tx.Model(&models.ScheduledDownload{}).Where("id = ?", id).
+				Updates(map[string]any{"status": status, "last_error": lastError, "updated_at": now}).Error
 		}
-		if !stopped {
+		if rowJob.ID == "" {
+			return nil
+		}
+		if rowJob.Job.StartedAt != nil {
 			return errStarted
 		}
-		return nil
+		if rowJob.Job.State.Terminal() {
+			return nil
+		}
+		_, err := ctx.JobService().Transition(ctx.jobDepsWithDB(tx), jobs.Transition{
+			JobID:           rowJob.ID,
+			ExpectedVersion: rowJob.Job.Version,
+			To:              jobs.StateCancelled,
+		})
+		return err
 	})
 	if errors.Is(err, errScheduledDownloadNotCancellable) || errors.Is(err, errStarted) {
 		return false, nil
@@ -521,25 +539,17 @@ func (ctx *MahresourcesContext) CancelScheduledDownload(id uint) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if ended != nil {
+		return false, ended
+	}
 	return true, nil
 }
 
 var errScheduledDownloadNotCancellable = errors.New("the scheduled download is not pending")
 
-// deferredDownloadJobIDTx names the Job behind one scheduled download, or ""
-// when it has none, and with lock takes that Job's row lock.
-func deferredDownloadJobIDTx(tx *gorm.DB, rowID uint, lock bool) (string, error) {
-	jobID, err := deferredDownloadJobIDOn(tx, rowID)
-	if err != nil || jobID == "" || !lock {
-		return jobID, err
-	}
-	var job models.Job
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", jobID).First(&job).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", err
-	}
-	return jobID, nil
-}
+// ErrScheduledDownloadEnded answers a cancel of a row whose Job had already
+// ended in a way the row records instead (deferredRowEnd); the row now says how.
+var ErrScheduledDownloadEnded = errors.New("the scheduled download already ended")
 
 // deferredDownloadJobIDOn names the Job a deferred row was accepted with, or ""
 // when it has none. That is its source mapping's Job, which nothing moves. The
@@ -566,37 +576,61 @@ func deferredDownloadJobIDOn(db *gorm.DB, rowID uint) (string, error) {
 	return handle.JobID, err
 }
 
-// cancelDeferredDownloadJobTx cancels one row's scheduled Job, inside the
-// caller's transaction. stopped is false when the Job has started, which a claim
-// records before an execution does anything: the download started, and a
-// cancelled row would misdescribe it. A row with no Job (written before there was
-// a control plane) and a Job that already ended without running both count as
-// stopped.
-func (ctx *MahresourcesContext) cancelDeferredDownloadJobTx(tx *gorm.DB, jobID string) (bool, error) {
-	service := ctx.JobService()
-	if service == nil || jobID == "" {
-		return true, nil
+// deferredRowJob is the Job a deferred row was accepted with, as the row sees it.
+// Every reader of that Job goes through loadDeferredRowJob, so each of them reads
+// a Job that no longer exists the same way.
+type deferredRowJob struct {
+	// ID is "" for a row with no durable Job, written before there was a control
+	// plane.
+	ID string
+	// Job is the Job's snapshot, and the zero value when it is gone.
+	Job jobs.Snapshot
+	// Gone reports a Job that no longer exists (mappedJobGone): it ended, and how
+	// is not known.
+	Gone bool
+}
+
+// ended reports that the row's Job has ended in a way the row records rather than
+// submitting or cancelling it (deferredRowEnd): with the end state of a Job that
+// ended before anything ran it, and with no state for a Job that is gone, which
+// may have run — the dispatch loop can run a Job before the sweep records its
+// row. A Job that started is not ended here: the row names it instead.
+func (j deferredRowJob) ended() (jobs.State, bool) {
+	if j.Gone {
+		return "", true
 	}
-	deps := ctx.jobDepsWithDB(tx)
-	job, err := service.Get(deps, jobs.Access{Administrator: true}, jobID)
-	if errors.Is(err, jobs.ErrNotFound) {
-		return true, nil
+	if j.ID != "" && j.Job.State.Terminal() && j.Job.StartedAt == nil {
+		return j.Job.State, true
+	}
+	return "", false
+}
+
+// loadDeferredRowJob reads the Job a row was accepted with (deferredDownloadJobIDOn)
+// through db, and with lock takes the Job's row lock first.
+func (ctx *MahresourcesContext) loadDeferredRowJob(db *gorm.DB, rowID uint, lock bool) (deferredRowJob, error) {
+	service := ctx.JobService()
+	if service == nil {
+		return deferredRowJob{}, nil
+	}
+	jobID, err := deferredDownloadJobIDOn(db, rowID)
+	if err != nil || jobID == "" {
+		return deferredRowJob{}, err
+	}
+	if lock {
+		var locked models.Job
+		err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", jobID).First(&locked).Error
+		if err != nil && !mappedJobGone(err) {
+			return deferredRowJob{}, err
+		}
+	}
+	job, err := service.Get(ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, jobID)
+	if mappedJobGone(err) {
+		return deferredRowJob{ID: jobID, Gone: true}, nil
 	}
 	if err != nil {
-		return false, err
+		return deferredRowJob{}, err
 	}
-	if job.StartedAt != nil {
-		return false, nil
-	}
-	if job.State.Terminal() {
-		return true, nil
-	}
-	_, err = service.Transition(deps, jobs.Transition{
-		JobID:           job.ID,
-		ExpectedVersion: job.Version,
-		To:              jobs.StateCancelled,
-	})
-	return err == nil, err
+	return deferredRowJob{ID: jobID, Job: job}, nil
 }
 
 // cancelDeferredDownloadRowTx ends the row behind a deferred Job the host
@@ -679,8 +713,9 @@ func (ctx *MahresourcesContext) ReconcileDeferredDownloadRows() (int, error) {
 	}{
 		// A submitted row names the Job the sweep queued.
 		{models.ScheduledDownloadStatusSubmitted, "JOIN jobs ON jobs.id = scheduled_downloads.job_id", nil},
-		// A pending row is the Job it was accepted with (deferredDownloadJobIDOn),
-		// which retention may have deleted since it ended.
+		// A pending row is the Job it was accepted with (deferredDownloadJobIDOn).
+		// The predicate below is deferredRowJob.ended in SQL: a Job that ended
+		// before it started, or one that is gone (mappedJobGone).
 		{models.ScheduledDownloadStatusPending,
 			"JOIN job_source_mappings AS mapping ON mapping.source_kind = ? AND mapping.source_id = CAST(scheduled_downloads.id AS TEXT) AND mapping.job_id <> '' LEFT JOIN jobs ON jobs.id = mapping.job_id",
 			[]any{jobMigrationScheduledDownload}},
@@ -798,9 +833,9 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	// checked: a refusal found now would record the failure of a deferral that was
 	// never going to run. So does a row whose Job retention has deleted, which is
 	// never submitted again.
-	if state, ended, err := ctx.deferredJobEnded(row.ID); err != nil {
+	if rowJob, err := ctx.loadDeferredRowJob(ctx.db, row.ID, false); err != nil {
 		return false, err
-	} else if ended {
+	} else if state, ended := rowJob.ended(); ended {
 		return false, ctx.markScheduledDownloadEnded(row.ID, claim, state, now)
 	}
 	if !ctx.scheduledDownloadPluginAvailable(row.PluginName, cfg.PluginAvailable) {
@@ -885,36 +920,25 @@ func (ctx *MahresourcesContext) scheduledDownloadPluginAvailable(pluginName stri
 //
 // materialized is false when the row has no durable Job — one written before there
 // was a control plane — and the caller falls back to submitting the payload itself.
-// A row whose Job is named but gone has one: retention deleted it after it ended,
-// whether or not it ran.
 // A Job that has moved on (already queued by an earlier tick, running, blocked for a
-// person) is left exactly as it is: the row's own claim is what stops a second
-// materialization, and a Job in any other state has already been decided about.
-// A Job that ended before anything ran it — cancelled while it waited — or that
-// retention has since deleted is reported as a *deferredJobEndedError, because the
-// row then records that end rather than a submission.
+// person, or ended after it started) is left exactly as it is: the row's own claim
+// is what stops a second materialization, and a Job in any other state has already
+// been decided about. A Job that ended in a way the row records instead
+// (deferredRowJob.ended) is reported as a *deferredJobEndedError.
 func (ctx *MahresourcesContext) materializeDeferredDownloadJob(rowID uint) (string, bool, error) {
-	service := ctx.JobService()
-	if service == nil {
-		return "", false, nil
-	}
-	jobID, err := deferredDownloadJobIDOn(ctx.db, rowID)
-	if err != nil || jobID == "" {
+	rowJob, err := ctx.loadDeferredRowJob(ctx.db, rowID, false)
+	if err != nil || rowJob.ID == "" {
 		return "", false, err
 	}
-	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
-	if errors.Is(err, jobs.ErrNotFound) {
-		return "", false, &deferredJobEndedError{}
+	if state, ended := rowJob.ended(); ended {
+		return "", false, &deferredJobEndedError{state: state}
 	}
-	if err != nil {
-		return "", false, err
+	if rowJob.Job.State != jobs.StateScheduled {
+		return rowJob.ID, true, nil
 	}
-	if job.State != jobs.StateScheduled {
-		return movedOnDeferredJob(job)
-	}
-	_, err = service.Transition(ctx.jobDeps(), jobs.Transition{
-		JobID:           job.ID,
-		ExpectedVersion: job.Version,
+	_, err = ctx.JobService().Transition(ctx.jobDeps(), jobs.Transition{
+		JobID:           rowJob.ID,
+		ExpectedVersion: rowJob.Job.Version,
 		To:              jobs.StateQueued,
 	})
 	if errors.Is(err, jobs.ErrVersionConflict) || errors.Is(err, jobs.ErrIllegalTransition) {
@@ -923,55 +947,21 @@ func (ctx *MahresourcesContext) materializeDeferredDownloadJob(rowID uint) (stri
 		// reached by losing a race rather than by arriving late, and it gets the
 		// same answer. Reporting the conflict instead marked the row failed while
 		// the download it asked for ran.
-		current, readErr := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, job.ID)
+		current, readErr := ctx.loadDeferredRowJob(ctx.db, rowID, false)
 		if readErr != nil {
 			return "", false, readErr
 		}
-		if current.State != jobs.StateScheduled {
-			return movedOnDeferredJob(current)
+		if state, ended := current.ended(); ended {
+			return "", false, &deferredJobEndedError{state: state}
+		}
+		if current.Job.State != jobs.StateScheduled {
+			return current.ID, true, nil
 		}
 	}
 	if err != nil {
 		return "", false, err
 	}
-	return job.ID, true, nil
-}
-
-// movedOnDeferredJob answers materializeDeferredDownloadJob for a Job that is no
-// longer scheduled.
-func movedOnDeferredJob(job jobs.Snapshot) (string, bool, error) {
-	if job.State.Terminal() && job.StartedAt == nil {
-		return "", false, &deferredJobEndedError{state: job.State}
-	}
-	return job.ID, true, nil
-}
-
-// deferredJobEnded reports that a row's deferred Job ended in a way the row must
-// record instead of submitting: with the Job's end state when it ended before
-// anything ran it, and with an empty state when retention has deleted it. Retention
-// deletes only ended Jobs, but it keeps nothing of how they ended, and the dispatch
-// loop can run a Job before the sweep records its row, so a deleted Job may have
-// run. A row with no durable Job has none.
-func (ctx *MahresourcesContext) deferredJobEnded(rowID uint) (jobs.State, bool, error) {
-	service := ctx.JobService()
-	if service == nil {
-		return "", false, nil
-	}
-	jobID, err := deferredDownloadJobIDOn(ctx.db, rowID)
-	if err != nil || jobID == "" {
-		return "", false, err
-	}
-	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
-	if errors.Is(err, jobs.ErrNotFound) {
-		return "", true, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	if job.State.Terminal() && job.StartedAt == nil {
-		return job.State, true, nil
-	}
-	return "", false, nil
+	return rowJob.ID, true, nil
 }
 
 // deferredJobEndedError reports a deferred Job that ended before anything ran it,
