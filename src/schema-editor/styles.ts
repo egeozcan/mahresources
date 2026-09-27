@@ -42,7 +42,10 @@ export const sharedStyles = css`
     font-family: inherit;
   }
   input:focus, select:focus, textarea:focus {
-    outline: none;
+    /* Transparent rather than none: forced colors drops the box-shadow and
+       repaints the border, and paints this outline instead. */
+    outline: 2px solid transparent;
+    outline-offset: 2px;
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }

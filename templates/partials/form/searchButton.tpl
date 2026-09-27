@@ -20,7 +20,7 @@
     {% else %}
         bg-amber-700 hover:bg-amber-800 focus:ring-amber-600
     {% endif %}
-    focus:outline-none focus:ring-2 focus:ring-offset-1
+    focus:outline-hidden focus:ring-2 focus:ring-offset-1
     disabled:opacity-50 disabled:cursor-not-allowed
     transition-colors duration-100">
     {% if text %}{% autoescape off %}{{ text }}{% endautoescape %}{% else %}Apply Filters{% endif %}

@@ -72,7 +72,7 @@
         class="
             mt-1.5 inline-flex items-center gap-0.5
             text-xs font-mono font-medium text-stone-500 hover:text-amber-700
-            focus:outline-none focus:text-amber-700 transition-colors duration-100">
+            focus:outline-hidden focus:text-amber-700 transition-colors duration-100">
         + Add Field
     </button>
 </div>

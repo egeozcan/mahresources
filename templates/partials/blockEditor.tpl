@@ -400,7 +400,7 @@
                                                                 @keydown.space.prevent="toggleSort(col.id)"
                                                                 tabindex="0"
                                                                 :aria-sort="sortColumn === col.id ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'"
-                                                                class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider cursor-pointer hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                                                class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider cursor-pointer hover:bg-stone-100 focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                                                             >
                                                                 <span x-text="col.label"></span>
                                                                 <span x-show="sortColumn === col.id" x-text="sortDirection === 'asc' ? ' ▲' : ' ▼'"></span>

@@ -9,7 +9,7 @@
         {% if cancelUrl %}
         <a href="{{ cancelUrl }}"
            data-testid="form-cancel"
-           class="inline-flex justify-center py-2 px-4 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+           class="inline-flex justify-center py-2 px-4 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Cancel
         </a>
         {% endif %}
@@ -29,7 +29,7 @@
                 :disabled="phase === 'uploading' || phase === 'partial'"
                 :class="phase === 'uploading' || phase === 'partial' ? 'opacity-60 cursor-not-allowed' : ''"
                 {% endif %}
-                class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Save
         </button>
     </div>

@@ -50,11 +50,11 @@
                     <button type="button"
                             autofocus
                             @click="$store.confirmDialog.cancel()"
-                            class="inline-flex justify-center py-2 px-4 border border-stone-300 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-500"
+                            class="inline-flex justify-center py-2 px-4 border border-stone-300 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-500"
                             x-text="$store.confirmDialog.cancelLabel"></button>
                     <button type="button"
                             @click="$store.confirmDialog.accept()"
-                            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                             x-text="$store.confirmDialog.confirmLabel"></button>
                 </div>
             </div>

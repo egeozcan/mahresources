@@ -425,7 +425,7 @@ export class SchemaFormMode extends LitElement {
       <div class="schema-nesting space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
-        <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
+        <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.oneOf.map((opt: JSONSchema, idx: number) => {
@@ -496,7 +496,7 @@ export class SchemaFormMode extends LitElement {
       <div class="schema-nesting space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
-        <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
+        <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-hidden focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.anyOf.map((opt: JSONSchema, idx: number) => {
@@ -812,7 +812,7 @@ export class SchemaFormMode extends LitElement {
 
         <button type="button"
           aria-label="Add new custom field"
-          class="mt-2 inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          class="mt-2 inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           @click=${onAddField}>Add Field</button>
       </div>
     `;

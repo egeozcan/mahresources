@@ -552,7 +552,7 @@ export class SchemaSearchMode extends LitElement {
             <button type="button"
                     data-operator-toggle
                     @click=${() => this._toggleOperator(field)}
-                    class="text-xs text-stone-400 hover:text-amber-700 underline cursor-pointer flex-shrink-0 w-5 text-center focus:outline-none focus:ring-1 focus:ring-amber-600 rounded"
+                    class="text-xs text-stone-400 hover:text-amber-700 underline cursor-pointer flex-shrink-0 w-5 text-center focus:outline-hidden focus:ring-1 focus:ring-amber-600 rounded"
                     aria-label=${'Change operator, currently ' + symbol}
                     title=${'Operator: ' + symbol}>
               ${symbol}

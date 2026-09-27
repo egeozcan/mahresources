@@ -10,7 +10,7 @@ const btnClasses = `bulk-action-btn inline-flex justify-center
       border
       items-center
       text-sm font-medium rounded-md
-      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600`;
+      focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600`;
 
 
 let _bulkLiveRegion = null;

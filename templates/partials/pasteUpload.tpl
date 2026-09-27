@@ -159,7 +159,7 @@
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">
                                     <button type="button"
-                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
                                             x-text="'Add ' + addModeForTag + '?'"
                                             x-init="setTimeout(() => $el.focus(), 1)"
                                             @keydown.escape.prevent="exitAdd"
@@ -221,7 +221,7 @@
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">
                                     <button type="button"
-                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
                                             x-text="'Add ' + addModeForTag + '?'"
                                             x-init="setTimeout(() => $el.focus(), 1)"
                                             @keydown.escape.prevent="exitAdd"

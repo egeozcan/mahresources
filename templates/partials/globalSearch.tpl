@@ -6,7 +6,7 @@
 >
     <button
         @click="toggle($event)"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm font-mono text-stone-700 bg-stone-100 rounded-lg hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-1 transition-colors"
+        class="flex items-center gap-2 px-3 py-1.5 text-sm font-mono text-stone-700 bg-stone-100 rounded-lg hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-amber-600 focus:ring-offset-1 transition-colors"
         title="Search (Ctrl+K / Cmd+K)"
         aria-label="Open search dialog"
         aria-haspopup="dialog"
@@ -72,7 +72,7 @@
                             @keydown.enter.prevent="selectResult()"
                             type="text"
                             placeholder="Search resources, notes, groups, tags..."
-                            class="flex-1 text-base text-stone-900 placeholder-stone-400 bg-transparent border-0 outline-none focus:ring-0 focus:outline-none"
+                            class="flex-1 text-base text-stone-900 placeholder-stone-400 bg-transparent border-0 focus:ring-0 focus:outline-hidden"
                             style="box-shadow: none !important;"
                             autocomplete="off"
                             role="combobox"

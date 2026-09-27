@@ -10,7 +10,7 @@
     border border-transparent
     shadow-sm text-sm font-mono font-medium rounded-md
     text-white bg-red-700 hover:bg-red-800
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+    focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
     value="{% if text %}{{ text }}{% else %}Delete{% endif %}"
     >
     {% if id %}

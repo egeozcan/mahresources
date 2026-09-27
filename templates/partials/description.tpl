@@ -43,13 +43,13 @@
                         @mousedown.prevent
                         @click="save()"
                         :disabled="saving"
-                        class="inline-flex justify-center py-1.5 px-3 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+                        class="inline-flex justify-center py-1.5 px-3 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
                     Save
                 </button>
                 <button type="button"
                         @mousedown.prevent
                         @click="cancel()"
-                        class="inline-flex justify-center py-1.5 px-3 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                        class="inline-flex justify-center py-1.5 px-3 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
                     Cancel
                 </button>
                 <span class="text-xs text-stone-500">Ctrl+Enter saves</span>

@@ -7,7 +7,7 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     {% if version.ContentType|slice:":6" == "image/" or version.ContentType|slice:":6" == "video/" %}
-                    <button type="button" class="shrink-0 rounded focus:outline-none focus:ring-2 focus:ring-amber-600"
+                    <button type="button" class="shrink-0 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600"
                             aria-label="View version {{ version.VersionNumber }}"
                             @click="$store.lightbox.openResourceAtVersion({{ resourceId }}, {{ version.ID }}, '{{ version.ContentType|escapejs }}', {{ version.Width }}, {{ version.Height }})">
                         {% if version.ContentType|slice:":6" == "image/" %}

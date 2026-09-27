@@ -59,21 +59,21 @@
                  :max="inputMax"
                  :step="inputType === 'number' ? '1' : null"
                  x-model="value"
-                 class="border border-stone-300 rounded px-2 py-1 text-sm flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                 class="border border-stone-300 rounded px-2 py-1 text-sm flex-1 min-w-[12rem] font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                  :aria-describedby="'hint-' + key" />
           <input type="text"
                  placeholder="Reason (optional)"
                  x-model="reason"
-                 class="border border-stone-300 rounded px-2 py-1 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                 class="border border-stone-300 rounded px-2 py-1 text-sm w-48 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                  :aria-label="'Reason for ' + label" />
           <button type="submit"
-                  class="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600">
+                  class="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600">
             Save
           </button>
           <template x-if="overridden">
             <button type="button"
                     @click="reset()"
-                    class="inline-flex items-center px-3 py-1 text-sm font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-stone-400">
+                    class="inline-flex items-center px-3 py-1 text-sm font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-stone-400">
               Reset
             </button>
           </template>

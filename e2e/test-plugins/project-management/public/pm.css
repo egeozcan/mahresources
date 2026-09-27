@@ -89,7 +89,13 @@
 .pm-picker a:hover,
 .pm-picker a:focus-visible {
   border-color: var(--pm-accent);
-  outline: none;
+}
+
+/* Transparent rather than none: forced colors repaints the border colour and
+   paints this outline instead. */
+.pm-picker a:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
 }
 
 .pm-picker .pm-picker-key {
@@ -230,7 +236,11 @@
 .pm-iconbtn:hover,
 .pm-iconbtn:focus-visible {
   border-color: var(--pm-accent);
-  outline: none;
+}
+
+.pm-iconbtn:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
 }
 
 .pm-status-move {

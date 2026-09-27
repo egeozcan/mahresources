@@ -17,7 +17,7 @@
         {% for link in errorRecovery %}
         <li>
             <a href="{{ link.Url }}"
-               class="text-sm text-amber-700 underline hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-600 rounded">{{ link.Name }}</a>
+               class="text-sm text-amber-700 underline hover:text-amber-900 focus:outline-hidden focus:ring-2 focus:ring-amber-600 rounded">{{ link.Name }}</a>
         </li>
         {% endfor %}
     </ul>

@@ -11,7 +11,7 @@
                        x-model="query" @input="onSearchInput()" @focus="open = suggestions.length > 0"
                        autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="tp-suggestions-{{ entityType }}"
                        :aria-expanded="open ? 'true' : 'false'"
-                       class="w-56 text-sm rounded border border-stone-300 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                       class="w-56 text-sm rounded border border-stone-300 px-2 py-1 focus:outline-hidden focus:ring-2 focus:ring-amber-600"
                        placeholder="Search {{ entityType }}…">
                 <ul x-show="open" @click.away="open = false" x-transition
                     id="tp-suggestions-{{ entityType }}" role="listbox"
@@ -19,7 +19,7 @@
                     <template x-for="s in suggestions" :key="s.id">
                         <li role="option" tabindex="0"
                             @click="pick(s)" @keydown.enter.prevent="pick(s)"
-                            class="px-2 py-1 cursor-pointer hover:bg-amber-50 focus:bg-amber-50 focus:outline-none">
+                            class="px-2 py-1 cursor-pointer hover:bg-amber-50 focus:bg-amber-50 focus:outline-hidden">
                             <span x-text="s.name"></span>
                             <span class="text-stone-500" x-text="'#' + s.id"></span>
                         </li>
@@ -30,7 +30,7 @@
             <div>
                 <label for="tp-slot-{{ entityType }}" class="block text-xs font-mono text-stone-600 mb-0.5">Slot</label>
                 <select id="tp-slot-{{ entityType }}" x-model="slot" @change="onSlotChange()"
-                        class="text-sm rounded border border-stone-300 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-amber-600">
+                        class="text-sm rounded border border-stone-300 px-2 py-1 focus:outline-hidden focus:ring-2 focus:ring-amber-600">
                     <template x-for="s in slots" :key="s.name">
                         <option :value="s.name" x-text="s.label"></option>
                     </template>
@@ -40,7 +40,7 @@
             <span x-show="isCarrierSlot()" class="text-xs font-mono text-stone-500 self-end pb-1.5">Previewed against this category itself.</span>
 
             <button type="button" @click="refresh()"
-                    class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-600 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">
+                    class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-600 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">
                 Refresh
             </button>
             <span x-show="loading" role="status" class="text-xs text-stone-500 font-mono">Rendering…</span>

@@ -270,48 +270,48 @@
 
                 {# Entity count cards #}
                 <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" aria-label="Entity counts">
-                    <a href="/resources" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/resources" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Resources</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.resources)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
                             <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.resources)"></span> this week</p>
                         </template>
                     </a>
-                    <a href="/notes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/notes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Notes</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.notes)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
                             <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.notes)"></span> this week</p>
                         </template>
                     </a>
-                    <a href="/groups" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/groups" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Groups</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.groups)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
                             <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.groups)"></span> this week</p>
                         </template>
                     </a>
-                    <a href="/tags" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/tags" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Tags</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.tags)"></p>
                     </a>
-                    <a href="/categories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/categories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Categories</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.categories)"></p>
                     </a>
-                    <a href="/resourceCategories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/resourceCategories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Resource Categories</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.resourceCategories)"></p>
                     </a>
-                    <a href="/noteTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/noteTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Note Types</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.noteTypes)"></p>
                     </a>
-                    <a href="/queries" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/queries" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Queries</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.queries)"></p>
                     </a>
-                    <a href="/templatePartials" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/templatePartials" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Template Partials</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.templatePartials)"></p>
                     </a>
@@ -319,15 +319,15 @@
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Series</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.series)"></p>
                     </div>
-                    <a href="/relations" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/relations" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Relations</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.relations)"></p>
                     </a>
-                    <a href="/relationTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/relationTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Relation Types</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.relationTypes)"></p>
                     </a>
-                    <a href="/logs" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/logs" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Log Entries</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.logEntries)"></p>
                     </a>
@@ -515,12 +515,12 @@
                         <div class="flex flex-wrap gap-2">
                             <button type="button" :disabled="busy" data-testid="admin-recompute-similarities"
                                 @click="post('/v1/admin/similarity/recompute', 'Recompute')"
-                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
                                 Recompute similarities
                             </button>
                             <button type="button" :disabled="busy" data-testid="admin-retry-failed-hashes"
                                 @click="post('/v1/admin/similarity/retry-failed', 'Retry failed')"
-                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
+                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
                                 Retry failed hashes
                             </button>
                         </div>

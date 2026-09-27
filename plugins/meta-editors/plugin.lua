@@ -237,7 +237,7 @@ local function render_star_rating(ctx)
     parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-0.5 py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="i in max" :key="i">'
     parts[#parts + 1] = '<button @click="save(i === val ? 0 : i)" @mouseenter="hover = i" @mouseleave="hover = 0" '
-        .. 'class="p-0 focus:outline-none" :aria-label="\'Rate \' + i + \' of \' + max">'
+        .. 'class="p-0 focus:outline-hidden" :aria-label="\'Rate \' + i + \' of \' + max">'
     parts[#parts + 1] = star_svg
     parts[#parts + 1] = '</button>'
     parts[#parts + 1] = '</template>'
@@ -268,7 +268,7 @@ local function render_toggle(ctx)
     end
     parts[#parts + 1] = '<button @click="save(!val)" role="switch" :aria-checked="val" '
         .. ':class="val ? \'bg-amber-600\' : \'bg-stone-300\'" '
-        .. 'class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1">'
+        .. 'class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:ring-offset-1">'
         .. '<span :class="val ? \'translate-x-6\' : \'translate-x-1\'" '
         .. 'class="inline-block h-4 w-4 rounded-full bg-white transition-transform shadow"></span>'
         .. '</button>'
@@ -337,7 +337,7 @@ local function render_button_group(ctx)
     parts[#parts + 1] = '<template x-for="(opt, idx) in options" :key="opt">'
     parts[#parts + 1] = '<button @click="save(opt)" '
         .. ':class="val === opt ? \'bg-amber-700 text-white border-amber-700 z-10\' : \'bg-white text-stone-700 border-stone-300 hover:bg-stone-50\'" '
-        .. 'class="px-3 py-1 border font-medium first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:z-10" '
+        .. 'class="px-3 py-1 border font-medium first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 transition-colors focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:z-10" '
         .. 'x-text="labels[idx] || opt"></button>'
     parts[#parts + 1] = '</template>'
     parts[#parts + 1] = save_indicators()
@@ -372,7 +372,7 @@ local function render_color_picker(ctx)
     parts[#parts + 1] = '<button @click="save(c)" '
         .. ':style="\'background-color:\' + c" '
         .. ':class="val === c ? \'ring-2 ring-offset-1 ring-amber-500\' : \'\'" '
-        .. 'class="w-6 h-6 rounded-full border border-stone-200 flex items-center justify-center transition-shadow focus:outline-none" '
+        .. 'class="w-6 h-6 rounded-full border border-stone-200 flex items-center justify-center transition-shadow focus:outline-hidden" '
         .. ':aria-label="\'Select color \' + c">'
         .. '<svg x-show="val === c" class="w-3 h-3 text-white" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>'
         .. '</button>'
@@ -416,7 +416,7 @@ local function render_tags_input(ctx)
     parts[#parts + 1] = '</div>'
     parts[#parts + 1] = string.format(
         '<input type="text" x-model="input" @keydown.enter.prevent="add()" :placeholder="\'%s\'" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm w-40 focus:outline-none focus:ring-1 focus:ring-amber-500">',
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm w-40 focus:outline-hidden focus:ring-1 focus:ring-amber-500">',
         html_escape(placeholder)
     )
     parts[#parts + 1] = save_indicators()
@@ -450,7 +450,7 @@ local function render_textarea(ctx)
     parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
-        .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',
+        .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm resize-y focus:outline-hidden focus:ring-1 focus:ring-amber-500"></textarea>',
         html_escape(rows), html_escape(placeholder)
     )
     parts[#parts + 1] = save_indicators()
@@ -479,7 +479,7 @@ local function render_date_picker(ctx)
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
     parts[#parts + 1] = '<input type="date" :value="val || \'\'" @change="save($event.target.value)" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500">'
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-hidden focus:ring-1 focus:ring-amber-500">'
     parts[#parts + 1] = save_indicators()
     parts[#parts + 1] = '</div>'
     return table.concat(parts, "\n")
@@ -511,10 +511,10 @@ local function render_date_range(ctx)
     parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="flex flex-wrap items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(start_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.start) || \'\'" @change="saveRange(\'start\', $event.target.value)" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 min-w-0">'
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-hidden focus:ring-1 focus:ring-amber-500 min-w-0">'
     parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(end_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.end) || \'\'" @change="saveRange(\'end\', $event.target.value)" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 min-w-0">'
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-hidden focus:ring-1 focus:ring-amber-500 min-w-0">'
     parts[#parts + 1] = save_indicators()
     parts[#parts + 1] = '</div>'
     return table.concat(parts, "\n")
@@ -624,8 +624,8 @@ local function render_key_value(ctx)
         .. '</div>'
     parts[#parts + 1] = '</template>'
     parts[#parts + 1] = '<div class="flex items-center gap-1 mt-1">'
-        .. '<input type="text" x-model="newKey" placeholder="key" class="px-1.5 py-0.5 border border-stone-300 rounded text-xs w-20 focus:outline-none focus:ring-1 focus:ring-amber-500">'
-        .. '<input type="text" x-model="newVal" placeholder="value" @keydown.enter.prevent="addPair()" class="px-1.5 py-0.5 border border-stone-300 rounded text-xs w-28 focus:outline-none focus:ring-1 focus:ring-amber-500">'
+        .. '<input type="text" x-model="newKey" placeholder="key" class="px-1.5 py-0.5 border border-stone-300 rounded text-xs w-20 focus:outline-hidden focus:ring-1 focus:ring-amber-500">'
+        .. '<input type="text" x-model="newVal" placeholder="value" @keydown.enter.prevent="addPair()" class="px-1.5 py-0.5 border border-stone-300 rounded text-xs w-28 focus:outline-hidden focus:ring-1 focus:ring-amber-500">'
         .. '<button @click="addPair()" class="px-1.5 py-0.5 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+</button>'
         .. '</div>'
     parts[#parts + 1] = save_indicators()
@@ -667,7 +667,7 @@ local function render_checklist(ctx)
     parts[#parts + 1] = '</template>'
     parts[#parts + 1] = '<div class="flex items-center gap-1 mt-1">'
         .. '<input type="text" x-model="newItem" @keydown.enter.prevent="addItem()" placeholder="Add item..." '
-        .. 'class="px-2 py-0.5 border border-stone-300 rounded text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-amber-500">'
+        .. 'class="px-2 py-0.5 border border-stone-300 rounded text-xs flex-1 focus:outline-hidden focus:ring-1 focus:ring-amber-500">'
         .. '<button @click="addItem()" class="px-1.5 py-0.5 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+</button>'
         .. '</div>'
     parts[#parts + 1] = save_indicators()
@@ -706,7 +706,7 @@ local function render_url_input(ctx)
     end
     parts[#parts + 1] = string.format(
         '<input type="url" x-model="val" @input="debounced()" placeholder="%s" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono flex-1 focus:outline-none focus:ring-1 focus:ring-amber-500">',
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono flex-1 focus:outline-hidden focus:ring-1 focus:ring-amber-500">',
         html_escape(placeholder)
     )
     parts[#parts + 1] = '<a x-show="valid" :href="val" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-800" title="Open link">'
@@ -744,7 +744,7 @@ local function render_markdown(ctx)
     parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
-        .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm font-mono resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',
+        .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm font-mono resize-y focus:outline-hidden focus:ring-1 focus:ring-amber-500"></textarea>',
         html_escape(rows), html_escape(placeholder)
     )
     parts[#parts + 1] = save_indicators()
