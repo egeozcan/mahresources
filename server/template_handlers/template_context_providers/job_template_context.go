@@ -158,6 +158,9 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		if reader == nil {
 			return base
 		}
+		if target := undismissedDefaultRedirect(request); target != "" {
+			return pongo2.Context{"_redirect": target}
+		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
 
 		filter, err := jobListFilter(query)
@@ -275,6 +278,36 @@ func jobStateOptions() []JobStateOption {
 	return options
 }
 
+// undismissedDefaultRedirect answers the URL a page navigation to /jobs without a
+// dismissed parameter is sent to: the same URL, every other parameter kept, with
+// the page's default written into it as dismissed=false. It answers "" when the
+// URL already names a value, and for the .json and .body variants, which a client
+// fetches rather than navigates to.
+//
+// The page lists what the viewer has not dismissed unless asked otherwise, while
+// the API reads an absent dismissed as no filter. Writing the default into the
+// address means every URL the page shows a list under, and every link, form,
+// pagination and live-refresh request built from it, names its dismissal filter,
+// so the same query string gives the same Jobs on /jobs, /v1/jobs and the CLI.
+func undismissedDefaultRedirect(request *http.Request) string {
+	if strings.TrimSpace(request.URL.Query().Get("dismissed")) != "" {
+		return ""
+	}
+	if path := request.URL.Path; strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".body") {
+		return ""
+	}
+	if accept := request.Header.Get("Accept"); strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") {
+		return ""
+	}
+	target := *request.URL
+	values := target.Query()
+	values.Set("dismissed", "false")
+	target.RawQuery = values.Encode()
+	// RequestURI, not String: the absolute form would let a proxied Host header
+	// steer the redirect off-site.
+	return target.RequestURI()
+}
+
 // jobListFilter reads the page's filter. The sidebar form submits every field,
 // so an empty value means "not asked" and is dropped before parsing — the API
 // refuses `command=` and an empty origin, which a person never typed. The page
@@ -330,14 +363,16 @@ func jobFilterForm(query url.Values) JobFilterForm {
 		Pinned:                query.Get("pinned"),
 		Dismissed:             query.Get("dismissed"),
 	}
+	// The select shows the filter in effect, and with no value that is the
+	// page's default.
+	if strings.TrimSpace(form.Dismissed) == "" {
+		form.Dismissed = "false"
+	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
 	// Every origin stays in the one field, comma-separated as the parser reads
 	// it; showing only the first would drop the rest on the next submit.
 	form.OriginText = strings.Join(form.Origins, ", ")
-	if form.Dismissed == "false" {
-		form.Dismissed = ""
-	}
 	return form
 }
 

@@ -38,6 +38,9 @@ func legacyJobHandler(handler http.HandlerFunc) http.HandlerFunc {
 func legacyDownloadsLocation(values url.Values) string {
 	query := make(url.Values)
 	query.Set("kind", "remote-download")
+	// The Job Center's default, written out so the translated address is one the
+	// page shows a list under rather than one it redirects again.
+	query.Set("dismissed", "false")
 	for _, value := range values["Status"] {
 		state := map[string]string{
 			"pending":     "queued",

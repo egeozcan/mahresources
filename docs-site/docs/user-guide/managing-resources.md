@@ -383,9 +383,12 @@ me**. Each count is how many Jobs the list shows with that link selected,
 under your other filters. Select an active link again to clear it. The **Filter** form narrows
 the list by text, state, Kind, currently available command, origin, owner,
 actor, and acceptance time. Times are in your browser's time zone, and an
-**Accepted before** time includes the whole minute it names. Under **Dismissed**, choose **Any** to include
-dismissed Jobs, or **Dismissed** to see only those Jobs. Dismissal does not
-delete Job history. **Saved searches** keep a filter for reuse.
+**Accepted before** time includes the whole minute it names. **Dismissed** starts
+at **Not dismissed**; choose **Any** to include dismissed Jobs, or **Dismissed**
+to see only those Jobs. The address always names this choice: opening `/jobs`
+without it adds `dismissed=false`, so a copied Job Center address lists the same
+Jobs through the API and the CLI, which include dismissed Jobs unless asked not
+to. Dismissal does not delete Job history. **Saved searches** keep a filter for reuse.
 
 Open a Job to see its progress, timeline, outputs, and related Jobs. Use only
 the controls displayed on that Job; available commands are checked again when

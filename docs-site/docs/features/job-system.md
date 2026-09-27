@@ -194,7 +194,10 @@ mr jobs summary --window 30d --json
 
 `jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
-advertised command, and the viewer's pin and dismissal preferences.
+advertised command, and the viewer's pin and dismissal preferences, which take
+`true`, `false` or `any`. Without `--dismissed` the CLI and the API list
+dismissed Jobs too; the `/jobs` page instead writes its default,
+`dismissed=false`, into its address.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent

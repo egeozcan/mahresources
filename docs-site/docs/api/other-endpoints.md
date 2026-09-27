@@ -69,7 +69,10 @@ List, summary, and export share these optional filters: `state`/`states`,
 `acceptedBefore`, `relationship`, `search`, `command`, `pinned`, and
 `dismissed`. Repeating a token parameter or comma-separating its values is
 supported. `pinned` and `dismissed` take `true`, `false` or `any`; `any` applies
-no preference, exactly as omitting the parameter does. Visibility is applied before filters and aggregation; an owner or
+no preference, exactly as omitting the parameter does. The Job Center page is the
+one place that reads an omitted `dismissed` differently: opening `/jobs` without
+it redirects to the same address with `dismissed=false`, its default, so every
+address the page shows names the filter it applies. Visibility is applied before filters and aggregation; an owner or
 actor filter never grants access to hidden Jobs.
 
 Single-command JSON bodies contain `expectedVersion`, `idempotencyKey`, and

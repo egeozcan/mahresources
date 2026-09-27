@@ -102,11 +102,57 @@ func renderJobList(t *testing.T, reader *fakeJobListReader, target string) map[s
 	return jobListContextProvider(reader)(httptest.NewRequest(http.MethodGet, target, nil))
 }
 
+// TestJobListWritesItsUndismissedDefaultIntoTheAddress pins how the page's
+// default meets the API's: a navigation without a dismissed parameter is sent
+// to the same URL with dismissed=false, keeping every other parameter, so each
+// URL the page shows a list under reads the same on /v1/jobs and the CLI, which
+// apply no dismissal filter when the parameter is absent.
+func TestJobListWritesItsUndismissedDefaultIntoTheAddress(t *testing.T) {
+	for target, want := range map[string]string{
+		"/jobs":                                  "/jobs?dismissed=false",
+		"/jobs?dismissed=":                       "/jobs?dismissed=false",
+		"/jobs?state=failed&search=a+b&view=all": "/jobs?dismissed=false&search=a+b&state=failed&view=all",
+		"/jobs?cursor=list-v1.x&kind=export&kind=import": "/jobs?cursor=list-v1.x&dismissed=false&kind=export&kind=import",
+	} {
+		reader := &fakeJobListReader{}
+		ctx := renderJobList(t, reader, target)
+		if got := ctx["_redirect"]; got != want {
+			t.Errorf("%s redirected to %v, want %s", target, got, want)
+		}
+		if len(reader.listed) != 0 {
+			t.Errorf("%s listed Jobs before redirecting", target)
+		}
+	}
+
+	// A fetched variant is answered in place with the page's default, and a
+	// named value is never redirected.
+	for _, target := range []string{"/jobs.body?state=failed", "/jobs.json", "/jobs?dismissed=false", "/jobs?dismissed=any", "/jobs?dismissed=true"} {
+		ctx := renderJobList(t, &fakeJobListReader{}, target)
+		if got, ok := ctx["_redirect"]; ok {
+			t.Errorf("%s redirected to %v", target, got)
+		}
+	}
+	jsonRequest := httptest.NewRequest(http.MethodGet, "/jobs?state=failed", nil)
+	jsonRequest.Header.Set("Accept", "application/json")
+	if got, ok := jobListContextProvider(&fakeJobListReader{})(jsonRequest)["_redirect"]; ok {
+		t.Errorf("a JSON request was redirected to %v", got)
+	}
+}
+
 func TestJobListDefaultsToTheViewersUndismissedJobs(t *testing.T) {
 	reader := &fakeJobListReader{}
-	renderJobList(t, reader, "/jobs")
+	ctx := renderJobList(t, reader, "/jobs.body")
 	if got := reader.listed[0].Dismissed; got == nil || *got {
 		t.Fatalf("the default list asked Dismissed=%v, want false", got)
+	}
+	if form := ctx["jobFilter"].(JobFilterForm); form.Dismissed != "false" {
+		t.Fatalf("the filter form shows Dismissed=%q, want the default in effect", form.Dismissed)
+	}
+
+	reader = &fakeJobListReader{}
+	renderJobList(t, reader, "/jobs?dismissed=false")
+	if got := reader.listed[0].Dismissed; got == nil || *got {
+		t.Fatalf("dismissed=false asked Dismissed=%v, want false", got)
 	}
 
 	reader = &fakeJobListReader{}
@@ -133,7 +179,7 @@ func TestJobQuickFilterCountsMatchTheRowsTheirLinksOpen(t *testing.T) {
 		}
 		return map[string]int64{"failed": 3, "blocked": 1, "queued": 4, "succeeded": 5}
 	}}
-	ctx := renderJobList(t, reader, "/jobs?kind=remote-download&state=queued")
+	ctx := renderJobList(t, reader, "/jobs?kind=remote-download&state=queued&dismissed=false")
 	if len(reader.counted) != 2 || reader.counted[0].States != nil || len(reader.counted[0].Kinds) != 1 {
 		t.Fatalf("state counts were asked with %+v, want the kind filter and no states", reader.counted)
 	}
@@ -157,12 +203,12 @@ func TestJobQuickFilterCountsMatchTheRowsTheirLinksOpen(t *testing.T) {
 	}
 
 	attention, _ := url.Parse(byKey["attention"].Link)
-	if attention.Path != "/jobs" || attention.Query().Get("kind") != "remote-download" ||
+	if attention.Path != "/jobs" || attention.Query().Get("kind") != "remote-download" || attention.Query().Get("dismissed") != "false" ||
 		strings.Join(attention.Query()["state"], ",") != "blocked,failed,interrupted" {
 		t.Errorf("needs attention link = %s", byKey["attention"].Link)
 	}
 
-	active := renderJobList(t, reader, "/jobs?state=queued&state=running&state=paused&state=scheduled")
+	active := renderJobList(t, reader, "/jobs?state=queued&state=running&state=paused&state=scheduled&dismissed=false")
 	for _, filter := range active["jobQuickFilters"].([]JobQuickFilter) {
 		if filter.Key != "active" {
 			continue
@@ -182,11 +228,11 @@ func TestJobListPaginatesByKeyset(t *testing.T) {
 	nextToken, _ := jobview.EncodeCursor(next)
 	prevToken, _ := jobview.EncodeCursor(prev)
 
-	current, _ := url.Parse("/jobs.body?kind=remote-download&cursor=" + prevToken)
+	current, _ := url.Parse("/jobs.body?kind=remote-download&dismissed=false&cursor=" + prevToken)
 	prevLink, nextLink := jobListPageLinks(current, jobs.Page{Next: &next, Prev: &prev})
 	for name, link := range map[string]string{"previous": prevLink, "next": nextLink} {
 		parsed, _ := url.Parse(link)
-		if parsed.Path != "/jobs" || parsed.Query().Get("kind") != "remote-download" {
+		if parsed.Path != "/jobs" || parsed.Query().Get("kind") != "remote-download" || parsed.Query().Get("dismissed") != "false" {
 			t.Errorf("%s link %s must name /jobs, never the .body a live refresh fetched, and keep the filter", name, link)
 		}
 	}
@@ -198,23 +244,23 @@ func TestJobListPaginatesByKeyset(t *testing.T) {
 	}
 
 	reader := &fakeJobListReader{page: jobs.Page{Next: &next}}
-	if _, present := renderJobList(t, reader, "/jobs")["pagination"]; !present {
+	if _, present := renderJobList(t, reader, "/jobs?dismissed=false")["pagination"]; !present {
 		t.Fatal("a page with a next page rendered no pagination")
 	}
 	reader = &fakeJobListReader{}
-	if _, present := renderJobList(t, reader, "/jobs")["pagination"]; present {
+	if _, present := renderJobList(t, reader, "/jobs?dismissed=false")["pagination"]; present {
 		t.Fatal("a single page rendered pagination")
 	}
 
 	reader = &fakeJobListReader{pageBefore: jobs.Page{Next: &next}}
-	renderJobList(t, reader, "/jobs?before="+prevToken)
+	renderJobList(t, reader, "/jobs?dismissed=false&before="+prevToken)
 	if len(reader.before) != 1 || reader.before[0] != prev || len(reader.listedAfter) != 0 {
 		t.Fatalf("before= did not read backwards: before=%+v after=%+v", reader.before, reader.listedAfter)
 	}
 }
 
 func TestJobListRefusesAnUnreadableFilter(t *testing.T) {
-	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?ownerId=nobody")
+	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?ownerId=nobody&dismissed=false")
 	if ctx["_statusCode"] != http.StatusBadRequest {
 		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
 	}
@@ -227,7 +273,7 @@ func TestJobListRefusesAnUnreadableFilter(t *testing.T) {
 // problem in the reader's terms, without the service's internal wrapping.
 func TestJobListRefusalNamesOnlyTheFilterProblem(t *testing.T) {
 	refused := fmt.Errorf("jobs: list: %w", fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus"))
-	ctx := renderJobList(t, &fakeJobListReader{listErr: refused}, "/jobs?state=bogus")
+	ctx := renderJobList(t, &fakeJobListReader{listErr: refused}, "/jobs?state=bogus&dismissed=false")
 	if ctx["_statusCode"] != http.StatusBadRequest {
 		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
 	}
@@ -246,7 +292,7 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 			"ok": {{Key: "entity", Type: jobs.OutputTypeEntity, Label: "Created resource", Availability: jobs.OutputAvailable}},
 		},
 	}
-	rows := renderJobList(t, reader, "/jobs")["jobs"].([]JobRow)
+	rows := renderJobList(t, reader, "/jobs?dismissed=false")["jobs"].([]JobRow)
 	if rows[0].Result.URL != "/v1/jobs/ok/outputs?key=entity" || rows[0].Progress == nil || rows[0].Progress.Percent != 100 {
 		t.Fatalf("succeeded row = %+v", rows[0])
 	}
@@ -373,7 +419,7 @@ func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
 }
 
 func TestJobKindOptionsKeepAKindTheURLNames(t *testing.T) {
-	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?kind=retired-kind&kind=group-export")
+	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?kind=retired-kind&kind=group-export&dismissed=false")
 	options := ctx["jobKindOptions"].([]string)
 	if !slices.Contains(options, "retired-kind") || !slices.Contains(options, "group-export") || !slices.Contains(options, "remote-download") {
 		t.Fatalf("kind options = %v: a Kind the URL names must stay offered, or resubmitting drops it", options)

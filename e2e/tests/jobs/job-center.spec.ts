@@ -207,6 +207,39 @@ test.describe('Job Center', () => {
     expect(new URL(page.url()).searchParams.get('dismissed')).toBe('any');
   });
 
+  test('a /jobs address names its dismissal filter, so the API reads it the same', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-parity-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const kept = await submitFailingDownload(request, groupId, `${name}-kept.bin`);
+    const hidden = await submitFailingDownload(request, groupId, `${name}-hidden.bin`);
+    await waitForJobState(request, kept.canonicalId, 'failed');
+    await waitForJobState(request, hidden.canonicalId, 'failed');
+    const job = await readJob(request, hidden.canonicalId);
+    const dismiss = job?.commands?.find(command => command.key === 'dismiss');
+    expect(dismiss).toBeTruthy();
+    const key = `job-center-parity-${stamp}`;
+    const dismissed = await request.post(dismiss!.endpoint, {
+      headers: { 'Idempotency-Key': key },
+      data: { expectedVersion: dismiss!.jobVersion, idempotencyKey: key },
+    });
+    expect(dismissed.ok(), await dismissed.text()).toBe(true);
+
+    // An address without the parameter is written out with the page's default.
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await expect(page).toHaveURL(/[?&]dismissed=false(&|$)/);
+    expect(new URL(page.url()).searchParams.get('search')).toBe(name);
+    await expect(page.getByRole('combobox', { name: 'Dismissed' })).toHaveValue('false');
+    await expect(page.locator(`[data-job-id="${kept.canonicalId}"]`)).toBeVisible();
+    await expect(page.locator(`[data-job-id="${hidden.canonicalId}"]`)).toHaveCount(0);
+
+    // The same query string, sent to the API, lists the same Jobs.
+    const response = await request.get(`/v1/jobs${new URL(page.url()).search}`);
+    expect(response.ok(), await response.text()).toBe(true);
+    const listed = ((await response.json()).jobs as Job[]).map(job => job.id);
+    expect(listed).toEqual([kept.canonicalId]);
+  });
+
   test('quick filters count the rows they open and toggle their State filter', async ({ page, request }) => {
     const stamp = Date.now();
     const name = `job-center-quick-${stamp}`;
@@ -501,7 +534,7 @@ test.describe('Job Center', () => {
     await expect(panel.locator(`a[href="/job?id=${canonicalId}"]`).first()).toBeVisible();
     await expect(panel).toContainText('Failed');
     await panel.getByRole('link', { name: 'All jobs', exact: true }).click();
-    await expect(page).toHaveURL('/jobs');
+    await expect(page).toHaveURL('/jobs?dismissed=false');
     await expect(page.getByTestId('job-center')).toBeVisible();
   });
 
