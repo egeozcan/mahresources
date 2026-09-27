@@ -713,17 +713,79 @@ describe('Job Center panel accessibility hooks', () => {
     test('a command confirmed after the drawer stopped is never sent', async () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        let confirm: (value: boolean) => void = () => {};
-        vi.stubGlobal('Alpine', { store: () => ({ ask: () => new Promise(resolve => { confirm = resolve; }) }) });
+        let answerConfirmation: (value: boolean) => void = () => {};
+        vi.stubGlobal('Alpine', { store: () => ({ ask: () => new Promise(resolve => { answerConfirmation = resolve; }) }) });
         panel.requestJSON = vi.fn(async () => ({ result: {} }));
         const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 };
 
         const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget replay input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
-        confirm(true);
+        answerConfirmation(true);
         await running;
 
         expect(panel.requestJSON).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    // An answer to a request the drawer sent before it stopped lands on a
+    // stopped drawer: it must change nothing and say nothing.
+    function lateAnswers(panel: any) {
+        const pending: Array<(value: unknown) => void> = [];
+        const fetchMock = vi.fn(() => new Promise(resolve => {
+            pending.push(body => resolve({ ok: true, status: 200, json: async () => body }));
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        return { fetchMock, answer: (body: unknown) => pending.shift()!(body) };
+    }
+
+    test('a command answered after the drawer stopped changes and says nothing', async () => {
+        const panel = jobPanel();
+        const { answer } = lateAnswers(panel);
+        const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'running', version: 10 };
+        panel.jobs = [job];
+
+        const running = panel.runCommandUnfocused(job, { key: 'cancel', label: 'Cancel', endpoint: '/v1/jobs/dl-1/commands/cancel', jobVersion: 10 });
+        await Promise.resolve();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ result: { job: { ...job, state: 'cancelled', version: 11 }, message: 'Cancelled' } });
+        await running;
+
+        expect(panel.notice).toBe('');
+        expect(panel.jobs).toEqual([]);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        vi.unstubAllGlobals();
+    });
+
+    test('a pin refresh answered after the drawer stopped keeps no detail', async () => {
+        const panel = jobPanel();
+        const { answer } = lateAnswers(panel);
+        const reading = panel.refreshJobPreference('old-job').catch(() => null);
+        await Promise.resolve();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ id: 'old-job', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10, pinned: true });
+        await reading;
+
+        expect(panel.details).toEqual({});
+        vi.unstubAllGlobals();
+    });
+
+    test('a dismissal answered after the drawer stopped changes and says nothing', async () => {
+        const panel = jobPanel();
+        const { fetchMock, answer } = lateAnswers(panel);
+        panel.jobs = [{ id: 'dl-2', title: 'done.bin', kind: 'remote-download', state: 'succeeded', version: 4, commands: [{ key: 'dismiss', label: 'Dismiss', bulk: true, jobVersion: 4 }] }];
+
+        const dismissing = panel.dismissFinished();
+        await Promise.resolve();
+        answer({ jobs: [{ id: 'dl-2' }], nextCursor: '' });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        answer({ results: [{ jobId: 'dl-2', status: 'succeeded', code: 'applied' }] });
+        await dismissing;
+
+        expect(panel.notice).toBe('');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
         vi.unstubAllGlobals();
     });
 

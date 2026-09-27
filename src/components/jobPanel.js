@@ -135,6 +135,12 @@ export function panelCountsText({ active = 0, attention = 0 } = {}) {
 // What the drawer says, and shows in place of its list, once its stream reset.
 const STREAM_STOPPED_NOTICE = "Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs.";
 
+function streamStoppedError() {
+    const error = new Error('Job updates stopped.');
+    error.streamStopped = true;
+    return error;
+}
+
 // How many jobs the announcement ledger remembers. A job older than this that
 // changes is recorded again without being said, which is the safe side.
 const HEARD_LIMIT = 1000;
@@ -414,12 +420,19 @@ export function jobPanel() {
             return region?.isConnected ? region : null;
         },
 
+        // Every request the drawer makes goes through here, so this is where a
+        // stopped drawer is fenced: nothing is sent once it stopped, and an
+        // answer to a request sent before is refused rather than returned, so
+        // no continuation after an await applies it or announces anything.
+        // Callers' failure paths check streamStopped before they say anything.
         async requestJSON(url, init = {}) {
+            if (this.streamStopped) throw streamStoppedError();
             const response = await fetch(url, {
                 ...init,
                 headers: { Accept: 'application/json', ...(init.headers || {}) },
             });
             const payload = await response.json().catch(() => ({}));
+            if (this.streamStopped) throw streamStoppedError();
             if (!response.ok) {
                 const error = new Error(payload.error || `Request failed (${response.status})`);
                 error.status = response.status;
@@ -1170,6 +1183,7 @@ export function jobPanel() {
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try { await this.refreshJobPreference(job.id, proved); }
                     catch { preferenceRefreshFailed = true; }
+                    if (this.streamStopped) return null;
                 }
                 // Dismissing records a preference and emits no job event, so no
                 // refresh would take the row away: it leaves now, and a fresh
@@ -1188,6 +1202,7 @@ export function jobPanel() {
                 this.announceNotice(this.notice || commandDoneText(job, command), proved);
                 return outcome;
             } catch (error) {
+                if (this.streamStopped) return null;
                 const freshJob = error.payload?.job;
                 if (error.status === 409 && freshJob?.id) {
                     this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
@@ -1217,9 +1232,6 @@ export function jobPanel() {
                 let cursor = '';
                 do {
                     const page = await this.requestJSON(buildFinishedPageURL(cursor));
-                    // A page read before the drawer stopped lists the other
-                    // database's Jobs, and no more of them are dismissed.
-                    if (this.streamStopped) break;
                     const jobIds = (page.jobs || []).map(job => job.id);
                     if (jobIds.length) {
                         const key = commandKey();
@@ -1257,6 +1269,10 @@ export function jobPanel() {
                     : `${dismissed} of ${total} finished job${plural} dismissed. Not dismissed: ${refusal}`;
                 this.announceNotice(this.notice || `${dismissed} finished job${plural} dismissed.`);
             } catch (error) {
+                if (this.streamStopped) {
+                    this.busy = false;
+                    return { dismissed, total };
+                }
                 const reason = error.message || 'Could not dismiss finished jobs.';
                 this.notice = dismissed > 0
                     ? `${dismissed} finished job${dismissed === 1 ? '' : 's'} dismissed before an error: ${reason}`
