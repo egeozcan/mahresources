@@ -16,7 +16,7 @@ import {
     sparklinePath,
 } from './jobProgress.js';
 import { isWorking, presentState, scheduledStartText } from './jobStates.js';
-import { kindLabel } from './jobVocabulary.js';
+import { failureClassLabel, kindLabel, originLabel } from './jobVocabulary.js';
 
 export { JOB_STATES } from './jobStates.js';
 
@@ -945,6 +945,11 @@ export function jobCenter(options = {}) {
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
+        stateTone(job) { return presentState(job).tone; },
+        kindText(job) { return kindLabel(job?.kind); },
+        nameText(job) { return jobName(job, 'Job'); },
+        originText(job) { return originLabel(job?.origin); },
+        failureClassText(job) { return failureClassLabel(job?.failure?.class); },
         scheduledText(job) { return scheduledText(job, this.now); },
         showsProgress(job) { return showsProgress(job); },
         phaseText(job) { return phaseText(job); },

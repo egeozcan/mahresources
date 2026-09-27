@@ -77,6 +77,10 @@ test.describe('Job progress figures', () => {
       const detailStats = page.locator('[data-job-stats]');
       await expect(detailStats).toContainText(/ of 5\.0 MB|5\.0 MB/, { timeout: 10_000 });
       await expect(page.locator('section[aria-labelledby="job-progress-heading"]')).not.toContainText(/\d{5,}/);
+      // The header and context in words, the state in its tone's colour.
+      await expect(page.locator('[data-job-kind]')).toHaveText('Download');
+      await expect(page.locator('[data-job-origin] dd')).toHaveText('Web page or API');
+      await expect(page.locator('[data-job-state]')).toHaveClass(/job-tone--(working|done)/);
 
       await expect.poll(async () => (await readJob(request, id))?.state, { timeout: 30_000 }).toBe('succeeded');
       await page.goto('/jobs?state=succeeded&dismissed=false');
@@ -84,6 +88,14 @@ test.describe('Job progress figures', () => {
       await expect(finished).toBeVisible({ timeout: 10_000 });
       await expect(finished.getByTestId('job-stats')).toHaveText(/^5\.0 MB · average \d/);
       await expect(finished.getByText('Completed', { exact: true })).toBeVisible();
+
+      // In forced colours a badge keeps its outline, on the card and on the Job page.
+      await page.emulateMedia({ forcedColors: 'active' });
+      await expect(finished.getByTestId('job-state')).toHaveCSS('border-top-width', '1px');
+      await expect(finished.getByTestId('job-state')).toHaveCSS('border-top-style', 'solid');
+      await page.goto(`/job?id=${encodeURIComponent(id)}`);
+      await expect(page.locator('[data-job-state]')).toHaveCSS('border-top-width', '1px');
+      await expect(page.locator('[data-job-state]')).toHaveCSS('border-top-style', 'solid');
     } finally {
       server.close();
     }

@@ -18,10 +18,11 @@
                     <a href="/jobs" class="text-sm text-amber-900 underline decoration-amber-300 underline-offset-2">All jobs</a>
                     <h1 class="mt-2 break-words text-2xl font-semibold text-stone-900" x-text="detail.title || detail.kind || detail.id"></h1>
                     <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
-                        <span class="rounded border border-stone-300 px-2 py-0.5 font-mono" x-text="stateLabel(detail)"></span>
+                        {# The tone's colour is the one every Job surface gives it (job-tone--* in public/index.css); the label says it in words. #}
+                        <span class="rounded-full border px-2 py-0.5 text-xs font-medium" data-job-state :class="'job-tone--' + stateTone(detail)" x-text="stateLabel(detail)"></span>
                         <span x-show="detail.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">Pinned by you</span>
                         <span x-show="detail.dismissed" x-cloak data-job-dismissed class="inline-flex items-center rounded border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-700">Dismissed by you</span>
-                        <span x-text="detail.kind"></span>
+                        <span data-job-kind x-text="kindText(detail)"></span>
                         <span x-show="phaseText(detail)" x-text="phaseText(detail)"></span>
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
@@ -49,9 +50,9 @@
                         <dt class="text-xs text-stone-500">Actor</dt>
                         <dd class="break-words text-stone-800" x-text="accountText(detail, 'actor')"></dd>
                     </div>
-                    <div x-show="detail.origin">
-                        <dt class="text-xs text-stone-500">Origin</dt>
-                        <dd class="break-words text-stone-800" x-text="detail.origin"></dd>
+                    <div x-show="detail.origin" data-job-origin>
+                        <dt class="text-xs text-stone-500">Started from</dt>
+                        <dd class="break-words text-stone-800" x-text="originText(detail)"></dd>
                     </div>
                     <div x-show="detail.scheduledFor" x-cloak>
                         <dt class="text-xs text-stone-500">Scheduled for</dt>
@@ -67,7 +68,7 @@
                     <h2 id="job-progress-heading" class="font-mono text-sm font-semibold text-stone-800">Progress</h2>
                     <p class="mt-2 text-sm text-stone-700" x-text="progressText(detail)"></p>
                     {# Forced colours drop backgrounds, so the track keeps a border and the fill a system colour. #}
-                    <div class="mt-2 h-2 overflow-hidden rounded bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(detail)" :aria-valuetext="progressAccessibleText(detail)" :aria-label="(detail.title || detail.kind || 'Job') + ' progress: ' + progressAccessibleText(detail)">
+                    <div class="mt-2 h-2 overflow-hidden rounded bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(detail)" :aria-valuetext="progressAccessibleText(detail)" :aria-label="nameText(detail) + ' progress: ' + progressAccessibleText(detail)">
                         <div class="h-full rounded bg-amber-800 forced-color-adjust-none forced-colors:bg-[Highlight]" :class="progressIndeterminate(detail) ? 'w-full motion-safe:animate-pulse' : ''" :style="progressIndeterminate(detail) ? '' : `width:${progressValue(detail) ?? 0}%`"></div>
                     </div>
                     <p x-show="statsText(detail)" class="mt-2 text-sm tabular-nums text-stone-700" data-job-stats x-text="statsText(detail)"></p>
@@ -102,7 +103,7 @@
             <section x-show="detail.failure?.message" x-cloak aria-labelledby="job-failure-heading" class="rounded border border-red-300 bg-red-50 p-4">
                 <h2 id="job-failure-heading" class="font-mono text-sm font-semibold text-red-900">Failure</h2>
                 <p class="mt-2 whitespace-pre-wrap break-words text-sm text-red-900" x-text="detail.failure?.message"></p>
-                <p x-show="detail.failure?.class" class="mt-2 text-xs text-red-800" x-text="'Class: ' + detail.failure?.class"></p>
+                <p x-show="detail.failure?.class" class="mt-2 text-xs text-red-800" data-job-failure-class x-text="'Failure type: ' + failureClassText(detail)"></p>
                 <template x-if="failureOutput(detail)">
                     <p class="mt-3"><a :href="outputLinkURL(failureOutput(detail), advertisedOutputs(detail))" :aria-label="outputLinkAccessibleLabel(failureOutput(detail), advertisedOutputs(detail))" class="text-sm font-medium text-red-900 underline decoration-red-400 underline-offset-2 hover:decoration-red-900" x-text="outputLinkLabel(failureOutput(detail), advertisedOutputs(detail))"></a></p>
                 </template>

@@ -1224,3 +1224,16 @@ describe('failure reason', () => {
         expect(result.announcement).toBe('video.mp4 failed: HTTP 404: 404 Not Found.');
     });
 });
+
+describe('the Job page header in words', () => {
+    test('names the Kind, where the Job was started from and its failure type', () => {
+        const center = jobCenter();
+        const job = { kind: 'deferred-download', origin: 'schedule', state: 'failed', failure: { class: 'timeout' } };
+        expect(center.kindText(job)).toBe('Scheduled download');
+        expect(center.originText(job)).toBe('Schedule');
+        expect(center.failureClassText(job)).toBe('Timed out');
+        expect(center.stateTone(job)).toBe('failed');
+        expect(center.nameText({ kind: 'group-export' })).toBe('Group export');
+        expect(center.nameText({ title: 'photos.tar' })).toBe('photos.tar');
+    });
+});

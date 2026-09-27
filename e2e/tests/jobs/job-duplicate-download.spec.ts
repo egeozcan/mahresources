@@ -48,7 +48,7 @@ test('a download of bytes the library already holds fails as a conflict and link
     await page.goto(`/job?id=${encodeURIComponent(ids[1])}`);
     const failure = page.getByRole('region', { name: 'Failure' });
     await expect(failure).toContainText('already exists');
-    await expect(failure).toContainText('Class: conflict');
+    await expect(failure).toContainText('Failure type: Conflict');
     await failure.getByRole('link', { name: 'View existing resource' }).click();
     await expect(page).toHaveURL(new RegExp(`${resourceLocation.replace(/[?]/g, '\\?')}$`));
   } finally {
