@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 var jobsPanelRenderedAtMeta = regexp.MustCompile(`<meta name="x-jobs-panel-rendered-at" content="([^"]*)">`)
@@ -19,6 +20,18 @@ var jobsPanelRenderedAtMeta = regexp.MustCompile(`<meta name="x-jobs-panel-rende
 // JSON.
 func TestPagesPublishWhenTheirRenderBegan(t *testing.T) {
 	tc := SetupTestEnv(t)
+
+	// When the page first reads its resources: the render time must not be later,
+	// or a download finishing in between would be missing from the page and read
+	// as older than it.
+	var firstRead time.Time
+	const firstReadName = "test:first_resources_read"
+	require.NoError(t, tc.DB.Callback().Query().Before("gorm:query").Register(firstReadName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "resources" && firstRead.IsZero() {
+			firstRead = time.Now()
+		}
+	}))
+	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove(firstReadName) })
 
 	before := time.Now().Truncate(time.Microsecond)
 	resp := tc.MakeRequest(http.MethodGet, "/resources", nil)
@@ -31,6 +44,8 @@ func TestPagesPublishWhenTheirRenderBegan(t *testing.T) {
 	require.NoError(t, err, "the render time %q is not a timestamp", match[1])
 	assert.False(t, renderedAt.Before(before), "the render time %s predates the request (%s)", renderedAt, before)
 	assert.False(t, renderedAt.After(after), "the render time %s postdates the response (%s)", renderedAt, after)
+	require.False(t, firstRead.IsZero(), "the page read no resources")
+	assert.False(t, renderedAt.After(firstRead), "the render time %s was taken after the page read its resources (%s)", renderedAt, firstRead)
 
 	jsonResp := tc.MakeRequest(http.MethodGet, "/resources.json", nil)
 	require.Equal(t, http.StatusOK, jsonResp.Code)
