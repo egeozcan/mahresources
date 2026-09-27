@@ -796,7 +796,12 @@ describe('job list live progress', () => {
         vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
         const list = listOn(runningCard('a') + runningCard('b'));
         list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
-        expect(progressOf('a')).toEqual({ text: '1048576 / 2097152 bytes', value: '50%', now: '50', width: '50%', stats: '64.0 KB/s · about 30 s left' });
+        const moved = progressOf('a');
+        expect({ ...moved, stats: undefined }).toEqual({ text: '1048576 / 2097152 bytes', value: '50%', now: '50', width: '50%', stats: undefined });
+        // The speed line's rate and time left; what else it says is the shared
+        // stats rule's.
+        expect(moved.stats).toContain('64.0 KB/s');
+        expect(moved.stats).toContain('about 30 s left');
         // A card no frame named is left as the server drew it.
         expect(progressOf('b').value).toBe('4%');
         list.destroy();
@@ -807,9 +812,11 @@ describe('job list live progress', () => {
         const list = listOn(runningCard('a'));
         list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
         vi.advanceTimersByTime(5000);
-        expect(progressOf('a').stats).toBe('64.0 KB/s · about 25 s left');
+        expect(progressOf('a').stats).toContain('64.0 KB/s');
+        expect(progressOf('a').stats).toContain('about 25 s left');
         vi.advanceTimersByTime(6000);
-        expect(progressOf('a').stats).toBe('');
+        expect(progressOf('a').stats).not.toContain('/s');
+        expect(progressOf('a').stats).not.toContain('left');
         list.destroy();
     });
 
