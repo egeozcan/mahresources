@@ -6,53 +6,53 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 )
 
 // An ephemeral database (-memory-db, -ephemeral) is a scratch SQLite file that
-// nothing reads once its process has gone. It lives in a directory of the system
+// nothing reads once its server has gone. It lives in a directory of the system
 // temp directory that this user's mahresources processes own
-// (ephemeralDirectoryName, mode 0700, holding ephemeralDirectoryMarker), named
-// <pid>_<random>.db with SQLite's -wal and -shm beside it. The owner deletes it on
-// a graceful shutdown, and every later ephemeral start deletes, in that directory
-// only, the databases of owners that exited without doing so (a crash, a SIGKILL,
-// a test binary that never shuts down). The random part keeps two contexts of one
-// process apart, which tests do.
+// (ephemeralDirectoryName, mode 0700, holding ephemeralDirectoryMarker), as
+// <name>.db with SQLite's -wal and -shm beside it and a <name>.lock that the
+// server holds an exclusive lock on from before the database exists until it has
+// deleted it. The server deletes all of them on a graceful shutdown. A killed
+// server cannot, but the kernel drops its lock, so every later ephemeral start
+// deletes, in that directory only, the files of any database whose lock it can
+// take. A file with no lock file beside it is never touched: nothing proves it is
+// an ephemeral database. Windows takes no such lock here, so it sweeps nothing.
 
 // ephemeralDirectoryMarker is the file that says a directory was made by
-// mahresources for its ephemeral databases, and so may be swept.
+// mahresources for its ephemeral databases.
 const ephemeralDirectoryMarker = ".mahresources-ephemeral"
 
 const ephemeralDirectoryMarkerText = "Scratch databases of mahresources -ephemeral / -memory-db servers.\n" +
-	"A database here is deleted once the process named by its file name has exited.\n"
+	"A database here is deleted once no process holds its .lock file.\n"
 
-// ephemeralDatabaseName matches the files an ephemeral database leaves in that
-// directory, and captures the database's own file name and the owner's pid.
-var ephemeralDatabaseName = regexp.MustCompile(`^(([0-9]+)_[0-9]+\.db)(?:-wal|-shm|-journal)?$`)
+// ephemeralLockSuffix names a database's lock file; the database itself is the
+// same name with ephemeralDatabaseSuffix.
+const (
+	ephemeralLockSuffix     = ".lock"
+	ephemeralDatabaseSuffix = ".db"
+)
 
-// ephemeralDatabaseSuffixes are the files SQLite keeps beside a database in WAL
-// or rollback-journal mode.
-var ephemeralDatabaseSuffixes = []string{"", "-wal", "-shm", "-journal"}
-
-// ownPIDSweep runs once per process, before its first ephemeral database exists:
-// at that point a database carrying this process's pid can only have been left by
-// an earlier process that had the same pid, so it is removed as well.
-var ownPIDSweep sync.Once
+// ephemeralDatabaseFiles are the files a database named <name> may leave, lock file
+// last: it is deleted only after everything it protects.
+var ephemeralDatabaseFiles = []string{".db", ".db-wal", ".db-shm", ".db-journal", ephemeralLockSuffix}
 
 type ephemeralDatabase struct {
-	path    string
+	path string
+	// lock is the open lock file whose exclusive lock marks the database live.
+	lock    *os.File
 	release sync.Once
 	err     error
 }
 
-// createEphemeralDatabase sweeps the databases of exited owners and reserves a new
-// database file for this process. It refuses when the ephemeral directory exists
-// but is not one it can prove is mahresources': writing there could not be swept
-// safely later, and a directory of its own per start would leak whenever a server
-// was killed.
+// createEphemeralDatabase sweeps abandoned databases and reserves a new one for
+// this process, locked before its file exists. It refuses when the ephemeral
+// directory exists but is not one it can prove is mahresources': writing there
+// could not be swept safely later, and a directory of its own per start would leak
+// whenever a server was killed.
 func createEphemeralDatabase() (*ephemeralDatabase, error) {
 	dir := filepath.Join(os.TempDir(), ephemeralDirectoryName())
 	if !claimEphemeralDirectory(dir) {
@@ -60,19 +60,52 @@ func createEphemeralDatabase() (*ephemeralDatabase, error) {
 			"directory of this user that no one else may open, containing %s; remove it, or set TMPDIR "+
 			"to another directory", dir, ephemeralDirectoryMarker)
 	}
-	ownPIDSweep.Do(func() { sweepEphemeralDatabases(dir, true) })
-	sweepEphemeralDatabases(dir, false)
+	sweepEphemeralDatabases(dir)
 
-	file, err := os.CreateTemp(dir, strconv.Itoa(os.Getpid())+"_*.db")
+	for attempt := 1; ; attempt++ {
+		lock, err := os.CreateTemp(dir, "*"+ephemeralLockSuffix)
+		if err != nil {
+			return nil, fmt.Errorf("create ephemeral database lock: %w", err)
+		}
+		if err := lockEphemeralFile(lock); err != nil {
+			_ = lock.Close()
+			_ = os.Remove(lock.Name())
+			return nil, fmt.Errorf("lock ephemeral database: %w", err)
+		}
+		// A sweep that opened the new lock file before it was locked can have taken
+		// the lock first and deleted it: a lock on a file no longer at its path
+		// protects nothing.
+		if !stillAt(lock, lock.Name()) {
+			_ = lock.Close()
+			if attempt < 3 {
+				continue
+			}
+			return nil, errors.New("reserve ephemeral database: its lock file kept being removed")
+		}
+		database := &ephemeralDatabase{
+			path: strings.TrimSuffix(lock.Name(), ephemeralLockSuffix) + ephemeralDatabaseSuffix,
+			lock: lock,
+		}
+		file, err := os.OpenFile(database.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			err = file.Close()
+		}
+		if err != nil {
+			_ = database.remove()
+			return nil, fmt.Errorf("create ephemeral database file: %w", err)
+		}
+		return database, nil
+	}
+}
+
+// stillAt reports whether path still names the file f has open.
+func stillAt(f *os.File, path string) bool {
+	opened, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("create ephemeral database file: %w", err)
+		return false
 	}
-	database := &ephemeralDatabase{path: file.Name()}
-	if err := file.Close(); err != nil {
-		_ = database.remove()
-		return nil, fmt.Errorf("create ephemeral database file: %w", err)
-	}
-	return database, nil
+	named, err := os.Lstat(path)
+	return err == nil && os.SameFile(opened, named)
 }
 
 // claimEphemeralDirectory makes dir the shared ephemeral directory, or confirms it
@@ -111,63 +144,50 @@ func ephemeralDatabaseDSN(path, params string) string {
 	return (&url.URL{Scheme: "file", Path: slashed, RawQuery: params}).String()
 }
 
-// sweepEphemeralDatabases deletes the databases in the shared ephemeral directory
-// whose owning process has exited and that no process still has open.
-// includeOwnPID also considers those that carry this process's pid (see
-// ownPIDSweep). Only regular files are touched.
-func sweepEphemeralDatabases(dir string, includeOwnPID bool) {
+// sweepEphemeralDatabases deletes, in the shared ephemeral directory, every
+// database whose lock file no process holds: its owner released it or died. The
+// files go while this sweep holds that lock, the lock file last, so a server that
+// is still starting (its lock taken, its database not yet created or copied) is
+// never touched. Only regular files are considered.
+func sweepEphemeralDatabases(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	self := os.Getpid()
-	exited := map[int]bool{}
-	// A database and its -wal, -shm and -journal files go together, decided once.
-	abandoned := map[string]bool{}
 	for _, entry := range entries {
-		match := ephemeralDatabaseName.FindStringSubmatch(entry.Name())
-		if match == nil || !entry.Type().IsRegular() {
+		name, isLock := strings.CutSuffix(entry.Name(), ephemeralLockSuffix)
+		if !isLock || name == "" || !entry.Type().IsRegular() {
 			continue
 		}
-		pid, err := strconv.Atoi(match[2])
+		path := filepath.Join(dir, entry.Name())
+		lock, err := os.Open(path)
 		if err != nil {
 			continue
 		}
-		database := filepath.Join(dir, match[1])
-		decided, seen := abandoned[database]
-		if !seen {
-			decided = ownerGone(pid, self, includeOwnPID, exited) && !ephemeralDatabaseOpen(database)
-			abandoned[database] = decided
+		if tryLockEphemeralFile(lock) && stillAt(lock, path) {
+			_ = removeEphemeralFiles(filepath.Join(dir, name))
 		}
-		if decided {
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
-		}
+		_ = lock.Close()
 	}
 }
 
-// ownerGone reports whether the process named by pid can no longer be using its
-// database, remembering the answer for each pid in exited.
-func ownerGone(pid, self int, includeOwnPID bool, exited map[int]bool) bool {
-	if pid == self {
-		return includeOwnPID
-	}
-	gone, known := exited[pid]
-	if !known {
-		gone = ephemeralOwnerExited(pid)
-		exited[pid] = gone
-	}
-	return gone
-}
-
-// remove deletes the database and its sidecar files.
-func (eph *ephemeralDatabase) remove() error {
+// removeEphemeralFiles deletes the files of the database named stem, lock file
+// last.
+func removeEphemeralFiles(stem string) error {
 	var errs []error
-	for _, suffix := range ephemeralDatabaseSuffixes {
-		if err := os.Remove(eph.path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, suffix := range ephemeralDatabaseFiles {
+		if err := os.Remove(stem + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// remove deletes the database and its sidecar files while this process still holds
+// its lock, then gives the lock up.
+func (eph *ephemeralDatabase) remove() error {
+	err := removeEphemeralFiles(strings.TrimSuffix(eph.path, ephemeralDatabaseSuffix))
+	return errors.Join(err, eph.lock.Close())
 }
 
 // ReleaseEphemeralDatabase closes an ephemeral context's database handles and

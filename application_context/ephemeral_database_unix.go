@@ -4,42 +4,12 @@ package application_context
 
 import (
 	"errors"
-	"io"
 	"os"
 	"strconv"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
-
-// ephemeralOwnerExited reports whether pid is certainly gone. Signal 0 probes
-// without delivering anything; EPERM is a live process of another user, and any
-// answer other than ESRCH proves nothing, so the file is kept.
-func ephemeralOwnerExited(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
-}
-
-// ephemeralDatabaseOpen reports whether another process still has the database at
-// path open. Every SQLite connection in WAL mode holds a lock on the -shm file for
-// as long as it is open, and a lock outlives nothing but its process, so this also
-// sees an owner whose pid is invisible here (another PID namespace sharing the
-// directory). A probe that fails proves nothing, so it answers yes.
-func ephemeralDatabaseOpen(path string) bool {
-	shm, err := os.Open(path + "-shm")
-	if errors.Is(err, os.ErrNotExist) {
-		return false
-	}
-	if err != nil {
-		return true
-	}
-	defer shm.Close()
-	probe := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart}
-	if err := syscall.FcntlFlock(shm.Fd(), syscall.F_GETLK, &probe); err != nil {
-		return true
-	}
-	return probe.Type != syscall.F_UNLCK
-}
 
 // ephemeralDirectoryName is this user's shared ephemeral directory under the temp
 // directory. The uid keeps users of one machine out of each other's.
@@ -57,4 +27,21 @@ func ownedByCurrentUser(info os.FileInfo) bool {
 // may use it.
 func privateToCurrentUser(info os.FileInfo) bool {
 	return ownedByCurrentUser(info) && info.Mode().Perm()&0o077 == 0
+}
+
+// lockEphemeralFile takes the exclusive lock that marks a database live, waiting
+// out a sweep that holds it for a moment. flock belongs to the open file, not the
+// process, so one server can hold several and still be refused its own.
+func lockEphemeralFile(f *os.File) error {
+	for {
+		err := unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		if !errors.Is(err, unix.EINTR) {
+			return err
+		}
+	}
+}
+
+// tryLockEphemeralFile takes that lock only if no one holds it.
+func tryLockEphemeralFile(f *os.File) bool {
+	return unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) == nil
 }

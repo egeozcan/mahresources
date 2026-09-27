@@ -54,7 +54,9 @@ Or use the combined ephemeral flag:
 ./mahresources -ephemeral
 ```
 
-`-memory-db` and `-ephemeral` use a temporary SQLite database file with WAL mode for better concurrency under test load. Treat it as transient scratch storage rather than durable persistence: the file lives in a private `mahresources-ephemeral-<uid>` directory of the system temp directory (`mahresources-ephemeral` on Windows), the server deletes it on a graceful shutdown (SIGINT or SIGTERM), and the next ephemeral start deletes the files of a server that was killed. On Windows that last step does not run, so a killed server's files stay. If that directory exists but is not one mahresources made (it must belong to the same user, be closed to everyone else, and hold a `.mahresources-ephemeral` marker or be empty), an ephemeral start refuses with an error naming it rather than writing into it.
+`-memory-db` and `-ephemeral` use a temporary SQLite database file with WAL mode for better concurrency under test load. Treat it as transient scratch storage rather than durable persistence: the file lives in a private `mahresources-ephemeral-<uid>` directory of the system temp directory (`mahresources-ephemeral` on Windows), the server deletes it on a graceful shutdown (SIGINT or SIGTERM), and the next ephemeral start deletes the files of a server that was killed, which it recognizes by a `.lock` file beside the database that no process holds any more. If that directory exists but is not one mahresources made (it must belong to the same user, be closed to everyone else, and hold a `.mahresources-ephemeral` marker or be empty), an ephemeral start refuses with an error naming it rather than writing into it.
+
+On Windows two of these do not hold: the server takes no lock there, so a killed server's files stay until deleted by hand, and it does not inspect the directory's ACLs, so point `TEMP` at a directory only your account can open.
 
 ### Seeding from Existing Database
 

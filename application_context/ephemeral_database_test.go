@@ -3,7 +3,6 @@
 package application_context
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -11,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // isolateTempDir points os.TempDir at a fresh directory for the test.
@@ -28,16 +25,6 @@ func isolateTempDirAt(t *testing.T, dir string) string {
 		t.Fatalf("os.TempDir() = %q, want %q", got, dir)
 	}
 	return dir
-}
-
-// exitedPID returns the pid of a process that has already exited and been reaped.
-func exitedPID(t *testing.T) int {
-	t.Helper()
-	cmd := exec.Command("true")
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("running true: %v", err)
-	}
-	return cmd.Process.Pid
 }
 
 // databaseFilesIn lists the ephemeral database files in dir, leaving out the
@@ -100,14 +87,14 @@ func TestEphemeralDatabaseLivesInAPrivateDirectoryAndIsRemovedOnRelease(t *testi
 	if filepath.Dir(ctx.ephemeralDB.path) != dir {
 		t.Fatalf("database at %s, want it in %s", ctx.ephemeralDB.path, dir)
 	}
-	files := databaseFilesIn(t, dir)
-	if len(files) == 0 {
-		t.Fatalf("no ephemeral database file in %s", dir)
-	}
-	for _, name := range files {
-		if !strings.HasPrefix(name, fmt.Sprintf("%d_", os.Getpid())) {
-			t.Errorf("ephemeral file %q does not carry this process's pid", name)
+	stem := strings.TrimSuffix(ctx.ephemeralDB.path, ephemeralDatabaseSuffix)
+	for _, name := range databaseFilesIn(t, dir) {
+		if !strings.HasPrefix(filepath.Join(dir, name), stem+".") {
+			t.Errorf("%s is not one of the database's files", name)
 		}
+	}
+	if heldBy(t, stem+ephemeralLockSuffix) != "someone" {
+		t.Fatal("a live database's lock file is not locked")
 	}
 
 	if err := ctx.ReleaseEphemeralDatabase(); err != nil {
@@ -178,47 +165,75 @@ func TestTwoEphemeralContextsInOneProcessDoNotShareAFile(t *testing.T) {
 	}
 }
 
-func TestOpeningAnEphemeralDatabaseSweepsTheDatabasesOfExitedProcesses(t *testing.T) {
+func TestOpeningAnEphemeralDatabaseSweepsOnlyDatabasesWhoseLockIsFree(t *testing.T) {
 	dir := filepath.Join(isolateTempDir(t), ephemeralDirectoryName())
 	if !claimEphemeralDirectory(dir) {
 		t.Fatal("could not create the ephemeral directory")
 	}
-	dead := exitedPID(t)
-	live := os.Getppid()
+	at := func(name string) string { return filepath.Join(dir, name) }
 
-	gone := []string{
-		fmt.Sprintf("%d_123.db", dead),
-		fmt.Sprintf("%d_123.db-wal", dead),
-		fmt.Sprintf("%d_123.db-shm", dead),
-		fmt.Sprintf("%d_456.db-journal", dead),
+	// abandoned: its owner is gone, so no one holds its lock.
+	gone := []string{"abandoned.db", "abandoned.db-wal", "abandoned.db-shm", "abandoned.db-journal", "abandoned.lock"}
+	for _, name := range gone {
+		writeFile(t, at(name), "x")
 	}
-	kept := []string{
-		fmt.Sprintf("%d_42.db", live),
-		fmt.Sprintf("%d_42.db-wal", live),
-		fmt.Sprintf("%d_123.db.bak", dead),
-		"notes.txt",
+	// live: an owner holds its lock; starting: locked, its database not created yet.
+	kept := []string{"live.db", "live.db-wal", "live.lock", "starting.lock"}
+	for _, name := range kept {
+		writeFile(t, at(name), "x")
 	}
-	for _, name := range append(append([]string{}, gone...), kept...) {
-		writeFile(t, filepath.Join(dir, name), "x")
-	}
-	link := fmt.Sprintf("%d_7.db", dead)
-	if err := os.Symlink(filepath.Join(dir, "notes.txt"), filepath.Join(dir, link)); err != nil {
+	holdLock(t, at("live.lock"))
+	holdLock(t, at("starting.lock"))
+	// No lock file, or a lock file that is a link: nothing proves these are ours.
+	writeFile(t, at("unproven.db"), "x")
+	writeFile(t, at("unproven.db-wal"), "x")
+	writeFile(t, at("notes.txt"), "x")
+	writeFile(t, at("linked.db"), "x")
+	if err := os.Symlink(at("notes.txt"), at("linked.lock")); err != nil {
 		t.Fatalf("creating a symlink: %v", err)
 	}
-	kept = append(kept, link)
+	kept = append(kept, "unproven.db", "unproven.db-wal", "notes.txt", "linked.db", "linked.lock")
 
 	openEphemeralContext(t)
 
 	for _, name := range gone {
-		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s belongs to an exited process and should have been swept (stat err %v)", name, err)
+		if _, err := os.Lstat(at(name)); !os.IsNotExist(err) {
+			t.Errorf("%s belongs to a database no one holds and should have been swept (stat err %v)", name, err)
 		}
 	}
 	for _, name := range kept {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+		if _, err := os.Lstat(at(name)); err != nil {
 			t.Errorf("%s should have been kept: %v", name, err)
 		}
 	}
+}
+
+// holdLock takes the lock a server holds on a live database's lock file, on an
+// open file of its own, until the test ends.
+func holdLock(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	if err := lockEphemeralFile(f); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// heldBy reports "someone" when a lock is held on path, and "no one" otherwise.
+func heldBy(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if tryLockEphemeralFile(f) {
+		return "no one"
+	}
+	return "someone"
 }
 
 // An empty private directory of that name is one a start left before writing the
@@ -261,7 +276,7 @@ func TestAnEphemeralDirectoryThatIsNotOursRefusesTheStart(t *testing.T) {
 			tempDir := isolateTempDir(t)
 			dir := filepath.Join(tempDir, ephemeralDirectoryName())
 			prepare(t, dir)
-			stranger := filepath.Join(dir, fmt.Sprintf("%d_1.db", exitedPID(t)))
+			stranger := filepath.Join(dir, "stranger.db")
 			writeFile(t, stranger, "x")
 			before := databaseFilesIn(t, dir)
 
@@ -284,31 +299,17 @@ func TestAnEphemeralDirectoryThatIsNotOursRefusesTheStart(t *testing.T) {
 	}
 }
 
-func TestSweepRemovesDatabasesThatCarryThisProcessesPidOnlyWhenAskedTo(t *testing.T) {
+// The lock is the kernel's to release: a database whose owner is another process
+// is kept for exactly as long as that process lives, whatever it could or could
+// not be seen as by pid.
+func TestSweepKeepsADatabaseWhoseOwnerIsAliveAndReclaimsItWhenTheOwnerDies(t *testing.T) {
 	dir := t.TempDir()
-	own := filepath.Join(dir, fmt.Sprintf("%d_1.db", os.Getpid()))
-	writeFile(t, own, "x")
+	stem := filepath.Join(dir, "owned")
+	writeFile(t, stem+ephemeralLockSuffix, "")
+	writeFile(t, stem+ephemeralDatabaseSuffix, "x")
 
-	sweepEphemeralDatabases(dir, false)
-	if _, err := os.Stat(own); err != nil {
-		t.Fatalf("a file carrying this pid was removed by a sweep that should skip it: %v", err)
-	}
-
-	sweepEphemeralDatabases(dir, true)
-	if _, err := os.Stat(own); !os.IsNotExist(err) {
-		t.Fatalf("a file left under this pid by an earlier process survived (stat err %v)", err)
-	}
-}
-
-// A pid this process cannot see is not proof of an exit: a process in another PID
-// namespace sharing the directory is invisible to signal 0. A database that some
-// process still has open is kept whatever its name says.
-func TestSweepKeepsADatabaseAnotherProcessHasOpen(t *testing.T) {
-	dir := t.TempDir()
-	database := filepath.Join(dir, fmt.Sprintf("%d_1.db", exitedPID(t)))
-
-	holder := exec.Command(os.Args[0], "-test.run=^TestEphemeralSweepHelperHoldsADatabase$")
-	holder.Env = append(os.Environ(), "MAHRES_HOLD_EPHEMERAL_DB="+database)
+	holder := exec.Command(os.Args[0], "-test.run=^TestEphemeralSweepHelperHoldsALock$")
+	holder.Env = append(os.Environ(), "MAHRES_HOLD_EPHEMERAL_LOCK="+stem+ephemeralLockSuffix)
 	stdin, err := holder.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -320,45 +321,48 @@ func TestSweepKeepsADatabaseAnotherProcessHasOpen(t *testing.T) {
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = stdin.Close(); _ = holder.Wait() })
+	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
 	ready := make([]byte, 64)
 	if n, err := stdout.Read(ready); err != nil || !strings.Contains(string(ready[:n]), "holding") {
-		t.Fatalf("the holder never opened the database: %q, %v", ready[:n], err)
+		t.Fatalf("the holder never took the lock: %q, %v", ready[:n], err)
 	}
 
-	sweepEphemeralDatabases(dir, false)
-	for _, suffix := range []string{"", "-shm"} {
-		if _, err := os.Stat(database + suffix); err != nil {
-			t.Fatalf("swept %s while another process had the database open: %v", filepath.Base(database+suffix), err)
+	sweepEphemeralDatabases(dir)
+	for _, suffix := range []string{ephemeralDatabaseSuffix, ephemeralLockSuffix} {
+		if _, err := os.Stat(stem + suffix); err != nil {
+			t.Fatalf("swept %s while its owner was alive: %v", filepath.Base(stem+suffix), err)
 		}
 	}
 
+	// Killed, not shut down: it releases nothing itself.
 	_ = stdin.Close()
-	if err := holder.Wait(); err != nil {
-		t.Fatalf("holder: %v", err)
+	if err := holder.Process.Kill(); err != nil {
+		t.Fatal(err)
 	}
-	sweepEphemeralDatabases(dir, false)
-	if _, err := os.Stat(database); !os.IsNotExist(err) {
-		t.Fatalf("the database survived the sweep after its holder closed it (stat err %v)", err)
+	_ = holder.Wait()
+	sweepEphemeralDatabases(dir)
+	for _, suffix := range []string{ephemeralDatabaseSuffix, ephemeralLockSuffix} {
+		if _, err := os.Stat(stem + suffix); !os.IsNotExist(err) {
+			t.Fatalf("%s survived its owner's death (stat err %v)", filepath.Base(stem+suffix), err)
+		}
 	}
 }
 
-// TestEphemeralSweepHelperHoldsADatabase is the other process for the test above:
-// it opens a WAL database, says so, and keeps it open until its stdin closes.
-func TestEphemeralSweepHelperHoldsADatabase(t *testing.T) {
-	path := os.Getenv("MAHRES_HOLD_EPHEMERAL_DB")
+// TestEphemeralSweepHelperHoldsALock is the owner process for the test above: it
+// locks the file it is given, says so, and waits to be killed.
+func TestEphemeralSweepHelperHoldsALock(t *testing.T) {
+	path := os.Getenv("MAHRES_HOLD_EPHEMERAL_LOCK")
 	if path == "" {
-		t.Skip("runs only as the helper process of TestSweepKeepsADatabaseAnotherProcessHasOpen")
+		t.Skip("runs only as the helper process of TestSweepKeepsADatabaseWhoseOwnerIsAliveAndReclaimsItWhenTheOwnerDies")
 	}
-	db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL")
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("CREATE TABLE held (id INTEGER PRIMARY KEY)"); err != nil {
+	if err := lockEphemeralFile(f); err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println("holding")
 	_, _ = io.Copy(io.Discard, os.Stdin)
+	select {}
 }
