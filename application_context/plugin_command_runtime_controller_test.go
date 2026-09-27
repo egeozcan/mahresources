@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"mahresources/constants"
 	"mahresources/jobs"
@@ -83,6 +84,21 @@ func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 	})
 
 	stopStdoutCapture := capturePluginCommandStdout(t)
+	// The runtime is published before its activation is logged, so the log
+	// entry is held until the test has seen the runtime active: what follows
+	// must wait for the entry rather than find it by luck of scheduling.
+	activeSeen := make(chan struct{})
+	var releaseLog sync.Once
+	const holdActivationLog = "test:hold_plugin_command_activation_log"
+	require.NoError(t, ctx.db.Callback().Create().Before("gorm:create").Register(holdActivationLog, func(tx *gorm.DB) {
+		if entry, ok := tx.Statement.Dest.(*models.LogEntry); ok && entry.EntityType == "plugin_command" && entry.Level == models.LogLevelInfo {
+			<-activeSeen
+		}
+	}))
+	t.Cleanup(func() {
+		releaseLog.Do(func() { close(activeSeen) })
+		_ = ctx.db.Callback().Create().Remove(holdActivationLog)
+	})
 	cfg := defaultPluginCommandControllerConfig()
 	cfg.acquireBackoff = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
 	attempted := make(chan int, 3)
@@ -120,6 +136,7 @@ func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 		_, err := ctx.pluginCommandActive()
 		return err == nil
 	}, time.Second, time.Millisecond)
+	releaseLog.Do(func() { close(activeSeen) })
 
 	mu.Lock()
 	require.Len(t, attempts, 3)
@@ -131,8 +148,13 @@ func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 	require.GreaterOrEqual(t, secondDelay, 10*time.Millisecond)
 	require.Less(t, secondDelay, time.Second)
 
+	// Activation is logged after it is published: the entry, not the runtime,
+	// is the end of the activation.
 	var logs []models.LogEntry
-	require.NoError(t, ctx.db.Where("entity_type = ?", "plugin_command").Order("id asc").Find(&logs).Error)
+	require.Eventually(t, func() bool {
+		logs = nil
+		return ctx.db.Where("entity_type = ?", "plugin_command").Order("id asc").Find(&logs).Error == nil && len(logs) >= 2
+	}, 5*time.Second, time.Millisecond)
 	require.Len(t, logs, 2)
 	require.Equal(t, models.LogLevelWarning, logs[0].Level)
 	require.Contains(t, logs[0].Message, root)
