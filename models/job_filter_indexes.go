@@ -37,7 +37,9 @@ type jobFilterIndex struct {
 //     such seek (jobs.orderedBranches), which is how the Jobs panel reads its
 //     groups on every refresh. idx_jobs_state_phase_entered and
 //     idx_jobs_visible_phase_entered are their twins for the partial token,
-//     which is a sliver of the succeeded Jobs.
+//     which is a sliver of the succeeded Jobs, and idx_jobs_owner_state_entered
+//     serves an administrator's own Jobs (owner=me), whose reads carry no
+//     visibility predicate to lead with.
 var jobFilterIndexes = []jobFilterIndex{
 	{"idx_jobs_state_phase", "jobs", "state, phase, accepted_at, id"},
 	{"idx_jobs_visible_phase", "jobs", "visibility_class, owner_user_id, state, phase, accepted_at, id"},
@@ -46,6 +48,7 @@ var jobFilterIndexes = []jobFilterIndex{
 	{"idx_jobs_visible_state_entered", "jobs", "visibility_class, owner_user_id, state, state_entered_at, id"},
 	{"idx_jobs_state_phase_entered", "jobs", "state, phase, state_entered_at, id"},
 	{"idx_jobs_visible_phase_entered", "jobs", "visibility_class, owner_user_id, state, phase, state_entered_at, id"},
+	{"idx_jobs_owner_state_entered", "jobs", "owner_user_id, state, state_entered_at, id"},
 }
 
 // jobFilterIndexLockKey is the PostgreSQL advisory lock one server holds while

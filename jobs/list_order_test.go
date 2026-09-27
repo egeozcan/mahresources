@@ -147,6 +147,21 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 	}
 }
 
+// TestStateEnteredOrderSeeksAnAdministratorsOwnJobs pins the plan of an
+// administrator's drawer limited to their own Jobs: with no visibility
+// predicate to lead with, each state is still a seek, on the owner.
+func TestStateEnteredOrderSeeksAnAdministratorsOwnJobs(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	dismissed := false
+	filter := Filter{States: []string{string(StateFailed), string(StateInterrupted)}, OwnedByViewer: true, Dismissed: &dismissed}
+	sql, vars := listRowsStatement(t, svc, deps, Access{UserID: 1, Administrator: true}, filter, true, Cursor{Order: OrderStateEntered})
+	plan := explainSQLite(t, deps, sql, vars)
+	if strings.Count(plan, "USING INDEX idx_jobs_owner_state_entered (owner_user_id=? AND state=?)") != 2 || strings.Contains(plan, "SCAN jobs") {
+		t.Errorf("an administrator's own state-entered page does not seek its owner once per state:\n%s", plan)
+	}
+}
+
 // TestStateEnteredOrderWithoutAStateListsEveryJobOnce pages an unfiltered
 // listing in state-entered order: every state is its own branch, and the pages
 // hold every Job once, newest state change first.
