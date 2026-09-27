@@ -295,9 +295,9 @@ Legacy alias: `POST /v1/download/submit`
 
 Submit multiple URLs separated by newlines in the `url` field. Each URL becomes a separate job in the queue.
 
-Each line must be an absolute `http` or `https` URL with a host. A line that is
-not one is refused when it is submitted, before any Job is made for it, and the
-others are still accepted: the answer is `202 Accepted` with the refused lines
+Blank lines are skipped. Every other line must be an absolute `http` or `https`
+URL with a host. A line that is not one is refused when it is submitted, before
+any Job is made for it, and the others are still accepted: the answer is `202 Accepted` with the refused lines
 listed under `refused`, each with its `url` and `reason`. When no line is
 accepted the answer is `400 Bad Request` naming the first refused line. A
 deferred plugin download is checked the same way when it is scheduled.

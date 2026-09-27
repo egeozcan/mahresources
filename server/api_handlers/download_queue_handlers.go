@@ -676,9 +676,7 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 		// fetching this URL means running this one too would transfer it twice.
 		if projection.Entry != nil {
 			if live, running := download_queue.ActiveDownloadForURL(ctx.DownloadManager(), projection.Entry.GetURL()); running {
-				http_utils.HandleError(
-					fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
-					writer, request, http.StatusConflict)
+				http_utils.HandleError(&download_queue.URLActiveError{JobID: live}, writer, request, http.StatusConflict)
 				return
 			}
 		}

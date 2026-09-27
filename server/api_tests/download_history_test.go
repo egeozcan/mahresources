@@ -847,6 +847,11 @@ func TestDownloadHistoryRetryRefusesAURLAlreadyDownloading(t *testing.T) {
 	if res.Code != http.StatusConflict {
 		t.Fatalf("retry of a URL already downloading: status %d, want 409 (%s)", res.Code, res.Body.String())
 	}
+	// The transfer in the way may be another account's, and its id is not the
+	// caller's to learn.
+	if strings.Contains(res.Body.String(), live.ID) {
+		t.Fatalf("the refusal names the other transfer: %s", res.Body.String())
+	}
 	if after := len(tc.AppCtx.DownloadManager().GetJobs()); after != before {
 		t.Fatalf("the queue grew from %d to %d: the same URL is being fetched twice", before, after)
 	}
@@ -890,9 +895,18 @@ func TestAPausedDownloadDoesNotBlockARetryOfItsURL(t *testing.T) {
 		t.Fatalf("the queue grew from %d to %d, want one retried download (%d %s)", before, after, res.Code, res.Body.String())
 	}
 
+	var retried string
+	for _, job := range dm.GetJobs() {
+		if job.ID != paused.ID && job.URL == server.URL {
+			retried = job.ID
+		}
+	}
 	resumed := postJSON(tc, "/v1/download/resume?id="+paused.ID, "", nil)
 	if resumed.Code != http.StatusConflict {
 		t.Fatalf("resuming a paused download while its URL downloads: status %d, want 409 (%s)", resumed.Code, resumed.Body.String())
+	}
+	if retried == "" || strings.Contains(resumed.Body.String(), retried) {
+		t.Fatalf("the refusal names the other transfer %q: %s", retried, resumed.Body.String())
 	}
 	if status := paused.GetStatus(); status != download_queue.JobStatusPaused {
 		t.Fatalf("the refused resume moved the paused download to %s", status)

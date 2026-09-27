@@ -152,3 +152,73 @@ func assertStoppedByShutdown(t *testing.T, rec HistoryRecord) {
 		t.Errorf("error = %q, want it to say the server shut down", rec.Error)
 	}
 }
+
+// A shutdown stops the attempt that is running when it lands, and only that one. An
+// older attempt a pause stopped and a resume replaced, still unwinding when the
+// shutdown comes, speaks for nothing: handing the Job back on its way out would
+// requeue the newer attempt's work while that attempt is still running, under the
+// execution the newer attempt was given.
+func TestAStaleAttemptDoesNotHandBackTheAttemptThatReplacedIt(t *testing.T) {
+	blocker := newBlockingResourceCreator()
+	dm := createTestManager()
+	dm.resourceCtx = blocker
+	dm.settings = NewStaticDownloadSettings(TimeoutConfig{
+		ConnectTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, OverallTimeout: time.Minute,
+	}, 0)
+	sink := &recordingCanonicalSink{}
+	dm.SetCanonicalSink(sink)
+	srv := trickleServer(t)
+
+	first := CanonicalRef{JobID: "0192f0aa-0000-7000-8000-00000000sd05", ExecutionToken: "token-first"}
+	job, err := dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: srv.URL + "/replaced.dat"},
+		nil, "", SubmissionOptions{JobID: "legacy-sd05", Canonical: &first})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	blocker.waitParked(t) // the first attempt, inside AddResource
+
+	if err := dm.Pause(job.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	second := CanonicalRef{JobID: first.JobID, ExecutionToken: "token-second"}
+	if !job.AttachCanonical(second) {
+		t.Fatal("the resumed execution was not attached")
+	}
+	if err := dm.ResumeExclusive(job.ID); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	blocker.waitParked(t) // the second attempt, inside AddResource too
+
+	// What Shutdown does to the attempt running now.
+	if !job.claimShutdownStop() {
+		t.Fatal("the shutdown found no running attempt")
+	}
+
+	blocker.releaseOne(t) // the first attempt unwinds
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		handed := len(sink.interrupted)
+		sink.mu.Unlock()
+		if handed != 0 {
+			t.Fatalf("the replaced attempt handed the Job back while the attempt that replaced it was still running")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if status := job.GetStatus(); status != JobStatusDownloading {
+		t.Fatalf("the replaced attempt moved the running one to %s", status)
+	}
+
+	blocker.releaseOne(t) // the attempt the shutdown stopped unwinds
+	waitForCanonical(t, "the stopped attempt to hand its Job back", func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.interrupted) > 0
+	})
+	sink.mu.Lock()
+	interrupted := append([]recordedMirror(nil), sink.interrupted...)
+	sink.mu.Unlock()
+	if len(interrupted) != 1 || interrupted[0].ref != second {
+		t.Fatalf("the Job was handed back %d times (%+v), want once under the execution the shutdown stopped", len(interrupted), interrupted)
+	}
+}

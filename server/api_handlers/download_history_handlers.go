@@ -265,7 +265,7 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// The queue is the authority on what is being downloaded, so it is asked first,
 	// whichever way this row is about to be run again.
 	if live, running := download_queue.ActiveDownloadForURL(dm, creator.URL); running {
-		return "", "", fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live)
+		return "", "", &download_queue.URLActiveError{JobID: live}
 	}
 
 	if job, exists := dm.GetJob(entry.JobID); exists {

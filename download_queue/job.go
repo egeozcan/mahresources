@@ -93,10 +93,14 @@ type DownloadJob struct {
 	// control. Cleared by claimRetry, which is the user asking for the job again.
 	cancelRequested bool
 	// stoppedForShutdown records that the deployment's shutdown, and not a person,
-	// ended the running attempt. Set under mu by claimShutdownStop, and only when no
-	// cancel was accepted first: a person's cancel that landed before the shutdown
-	// is still what stopped the download.
-	stoppedForShutdown bool
+	// ended the attempt stoppedForShutdownRun names. Set under mu by
+	// claimShutdownStop, and only when no cancel was accepted first: a person's
+	// cancel that landed before the shutdown is still what stopped the download.
+	// It names one attempt because an older one, which a pause stopped and a resume
+	// replaced, can still be unwinding when the shutdown lands, and the shutdown
+	// did not stop that one.
+	stoppedForShutdown    bool
+	stoppedForShutdownRun uint64
 	// discarded records that the user deleted this job's history row, so a terminal
 	// write still in flight does not re-insert it. See markDiscarded.
 	discarded bool
@@ -214,18 +218,33 @@ func (j *DownloadJob) claimShutdownStop() bool {
 		return false
 	}
 	if !j.cancelRequested {
-		j.stoppedForShutdown = true
+		j.stoppedForShutdown, j.stoppedForShutdownRun = true, j.runID
 	}
 	j.cancelLocked()
 	return true
 }
 
-// wasStoppedForShutdown reports whether the deployment's shutdown ended the
-// running attempt (see claimShutdownStop).
-func (j *DownloadJob) wasStoppedForShutdown() bool {
+// stoppedForShutdownBy reports whether the deployment's shutdown ended the given
+// attempt (see claimShutdownStop). An attempt the shutdown did not stop, however
+// it ended, gets false, and its own terminal writes are then refused by the
+// ownership check like any other stale attempt's.
+func (j *DownloadJob) stoppedForShutdownBy(runID uint64) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
-	return j.stoppedForShutdown
+	return j.stoppedForShutdown && j.stoppedForShutdownRun == runID
+}
+
+// canonicalForRun answers the durable execution an attempt publishes under, read
+// together with the check that the attempt still owns the job (ownedByRunLocked).
+// An attempt that no longer does publishes nothing: the execution attached now
+// may belong to the attempt that replaced it.
+func (j *DownloadJob) canonicalForRun(runID uint64) (CanonicalRef, bool) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if !j.ownedByRunLocked(runID) || j.canonical == nil || j.canonical.JobID == "" {
+		return CanonicalRef{}, false
+	}
+	return *j.canonical, true
 }
 
 // claimHeldShutdown stamps a paused download that the deployment's shutdown is
@@ -484,7 +503,7 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 	j.Status = JobStatusPending
 	j.Error = ""
 	j.FailureReason, j.FailureCode, j.ExistingResourceID = "", "", nil
-	j.stoppedForShutdown = false
+	j.stoppedForShutdown, j.stoppedForShutdownRun = false, 0
 	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
 	j.StartedAt, j.CompletedAt, j.ResourceID = nil, nil, nil
 	// The previous attempt's *reported* leftovers go too, which the counters and the

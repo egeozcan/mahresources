@@ -244,14 +244,17 @@ type SubmissionOptions struct {
 }
 
 // URLActiveError is a submission refused because another entry in this queue is
-// fetching the same URL right now.
+// fetching the same URL right now. JobID names that entry for the code that
+// arbitrates; the message does not, because the transfer in the way may be another
+// account's.
 type URLActiveError struct {
 	JobID string
 }
 
-func (e *URLActiveError) Error() string {
-	return fmt.Sprintf("this URL is already downloading as %s", e.JobID)
-}
+// URLBusyMessage is what a caller refused for a busy URL is told, on every path.
+const URLBusyMessage = "this URL is already downloading; wait for it to finish"
+
+func (e *URLActiveError) Error() string { return URLBusyMessage }
 
 // actorResourceCreator is the optional capability (implemented by
 // *application_context.MahresourcesContext, not by test doubles) that binds the
@@ -806,7 +809,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		return
 	}
 	dm.notifyJob("updated", job)
-	dm.mirrorProgress(job)
+	dm.mirrorProgressForRun(job, runID)
 
 	// Perform the download with progress tracking
 	resource, err := dm.downloadWithProgress(ctx, runID, job)
@@ -820,7 +823,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	}
 	status, errMsg, failure, resourceID := JobStatusCompleted, "", attemptFailure{}, uint(0)
 	switch {
-	case err != nil && ctx.Err() != nil && job.wasStoppedForShutdown():
+	case err != nil && ctx.Err() != nil && job.stoppedForShutdownBy(runID):
 		dm.handOverStoppedForShutdown(job, runID)
 		return
 	case err != nil && ctx.Err() != nil:
@@ -882,7 +885,7 @@ func (dm *DownloadManager) acquireDomainGate(ctx context.Context, job *DownloadJ
 }
 
 func (dm *DownloadManager) finishCancelledBeforeStarting(job *DownloadJob, runID uint64) {
-	if job.wasStoppedForShutdown() {
+	if job.stoppedForShutdownBy(runID) {
 		dm.handOverStoppedForShutdown(job, runID)
 		return
 	}
@@ -915,7 +918,9 @@ const stoppedForShutdownMessage = "The server shut down before the download fini
 // retryable from its history row.
 func (dm *DownloadManager) handOverStoppedForShutdown(job *DownloadJob, runID uint64) {
 	if _, owned := job.CanonicalExecution(); owned {
-		dm.mirrorInterrupted(job)
+		// Under the execution this attempt still owns, read with that check, and
+		// not whichever one is attached by the time the write is made.
+		dm.mirrorInterruptedForRun(job, runID)
 		return
 	}
 	snap, stamped := job.finishSnapshotWithReason(runID, JobStatusFailed, stoppedForShutdownMessage,
@@ -1143,7 +1148,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			if due {
 				dm.notifyJob("updated", job)
 				mirrorMu.Lock()
-				dm.mirrorProgress(job)
+				dm.mirrorProgressForRun(job, runID)
 				mirrorMu.Unlock()
 			}
 		})
@@ -1209,7 +1214,7 @@ func (r *attemptReporter) onProgress(downloaded int64) {
 	if time.Since(r.lastNotify) >= progressNotifyInterval {
 		r.lastNotify = time.Now()
 		r.dm.notifyJob("updated", r.job)
-		r.dm.mirrorProgress(r.job)
+		r.dm.mirrorProgressForRun(r.job, r.runID)
 	}
 }
 
@@ -1225,7 +1230,7 @@ func (r *attemptReporter) onComplete() {
 		return
 	}
 	r.dm.notifyJob("updated", r.job)
-	r.dm.mirrorProgress(r.job)
+	r.dm.mirrorProgressForRun(r.job, r.runID)
 }
 
 // downloadWithProgress performs the HTTP download with progress tracking.
@@ -1766,8 +1771,8 @@ func (dm *DownloadManager) currentCanonicalSink() CanonicalSink {
 // the package's own tests, and every non-download source — and its error is
 // deliberately not propagated: the mirror is a record about a download, and a
 // record that cannot be written must not change what the download does.
-func (dm *DownloadManager) mirrorProgress(job *DownloadJob) {
-	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+func (dm *DownloadManager) mirrorProgressForRun(job *DownloadJob, runID uint64) {
+	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
 		return sink.DownloadProgress(ref, snap)
 	})
 }
@@ -1790,8 +1795,8 @@ func (dm *DownloadManager) mirrorFinished(job *DownloadJob) {
 
 // mirrorInterrupted hands a transfer the deployment's shutdown stopped back to its
 // Job (see CanonicalSink.DownloadInterrupted).
-func (dm *DownloadManager) mirrorInterrupted(job *DownloadJob) {
-	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+func (dm *DownloadManager) mirrorInterruptedForRun(job *DownloadJob, runID uint64) {
+	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
 		return sink.DownloadInterrupted(ref, snap)
 	})
 }
@@ -1799,6 +1804,26 @@ func (dm *DownloadManager) mirrorInterrupted(job *DownloadJob) {
 // mirror is the one place a canonical ref is read, the sink is looked up, and the
 // snapshot is taken — so no mirror can publish under a job's live pointer or
 // forget to be a no-op for a job without an execution.
+// mirrorForRun is mirror for a write an attempt makes while it runs: it publishes
+// only while that attempt still owns the job, under the execution read with that
+// check (canonicalForRun), so an attempt a pause stopped and a resume replaced
+// never speaks for the one that replaced it. An attempt's outcome is published
+// with mirror, after the stamp that the same ownership check fences.
+func (dm *DownloadManager) mirrorForRun(job *DownloadJob, runID uint64, publish func(CanonicalSink, CanonicalRef, *DownloadJob) error) {
+	if job == nil || job.Source != JobSourceDownload || job.runFn != nil {
+		return
+	}
+	ref, ok := job.canonicalForRun(runID)
+	if !ok {
+		return
+	}
+	sink := dm.currentCanonicalSink()
+	if sink == nil {
+		return
+	}
+	_ = publish(sink, ref, job.Snapshot())
+}
+
 func (dm *DownloadManager) mirror(job *DownloadJob, publish func(CanonicalSink, CanonicalRef, *DownloadJob) error) {
 	if job == nil || job.Source != JobSourceDownload || job.runFn != nil {
 		return
