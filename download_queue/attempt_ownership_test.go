@@ -86,6 +86,9 @@ func TestAttemptReporter_WritesAreRefusedOnceAControlOwnsTheJob(t *testing.T) {
 		dm := createTestManager()
 		job := addTestJob(dm, "j", JobStatusDownloading)
 		stale := newReporter(job) // attempt A
+		// This test plays attempt B itself, so the worker Resume starts for it is
+		// held off the job; running, it would race the test for B's own writes.
+		holdRetryWorker(t, dm, job)
 
 		if err := dm.Pause("j"); err != nil {
 			t.Fatalf("pausing failed: %v", err)

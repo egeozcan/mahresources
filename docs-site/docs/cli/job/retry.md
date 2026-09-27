@@ -9,17 +9,26 @@ sidebar_label: retry
 Re-queue a failed or cancelled download job for another attempt.
 Retry only works against jobs in the `failed` or `cancelled` state;
 the server rejects retry on jobs that are still active, paused, or
-already completed. A retry is also refused with HTTP 409 while any queued
-or running job is already fetching the same URL, so one URL is never
-transferred twice, and for a failure a retry would repeat: a duplicate
-of content the library holds, a stream the server will not assemble, or
-a remote 4xx other than 403, 408, 423, 425 and 429.
+already completed. It also refuses a failure a retry would repeat: a
+duplicate of content the library holds, a stream the server will not
+assemble, or a remote 4xx other than 403, 408, 423, 425 and 429.
 
-The ID you pass keeps working. For a download the Job Center records,
-the retry is a new Job linked to the failed one, which keeps its
-outcome, and the ID moves to the new Job. A download from before the
-Job Center is retried in place: its progress, error message and
-completion times are cleared, then the worker fetches the URL again.
+One URL is transferred once at a time. While the server's queue still
+holds the failed attempt and another download of the same URL is
+pending, downloading, processing or paused there, this command is
+refused with HTTP 409. Otherwise the retry is accepted, and if the URL
+is downloading when the new attempt would start, it waits in the queue
+with the phase `waiting` until that transfer ends. A retry from the Job
+Center (`POST /v1/jobs/{id}/commands/retry`) is never refused for this:
+it always waits.
+
+The download ID you pass keeps working. For a download the Job Center
+records, the retry is a new Job linked to the failed one, and the ID
+moves to the new Job. The failed Job keeps its outcome, and its own
+Job UUID keeps naming it; the response's `canonicalJobId` is the new
+Job's UUID. A download from before the Job Center is retried in place:
+its progress, error message and completion times are cleared, then the
+worker fetches the URL again.
 
 Useful when a transient network error blew up the first attempt.
 Persistent failures need an updated URL, which means calling

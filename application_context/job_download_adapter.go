@@ -374,6 +374,21 @@ func (a *downloadJobAdapter) ClaimExclusions() []string {
 	})
 }
 
+// downloadAdapterFor answers this process's registered adapter for a download
+// Kind, whose record of waiting Jobs the dispatch loop consults. A process with no
+// adapter registered gets one without that record: its waiting Job is then claimed
+// on the next pass and, finding the URL still busy, goes back to wait there.
+func (ctx *MahresourcesContext) downloadAdapterFor(kind string) *downloadJobAdapter {
+	if service := ctx.JobService(); service != nil {
+		if adapter, ok := service.AdapterFor(kind, jobDownloadKindVersion); ok {
+			if download, ok := adapter.(*downloadJobAdapter); ok {
+				return download
+			}
+		}
+	}
+	return &downloadJobAdapter{ctx: ctx, kind: kind}
+}
+
 // waitForTheURL hands this execution's Job back to the queue to wait for the
 // transfer already fetching its URL.
 //
@@ -1333,7 +1348,22 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 				JobID:          admission.Execution.JobID,
 				ExecutionToken: admission.Execution.ExecutionToken,
 			},
+			ExclusiveURL: true,
 		})
+	var busy *download_queue.URLActiveError
+	if errors.As(err, &busy) {
+		// The URL is downloading here already. The Job waits for that transfer in the
+		// queue, exactly as a dispatch that found the URL busy would, so one URL is
+		// fetched once at a time whether or not the deployment had room to start this
+		// submission at once.
+		_ = ctx.downloadAdapterFor(JobKindRemoteDownload).waitForTheURL(admission.Execution, creator.URL)
+		projected := admission.Accepted
+		if current, getErr := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, admission.Accepted.ID); getErr == nil {
+			projected = current
+		}
+		result.Row = downloadRowFromJob(projected, legacyID, download_queue.JobSourceDownload)
+		return result
+	}
 	if err != nil {
 		// The Job was admitted and the queue refused the transfer. It is ended here
 		// rather than left running: a Job nothing will ever dispatch would sit in the

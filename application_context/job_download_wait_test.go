@@ -124,6 +124,50 @@ func TestARetryOfAURLThatIsDownloadingWaitsForItAndThenRuns(t *testing.T) {
 	}
 }
 
+// A new submission of a URL another transfer is fetching waits for it the same way
+// a Retry does, whether or not the deployment had room to start it at once: one URL
+// is fetched once at a time here, and the order the work arrived in does not
+// change that.
+func TestASecondSubmissionOfADownloadingURLWaitsForIt(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server, release := gatedDownloadServer(t)
+	url := server.URL + "/submitted-twice.bin"
+	running, entry := submitRunning(t, ctx, url)
+
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: url}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].CanonicalJobID == "" {
+		t.Fatalf("the second submission was not accepted: %+v", submissions)
+	}
+	second := submissions[0].CanonicalJobID
+	if submissions[0].Job != nil {
+		t.Fatalf("the second submission started transfer %s beside %s", submissions[0].Job.ID, entry.ID)
+	}
+	if submissions[0].Row == nil || submissions[0].Row.CanonicalJobID != second {
+		t.Fatalf("the second submission reported no row for its Job: %+v", submissions[0].Row)
+	}
+	waiting := waitForSnapshot(t, ctx, second, "the second submission to wait for the URL", func(snap jobs.Snapshot) bool {
+		return snap.State == jobs.StateQueued && snap.Phase == "waiting"
+	})
+	if waiting.Progress.Message == "" {
+		t.Fatalf("the waiting submission does not say what it waits for: %+v", waiting.Progress)
+	}
+	if live := ctx.downloadManager.OtherActiveTransfer(url, running); live != "" {
+		t.Fatalf("a second transfer of the URL is running: %s", live)
+	}
+
+	close(release)
+	waitForSnapshot(t, ctx, running, "the first transfer to finish",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateSucceeded })
+	done := waitForSnapshot(t, ctx, second, "the second submission to run once the URL is free",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if done.State != jobs.StateSucceeded {
+		t.Fatalf("the second submission ended %s (%+v)", done.State, done.Failure)
+	}
+	if hasEvent(t, ctx, second, jobs.EventBlocked) {
+		t.Fatalf("the second submission was blocked on its way")
+	}
+}
+
 // A waiting Retry answers a cancel without waiting for the transfer it is
 // waiting on, and leaves that transfer alone.
 func TestAWaitingRetryCanBeCancelled(t *testing.T) {

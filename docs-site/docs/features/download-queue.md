@@ -58,7 +58,7 @@ exports, imports, Resource Reduction computation, similarity recomputes, and
 plugin actions also publish through the durable Job Service.
 
 - Every non-admin principal sees only the rows it submitted.
-- **Retry** through the legacy handle creates a new canonical Job and moves the handle to that Retry leaf. The source Job keeps its original outcome. Current authorization and download scope are checked again, and a duplicate active transfer is refused.
+- **Retry** through the legacy handle creates a new canonical Job and moves the handle to that Retry leaf. The source Job keeps its original outcome. Current authorization and download scope are checked again. While the queue still holds the failed attempt and another download of the same URL is pending, downloading, processing or paused, the retry is refused with 409; otherwise the new Job waits for the URL (see **One transfer per URL** below).
 - **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
 - A restart is not a cancellation, and nothing records it as one. When the server stops gracefully, a download that was running goes back to the queue under the same Job and handle, with the event reason `server-shutdown` and the message "Stopped by a server shutdown; it starts again from the beginning" on its row, and starts again from the beginning when a server claims it: at once in a deployment with another process running, otherwise when the server is back. A paused download stays held until someone resumes or cancels it. Neither writes a history row until it finishes. After a crash the Job reaches the same state once its claim expires and the process that held it is known to be gone. A download the queue runs without a durable Job is recorded as failed with the reason "The server shut down before the download finished".
 
@@ -257,13 +257,16 @@ it because the User-Agent the deployment sends can be changed.
   with the phase `waiting` and the message "Waiting for another download of this
   URL to finish" on its row. It holds no slot of the concurrency budget while it
   waits, the dispatch loop passes over it, and it starts on the first pass after
-  the other transfer ends. That covers a Retry, a deferred download coming due,
-  queued work, and a paused download being resumed. A paused download does not
-  hold its URL, since it fetches nothing and may wait for a person indefinitely.
-  A cancel ends the waiting Job like any queued Job and leaves the other
-  transfer alone. `POST /v1/download/retry` and `POST /v1/jobs/retry`
-  refuse such a retry with 409 instead, while the queue still holds the failed
-  attempt.
+  the other transfer ends. That covers a new submission, a Retry, a deferred
+  download coming due, queued work, and a paused download being resumed. A
+  paused download does not hold its URL, since it fetches nothing and may wait
+  for a person indefinitely. A cancel ends the waiting Job like any queued Job
+  and leaves the other transfer alone. A Retry from the Job Center
+  (`POST /v1/jobs/{id}/commands/retry`) always waits. The legacy
+  `POST /v1/download/retry` and `POST /v1/jobs/retry` refuse the retry with 409
+  instead while the queue still holds the failed attempt and another download
+  of the URL is pending, downloading, processing or paused; once the queue no
+  longer holds it, they create a Retry that waits like any other.
 
 ## Submitting Downloads
 
