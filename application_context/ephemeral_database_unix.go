@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"syscall"
 )
 
@@ -38,4 +39,22 @@ func ephemeralDatabaseOpen(path string) bool {
 		return true
 	}
 	return probe.Type != syscall.F_UNLCK
+}
+
+// ephemeralDirectoryName is this user's shared ephemeral directory under the temp
+// directory. The uid keeps users of one machine out of each other's.
+func ephemeralDirectoryName() string {
+	return "mahresources-ephemeral-" + strconv.Itoa(os.Getuid())
+}
+
+// ownedByCurrentUser reports whether this user owns the file info describes.
+func ownedByCurrentUser(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(stat.Uid) == os.Getuid()
+}
+
+// privateToCurrentUser reports whether this user owns the file and nobody else
+// may use it.
+func privateToCurrentUser(info os.FileInfo) bool {
+	return ownedByCurrentUser(info) && info.Mode().Perm()&0o077 == 0
 }

@@ -54,7 +54,7 @@ Or use the combined ephemeral flag:
 ./mahresources -ephemeral
 ```
 
-`-memory-db` and `-ephemeral` use a temporary SQLite database file with WAL mode for better concurrency under test load. Treat it as transient scratch storage rather than durable persistence: the file lives in the system temp directory, the server deletes it on a graceful shutdown (SIGINT or SIGTERM), and the next ephemeral start deletes the files of a server that was killed. On Windows that last step does not run, so a killed server's files stay.
+`-memory-db` and `-ephemeral` use a temporary SQLite database file with WAL mode for better concurrency under test load. Treat it as transient scratch storage rather than durable persistence: the file lives in a private `mahresources-ephemeral-<uid>` directory of the system temp directory (`mahresources-ephemeral` on Windows), the server deletes it on a graceful shutdown (SIGINT or SIGTERM), and the next ephemeral start deletes the files of a server that was killed. On Windows that last step does not run, so a killed server's files stay.
 
 ### Seeding from Existing Database
 

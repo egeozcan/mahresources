@@ -1669,30 +1669,30 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		}
 	}
 
-	// ephemeralPath is the scratch file behind -memory-db. Until the context that
-	// owns it is returned, a failed start deletes it here.
-	ephemeralPath := ""
+	// ephemeral is the scratch file behind -memory-db. Until the context that owns
+	// it is returned, a failed start deletes it here.
+	var ephemeral *ephemeralDatabase
 	opened := false
 	defer func() {
-		if ephemeralPath != "" && !opened {
-			_ = removeEphemeralDatabaseFiles(ephemeralPath)
+		if ephemeral != nil && !opened {
+			_ = ephemeral.remove()
 		}
 	}()
 
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
 		// A temp file in WAL mode rather than :memory:, for concurrent writers.
-		path, err := createEphemeralDatabase()
+		created, err := createEphemeralDatabase()
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		ephemeralPath = path
-		dbDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", ephemeralPath)
-		readOnlyDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&mode=ro", ephemeralPath)
+		ephemeral = created
+		dbDsn = ephemeralDatabaseDSN(ephemeral.path, "_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL")
+		readOnlyDsn = ephemeralDatabaseDSN(ephemeral.path, "_journal_mode=WAL&_busy_timeout=10000&mode=ro")
 
 		if cfg.SeedDB != "" {
 			// Copy seed database to temp location
-			if err := copySeedDatabase(cfg.SeedDB, ephemeralPath); err != nil {
+			if err := copySeedDatabase(cfg.SeedDB, ephemeral.path); err != nil {
 				return nil, nil, nil, fmt.Errorf("copy seed database: %w", err)
 			}
 			log.Printf("Using ephemeral SQLite database seeded from %s", cfg.SeedDB)
@@ -1900,9 +1900,7 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 	resolvedConfig.PluginCommandOutputRetention = cfg.PluginCommandOutputRetention
 	resolvedConfig.PluginCommandStagingTemporary = cfg.PluginCommandStagingTemporary
 	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, resolvedConfig)
-	if ephemeralPath != "" {
-		mahContext.ephemeralDB = &ephemeralDatabase{path: ephemeralPath}
-	}
+	mahContext.ephemeralDB = ephemeral
 	opened = true
 
 	// The slow-query logger exists before the context does, so its
