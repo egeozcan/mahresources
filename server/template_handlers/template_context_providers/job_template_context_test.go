@@ -3,10 +3,10 @@ package template_context_providers
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
