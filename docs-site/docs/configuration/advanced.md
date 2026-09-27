@@ -499,11 +499,14 @@ the previous one has stopped cleanly, or can be shown to have exited because it
 ran in this process table (same hostname, boot and PID namespace) and its
 process no longer exists. A previous server on another host, or one from before
 a reboot that skipped the clean stop, cannot be shown to have exited, since
-another machine can share a hostname. To release its binding, start one server
-with `-plugin-command-staging-path` set to the root `/logs` names (it is
-recreated if missing): that server takes the fence over on the root's own lease,
-and once it stops cleanly the next MemoryFS server takes the database over as
-usual. Files a crashed MemoryFS server left in its private root are not carried
+another machine can share a hostname. Releasing its binding is then an operator
+decision: once you know that server is not running (a reboot of its host ended
+it, or you stopped it), start one server with `-plugin-command-staging-path` set
+to the root `/logs` names (it is recreated if missing). That server takes the
+fence over on the root's own lease, which excludes only processes on its own
+host, and once it stops cleanly the next MemoryFS server takes the database over
+as usual. Doing this while the previous server still runs on another host puts
+two command runtimes on one database. Files a crashed MemoryFS server left in its private root are not carried
 over; like the MemoryFS library, they lived as long as that process. A binding
 recorded by a release that did not mark private roots is kept as durable; keep
 that root pinned with the flag.
