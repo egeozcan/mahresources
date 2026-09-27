@@ -1,6 +1,6 @@
 import path from 'path';
 import { test, expect } from '../fixtures/base.fixture';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 /**
  * Resource Reduction: the review surface for collapsing repeats.
@@ -103,6 +103,38 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
   }, { timeout: 30_000 }).toBe('ready');
 }
 
+// Waits for every CSS transition running on the page to end. Selecting an item
+// collapses the bulk bar's "select all" row, which slides the bar's buttons up,
+// and a Reduction panel animates its height open: a click aimed at a control while
+// it moves can land on nothing (the element under the press is not the one under
+// the release), so the panel stays shut or a checkbox keeps its state.
+async function transitionsSettled(page: Page) {
+  await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations()
+      .filter(animation => animation instanceof CSSTransition)
+      .map(animation => animation.finished.catch(() => undefined)));
+  });
+}
+
+async function openReductionPanel(page: Page, trigger: Locator) {
+  await transitionsSettled(page);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await transitionsSettled(page);
+}
+
+// Clicks the checkbox of a Cluster the click will remove from the filtered list.
+// The card is addressed by its Cluster id rather than by position, and clicked
+// once: uncheck() verifies the state after its click, and finding its element
+// detached by the refresh it re-resolves the locator, so a positional one lands
+// on the next Cluster's checkbox and unchecks that one too.
+async function clickLeavingCluster(page: Page, card: Locator) {
+  const clusterId = await card.getAttribute('data-cluster-id');
+  expect(clusterId).toBeTruthy();
+  await page.locator(`[data-cluster-id="${clusterId}"]`).getByTestId('cluster-checkbox').click();
+}
+
 test.describe('Resource Reduction', () => {
   for (const selection of ['groups', 'resources', 'both']) {
     test(`creates a Reduction from the list with ${selection}`, async ({ page, apiClient, request, baseURL }) => {
@@ -173,7 +205,7 @@ test.describe('Resource Reduction', () => {
 
     await page.goto(`/group?id=${root.ID}`);
     const panel = page.locator('.detail-panel').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
-    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
     await expect(panel.getByRole('checkbox', { name: 'Include resources from all subgroups' })).not.toBeChecked();
     await panel.getByTestId('bulk-reduction-name').fill(label);
     await panel.getByRole('checkbox', { name: 'Exclude external resources' }).check();
@@ -185,7 +217,7 @@ test.describe('Resource Reduction', () => {
     await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
 
     await page.goto(`/group?id=${root.ID}`);
-    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
     await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
     await panel.getByRole('radio', { name: 'Add to existing reduction' }).check();
     await expect(panel.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeVisible();
@@ -206,7 +238,7 @@ test.describe('Resource Reduction', () => {
     });
 
     await page.goto(`/group?id=${root.ID}`);
-    await page.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await openReductionPanel(page, page.getByRole('button', { name: 'Reduce', exact: true }));
     await page.getByTestId('bulk-reduction-submit').click();
     await expect(page.getByTestId('bulk-reduction-error')).toContainText('no owned Resources');
     await page.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
@@ -224,7 +256,7 @@ test.describe('Resource Reduction', () => {
     await page.getByRole('checkbox', { name: `Select ${keeper.Name}` }).check();
     await page.getByRole('checkbox', { name: `Select ${twin.Name}` }).check();
 
-    await page.getByTestId('bulk-reduction-action').click();
+    await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
     await page.getByTestId('bulk-reduction-name').fill(label);
     await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
     await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
@@ -245,7 +277,7 @@ test.describe('Resource Reduction', () => {
     const group = await apiClient.createGroup({ name: label, categoryId: category.ID });
     await page.goto(`/groups?Name=${encodeURIComponent(label)}`);
     await page.getByRole('checkbox', { name: `Select ${group.Name}`, exact: true }).check();
-    await page.getByTestId('bulk-reduction-action').click();
+    await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
     await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
     await page.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(/\/reduction\?id=\d+/);
@@ -456,7 +488,7 @@ test.describe('Resource Reduction', () => {
 
     // Identical Clusters arrive checked, so the click is an uncheck — it makes
     // the Cluster Reviewed and the filter drops it.
-    await clusters.first().getByTestId('cluster-checkbox').uncheck();
+    await clickLeavingCluster(page, clusters.first());
 
     await expect(clusters).toHaveCount(1);
     // The survivor's own server-rendered state, not the clicked state of the
@@ -491,7 +523,7 @@ test.describe('Resource Reduction', () => {
     // An explicit action on the first cluster refreshes the page. The first
     // cluster leaves the open filter; the second one stays and must have been
     // repaired to its server-rendered state.
-    await clusters.nth(0).getByTestId('cluster-checkbox').uncheck();
+    await clickLeavingCluster(page, clusters.nth(0));
 
     await expect(clusters).toHaveCount(1);
     await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();

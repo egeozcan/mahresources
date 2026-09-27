@@ -33,6 +33,7 @@
     {# results" mode. 0 on pages that do not render a mass-edit panel.            #}
     <meta name="x-total-count" content="{{ totalCount|default:0 }}">
     <meta name="x-jobs-panel-finished-limit" content="{{ jobsPanelFinishedLimit|default:10 }}">
+    <meta name="x-jobs-panel-rendered-at" content="{{ jobsPanelRenderedAt|default:'' }}">
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>

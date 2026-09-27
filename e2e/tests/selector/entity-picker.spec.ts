@@ -505,31 +505,25 @@ test.describe('Entity Picker - Group Selection', () => {
 
   test('should remove group from references block', async ({ page, baseURL, apiClient }) => {
     // Create a new block with a group for removal test
-    await apiClient.createBlock(noteId, 'references', 'for-removal', { groupIds: [selectableGroupId] });
+    const block = await apiClient.createBlock(noteId, 'references', 'for-removal', { groupIds: [selectableGroupId] });
 
     await page.goto(`${baseURL}/note?id=${noteId}`);
     await page.waitForLoadState('load');
 
     await page.locator('button:has-text("Edit Blocks")').click();
 
-    // Locate the remove control by its accessible name.
-    //
-    // This used to be `button[title="Remove"]`, which matched every remove control in
-    // the block editor regardless of what it removed — a locator wider than its
-    // subject, in a test whose own comment says it is about the Selectable Test Group.
-    // WS5 finding 48 replaced those undescriptive `title="Remove"` names with
-    // aria-labels that say what is being removed, so the locator can now be scoped to
-    // the group this test names.
-    const removeButtons = page.locator('button[aria-label="Remove Selectable Test Group"]');
-    const initialCount = await removeButtons.count();
-    expect(initialCount, 'the reference chip for the group must be present to remove').toBeGreaterThan(0);
-    await removeButtons.first().click();
+    // The note holds three references blocks naming this group by now, and each
+    // one labels its chips only after its own read of the group names answers.
+    // A count taken across the page can land between those reads, so the
+    // control is found inside the block this test created.
+    const removeButton = page
+      .locator(`[data-block-id="${block.id}"]`)
+      .getByRole('button', { name: 'Remove Selectable Test Group', exact: true });
+    await expect(removeButton).toBeVisible();
+    await removeButton.click();
 
-    // Wait for the removal to take effect by checking the button count decreased
-    await expect(async () => {
-      const currentCount = await removeButtons.count();
-      expect(currentCount).toBeLessThan(initialCount);
-    }).toPass({ timeout: 5000 });
+    await expect(removeButton).toHaveCount(0);
+    await expect.poll(async () => (await apiClient.getBlock(block.id)).content.groupIds).toEqual([]);
   });
 
   test.afterAll(async ({ apiClient }) => {

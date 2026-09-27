@@ -102,6 +102,24 @@ export function panelFinishedLimit(doc = globalThis.document) {
     return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_FINISHED_LIMIT) : DEFAULT_FINISHED_LIMIT;
 }
 
+// An RFC 3339 time as epoch microseconds, or NaN. Date.parse keeps only
+// milliseconds, and two server times within one millisecond must still order.
+// Microseconds are as fine as a Number stays exact at.
+export function epochMicros(raw) {
+    const match = /^(.+T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(String(raw || ''));
+    if (!match) return NaN;
+    const fraction = (match[2] || '').padEnd(6, '0');
+    const millis = Date.parse(`${match[1]}.${fraction.slice(0, 3)}${match[3]}`);
+    return Number.isFinite(millis) ? millis * 1000 + Number(fraction.slice(3, 6)) : NaN;
+}
+
+// When the server began rendering this page, as epoch microseconds, or null
+// when the page does not say.
+export function panelRenderedAt(doc = globalThis.document) {
+    const parsed = epochMicros(doc?.querySelector?.('meta[name="x-jobs-panel-rendered-at"]')?.getAttribute('content'));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 // The owner line an administrator's drawer shows on somebody else's Job. The
 // viewer's own Jobs, and work that never had an owner, show none; a viewer who is
 // not an administrator (no viewer id) sees only their own Jobs and is told
@@ -273,6 +291,8 @@ export function jobPanel() {
         // an administrator's drawer can hold either. Lists and stream follow it.
         ownerScope: '',
         _resourceRefreshNotified: new Set(),
+        // When the server began rendering this page; see trackResourceCompletion.
+        _renderedAt: null,
         busy: false,
         finishedLimit: DEFAULT_FINISHED_LIMIT,
         // Whether each group's list had more than it holds.
@@ -362,6 +382,7 @@ export function jobPanel() {
 
         init() {
             this.finishedLimit = panelFinishedLimit();
+            this._renderedAt = panelRenderedAt();
             // Set on an administrator's drawer only: whose Job a row is matters
             // when the drawer lists every account's.
             this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
@@ -1433,6 +1454,23 @@ export function jobPanel() {
             if (said) this.announceNews([this.newsEntry(saidAbout, said)]);
         },
 
+        // The resource lists refresh for a download that succeeded after the server
+        // began rendering this page: the page cannot hold its resource. One that
+        // succeeded before the render is already in the page, and refreshing for
+        // it would morph the lists under whatever the reader has open in them
+        // every time the drawer first read it (and it stays in the drawer's
+        // Finished group, so that is every page load). The two times are both the
+        // server's, so the rule holds whenever and however the drawer first sees
+        // the download: a read before or after the stream's catch-up, after a
+        // reconnect, or in a command's answer. A page that does not say when it
+        // was rendered refreshes for nothing, since it cannot tell. The render
+        // time is read once, at init: a list morphed in later carries no head,
+        // and the page's head does not change.
+        // Known limit: the two times can come from different processes. With a
+        // skew of d between their clocks, a download finishing within d of the
+        // render is misread: refreshed for although the page lists it, or not
+        // refreshed for although it does not (its resource then appears on the
+        // next load). Widening the comparison moves the error to the other side.
         trackResourceCompletion(job) {
             if (!job?.id || job.state !== 'succeeded' ||
                 (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||
@@ -1441,7 +1479,9 @@ export function jobPanel() {
             if (this._resourceRefreshNotified.size > 256) {
                 this._resourceRefreshNotified.delete(this._resourceRefreshNotified.values().next().value);
             }
-            if (this.streamCaughtUp && globalThis.window?.dispatchEvent && globalThis.CustomEvent) {
+            const finishedAt = epochMicros(job.finishedAt);
+            if (this._renderedAt === null || !Number.isFinite(finishedAt) || finishedAt < this._renderedAt) return;
+            if (globalThis.window?.dispatchEvent && globalThis.CustomEvent) {
                 globalThis.window.dispatchEvent(new CustomEvent('download-completed', { detail: { jobId: job.id } }));
             }
         },

@@ -84,6 +84,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"pluginCardActions":   true,
 				"pluginBulkActions":   true,
 				"mrqlBulkActions":     true,
+				"jobsPanelRenderedAt": true, // the Jobs drawer's page-render clock, for the HTML page only
 			}, context)); err != nil {
 				fmt.Println(err)
 			}

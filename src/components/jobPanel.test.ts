@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
+import { epochMicros, jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -171,11 +171,12 @@ describe('Job Center panel', () => {
             constructor(type: string, init: { detail: unknown }) { this.type = type; this.detail = init.detail; }
         });
         const panel = jobPanel();
-        panel.streamCaughtUp = true;
+        panel._renderedAt = epochMicros('2026-09-26T10:00:00Z');
+        const finishedAt = '2026-09-26T10:00:05Z';
         panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'running' });
-        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
-        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
-        panel.trackResourceCompletion({ id: 'export-1', kind: 'group-export', state: 'succeeded' });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded', finishedAt });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded', finishedAt });
+        panel.trackResourceCompletion({ id: 'export-1', kind: 'group-export', state: 'succeeded', finishedAt });
         expect(dispatchEvent).toHaveBeenCalledOnce();
         expect(dispatchEvent.mock.calls[0][0]).toMatchObject({ type: 'download-completed', detail: { jobId: 'download-1' } });
     });
@@ -704,6 +705,92 @@ describe('Job Center panel accessibility hooks', () => {
         });
         return panel;
     }
+
+    function recordDownloadCompletions() {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        vi.stubGlobal('CustomEvent', class {
+            type: string;
+            detail: unknown;
+            constructor(type: string, init: { detail: unknown }) { this.type = type; this.detail = init.detail; }
+        });
+        return () => dispatchEvent.mock.calls.map(call => call[0].detail);
+    }
+
+    test('a download that succeeded before the page was rendered refreshes no list, however the drawer first sees it', async () => {
+        const completions = recordDownloadCompletions();
+        const done = { id: 'dl-old', title: 'old.bin', kind: 'remote-download', state: 'succeeded', version: 4, acceptedAt: '2026-09-26T09:59:00Z', finishedAt: '2026-09-26T09:59:59.999Z' };
+        const panel = refreshingPanel([done]);
+        panel._renderedAt = epochMicros('2026-09-26T10:00:00Z');
+        vi.stubGlobal('setTimeout', vi.fn());
+
+        // Read after the catch-up, as a slow first read is, and again after a
+        // live event about it, which a success published on the next tick is.
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
+        await panel.refresh();
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'dl-old', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 21 }),
+            lastEventId: 'v2:21',
+        });
+        await panel.refresh();
+
+        expect(panel.jobs.map(job => job.id)).toEqual(['dl-old']);
+        expect(completions()).toEqual([]);
+    });
+
+    test('a download that succeeded after the page was rendered refreshes the lists once, from a read alone', async () => {
+        const completions = recordDownloadCompletions();
+        // Started and finished while the stream was down: nothing live said so.
+        const done = { id: 'dl-new', title: 'new.bin', kind: 'remote-download', state: 'succeeded', version: 3, acceptedAt: '2026-09-26T10:00:00Z', finishedAt: '2026-09-26T10:00:00.000Z' };
+        const panel = refreshingPanel([done]);
+        panel._renderedAt = epochMicros('2026-09-26T10:00:00Z');
+
+        await panel.refresh();
+        await panel.refresh();
+
+        expect(completions()).toEqual([{ jobId: 'dl-new' }]);
+    });
+
+    test('orders a finish and a render inside one millisecond', () => {
+        const completions = recordDownloadCompletions();
+        const panel = jobPanel();
+        panel._renderedAt = epochMicros('2026-09-26T10:00:00.123900Z');
+        // Finished 0.7 ms before the render began, in the same millisecond: the
+        // page already lists its resource.
+        panel.trackResourceCompletion({ id: 'dl-before', kind: 'remote-download', state: 'succeeded', finishedAt: '2026-09-26T12:00:00.1232+02:00' });
+        panel.trackResourceCompletion({ id: 'dl-after', kind: 'remote-download', state: 'succeeded', finishedAt: '2026-09-26T10:00:00.1239005Z' });
+        expect(completions()).toEqual([{ jobId: 'dl-after' }]);
+    });
+
+    test('reads server times to the microsecond', () => {
+        expect(epochMicros('2026-09-26T10:00:00Z')).toBe(Date.parse('2026-09-26T10:00:00Z') * 1000);
+        expect(epochMicros('2026-09-26T10:00:00.5Z')).toBe(Date.parse('2026-09-26T10:00:00.500Z') * 1000);
+        expect(epochMicros('2026-09-26T12:00:00.123456789+02:00')).toBe(Date.parse('2026-09-26T10:00:00.123Z') * 1000 + 456);
+        expect(epochMicros('')).toBeNaN();
+        expect(epochMicros(undefined)).toBeNaN();
+        expect(epochMicros('yesterday')).toBeNaN();
+    });
+
+    test('a page that does not say when it was rendered refreshes for no download', async () => {
+        const completions = recordDownloadCompletions();
+        const panel = jobPanel();
+        expect(panel._renderedAt).toBeNull();
+        panel.trackResourceCompletion({ id: 'dl-1', kind: 'remote-download', state: 'succeeded', finishedAt: '2026-09-26T10:00:05Z' });
+        panel._renderedAt = epochMicros('2026-09-26T10:00:00Z');
+        panel.trackResourceCompletion({ id: 'dl-2', kind: 'deferred-download', state: 'succeeded' });
+        expect(completions()).toEqual([]);
+    });
+
+    test('reads the render time the page publishes', () => {
+        const page = (content: string | null) => ({
+            querySelector: (selector: string) => selector === 'meta[name="x-jobs-panel-rendered-at"]' && content !== null
+                ? { getAttribute: () => content } : null,
+        });
+        expect(panelRenderedAt(page('2026-09-26T10:00:00.123456Z') as any)).toBe(Date.parse('2026-09-26T10:00:00.123Z') * 1000 + 456);
+        expect(panelRenderedAt(page('') as any)).toBeNull();
+        expect(panelRenderedAt(page('not a time') as any)).toBeNull();
+        expect(panelRenderedAt(page(null) as any)).toBeNull();
+    });
 
     test('a stream reset stops the drawer instead of reloading the page it sits on', async () => {
         const reload = vi.fn();

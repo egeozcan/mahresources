@@ -1,5 +1,17 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
 import path from 'path';
+
+// Enter accepts the highlighted suggestion while the bar's suggestion list is open,
+// and the list opens on its own once a completion request answers: after a whole
+// expression it offers AND and OR with the first highlighted. A test that submits
+// with Enter therefore answers completion with nothing, or its Enter would accept
+// AND instead of submitting whenever the answer arrived first.
+async function withoutSuggestions(page: Page) {
+  await page.route('**/v1/mrql/complete', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ suggestions: [] }),
+  }));
+}
 
 // Package 5a: the MRQL filter bar on the list pages.
 test.describe('MRQL list-page filter bar', () => {
@@ -43,6 +55,7 @@ test.describe('MRQL list-page filter bar', () => {
   });
 
   test('filter narrows the resource list and submits via the bar', async ({ page }) => {
+    await withoutSuggestions(page);
     await page.goto('/resources');
     const input = page.locator('.mrql-bar input[role="combobox"]');
     await expect(input).toBeVisible();
@@ -70,6 +83,7 @@ test.describe('MRQL list-page filter bar', () => {
   });
 
   test('immediate MRQL submit replaces a stale schema bootstrap category', async ({ page }) => {
+    await withoutSuggestions(page);
     await page.goto(
       `/groups?categories=${groupCategoryId}&mrql=${encodeURIComponent(`category = ${groupCategoryId}`)}`,
     );
