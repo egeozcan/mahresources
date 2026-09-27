@@ -254,9 +254,11 @@ that page as a link. The Job's own page opens both directly. A notice names its
 Job; one for a request, such as "Cancel requested for ...", goes once the row
 has moved on, and closing the drawer clears it. After every command, and after
 a refusal of a Job that still exists, the Job's controls are read again, so a
-control the Job no longer offers disappears. A refusal says why: the Kind's own reason, or, for
-example, "Cancel is no longer offered for ..., which is now succeeded.". While
-a command runs, the Job's controls take no second press.
+control the Job no longer offers disappears. A refusal names the command and
+the Job and says why: a Kind's refusal in its own words ("Retry refused for
+<Job>: <reason>"), and the service's own in terms of the Job ("Cancel is no
+longer offered for <Job>, which is now succeeded."). While a command runs, the
+Job's controls take no second press.
 
 When a row changes group while the keyboard is on it, or a command replaces the
 control that had focus, focus stays on that row: the same control, its
