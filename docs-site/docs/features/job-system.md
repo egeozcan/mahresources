@@ -304,9 +304,11 @@ then sends `job-caught-up` with the cursor it reached, as
 have been handed was issued by a different database, for example one since
 restored from an older backup, or an ephemeral server that restarted. The
 stream then resumes at the viewer's last published event and adds
-`"reset": true` to `job-caught-up`. Nothing the client missed is replayed, so on
-a reset it discards the sequences it holds, takes the new cursor, and reads its
-Jobs again. An account whose visibility has narrowed since it received its
+`"reset": true` to `job-caught-up`. That one `job-caught-up` also carries the new
+cursor as its SSE `id`, so a browser that reconnects before the next event
+resumes from it. Nothing the client missed is replayed, so on a reset it
+discards the sequences it holds, takes the new cursor, and reads its Jobs
+again. An account whose visibility has narrowed since it received its
 cursor can be reset too; that costs one re-read.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
@@ -314,8 +316,8 @@ Once the canonical stream has sent `job-caught-up`, each poll also sends a
 30 seconds and whose current snapshot this connection has not sent yet, up to
 the 500 most recently changed Jobs. Its
 data is `{jobId, version, state, progress, point, intervalMs}`, where `point` is
-the latest series point. Like `job-caught-up`, it has no SSE `id` and never
-moves the delivery cursor. A new connection can therefore receive frames for
+the latest series point. Like an ordinary `job-caught-up`, it has no SSE `id`
+and never moves the delivery cursor. A new connection can therefore receive frames for
 changes an earlier connection already delivered. Each frame replaces the Job's
 progress, so a reader treats a repeat as a no-op: it ignores a frame whose
 `progress.updatedAt` is older than the progress it holds, and replaces rather

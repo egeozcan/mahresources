@@ -560,10 +560,12 @@ func TestCanonicalJobSSEResetsACursorBeyondTheHead(t *testing.T) {
 		wantAfter  uint64
 		wantMarker string
 	}{
-		{"a cursor beyond the head", "v2:5000", 875, 875, `{"cursor":"v2:875","reset":true}`},
-		{"a cursor beyond an empty stream", "v2:12", 0, 0, `{"cursor":"v2:0","reset":true}`},
-		{"a cursor at the head", "v2:875", 875, 875, `{"cursor":"v2:875"}`},
-		{"a cursor below the head", "v2:874", 875, 874, `{"cursor":"v2:874"}`},
+		// A reset marker carries the cursor as its SSE id too, so the browser
+		// resumes from the new head rather than the cursor it was reset from.
+		{"a cursor beyond the head", "v2:5000", 875, 875, "id: v2:875\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875","reset":true}`},
+		{"a cursor beyond an empty stream", "v2:12", 0, 0, "id: v2:0\nevent: job-caught-up\ndata: " + `{"cursor":"v2:0","reset":true}`},
+		{"a cursor at the head", "v2:875", 875, 875, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875"}`},
+		{"a cursor below the head", "v2:874", 875, 874, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:874"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			head := tt.head
@@ -589,7 +591,8 @@ func TestCanonicalJobSSEResetsACursorBeyondTheHead(t *testing.T) {
 			if len(ctx.after) == 0 || ctx.after[0] != tt.wantAfter {
 				t.Fatalf("catch-up read from %v, want %d", ctx.after, tt.wantAfter)
 			}
-			if want := "event: job-caught-up\ndata: " + tt.wantMarker + "\n\n"; !strings.Contains(response.String(), want) {
+			body := "\n\n" + response.String()
+			if want := tt.wantMarker + "\n\n"; !strings.Contains(body, want) {
 				t.Fatalf("SSE body = %q, want the marker %q", response.String(), want)
 			}
 		})

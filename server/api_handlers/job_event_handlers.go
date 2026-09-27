@@ -235,7 +235,14 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 				}
 				// This control frame marks the boundary between replay and live
 				// delivery. It is not a durable Job event, so it deliberately has no
-				// SSE id and never enters the timeline or delivery cursor.
+				// SSE id and never enters the timeline or delivery cursor — except
+				// on a reset, where moving the browser's cursor is the point: the
+				// id it holds was never issued here, and a reconnect before the
+				// next event would otherwise resume from it again and, once this
+				// database's sequence had passed it, skip everything in between.
+				if reset {
+					fmt.Fprintf(w, "id: v2:%d\n", cursor)
+				}
 				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
 				flusher.Flush()
 				caughtUp = true
