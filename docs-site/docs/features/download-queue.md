@@ -192,6 +192,13 @@ states:
 | `cancelled` | Cancelled by user |
 | `paused` | Paused by user (can be resumed) |
 
+A download's Job is titled with the file name the submission chose, or else
+the last segment of the URL's path, decoded (`sunrise.png` for
+`https://example.com/photos/sunrise.png?sig=...`), or else "Download from"
+and the host when the path names no file. The query and fragment never reach
+the title. An old `/downloads?URL=` link opens the Job Center searching for
+the file the URL names, or its host, since a Job keeps no URL.
+
 A failed download's Job records why it failed: for example
 `HTTP 403 Forbidden`, `connect: connection refused`, or the timeout that ended
 the transfer. A transfer that runs past `-remote-overall-timeout` says it did

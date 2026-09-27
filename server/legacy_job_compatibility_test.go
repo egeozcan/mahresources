@@ -109,3 +109,25 @@ func TestALegacyDateRangeOfOneDayListsThatDay(t *testing.T) {
 		t.Fatalf("a one-day range reads %v .. %v, want %v .. %v", filter.AcceptedAfter, filter.AcceptedBefore, wantStart, wantEnd)
 	}
 }
+
+// TestALegacyURLFilterSearchesForTheFileTheURLNames pins how an old /downloads
+// link's URL filter is carried: a whole URL is searched for by the file its path
+// names, which is what a download is titled by, since the Job Center keeps no
+// URL; a URL naming no file by its host; and a fragment as it was typed.
+func TestALegacyURLFilterSearchesForTheFileTheURLNames(t *testing.T) {
+	for typed, want := range map[string]string{
+		"http://127.0.0.1:18900/status/404/missing-photo.jpg?sig=secret": "missing-photo.jpg",
+		"https://files.example.test/Caf%C3%A9%20terrace.png":             "Café terrace.png",
+		"https://files.example.test/":                                    "files.example.test",
+		"missing-photo":                                                  "missing-photo",
+		"example.test/a b":                                               "example.test/a b",
+	} {
+		parsed, err := url.Parse(legacyDownloadsLocation(url.Values{"URL": {typed}}))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if got := parsed.Query().Get("search"); got != want {
+			t.Errorf("URL=%q searches for %q, want %q", typed, got, want)
+		}
+	}
+}

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"mahresources/download_queue"
@@ -177,10 +179,12 @@ func downloadSummaryOf(input json.RawMessage) (downloadSummary, error) {
 	return summary, nil
 }
 
-// downloadJobTitle is the Job's own title: the file name the submission chose, or
-// the URL's host when it chose none. Never the URL itself — a title is searchable
-// text, and a URL can carry a token. The title is a bounded projection; the replay
-// input keeps the complete file name for execution and retry.
+// downloadJobTitle is the Job's own title: the file name the submission chose,
+// else the decoded last segment of the URL's path, which is the file a person
+// recognises and what the created resource is named after, else the URL's host.
+// Never the query or the fragment, where a signed link keeps its token: a title
+// is searchable text. The title is a bounded projection; the replay input keeps
+// the complete URL and file name for execution and retry.
 func downloadJobTitle(input json.RawMessage) string {
 	summary, err := downloadSummaryOf(input)
 	if err != nil {
@@ -189,10 +193,37 @@ func downloadJobTitle(input json.RawMessage) string {
 	title := "Download"
 	if summary.Name != "" {
 		title = summary.Name
+	} else if segment := downloadURLFileSegment(input); segment != "" {
+		title = segment
 	} else if summary.Host != "" {
 		title = "Download from " + summary.Host
 	}
 	return truncateDownloadJobTitle(title)
+}
+
+// downloadURLFileSegment is the last segment of a download's URL path, decoded,
+// with control characters made spaces and invalid UTF-8 dropped, or "" when the
+// path names no segment.
+func downloadURLFileSegment(input json.RawMessage) string {
+	var decoded downloadJobInput
+	if err := json.Unmarshal(input, &decoded); err != nil || decoded.Creator == nil {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(decoded.Creator.URL))
+	if err != nil {
+		return ""
+	}
+	segment := path.Base(strings.TrimRight(parsed.Path, "/"))
+	if segment == "." || segment == "/" {
+		return ""
+	}
+	segment = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(segment, ""))
+	return strings.TrimSpace(segment)
 }
 
 func truncateDownloadJobTitle(title string) string {

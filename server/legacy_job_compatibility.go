@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -61,7 +62,7 @@ func legacyDownloadsLocation(values url.Values) string {
 		}
 	}
 	if value := strings.TrimSpace(values.Get("URL")); value != "" {
-		query.Set("search", value)
+		query.Set("search", legacyDownloadSearchTerm(value))
 	}
 	for old, canonical := range map[string]string{
 		"CreatedAfter":  "acceptedAfter",
@@ -74,6 +75,22 @@ func legacyDownloadsLocation(values url.Values) string {
 		}
 	}
 	return "/jobs?" + query.Encode()
+}
+
+// legacyDownloadSearchTerm carries a legacy URL filter to a Job Center search.
+// A Job keeps no URL, only its title and its summary's host, so a whole URL is
+// searched for by what it is titled by: the decoded last segment of its path,
+// or its host when the path names none. Anything else, the part of a URL the
+// legacy box was usually given, is searched for as typed.
+func legacyDownloadSearchTerm(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return value
+	}
+	if segment := path.Base(strings.TrimRight(parsed.Path, "/")); segment != "." && segment != "/" && segment != "" {
+		return segment
+	}
+	return parsed.Host
 }
 
 // canonicalJobTimeBound carries one legacy date bound. A bare date stays a date:

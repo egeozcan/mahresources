@@ -427,20 +427,21 @@ test.describe('Job Center', () => {
       const response = await request.get('/v1/jobs?kind=remote-download&state=succeeded&limit=50');
       if (!response.ok()) return false;
       const body = await response.json();
-      return (body.jobs as Job[]).some(candidate => candidate.title === `Download from ${new URL(source).host}`);
+      // A download the form names no file for is titled by the file its URL names.
+      return (body.jobs as Job[]).some(candidate => candidate.title === 'ms-icon-150x150.png');
     }, { timeout: 20_000 }).toBe(true);
 
     const trigger = page.getByRole('button', { name: 'Open Jobs panel' });
     await trigger.click();
     const panel = page.getByRole('dialog', { name: 'Jobs' });
-    const panelLink = panel.getByRole('link', { name: /^View created resource for Download from / }).first();
+    const panelLink = panel.getByRole('link', { name: /^View created resource for ms-icon-150x150\.png/ }).first();
     await expect(panelLink).toBeVisible();
     await panelLink.click();
     await expect(page).toHaveURL(/\/resource\?id=\d+$/);
     const resourceURL = page.url();
 
     await page.goto('/jobs');
-    const listLink = page.getByRole('link', { name: /^View created resource for Download from / }).first();
+    const listLink = page.getByRole('link', { name: /^View created resource for ms-icon-150x150\.png/ }).first();
     await expect(listLink).toBeVisible();
     await listLink.click();
     await expect(page).toHaveURL(/\/resource\?id=\d+$/);
@@ -461,6 +462,23 @@ test.describe('Job Center', () => {
     const form = page.getByRole('form', { name: 'Filter jobs' });
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
     await expect(form.getByRole('searchbox', { name: 'Search' })).toHaveValue('legacy-search');
+  });
+
+  test('a download is titled by the file its URL names, and an old /downloads link finds it by that URL', async ({ page, request }) => {
+    const stamp = Date.now();
+    const file = `legacy-find-${stamp}.bin`;
+    const url = `${DEAD_URL}archive/${file}?sig=${stamp}`;
+    const response = await request.post('/v1/download/submit', { data: { URL: url } });
+    expect(response.status(), await response.text()).toBe(202);
+    const id = (await response.json()).jobs?.[0]?.canonicalJobId as string;
+    await waitForJobState(request, id, 'failed');
+    expect((await readJob(request, id))?.title).toBe(file);
+
+    for (const typed of [url, file]) {
+      await page.goto(`/downloads?URL=${encodeURIComponent(typed)}`);
+      await expect(page).toHaveURL(/\/jobs\?/);
+      await expect(page.locator(`[data-job-id="${id}"]`)).toBeVisible();
+    }
   });
 
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {

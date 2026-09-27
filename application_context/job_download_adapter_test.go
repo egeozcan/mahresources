@@ -1795,3 +1795,32 @@ func countRowsForHandle(rows []*download_queue.DownloadJob, handle string) int {
 	}
 	return count
 }
+
+// TestADownloadIsTitledByTheFileItFetches pins a download Job's title: the name
+// the submission chose, else the decoded last segment of the URL's path, which
+// is the file a person recognises, and only when the path names none the host.
+// The query and fragment, where a signed link keeps its token, never reach it.
+func TestADownloadIsTitledByTheFileItFetches(t *testing.T) {
+	for _, tc := range []struct {
+		url, fileName, want string
+	}{
+		{url: "http://files.example.test/photos/sunrise.png", want: "sunrise.png"},
+		{url: "http://files.example.test/photos/Caf%C3%A9%20terrace.png?sig=secret#frag", want: "Café terrace.png"},
+		{url: "http://files.example.test/%E6%97%A5%E6%9C%AC%E8%AA%9E.png", want: "日本語.png"},
+		{url: "http://files.example.test/status/404/missing-photo.jpg/", want: "missing-photo.jpg"},
+		{url: "http://files.example.test/", want: "Download from files.example.test"},
+		{url: "http://files.example.test?token=secret", want: "Download from files.example.test"},
+		{url: "http://files.example.test/a/b.bin", fileName: "chosen.bin", want: "chosen.bin"},
+	} {
+		input, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: tc.url, FileName: tc.fileName}, "")
+		if err != nil {
+			t.Fatalf("input for %s: %v", tc.url, err)
+		}
+		if got := downloadJobTitle(input); got != tc.want {
+			t.Errorf("title of %s = %q, want %q", tc.url, got, tc.want)
+		}
+		if strings.Contains(downloadJobTitle(input), "secret") {
+			t.Errorf("title of %s carries the query", tc.url)
+		}
+	}
+}
