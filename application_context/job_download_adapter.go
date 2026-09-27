@@ -1064,6 +1064,7 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
 		Destructive:  true,
+		Bulk:         true,
 		Confirmation: "Stop this download? A file already saved stays in the library.",
 	})
 	if state == jobs.StateRunning {
@@ -1092,7 +1093,8 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 // an ordinary download that starts now. For a deferred download that never
 // started, that drops the time it was scheduled for, so the control says so
 // before it is used instead of reading "Retry"; the plugin's deferred row stays
-// cancelled and does not follow the successor.
+// cancelled and does not follow the successor. That one is not offered in bulk,
+// where a selection's Retry would start it without the warning; a plain Retry is.
 func downloadRetryCommand(snapshot jobs.Snapshot) jobs.Command {
 	if snapshot.ScheduledFor != nil && snapshot.StartedAt == nil {
 		return jobs.Command{
@@ -1101,7 +1103,7 @@ func downloadRetryCommand(snapshot jobs.Snapshot) jobs.Command {
 			Confirmation: "This download was scheduled for later and never started. Download now starts it immediately; it does not wait for the scheduled time.",
 		}
 	}
-	return jobs.Command{Key: jobs.CommandRetry, Label: "Retry"}
+	return jobs.Command{Key: jobs.CommandRetry, Label: "Retry", Bulk: true}
 }
 
 // ExecuteCommand runs one control the host decided this Kind owns.

@@ -1030,7 +1030,7 @@ func (a *pluginActionAdapter) unsuccessfulCommands(commandContext jobs.CommandCo
 	default:
 		return nil, nil
 	}
-	return []jobs.Command{{Key: jobs.CommandRetry, Label: "Retry"}}, nil
+	return []jobs.Command{{Key: jobs.CommandRetry, Label: "Retry", Bulk: true}}, nil
 }
 
 // continuationCommands is the Continue advertisement: a *successful* registered

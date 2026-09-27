@@ -663,6 +663,7 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
 		Destructive:  true,
+		Bulk:         true,
 		Confirmation: "Stop reading this archive? Nothing is added to the library by a parse.",
 	}}
 	state := commandContext.Snapshot.State
@@ -675,7 +676,7 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 				return nil, err
 			}
 			if available {
-				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry", Bulk: true})
 			}
 		}
 	}
@@ -1000,6 +1001,7 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 			Key:          jobs.CommandCancel,
 			Label:        "Cancel",
 			Destructive:  true,
+			Bulk:         true,
 			Confirmation: "Stop applying this import? Rows it has already created stay in the library.",
 		})
 	}
@@ -1012,7 +1014,7 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 				return nil, err
 			}
 			if archiveAvailable && planAvailable {
-				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry", Bulk: true})
 			}
 		}
 	}

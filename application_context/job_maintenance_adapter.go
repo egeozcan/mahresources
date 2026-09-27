@@ -272,11 +272,12 @@ func (a *similarityRecomputeAdapter) Commands(_ context.Context, commandContext 
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
 		Destructive:  true,
+		Bulk:         true,
 		Confirmation: "Stop rebuilding the similarity index? The pairs already rebuilt stay.",
 	}}
 	switch commandContext.Snapshot.State {
 	case jobs.StateFailed, jobs.StateCancelled, jobs.StateInterrupted:
-		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry", Bulk: true})
 	}
 	return commands, nil
 }
