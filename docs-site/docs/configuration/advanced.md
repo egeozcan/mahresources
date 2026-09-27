@@ -533,7 +533,13 @@ command runtime. Command and exchange calls return an unavailable error,
 administrator cancellation is disabled and returns HTTP 503 without setting the
 durable cancellation latch, and recovery continues automatically. Lease
 contention follows the short capped schedule above. A recovery blocker retains
-the staging lease and retries every five minutes. Recovery-blocker warnings in
+the staging lease and retries every five minutes; a blocker waiting for a
+process group that is alive or could not be inspected is also checked every
+five seconds, and recovery runs again as soon as that group has exited, so an
+orphan that dies with its crashed server's pipes holds commands back for
+seconds rather than minutes. A blocker with no recorded group, or a group from
+another boot, is changed by no exit and waits for the five-minute scan.
+Recovery-blocker warnings in
 `/logs` enumerate every blocked run ID, PGID, and reason. Lease warnings name
 the staging root. Retry failures record their failure reason. Healing is also
 logged. If an operator has independently decided that the named group is

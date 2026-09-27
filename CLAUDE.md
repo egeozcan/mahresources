@@ -581,7 +581,9 @@ so staging peaks near twice the source; the global sample is refreshed outside
 admission at startup and after sweeps, and a failed refresh preserves the last
 complete sample. Exactly one process may own a staging root. Busy lease
 acquisition uses short capped backoff; recovery blockers retain the lease and
-retry every five minutes.
+retry every five minutes, and a blocker waiting for a live or uninspectable
+process group is re-checked every five seconds and recovered as soon as that
+group is provably dead. Callers are told the time to that next check.
 Quarantine keeps rows nonterminal, withholds command mutations, reports to
 `/logs`, and may be healed by terminating the named abandoned process group.
 

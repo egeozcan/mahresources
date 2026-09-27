@@ -2,8 +2,10 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"runtime"
 	"sync"
 
@@ -235,8 +237,22 @@ func checkCommandParams(L *lua.LState, index int) map[string]string {
 	return params
 }
 
+// pushLuaHostError returns nil and the error. A command runtime the host is
+// recovering reads the one documented unavailable message whichever door
+// refused, plus a third value: the whole seconds until the host next tries to
+// recover it, so a plugin route can answer 503 "try later" instead of blaming
+// the request. The third value is absent when no retry is scheduled.
 func pushLuaHostError(L *lua.LState, err error) int {
 	L.Push(lua.LNil)
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	if errors.As(err, &quarantined) {
+		L.Push(lua.LString(commandRuntimeUnavailableMessage))
+		if retryAfter := quarantined.RetryAfter(); retryAfter > 0 {
+			L.Push(lua.LNumber(math.Ceil(retryAfter.Seconds())))
+			return 3
+		}
+		return 2
+	}
 	L.Push(lua.LString(err.Error()))
 	return 2
 }

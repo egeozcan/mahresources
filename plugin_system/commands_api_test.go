@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -34,6 +35,8 @@ type commandLuaHost struct {
 	imports       []plugin_commands.ImportSubmission
 	thumbnails    []thumbnailCall
 	discards      []string
+	// submitErr, when set, refuses every submission with it.
+	submitErr error
 }
 
 type thumbnailCall struct {
@@ -52,6 +55,9 @@ func (h *commandLuaHost) SubmitPluginCommand(req plugin_commands.CommandRequest)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.submitErr != nil {
+		return "", h.submitErr
+	}
 	h.requests = append(h.requests, req)
 	return "run-123", nil
 }
@@ -228,6 +234,48 @@ func TestCommandHostUnavailableExplainsAutomaticRecoveryAndActivatesWithoutReloa
 	}
 	if L.GetGlobal("__healed_id").String() != "run-123" || L.GetGlobal("__healed_err") != lua.LNil {
 		t.Fatalf("published command host was not resolved by the loaded plugin: %v / %v", L.GetGlobal("__healed_id"), L.GetGlobal("__healed_err"))
+	}
+}
+
+// TestAQuarantinedRuntimeTellsThePluginWhenToTryAgain pins what a plugin sees
+// while the host recovers its command runtime: the one documented unavailable
+// message, whatever wording the refusal carried, and the whole seconds until
+// the host tries again, so a route can answer 503 rather than 400. No third
+// value is returned when no retry is scheduled, or for any other refusal.
+func TestAQuarantinedRuntimeTellsThePluginWhenToTryAgain(t *testing.T) {
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands"`, host)
+	run := func() (lua.LValue, string, lua.LValue) {
+		t.Helper()
+		if err := L.DoString(`__id, __err, __retry = mah.commands.run("download", {url="literal"})`); err != nil {
+			t.Fatal(err)
+		}
+		return L.GetGlobal("__id"), L.GetGlobal("__err").String(), L.GetGlobal("__retry")
+	}
+
+	host.mu.Lock()
+	host.submitErr = &plugin_commands.RuntimeQuarantinedError{Reason: "commands are quarantined", RetryAfterDuration: 1500 * time.Millisecond}
+	host.mu.Unlock()
+	id, message, retry := run()
+	if id != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
+		t.Fatalf("quarantined run = %v, %q", id, message)
+	}
+	if retry != lua.LNumber(2) {
+		t.Fatalf("retry after = %v, want 2 whole seconds", retry)
+	}
+
+	host.mu.Lock()
+	host.submitErr = &plugin_commands.RuntimeQuarantinedError{Reason: "commands are quarantined"}
+	host.mu.Unlock()
+	if _, message, retry = run(); retry != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
+		t.Fatalf("unscheduled retry = %q, %v, want the message and no third value", message, retry)
+	}
+
+	host.mu.Lock()
+	host.submitErr = errors.New("per-plugin queue is full")
+	host.mu.Unlock()
+	if _, message, retry = run(); retry != lua.LNil || message != "per-plugin queue is full" {
+		t.Fatalf("ordinary refusal = %q, %v", message, retry)
 	}
 }
 

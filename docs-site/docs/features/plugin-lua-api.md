@@ -28,12 +28,26 @@ when the plugin also has `db:write`. All command and filesystem calls are
 refused inside `mah.db.transaction`.
 
 The modules stay installed while the host command runtime is quarantined by a
-busy staging lease or a recovery blocker. Calls then return `nil` and an error
-containing `plugin command runtime is unavailable`; the host represents this as
-a distinct typed unavailable state rather than as a missing run. Quarantined
+busy staging lease or a recovery blocker. Calls then return `nil`, an error
+containing `plugin command runtime is unavailable`, and a third value: the
+whole seconds until the host next tries to recover the runtime. The third value
+is absent when no retry is scheduled (the server is stopping). Quarantined
 recovery retries automatically, and `/logs` records the reason and healing. Once
 it succeeds, calls begin working without a plugin reload. Do not retry in a tight
-Lua loop.
+Lua loop; a route should tell its caller to try later instead:
+
+```lua
+local run_id, err, retry_after = mah.commands.run("download", params)
+if retry_after then
+    ctx.status(503) -- temporarily unavailable, not a bad request
+    ctx.json({ error = err, retry_after = retry_after })
+    return
+elseif err then
+    ctx.status(400)
+    ctx.json({ error = err })
+    return
+end
+```
 
 ### Start a command
 

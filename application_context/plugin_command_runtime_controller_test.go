@@ -228,10 +228,11 @@ func newControllerHealingPluginContext(t *testing.T) *MahresourcesContext {
 }
 function init()
   mah.inject("page_bottom", function()
-    local id, command_err = mah.commands.run("probe", {value="healed"})
-    local runs, fs_err = mah.fs.runs()
+    local id, command_err, command_retry = mah.commands.run("probe", {value="healed"})
+    local runs, fs_err, fs_retry = mah.fs.runs()
     if command_err ~= nil or fs_err ~= nil then
-      return "command=" .. tostring(command_err) .. "|fs=" .. tostring(fs_err)
+      return "command=" .. tostring(command_err) .. "|fs=" .. tostring(fs_err) ..
+        "|command_retry=" .. tostring(command_retry) .. "|fs_retry=" .. tostring(fs_retry)
     end
     return "ok:" .. tostring(id) .. ":" .. tostring(#runs)
   end)
@@ -260,11 +261,98 @@ func renderControllerHealingPlugin(ctx *MahresourcesContext) string {
 	return ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 }
 
-func requireControllerHealingPluginQuarantined(t *testing.T, ctx *MahresourcesContext) {
+// requireControllerHealingPluginQuarantined checks what a plugin is told while
+// commands are unavailable. While the host is recovering it is also told when
+// the host tries again, so its route can answer 503 rather than blame the
+// request; once the runtime is stopping no retry is scheduled, and none is
+// promised.
+func requireControllerHealingPluginQuarantined(t *testing.T, ctx *MahresourcesContext, recovering bool) {
 	t.Helper()
 	output := renderControllerHealingPlugin(ctx)
 	require.Contains(t, output, "command=plugin command runtime is unavailable")
 	require.Contains(t, output, "fs=plugin command runtime is unavailable")
+	if recovering {
+		require.Regexp(t, `command_retry=[1-9][0-9]*\|fs_retry=[1-9][0-9]*$`, output)
+	} else {
+		require.Contains(t, output, "command_retry=nil|fs_retry=nil")
+	}
+}
+
+// TestPluginCommandRecoveryQuarantineEndsOnceTheBlockingGroupExits pins that a
+// recovery blocker waiting for a process group to exit is settled by that
+// exit, not by the next five-minute scan: the blocked groups are inspected on
+// a short cadence and recovery runs as soon as one is proved dead. Callers are
+// told to try again at that cadence.
+func TestPluginCommandRecoveryQuarantineEndsOnceTheBlockingGroupExits(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	createControllerRecoveryRun(t, ctx, "orphan-after-crash", 4441)
+	inspector := &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = inspector
+	cfg.recoveryInterval = time.Hour
+	cfg.blockerPollInterval = 10 * time.Millisecond
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	_, err := ctx.pluginCommandActive()
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	require.ErrorAs(t, err, &quarantined)
+	require.LessOrEqual(t, quarantined.RetryAfter(), time.Second, "callers are told to try again at the blocker cadence")
+
+	inspector.set(plugin_commands.GroupDead)
+	require.Eventually(t, func() bool {
+		_, err := ctx.pluginCommandActive()
+		return err == nil
+	}, 2*time.Second, 5*time.Millisecond)
+	run, _, err := ctx.Run("orphan-after-crash")
+	require.NoError(t, err)
+	require.Equal(t, plugin_commands.RunStatusInterrupted, run.Status)
+}
+
+// TestPluginCommandRecoveryBlockerNoExitCanSettleKeepsTheSlowCadence covers the
+// blockers no process exit changes: a run whose process group was never
+// recorded names nothing to watch, so recovery is not re-run on the short
+// cadence and callers are told the real wait.
+func TestPluginCommandRecoveryBlockerNoExitCanSettleKeepsTheSlowCadence(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC()
+	owner := uint(7)
+	require.NoError(t, ctx.CreateRun(plugin_commands.RunRecord{
+		ID: "no-recorded-group", PluginName: "controller", CommandName: "tool", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusQueued, CreatedByUserID: &owner, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: "no-recorded-group", ArgvJSON: `[]`, CreatedAt: now}))
+	won, err := ctx.MarkRunRunning("no-recorded-group", now)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var count int
+	var mu sync.Mutex
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = &controllerRecoveryInspector{state: plugin_commands.GroupDead}
+	cfg.recoveryInterval = time.Hour
+	cfg.blockerPollInterval = 5 * time.Millisecond
+	cfg.beforeQuarantine = func(pluginCommandRuntimeState) {
+		mu.Lock()
+		count++
+		mu.Unlock()
+	}
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	require.Equal(t, 1, count, "a blocker no exit can settle must not re-run recovery on the short cadence")
+	mu.Unlock()
+	_, err = ctx.pluginCommandActive()
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	require.ErrorAs(t, err, &quarantined)
+	require.Greater(t, quarantined.RetryAfter(), time.Minute)
 }
 
 func TestPluginCommandControllerRecoveryQuarantinePublishesBothHostsToLoadedPlugin(t *testing.T) {
@@ -283,7 +371,7 @@ func TestPluginCommandControllerRecoveryQuarantinePublishesBothHostsToLoadedPlug
 	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
 
 	require.True(t, ctx.PluginManager().IsEnabled(controllerHealingPluginName))
-	requireControllerHealingPluginQuarantined(t, ctx)
+	requireControllerHealingPluginQuarantined(t, ctx, true)
 
 	inspector.set(plugin_commands.GroupDead)
 	var healedOutput string
@@ -745,7 +833,7 @@ func TestPluginCommandControllerStopDuringHealingRetainsLeaseUntilDispatcherQuie
 	}
 
 	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), settings, cfg))
-	requireControllerHealingPluginQuarantined(t, ctx)
+	requireControllerHealingPluginQuarantined(t, ctx, true)
 	inspector.set(plugin_commands.GroupDead)
 	select {
 	case <-publishEntered:
@@ -787,7 +875,7 @@ func TestPluginCommandControllerStopDuringHealingRetainsLeaseUntilDispatcherQuie
 	require.NoError(t, <-stopped)
 	_, activeErr := ctx.pluginCommandActive()
 	requireGenericCommandQuarantineError(t, activeErr)
-	requireControllerHealingPluginQuarantined(t, ctx)
+	requireControllerHealingPluginQuarantined(t, ctx, false)
 	second, leaseErr = plugin_commands.AcquireRuntimeLease(root)
 	require.NoError(t, leaseErr)
 	require.NoError(t, second.Close())
