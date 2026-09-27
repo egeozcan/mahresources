@@ -1,4 +1,4 @@
-<div x-data="jobPanel()" data-testid="job-panel-root" class="relative"{% if currentUser and currentUser.IsAdmin %} data-job-panel-viewer="{{ currentUser.UserID }}"{% endif %}>
+<div x-data="jobPanel()" data-testid="job-panel-root" class="relative"{% if currentUser and currentUser.IsAdmin %} data-job-panel-viewer="{{ currentUser.UserID }}" data-job-panel-owner-scope="{{ jobsPanelOwnerScope }}"{% endif %}>
     <button type="button" class="job-panel-trigger inline-flex items-center gap-2 rounded border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-amber-700"
             @click="toggle($event)" aria-label="Open Jobs panel" :aria-controls="isOpen ? 'job-center-panel' : null"
             :aria-expanded="isOpen.toString()" aria-describedby="job-panel-trigger-counts" title="Jobs (Control or Command + Shift + D)">
@@ -44,6 +44,22 @@
                         <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" /></svg>
                     </button>
                 </header>
+
+                {% if currentUser and currentUser.IsAdmin %}
+                {# An administrator's drawer can list every account's Jobs; it lists their own until they choose otherwise, and remembers the choice. #}
+                <fieldset class="flex items-center gap-1 border-b border-stone-200 px-4 py-1.5 text-xs text-stone-700" data-job-panel-scope>
+                    <legend class="sr-only">Whose jobs to show</legend>
+                    <span aria-hidden="true" class="mr-1 text-stone-600">Show</span>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="job-panel-scope" value="mine" class="peer sr-only" :checked="ownerScope === 'me'" @change="chooseOwnerScope('mine')">
+                        <span class="inline-flex min-h-6 items-center rounded px-2 font-medium peer-checked:bg-amber-100 peer-checked:text-amber-900 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-1 peer-focus-visible:outline-amber-700">My jobs</span>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="job-panel-scope" value="everyone" class="peer sr-only" :checked="ownerScope !== 'me'" @change="chooseOwnerScope('everyone')">
+                        <span class="inline-flex min-h-6 items-center rounded px-2 font-medium peer-checked:bg-amber-100 peer-checked:text-amber-900 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-1 peer-focus-visible:outline-amber-700">Everyone's</span>
+                    </label>
+                </fieldset>
+                {% endif %}
 
                 {# Announcements while the drawer is open: it is aria-modal, so the page's own live region may go unheard. #}
                 <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-job-panel-announcer></div>

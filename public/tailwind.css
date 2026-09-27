@@ -3346,6 +3346,32 @@
       }
     }
   }
+  .peer-checked\:bg-amber-100 {
+    &:is(:where(.peer):checked ~ *) {
+      background-color: var(--color-amber-100);
+    }
+  }
+  .peer-checked\:text-amber-900 {
+    &:is(:where(.peer):checked ~ *) {
+      color: var(--color-amber-900);
+    }
+  }
+  .peer-focus-visible\:outline-2 {
+    &:is(:where(.peer):focus-visible ~ *) {
+      outline-style: var(--tw-outline-style);
+      outline-width: 2px;
+    }
+  }
+  .peer-focus-visible\:outline-offset-1 {
+    &:is(:where(.peer):focus-visible ~ *) {
+      outline-offset: 1px;
+    }
+  }
+  .peer-focus-visible\:outline-amber-700 {
+    &:is(:where(.peer):focus-visible ~ *) {
+      outline-color: var(--color-amber-700);
+    }
+  }
   .file\:mr-4 {
     &::file-selector-button {
       margin-right: calc(var(--spacing) * 4);

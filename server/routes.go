@@ -192,6 +192,12 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		ctx["jobCenterCutoverEnabled"] = template_context_providers.JobCenterCutoverEnabled
 		if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
 			ctx["currentUser"] = p
+			// An administrator's Jobs drawer lists their own Jobs unless they
+			// chose every account's; rendered with the page, so the first read
+			// already has the right scope.
+			if p.IsAdmin() && !appContext.JobsPanelShowsEveryone(p.UserID) {
+				ctx["jobsPanelOwnerScope"] = "me"
+			}
 		}
 		// CSRF synchronizer token for the page (meta tag + form fields). Empty
 		// when auth is off or for Bearer requests, where CSRF is not enforced.

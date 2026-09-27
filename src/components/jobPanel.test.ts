@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as userSettings from '../userSettings.js';
 import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -44,7 +45,7 @@ describe('Job Center panel', () => {
         expect([...byGroup.values()].filter(Boolean)).toEqual(['retry-of']);
     });
 
-    test('a drawer scoped to its viewer\'s own jobs reads only those, and reads everything again once widened', async () => {
+    test('an administrator\'s drawer lists only their own jobs until they choose everyone\'s, and keeps the choice', async () => {
         const panel = jobPanel();
         panel.ownerScope = 'me';
         const requests: URL[] = [];
@@ -58,10 +59,15 @@ describe('Job Center panel', () => {
         expect(requests.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
 
         requests.length = 0;
-        panel.setOwnerScope('');
+        panel.chooseOwnerScope('everyone');
         await vi.waitFor(() => expect(requests).toHaveLength(3));
         expect(panel.ownerScope).toBe('');
         expect(requests.some(url => url.searchParams.has('owner'))).toBe(false);
+        expect(userSettings.get('jobsPanelScope')).toBe('everyone');
+
+        panel.chooseOwnerScope('mine');
+        expect(panel.ownerScope).toBe('me');
+        expect(userSettings.get('jobsPanelScope')).toBe('mine');
     });
 
     test('asks first only for a command that stops work or cannot be undone', () => {

@@ -32,6 +32,26 @@ var (
 	ErrTooManySettings  = errors.New("too many settings for this user")
 )
 
+// JobsPanelScopeSetting is the setting an administrator's Jobs drawer keeps its
+// Mine or Everyone choice under, as the JSON string "mine" or "everyone".
+const JobsPanelScopeSetting = "jobsPanelScope"
+
+// JobsPanelShowsEveryone reports whether this account chose to see every
+// account's Jobs in the drawer rather than its own. Only an administrator's
+// drawer lists other accounts' Jobs, and it lists its own by default: a missing
+// or unreadable choice keeps the default, which shows less, never more.
+func (ctx *MahresourcesContext) JobsPanelShowsEveryone(userID uint) bool {
+	if userID == 0 {
+		return false
+	}
+	var rows []models.UserSetting
+	if err := ctx.db.Where(&models.UserSetting{UserId: userID, Key: JobsPanelScopeSetting}).Limit(1).Find(&rows).Error; err != nil || len(rows) == 0 {
+		return false
+	}
+	var choice string
+	return json.Unmarshal([]byte(rows[0].Value), &choice) == nil && choice == "everyone"
+}
+
 // GetUserSettings returns all settings for the acting user as key → raw JSON value.
 // The owner is resolved internally from the request principal (auth on) or the root
 // admin (auth off); a 0 owner yields an empty map so a read never fails on identity.

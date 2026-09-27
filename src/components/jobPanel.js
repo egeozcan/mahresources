@@ -1,4 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import * as userSettings from '../userSettings.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
 import {
@@ -1258,6 +1259,13 @@ export function jobPanel() {
             if (next === this.ownerScope || this.streamStopped) return;
             this.ownerScope = next;
             this.refresh();
+        },
+
+        // An administrator's Mine or Everyone choice, kept for their next page.
+        chooseOwnerScope(choice) {
+            const mine = choice === 'mine';
+            this.setOwnerScope(mine ? 'me' : '');
+            userSettings.set('jobsPanelScope', mine ? 'mine' : 'everyone');
         },
 
         // The Undo a Dismiss's box offers.
