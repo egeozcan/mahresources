@@ -506,9 +506,10 @@ export function jobCenter(options = {}) {
         },
 
         async refreshJobPreference(id) {
+            const generation = this._loadGeneration;
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id) this.updateJob(freshJob);
+            if (freshJob?.id && generation === this._loadGeneration) this.updateJob(freshJob);
             return freshJob;
         },
 
@@ -632,9 +633,13 @@ export function jobCenter(options = {}) {
             }
             if (result.needsSnapshot) {
                 if (!this.jobs.some(job => job.id === result.jobId)) return;
+                // Like a detail load, a snapshot read that a newer load has
+                // superseded (one a reset began) is dropped when it answers.
+                const generation = this._loadGeneration;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
                         const snapshot = payload.job || payload;
+                        if (generation !== this._loadGeneration) return;
                         if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
                     .catch(() => {});
