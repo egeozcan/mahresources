@@ -143,3 +143,36 @@ func TestAScheduledJobCardSaysWhenItStarts(t *testing.T) {
 		t.Fatal("the scheduled card draws a progress bar for work nobody is doing")
 	}
 }
+
+// TestAnIndeterminateJobCardHonoursReducedMotion renders a running card whose
+// total is unknown. Its bar may pulse only for a reader who has not asked for
+// reduced motion, as the drawer's and the detail page's bars do.
+func TestAnIndeterminateJobCardHonoursReducedMotion(t *testing.T) {
+	set := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("../templates", nil))
+	page, err := set.FromFile("listJobs.tpl")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	context := template_context_providers.JobCenterListContextProvider(nil)(httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil))
+	context["jobs"] = []template_context_providers.JobRow{{
+		ID: "running-card", Title: "Download", Kind: "remote-download", State: "running",
+		StateLabel: "Running", BadgeClass: "card-badge--live", DetailURL: "/job?id=running-card", Entity: "{}",
+		Progress: &template_context_providers.JobRowProgress{Text: "Working", Indeterminate: true, AccessibleText: "Working; total unknown"},
+	}}
+	rendered, err := page.Execute(context)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	start := strings.Index(rendered, `data-job-id="running-card"`)
+	end := strings.Index(rendered[start:], "</article>")
+	if start < 0 || end < 0 {
+		t.Fatal("the running card was not rendered")
+	}
+	card := rendered[start : start+end]
+	if !strings.Contains(card, "motion-safe:animate-pulse") {
+		t.Fatal("the indeterminate bar does not pulse at all")
+	}
+	if strings.Contains(strings.ReplaceAll(card, "motion-safe:animate-pulse", ""), "animate-pulse") {
+		t.Fatal("the indeterminate bar pulses for a reader who asked for reduced motion")
+	}
+}
