@@ -264,8 +264,20 @@ func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, e
 	}
 	execution := admission.Execution
 	done := make(chan struct{})
-	go ctx.renewQueueExecutionClaim(execution, admission.Lease, done)
+	followers := ctx.queueFollowers
+	if followers != nil {
+		followers.Add(2)
+	}
 	go func() {
+		if followers != nil {
+			defer followers.Done()
+		}
+		ctx.renewQueueExecutionClaim(execution, admission.Lease, done)
+	}()
+	go func() {
+		if followers != nil {
+			defer followers.Done()
+		}
 		defer close(done)
 		snap, stopped := ctx.followQueueExecution(execution, entry)
 		if stopped {
@@ -634,6 +646,17 @@ func (ctx *MahresourcesContext) recordOwnedHold(execution jobs.Execution, entry 
 }
 
 // queueIsShuttingDown reports whether this deployment's queue has begun stopping.
+// waitQueueFollowers waits, at most timeout, for every goroutine ownQueueExecution
+// started, and reports whether they all returned. Once the queue is shutting down
+// they stop following and stop retrying a publication, so what is left to wait
+// for is a write already in flight.
+func (ctx *MahresourcesContext) waitQueueFollowers(timeout time.Duration) bool {
+	if ctx == nil || ctx.queueFollowers == nil {
+		return true
+	}
+	return waitForWaitGroup(ctx.queueFollowers, timeout)
+}
+
 func (ctx *MahresourcesContext) queueIsShuttingDown() bool {
 	if ctx == nil || ctx.downloadManager == nil {
 		return false
