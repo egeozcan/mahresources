@@ -299,9 +299,10 @@ The job at the head of the queue starts once one of the process's 3 plugin job
 slots is free, the plugin is not busy with a hook, a page or another synchronous
 call, and the deployment's job budget (`-max-job-concurrency`, shared with
 downloads, exports and every other kind of Job) has room. A bulk run over 50
-resources is therefore one running Job and 49 queued ones, and it occupies one
-slot at a time, so other plugins' work and downloads keep starting while it
-drains. Just before a queued action starts, the server checks again that the
+resources on one server process is therefore one running Job and 49 queued ones
+(with several server processes, up to one running Job per process), and it
+occupies one slot per process at a time, so other plugins' work and downloads
+keep starting while it drains. Just before a queued action starts, the server checks again that the
 account it runs as may still run it on that entity. If claiming the job and
 making those checks take longer than 10 seconds together, the job goes back to
 `queued`, shows "Waiting for the account and scope checks", and lets the
