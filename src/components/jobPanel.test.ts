@@ -1238,6 +1238,49 @@ describe('Job Center panel accessibility hooks', () => {
         expect(completions()).toEqual([{ jobId: 'dl-new' }]);
     });
 
+    // A Retry records a retried event on the Job it follows: not a transition,
+    // since the Job keeps its state and version, but news that its failure was
+    // taken care of. The drawer reads its lists again on it, and the failure
+    // leaves Needs attention without a word: its outcome was said when it
+    // failed, and nothing about it is new.
+    test('a failure someone retried leaves Needs attention without being said again', async () => {
+        const failed = {
+            id: 'dl-retried', title: 'sunrise.png', kind: 'remote-download', state: 'failed', version: 3,
+            failure: { code: 'http-500', message: 'HTTP 500 Internal Server Error' },
+        };
+        let retried = false;
+        const spoken: string[] = [];
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs') {
+                const needsAttention = url.searchParams.getAll('state').includes('failed');
+                const hidesRetried = url.searchParams.get('noInboundRelationship') === 'retry-of';
+                return { jobs: needsAttention && !(retried && hidesRetried) ? [failed] : [] };
+            }
+            return { ...failed, commands: [] };
+        }) as any;
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
+        await panel.refresh();
+        expect(panel.jobs.map(job => job.id)).toEqual(['dl-retried']);
+
+        retried = true;
+        expect(panelLifecycleEvents.has('retried')).toBe(false);
+        const refreshes = vi.spyOn(panel, 'schedulePanelRefresh');
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'dl-retried', jobVersion: 3, type: 'retried', sequence: 6, deliverySequence: 21 }),
+            lastEventId: 'v2:21',
+        });
+        expect(refreshes).toHaveBeenCalled();
+        await panel.refresh();
+
+        expect(panel.jobs).toEqual([]);
+        await new Promise(resolve => setTimeout(resolve, 80));
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        expect(spoken).toEqual([]);
+    });
+
     test('orders a finish and a render inside one millisecond', () => {
         const completions = recordDownloadCompletions();
         const panel = jobPanel();
