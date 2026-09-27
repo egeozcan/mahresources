@@ -1,6 +1,8 @@
 package plugin_system
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -186,11 +188,31 @@ func (pm *PluginManager) hostJobsInstalled() HostJobs {
 // again?" is answered by "is that process still there?" and by nothing else. A
 // lease expiring is not that answer — a runtime can be alive and unreachable, and
 // a fresh process can be running beside it.
+//
+// Host and boot session together are taken to name one pid namespace. That holds
+// for a machine and for a container with its own hostname (Docker's default is
+// the container id, which survives a restart), and it is why servers sharing one
+// database must not share a hostname on one kernel: two such processes would
+// read each other's pids as their own.
 type RuntimeIdentity struct {
 	Host        string
 	BootSession string
 	PID         int
+	// Nonce is drawn once per process. A restarted container keeps its hostname,
+	// the kernel's boot session and usually its pid, so without it a new process
+	// reads its predecessor's record as its own and that predecessor never ends.
+	// Empty in a record written before nonces were recorded.
+	Nonce string
 }
+
+// processNonce is this process's nonce: 32 random bits, enough to tell apart the
+// few processes that can hold one pid in one boot, and short enough that the
+// recorded form fits a claimant with a 64-byte hostname.
+var processNonce = func() string {
+	var raw [4]byte
+	_, _ = rand.Read(raw[:])
+	return hex.EncodeToString(raw[:])
+}()
 
 // CurrentRuntimeIdentity names this process.
 //
@@ -211,24 +233,29 @@ func CurrentRuntimeIdentity() RuntimeIdentity {
 	if err != nil {
 		boot = ""
 	}
-	return RuntimeIdentity{Host: host, BootSession: boot, PID: os.Getpid()}
+	return RuntimeIdentity{Host: host, BootSession: boot, PID: os.Getpid(), Nonce: processNonce}
 }
 
-// String is the recorded form: host, boot session and pid in one bounded field.
+// String is the recorded form: host, boot session, pid and nonce in one bounded
+// field.
 //
 // It is stored in a Job's sanitized summary — a place a person reads — so it is
 // deliberately one compact string rather than nested JSON, and it carries nothing
 // but identity: no path, no user, no plugin value.
 func (r RuntimeIdentity) String() string {
-	return fmt.Sprintf("%s/%s/%d", r.Host, r.BootSession, r.PID)
+	if r.Nonce == "" {
+		return fmt.Sprintf("%s/%s/%d", r.Host, r.BootSession, r.PID)
+	}
+	return fmt.Sprintf("%s/%s/%d/%s", r.Host, r.BootSession, r.PID, r.Nonce)
 }
 
-// ParseRuntimeIdentity reads a recorded identity back. An unreadable value yields
-// ok=false rather than a zero identity, so a caller cannot mistake "nothing was
-// recorded" for "recorded, and this process is it".
+// ParseRuntimeIdentity reads a recorded identity back, with or without the nonce
+// an earlier release did not record. An unreadable value yields ok=false rather
+// than a zero identity, so a caller cannot mistake "nothing was recorded" for
+// "recorded, and this process is it".
 func ParseRuntimeIdentity(recorded string) (RuntimeIdentity, bool) {
 	parts := strings.Split(recorded, "/")
-	if len(parts) != 3 {
+	if len(parts) != 3 && len(parts) != 4 {
 		return RuntimeIdentity{}, false
 	}
 	pid, err := strconv.Atoi(parts[2])
@@ -238,7 +265,14 @@ func ParseRuntimeIdentity(recorded string) (RuntimeIdentity, bool) {
 	if parts[0] == "" {
 		return RuntimeIdentity{}, false
 	}
-	return RuntimeIdentity{Host: parts[0], BootSession: parts[1], PID: pid}, true
+	identity := RuntimeIdentity{Host: parts[0], BootSession: parts[1], PID: pid}
+	if len(parts) == 4 {
+		if parts[3] == "" {
+			return RuntimeIdentity{}, false
+		}
+		identity.Nonce = parts[3]
+	}
+	return identity, true
 }
 
 // RuntimeLiveness is what can be proved about the process that accepted work.
@@ -264,10 +298,17 @@ const (
 //
 //   - another host: Unknown. Its process table is not ours to read, and a boot
 //     session id from another machine's clock is not comparable. This is the case
-//     §3 calls out — a cross-host mismatch alone never proves death.
+//     §3 calls out — a cross-host mismatch alone never proves death. It stays
+//     Unknown however long the work waits: the only evidence that would settle it
+//     lives on the other host, so the work stays blocked for a person.
 //   - this host, a different boot session: Gone. The machine has rebooted since,
 //     so no process from that boot exists, whatever its pid does now.
-//   - this host, this boot, our own pid: Alive, and provably *this* runtime.
+//   - this host, this boot, our own pid and our own nonce: Alive, and provably
+//     *this* runtime.
+//   - this host, this boot, our own pid and any other nonce, or none: Gone. One
+//     pid names one process at a time and this process holds it, so the process
+//     that recorded it has exited. This process always records its nonce, so a
+//     record without one is an earlier process's.
 //   - this host, this boot, another pid: Gone when the process does not exist,
 //     Alive when one does. A reused pid reads as Alive, which errs toward
 //     leaving a Job blocked rather than interrupting work that may still run.
@@ -285,7 +326,10 @@ func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 		return RuntimeGone
 	}
 	if r.PID == current.PID {
-		return RuntimeAlive
+		if r.Nonce != "" && r.Nonce == current.Nonce {
+			return RuntimeAlive
+		}
+		return RuntimeGone
 	}
 	return pidLiveness(r.PID)
 }

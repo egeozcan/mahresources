@@ -374,13 +374,53 @@ func TestRuntimeIdentityLiveness_isConservative(t *testing.T) {
 	}
 }
 
+// TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone is the restarted
+// container: the hostname, the kernel's boot session and the pid all survive a
+// `docker restart`, so a process that finds its own pid in a record can only
+// tell itself from its predecessor by the per-process nonce. The pid is held by
+// this process now, so whoever recorded it with another nonce, or before nonces
+// were recorded, has exited.
+func TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone(t *testing.T) {
+	current := CurrentRuntimeIdentity()
+	if current.Host == "" || current.BootSession == "" {
+		t.Skip("this host has no name or boot session to compare against")
+	}
+	if current.Nonce == "" {
+		t.Fatal("the current runtime identity carries no nonce")
+	}
+	if again := CurrentRuntimeIdentity(); again != current {
+		t.Fatalf("the nonce changed within one process: %+v then %+v", current, again)
+	}
+
+	predecessor := current
+	predecessor.Nonce = current.Nonce + "0"
+	if got := predecessor.Liveness(); got != RuntimeGone {
+		t.Errorf("an earlier process with this pid: liveness = %v, want gone", got)
+	}
+	recordedBeforeNonces, ok := ParseRuntimeIdentity(fmt.Sprintf("%s/%s/%d", current.Host, current.BootSession, current.PID))
+	if !ok {
+		t.Fatal("a three-part identity recorded by an earlier release no longer parses")
+	}
+	if got := recordedBeforeNonces.Liveness(); got != RuntimeGone {
+		t.Errorf("an earlier release's record of this pid: liveness = %v, want gone", got)
+	}
+	parsed, ok := ParseRuntimeIdentity(current.String())
+	if !ok || parsed.Liveness() != RuntimeAlive {
+		t.Errorf("this process's own recorded identity %q: parsed ok=%v liveness=%v, want alive", current.String(), ok, parsed.Liveness())
+	}
+}
+
 func TestRuntimeIdentityRoundTrips(t *testing.T) {
-	identity := RuntimeIdentity{Host: "host-a", BootSession: "boot-b", PID: 4242}
+	identity := RuntimeIdentity{Host: "host-a", BootSession: "boot-b", PID: 4242, Nonce: "0a1b2c3d"}
 	parsed, ok := ParseRuntimeIdentity(identity.String())
 	if !ok || parsed != identity {
 		t.Fatalf("round trip of %q gave %+v ok=%v", identity.String(), parsed, ok)
 	}
-	for _, bad := range []string{"", "host", "host/boot", "host/boot/notanumber", "host/boot/0", "/boot/1"} {
+	legacy, ok := ParseRuntimeIdentity("host-a/boot-b/4242")
+	if !ok || legacy != (RuntimeIdentity{Host: "host-a", BootSession: "boot-b", PID: 4242}) {
+		t.Fatalf("a record without a nonce gave %+v ok=%v", legacy, ok)
+	}
+	for _, bad := range []string{"", "host", "host/boot", "host/boot/notanumber", "host/boot/0", "/boot/1", "host/boot/1/", "host/boot/1/n/extra"} {
 		if _, ok := ParseRuntimeIdentity(bad); ok {
 			t.Errorf("ParseRuntimeIdentity(%q) was accepted", bad)
 		}

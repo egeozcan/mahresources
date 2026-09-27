@@ -15,6 +15,7 @@ import (
 	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/plugin_system"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
@@ -869,5 +870,19 @@ func TestJobRuntimeNeverLogsTheDecryptedInputItCouldNotDecode(t *testing.T) {
 	}
 	if held := storedCapacity(t, app, jobs.CapacityGroupGlobal) + storedCapacity(t, app, runtimeTestKind); held != 0 {
 		t.Fatalf("the blocked Job still holds %d capacity slots", held)
+	}
+}
+
+// TestRuntimeIdentityFitsTheClaimantBound keeps the recorded runtime identity
+// inside the claimant column for the longest hostname Linux allows, a boot
+// session UUID and the largest Linux pid: a claimant over the bound refuses the
+// claim, and every Job this process dispatches would fail to start.
+func TestRuntimeIdentityFitsTheClaimantBound(t *testing.T) {
+	identity := plugin_system.CurrentRuntimeIdentity()
+	identity.Host = strings.Repeat("h", 64)
+	identity.BootSession = "01234567-89ab-cdef-0123-456789abcdef"
+	identity.PID = 4194304
+	if recorded := identity.String(); len(recorded) > jobs.MaxClaimantBytes {
+		t.Fatalf("recorded identity %q is %d bytes, over the %d-byte claimant bound", recorded, len(recorded), jobs.MaxClaimantBytes)
 	}
 }
