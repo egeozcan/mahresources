@@ -245,8 +245,8 @@ func checkCommandParams(L *lua.LState, index int) map[string]string {
 // reads the one documented message whichever door refused, plus a third value,
 // {unavailable = true, retry_after = seconds}, so a plugin route can answer 503
 // "try later" instead of blaming the request. retry_after is the whole seconds
-// until the host next tries to recover the runtime, and absent when no retry is
-// scheduled. Any other refusal returns two values.
+// until the host next checks whether it can recover the runtime, and absent
+// when no check is scheduled. Any other refusal returns two values.
 func pushLuaHostError(L *lua.LState, err error) int {
 	L.Push(lua.LNil)
 	var quarantined *plugin_commands.RuntimeQuarantinedError
