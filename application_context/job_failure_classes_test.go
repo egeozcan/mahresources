@@ -155,7 +155,7 @@ func TestARefusedImportArchiveSaysWhy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := newWorkflowJobContext(t)
 			handle := "imp-unreadable-" + strings.ReplaceAll(tc.name, " ", "-")
-			submission := ctx.SubmitImportParse(handle, tc.archive(t, ctx, handle), "api")
+			submission := ctx.SubmitImportParse(handle, tc.archive(t, ctx, handle), "", "api")
 			if submission.Err != nil {
 				t.Fatalf("submit the parse: %v", submission.Err)
 			}

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"mahresources/download_queue"
 	"mahresources/groupio"
@@ -103,6 +105,9 @@ func importResultPathFor(handle string) string {
 type importParseJobInput struct {
 	Handle  string `json:"handle"`
 	Archive string `json:"archive"`
+	// FileName is the name the archive was uploaded under, for people to tell
+	// imports apart; the executor never opens it.
+	FileName string `json:"fileName,omitempty"`
 }
 
 // importApplyJobInput is what an apply Job is accepted with: the plan it decided on
@@ -119,6 +124,8 @@ type importApplyJobInput struct {
 	ParseHandle string          `json:"parseHandle"`
 	Plan        string          `json:"plan"`
 	Decisions   ImportDecisions `json:"decisions"`
+	// FileName is the uploaded archive's name, as its parse recorded it.
+	FileName string `json:"fileName,omitempty"`
 }
 
 func importParseJobCodec() jobs.ReplayCodec {
@@ -150,10 +157,12 @@ func importApplyJobCodec() jobs.ReplayCodec {
 }
 
 // importParseSummary is the bounded, searchable half of a parse's input: the
-// archive's own file name, never a path into the deployment's storage.
+// staged archive's own file name, never a path into the deployment's storage,
+// and the name the person uploaded it under.
 type importParseSummary struct {
-	Handle  string `json:"handle,omitempty"`
-	Archive string `json:"archive,omitempty"`
+	Handle   string `json:"handle,omitempty"`
+	Archive  string `json:"archive,omitempty"`
+	FileName string `json:"fileName,omitempty"`
 }
 
 // importApplySummary is the bounded, searchable half of an apply's input. The
@@ -162,6 +171,7 @@ type importParseSummary struct {
 // anybody with access to the Job may read.
 type importApplySummary struct {
 	ParseHandle     string `json:"parseHandle,omitempty"`
+	FileName        string `json:"fileName,omitempty"`
 	ExcludedItems   int    `json:"excludedItems,omitempty"`
 	MappingActions  int    `json:"mappingActions,omitempty"`
 	DanglingActions int    `json:"danglingActions,omitempty"`
@@ -173,7 +183,54 @@ func sanitizeImportParseInput(input json.RawMessage) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(importParseSummary{Handle: parsed.Handle, Archive: filepath.Base(parsed.Archive)})
+	return json.Marshal(importParseSummary{
+		Handle: parsed.Handle, Archive: filepath.Base(parsed.Archive), FileName: importUploadName(parsed.FileName),
+	})
+}
+
+// importUploadNameBytes bounds the uploaded file name a parse records.
+const importUploadNameBytes = 255
+
+// importUploadName is the name an archive was uploaded under, as a title and a
+// summary may show it: its last path element whichever separator the client
+// used (a browser can send the whole path), without control characters, and
+// bounded. A name that is nothing but a path answers "".
+func importUploadName(raw string) string {
+	name := strings.ReplaceAll(raw, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name))
+	if name == "." || name == ".." {
+		return ""
+	}
+	return truncateUTF8(name, importUploadNameBytes)
+}
+
+// importJobTitle names an import's Job by the archive it was uploaded as, bounded
+// to a title's ceiling, or answers the Kind's own title when there is no name.
+func importJobTitle(prefix, fileName, untitled string) string {
+	if fileName == "" {
+		return untitled
+	}
+	return truncateUTF8(prefix+fileName, jobs.MaxTitleBytes)
+}
+
+// truncateUTF8 cuts value to at most limit bytes without splitting a character.
+func truncateUTF8(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	value = value[:limit]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func encodeImportParseInput(input json.RawMessage) (json.RawMessage, error) {
@@ -220,6 +277,7 @@ func sanitizeImportApplyInput(input json.RawMessage) (json.RawMessage, error) {
 	}
 	return json.Marshal(importApplySummary{
 		ParseHandle:     parsed.ParseHandle,
+		FileName:        importUploadName(parsed.FileName),
 		ExcludedItems:   len(parsed.Decisions.ExcludedItems),
 		MappingActions:  len(parsed.Decisions.MappingActions),
 		DanglingActions: len(parsed.Decisions.DanglingActions),
@@ -1184,7 +1242,7 @@ func (ctx *MahresourcesContext) runImportApplyJob(jobCtx context.Context, sink d
 // the input names the file the executor reads: accepting a Job whose input names a
 // staging path that may be renamed underneath it would be an input that describes
 // something other than what runs.
-func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string, origin string) QueueJobSubmission {
+func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath, fileName, origin string) QueueJobSubmission {
 	result := QueueJobSubmission{QueueJobID: handle}
 	if ctx == nil || ctx.downloadManager == nil {
 		result.Err = errors.New("the download queue is not available")
@@ -1204,7 +1262,8 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 	}
 
 	owner := ctx.queueSubmitterOwner()
-	input, err := json.Marshal(importParseJobInput{Handle: handle, Archive: archivePath})
+	fileName = importUploadName(fileName)
+	input, err := json.Marshal(importParseJobInput{Handle: handle, Archive: archivePath, FileName: fileName})
 	if err != nil {
 		result.Err = err
 		return result
@@ -1239,7 +1298,7 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 		OwnerUserID: owner,
 		ActorUserID: owner,
 		Origin:      origin,
-		Title:       "Group import",
+		Title:       importJobTitle("Import of ", fileName, "Group import"),
 		Replay:      jobs.ReplayInput{Input: input},
 		LegacyRefs:  []jobs.LegacyRef{{Namespace: ImportParseHandleNamespace, Handle: handle}},
 	})
@@ -1255,7 +1314,7 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 		return result
 	}
 
-	parseInput := &importParseJobInput{Handle: handle, Archive: archivePath}
+	parseInput := &importParseJobInput{Handle: handle, Archive: archivePath, FileName: fileName}
 	entry, err := ctx.submitQueueJob(opts, handle,
 		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
 		ctx.buildImportParseRunFn(parseInput))
@@ -1330,6 +1389,14 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		result.Err = err
 		return result
 	}
+	// The apply is named after the archive its parse was uploaded as. A parse
+	// that cannot be read here costs the apply its name, never its acceptance.
+	fileName := ""
+	if parent, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), parentID); err == nil {
+		if summary, ok := importParseSummaryOf(parent.Summary); ok {
+			fileName = importUploadName(summary.FileName)
+		}
+	}
 
 	legacyID := download_queue.NewJobID()
 	consumedPath := importConsumedPlanPathFor(parseHandle, legacyID)
@@ -1342,6 +1409,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		ParseHandle: parseHandle,
 		Plan:        importPlanPathFor(parseHandle),
 		Decisions:   *decisions,
+		FileName:    fileName,
 	})
 	if err != nil {
 		ctx.restoreImportPlan(consumedPath, parseHandle)
@@ -1359,7 +1427,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		OwnerUserID: owner,
 		ActorUserID: owner,
 		Origin:      origin,
-		Title:       "Apply import",
+		Title:       importJobTitle("Apply import of ", fileName, "Apply import"),
 		Replay:      jobs.ReplayInput{Input: input},
 		LegacyRefs:  []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: legacyID}},
 		Parents:     []string{parentID},
@@ -1377,7 +1445,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		return result
 	}
 
-	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: importPlanPathFor(parseHandle), Decisions: *decisions}
+	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: importPlanPathFor(parseHandle), Decisions: *decisions, FileName: fileName}
 	entry, err := ctx.submitQueueJob(opts, legacyID,
 		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
 		ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions))

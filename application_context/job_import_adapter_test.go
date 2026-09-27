@@ -284,7 +284,7 @@ func TestAnImportParseAcceptsADurableJobAndPublishesItsPlan(t *testing.T) {
 	handle := "imp-accept-1"
 	staging := writeImportArchiveForTest(t, ctx, handle)
 
-	submission := ctx.SubmitImportParse(handle, staging, "api")
+	submission := ctx.SubmitImportParse(handle, staging, "", "api")
 	if submission.Err != nil {
 		t.Fatalf("submit the parse: %v", submission.Err)
 	}
@@ -333,7 +333,7 @@ func TestAnImportParseRetryIsAdvertisedOnlyWhileTheArchiveRemains(t *testing.T) 
 	if err := afero.WriteFile(ctx.GetDefaultFs(), staging, []byte("not a tar"), 0644); err != nil {
 		t.Fatalf("write a corrupt archive: %v", err)
 	}
-	submission := ctx.SubmitImportParse(handle, staging, "api")
+	submission := ctx.SubmitImportParse(handle, staging, "", "api")
 	if submission.Err != nil {
 		t.Fatalf("submit the parse: %v", submission.Err)
 	}
@@ -377,7 +377,7 @@ func TestAnImportApplyIsAChildOfItsParseAndRetriesOnlyOnRestoredEvidence(t *test
 	handle := "imp-apply-1"
 	staging := writeImportArchiveForTest(t, ctx, handle)
 
-	submission := ctx.SubmitImportParse(handle, staging, "api")
+	submission := ctx.SubmitImportParse(handle, staging, "", "api")
 	if submission.Err != nil {
 		t.Fatalf("submit the parse: %v", submission.Err)
 	}
@@ -459,7 +459,7 @@ func TestAnImportsAuthorizationOutlivesItsQueueEntry(t *testing.T) {
 	handle := "imp-owner-1"
 	staging := writeImportArchiveForTest(t, ctx, handle)
 	ownerCtx := ctx.WithPrincipal(auth.FromUser(owner))
-	submission := ownerCtx.SubmitImportParse(handle, staging, "api")
+	submission := ownerCtx.SubmitImportParse(handle, staging, "", "api")
 	if submission.Err != nil {
 		t.Fatalf("submit the parse: %v", submission.Err)
 	}
@@ -631,7 +631,7 @@ func TestAQueuedImportApplyRestartsFromItsAdmittedPlan(t *testing.T) {
 	handle := "imp-crash-boundary"
 	staging := writeImportArchiveForTest(t, ctx, handle)
 
-	parse := ctx.SubmitImportParse(handle, staging, "api")
+	parse := ctx.SubmitImportParse(handle, staging, "", "api")
 	if parse.Err != nil {
 		t.Fatalf("submit the parse: %v", parse.Err)
 	}
@@ -971,7 +971,7 @@ func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *test
 	// deployment had room for it.
 	handle := "imp-demoted-1"
 	staging := writeImportArchiveForTest(t, first, handle)
-	parse := actorCtx.SubmitImportParse(handle, staging, "api")
+	parse := actorCtx.SubmitImportParse(handle, staging, "", "api")
 	if parse.Err != nil {
 		t.Fatalf("submit the parse: %v", parse.Err)
 	}
@@ -1220,7 +1220,7 @@ func TestARetryAndAFreshApplyCannotBothApplyOneReview(t *testing.T) {
 
 	handle := "imp-double-apply"
 	staging := writeImportArchiveForTest(t, first, handle)
-	parse := first.SubmitImportParse(handle, staging, "api")
+	parse := first.SubmitImportParse(handle, staging, "", "api")
 	if parse.Err != nil {
 		t.Fatalf("submit the parse: %v", parse.Err)
 	}

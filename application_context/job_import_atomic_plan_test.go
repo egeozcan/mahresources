@@ -34,7 +34,7 @@ func TestASecondRuntimeCannotSettleAnImportFromAPlanBeforeItsExecutorIsQuiescent
 	first.groupio = groupio.NewService(gate, first.altFileSystems)
 	other.groupio = first.groupio
 
-	submission := first.SubmitImportParse(handle, staging, "api")
+	submission := first.SubmitImportParse(handle, staging, "", "api")
 	if submission.Err != nil {
 		t.Fatalf("submit the parse: %v", submission.Err)
 	}
