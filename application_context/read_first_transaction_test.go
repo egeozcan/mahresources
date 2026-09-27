@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +53,19 @@ func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) *atomic.I
 		_ = ctx.db.Callback().Row().Remove(rowName)
 	})
 	return &attempts
+}
+
+// requireMappedJob reports a Resource Reduction source whose mapping does not name
+// jobID: a write that returned nil without landing.
+func requireMappedJob(ctx *MahresourcesContext, sourceID, jobID string) error {
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationReduction, sourceID).First(&mapping).Error; err != nil {
+		return err
+	}
+	if mapping.JobID != jobID {
+		return fmt.Errorf("the mapping of %s names %q, want %q", sourceID, mapping.JobID, jobID)
+	}
+	return nil
 }
 
 // Each of these writers reads inside its transaction before it writes. None needs to
@@ -113,19 +127,37 @@ func TestTransactionsThatReadBeforeTheyWriteSurviveACommitAfterTheirRead(t *test
 			loser := &models.Resource{Name: "loser", Hash: "hash-loser", Location: "loc-loser"}
 			require.NoError(t, ctx.db.Create(winner).Error)
 			require.NoError(t, ctx.db.Create(loser).Error)
-			return func() error { return ctx.MergeResources(winner.ID, []uint{loser.ID}, false) }
+			return func() error {
+				if err := ctx.MergeResources(winner.ID, []uint{loser.ID}, false); err != nil {
+					return err
+				}
+				var remaining int64
+				if err := ctx.db.Model(&models.Resource{}).Where("id = ?", loser.ID).Count(&remaining).Error; err != nil {
+					return err
+				}
+				if remaining != 0 {
+					return fmt.Errorf("the merge reported success and kept its loser")
+				}
+				return nil
+			}
 		}},
 		{"recording a new dual-published source", func(t *testing.T, ctx *MahresourcesContext) func() error {
 			require.NoError(t, ctx.db.AutoMigrate(&models.JobSourceMapping{}))
 			return func() error {
-				return ctx.recordDualPublishedSource(jobMigrationReduction, "new", "job-1", "hash-1", false, time.Now())
+				if err := ctx.recordDualPublishedSource(jobMigrationReduction, "new", "job-1", "hash-1", false, time.Now()); err != nil {
+					return err
+				}
+				return requireMappedJob(ctx, "new", "job-1")
 			}
 		}},
 		{"refreshing a dual-published source", func(t *testing.T, ctx *MahresourcesContext) func() error {
 			require.NoError(t, ctx.db.AutoMigrate(&models.JobSourceMapping{}))
 			require.NoError(t, ctx.recordDualPublishedSource(jobMigrationReduction, "existing", "job-0", "hash-0", false, time.Now()))
 			return func() error {
-				return ctx.recordDualPublishedSource(jobMigrationReduction, "existing", "job-1", "hash-1", false, time.Now())
+				if err := ctx.recordDualPublishedSource(jobMigrationReduction, "existing", "job-1", "hash-1", false, time.Now()); err != nil {
+					return err
+				}
+				return requireMappedJob(ctx, "existing", "job-1")
 			}
 		}},
 		{"editing a resource", func(t *testing.T, ctx *MahresourcesContext) func() error {
