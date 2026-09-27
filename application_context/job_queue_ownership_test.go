@@ -121,6 +121,10 @@ func heldTransferServer(t *testing.T) (*httptest.Server, *atomic.Int64, func()) 
 
 // holdTheDeploymentBudgetIn occupies one context's whole deployment budget with a claim
 // of the runtime test Kind: a deployment at its ceiling, seen from a submission.
+//
+// Accepted and claimed in one transaction: several callers run a dispatch loop, which
+// claims a queued Job of this Kind on its next tick, so an acceptance followed by a
+// separate claim could find the Job already taken by the loop.
 func holdTheDeploymentBudgetIn(t *testing.T, ctx *MahresourcesContext) jobs.Execution {
 	t.Helper()
 	service := ctx.JobService()
@@ -129,19 +133,15 @@ func holdTheDeploymentBudgetIn(t *testing.T, ctx *MahresourcesContext) jobs.Exec
 			t.Fatalf("register the budget holder's kind: %v", err)
 		}
 	}
-	accepted, err := service.Accept(ctx.jobDeps(), jobs.Acceptance{
+	execution, _, err := service.AcceptClaimed(context.Background(), ctx.jobDeps(), jobs.Acceptance{
 		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "test",
 		Replay: jobs.ReplayInput{NonReplayable: true},
-	})
-	if err != nil {
-		t.Fatalf("accept the budget holder: %v", err)
-	}
-	execution, claimed, err := service.Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
-		Kind: runtimeTestKind, KindVersion: 1, JobID: accepted.ID, Claimant: "budget-holder",
+	}, jobs.ClaimRequest{
+		Kind: runtimeTestKind, KindVersion: 1, Claimant: "budget-holder",
 		Capacity: ctx.hostClaimCapacityBudget(),
 	})
-	if err != nil || !claimed {
-		t.Fatalf("claim the budget holder: claimed=%v err=%v", claimed, err)
+	if err != nil {
+		t.Fatalf("accept and claim the budget holder: %v", err)
 	}
 	return execution
 }
