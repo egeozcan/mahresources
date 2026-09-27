@@ -794,7 +794,7 @@ func (s *Service) applyCommandHostNarrowing(query *gorm.DB, deps Deps, key strin
 		return query.Where("jobs.state IN ?", []State{StatePaused, StateBlocked}).
 			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel).
 			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()).
-			Where(executionPrincipalPresent), nil
+			Where(executionPrincipalPresent, true, true), nil
 	case CommandRetry:
 		query = query.Where("jobs.state IN ?", []State{StateFailed, StateCancelled, StateInterrupted}).
 			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
@@ -848,9 +848,13 @@ func (s *Service) applyReplayAvailableFilter(query *gorm.DB, deps Deps) (*gorm.D
 
 // executionPrincipalPresent is executionAccess's answer as a predicate: the
 // principal a Job's execution acts as still exists. A row from before the class
-// was recorded derives it from the references, and so always has one.
+// was recorded derives it as executionPrincipalOf does, from the references and
+// the marks the deletion sweep left where it cleared one. It binds two true
+// values, for those marks.
 const executionPrincipalPresent = "NOT ((jobs.execution_principal = 'actor' AND jobs.actor_user_id IS NULL) OR " +
-	"(jobs.execution_principal = 'owner' AND jobs.owner_user_id IS NULL))"
+	"(jobs.execution_principal = 'owner' AND jobs.owner_user_id IS NULL) OR " +
+	"(jobs.execution_principal = '' AND jobs.actor_user_id IS NULL AND " +
+	"(jobs.actor_deleted = ? OR (jobs.owner_user_id IS NULL AND jobs.owner_deleted = ?))))"
 
 func terminalJobStates() []State {
 	return []State{StateSucceeded, StateFailed, StateCancelled, StateInterrupted}

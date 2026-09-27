@@ -508,10 +508,13 @@ func executionPrincipalOf(job models.Job) PrincipalClass {
 	if job.ExecutionPrincipal != "" {
 		return PrincipalClass(job.ExecutionPrincipal)
 	}
+	// A reference the deletion sweep cleared still counts: the Job acted as that
+	// account, and reading it as the next reference, or as the host, would run it
+	// with authority the deletion removed.
 	switch {
-	case job.ActorUserID != nil:
+	case job.ActorUserID != nil || job.ActorDeleted:
 		return PrincipalActor
-	case job.OwnerUserID != nil:
+	case job.OwnerUserID != nil || job.OwnerDeleted:
 		return PrincipalOwner
 	default:
 		return PrincipalHost

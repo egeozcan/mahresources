@@ -106,8 +106,9 @@ in the API), and `ownerDeleted=true`, **A deleted account** in the Job Center's
 Owner filter, lists them. Work that was still waiting to act as the deleted account never
 runs as anyone else: when its turn comes it ends failed with the code
 `principal-missing`, and a Job that an earlier release blocked for the same
-reason is not offered Resume. Work already running when the account was
-deleted may still finish. The delete confirmation on `/admin/users` says how
+reason is not offered Resume. A Job claimed or accepted in the same moment as
+the deletion can instead end up blocked as `role-refused`; it still never runs.
+Work already running when the account was deleted may still finish. The delete confirmation on `/admin/users` says how
 many of the account's jobs have not finished.
 
 The Job event streams apply the same rule for as long as they stay open. The
@@ -340,8 +341,9 @@ The stream's cursor, the SSE `id` (`v2:<n>`) and the `deliverySequence` of
 every event, including those `GET /v1/jobs/{id}/events` returns, is one counter
 for the whole deployment, which is what lets a reconnect resume exactly where
 it stopped. A viewer receives only the events of Jobs they can see, so the gap
-between two sequences they receive counts the Job events other accounts' work
-produced in between. The gap names no Job and no account.
+between two sequences they receive counts the Job events produced in between
+on Jobs they cannot see: other accounts' work, and work no account owns. The
+gap names no Job and no account.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
@@ -350,13 +352,17 @@ refuse when it came to run is refused up front with `409`, result code
 `refused` and the reason in `message`, and nothing is created: for example a
 download or an export whose target group has left the scope of the account it
 would run as. A Retry, Continue or Repeat runs as the account that asks for it;
-a Resume runs as the account the Job was accepted for. When the account or
-group read behind that check fails, the command answers `500` instead of
-refusing, and asking again once the database answers is safe. The same read
-failing as a download or an export is about to start currently blocks the Job
-with the reason the check would have given (`role-refused`, `scope-refused` or
-`group-out-of-scope`) instead of leaving it queued; Resume starts it again. Bulk requests accept at most 200 Job IDs; each result commits
-independently, so a response can contain both successes and refusals.
+a Resume runs as the account the Job was accepted for. A target that leaves
+the scope after that check but before the new Job is created is not caught up
+front: the Job is accepted, and then blocked with `scope-refused` or
+`group-out-of-scope` before anything runs. When the account or group read
+behind the check fails, the command answers `500` instead of refusing, and
+asking again once the database answers is safe. The same read failing as a
+download or an export is about to start currently blocks the Job with the
+reason the check would have given (`role-refused`, `scope-refused` or
+`group-out-of-scope`) instead of leaving it queued; Resume starts it again.
+Bulk requests accept at most 200 Job IDs; each result commits independently, so
+a response can contain both successes and refusals.
 
 ## Replay keys and writer epoch
 

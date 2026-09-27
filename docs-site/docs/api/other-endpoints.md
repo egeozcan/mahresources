@@ -78,8 +78,9 @@ never grants access to hidden Jobs.
 The canonical stream's cursor, each event's SSE `id` (`v2:<n>`) and its
 `deliverySequence`, is one counter for the whole deployment. A viewer receives
 only the events of Jobs they can see, so the gap between two consecutive
-sequences they receive is the number of Job events other accounts' work
-produced in between. It names no Job and no account.
+sequences they receive is the number of Job events produced in between on Jobs
+they cannot see: other accounts' work, and work no account owns. It names no
+Job and no account.
 
 Single-command JSON bodies contain `expectedVersion`, `idempotencyKey`, and
 `origin`. The bulk body contains `jobIds`, `idempotencyKey`, and `origin`; each

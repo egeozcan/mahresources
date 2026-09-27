@@ -88,6 +88,66 @@ func TestABlockedJobWhoseAccountWasDeletedOffersNoResume(t *testing.T) {
 	}
 }
 
+// A row written before the execution principal was recorded derives it from its
+// references, and the deletion sweep clears those. Its marks keep the derivation
+// on the deleted account, so the blocked Job offers no Resume, in the
+// advertisement and in the command filter alike, instead of reading as work the
+// host does for itself.
+func TestALegacyBlockedJobWhoseAccountWasDeletedOffersNoResume(t *testing.T) {
+	h := newCommandHarness(t)
+	h.adapter.advertise = func(context.Context, CommandContext) ([]Command, error) {
+		return []Command{{Key: CommandCancel, Label: "Cancel"}, {Key: CommandResume, Label: "Resume"}}, nil
+	}
+	actor := uint(41)
+	job := h.acceptReplayable(&actor)
+	execution := h.claim(job.ID)
+	h.now()
+	if _, err := h.svc.Transition(h.deps, Transition{
+		JobID: job.ID, ExpectedVersion: jobRow(t, h.deps, job.ID).Version, ExecutionToken: execution.ExecutionToken,
+		To: StateBlocked, Event: EventInput{Type: EventBlocked},
+	}); err != nil {
+		t.Fatalf("block the job: %v", err)
+	}
+	if err := h.deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).
+		UpdateColumn("execution_principal", "").Error; err != nil {
+		t.Fatalf("make the job a legacy row: %v", err)
+	}
+	admin := Access{UserID: 1, Administrator: true}
+	h.adapter.selectCommand = func(_ context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+		return request.Jobs.Select("jobs.id"), true, nil
+	}
+	resumable := func() int {
+		t.Helper()
+		page, err := h.svc.List(h.deps, admin, Filter{Command: CommandResume}, Cursor{}, 0)
+		if err != nil {
+			t.Fatalf("list command=resume: %v", err)
+		}
+		return len(page.Jobs)
+	}
+	requireCommandKeys(t, "a legacy blocked job whose account exists", h.advertise(job.ID, admin),
+		CommandCancel, CommandResume, CommandPin, CommandUnpin, CommandPinLineage)
+	if got := resumable(); got != 1 {
+		t.Fatalf("command=resume lists %d jobs while the account exists, want the legacy job", got)
+	}
+
+	if err := h.deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).
+		Updates(map[string]any{"actor_user_id": nil, "actor_deleted": true, "owner_user_id": nil, "owner_deleted": true}).Error; err != nil {
+		t.Fatalf("delete the account: %v", err)
+	}
+	stored, err := h.svc.Get(h.deps, admin, job.ID)
+	if err != nil {
+		t.Fatalf("read the legacy job: %v", err)
+	}
+	if stored.ExecutionPrincipal != PrincipalActor {
+		t.Fatalf("the legacy job derives %q after the deletion, want the deleted actor", stored.ExecutionPrincipal)
+	}
+	requireCommandKeys(t, "a legacy blocked job whose account was deleted", h.advertise(job.ID, admin),
+		CommandCancel, CommandPin, CommandUnpin, CommandPinLineage)
+	if got := resumable(); got != 0 {
+		t.Fatalf("command=resume lists %d jobs; the legacy job's account is gone", got)
+	}
+}
+
 // Deleting an account nulls the owner reference, so a filter on the owner's id
 // can never find that account's Jobs again. OwnerDeleted is how an
 // administrator asks for them.
