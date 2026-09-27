@@ -343,7 +343,7 @@ describe('job bulk commands', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(3);
 
         await component.run({ key: 'cancel', label: 'Cancel', bulk: true, destructive: true, confirmation: 'Stop these?' });
-        expect(ask).toHaveBeenCalledWith('Stop these? This applies to 1 selected job.', { title: 'Cancel', confirmLabel: 'Cancel', cancelLabel: undefined, destructive: true });
+        expect(ask).toHaveBeenCalledWith('Stop these? This applies to 1 selected job.', expect.objectContaining({ title: 'Cancel', confirmLabel: 'Cancel', cancelLabel: undefined, destructive: true, fallbackFocus: expect.any(Function) }));
     });
 
     test('a newer selection with nothing to read does not leave the bar loading', async () => {

@@ -49,6 +49,10 @@ export function registerConfirmDialogStore(Alpine) {
 
         _resolve: null,
         _opener: null,
+        // Where focus goes when the opener is gone by the time the dialog closes
+        // (a live update removed it underneath): an element, or a function
+        // answering one then.
+        _fallback: null,
         // Only the elements *this* dialog made inert, so an element that was
         // already inert for another reason is left exactly as it was found.
         _inerted: [],
@@ -62,7 +66,7 @@ export function registerConfirmDialogStore(Alpine) {
          * of a bug here must be that nothing happens, never that something is
          * destroyed without being confirmed.
          */
-        ask(message, { title, confirmLabel, cancelLabel, destructive = true } = {}) {
+        ask(message, { title, confirmLabel, cancelLabel, destructive = true, fallbackFocus = null } = {}) {
             if (this.isOpen) return Promise.resolve(false);
 
             this.destructive = destructive !== false;
@@ -78,6 +82,7 @@ export function registerConfirmDialogStore(Alpine) {
             // After a click on a submit button that button is the active element,
             // which is exactly the control to come back to.
             this._opener = focusedElement();
+            this._fallback = fallbackFocus;
             this.isOpen = true;
 
             return new Promise((resolve) => {
@@ -97,10 +102,12 @@ export function registerConfirmDialogStore(Alpine) {
             if (!this.isOpen) return;
             const resolve = this._resolve;
             const opener = this._opener;
+            const fallback = this._fallback;
 
             this.isOpen = false;
             this._resolve = null;
             this._opener = null;
+            this._fallback = null;
             this._releaseInert();
 
             // Restore focus only once Alpine has torn the dialog down.
@@ -112,7 +119,11 @@ export function registerConfirmDialogStore(Alpine) {
             // falls to <body>, which is precisely the defect this dialog exists to
             // avoid. A macrotask runs after Alpine's microtask-flushed effects, so
             // by then the trap has released and the subtree is gone.
-            setTimeout(() => restoreFocus(opener, null), 0);
+            setTimeout(() => {
+                if (restoreFocus(opener, null) || !fallback) return;
+                const target = typeof fallback === 'function' ? fallback() : fallback;
+                if (target) restoreFocus(null, target);
+            }, 0);
 
             if (resolve) resolve(value);
         },

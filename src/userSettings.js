@@ -228,7 +228,24 @@ export function set(key, value) {
   if (_loaded) scheduleFlush(key);
 }
 
+/**
+ * Write a setting the reader chose explicitly, and send it at once rather than after the
+ * debounce, so a page opened straight afterwards is rendered with it. keepalive lets the
+ * request outlive a navigation that follows. The data-loss guard above exists for state a
+ * page sets by itself; an explicit choice is never that, so it is sent even before the
+ * initial load has settled. The key stays dirty until the load has, so the load cannot
+ * overwrite it with the value it read before the choice.
+ */
+export function saveNow(key, value) {
+  _cache[key] = value;
+  _dirty.add(key);
+  clearTimeout(_timers[key]);
+  putNow(key, value, true).then((ok) => {
+    if (ok && _loaded && _cache[key] === value) _dirty.delete(key);
+  });
+}
+
 // Start loading as early as possible so consumers' whenLoaded() resolves quickly.
 if (typeof window !== 'undefined') whenLoaded();
 
-export default { whenLoaded, isLoaded, get, set, snapshot };
+export default { whenLoaded, isLoaded, get, set, saveNow, snapshot };

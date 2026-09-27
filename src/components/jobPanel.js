@@ -12,6 +12,8 @@ import {
     commandLocation,
     commandNoticeText,
     commandRefusalText,
+    requestSettled,
+    requestWatchVersion,
     eventJob,
     isPartialSuccess,
     lifecycleAnnouncement,
@@ -1289,7 +1291,8 @@ export function jobPanel() {
         chooseOwnerScope(choice) {
             const mine = choice === 'mine';
             this.setOwnerScope(mine ? 'me' : '');
-            userSettings.set('jobsPanelScope', mine ? 'mine' : 'everyone');
+            // Sent at once: the next page is rendered with the stored choice.
+            userSettings.saveNow('jobsPanelScope', mine ? 'mine' : 'everyone');
         },
 
         // The Undo a Dismiss's box offers.
@@ -1467,11 +1470,22 @@ export function jobPanel() {
                     });
                     return;
                 }
-                this.focusRowOrNeighbour(memo.jobId, memo.rows, [
+                const restore = () => this.focusRowOrNeighbour(memo.jobId, memo.rows, [
                     memo.selector,
                     ...(memo.commandKey ? panelFocusSuccessorKeys(memo.commandKey).map(other => `button[data-command-key="${CSS.escape(other)}"]`) : []),
                     'a[id^="job-panel-title-"]',
                 ]);
+                // A row the drawer still lists but has not drawn yet is being
+                // redrawn in another group: it is waited for, once, rather than
+                // focus going to a neighbour.
+                const drawn = document.querySelector(`#job-center-panel article[data-job-id="${CSS.escape(String(memo.jobId))}"]`);
+                if (!drawn && this.jobs.some(job => job.id === memo.jobId)) {
+                    afterNextPaint(() => {
+                        if (this._focusMemo === memo && !memo.element.isConnected && this.isOpen) restore();
+                    });
+                    return;
+                }
+                restore();
             }, 0);
         },
 
@@ -1524,7 +1538,10 @@ export function jobPanel() {
                 // Only a lifecycle command's answer can be what moved the row; a
                 // record-keeping command's result is said whatever else changed,
                 // and a change of state it happened to read is heard as a read.
-                const movedOn = !keepsRecord && now?.state && stateOf(now) !== stateOf(job) && outcome.code !== 'requested';
+                // A request the executor has already carried out is said as its
+                // result too (requestSettled).
+                const movedOn = !keepsRecord && now?.state && stateOf(now) !== stateOf(job) &&
+                    (outcome.code !== 'requested' || requestSettled(job, freshJob, now, outcome));
                 let spoken = '';
                 if (rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')) {
                     this.setNotice(`${commandLabel(command)} completed. Reload this job to see its current pin status.`);
@@ -1545,7 +1562,7 @@ export function jobPanel() {
                     spoken = lifecycleAnnouncement({ ...job, ...now });
                 } else {
                     this.setNotice(commandNoticeText(job, command, outcome), {
-                        watch: outcome.code === 'requested' ? { jobId: job.id, version: Number(now?.version ?? job.version ?? 0) } : null,
+                        watch: outcome.code === 'requested' ? { jobId: job.id, version: requestWatchVersion(job, freshJob) } : null,
                     });
                 }
                 this.announceNotice(this.notice || spoken, proved);
@@ -1592,11 +1609,16 @@ export function jobPanel() {
                     void this.refresh();
                     return { dismissed: 0, total: 0 };
                 }
+                // An administrator's drawer says whose jobs: the choice beside it
+                // can differ from what the dialog was asked about.
+                const whose = this._ownerViewer ? (ownerScope === 'me' ? 'your' : 'everyone\'s') : '';
+                if (ownerScope !== this.ownerScope) return this.refuseChangedScope();
                 const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(
-                    dismissFinishedConfirmation(count, !!first.nextCursor, this.finishedJobs.length),
+                    dismissFinishedConfirmation(count, !!first.nextCursor, this.finishedJobs.length, whose),
                     { title: 'Dismiss finished jobs', confirmLabel: first.nextCursor ? 'Dismiss all' : `Dismiss ${count}`, destructive: false },
                 );
                 if (!accepted || this.streamStopped) return { dismissed: 0, total: 0 };
+                if (ownerScope !== this.ownerScope) return this.refuseChangedScope();
             } catch (error) {
                 if (!this.streamStopped) {
                     this.setNotice(error.message || 'Could not dismiss finished jobs.');
@@ -1673,6 +1695,14 @@ export function jobPanel() {
                 this.busy = false;
             }
             return { dismissed, total };
+        },
+
+        // The drawer was switched to another account scope while Dismiss
+        // finished read or asked: what was counted is not what is shown.
+        refuseChangedScope() {
+            this.setNotice('The jobs shown changed while Dismiss finished was asking. Nothing was dismissed; try again.');
+            this.announceNotice(this.notice);
+            return { dismissed: 0, total: 0 };
         },
 
         // "Dismiss finished" hides once nothing finished is shown, and it is
@@ -1755,12 +1785,19 @@ function buildPanelListURL(group, ownerScope = '') {
 // What Dismiss finished asks before it runs. `count` is the first page of
 // finished jobs the viewer has not dismissed, and `more` says there are pages
 // after it; `shown` is how many of them the drawer lists.
-// It names the states it reaches, so nobody expects a failure to go with them.
-export function dismissFinishedConfirmation(count, more, shown) {
+// It names the states it reaches, so nobody expects a failure to go with them,
+// and on an administrator's drawer whose jobs (`whose`: 'your' or
+// "everyone's"; '' where the drawer offers no choice).
+export function dismissFinishedConfirmation(count, more, shown, whose = '') {
     const after = 'Failed jobs stay in Needs attention. Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.';
-    if (more) return `Dismiss every job that succeeded or was cancelled and that you have not dismissed? That is more than ${count}, and the drawer shows ${shown}. ${after}`;
+    if (more) {
+        const every = whose ? `every one of ${whose} jobs` : 'every job';
+        return `Dismiss ${every} that succeeded or was cancelled and that you have not dismissed? That is more than ${count}, and the drawer shows ${shown}. ${after}`;
+    }
     const hidden = Math.max(0, count - shown);
-    const which = count === 1 ? 'finished job that succeeded or was cancelled' : 'finished jobs that succeeded or were cancelled';
+    const which = whose
+        ? `of ${whose} finished jobs that succeeded or were cancelled`
+        : count === 1 ? 'finished job that succeeded or was cancelled' : 'finished jobs that succeeded or were cancelled';
     return `Dismiss ${count} ${which}?${hidden > 0 ? ` ${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown here.` : ''} ${after}`;
 }
 

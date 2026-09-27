@@ -772,3 +772,78 @@ test.describe('Needs attention', () => {
     }
   });
 });
+
+test.describe('A confirmation whose command went away while it was open', () => {
+  for (const answer of ['Go back', 'Cancel'] as const) {
+    test(`hands focus to the detail page's next command after ${answer}`, async ({ page }) => {
+      const store = jobStore([runningJob('confirm-gone', 'Confirm gone download')]);
+      await serveStore(page, store);
+      await page.route('**/v1/jobs/confirm-gone/commands/cancel', route => route.fulfill({ status: 409, json: {
+        error: 'the job does not offer that command', result: { code: 'not-advertised', message: 'the job does not offer that command' },
+      } }));
+
+      await page.goto('/job?id=confirm-gone');
+      const commands = page.getByRole('group', { name: 'Advertised job commands' });
+      await commands.getByRole('button', { name: 'Cancel', exact: true }).click();
+      const confirmation = page.getByRole('alertdialog');
+      await expect(confirmation).toBeVisible();
+
+      // The download finishes while the dialog is open: Cancel is no longer offered.
+      store.set('confirm-gone', withCommands({ ...store.jobs.get('confirm-gone')!, state: 'succeeded', version: 3, phase: undefined }, [['dismiss', 'Dismiss', { bulk: true }]]));
+      await page.evaluate(snapshot => {
+        const root = document.querySelector('[data-testid="job-detail"]');
+        (window as any).Alpine.$data(root).applyStreamSnapshot(snapshot);
+      }, store.jobs.get('confirm-gone'));
+      await expect(commands.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+
+      await confirmation.getByRole('button', { name: answer, exact: true }).click();
+      await expect(commands.getByRole('button', { name: 'Dismiss', exact: true })).toBeFocused();
+    });
+  }
+
+  test('hands focus to Select All when the /jobs selection it was asked about emptied', async ({ page, request }) => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.end('gone');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const stamp = `bulk-confirm-${Date.now()}`;
+      const ids: string[] = [];
+      for (const index of [0, 1]) {
+        const name = `${stamp}-${index}.bin`;
+        const submitted = await request.post('/v1/download/submit', { data: { URL: `${base}/${name}`, Name: name, FileName: name } });
+        expect(submitted.status()).toBe(202);
+        ids.push((await submitted.json()).jobs[0].canonicalJobId as string);
+      }
+      for (const id of ids) await expect.poll(async () => (await (await request.get(`/v1/jobs/${id}`)).json()).state, { timeout: 20_000 }).toBe('failed');
+      const [jobId] = ids;
+      const real = await (await request.get(`/v1/jobs/${jobId}`)).json();
+      // The bar offers what the detail advertises; here a command that asks first.
+      await page.route(`**/v1/jobs/${jobId}`, route => route.fulfill({ json: {
+        ...real, commands: [{ key: 'cancel', label: 'Cancel', endpoint: `/v1/jobs/${jobId}/commands/cancel`, jobVersion: real.version, bulk: true, destructive: true, confirmation: 'Stop these?' }],
+      } }));
+
+      await page.goto(`/jobs?dismissed=false&search=${encodeURIComponent(stamp)}`);
+      await expect(page.locator('[data-job-id]')).toHaveCount(2);
+      await page.locator(`[data-job-id="${jobId}"]`).getByRole('checkbox').check();
+      const bulk = page.getByRole('group', { name: 'Commands for the selected jobs' });
+      await bulk.getByRole('button', { name: 'Cancel', exact: true }).click();
+      const confirmation = page.getByRole('alertdialog');
+      await expect(confirmation).toBeVisible();
+
+      // Another tab dismisses the selected job while the dialog is open; the list
+      // refreshes, the card leaves, and the bar hides with the empty selection.
+      const dismissed = await request.post('/v1/jobs/commands/dismiss', { data: { jobIds: [jobId], idempotencyKey: `dismiss-${jobId}` }, headers: { 'Idempotency-Key': `dismiss-${jobId}` } });
+      expect(dismissed.ok()).toBe(true);
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('job-list-refresh')));
+      await expect(page.locator(`[data-job-id="${jobId}"]`)).toHaveCount(0, { timeout: 10_000 });
+
+      await confirmation.getByRole('button', { name: 'Go back', exact: true }).click();
+      await expect(page.locator('[data-bulk-select-all]').first()).toBeFocused();
+    } finally {
+      server.close();
+    }
+  });
+});

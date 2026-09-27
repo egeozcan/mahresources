@@ -489,6 +489,8 @@ export function jobCenter(options = {}) {
             this._liveRegion = createLiveRegion();
             // Keeps "about 14 s left" counting down between progress frames.
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
+            // Kept: a method called from a directive sees that element as $el.
+            this._root = this.$el || null;
             this._focusKeeper = this.$el ? keepCommandFocus(this.$el) : null;
             this.connect();
             this.load();
@@ -582,7 +584,10 @@ export function jobCenter(options = {}) {
         async runCommandUnguarded(job, command) {
             const confirmation = commandConfirmation(command);
             if (confirmation) {
-                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, commandConfirmOptions(job, command));
+                const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
+                    ...commandConfirmOptions(job, command),
+                    fallbackFocus: () => commandFocusTarget(this._root, command.key),
+                });
                 if (!accepted) return null;
             }
             const key = idempotencyKey();
@@ -604,11 +609,12 @@ export function jobCenter(options = {}) {
                 const successorId = outcome.successorId || outcome.successorID || payload.successorId || payload.successorID;
                 const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
                 if (location) globalThis.location?.assign?.(location);
+                const settled = requestSettled(job, freshJob, now, outcome);
                 this.notice = rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
-                    : commandNoticeText(job, command, outcome);
-                this._noticeWatch = outcome.code === 'requested'
-                    ? { version: Number(now?.version ?? job.version ?? 0) } : null;
+                    : settled ? lifecycleAnnouncement({ ...job, ...now }) : commandNoticeText(job, command, outcome);
+                this._noticeWatch = outcome.code === 'requested' && !settled
+                    ? { version: requestWatchVersion(job, freshJob) } : null;
                 this._liveRegion?.announce(this.notice);
                 return outcome;
             } catch (error) {
@@ -776,15 +782,23 @@ function keepCommandFocus(root) {
     return keepFocusWithin(root, {
         describe: element => (element.dataset?.commandKey && group()?.contains(element) ? { key: element.dataset.commandKey } : null),
         restore: ({ key }) => {
-            const buttons = group();
-            const candidates = [
-                ...commandFocusSuccessorKeys(key).map(other => buttons?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
-                buttons?.querySelector('button'),
-                root.querySelector('h1'),
-            ];
-            for (const candidate of candidates) if (candidate && focusOn(candidate)) return;
+            const target = commandFocusTarget(root, key);
+            if (target) focusOn(target);
         },
     });
+}
+
+// The control that stands in for a detail-page command that is gone: its
+// counterpart, the same command drawn again, the first command left, else the
+// Job's heading.
+function commandFocusTarget(root, key) {
+    const buttons = root?.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    const candidates = [
+        ...commandFocusSuccessorKeys(key).map(other => buttons?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+        buttons?.querySelector('button'),
+        root?.querySelector('h1'),
+    ];
+    return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
 }
 
 export function commandConfirmation(command) {
@@ -854,6 +868,21 @@ export function commandNoticeText(job, command, outcome) {
     if (outcome?.code === 'requested') return `${label} requested for ${name}.`;
     const message = String(outcome?.message || '').trim();
     return message ? `${name}: ${message}.`.replace(/\.\.$/, '.') : `${label} completed for ${name}.`;
+}
+
+// Whether the executor has already acted on a requested control: the Job read
+// after the answer has left the state the answer reported. Its box would
+// otherwise say "requested" of something already done.
+export function requestSettled(job, answered, now, outcome) {
+    return outcome?.code === 'requested' && !!now?.state &&
+        Number(now.version || 0) > Number(answered?.version ?? job?.version ?? 0) &&
+        stateOf(now) !== stateOf(answered || job);
+}
+
+// The version a requested control's box waits to see passed: the one its answer
+// reported, never a later read's, which may already be the result.
+export function requestWatchVersion(job, answered) {
+    return Number(answered?.version ?? job?.version ?? 0);
 }
 
 // Fields a snapshot leaves out when they are empty. A newer snapshot that

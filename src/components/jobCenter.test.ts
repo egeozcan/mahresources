@@ -288,6 +288,26 @@ describe('Job detail commands', () => {
         expect(center.detail.controlIntent).toBeUndefined();
     });
 
+    test('a request the executor carried out before the reread says the result, and a pending one waits for the answer\'s version', async () => {
+        const running = { id: 'job-3', title: 'held.iso', kind: 'remote-download', state: 'running', version: 5,
+            commands: [{ key: 'pause', label: 'Pause', jobVersion: 5, confirmation: 'Pause?' }] };
+        let reread: any = { ...running, state: 'paused', version: 7, commands: [] };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'Pause requested.', job: { ...running, controlIntent: 'pause', version: 6 } } }
+            : reread);
+
+        await center.runCommand(center.detail, running.commands[0]);
+        expect(center.noticeText).toBe('held.iso paused.');
+
+        // Not yet held at the reread: the box waits for the version after the answer's.
+        center.detail = { ...running };
+        reread = { ...running, controlIntent: 'pause', version: 6 };
+        await center.runCommand(center.detail, running.commands[0]);
+        expect(center.noticeText).toBe('Pause requested for held.iso.');
+        center.applyStreamSnapshot({ ...running, state: 'paused', version: 7, commands: [] });
+        expect(center.noticeText).toBe('');
+    });
+
     test('an older snapshot never rolls the page back', () => {
         const center = detailCenter({ ...failed, version: 5 }, () => ({}));
         center.applyStreamSnapshot({ ...failed, state: 'running', version: 4 });

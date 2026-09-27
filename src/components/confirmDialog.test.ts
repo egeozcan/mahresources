@@ -244,3 +244,34 @@ describe('how the confirming button reads', () => {
         await next;
     });
 });
+
+describe('where focus goes when the dialog closes', () => {
+    test('to the opener while it is there, else to the fallback the caller named', async () => {
+        vi.useFakeTimers();
+        const focused: string[] = [];
+        const element = (name: string, connected = true) => ({
+            name, isConnected: connected, matches: () => true,
+            focus() { focused.push(name); (globalThis.document as any).activeElement = this; },
+        });
+        const opener = element('opener');
+        const fallback = element('fallback');
+        const body = { children: [] };
+        vi.stubGlobal('document', { activeElement: opener, body, documentElement: {} });
+
+        // The opener is still there: it gets focus back.
+        store.ask('Cancel?', { fallbackFocus: () => fallback });
+        store.cancel();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(focused).toEqual(['opener']);
+
+        // A live update removed the opener while the dialog was open: the fallback.
+        focused.length = 0;
+        (globalThis.document as any).activeElement = opener;
+        store.ask('Cancel?', { fallbackFocus: () => fallback });
+        opener.isConnected = false;
+        store.accept();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(focused).toEqual(['fallback']);
+        vi.useRealTimers();
+    });
+});

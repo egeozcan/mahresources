@@ -294,22 +294,16 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             // whole bar. Focus goes to the button that replaced it, else Select
             // All, which shows once nothing is selected, else the first card,
             // else the page's main region when the list is left empty.
+            // Kept: a method called from a directive sees that element as $el.
+            this._root = this.$el || null;
             const bar = this.$el?.closest?.('.bulk-editors');
             this._focusKeeper = this.$el ? keepFocusWithin(this.$el, {
                 observe: bar?.parentElement || this.$el,
                 attributes: true,
                 describe: element => (element.dataset?.commandKey ? { key: element.dataset.commandKey } : null),
                 restore: ({ key }) => {
-                    const candidates = [
-                        ...commandFocusSuccessorKeys(key).map(other => this.$el.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
-                        this.$el.querySelector('button[data-command-key]'),
-                        ...document.querySelectorAll('[data-bulk-select-all]'),
-                        document.querySelector('[data-job-id] a[href]'),
-                        document.querySelector('main'),
-                    ];
-                    for (const candidate of candidates) {
-                        if (candidate?.checkVisibility?.() !== false && focusOn(candidate)) return;
-                    }
+                    const target = bulkFocusTarget(this._root, key);
+                    if (target) focusOn(target);
                 },
             }) : null;
         },
@@ -412,7 +406,10 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,
-                    { title: commandLabel(command), confirmLabel: commandLabel(command), cancelLabel: commandDismissLabel(command), destructive: command?.destructive === true },
+                    {
+                        title: commandLabel(command), confirmLabel: commandLabel(command), cancelLabel: commandDismissLabel(command),
+                        destructive: command?.destructive === true, fallbackFocus: () => bulkFocusTarget(this._root, command.key),
+                    },
                 );
                 if (!accepted) return;
                 // The dialog blocks the reader, not the live refresh: a card can leave
@@ -450,6 +447,20 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             }
         },
     };
+}
+
+// The control that stands in for a bulk command that is gone: its counterpart,
+// the same command drawn again, the first command left, else Select All (shown
+// once nothing is selected), the first card, or the page's main region.
+function bulkFocusTarget(root, key) {
+    const candidates = [
+        ...commandFocusSuccessorKeys(key).map(other => root?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+        root?.querySelector('button[data-command-key]'),
+        ...document.querySelectorAll('[data-bulk-select-all]'),
+        document.querySelector('[data-job-id] a[href]'),
+        document.querySelector('main'),
+    ];
+    return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
 }
 
 function pad(value, width = 2) {

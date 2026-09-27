@@ -64,6 +64,8 @@ describe('Job Center panel', () => {
     });
 
     test('an administrator\'s drawer lists only their own jobs until they choose everyone\'s, and keeps the choice', async () => {
+        const puts: Array<{ url: string; init: any }> = [];
+        vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => { puts.push({ url, init }); return { ok: true }; }));
         const panel = jobPanel();
         panel.ownerScope = 'me';
         const requests: URL[] = [];
@@ -78,6 +80,10 @@ describe('Job Center panel', () => {
 
         requests.length = 0;
         panel.chooseOwnerScope('everyone');
+        // Sent at once, and able to outlive a navigation that follows.
+        expect(puts).toHaveLength(1);
+        expect(puts[0].url).toBe('/v1/account/settings/jobsPanelScope');
+        expect(puts[0].init).toMatchObject({ method: 'PUT', keepalive: true, body: JSON.stringify({ value: 'everyone' }) });
         await vi.waitFor(() => expect(requests).toHaveLength(3));
         expect(panel.ownerScope).toBe('');
         expect(requests.some(url => url.searchParams.has('owner'))).toBe(false);
@@ -285,6 +291,25 @@ describe('Job Center panel', () => {
         expect(posts).toHaveLength(2);
         expect(listURLs).toHaveLength(2);
         expect(listURLs.every(url => url.searchParams.get('owner') === 'me')).toBe(true);
+    });
+
+    test('an administrator is told whose jobs, and a scope switched while it asked dismisses nothing', async () => {
+        const { panel, posts, asked } = dismissAllHarness([{ ids: ['a', 'b'] }]);
+        panel._ownerViewer = 1;
+        panel.ownerScope = 'me';
+        const ask = globalThis.Alpine.store().ask;
+        vi.stubGlobal('Alpine', { store: () => ({ ask: async (...args: any[]) => {
+            const answer = await ask(...args);
+            // The reader switches to everyone's jobs while the dialog is open.
+            panel.ownerScope = '';
+            return answer;
+        } }) });
+
+        await expect(panel.dismissFinished()).resolves.toEqual({ dismissed: 0, total: 0 });
+
+        expect(asked[0][0]).toMatch(/^Dismiss 2 of your finished jobs that succeeded or were cancelled\?/);
+        expect(posts).toEqual([]);
+        expect(panel.notice).toBe('The jobs shown changed while Dismiss finished was asking. Nothing was dismissed; try again.');
     });
 
     test('a backlog past one page is named as more than it, and declining dismisses nothing', async () => {
@@ -495,6 +520,19 @@ describe('Job Center panel', () => {
             expect(panel.noticeText).toBe('');
         });
     }
+
+    test('a request the executor carried out before the reread is said as its result, not as requested', async () => {
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'Pause requested.', job: { ...panel.jobs[0], state: 'running', version: 5, controlIntent: 'pause' } } }
+            // By the reread the transfer is already held.
+            : { ...panel.jobs[0], state: 'paused', version: 6, commands: [] });
+        panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
+
+        await panel.runCommand(panel.jobs[0], { key: 'pause', label: 'Pause', jobVersion: 4 });
+
+        expect(panel.noticeText).toBe('');
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin paused.');
+    });
 
     test('a command whose answer already moved the row says so without a box', async () => {
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'
