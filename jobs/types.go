@@ -1291,6 +1291,15 @@ var (
 	// Nothing is written: a Job is never left running without the capacity that
 	// admitted it.
 	ErrCapacityExhausted = errors.New("jobs: the capacity budget is full")
+	// ErrJobNotWaiting means a claim named a Job that is not waiting to run: it
+	// ended, another runtime owns it, it is blocked, or it does not exist. It is
+	// ClaimJob's answer, and it is final for that Job in a way capacity is not.
+	ErrJobNotWaiting = errors.New("jobs: the job is not waiting to run")
+	// ErrExecutionNotLoaded means ClaimJob's claim committed but the execution's
+	// input could not be read within the claim's bound. The Execution returned
+	// with it carries the claim's token and no input: the Job is running under
+	// that token, and only its holder can hand the claim back.
+	ErrExecutionNotLoaded = errors.New("jobs: the claimed execution could not be loaded")
 	// ErrInvalidReconcileDecision is a reconciliation answer outside the
 	// vocabulary, or one this Kind may not be given.
 	ErrInvalidReconcileDecision = errors.New("jobs: invalid reconciliation decision")
@@ -1447,6 +1456,24 @@ type CapacityRef struct {
 	Limit int
 }
 
+// UnrunnableClaimError is ClaimJob's answer for a Job it claimed that cannot run
+// — its principal is gone, or its input cannot be opened — when blocking it could
+// not be written within the claim's bound. The Execution returned with it holds
+// the claim: its holder records Reason as the block, retrying until it lands. It
+// is never run.
+type UnrunnableClaimError struct {
+	// Reason is the bounded block reason the control plane would have recorded.
+	Reason string
+	// Cause is why the Job cannot run, and why the block was not written.
+	Cause error
+}
+
+func (e *UnrunnableClaimError) Error() string {
+	return fmt.Sprintf("jobs: the claimed job cannot run (%s), and blocking it was not recorded: %v", e.Reason, e.Cause)
+}
+
+func (e *UnrunnableClaimError) Unwrap() error { return e.Cause }
+
 // ClaimRequest asks the Service to claim the next Job of one Kind that is
 // waiting to run, and to hand it back as an Execution.
 type ClaimRequest struct {
@@ -1472,6 +1499,11 @@ type ClaimRequest struct {
 	Capacity []CapacityRef
 	// Lease overrides the Kind's declared lease for this claim.
 	Lease time.Duration
+	// Claimed, when set, is told the claim's reference as soon as it has
+	// committed, before anything else is read or written for it. A caller
+	// whose own recovery has to settle the claim then holds its token even
+	// when what follows the commit panics instead of returning.
+	Claimed func(ExecutionRef)
 }
 
 // Execution is everything a Kind adapter is given to run one claimed Job: its

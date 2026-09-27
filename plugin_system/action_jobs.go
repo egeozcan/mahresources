@@ -294,6 +294,10 @@ func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, a
 // one is given: the id the client was answered with, the id the panel renders and
 // the id the legacy action-job endpoint resolves all have to be the same string,
 // or one execution would be two rows seen two ways.
+//
+// A host Job this process already has an execution for is not given a second
+// one: the existing entry's id is answered, so handing a waiting Job to this
+// process twice results in one execution.
 func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
@@ -333,50 +337,33 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	}
 
 	pm.actionJobsMu.Lock()
+	if held, ok := pm.holdHostJobLocked(host, jobID); !ok {
+		pm.actionJobsMu.Unlock()
+		return held, nil
+	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
 
 	pm.notifyActionJobSubscribers("added", job)
 
-	// Capture the handler and settings before spawning goroutine.
-	handler := action.Handler
-	settings := pm.GetPluginSettings(pluginName)
-
 	// Track in-flight async actions so DisablePlugin can wait for completion.
 	wg := pm.actionWaitGroup(pluginName)
 	wg.Add(1)
+	ticket := pm.laneFor(pluginName).join()
+	revoked := pm.stateRevoked(L)
 
 	go func() {
 		defer wg.Done()
-		pm.runAsyncActionGoroutine(job, L, handler, entityID, params, settings)
+		defer pm.releaseHostJob(host)
+		switch pm.runAsyncActionGoroutine(job, ticket, revoked, entityID, params, expectFilters) {
+		case asyncGaveUp, asyncWithdrawn:
+			pm.dropUnstartedJob(job)
+		case asyncRevoked:
+			pm.abandonUnstartedJob(job)
+		}
 	}()
 
 	return jobID, nil
-}
-
-// acquireJobSlot takes one of the concurrent-async-job slots.
-//
-// A non-positive wait waits forever, which is what an action or a start_job
-// wants: a user asked for that work and nothing else will ask again.
-//
-// A positive wait is for a caller that must not block indefinitely because it is
-// holding something while it waits. The scheduler is the only such caller today,
-// and what it holds is a database claim on the schedule row; a claim of
-// unbounded lifetime cannot have a meaningful expiry, and its expiry is the only
-// thing stopping a second process running the same schedule.
-func (pm *PluginManager) acquireJobSlot(wait time.Duration) bool {
-	if wait <= 0 {
-		pm.actionSemaphore <- struct{}{}
-		return true
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case pm.actionSemaphore <- struct{}{}:
-		return true
-	case <-timer.C:
-		return false
-	}
 }
 
 // FillJobBudgetForTest saturates the async job budget and returns a release
@@ -400,35 +387,109 @@ func (pm *PluginManager) FillJobBudgetForTest() func() {
 	}
 }
 
-// executeAsyncJob is the common scaffold for running an async job goroutine.
-// It handles panic recovery, semaphore, status transitions, error handling, and default completion.
-// The work function performs the actual Lua call and returns its error.
-func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work func() error) {
-	pm.executeAsyncJobWithin(job, logLabel, 0, work)
+// asyncWork is one execution's Lua side.
+//
+// lock takes the plugin's VM for the execution and answers it held: waiting for
+// it when wait is set, for no longer than ctx lasts, and otherwise answering
+// errVMBusy at once when it is taken. It answers errPluginGone when the plugin is
+// no longer there to run it or ctx ended, or an error wrapping errJobDidNotStart
+// when a bounded wait for the VM ran out.
+// live reports, with the VM held, whether the VM lock answered for is still the
+// plugin's. run enters the handler with the VM held, and releases it before
+// returning.
+type asyncWork struct {
+	lock func(ctx context.Context, wait bool) (*vmMutex, error)
+	live func() bool
+	run  func(mu *vmMutex) error
 }
 
-// executeAsyncJobWithin is executeAsyncJob with a bound on how long it will wait
-// for a free slot, and it reports whether the job ran at all.
+// errPluginGone is asyncWork.lock's answer for a plugin that was disabled or
+// reloaded: its VM is gone, and nothing was entered.
+var errPluginGone = errors.New("the plugin is no longer available")
+
+// errVMBusy is asyncWork.lock's answer, without waiting, for a VM somebody else
+// holds.
+var errVMBusy = errors.New("the plugin's VM is busy")
+
+// lockVMFor is asyncWork.lock for a VM that is waited for, when asked to wait,
+// for as long as ctx lasts.
+func (pm *PluginManager) lockVMFor(ctx context.Context, L *lua.LState, wait bool) (*vmMutex, error) {
+	if wait {
+		mu, _ := pm.LockVMWithContext(ctx, L)
+		if mu == nil {
+			return nil, errPluginGone
+		}
+		return mu, nil
+	}
+	mu, busy := pm.TryLockVMWithin(context.Background(), L, 0)
+	switch {
+	case mu != nil:
+		return mu, nil
+	case busy:
+		return nil, errVMBusy
+	default:
+		return nil, errPluginGone
+	}
+}
+
+// executeAsyncJob is the common scaffold for running an async job goroutine:
+// the plugin's lane, a job slot, the VM, the host's admission, panic recovery,
+// status transitions, error handling and default completion.
 //
-// Returning false means nothing was touched: no status transition, no
-// notification, no work. That is what lets a caller holding a resource treat a
-// full budget as "not now" and give the resource back, rather than parking on
-// the semaphore while it holds it.
+// Every wait here is unbounded, which is what an action or a start_job wants: a
+// user asked for that work and nothing else will ask again. None of them holds
+// anything another plugin needs — see action_lanes.go for the order.
+func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, ticket *laneTicket, revoked <-chan struct{}, work asyncWork) asyncOutcome {
+	return pm.runAsyncJob(job, logLabel, asyncBounds{revoked: revoked}, ticket, work)
+}
+
+// executeAsyncJobWithin is executeAsyncJob with bounds on the waits before the
+// work, and it reports whether the job ran at all.
+//
+// The bounds are for a caller that must not block indefinitely because it is
+// holding something while it waits. The scheduler is the only such caller today,
+// and what it holds is a database claim on the schedule row; a claim of unbounded
+// lifetime cannot have a meaningful expiry, and its expiry is the only thing
+// stopping a second process running the same schedule.
+//
+// Returning false means the work was never entered: no outcome was recorded and
+// no failure was announced. That is what lets a caller holding a resource treat a
+// full budget as "not now" and give the resource back.
+func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, bounds asyncBounds, ticket *laneTicket, work asyncWork) (ran bool) {
+	return pm.runAsyncJob(job, logLabel, bounds, ticket, work) == asyncRan
+}
+
 // errJobDidNotStart is a work function's way of saying it never began.
 //
-// executeAsyncJobWithin's contract is "ran means the job entered its work", and
-// a work function that spends its own bounded wait on something it could not get
-// — today, a schedule waiting on the plugin's VM lock — has not. Without this it
-// looked identical to a job that ran and failed: the panel announced "Action
-// failed" to a screen reader, kept a failed row for a handler that was never
-// entered, and the application log blamed the plugin for it. The alternative was
-// to correct the status afterwards from the caller, and that was tried first: it
-// left two mechanisms for one condition and still emitted the failure event.
+// The runner's contract is "ran means the job entered its work", and work that
+// spends its own bounded wait on something it could not get — today, a schedule
+// waiting on the plugin's VM lock — has not. Without this it looked identical to
+// a job that ran and failed: the panel announced "Action failed" to a screen
+// reader, kept a failed row for a handler that was never entered, and the
+// application log blamed the plugin for it.
 var errJobDidNotStart = errors.New("the job never entered its work")
 
-func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, wait time.Duration, work func() error) (ran bool) {
+// runAsyncJob takes, in order, the plugin's lane, a job slot, the plugin's VM and
+// the host's admission, and only then enters the work. See action_lanes.go for
+// why that order is the whole design: an execution that is waiting holds nothing
+// shared. The VM comes before the admission so that a claim — a slot of the
+// deployment's budget — is only taken by work that can start at once; and a full
+// budget gives the VM back before waiting, so a plugin's hooks and pages are
+// never held behind the budget.
+//
+// ticket is the place in the lane the caller took when the work was submitted,
+// or nil to take one now.
+func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asyncBounds, ticket *laneTicket, work asyncWork) (outcome asyncOutcome) {
+	started := false
 	defer func() {
 		if r := recover(); r != nil {
+			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			if !started {
+				// Nothing was admitted, so there is no Job of this execution's to
+				// fail: the host still holds it waiting.
+				outcome = asyncGaveUp
+				return
+			}
 			message := fmt.Sprintf("panic: %v", r)
 			job.mu.Lock()
 			job.Status = "failed"
@@ -437,20 +498,104 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 			pm.notifyActionJobSubscribers("updated", job)
 			flushHeldProgress(job)
 			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
-			log.Printf("[plugin] panic in %s: %v", logLabel, r)
+			// It ran, and it failed, which is a different thing from never starting.
+			outcome = asyncRan
 		}
 	}()
 
-	// Acquire semaphore slot (limits concurrent async actions).
-	if !pm.acquireJobSlot(wait) {
-		return false
+	if ticket == nil {
+		ticket = pm.laneFor(job.PluginName).join()
 	}
-	// Set before any work, so a panic recovered above still reports that the job
-	// ran: it did, and it failed, which is a different thing from never starting.
-	ran = true
-	defer func() { <-pm.actionSemaphore }()
+	if !ticket.wait(pm.done, bounds.lane, bounds.revoked) {
+		return pm.abandonedWait(bounds.revoked)
+	}
+	laneHeld := true
+	defer func() {
+		if laneHeld {
+			ticket.lane.release()
+		}
+	}()
 
-	// Mark as running.
+	// The VM wait ends when the VM it waits for is revoked or the manager
+	// closes: a head waiting on a revoked VM behind a long synchronous call would
+	// otherwise hold the lane from the plugin's next VM.
+	waitCtx, stopWaiting := context.WithCancel(context.Background())
+	defer stopWaiting()
+	go func() {
+		select {
+		case <-bounds.revoked:
+		case <-pm.done:
+		case <-waitCtx.Done():
+		}
+		stopWaiting()
+	}()
+
+	// The job-slot and admission bound is fixed the first time the VM is held,
+	// so an unbounded wait for the VM ("allow") does not spend it.
+	var slotDeadline time.Time
+	slotBoundFixed := false
+	fixSlotBound := func() time.Time {
+		if !slotBoundFixed {
+			slotDeadline = bounds.slotDeadline(time.Now())
+			slotBoundFixed = true
+		}
+		return slotDeadline
+	}
+	// What this execution holds is given back on every way out, a panic in the
+	// host's admission included. The VM is handed to the work, which releases it
+	// itself, so it is dropped from here once handed over.
+	var heldVM *vmMutex
+	slotHeld := false
+	defer func() {
+		if heldVM != nil {
+			heldVM.Unlock()
+		}
+		if slotHeld {
+			<-pm.actionSemaphore
+		}
+	}()
+	for {
+		held, got := pm.acquireSlotAndVM(waitCtx, work, fixSlotBound, bounds.revoked)
+		if got != asyncRan {
+			return got
+		}
+		heldVM, slotHeld = held, true
+		// Everything is held now, whether or not any of it was waited for, so
+		// this is where a caller's absolute deadline is asked once more.
+		if expired(bounds.slot) {
+			return asyncGaveUp
+		}
+		got, next := pm.admitOnce(job, slotDeadline)
+		if next == admitDone && got == asyncRan {
+			break
+		}
+		heldVM.Unlock()
+		heldVM = nil
+		<-pm.actionSemaphore
+		slotHeld = false
+		switch next {
+		case admitAgain:
+			if paused := pm.pauseBeforeAdmission(slotDeadline, bounds.revoked); paused != asyncRan {
+				return paused
+			}
+		case admitStepOut:
+			if back := pm.stepOutOfLane(job, &ticket, &laneHeld, waitCtx, slotDeadline, bounds.revoked); back != asyncRan {
+				return back
+			}
+		default:
+			return got
+		}
+	}
+	started = true
+	if !work.live() {
+		// The plugin was disabled or reloaded while the claim was being asked
+		// for: the VM was revoked under the lock this execution holds. The claim
+		// was granted, so the Job ends here, as work whose plugin went away.
+		heldVM.Unlock()
+		heldVM = nil
+		pm.settleActionJob(job, logLabel, fmt.Errorf("plugin %q is no longer available", job.PluginName))
+		return asyncRan
+	}
 	job.mu.Lock()
 	job.Status = "running"
 	job.Message = "Running..."
@@ -458,22 +603,93 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 	pm.notifyActionJobSubscribers("updated", job)
 	_ = reportHostJob(job, func(sink HostJobSink) error { sink.Started("Running..."); return nil })
 
-	err := work()
+	// The VM is handed to the work here and not before: the work releases it
+	// from now on, and until now the deferred hand-back does.
+	mu := heldVM
+	heldVM = nil
+	err := work.run(mu)
 
 	if errors.Is(err, errJobDidNotStart) {
 		// Nothing was entered, so there is no outcome to record and nothing to
 		// tell subscribers: the caller removes the job entry, and a status
 		// written here would be the last word the panel retained about it.
-		//
-		// The durable Job is deliberately not told either. "Never started" is not
-		// an outcome a Job records — the same reason the in-memory entry goes away
-		// — and the caller that owns the Job decides what leaving it undone means
-		// (for a schedule, that the tick gave the row back).
-		return false
+		return asyncNotStarted
 	}
 
 	pm.settleActionJob(job, logLabel, err)
-	return true
+	return asyncRan
+}
+
+// acquireSlotAndVM takes one of the process's job slots and the plugin's VM
+// together, and never waits for one while holding the other: a slot held while
+// the VM is busy with a synchronous call is a slot no other plugin can use, and
+// the VM held while waiting for a slot holds the plugin's hooks and pages behind
+// other plugins' work. It waits for the VM, takes a slot if one is free, and
+// otherwise gives the VM back, waits for a slot, and takes the VM only if it is
+// free, until both come together. deadline is asked each time the VM is held,
+// and bounds the wait for a slot.
+func (pm *PluginManager) acquireSlotAndVM(ctx context.Context, work asyncWork, deadline func() time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
+	outcomeOf := func(err error) asyncOutcome {
+		if errors.Is(err, errJobDidNotStart) {
+			return asyncGaveUp
+		}
+		return asyncRevoked
+	}
+	for {
+		mu, err := work.lock(ctx, true)
+		if err != nil {
+			return nil, outcomeOf(err)
+		}
+		slotDeadline := deadline()
+		select {
+		case pm.actionSemaphore <- struct{}{}:
+			return mu, asyncRan
+		default:
+		}
+		mu.Unlock()
+		if got := pm.acquireJobSlotUntil(slotDeadline, revoked); got != asyncRan {
+			return nil, got
+		}
+		mu, err = work.lock(ctx, false)
+		if err == nil {
+			return mu, asyncRan
+		}
+		<-pm.actionSemaphore
+		if !errors.Is(err, errVMBusy) {
+			return nil, outcomeOf(err)
+		}
+	}
+}
+
+// isClosed reports whether a channel is closed, without waiting.
+func isClosed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// abandonUnstartedJob ends the in-memory entry of an execution that will never
+// start because its VM went away while it waited. With a host Job the host is
+// told the callback is lost — it decides whether the Job waits for another
+// process or ends — and the entry goes; without one the entry is the only
+// record, so it ends failed, as work whose plugin disappeared always has.
+func (pm *PluginManager) abandonUnstartedJob(job *ActionJob) {
+	if ref := job.hostJobRef(); ref != nil && ref.Sink != nil {
+		ref.Sink.CallbackLost("plugin-unavailable")
+		pm.dropUnstartedJob(job)
+		return
+	}
+	job.mu.Lock()
+	job.Status = "failed"
+	job.Message = fmt.Sprintf("plugin %q is no longer available", job.PluginName)
+	job.mu.Unlock()
+	pm.notifyActionJobSubscribers("updated", job)
 }
 
 // settleActionJob records one execution's outcome once its callback has returned,
@@ -530,123 +746,189 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 	reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Completed(message, result) })
 }
 
+// resolveQueuedAction finds the registration a queued action runs, once it has
+// reached the head of its lane rather than when it was queued: a plugin can be
+// reloaded while work waits for it, and the handler to run is the one registered
+// now. It is refused unless it is still the action the submission was checked
+// against — the same filters, the same kind of entity, and params that still
+// validate — because a replacement that changed any of them would receive a
+// payload nobody validated for it.
+func (pm *PluginManager) resolveQueuedAction(job *ActionJob, params map[string]any, expectFilters string) (ActionRegistration, *lua.LState, error) {
+	action, L, err := pm.FindAction(job.PluginName, job.ActionID)
+	if err != nil {
+		return ActionRegistration{}, nil, fmt.Errorf("plugin %q is no longer available", job.PluginName)
+	}
+	if err := checkActionUnchanged(action, expectFilters); err != nil {
+		return ActionRegistration{}, nil, err
+	}
+	if action.Entity != job.EntityType {
+		return ActionRegistration{}, nil, fmt.Errorf("%w: it now acts on %s, not %s", errActionChanged, action.Entity, job.EntityType)
+	}
+	if validationErrs := ValidateActionParams(action, params); len(validationErrs) > 0 {
+		return ActionRegistration{}, nil, fmt.Errorf("%w: validation failed: %s: %s",
+			errActionChanged, validationErrs[0].Field, validationErrs[0].Message)
+	}
+	return action, L, nil
+}
+
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.
-func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, handler *lua.LFunction, entityID uint, params map[string]any, settings map[string]any) {
-	pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), func() error {
-		// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
-		ctxData := map[string]any{
-			"entity_id": entityID,
-			"job_id":    job.ID,
-		}
-		if params != nil {
-			ctxData["params"] = params
-		} else {
-			ctxData["params"] = map[string]any{}
-		}
-		if settings != nil {
-			ctxData["settings"] = settings
-		} else {
-			ctxData["settings"] = map[string]any{}
-		}
-
-		mu := pm.LockVM(L)
-		if mu == nil {
-			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
-		}
-
-		tbl := goToLuaTable(L, ctxData)
-
-		// The submitter is captured at enqueue (ActionJob.ownerUserID), so an
-		// async action's mah.db writes are attributed to whoever ran the action
-		// rather than to nobody. Background-parented: a job outlives its request.
-		timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
-		L.SetContext(timeoutCtx)
-
-		err := L.CallByParam(lua.P{
-			Fn:      handler,
-			NRet:    1,
-			Protect: true,
-		}, tbl)
-
-		L.RemoveContext()
-		cancel()
-
-		if err != nil {
-			mu.Unlock()
-			return err
-		}
-
-		// Parse the return value while the VM is still locked — which is what
-		// this comment always claimed, while the unlock sat above the
-		// conversion. An async handler can return a table the plugin holds
-		// globally, and two jobs of the same plugin run one after another on the
-		// same VM: converting outside the lock let one walk that table while the
-		// next mutated it, which Go aborts the process for.
-		ret := L.Get(-1)
-		L.Pop(1)
-		var parsed map[string]any
-		retTbl, isTable := ret.(*lua.LTable)
-		if isTable {
-			parsed = luaTableToGoMap(retTbl)
-		}
-		mu.Unlock()
-
-		// If the handler returned a table, treat it as the result and mark completed.
-		if isTable {
-			job.mu.Lock()
-			// Unless the handler already decided. A handler that calls
-			// mah.job_fail and then returns a diagnostic table meant to fail,
-			// and overwriting that with "completed" contradicts the documented
-			// contract in the direction that hides the failure.
-			if job.Status == "failed" || job.Status == "cancelled" {
-				job.mu.Unlock()
-				return nil
+//
+// The VM it locks is the plugin's current one, found by name when the
+// execution's turn comes, and the handler it runs is the registration found then
+// (resolveQueuedAction), with the settings read then too: a plugin can be
+// reloaded while its work waits.
+func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, ticket *laneTicket, revoked <-chan struct{}, entityID uint, params map[string]any, expectFilters string) asyncOutcome {
+	var L *lua.LState
+	return pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), ticket, revoked, asyncWork{
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) {
+			_, current, err := pm.FindAction(job.PluginName, job.ActionID)
+			if err != nil {
+				return nil, errPluginGone
 			}
-			job.Status = "completed"
-			job.Progress = 100
-			if msg, ok := parsed["message"].(string); ok {
-				job.Message = msg
+			mu, err := pm.lockVMFor(waitCtx, current, wait)
+			if err != nil {
+				return nil, err
+			}
+			L = current
+			return mu, nil
+		},
+		live: func() bool { return pm.stillRegistered(L) },
+		run: func(mu *vmMutex) error {
+			// The VM is released once, by whichever comes first: the explicit
+			// release below, or this deferred one on a panic.
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					mu.Unlock()
+				}
+			}
+			defer release()
+
+			// Resolved again under the lock: the VM cannot be revoked while it is
+			// held, so this is the registration that will run.
+			action, resolved, err := pm.resolveQueuedAction(job, params, expectFilters)
+			if err != nil {
+				release()
+				return err
+			}
+			if resolved != L {
+				release()
+				return fmt.Errorf("plugin %q is no longer available", job.PluginName)
+			}
+			handler := action.Handler
+			settings := pm.GetPluginSettings(job.PluginName)
+
+			// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
+			ctxData := map[string]any{
+				"entity_id": entityID,
+				"job_id":    job.ID,
+			}
+			if params != nil {
+				ctxData["params"] = params
 			} else {
-				job.Message = "Completed"
+				ctxData["params"] = map[string]any{}
 			}
-			job.Result = parsed
-			message := job.Message
-			job.mu.Unlock()
-			pm.notifyActionJobSubscribers("updated", job)
-			// Not reported once: this is the handler's *own* return value, and the
-			// settle path below publishes the same outcome through the once-guarded
-			// call. Attempting it here is only so a Job is not left without an
-			// outcome if that path is never reached, and a refusal is swallowed for
-			// the settle path to make good on.
-			flushHeldProgress(job)
-			_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
-		}
+			if settings != nil {
+				ctxData["settings"] = settings
+			} else {
+				ctxData["settings"] = map[string]any{}
+			}
 
-		return nil
+			tbl := goToLuaTable(L, ctxData)
+
+			// The submitter is captured at enqueue (ActionJob.ownerUserID), so an
+			// async action's mah.db writes are attributed to whoever ran the action
+			// rather than to nobody. Background-parented: a job outlives its request.
+			timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
+			L.SetContext(timeoutCtx)
+
+			err = L.CallByParam(lua.P{
+				Fn:      handler,
+				NRet:    1,
+				Protect: true,
+			}, tbl)
+
+			L.RemoveContext()
+			cancel()
+
+			if err != nil {
+				release()
+				return err
+			}
+
+			// Parse the return value while the VM is still locked — which is what
+			// this comment always claimed, while the unlock sat above the
+			// conversion. An async handler can return a table the plugin holds
+			// globally, and two jobs of the same plugin run one after another on
+			// the same VM: converting outside the lock let one walk that table
+			// while the next mutated it, which Go aborts the process for.
+			ret := L.Get(-1)
+			L.Pop(1)
+			var parsed map[string]any
+			retTbl, isTable := ret.(*lua.LTable)
+			if isTable {
+				parsed = luaTableToGoMap(retTbl)
+			}
+			release()
+
+			// If the handler returned a table, treat it as the result and mark completed.
+			if isTable {
+				job.mu.Lock()
+				// Unless the handler already decided. A handler that calls
+				// mah.job_fail and then returns a diagnostic table meant to fail,
+				// and overwriting that with "completed" contradicts the documented
+				// contract in the direction that hides the failure.
+				if job.Status == "failed" || job.Status == "cancelled" {
+					job.mu.Unlock()
+					return nil
+				}
+				job.Status = "completed"
+				job.Progress = 100
+				if msg, ok := parsed["message"].(string); ok {
+					job.Message = msg
+				} else {
+					job.Message = "Completed"
+				}
+				job.Result = parsed
+				message := job.Message
+				job.mu.Unlock()
+				pm.notifyActionJobSubscribers("updated", job)
+				// Not reported once: this is the handler's *own* return value, and
+				// the settle path below publishes the same outcome through the
+				// once-guarded call. Attempting it here is only so a Job is not left
+				// without an outcome if that path is never reached, and a refusal is
+				// swallowed for the settle path to make good on.
+				flushHeldProgress(job)
+				_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
+			}
+
+			return nil
+		},
 	})
 }
 
 // runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
-func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
-	pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), func() error {
-		mu := pm.LockVM(L)
-		if mu == nil {
-			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
-		}
-		defer mu.Unlock()
+func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, ticket *laneTicket, L *lua.LState, fn *lua.LFunction, jobID string) asyncOutcome {
+	return pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), ticket, pm.stateRevoked(L), asyncWork{
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) { return pm.lockVMFor(waitCtx, L, wait) },
+		live: func() bool { return pm.stillRegistered(L) },
+		run: func(mu *vmMutex) error {
+			defer mu.Unlock()
 
-		timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
-		L.SetContext(timeoutCtx)
-		defer func() {
-			L.RemoveContext()
-			cancel()
-		}()
+			timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
+			L.SetContext(timeoutCtx)
+			defer func() {
+				L.RemoveContext()
+				cancel()
+			}()
 
-		return L.CallByParam(lua.P{
-			Fn:      fn,
-			NRet:    0,
-			Protect: true,
-		}, lua.LString(jobID))
+			return L.CallByParam(lua.P{
+				Fn:      fn,
+				NRet:    0,
+				Protect: true,
+			}, lua.LString(jobID))
+		},
 	})
 }
 

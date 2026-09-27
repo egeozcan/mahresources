@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -21,6 +22,10 @@ type ProgressSink interface {
 type JobRunFn func(ctx context.Context, j *DownloadJob, p ProgressSink) error
 
 const MaxManagedLiveJobs = 6
+
+// ErrManagedLaneFull is SubmitManagedJob's refusal when MaxManagedLiveJobs managed
+// jobs are live. It is transient: a live entry leaves once its callback returns.
+var ErrManagedLaneFull = errors.New("managed job lane is full")
 
 // JobControls describes the controls a managed live job exposes. Managed jobs
 // are authoritative durable operations, so controls are opt-in rather than
@@ -219,7 +224,7 @@ func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn Managed
 	m.mu.Lock()
 	if !m.makeRoomForManagedJob() {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("managed job lane is full (max %d jobs)", MaxManagedLiveJobs)
+		return nil, fmt.Errorf("%w (max %d jobs)", ErrManagedLaneFull, MaxManagedLiveJobs)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &DownloadJob{
@@ -251,7 +256,26 @@ func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn Managed
 	return job, nil
 }
 
+// ManagedLaneHasRoom reports whether SubmitManagedJob would find room now: fewer
+// than MaxManagedLiveJobs managed entries, or a finished one it may evict.
+func (m *DownloadManager) ManagedLaneHasRoom() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	room, _, _ := m.managedLaneRoom()
+	return room
+}
+
 func (m *DownloadManager) makeRoomForManagedJob() bool {
+	room, evictID, evict := m.managedLaneRoom()
+	if evict != nil {
+		m.evictJob(evictID, evict)
+	}
+	return room
+}
+
+// managedLaneRoom answers whether the managed lane has room, and which finished
+// entry makes it when the lane is at its limit.
+func (m *DownloadManager) managedLaneRoom() (bool, string, *DownloadJob) {
 	count := 0
 	var terminalID string
 	var terminal *DownloadJob
@@ -269,13 +293,12 @@ func (m *DownloadManager) makeRoomForManagedJob() bool {
 		}
 	}
 	if count < MaxManagedLiveJobs {
-		return true
+		return true, "", nil
 	}
 	if terminal != nil {
-		m.evictJob(terminalID, terminal)
-		return true
+		return true, terminalID, terminal
 	}
-	return false
+	return false, "", nil
 }
 
 func (m *DownloadManager) processManagedJob(j *DownloadJob) {

@@ -79,3 +79,65 @@ end
 		t.Fatal("the VM was released 10s ago and the schedule has still not run")
 	}
 }
+
+// deadlineAdmission admits only within the deadline it is asked with, as the
+// host's own admission does: its claim is bounded by that deadline.
+type deadlineAdmission struct{}
+
+func (deadlineAdmission) Admit(deadline time.Time) AdmitResult {
+	if !deadline.IsZero() && !time.Now().Before(deadline) {
+		return AdmitLater
+	}
+	return Admitted
+}
+
+// TestOverlapAllowAdmissionBudgetStartsOnceTheVMIsHeld is the host-admission half
+// of TestOverlapAllowWaitsOutABusyVM. Under "allow" the row was advanced before
+// the run, the VM is waited for as long as it takes, and only the job slot and
+// the host's admission keep the dispatch wait as their bound. That bound must
+// start once the VM is held: started before a long VM wait, it has run out by
+// the time the host is asked, and the occurrence is dropped for good.
+func TestOverlapAllowAdmissionBudgetStartsOnceTheVMIsHeld(t *testing.T) {
+	dir := t.TempDir()
+	pm, err := enablingPlugin(t, dir, "queued", `plugin = { name = "queued", version = "1.0", api_version = 1, capabilities = {"schedule"} }
+function init()
+    mah.schedule({ id = "poll", every = "30s", overlap = "allow", handler = function() end })
+end
+`)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	pm.mu.RLock()
+	regs := pm.schedules["queued"]
+	pm.mu.RUnlock()
+	if len(regs) != 1 {
+		t.Fatalf("expected one registered schedule, got %d", len(regs))
+	}
+	reg := regs[0]
+
+	held := pm.LockVM(reg.state)
+	if held == nil {
+		t.Fatal("could not take the plugin's VM lock")
+	}
+	release := sync.OnceFunc(held.Unlock)
+	defer release()
+
+	const budget = 300 * time.Millisecond
+	done := make(chan bool, 1)
+	go func() {
+		host := &HostJobRef{JobID: "allow-occurrence", Sink: &recordingSink{}, Admission: deadlineAdmission{}}
+		_, ran, _ := pm.RunScheduleForHost(reg, 0, budget, false, host)
+		done <- ran
+	}()
+	time.Sleep(4 * budget)
+	release()
+
+	select {
+	case ran := <-done:
+		if !ran {
+			t.Fatal("the VM was released and the occurrence was dropped: its admission budget ran out while it waited for the VM")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the VM was released 10s ago and the occurrence has still not run")
+	}
+}

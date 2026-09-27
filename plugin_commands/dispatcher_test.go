@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +224,20 @@ type dispatcherTestJobs struct {
 	imports    []registeredImport
 	commandErr error
 	importErr  error
+	// slots, when set, is how many more runs and imports the job budget admits.
+	slots *int
+}
+
+// takeSlot answers the job budget's refusal once slots are used up.
+func (j *dispatcherTestJobs) takeSlot() error {
+	if j.slots == nil {
+		return nil
+	}
+	if *j.slots == 0 {
+		return fmt.Errorf("%w: no slot left", ErrJobCapacityFull)
+	}
+	*j.slots--
+	return nil
 }
 
 func (j *dispatcherTestJobs) SubmitCommandJob(s RunJobSpec, c func(string) error, r func(context.Context, Progress) Outcome) (string, error) {
@@ -230,6 +245,9 @@ func (j *dispatcherTestJobs) SubmitCommandJob(s RunJobSpec, c func(string) error
 	defer j.mu.Unlock()
 	if j.commandErr != nil {
 		return "", j.commandErr
+	}
+	if err := j.takeSlot(); err != nil {
+		return "", err
 	}
 	j.commands = append(j.commands, registeredCommand{s, c, r})
 	return "job-" + s.RunID, nil
@@ -239,6 +257,9 @@ func (j *dispatcherTestJobs) SubmitImportJob(s ImportJobSpec, r func(context.Con
 	defer j.mu.Unlock()
 	if j.importErr != nil {
 		return "", j.importErr
+	}
+	if err := j.takeSlot(); err != nil {
+		return "", err
 	}
 	j.imports = append(j.imports, registeredImport{spec: s, run: r})
 	return "job-" + s.ImportID, nil

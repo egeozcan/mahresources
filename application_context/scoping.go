@@ -113,8 +113,22 @@ func (ctx *MahresourcesContext) principalForcedScope() (scopeID uint, forced boo
 func (ctx *MahresourcesContext) WithPrincipal(p *auth.Principal) *MahresourcesContext {
 	cp := *ctx
 	cp.principal = p
-	applyPrincipalScope(&cp, ctx, p, context.Background())
+	_ = applyPrincipalScope(&cp, ctx, p, context.Background())
 	return &cp
+}
+
+// withPrincipalWithin is WithPrincipal for a caller that bounds its reads by
+// parent and has to know when the principal's subtree could not be read. Every
+// handle the copy queries through carries parent's deadline beneath the actor
+// and the scope, so the bound reaches each scoped read without replacing the
+// context that carries the scope. A subtree that could not be read still leaves
+// the copy denying everything, as WithPrincipal's does; the error says the
+// denial is not an answer.
+func (ctx *MahresourcesContext) withPrincipalWithin(parent context.Context, p *auth.Principal) (*MahresourcesContext, error) {
+	cp := *ctx
+	cp.principal = p
+	err := applyPrincipalScope(&cp, ctx, p, parent)
+	return &cp, err
 }
 
 // WithMRQLPrincipal binds request cancellation and actor identity without
@@ -146,7 +160,8 @@ func (ctx *MahresourcesContext) WithMRQLPrincipal(parent context.Context, p *aut
 // group-limited principals (preserving fail-closed empty-allowlist semantics).
 // The parent controls cancellation: background callers use Background, while
 // request-bound callers retain the current request deadline and cancellation.
-func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p *auth.Principal, parent context.Context) {
+// It answers the error of a subtree lookup that failed, after failing closed.
+func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p *auth.Principal, parent context.Context) error {
 	// resolveActingUserID: just p.UserID (0 when p == nil). No root lookup here —
 	// under no-auth the principal already carries the root id (Phase 7), so this
 	// stays an allocation-free, DB-free read on the hot create path.
@@ -162,6 +177,7 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 	if actorID != 0 {
 		ctx = context.WithValue(ctx, actingUserCtxKey{}, actorID)
 	}
+	var lookupErr error
 	if mustScope {
 		var allowed []uint
 		if p.IsScoped() {
@@ -169,6 +185,8 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 			lookup.db = base.db.WithContext(parent)
 			if ids, err := lookup.collectSubtreeGroupIDs(*p.ScopeGroupID); err == nil {
 				allowed = ids
+			} else {
+				lookupErr = err
 			}
 			// On error, allowed stays empty → deny-all (fail closed). A role that
 			// must be scoped but has no resolved subtree also lands here empty.
@@ -176,6 +194,7 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 		ctx = context.WithValue(ctx, scopeCtxKey{}, &scopeFilter{allowed: allowed})
 	}
 	dst.db = base.db.WithContext(ctx)
+	return lookupErr
 }
 
 // unscopedDB returns this context's handle without its subtree filter: the same
@@ -227,14 +246,21 @@ func (ctx *MahresourcesContext) isScopedPrincipal() bool {
 // callbacks apply, so for a scoped principal it is true only when the entity is
 // inside the subtree. Intended to gate access when isScopedPrincipal() is true.
 func (ctx *MahresourcesContext) entityVisible(model any, id uint) bool {
+	visible, _ := ctx.entityVisibleChecked(model, id)
+	return visible
+}
+
+// entityVisibleChecked is entityVisible that also reports a read that failed,
+// which answers not visible with the read's error.
+func (ctx *MahresourcesContext) entityVisibleChecked(model any, id uint) (bool, error) {
 	if id == 0 {
-		return false
+		return false, nil
 	}
 	var count int64
 	if err := ctx.db.Model(model).Where("id = ?", id).Limit(1).Count(&count).Error; err != nil {
-		return false
+		return false, err
 	}
-	return count > 0
+	return count > 0, nil
 }
 
 // GroupVisible reports whether the group is visible under the current scope.

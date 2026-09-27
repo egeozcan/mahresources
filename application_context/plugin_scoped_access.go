@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -149,17 +150,28 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 // whether plugin code may run for a confined principal, and "I could not find out" must
 // not resolve to yes.
 func (ctx *MahresourcesContext) pluginAllowsScopedPrincipalsOn(db *gorm.DB, pluginName string) bool {
+	allowed, _ := ctx.pluginScopedAccessOn(db, pluginName)
+	return allowed
+}
+
+// pluginScopedAccessOn is pluginAllowsScopedPrincipalsOn that also reports a read
+// that failed. A plugin with no state row is an answer (never enabled, so not
+// allowed); any other failed read answers not allowed with the read's error.
+func (ctx *MahresourcesContext) pluginScopedAccessOn(db *gorm.DB, pluginName string) (bool, error) {
 	if ctx == nil || pluginName == "" {
-		return false
+		return false, nil
 	}
 	if db == nil {
-		return false
+		return false, nil
 	}
 	var state models.PluginState
 	if err := db.Where("plugin_name = ?", pluginName).First(&state).Error; err != nil {
-		return false
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
-	return state.Enabled && state.AllowScopedPrincipals
+	return state.Enabled && state.AllowScopedPrincipals, nil
 }
 
 // SetPluginScopedAccess records whether group-limited principals may reach a

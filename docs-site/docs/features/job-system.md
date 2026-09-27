@@ -53,6 +53,16 @@ available commands. Current adapters include:
 
 Plugin command runs and imports use their separate fenced command runtime.
 
+Every Kind's running Jobs count against one deployment budget,
+`-max-job-concurrency`. A Job whose turn comes while the budget is full waits
+`queued` for a slot rather than failing. The exception is a scheduled
+occurrence, which gives up after 10 seconds without a slot and is withdrawn; see
+[Timing you should not rely on](./plugin-lua-api.md#timing-you-should-not-rely-on).
+Plugin work also waits
+for its plugin: in each server process a plugin runs one of its async actions,
+`mah.start_job` jobs and schedule runs at a time, so a plugin's backlog is `queued`
+Jobs behind one running Job and occupies one slot of the budget per process.
+
 ## State and visibility
 
 Canonical state is one of `scheduled`, `queued`, `running`, `paused`, `blocked`,

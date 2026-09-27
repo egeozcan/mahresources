@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"mahresources/auth"
 	"mahresources/jobs"
@@ -45,18 +46,31 @@ import (
 // controllable through its Jobs, which is the same rule the plugin surfaces answer
 // through `PluginAccessFor`.
 func (ctx *MahresourcesContext) commandActorRefusal(deps jobs.Deps, access jobs.Access, pluginName string) string {
+	reason, _ := ctx.commandActorRefusalChecked(deps, access, pluginName)
+	return reason
+}
+
+// commandActorRefusalChecked is commandActorRefusal for a caller that can tell a
+// refusal from a question it could not answer. A read that failed answers the
+// refusal commandActorRefusal answers for it, which fails closed, together with
+// the read's error: a caller that can ask again later does so, rather than
+// recording a refusal the account never earned.
+func (ctx *MahresourcesContext) commandActorRefusalChecked(deps jobs.Deps, access jobs.Access, pluginName string) (string, error) {
 	if ctx == nil {
-		return ""
+		return "", nil
 	}
 	// An administrator is unscoped and may write, and a context with no principal at
 	// all is the host acting as itself — the CLI, a seed, an operation nobody made a
 	// claim about. Both are the same permissive branch every other role guard takes.
 	if access.Administrator {
-		return ""
+		return "", nil
 	}
-	principal := commandActorOn(deps.DB, access.UserID)
+	principal, err := commandActorLookup(deps.DB, access.UserID)
+	if err != nil {
+		return "role-refused", err
+	}
 	if principal == nil {
-		return ""
+		return "", nil
 	}
 	// The capability is read off the principal rather than through a principal-bound
 	// context, and that is not a shortcut: WithPrincipal materializes the principal's
@@ -67,7 +81,7 @@ func (ctx *MahresourcesContext) commandActorRefusal(deps jobs.Deps, access jobs.
 	// whole of the question, and requireWriteRole's answer for a resolved principal is
 	// exactly this one.
 	if !principal.CanWrite() {
-		return "role-refused"
+		return "role-refused", nil
 	}
 	if pluginName != "" {
 		requestCtx := auth.WithPrincipal(context.Background(), principal)
@@ -76,12 +90,19 @@ func (ctx *MahresourcesContext) commandActorRefusal(deps jobs.Deps, access jobs.
 		// reloads the process-wide snapshot through the context's handle on a cache miss,
 		// and that second connection beside the one the caller already holds is the
 		// deadlock this seam was corrected for once already.
-		allowsScoped := func(name string) bool { return ctx.pluginAllowsScopedPrincipalsOn(deps.DB, name) }
+		var readErr error
+		allowsScoped := func(name string) bool {
+			allowed, err := ctx.pluginScopedAccessOn(deps.DB, name)
+			if err != nil {
+				readErr = err
+			}
+			return allowed
+		}
 		if !auth.PluginActionAccessFor(requestCtx, allowsScoped)(pluginName) {
-			return "plugin-refused"
+			return "plugin-refused", readErr
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // commandActorOn resolves the account one actor id names, on the handle the question
@@ -95,20 +116,33 @@ func (ctx *MahresourcesContext) commandActorRefusal(deps jobs.Deps, access jobs.
 // or an outage — resolves to this tree's deny-all identity rather than to an unscoped
 // one, because "I could not find out what you may do" must not mean "anything".
 func commandActorOn(db *gorm.DB, actorID uint) *auth.Principal {
+	principal, _ := commandActorLookup(db, actorID)
+	return principal
+}
+
+// commandActorLookup is commandActorOn that also reports a read that failed. An
+// account that does not exist or is disabled is an answer, the deny-all identity
+// with no error; a read that failed for any other reason answers that identity
+// too, with the read's error, so a caller that can ask again can tell it was not
+// an answer.
+func commandActorLookup(db *gorm.DB, actorID uint) (*auth.Principal, error) {
 	if actorID == 0 {
-		return nil
+		return nil, nil
 	}
 	if db == nil {
-		return deniedPluginPrincipal(actorID)
+		return deniedPluginPrincipal(actorID), nil
 	}
 	var user models.User
 	if err := db.Where("id = ?", actorID).First(&user).Error; err != nil {
-		return deniedPluginPrincipal(actorID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return deniedPluginPrincipal(actorID), nil
+		}
+		return deniedPluginPrincipal(actorID), err
 	}
 	if user.Disabled {
-		return deniedPluginPrincipal(actorID)
+		return deniedPluginPrincipal(actorID), nil
 	}
-	return auth.FromUser(&user)
+	return auth.FromUser(&user), nil
 }
 
 // jobCommandSummaryPlugin answers the plugin name a Job's sanitized summary records,

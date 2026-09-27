@@ -218,17 +218,21 @@ var errScheduleVMBusy = fmt.Errorf(
 // tick starting a second copy — so it needs to know when the run is over, and
 // nothing else can tell it: an ActionJob lives in this process's memory only.
 //
-// The wait bounds everything before the handler is entered — the job slot and,
-// when holdClaim is set, the plugin's VM lock, sharing one deadline — and
-// running out of it is reported as ran=false with no error. That is not a
-// failure of the schedule; it is a tick that could not get started, and the
-// caller's correct response is to release the claim and leave the row due. The
-// bound is not a nicety: the caller's claim expires after ScheduleClaimTTL,
-// which is derived as this wait plus the run, so an unbounded wait would let the
-// claim lapse mid-dispatch and the next tick would fire the same schedule again.
+// The wait bounds everything before the handler is entered — the plugin's lane,
+// the job slot, the host's admission and, when holdClaim is set, the plugin's VM
+// lock, sharing one deadline — and running out of it is reported as ran=false
+// with no error. That is not a failure of the schedule; it is a tick that could
+// not get started, and the caller's correct response is to release the claim and
+// leave the row due. The bound is not a nicety: the caller's claim expires after
+// ScheduleClaimTTL, which is derived as this wait plus the run, so an unbounded
+// wait would let the claim lapse mid-dispatch and the next tick would fire the
+// same schedule again.
 //
 // holdClaim is that condition rather than an option. A caller that has already
-// released the row must not have its VM wait bounded — see acquireScheduleVM.
+// released the row must not have its waits for this plugin's own work bounded —
+// the lane and the VM, see acquireScheduleVM — while the job slot and the
+// admission, which it shares with every other plugin, keep the wait as their
+// bound, counted from the moment the lane is held.
 // acquireScheduleVM takes the plugin's VM lock for a run that is about to start.
 //
 // Whether that wait is bounded is decided by the single thing a bound protects:
@@ -249,11 +253,15 @@ var errScheduleVMBusy = fmt.Errorf(
 // The busy report is therefore only ever true for a bounded wait. An unbounded
 // one that comes back empty-handed means the plugin is gone, which is the same
 // answer LockVM has always given and every caller already handles.
-func (pm *PluginManager) acquireScheduleVM(state *lua.LState, holdClaim bool, deadline time.Time) (*vmMutex, bool) {
+//
+// ctx ends either wait early, as a revocation or a closing manager does; the
+// answer is then the plugin gone rather than busy.
+func (pm *PluginManager) acquireScheduleVM(ctx context.Context, state *lua.LState, holdClaim bool, deadline time.Time) (*vmMutex, bool) {
 	if holdClaim {
-		return pm.TryLockVMWithin(context.Background(), state, time.Until(deadline))
+		mu, busy := pm.TryLockVMWithin(ctx, state, time.Until(deadline))
+		return mu, busy && ctx.Err() == nil
 	}
-	mu, _ := pm.LockVMWithContext(context.Background(), state)
+	mu, _ := pm.LockVMWithContext(ctx, state)
 	return mu, false
 }
 
@@ -317,9 +325,14 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	}
 
 	pm.actionJobsMu.Lock()
+	if _, ok := pm.holdHostJobLocked(host, jobID); !ok {
+		pm.actionJobsMu.Unlock()
+		return "", false, errHostJobHeld
+	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
 	pm.notifyActionJobSubscribers("added", job)
+	defer pm.releaseHostJob(host)
 
 	wg := pm.actionWaitGroup(reg.PluginName)
 	wg.Add(1)
@@ -334,35 +347,49 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	// the TTL the row reads as unclaimed again and the next tick starts a second
 	// run of a schedule that has not begun its first.
 	deadline := time.Now().Add(wait)
+	bounds := asyncBounds{lane: deadline, slot: deadline, revoked: pm.stateRevoked(state)}
+	if !holdClaim {
+		bounds = asyncBounds{slotWait: wait, revoked: bounds.revoked}
+	}
 
-	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), wait, func() error {
-		mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
-		if mu == nil {
+	// A tick goes ahead of the plugin's queued actions: see joinAhead.
+	ticket := pm.laneFor(reg.PluginName).joinAhead()
+	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), bounds, ticket, asyncWork{
+		lock: func(waitCtx context.Context, wait bool) (*vmMutex, error) {
+			if !wait {
+				return pm.lockVMFor(waitCtx, state, false)
+			}
+			mu, busy := pm.acquireScheduleVM(waitCtx, state, holdClaim, deadline)
+			if mu != nil {
+				return mu, nil
+			}
 			if !busy {
-				return fmt.Errorf("plugin %q is no longer available", reg.PluginName)
+				return nil, errPluginGone
 			}
 			// Busy, and the budget is spent. The handler was never called, so
 			// this is "not this tick" rather than a failed run — the same answer
 			// a full job budget gives, and the dispatcher already knows how to
-			// hand the claim back for it. errJobDidNotStart is what keeps the
-			// job runner from recording it as a failure on the way out.
-			return errScheduleVMBusy
-		}
-		defer mu.Unlock()
+			// hand the claim back for it.
+			return nil, errScheduleVMBusy
+		},
+		live: func() bool { return pm.stillRegistered(state) },
+		run: func(mu *vmMutex) error {
+			defer mu.Unlock()
 
-		timeoutCtx, cancel := context.WithTimeout(
-			withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
-		state.SetContext(timeoutCtx)
-		defer func() {
-			state.RemoveContext()
-			cancel()
-		}()
+			timeoutCtx, cancel := context.WithTimeout(
+				withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
+			state.SetContext(timeoutCtx)
+			defer func() {
+				state.RemoveContext()
+				cancel()
+			}()
 
-		return state.CallByParam(lua.P{
-			Fn:      fn,
-			NRet:    0,
-			Protect: true,
-		}, lua.LString(jobID))
+			return state.CallByParam(lua.P{
+				Fn:      fn,
+				NRet:    0,
+				Protect: true,
+			}, lua.LString(jobID))
+		},
 	})
 
 	if !ran {

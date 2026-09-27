@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -476,6 +477,13 @@ func (ctx *MahresourcesContext) registerPluginCommandJobKinds(service *jobs.Serv
 	return nil
 }
 
+// claimPluginCommandJob claims one command or import Job for the fenced command
+// runtime, against the deployment's budget, and binds the claim to its source
+// row in the same transaction.
+//
+// A Job that is not waiting answers claimed=false. A full budget is an error
+// wrapping jobs.ErrCapacityExhausted, because the caller has to tell it apart:
+// it is a reason to wait, never a reason to fail the run.
 func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID string) (jobs.Execution, bool, error) {
 	if jobID == "" || ctx == nil || ctx.JobService() == nil {
 		return jobs.Execution{}, false, nil
@@ -499,13 +507,17 @@ func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID stri
 		deps := ctx.jobDeps()
 		deps.DB = tx
 		var err error
-		execution, claimed, err = ctx.JobService().Claim(context.Background(), deps, jobs.ClaimRequest{
+		execution, err = ctx.JobService().ClaimJob(context.Background(), deps, jobs.ClaimRequest{
 			Kind: kind, KindVersion: jobPluginCommandVersion, JobID: jobID,
 			Claimant: "plugin-command:" + token, Capacity: ctx.hostClaimCapacityBudget(),
 		})
-		if err != nil || !claimed {
+		if errors.Is(err, jobs.ErrJobNotWaiting) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
+		claimed = true
 		model := any(&models.PluginCommandRun{})
 		status := plugin_commands.RunStatusQueued
 		if kind == JobKindPluginCommandImport {

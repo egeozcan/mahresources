@@ -288,7 +288,32 @@ end
 
 Async actions (`async = true`) run in a background goroutine via the job system. The API returns immediately with a `job_id`.
 
-**Timeout**: 5 minutes. **Max concurrent**: 3 async actions across all plugins.
+**Timeout**: 5 minutes.
+
+A plugin runs one piece of background work at a time in each server process. Its
+async actions and its `mah.start_job` jobs wait in one queue per plugin and start
+in the order they were submitted; a schedule run goes ahead of them and waits only
+for the work already running, though never twice in a row while an action is
+waiting. A job waiting its turn is `queued` in the Job Center and holds nothing.
+The job at the head of the queue starts once one of the process's 3 plugin job
+slots is free, the plugin is not busy with a hook, a page or another synchronous
+call, and the deployment's job budget (`-max-job-concurrency`, shared with
+downloads, exports and every other kind of Job) has room. A bulk run over 50
+resources on one server process is therefore one running Job and 49 queued ones
+(with several server processes, up to one running Job per process), and it
+occupies one slot per process at a time, so other plugins' work and downloads
+keep starting while it drains. Just before a queued action starts, the server checks again that the
+account it runs as may still run it on that entity. If claiming the job and
+making those checks take longer than 10 seconds together, the job goes back to
+`queued`, shows "Waiting for the account and scope checks", and lets the
+plugin's other work go first. It tries again after a wait that starts at one
+second and doubles each time, up to 30 seconds, and each attempt is allowed twice
+as long as the one before, up to one minute, so checks that are slow but finish
+still let it start. It never starts on a check that did not finish, and a check
+that could not finish is never recorded as a refusal. Each attempt adds a start
+and a return to `queued` to the job's history. Work still queued when its plugin is disabled does not
+start: a queued action is blocked for a person to decide about, or runs if the
+plugin is enabled again first, and a queued `mah.start_job` job is cancelled.
 
 ```lua
 mah.action({

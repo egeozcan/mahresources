@@ -19,6 +19,10 @@ const (
 	maxActiveCommandsPerPlugin = 2
 	maxActiveImports           = 2
 	dispatchFailureRetryDelay  = 100 * time.Millisecond
+	// jobCapacityRetryDelay is how long the dispatcher waits before offering
+	// work again after the deployment's job budget refused it. The slot it is
+	// waiting for is freed by another Job ending, possibly in another process.
+	jobCapacityRetryDelay      = 500 * time.Millisecond
 	pluginCommandSweepInterval = 5 * time.Minute
 	pluginCommandSweepBatch    = 100
 )
@@ -277,6 +281,15 @@ type dispatcherState struct {
 	failedImportDispatch  map[string]*importDispatchFailure
 	queuedCancellations   map[string]*queuedCancellation
 	cancelWaiters         map[string][]chan error
+	// capacityRetryAt is when work refused by a full job budget is offered
+	// again. Until then nothing is started: every run and import draws on the
+	// same deployment budget, so one refusal answers for all of them.
+	capacityRetryAt time.Time
+	// importsFirst says which kind of work is offered room first. Runs and
+	// imports take turns: the kind that was just started goes second next time,
+	// and a kind refused by a full budget keeps its turn, so neither can take
+	// every slot that frees while the other waits.
+	importsFirst bool
 }
 
 func NewDispatcher(deps Dependencies) *Dispatcher {
@@ -1186,20 +1199,71 @@ func (d *Dispatcher) completeCommand(state *dispatcherState, message commandComp
 }
 
 func (d *Dispatcher) schedule(state *dispatcherState) {
-	for len(state.activeCommands) < maxActiveCommands {
-		run, ok := state.nextCommand()
-		if !ok {
-			break
-		}
-		d.startCommand(state, run)
+	if d.now().Before(state.capacityRetryAt) {
+		return
 	}
-	for len(state.activeImports) < maxActiveImports {
+	for {
+		started := false
+		for _, imports := range [2]bool{state.importsFirst, !state.importsFirst} {
+			took, refused := d.startNext(state, imports)
+			if refused {
+				state.importsFirst = imports
+				state.capacityRetryAt = d.now().Add(jobCapacityRetryDelay)
+				return
+			}
+			if took {
+				state.importsFirst = !imports
+				started = true
+				break
+			}
+		}
+		if !started {
+			return
+		}
+	}
+}
+
+// startNext offers room to the next queued run, or the next queued import. took
+// reports that one was taken off its queue; refused that the job budget had no
+// room for it, and it is back at the head of its queue.
+func (d *Dispatcher) startNext(state *dispatcherState, imports bool) (took, refused bool) {
+	if imports {
+		if len(state.activeImports) >= maxActiveImports {
+			return false, false
+		}
 		item, ok := state.nextImport()
 		if !ok {
-			break
+			return false, false
 		}
-		d.startImport(state, item)
+		if !d.startImport(state, item) {
+			return false, true
+		}
+		return true, false
 	}
+	if len(state.activeCommands) >= maxActiveCommands {
+		return false, false
+	}
+	run, ok := state.nextCommand()
+	if !ok {
+		return false, false
+	}
+	if !d.startCommand(state, run) {
+		return false, true
+	}
+	return true, false
+}
+
+// requeueCommand puts a run the job budget refused back at the head of its
+// plugin's queue, where it keeps its place.
+func (s *dispatcherState) requeueCommand(run QueuedRun) {
+	plugin := run.Request.PluginName
+	s.commands[plugin] = append([]QueuedRun{run}, s.commands[plugin]...)
+}
+
+// requeueImport is requeueCommand for an import.
+func (s *dispatcherState) requeueImport(item queuedImport) {
+	plugin := item.spec.PluginName
+	s.imports[plugin] = append([]queuedImport{item}, s.imports[plugin]...)
 }
 
 func (s *dispatcherState) nextCommand() (QueuedRun, bool) {
@@ -1240,7 +1304,10 @@ func (s *dispatcherState) nextImport() (queuedImport, bool) {
 	return queuedImport{}, false
 }
 
-func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
+// startCommand hands one run to the managed live lane. It answers false, having
+// put the run back at the head of its queue, when the deployment's job budget
+// refused it: that is a wait, and the run is still queued, durably and here.
+func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) bool {
 	execCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeCommands[run.RunID] = activeCommand{plugin: run.Request.PluginName, cancel: cancel, run: run}
 	state.activeByPlugin[run.Request.PluginName]++
@@ -1290,18 +1357,26 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		return outcome
 	})
 	if err == nil {
-		return
+		return true
 	}
 
 	cancel(err)
+	if errors.Is(err, ErrJobCapacityFull) {
+		delete(state.activeCommands, run.RunID)
+		state.activeByPlugin[run.Request.PluginName]--
+		state.requeueCommand(run)
+		return false
+	}
 	failure := &commandDispatchFailure{
 		run: run, dispatchErr: err, status: RunStatusFailed, reason: err.Error(),
 	}
 	state.failedCommandDispatch[run.RunID] = failure
 	_, _ = d.persistCommandDispatchFailure(state, failure)
+	return true
 }
 
-func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
+// startImport is startCommand for an import, and answers the same way.
+func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) bool {
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeImports[item.spec.ImportID] = activeImport{plugin: item.spec.PluginName, cancel: cancel, release: item.release, claimed: item.claimed}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
@@ -1330,14 +1405,20 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 		return outcome
 	})
 	if err == nil {
-		return
+		return true
 	}
 	cancel(err)
+	if errors.Is(err, ErrJobCapacityFull) {
+		delete(state.activeImports, item.spec.ImportID)
+		state.requeueImport(item)
+		return false
+	}
 	failure := &importDispatchFailure{
 		item: item, dispatchErr: err, status: ImportStatusFailed, reason: err.Error(),
 	}
 	state.failedImportDispatch[item.spec.ImportID] = failure
 	_, _ = d.persistImportDispatchFailure(state, failure)
+	return true
 }
 
 func (d *Dispatcher) cancelImport(state *dispatcherState, importID, reason string) error {

@@ -270,6 +270,11 @@ func (r *JobRuntime) tick(ctx context.Context) {
 
 	for _, registration := range r.service.Registrations() {
 		if gated, ok := registration.Adapter.(interface{ RuntimeClaimEnabled() bool }); ok && !gated.RuntimeClaimEnabled() {
+			// A Kind that admits its own work may still want this cadence to
+			// find waiting work nobody in this process holds.
+			if adopter, ok := registration.Adapter.(interface{ AdoptWaiting(context.Context) }); ok {
+				adopter.AdoptWaiting(ctx)
+			}
 			continue
 		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
