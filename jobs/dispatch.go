@@ -53,7 +53,7 @@ var errClaimContended = errors.New("jobs: the job was claimed by another runtime
 // no error: a runtime cannot act differently on either answer, and the queue is
 // re-read on the next pass.
 func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (Execution, bool, error) {
-	execution, err := s.claimWaiting(ctx, deps, request)
+	execution, err := s.claimWaiting(ctx, deps, request, false)
 	switch {
 	case err == nil:
 		return execution, true, nil
@@ -74,16 +74,25 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 // ended, it is blocked, or another runtime owns it, and asking again changes
 // nothing. A polling runtime cannot use the distinction, which is why Claim keeps
 // its own contract; an executor holding work in memory for one Job can.
+//
+// The context on deps.DB bounds the claim and the read of the execution's input
+// after its commit; ctx is what the returned Execution publishes through for the
+// rest of its run, so a caller's budget for starting never cuts short what the
+// work later writes. A claim that committed but whose input could not be read in
+// that bound answers ErrExecutionNotLoaded with the claimed execution, so the
+// caller can hand the claim back.
 func (s *Service) ClaimJob(ctx context.Context, deps Deps, request ClaimRequest) (Execution, error) {
 	if strings.TrimSpace(request.JobID) == "" {
 		return Execution{}, fmt.Errorf("%w: ClaimJob names the job it claims", ErrInvalidClaim)
 	}
-	execution, err := s.claimWaiting(ctx, deps, request)
+	execution, err := s.claimWaiting(ctx, deps, request, true)
 	switch {
 	case err == nil:
 		return execution, nil
 	case errors.Is(err, errNothingWaiting), errors.Is(err, errClaimContended):
 		return Execution{}, fmt.Errorf("%w: job %s", ErrJobNotWaiting, request.JobID)
+	case errors.Is(err, ErrExecutionNotLoaded):
+		return execution, err
 	default:
 		return Execution{}, err
 	}
@@ -95,8 +104,9 @@ var errNothingWaiting = errors.New("jobs: no job is waiting")
 
 // claimWaiting is the one claim body. Its refusals are errors — nothing waiting,
 // lost to another runtime, a full budget — and each public entry point decides
-// which of them its callers can act on.
-func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequest) (Execution, error) {
+// which of them its callers can act on. loadOnClaimHandle reads the execution's
+// input on deps.DB, whose context bounds the claim, rather than on ctx.
+func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequest, loadOnClaimHandle bool) (Execution, error) {
 	_, definition, err := s.adapterFor(request.Kind, request.KindVersion)
 	if err != nil {
 		return Execution{}, err
@@ -200,11 +210,14 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	if err != nil {
 		return Execution{}, err
 	}
-	// The execution is built on ctx, not on whatever bound the claim's own
-	// queries: a caller may give the claim a deadline, and a read after the
-	// commit that ran into it would leave the Job running with no execution to
-	// run or settle it.
-	return s.executionFor(ctx, deps.withContext(ctx), claimed, claim, State(job.State), claimFromWaiting)
+	// The execution publishes through ctx, never through whatever bound the
+	// claim's own queries: a deadline there would cut short every write the work
+	// makes after its caller stopped waiting to start it.
+	load := deps.withContext(ctx)
+	if loadOnClaimHandle {
+		load = deps
+	}
+	return s.executionLoadedOn(ctx, load, deps.withContext(ctx), claimed, claim, State(job.State), claimFromWaiting)
 }
 
 // validateClaimRequest checks a claim and normalizes the budgets it occupies.
@@ -589,24 +602,34 @@ const (
 // over an expired one it does not, because the execution it replaced may still be
 // running the work.
 func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, claimedFrom State, origin claimOrigin) (Execution, error) {
+	return s.executionLoadedOn(ctx, deps, deps, job, claim, claimedFrom, origin)
+}
+
+// executionLoadedOn is executionFor with the input read on load and a claim that
+// cannot run settled through settle. A read that fails for any reason but an
+// input that cannot be opened answers ErrExecutionNotLoaded with the execution
+// the claim created: the Job is running under its token, and whoever holds the
+// token is the only one who can hand it back.
+func (s *Service) executionLoadedOn(ctx context.Context, load, settle Deps, job models.Job, claim models.JobClaim, claimedFrom State, origin claimOrigin) (Execution, error) {
 	// Who the work acts as is settled before what it runs with: a Job whose
 	// recorded principal has been deleted may not be handed to an adapter at all,
 	// because every adapter receives that identity as the authority its work
 	// runs under.
 	access, err := executionAccess(job)
 	if err != nil {
-		return Execution{}, s.unrunnableClaim(deps, origin, job, claim,
+		return Execution{}, s.unrunnableClaim(settle, origin, job, claim,
 			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, err)
 	}
-	input, err := s.executionInput(deps, job)
+	input, err := s.executionInput(load, job)
 	if err != nil {
 		if ReplayBlocked(State(job.State), err) {
-			return Execution{}, s.unrunnableClaim(deps, origin, job, claim,
+			return Execution{}, s.unrunnableClaim(settle, origin, job, claim,
 				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, err)
 		}
-		return Execution{}, err
+		return newExecution(ctx, settle, s, job, claim, access, nil, claimedFrom),
+			fmt.Errorf("%w: %w", ErrExecutionNotLoaded, err)
 	}
-	return newExecution(ctx, deps, s, job, claim, access, input, claimedFrom), nil
+	return newExecution(ctx, settle, s, job, claim, access, input, claimedFrom), nil
 }
 
 // unrunnableClaim decides what becomes of a claim the control plane cannot hand to

@@ -301,9 +301,13 @@ call, and the deployment's job budget (`-max-job-concurrency`, shared with
 downloads, exports and every other kind of Job) has room. A bulk run over 50
 resources is therefore one running Job and 49 queued ones, and it occupies one
 slot at a time, so other plugins' work and downloads keep starting while it
-drains. Work still queued when its plugin is disabled does not start: a queued
-action is blocked for a person to decide about, or runs if the plugin is enabled
-again first, and a queued `mah.start_job` job is cancelled.
+drains. Just before a queued action starts, the server checks again that the
+account it runs as may still run it on that entity. If claiming the job and
+making those checks take longer than 10 seconds together, the job goes back to
+`queued` and is tried again later; a check that could not finish is never
+recorded as a refusal. Work still queued when its plugin is disabled does not
+start: a queued action is blocked for a person to decide about, or runs if the
+plugin is enabled again first, and a queued `mah.start_job` job is cancelled.
 
 ```lua
 mah.action({

@@ -224,8 +224,10 @@ const (
 	// Admitted means the host now owns the durable Job under a claim for this
 	// execution, and the reference's Sink reports into it from here on.
 	Admitted AdmitResult = iota
-	// AdmitLater means the deployment's budget is full. Nothing was written, and
-	// the same question may be asked again.
+	// AdmitLater means the Job is still waiting and this execution may not start
+	// it yet: the deployment's budget is full, or the host could not finish
+	// admitting it within its bound and is giving the claim back. The same
+	// question may be asked again.
 	AdmitLater
 	// AdmitWithdrawn means the Job will never be this execution's to run: it
 	// ended, it was blocked, or another runtime owns it. The host has recorded
@@ -326,9 +328,9 @@ func (pm *PluginManager) acquireJobSlotUntil(deadline time.Time, revoked <-chan 
 // admitOnce asks the host for the durable claim once. It is asked with the
 // plugin's VM already held, so the claim is only ever taken by work that can
 // start at once: waiting for the VM with a claim held would hold a slot of the
-// deployment's budget for work that is doing nothing. retry reports a full
-// budget, which writes nothing and may be asked about again; otherwise outcome
-// is asyncRan when the work may start.
+// deployment's budget for work that is doing nothing. retry reports AdmitLater,
+// which may be asked about again once the VM and the slot have been given back;
+// otherwise outcome is asyncRan when the work may start.
 func (pm *PluginManager) admitOnce(job *ActionJob, deadline time.Time) (outcome asyncOutcome, retry bool) {
 	ref := job.hostJobRef()
 	if ref == nil || ref.Admission == nil {

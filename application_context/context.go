@@ -1351,7 +1351,7 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 		return &ctxCopy
 	}
 	ctxCopy.principal = p
-	applyPrincipalScope(&ctxCopy, ctx, p, r.Context())
+	_ = applyPrincipalScope(&ctxCopy, ctx, p, r.Context())
 	return &ctxCopy
 }
 

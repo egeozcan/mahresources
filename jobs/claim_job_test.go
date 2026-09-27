@@ -172,19 +172,22 @@ func TestAClaimAgainstAFullBudgetWritesNothingAtAll(t *testing.T) {
 	}
 }
 
-// TestAClaimsDeadlineDoesNotReachTheReadsAfterItsCommit pins where a claim's
-// deadline stops. A caller may bound the claim's own queries; once the claim has
-// committed, the execution is loaded on the caller's context, because a read
-// that ran into the deadline there would leave the Job running with no
-// execution to run it or settle it.
-func TestAClaimsDeadlineDoesNotReachTheReadsAfterItsCommit(t *testing.T) {
+// TestAClaimJobDeadlineBoundsTheLoadAfterItsCommit pins where a claim's deadline
+// stops. ClaimJob's caller bounds the claim, and the read of the execution's input
+// after its commit, through the handle it passes: a read that runs into the
+// deadline answers ErrExecutionNotLoaded with the claimed execution rather than
+// leaving the Job running with a token nobody holds. That execution publishes
+// through the context ClaimJob was given, so it can still write, and hand the
+// claim back, after the deadline has passed.
+func TestAClaimJobDeadlineBoundsTheLoadAfterItsCommit(t *testing.T) {
 	_, deps := newDispatchDatabase(t, "claim-deadline.db")
 	svc := NewService()
 	registerTestAdapter(t, svc, testDefinition())
 	waiting := acceptQueued(t, svc, deps, nil)
+	budget := CapacityRef{Group: CapacityGroupGlobal, Limit: 1}
 
 	deadline := time.Now().Add(300 * time.Millisecond)
-	var committed atomic.Bool
+	var committed, stalled atomic.Bool
 	// The started event is the claim transaction's last write, so every read
 	// after it is a read after the commit.
 	if err := deps.DB.Callback().Create().After("gorm:create").Register("mark-claim-committed", func(db *gorm.DB) {
@@ -194,25 +197,61 @@ func TestAClaimsDeadlineDoesNotReachTheReadsAfterItsCommit(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register the commit marker: %v", err)
 	}
-	if err := deps.DB.Callback().Query().Before("gorm:query").Register("outlast-the-deadline", func(db *gorm.DB) {
-		if committed.Load() {
-			time.Sleep(time.Until(deadline) + 50*time.Millisecond)
+	// The first read after the commit waits for its own statement's context,
+	// so it returns when the deadline does if the deadline reaches it, and only
+	// after five seconds if it does not.
+	if err := deps.DB.Callback().Query().Before("gorm:query").Register("stall-the-load", func(db *gorm.DB) {
+		if committed.Load() && stalled.CompareAndSwap(false, true) {
+			select {
+			case <-db.Statement.Context.Done():
+			case <-time.After(5 * time.Second):
+			}
 		}
 	}); err != nil {
-		t.Fatalf("register the slow read: %v", err)
+		t.Fatalf("register the stalled read: %v", err)
 	}
 
 	bounded := deps
 	claimCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	bounded.DB = deps.DB.WithContext(claimCtx)
+	started := time.Now()
 	execution, err := svc.ClaimJob(context.Background(), bounded, ClaimRequest{
 		Kind: testKind, KindVersion: 1, JobID: waiting.ID, Claimant: "bounded-runtime",
+		Capacity: []CapacityRef{budget},
 	})
-	if err != nil {
-		t.Fatalf("a claim that committed before its deadline failed loading its execution: %v", err)
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("the load after the commit took %v: the claim's deadline did not reach it", elapsed)
 	}
-	if execution.ExecutionToken == "" || jobRow(t, deps, waiting.ID).ExecutionToken != execution.ExecutionToken {
-		t.Fatalf("the execution does not own the claimed job")
+	if !stalled.Load() {
+		t.Fatal("no read after the commit was stalled: the test did not reach the load")
+	}
+	if !errors.Is(err, ErrExecutionNotLoaded) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a load cut short by the deadline answered %v, want ErrExecutionNotLoaded wrapping the deadline", err)
+	}
+	row := jobRow(t, deps, waiting.ID)
+	if execution.ExecutionToken == "" || row.ExecutionToken != execution.ExecutionToken || State(row.State) != StateRunning {
+		t.Fatalf("the execution handed back does not own the claimed job (token %q, row %q in %s)",
+			execution.ExecutionToken, row.ExecutionToken, row.State)
+	}
+
+	// The deadline has passed; the execution still writes.
+	if _, err := execution.Progress(Progress{Phase: "admitting"}); err != nil {
+		t.Fatalf("the execution publishes through the claim's deadline: %v", err)
+	}
+	if _, err := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+		Reason:       "admission-unfinished", To: StateQueued,
+	}); err != nil {
+		t.Fatalf("hand the claim back: %v", err)
+	}
+	if State(jobRow(t, deps, waiting.ID).State) != StateQueued {
+		t.Fatal("the handed-back job is not waiting again")
+	}
+	if held := capacityRows(t, deps, waiting.ID); len(held) != 0 {
+		t.Fatalf("the handed-back job still holds %d capacity rows", len(held))
+	}
+	if _, err := claimNamed(svc, deps, waiting.ID, budget); err != nil {
+		t.Fatalf("the handed-back job could not be claimed again: %v", err)
 	}
 }

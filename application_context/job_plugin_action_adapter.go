@@ -443,16 +443,7 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 		}
 		return ctx.blockPluginActionJob(jobs.Execution{JobID: jobID}, refusal)
 	}
-	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) func() error {
-		reason := "plugins-unavailable"
-		if current := ctx.PluginManager(); current != nil {
-			reason = ctx.pluginActionRefusal(current, execution, claimed)
-		}
-		if reason == "" {
-			return nil
-		}
-		return func() error { return ctx.blockPluginActionJob(execution, reason) }
-	})
+	admission := ctx.newPluginActionAdmission(jobID, input, ctx.registeredActionRefusal)
 	if _, err := pm.RunActionAsyncForHost(admission.hostJobRef(handle, ""), owner, input.Plugin, input.Action,
 		input.EntityID, input.Params, input.Fingerprint); err != nil {
 		// This process could not take the Job — its plugin stopped, or the
@@ -463,6 +454,22 @@ func (ctx *MahresourcesContext) queueRegisteredPluginAction(pm *plugin_system.Pl
 		log.Printf("warning: plugin job %s stays queued: this process cannot run it now: %v", jobID, err)
 	}
 	return nil
+}
+
+// registeredActionRefusal is a registered action's re-check under its fresh claim:
+// the registration, and what the acting principal may do, asked again now.
+func (ctx *MahresourcesContext) registeredActionRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (func() error, error) {
+	reason := "plugins-unavailable"
+	if current := ctx.PluginManager(); current != nil {
+		var err error
+		if reason, err = ctx.pluginActionRefusalWithin(bounded, current, execution, claimed); err != nil {
+			return nil, err
+		}
+	}
+	if reason == "" {
+		return nil, nil
+	}
+	return func() error { return ctx.blockPluginActionJob(execution, reason) }, nil
 }
 
 // pluginActionRun is what running one execution produced, for callers that need
@@ -703,45 +710,77 @@ func (ctx *MahresourcesContext) pluginActionNeverStarted(snap jobs.Snapshot) boo
 // identity rather than to an unscoped one, which is what makes the scope question
 // below answer "no" instead of "everywhere".
 func (ctx *MahresourcesContext) pluginActionRefusal(pm *plugin_system.PluginManager, execution jobs.Execution, input *pluginActionJobInput) string {
+	reason, _ := ctx.pluginActionRefusalWithin(context.Background(), pm, execution, input)
+	return reason
+}
+
+// pluginActionRefusalWithin is pluginActionRefusal with every read bounded by
+// bounded, for a caller that can tell a refusal from a question it could not
+// answer. A read that failed or ran out answers the refusal pluginActionRefusal
+// would record for it, together with the read's error: an admission holding the
+// plugin's VM gives its claim back and asks again, rather than blocking a Job
+// whose actor was never found wanting.
+func (ctx *MahresourcesContext) pluginActionRefusalWithin(bounded context.Context, pm *plugin_system.PluginManager, execution jobs.Execution, input *pluginActionJobInput) (string, error) {
 	if refusal := ctx.pluginActionRegistrationRefusal(pm, input); refusal != "" {
-		return refusal
+		return refusal, nil
 	}
 	action, _, err := pm.FindAction(input.Plugin, input.Action)
 	if err != nil {
-		return "action-unavailable"
+		return "action-unavailable", nil
 	}
 
-	actorID := accessUserID(execution.Access)
-	principal := ctx.principalForPluginActor(actorID)
-	if principal != nil {
-		scoped := ctx.WithPrincipal(principal)
-		if err := scoped.requireWriteRole("run a plugin action"); err != nil {
-			return "role-refused"
+	db := ctx.db.WithContext(bounded)
+	principal, err := commandActorLookup(db, accessUserID(execution.Access))
+	if err != nil {
+		return "role-refused", err
+	}
+	if principal == nil {
+		return "", nil
+	}
+	// The scoped context is built on bounded rather than given it afterwards: its
+	// handle's context carries the scope, and replacing that context would drop
+	// the scope along with it.
+	scoped, err := ctx.withPrincipalWithin(bounded, principal)
+	if err != nil {
+		return "target-out-of-scope", err
+	}
+	if err := scoped.requireWriteRole("run a plugin action"); err != nil {
+		return "role-refused", nil
+	}
+	var readErr error
+	allowsScoped := func(name string) bool {
+		allowed, err := ctx.pluginScopedAccessOn(db, name)
+		if err != nil {
+			readErr = err
 		}
-		if !auth.PluginActionAccessFor(auth.WithPrincipal(context.Background(), principal),
-			ctx.PluginAllowsScopedPrincipals)(input.Plugin) {
-			return "plugin-refused"
+		return allowed
+	}
+	if !auth.PluginActionAccessFor(auth.WithPrincipal(context.Background(), principal), allowsScoped)(input.Plugin) {
+		return "plugin-refused", readErr
+	}
+	// The target's scope is checked as the acting principal, not as whoever
+	// submitted the Job: an entity that has since moved out of a narrowed
+	// subtree must not be acted on by a Job that was accepted while it was
+	// inside.
+	var target any
+	switch action.Entity {
+	case "resource":
+		target = &models.Resource{}
+	case "note":
+		target = &models.Note{}
+	case "group":
+		target = &models.Group{}
+	}
+	if target != nil && scoped.isScopedPrincipal() {
+		visible, err := scoped.entityVisibleChecked(target, input.EntityID)
+		if err != nil {
+			return "target-out-of-scope", err
 		}
-		// The target's scope is checked as the acting principal, not as whoever
-		// submitted the Job: an entity that has since moved out of a narrowed
-		// subtree must not be acted on by a Job that was accepted while it was
-		// inside.
-		switch action.Entity {
-		case "resource":
-			if !scoped.ResourceVisible(input.EntityID) {
-				return "target-out-of-scope"
-			}
-		case "note":
-			if !scoped.NoteVisible(input.EntityID) {
-				return "target-out-of-scope"
-			}
-		case "group":
-			if !scoped.GroupVisible(input.EntityID) {
-				return "target-out-of-scope"
-			}
+		if !visible {
+			return "target-out-of-scope", nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // pluginActionRegistrationRefusal answers why the action a Job names cannot run
@@ -1865,13 +1904,7 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 	// materialized occurrence that may no longer run is blocked rather than failed
 	// — a person has to decide about it, and a broken schedule would be the wrong
 	// thing to report.
-	admission := ctx.newPluginActionAdmission(jobID, input, func(execution jobs.Execution, claimed *pluginActionJobInput) func() error {
-		reason := ctx.commandActorRefusal(ctx.jobDeps(), execution.Access, claimed.Plugin)
-		if reason == "" {
-			return nil
-		}
-		return func() error { return ctx.blockPluginActionJob(execution, reason) }
-	})
+	admission := ctx.newPluginActionAdmission(jobID, input, ctx.occurrenceActorRefusal)
 	holdClaim := input.Overlap == plugin_system.ScheduleOverlapSkip
 	_, ran, runErr := pm.RunScheduleForHost(reg, actorUserID, wait, holdClaim,
 		admission.hostJobRef(ctx.pluginActionHandleFor(jobID), ""))
@@ -1883,6 +1916,23 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: jobID})
 	}
 	return ctx.settleUnstartedOccurrence(admission)
+}
+
+// occurrenceActorRefusal is a scheduled occurrence's re-check under its fresh
+// claim: whether the operator it runs as may still run its plugin's work.
+func (ctx *MahresourcesContext) occurrenceActorRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (func() error, error) {
+	deps := ctx.jobDeps()
+	if deps.DB != nil {
+		deps.DB = deps.DB.WithContext(bounded)
+	}
+	reason, err := ctx.commandActorRefusalChecked(deps, execution.Access, claimed.Plugin)
+	if err != nil {
+		return nil, err
+	}
+	if reason == "" {
+		return nil, nil
+	}
+	return func() error { return ctx.blockPluginActionJob(execution, reason) }, nil
 }
 
 // settleUnstartedOccurrence ends an occurrence whose handler was never entered
@@ -1897,10 +1947,27 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 // is what this answers — whether it is still running or already over, because a
 // run that happened elsewhere is still this row's run. One the claim blocked
 // stays as it was left.
+//
+// What this process did under its own claim is known without reading the Job,
+// whose state may not show it yet. An occurrence it refused or failed before the
+// handler ran did not start, and the write recording why lands on its own. One
+// whose claim it gave back is withdrawn once the claim is back in the queue.
 func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActionAdmission) (pluginActionRun, error) {
 	run := pluginActionRun{JobID: admission.jobID}
 	if execution, admitted := admission.admitted(); admitted {
 		return run, ctx.withdrawPluginActionJob(execution, "not-started", "the plugin's execution budget or VM stayed busy")
+	}
+	if admission.endedByItself() {
+		return run, nil
+	}
+	if admission.stillReturning() {
+		admission.afterReturn(func() {
+			ctx.settlePluginActionWhile(admission.jobID, jobs.StateQueued, func() error {
+				return ctx.withdrawPluginActionJob(jobs.Execution{JobID: admission.jobID}, "not-started",
+					"the plugin's execution budget or VM stayed busy")
+			})
+		})
+		return run, nil
 	}
 	snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, admission.jobID)
 	if err != nil {
@@ -1922,11 +1989,12 @@ func (ctx *MahresourcesContext) settleUnstartedOccurrence(admission *pluginActio
 // executions it dispatches.
 //
 // It stops when the Job leaves running — the heartbeat is refused by the token
-// fence once the Job is finished or released — so nothing has to tell it to stop.
-func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execution) {
+// fence once the Job is finished or released — or when the returned stop is
+// called, which is how a claim given back before it ran stops renewing at once.
+func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execution) (stop func()) {
 	service := ctx.JobService()
 	if service == nil || execution.ExecutionToken == "" {
-		return
+		return func() {}
 	}
 	lease := ctx.pluginActionLease()
 	interval := lease / jobRuntimeHeartbeatDivisor
@@ -1934,10 +2002,16 @@ func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execut
 		interval = minJobRuntimeHeartbeatInterval
 	}
 	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	stopped := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			select {
+			case <-stopped:
+				return
+			case <-ticker.C:
+			}
 			err := service.Heartbeat(ctx.jobDeps(), ref, lease)
 			if err == nil {
 				continue
@@ -1950,6 +2024,8 @@ func (ctx *MahresourcesContext) startPluginActionHeartbeat(execution jobs.Execut
 			log.Printf("warning: heartbeat for plugin job %s failed: %v", execution.JobID, err)
 		}
 	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stopped) }) }
 }
 
 // pluginActionLease is the definition's own lease, so a heartbeat renews exactly

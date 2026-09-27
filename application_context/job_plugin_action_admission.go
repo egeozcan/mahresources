@@ -41,18 +41,30 @@ type pluginActionAdmission struct {
 	// closure's input is not replayable, so the claim opens nothing and the
 	// accepting call's own description stands in for it.
 	input *pluginActionJobInput
-	// refusal re-checks, under the fresh claim, that the execution may still run
-	// as the principal it acts as. It answers nil when it may, and otherwise the
-	// write that records what stops it (a block or a failure); a nil refusal
-	// re-checks nothing.
-	refusal func(execution jobs.Execution, input *pluginActionJobInput) func() error
+	// refusal re-checks, under the fresh claim and within bounded, that the
+	// execution may still run as the principal it acts as. It answers nil when it
+	// may, and otherwise the write that records what stops it (a block or a
+	// failure); an error means it could not find out, which is not a refusal. A nil
+	// refusal re-checks nothing.
+	refusal pluginActionRefusalCheck
 
 	mu        sync.Mutex
 	execution jobs.Execution
 	sink      *pluginActionSink
+	// returning is open while a claim this admission gave back is still being
+	// handed back. Nothing is asked for until it closes: the Job is running under
+	// the returned token until then, and a claim asked for meanwhile would read
+	// that as a Job some other execution owns and leave the lane.
+	returning chan struct{}
+	// ending is set once this admission has refused or failed the Job under its
+	// own claim. The write that records it runs, and is retried, on its own.
+	ending bool
 }
 
-func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pluginActionJobInput, refusal func(jobs.Execution, *pluginActionJobInput) func() error) *pluginActionAdmission {
+// pluginActionRefusalCheck is an admission's re-check under a fresh claim.
+type pluginActionRefusalCheck func(bounded context.Context, execution jobs.Execution, input *pluginActionJobInput) (record func() error, err error)
+
+func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pluginActionJobInput, refusal pluginActionRefusalCheck) *pluginActionAdmission {
 	return &pluginActionAdmission{ctx: ctx, jobID: jobID, subtype: input.Subtype, input: input, refusal: refusal}
 }
 
@@ -69,8 +81,15 @@ func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_s
 // A full deployment budget is "later" and writes nothing. A Job that is no longer
 // waiting — cancelled, blocked, or claimed by another runtime — is withdrawn from
 // this process's lane without a word, because whoever moved it owns what happens
-// to it now. A deadline bounds the claim's own database work, so a claim waiting
-// on a lock cannot carry a bounded caller past its budget.
+// to it now.
+//
+// It is asked with the plugin's VM held, so everything it does is bounded by one
+// deadline: the caller's, or one attempt's bound, whichever comes first. That
+// covers the claim, the read of the claimed input and the re-checks of the
+// acting principal. A claim granted but not finished within it is given back to
+// the queue (returnClaim) and answered "later": a read that ran out, or failed,
+// found nothing out, and is never recorded as a refusal. Recording what ends a
+// claimed Job, or gives its claim back, happens after the VM is released.
 //
 // A panic here is contained: before the claim the execution asks again later,
 // and after it the Job is ended, since the claim would otherwise leave it running
@@ -79,6 +98,15 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	if _, admitted := a.admitted(); admitted {
 		return plugin_system.Admitted
 	}
+	if a.stillReturning() {
+		return plugin_system.AdmitLater
+	}
+	if attempt := time.Now().Add(pluginActionAdmissionAttempt); deadline.IsZero() || attempt.Before(deadline) {
+		deadline = attempt
+	}
+	bounded, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
 	var claimed *jobs.Execution
 	defer func() {
 		r := recover()
@@ -89,16 +117,20 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		result = plugin_system.AdmitLater
 		if claimed != nil {
 			execution := *claimed
-			a.ctx.settleRefusedPluginAction(execution, func() error {
+			a.endClaimed(execution, func() error {
 				return a.ctx.failPluginActionJob(execution, "plugin-action-unavailable",
 					"the plugin action could not be started")
 			})
 			result = plugin_system.AdmitWithdrawn
 		}
 	}()
-	execution, err := a.ctx.claimPluginActionJobNamed(a.jobID, deadline)
+	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, a.jobID)
 	switch {
 	case err == nil:
+	case errors.Is(err, jobs.ErrExecutionNotLoaded):
+		log.Printf("warning: could not load plugin job %s after claiming it; asking again: %v", a.jobID, err)
+		a.returnClaim(execution, stopHeartbeat)
+		return plugin_system.AdmitLater
 	case errors.Is(err, jobs.ErrCapacityExhausted):
 		return plugin_system.AdmitLater
 	case errors.Is(err, jobs.ErrJobNotWaiting):
@@ -114,15 +146,21 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	claimed = &execution
 	input, err := a.inputOf(execution)
 	if err != nil {
-		a.ctx.settleRefusedPluginAction(execution, func() error {
+		a.endClaimed(execution, func() error {
 			return a.ctx.failPluginActionJob(execution, "plugin-action-unavailable",
 				"the plugin action could not be started")
 		})
 		return plugin_system.AdmitWithdrawn
 	}
 	if a.refusal != nil {
-		if record := a.refusal(execution, input); record != nil {
-			a.ctx.settleRefusedPluginAction(execution, record)
+		record, err := a.refusal(bounded, execution, input)
+		if err != nil {
+			log.Printf("warning: could not re-check plugin job %s before it runs; asking again: %v", a.jobID, err)
+			a.returnClaim(execution, stopHeartbeat)
+			return plugin_system.AdmitLater
+		}
+		if record != nil {
+			a.endClaimed(execution, record)
 			return plugin_system.AdmitWithdrawn
 		}
 	}
@@ -131,6 +169,87 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	a.sink = newPluginActionSink(a.ctx, execution, input)
 	a.mu.Unlock()
 	return plugin_system.Admitted
+}
+
+// returnClaim hands a claim this admission could not finish back to the queue,
+// the Job to `queued` under the claim's own token, and keeps trying until that
+// lands or the Job has left running. The heartbeat keeps the claim alive until
+// it does, and stops once it has. It runs after the VM is released; until it is
+// over, the admission answers "later" without asking.
+func (a *pluginActionAdmission) returnClaim(execution jobs.Execution, stopHeartbeat func()) {
+	done := make(chan struct{})
+	a.mu.Lock()
+	a.returning = done
+	a.mu.Unlock()
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	release := func() error {
+		_, err := a.ctx.JobService().ReleaseClaim(a.ctx.jobDeps(), jobs.ReleaseRequest{
+			ExecutionRef: ref, Reason: "admission-unfinished", To: jobs.StateQueued,
+		})
+		return err
+	}
+	go func() {
+		defer close(done)
+		defer stopHeartbeat()
+		if err := release(); err != nil {
+			log.Printf("warning: could not give back the claim on plugin job %s; retrying: %v", execution.JobID, err)
+			a.ctx.retryPluginActionSettlement(execution.JobID, jobs.StateRunning, release)
+		}
+	}()
+}
+
+// stillReturning reports whether a claim this admission gave back is still on
+// its way back.
+func (a *pluginActionAdmission) stillReturning() bool {
+	returning := a.returningClaim()
+	if returning == nil {
+		return false
+	}
+	select {
+	case <-returning:
+		return false
+	default:
+		return true
+	}
+}
+
+func (a *pluginActionAdmission) returningClaim() chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.returning
+}
+
+// afterReturn runs then once any claim this admission gave back is in the queue
+// again: at once when there is none, and otherwise in the background when it
+// lands. A write that assumes the Job is waiting would find it still running
+// under the returned token and give up.
+func (a *pluginActionAdmission) afterReturn(then func()) {
+	returning := a.returningClaim()
+	if returning == nil {
+		then()
+		return
+	}
+	go func() {
+		<-returning
+		then()
+	}()
+}
+
+// endClaimed records why a Job this admission claimed will not run. The write
+// runs after the plugin's VM is released, and is retried until it lands.
+func (a *pluginActionAdmission) endClaimed(execution jobs.Execution, record func() error) {
+	a.mu.Lock()
+	a.ending = true
+	a.mu.Unlock()
+	go a.ctx.settleRefusedPluginAction(execution, record)
+}
+
+// endedByItself reports whether this admission refused or failed the Job under
+// its own claim.
+func (a *pluginActionAdmission) endedByItself() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ending
 }
 
 // inputOf is the input the claimed execution runs with: the sealed input it
@@ -203,9 +322,11 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 	if a.subtype == pluginActionSubtypeRegistered {
 		return
 	}
-	a.ctx.settlePluginActionWhile(a.jobID, jobs.StateQueued, func() error {
-		return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: a.jobID}, "not-started",
-			"the process that was going to run this job stopped first")
+	a.afterReturn(func() {
+		a.ctx.settlePluginActionWhile(a.jobID, jobs.StateQueued, func() error {
+			return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: a.jobID}, "not-started",
+				"the process that was going to run this job stopped first")
+		})
 	})
 }
 
@@ -232,19 +353,23 @@ func (ctx *MahresourcesContext) settlePluginActionWhile(jobID string, state jobs
 		return
 	}
 	log.Printf("warning: could not end plugin job %s; retrying: %v", jobID, err)
-	go func() {
-		ticker := time.NewTicker(pluginActionSettlementRetryInterval)
-		defer ticker.Stop()
-		for range ticker.C {
-			if err := record(); err == nil {
-				return
-			}
-			snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
-			if err == nil && snap.State != state {
-				return
-			}
+	go ctx.retryPluginActionSettlement(jobID, state, record)
+}
+
+// retryPluginActionSettlement repeats a write that failed until it lands or the
+// Job has left state, and returns then.
+func (ctx *MahresourcesContext) retryPluginActionSettlement(jobID string, state jobs.State, record func() error) {
+	ticker := time.NewTicker(pluginActionSettlementRetryInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if err := record(); err == nil {
+			return
 		}
-	}()
+		snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err == nil && snap.State != state {
+			return
+		}
+	}
 }
 
 // pluginActionIsSuccessor reports whether a Job was made by a Retry, a Continue
@@ -274,34 +399,31 @@ func (ctx *MahresourcesContext) pluginDisabledEverywhere(pluginName string) bool
 	}
 }
 
-// pluginActionAdmissionAttempt bounds one claim attempt's database work. The
-// claim is asked for with the plugin's VM held, so a claim stuck on a lock or an
-// exhausted pool would otherwise hold that plugin's hooks and pages — and a
-// shutdown closing its VM — for as long as the stall lasts. An attempt that runs
-// out is "later", and the VM is given back before asking again.
+// pluginActionAdmissionAttempt bounds one admission's database work: the claim,
+// the read of the claimed input and the re-checks of the acting principal. It is
+// asked for with the plugin's VM held, so a claim stuck on a lock or an exhausted
+// pool, or a re-check stuck behind one, would otherwise hold that plugin's hooks
+// and pages — and a shutdown closing its VM — for as long as the stall lasts. An
+// admission that runs out is "later": a claim it had been granted goes back to the
+// queue, and the VM is given back before it asks again.
 var pluginActionAdmissionAttempt = 10 * time.Second
 
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
-// against the deployment's budget, and keeps the claim alive. The claim's
-// database work is bounded by the caller's deadline and by one attempt's bound,
-// whichever comes first.
-func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string, deadline time.Time) (jobs.Execution, error) {
+// against the deployment's budget, and keeps the claim alive until the returned
+// stop is called or the Job leaves running. bounded bounds the claim's database
+// work and the read of its input after the commit; with ErrExecutionNotLoaded the
+// claim was granted, and the execution returned with it is the claim to give back.
+func (ctx *MahresourcesContext) claimPluginActionJobNamed(bounded context.Context, jobID string) (jobs.Execution, func(), error) {
 	service := ctx.JobService()
 	if service == nil {
-		return jobs.Execution{}, errors.New("this context has no job control plane installed")
+		return jobs.Execution{}, func() {}, errors.New("this context has no job control plane installed")
 	}
-	if attempt := time.Now().Add(pluginActionAdmissionAttempt); deadline.IsZero() || attempt.Before(deadline) {
-		deadline = attempt
-	}
-	// The deadline rides on the handle the claim's own queries run on, and not on
-	// the context ClaimJob is given: that one is what the execution is loaded
-	// with after the commit and publishes through for the rest of its life, long
-	// after this deadline has passed.
+	// The bound rides on the handle the claim's own queries run on, and not on
+	// the context ClaimJob is given: that one is what the execution publishes
+	// through for the rest of its life, long after the bound has passed.
 	deps := ctx.jobDeps()
 	if deps.DB != nil {
-		claimCtx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
-		deps.DB = deps.DB.WithContext(claimCtx)
+		deps.DB = deps.DB.WithContext(bounded)
 	}
 	execution, err := service.ClaimJob(context.Background(), deps, jobs.ClaimRequest{
 		Kind:        JobKindPluginAction,
@@ -313,11 +435,10 @@ func (ctx *MahresourcesContext) claimPluginActionJobNamed(jobID string, deadline
 		// counts.
 		Capacity: ctx.hostClaimCapacityBudget(),
 	})
-	if err != nil {
-		return jobs.Execution{}, err
+	if err != nil && !errors.Is(err, jobs.ErrExecutionNotLoaded) {
+		return jobs.Execution{}, func() {}, err
 	}
-	ctx.startPluginActionHeartbeat(execution)
-	return execution, nil
+	return execution, ctx.startPluginActionHeartbeat(execution), err
 }
 
 // pluginActionAdoptBatch bounds how many waiting Jobs one adoption pass reads. A

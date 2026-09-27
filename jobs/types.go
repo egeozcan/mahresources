@@ -1295,6 +1295,11 @@ var (
 	// ended, another runtime owns it, it is blocked, or it does not exist. It is
 	// ClaimJob's answer, and it is final for that Job in a way capacity is not.
 	ErrJobNotWaiting = errors.New("jobs: the job is not waiting to run")
+	// ErrExecutionNotLoaded means ClaimJob's claim committed but the execution's
+	// input could not be read within the claim's bound. The Execution returned
+	// with it carries the claim's token and no input: the Job is running under
+	// that token, and only its holder can hand the claim back.
+	ErrExecutionNotLoaded = errors.New("jobs: the claimed execution could not be loaded")
 	// ErrInvalidReconcileDecision is a reconciliation answer outside the
 	// vocabulary, or one this Kind may not be given.
 	ErrInvalidReconcileDecision = errors.New("jobs: invalid reconciliation decision")
