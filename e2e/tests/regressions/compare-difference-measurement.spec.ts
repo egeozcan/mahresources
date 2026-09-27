@@ -456,6 +456,13 @@ test.describe.serial('compare page: difference and measurement', () => {
     test('prefers-reduced-motion refuses with a stated reason', async ({ page }) => {
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      // Asked of the document the component runs in, so a run where the button
+      // stays enabled says whether the browser or the component ignored the
+      // preference.
+      expect(
+        await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+        'precondition: the page reports reduced motion',
+      ).toBe(true);
       await page.locator('.compare-seg-btn:has-text("Toggle")').click();
 
       await expect(blinkButton(page)).toBeVisible();
