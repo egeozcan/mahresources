@@ -620,16 +620,7 @@ func (a *groupExportAdapter) refusalReason(execution jobs.Execution, request *Ex
 	if execution.Access.UserID == 0 {
 		return ""
 	}
-	scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
-	if err := scoped.requireWriteRole("run an export"); err != nil {
-		return "role-refused"
-	}
-	for _, id := range request.RootGroupIDs {
-		if !scoped.GroupVisible(id) {
-			return "group-out-of-scope"
-		}
-	}
-	return ""
+	return a.ctx.exportPrincipalRefusal(execution.Access.UserID, request.RootGroupIDs).Reason
 }
 
 // start submits the export this execution needs, taking the id from the Job's own

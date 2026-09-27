@@ -61,15 +61,23 @@ func (a *downloadJobAdapter) PreflightCommand(_ context.Context, command jobs.Co
 		// still decides from the sealed input.
 		return jobs.CommandRefusal{}, nil
 	}
-	scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(principal))
+	return a.ctx.downloadPrincipalRefusal(principal, downloadTargetsCreator(summary.Targets)), nil
+}
+
+// downloadPrincipalRefusal is the part of a download's dispatch check that turns
+// on the account it runs as: that account may still write, and every target the
+// submission names is inside its scope as it stands now. Dispatch (refusalReason)
+// and the command preflight both ask it, so the two cannot disagree about a rule.
+func (ctx *MahresourcesContext) downloadPrincipalRefusal(principalID uint, creator *query_models.ResourceFromRemoteCreator) jobs.CommandRefusal {
+	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(principalID))
 	if err := scoped.requireWriteRole("run a download"); err != nil {
 		return jobs.CommandRefusal{Reason: "role-refused",
-			Message: "The account this download would run as can no longer create resources."}, nil
+			Message: "The account this download would run as can no longer create resources."}
 	}
-	if err := scoped.validateDownloadTargetsInScope(downloadTargetsCreator(summary.Targets)); err != nil {
-		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(err.Error())}, nil
+	if err := scoped.validateDownloadTargetsInScope(creator); err != nil {
+		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(err.Error())}
 	}
-	return jobs.CommandRefusal{}, nil
+	return jobs.CommandRefusal{}
 }
 
 // downloadTargetsCreator rebuilds the part of a submission that scope is checked
@@ -107,18 +115,26 @@ func (a *groupExportAdapter) PreflightCommand(_ context.Context, command jobs.Co
 	if err := json.Unmarshal(command.Snapshot.Summary, &summary); err != nil {
 		return jobs.CommandRefusal{}, nil
 	}
-	scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(principal))
+	return a.ctx.exportPrincipalRefusal(principal, summary.RootGroups), nil
+}
+
+// exportPrincipalRefusal is the part of an export's dispatch check that turns on
+// the account it runs as: that account may still write, and every group it
+// exports is inside its scope as it stands now. Dispatch (refusalReason) and the
+// command preflight both ask it.
+func (ctx *MahresourcesContext) exportPrincipalRefusal(principalID uint, rootGroupIDs []uint) jobs.CommandRefusal {
+	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(principalID))
 	if err := scoped.requireWriteRole("run an export"); err != nil {
 		return jobs.CommandRefusal{Reason: "role-refused",
-			Message: "The account this export would run as can no longer export groups."}, nil
+			Message: "The account this export would run as can no longer export groups."}
 	}
-	for _, id := range summary.RootGroups {
+	for _, id := range rootGroupIDs {
 		if !scoped.GroupVisible(id) {
 			return jobs.CommandRefusal{Reason: "group-out-of-scope",
-				Message: "A group this export includes is outside your permitted scope."}, nil
+				Message: "A group this export includes is outside your permitted scope."}
 		}
 	}
-	return jobs.CommandRefusal{}, nil
+	return jobs.CommandRefusal{}
 }
 
 // sentence makes an error's text read as a sentence: capitalized, with a full stop.
