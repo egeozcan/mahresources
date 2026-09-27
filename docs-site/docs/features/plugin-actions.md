@@ -304,11 +304,13 @@ slot at a time, so other plugins' work and downloads keep starting while it
 drains. Just before a queued action starts, the server checks again that the
 account it runs as may still run it on that entity. If claiming the job and
 making those checks take longer than 10 seconds together, the job goes back to
-`queued` and lets the plugin's other work go first, then tries again after a
-wait that starts at one second and doubles each time, up to 30 seconds. It never
-starts on a check that did not finish, and a check that could not finish is
-never recorded as a refusal. Each attempt adds a start and a return to `queued`
-to the job's history. Work still queued when its plugin is disabled does not
+`queued`, shows "Waiting for the account and scope checks", and lets the
+plugin's other work go first. It tries again after a wait that starts at one
+second and doubles each time, up to 30 seconds, and each attempt is allowed twice
+as long as the one before, up to one minute, so checks that are slow but finish
+still let it start. It never starts on a check that did not finish, and a check
+that could not finish is never recorded as a refusal. Each attempt adds a start
+and a return to `queued` to the job's history. Work still queued when its plugin is disabled does not
 start: a queued action is blocked for a person to decide about, or runs if the
 plugin is enabled again first, and a queued `mah.start_job` job is cancelled.
 

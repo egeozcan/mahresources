@@ -106,7 +106,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		// and a claim asked for meanwhile would read it as another runtime's.
 		return plugin_system.AdmitLater
 	}
-	if attempt := time.Now().Add(pluginActionAdmissionAttempt); deadline.IsZero() || attempt.Before(deadline) {
+	if attempt := time.Now().Add(a.attemptBound()); deadline.IsZero() || attempt.Before(deadline) {
 		deadline = attempt
 	}
 	bounded, cancel := context.WithDeadline(context.Background(), deadline)
@@ -182,6 +182,26 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	return plugin_system.Admitted
 }
 
+// attemptBound is how long this admission's database work may hold the plugin's
+// VM: pluginActionAdmissionAttempt, doubled for each claim given back in a row, up
+// to pluginActionAdmissionAttemptCap. A re-check that is slow but answers, such as
+// a scope subtree large enough to take longer than the first bound, is given more
+// time at each attempt until it fits, while no attempt holds the VM for longer
+// than the cap.
+func (a *pluginActionAdmission) attemptBound() time.Duration {
+	a.mu.Lock()
+	givenBack := a.givenBack
+	a.mu.Unlock()
+	bound := pluginActionAdmissionAttempt
+	for ; givenBack > 0 && bound < pluginActionAdmissionAttemptCap; givenBack-- {
+		bound *= 2
+	}
+	if bound > pluginActionAdmissionAttemptCap {
+		bound = pluginActionAdmissionAttemptCap
+	}
+	return bound
+}
+
 // Deferral implements plugin_system.HostDeferral: how long the execution stays
 // out of its lane after a claim it gave back. It doubles with each claim given
 // back in a row, from one second to pluginActionGiveBackCap. That is the whole
@@ -224,6 +244,12 @@ func (a *pluginActionAdmission) giveBack(execution jobs.Execution, stopHeartbeat
 	go func() {
 		defer close(done)
 		defer stopHeartbeat()
+		// Said on the Job while it still holds the claim, so the queued row says
+		// why it is waiting. A progress snapshot is not an event, and the start
+		// that ends the wait replaces it.
+		if _, err := execution.Progress(jobs.Progress{Message: pluginActionWaitingForChecks}); err != nil {
+			log.Printf("warning: could not say why plugin job %s is waiting: %v", execution.JobID, err)
+		}
 		if err := release(); err != nil {
 			log.Printf("warning: could not give back the claim on plugin job %s; retrying: %v", execution.JobID, err)
 			a.ctx.retryPluginActionSettlement(execution.JobID, jobs.StateRunning, release)
@@ -444,6 +470,13 @@ const pluginActionGiveBackCap = 30 * time.Second
 // admission that runs out is "later": a claim it had been granted goes back to the
 // queue, and the VM is given back before it asks again.
 var pluginActionAdmissionAttempt = 10 * time.Second
+
+// pluginActionAdmissionAttemptCap is the longest attemptBound grows to.
+var pluginActionAdmissionAttemptCap = time.Minute
+
+// pluginActionWaitingForChecks is what a Job whose claim was given back says
+// while it waits to be asked again.
+const pluginActionWaitingForChecks = "Waiting for the account and scope checks"
 
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
 // against the deployment's budget, and keeps the claim alive until the returned

@@ -820,3 +820,46 @@ func TestAClaimWhosePrincipalIsGoneIsBlockedFromTheAdmission(t *testing.T) {
 		t.Fatalf("a Job whose principal is gone ran %q times", got)
 	}
 }
+
+// TestASlowReCheckRunsOnALaterAttempt pins the other side of the deferral: a
+// re-check that is slow but answers, such as a scope subtree too large to read
+// within the first bound, is given more time at each attempt until it fits, so
+// the Job runs rather than waiting for good. While it waits, its queued row says
+// why. At full size this is a 15 second check: given back at 10 seconds, it runs
+// in the 20 seconds of the next attempt.
+func TestASlowReCheckRunsOnALaterAttempt(t *testing.T) {
+	setAdmissionBound(t, 200*time.Millisecond)
+	ctx := newJobHarnessContext(t, false)
+	pm := enableActionPluginForTest(t, ctx)
+	actor := models.User{Username: "slow-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	stall := installReadStall(t, ctx.db)
+	stall.armSlow(readsTable("users"), 300*time.Millisecond)
+	defer stall.disarm()
+
+	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 4)
+	owner := actor.ID
+	if err := ctx.queueRegisteredPluginAction(pm, accepted.ID, "slow-handle", &owner, input); err != nil {
+		t.Fatalf("queue the action: %v", err)
+	}
+	waitForJobState(t, ctx, accepted.ID, "the queued Job to say why it waits", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateQueued && s.Progress.Message == pluginActionWaitingForChecks
+	})
+	job := waitForJobState(t, ctx, accepted.ID, "the action to run once its check fits", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the action ended %s, want succeeded", job.State)
+	}
+	if started := countTimelineEvents(t, ctx, accepted.ID, jobs.EventStarted); started != 2 {
+		t.Fatalf("the action was started %d times, want the attempt given back and the one that ran", started)
+	}
+
+	many := ctx.newPluginActionAdmission("bound-only", input, nil)
+	many.givenBack = 20
+	if got := many.attemptBound(); got != pluginActionAdmissionAttemptCap {
+		t.Fatalf("after many give-backs an attempt may hold the VM for %v, want the cap %v", got, pluginActionAdmissionAttemptCap)
+	}
+}

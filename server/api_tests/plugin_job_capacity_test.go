@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -413,5 +414,89 @@ func TestAPluginCommandWaitsForAFullBudgetInsteadOfFailing(t *testing.T) {
 	// The fixture's completion callback imports the command's output. It has to
 	// land before the runtime stops, or the callback outlives the fence it writes
 	// under.
+	waitForImport(t, tc.AppCtx, succeeded.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
+}
+
+// TestAPluginCommandWaitsForAFullManagedLaneInsteadOfFailing is the same wait
+// through the other door. Commands and imports also run in a six-entry managed
+// lane, and an entry leaves it only when its callback returns, which can be after
+// the budget it held has freed. A command asked for while the lane is full waits,
+// claiming nothing, and runs once an entry leaves.
+func TestAPluginCommandWaitsForAFullManagedLaneInsteadOfFailing(t *testing.T) {
+	pluginDir := t.TempDir()
+	commandDir := t.TempDir()
+	stagingRoot := t.TempDir()
+	databasePath := filepath.Join(t.TempDir(), "command-managed-lane.db")
+	executable := installCommandIntegrationExecutable(t, commandDir)
+	writeCommandIntegrationPlugin(t, pluginDir, executable)
+	settings := commandIntegrationSettings{root: stagingRoot, commandPath: commandDir}
+
+	tc, closeContext := openPersistentCommandTestContext(t, databasePath, pluginDir, afero.NewMemMapFs())
+	tc.AppCtx.Config.MaxJobConcurrency = 16
+	hold := make(chan struct{})
+	held := false
+	commandsStarted := false
+	t.Cleanup(func() {
+		if !held {
+			close(hold)
+		}
+		if commandsStarted {
+			_ = tc.AppCtx.StopPluginCommands()
+		}
+		closeContext()
+	})
+	if err := tc.AppCtx.StartPluginCommands(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	commandsStarted = true
+	if _, err := tc.AppCtx.EnsurePluginStates(); err != nil {
+		t.Fatal(err)
+	}
+	_, bearer := commandIntegrationBearer(t, tc)
+	if err := tc.AppCtx.WithPrincipal(nil).SetPluginEnabledWithOptions(
+		commandIntegrationPluginName, true, application_context.PluginEnableOptions{ConfirmCommands: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Six managed entries whose callbacks have not returned: the lane is full while
+	// the deployment's budget has room.
+	manager := tc.AppCtx.DownloadManager()
+	for i := 0; i < download_queue.MaxManagedLiveJobs; i++ {
+		if _, err := manager.SubmitManagedJob(download_queue.ManagedJobOptions{JobOptions: download_queue.JobOptions{Source: "lane-filler"}},
+			func(context.Context, *download_queue.DownloadJob, download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
+				<-hold
+				return download_queue.ManagedJobOutcome{Status: download_queue.JobStatusCompleted}
+			}); err != nil {
+			t.Fatalf("fill the managed lane: %v", err)
+		}
+	}
+
+	start := doReq(tc, http.MethodGet, "/plugins/command-integration/start", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	if start.Code != http.StatusOK || !strings.Contains(start.Body.String(), "started:") {
+		t.Fatalf("start page = %d %s", start.Code, start.Body.String())
+	}
+	run := waitForCommandRun(t, tc.AppCtx, "produce", "queued", "failed", "succeeded", "running")
+	time.Sleep(1500 * time.Millisecond)
+	record, _, err := tc.AppCtx.Run(run.ID)
+	if err != nil {
+		t.Fatalf("read the run: %v", err)
+	}
+	if record.Status != "queued" {
+		t.Fatalf("a command asked for while the managed lane was full is %q (%s), want queued", record.Status, record.Error)
+	}
+	if record.JobID != "" {
+		job := capacityJob(t, tc, record.JobID)
+		if job.State != jobs.StateQueued || job.StartedAt != nil {
+			t.Fatalf("its Job is %s (started %v) while the lane is full, want queued and never claimed", job.State, job.StartedAt)
+		}
+	}
+
+	close(hold)
+	held = true
+	succeeded := waitForCommandRun(t, tc.AppCtx, "produce", "succeeded", "failed")
+	if succeeded.Status != "succeeded" {
+		t.Fatalf("the command ended %s (%s) once the lane had room, want succeeded", succeeded.Status, succeeded.Error)
+	}
 	waitForImport(t, tc.AppCtx, succeeded.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
 }

@@ -241,6 +241,9 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 	if j.manager == nil {
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
 	}
+	if err := j.managedLaneRoom(); err != nil {
+		return "", err
+	}
 	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommand, spec.RunID)
 	if errors.Is(err, jobs.ErrCapacityExhausted) {
 		return "", fmt.Errorf("%w: %v", plugin_commands.ErrJobCapacityFull, err)
@@ -267,10 +270,7 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress, mirror: mirror}))
 	})
 	if err != nil {
-		if claimed {
-			_ = j.ctx.releasePluginCommandJob(execution)
-		}
-		return "", err
+		return "", j.refusedByManagedLane(execution, claimed, err)
 	}
 	return job.ID, nil
 }
@@ -278,6 +278,9 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
 	if j.manager == nil {
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
+	}
+	if err := j.managedLaneRoom(); err != nil {
+		return "", err
 	}
 	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommandImport, spec.ImportID)
 	if errors.Is(err, jobs.ErrCapacityExhausted) {
@@ -298,12 +301,47 @@ func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run
 		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress}))
 	})
 	if err != nil {
-		if claimed {
-			_ = j.ctx.releasePluginCommandJob(execution)
-		}
-		return "", err
+		return "", j.refusedByManagedLane(execution, claimed, err)
 	}
 	return job.ID, nil
+}
+
+// managedLaneRoom refuses, as a full budget, work the managed lane has no room
+// for, before anything is claimed. A worker posts its completion before its
+// managed callback returns, so the lane can still be full when the budget has
+// just freed; claiming then would take a claim only to give it back. The
+// dispatcher is the lane's only submitter, so the room it finds is still there
+// when it submits.
+func (j commandLiveJobs) managedLaneRoom() error {
+	if j.manager.ManagedLaneHasRoom() {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", plugin_commands.ErrJobCapacityFull, download_queue.ErrManagedLaneFull)
+}
+
+// refusedByManagedLane settles a claim the managed lane refused: the claim goes
+// back to the queue, retried until it lands or this runtime has lost the command
+// fence, because the dispatcher asks again and its next claim would read a Job
+// still running under this token as another runtime's. A full lane is answered
+// as a full budget, which the dispatcher waits out.
+func (j commandLiveJobs) refusedByManagedLane(execution jobs.Execution, claimed bool, err error) error {
+	if claimed {
+		for delay := 100 * time.Millisecond; ; {
+			releaseErr := j.ctx.releasePluginCommandJob(execution)
+			if releaseErr == nil || !j.ctx.pluginCommandFenceOwned() {
+				break
+			}
+			log.Printf("warning: could not give back the claim on plugin command job %s; retrying: %v", execution.JobID, releaseErr)
+			time.Sleep(delay)
+			if delay < 2*time.Second {
+				delay *= 2
+			}
+		}
+	}
+	if errors.Is(err, download_queue.ErrManagedLaneFull) {
+		return fmt.Errorf("%w: %v", plugin_commands.ErrJobCapacityFull, err)
+	}
+	return err
 }
 
 func (ctx *MahresourcesContext) heartbeatManagedCommand(parent context.Context, execution jobs.Execution, claimed bool) (context.Context, context.CancelFunc) {

@@ -104,7 +104,8 @@ queueing; the byte transfer runs on the host import pool outside the VM lock, so
 plugin pages remain responsive.
 
 A run whose turn comes while the deployment's job budget (`-max-job-concurrency`)
-is full stays `queued`, keeps its place, and starts when a slot frees; so does a
+is full, or while six command runs and imports are still active in the same server
+process, stays `queued`, keeps its place, and starts when there is room; so does a
 queued import. A server stop before then interrupts it, as it does any queued run.
 
 Command run statuses are exactly `queued`, `running`, `succeeded`, `failed`,
