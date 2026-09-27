@@ -336,6 +336,13 @@ current `version` from `GET /v1/jobs/{id}` as `expectedVersion` and a unique
 `idempotencyKey` (see
 [the Job Center API](../api/other-endpoints.md#canonical-job-center-api)).
 
+Cancel works only where the Job offers it (`jobs get` lists its commands). Two
+Kinds offer none while unfinished. For a `plugin-action` Job, disable the plugin
+it belongs to until the Job has ended: a disabled plugin's waiting work does not
+run. A `job-summary-export` Job summarizes Job history under the scope sealed
+when it was accepted, and what it writes can be opened only by an
+administrator, so it can be left to finish.
+
 ## Restoring a Pre-Retirement Backup
 
 A database backup taken before plaintext retirement may contain old replay
