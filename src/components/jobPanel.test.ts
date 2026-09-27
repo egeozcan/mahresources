@@ -105,16 +105,20 @@ describe('Job Center panel', () => {
         panel._ownerViewer = 1;
         panel.requestJSON = vi.fn(async () => ({ jobs: [] })) as any;
 
+        panel.chooseOwnerScope('mine');
+        await vi.waitFor(() => expect(sent).toEqual(['mine']));
         panel.chooseOwnerScope('everyone');
         panel.chooseOwnerScope('mine');
-        panel.chooseOwnerScope('everyone');
-        await vi.waitFor(() => expect(sent).toEqual(['everyone']));
-        // The next is not sent until the one before it has been answered.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        // The next is not sent until the one before it has been answered, and
+        // then says the choice as it stands.
+        expect(sent).toEqual(['mine']);
         answers.shift()!();
-        await vi.waitFor(() => expect(sent).toEqual(['everyone', 'mine']));
+        await vi.waitFor(() => expect(sent).toEqual(['mine', 'mine']));
         answers.shift()!();
-        await vi.waitFor(() => expect(sent).toEqual(['everyone', 'mine', 'everyone']));
+        await vi.waitFor(() => expect(sent).toEqual(['mine', 'mine', 'mine']));
         answers.shift()!();
+        expect(panel.ownerScope).toBe('me');
     });
 
     test('a choice a page was rendered without is applied on that page, before its first read, and stored again', async () => {
@@ -627,6 +631,20 @@ describe('Job Center panel', () => {
 
         expect(panel.noticeText).toBe('');
         expect(panel._noticeWatch).toBeNull();
+        await vi.waitFor(() => expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin cancelled.'));
+    });
+
+    test('a request answered with its result is said as that result when an older read comes back after it', async () => {
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...panel.jobs[0], state: 'cancelled', version: 7, commands: undefined } } }
+            // A read that was served before the executor finished.
+            : { ...panel.jobs[0], state: 'running', version: 6, controlIntent: 'cancel', commands: [] });
+        panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
+
+        await panel.runCommand(panel.jobs[0], { key: 'cancel', label: 'Cancel', jobVersion: 4 });
+
+        expect(panel.jobs.find(job => job.id === 'row-1')?.state).toBe('cancelled');
+        expect(panel.noticeText).toBe('');
         await vi.waitFor(() => expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('first.bin cancelled.'));
     });
 

@@ -304,6 +304,20 @@ describe('Job detail commands', () => {
         expect(center._noticeWatch).toBeNull();
     });
 
+    test('a request answered with its result is said as that result when an older read comes back after it', async () => {
+        const running = { id: 'job-5', title: 'big.iso', kind: 'remote-download', state: 'running', version: 5,
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5, destructive: true, confirmation: 'Stop this download?' }] };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...running, state: 'cancelled', version: 7, commands: undefined } } }
+            // A read that was served before the executor finished.
+            : { ...running, controlIntent: 'cancel', version: 6, commands: [] });
+
+        await center.runCommand(center.detail, running.commands[0]);
+
+        expect(center.detail.state).toBe('cancelled');
+        expect(center.noticeText).toBe('big.iso cancelled.');
+    });
+
     test('a request the executor carried out before the reread says the result, and a pending one waits for the Job to leave its state', async () => {
         const running = { id: 'job-3', title: 'held.iso', kind: 'remote-download', state: 'running', version: 5,
             commands: [{ key: 'pause', label: 'Pause', jobVersion: 5, confirmation: 'Pause?' }] };

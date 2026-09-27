@@ -612,7 +612,7 @@ export function jobCenter(options = {}) {
                 const settled = requestSettled(job, freshJob, now, outcome);
                 this.notice = rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
-                    : settled ? lifecycleAnnouncement({ ...job, ...now }) : commandNoticeText(job, command, outcome);
+                    : settled ? lifecycleAnnouncement({ ...job, ...latestSnapshot(freshJob, now) }) : commandNoticeText(job, command, outcome);
                 this._noticeWatch = outcome.code === 'requested' && !settled ? requestWatch(job) : null;
                 this._liveRegion?.announce(this.notice);
                 return outcome;
@@ -875,8 +875,14 @@ export function commandNoticeText(job, command, outcome) {
 // "requested"; after, it would say that of something already done.
 export function requestSettled(job, answered, now, outcome) {
     if (outcome?.code !== 'requested') return false;
-    const latest = now && Number(now.version || 0) >= Number(answered?.version || 0) ? now : answered || now;
+    const latest = latestSnapshot(answered, now);
     return !!latest?.state && requestPassed(requestWatch(job), latest);
+}
+
+// The newer of a command's answer and the read after it: a read served before
+// the answer was written is older than it, and says nothing about the result.
+export function latestSnapshot(answered, now) {
+    return now && Number(now.version || 0) >= Number(answered?.version || 0) ? now : answered || now;
 }
 
 // What a requested control's box waits for: the Job leaving `job`'s state.

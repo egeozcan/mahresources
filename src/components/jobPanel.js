@@ -12,6 +12,7 @@ import {
     commandLocation,
     commandNoticeText,
     commandRefusalText,
+    latestSnapshot,
     requestPassed,
     requestSettled,
     requestWatch,
@@ -1298,13 +1299,11 @@ export function jobPanel() {
             this.saveOwnerChoice(value);
         },
 
-        // Sent at once, since the next page is rendered with the stored choice,
-        // and one after another, so the last choice made is the last one stored.
+        // Sent at once, since the next page is rendered with the stored choice;
+        // the settings store sends one key's writes one after another, so the
+        // last choice made is the last one stored.
         saveOwnerChoice(value) {
-            this._ownerChoiceSave = (this._ownerChoiceSave || Promise.resolve())
-                .catch(() => {})
-                .then(() => userSettings.saveNow('jobsPanelScope', value));
-            return this._ownerChoiceSave;
+            return userSettings.saveNow('jobsPanelScope', value);
         },
 
         // A page opened before the choice was stored is rendered with the old
@@ -1604,7 +1603,8 @@ export function jobPanel() {
                 // and a change of state it happened to read is heard as a read.
                 // A request the executor has already carried out is said as its
                 // result too (requestSettled).
-                const movedOn = !keepsRecord && now?.state && stateOf(now) !== stateOf(job) &&
+                const latest = latestSnapshot(freshJob, now);
+                const movedOn = !keepsRecord && latest?.state && stateOf(latest) !== stateOf(job) &&
                     (outcome.code !== 'requested' || requestSettled(job, freshJob, now, outcome));
                 let spoken = '';
                 if (rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')) {
@@ -1623,7 +1623,7 @@ export function jobPanel() {
                 } else if (movedOn) {
                     // The answer moved the row to another state, which it shows.
                     this.clearNotice();
-                    spoken = lifecycleAnnouncement({ ...job, ...now });
+                    spoken = lifecycleAnnouncement({ ...job, ...latest });
                 } else {
                     this.setNotice(commandNoticeText(job, command, outcome), {
                         watch: outcome.code === 'requested' ? { jobId: job.id, ...requestWatch(job) } : null,
