@@ -619,3 +619,22 @@ func TestJobsListQuietPrintsOnlyIDsAndRefusesPageNumbers(t *testing.T) {
 		t.Fatalf("a refused --page still sent %d request(s)", requests)
 	}
 }
+
+func TestJobsListPassesAnyPreferenceThrough(t *testing.T) {
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		writeJobJSON(w, `{"jobs":[]}`)
+	}))
+	defer server.Close()
+
+	if err := runJobCLI(t, server.URL, false, "list", "--dismissed", "any", "--pinned", "false"); err != nil {
+		t.Fatalf("jobs list: %v", err)
+	}
+	if gotQuery.Get("dismissed") != "any" || gotQuery.Get("pinned") != "false" {
+		t.Fatalf("query = %v, want dismissed=any and pinned=false", gotQuery)
+	}
+	if err := runJobCLI(t, server.URL, false, "list", "--dismissed", "maybe"); err == nil || !strings.Contains(err.Error(), "true, false or any") {
+		t.Fatalf("--dismissed maybe = %v, want a refusal naming the choices", err)
+	}
+}

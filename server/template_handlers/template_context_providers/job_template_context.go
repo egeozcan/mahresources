@@ -25,12 +25,6 @@ const JobCenterCutoverEnabled = true
 // jobListPageSize is how many Jobs one /jobs page shows.
 const jobListPageSize = jobs.DefaultPageSize
 
-// dismissedAny is the page-only value of the Dismissed filter that asks for
-// every Job whatever the viewer dismissed. The page's default list is the
-// undismissed one, so "not asked" cannot also mean "any" here as it does on the
-// API.
-const dismissedAny = "any"
-
 // Quick-filter groupings. Their names are the glossary's (CONTEXT.md): Active
 // and Finished Jobs, and the Jobs that Need Attention.
 var (
@@ -285,18 +279,14 @@ func jobStateOptions() []JobStateOption {
 // so an empty value means "not asked" and is dropped before parsing — the API
 // refuses `command=` and an empty origin, which a person never typed. The page
 // lists what the viewer has not dismissed unless they ask otherwise;
-// `dismissed=any` is that asking.
+// `dismissed=any` is that asking, and reads as it does on the API.
 func jobListFilter(query url.Values) (jobs.Filter, error) {
 	query = withoutEmptyValues(query)
-	dismissed := query.Get("dismissed")
-	if dismissed == dismissedAny {
-		query.Del("dismissed")
-	}
 	filter, err := jobview.ParseFilter(query)
 	if err != nil {
 		return jobs.Filter{}, err
 	}
-	if dismissed == "" {
+	if query.Get("dismissed") == "" {
 		undismissed := false
 		filter.Dismissed = &undismissed
 	}

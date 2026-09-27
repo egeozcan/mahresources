@@ -102,3 +102,21 @@ func TestJobCommandConflictsSayWhichConflict(t *testing.T) {
 		t.Errorf("a reused key answered result %v, want code %q for %s", answer["result"], jobs.CommandCodeKeyReused, accepted.ID)
 	}
 }
+
+// TestJobPreferenceFiltersAcceptAny covers the Job Center's "Any" choice sent to
+// the API: a /jobs query string with dismissed=any, pasted into the API or the
+// CLI, must read the same rather than be refused.
+func TestJobPreferenceFiltersAcceptAny(t *testing.T) {
+	tc := SetupTestEnv(t)
+	for _, url := range []string{
+		"/v1/jobs?dismissed=any", "/v1/jobs?pinned=any",
+		"/v1/jobs/summary?dismissed=any", "/v1/jobs/summary?pinned=any",
+	} {
+		if res := tc.MakeRequest(http.MethodGet, url, nil); res.Code != http.StatusOK {
+			t.Errorf("%s answered %d: %s", url, res.Code, res.Body.String())
+		}
+	}
+	if got := jobAPIError(t, tc, http.MethodGet, "/v1/jobs?dismissed=maybe", nil, http.StatusBadRequest)["error"]; got != "dismissed must be true, false or any" {
+		t.Errorf("dismissed=maybe answered error %q", got)
+	}
+}

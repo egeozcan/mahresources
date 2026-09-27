@@ -68,7 +68,8 @@ List, summary, and export share these optional filters: `state`/`states`,
 `kind`/`kinds`, `origin`/`origins`, `ownerId`, `actorId`, `acceptedAfter`,
 `acceptedBefore`, `relationship`, `search`, `command`, `pinned`, and
 `dismissed`. Repeating a token parameter or comma-separating its values is
-supported. Visibility is applied before filters and aggregation; an owner or
+supported. `pinned` and `dismissed` take `true`, `false` or `any`; `any` applies
+no preference, exactly as omitting the parameter does. Visibility is applied before filters and aggregation; an owner or
 actor filter never grants access to hidden Jobs.
 
 Single-command JSON bodies contain `expectedVersion`, `idempotencyKey`, and

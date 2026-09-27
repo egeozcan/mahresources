@@ -55,6 +55,28 @@ func TestParseFilterReadsBothEndsOfARelationship(t *testing.T) {
 	}
 }
 
+// TestParseFilterReadsAnyAsNoPreference pins the one spelling of "either way"
+// both preference filters share across the Job Center page, the API and the
+// CLI, so a query string written on one surface means the same on the others.
+func TestParseFilterReadsAnyAsNoPreference(t *testing.T) {
+	for _, name := range []string{"dismissed", "pinned"} {
+		filter, err := ParseFilter(url.Values{name: {"any"}})
+		if err != nil {
+			t.Fatalf("%s=any: %v", name, err)
+		}
+		if filter.Dismissed != nil || filter.Pinned != nil {
+			t.Fatalf("%s=any asked a preference: %+v", name, filter)
+		}
+		if _, err := ParseFilter(url.Values{name: {"sometimes"}}); err == nil || err.Error() != name+" must be true, false or any" {
+			t.Fatalf("%s=sometimes answered %v", name, err)
+		}
+	}
+	filter, err := ParseFilter(url.Values{"dismissed": {"false"}, "pinned": {"true"}})
+	if err != nil || filter.Dismissed == nil || *filter.Dismissed || filter.Pinned == nil || !*filter.Pinned {
+		t.Fatalf("explicit preferences read as %+v, %v", filter, err)
+	}
+}
+
 func TestCursorRoundTrips(t *testing.T) {
 	cursor := jobs.Cursor{AcceptedAt: time.Date(2026, 9, 1, 8, 0, 0, 5, time.UTC), ID: "abc"}
 	token, err := EncodeCursor(cursor)

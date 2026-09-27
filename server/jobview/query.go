@@ -140,14 +140,18 @@ func Bound(raw string, end bool) (*time.Time, error) {
 	return &parsed, nil
 }
 
+// AnyPreference is the explicit spelling of "either way" for the pinned and
+// dismissed filters, read exactly as the parameter's absence is read.
+const AnyPreference = "any"
+
 func optionalBool(values url.Values, name string) (*bool, error) {
 	raw := values.Get(name)
-	if raw == "" {
+	if raw == "" || raw == AnyPreference {
 		return nil, nil
 	}
 	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s must be true or false", name)
+		return nil, fmt.Errorf("%s must be true, false or %s", name, AnyPreference)
 	}
 	return &parsed, nil
 }

@@ -436,8 +436,8 @@ func (f *jobFilterFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.noInboundRelationship, "no-inbound-relationship", "", "Filter Jobs no visible Job links to with this relationship (for example, not yet retried)")
 	cmd.Flags().StringVar(&f.search, "search", "", "Search visible Job text and output labels")
 	cmd.Flags().StringVar(&f.command, "command", "", "Filter Jobs currently advertising this command key")
-	cmd.Flags().StringVar(&f.pinned, "pinned", "", "Filter this viewer's pin preference (true or false)")
-	cmd.Flags().StringVar(&f.dismissed, "dismissed", "", "Filter this viewer's dismissal preference (true or false)")
+	cmd.Flags().StringVar(&f.pinned, "pinned", "", "Filter this viewer's pin preference (true, false or any)")
+	cmd.Flags().StringVar(&f.dismissed, "dismissed", "", "Filter this viewer's dismissal preference (true, false or any)")
 }
 
 func (f cliJobFilterFlags) query(cmd *cobra.Command) (url.Values, error) {
@@ -486,8 +486,8 @@ func (f cliJobFilterFlags) query(cmd *cobra.Command) (url.Values, error) {
 		if value == "" {
 			continue
 		}
-		if _, err := strconv.ParseBool(value); err != nil {
-			return nil, fmt.Errorf("--%s must be true or false", flag)
+		if _, err := strconv.ParseBool(value); err != nil && value != "any" {
+			return nil, fmt.Errorf("--%s must be true, false or any", flag)
 		}
 		query.Set(flag, value)
 	}
