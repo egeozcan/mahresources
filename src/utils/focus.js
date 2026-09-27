@@ -95,9 +95,15 @@ export function parkFocus(element) {
  * the icon as `target`, and focusing an SVG span is not the same as returning
  * the reader to the control they pressed. `currentTarget` is only valid during
  * dispatch, which is why this is read at open time and stored.
+ *
+ * Only an element is a trigger. A shortcut handled by a listener on `document`
+ * or `window` reports that as its `currentTarget`, which cannot take focus
+ * back; answering null there lets the caller fall back to `focusedElement()`,
+ * the field the reader pressed the shortcut in.
  */
 export function captureTrigger(event) {
-  return event?.currentTarget ?? null;
+  const target = event?.currentTarget;
+  return target?.nodeType === 1 ? target : null;
 }
 
 /**
@@ -146,4 +152,65 @@ export function focusFirstIn(container) {
   const first = container.querySelector(FOCUSABLE_IN_CONTAINER);
   if (first && focusOn(first)) return;
   parkFocus(container);
+}
+
+function isPainted(element) {
+  if (!element?.isConnected) return false;
+  if (typeof element.checkVisibility === 'function') return element.checkVisibility();
+  return !!(element.offsetWidth || element.offsetHeight || element.getClientRects?.().length);
+}
+
+/**
+ * Keep focus in `root` when a re-render takes away, or hides, the element that
+ * had it. A control list drawn with `x-for` replaces the control a command
+ * changed (Pin becomes Unpin), and a bar hidden with its selection hides the
+ * button pressed; either way focus falls to `<body>` and the next Tab starts
+ * again at the top of the page.
+ *
+ * `describe(element)` says what to remember about a focused element in `root`,
+ * or null for one not worth keeping. When that element leaves or stops being
+ * painted, `restore(memo)` runs a macrotask later — after the framework has
+ * finished re-rendering — if focus is still nowhere, so a place the reader
+ * moved to themselves is never overridden. `observe` is the subtree whose
+ * changes can take the element away, which for a bar hidden by an ancestor is
+ * wider than `root`; `attributes` watches `hidden`, `style` and `class` there
+ * too. Returns `stop()`.
+ */
+export function keepFocusWithin(root, { describe, restore, observe = root, attributes = false }) {
+  if (!root || typeof MutationObserver === 'undefined') return { stop() {} };
+  let memo = null;
+  let timer = null;
+  const note = (target) => {
+    const described = target && root.contains(target) ? describe(target) : null;
+    memo = described ? { ...described, element: target } : null;
+  };
+  const onFocusIn = (event) => note(event.target);
+  const lost = (held) => held && !isPainted(held.element);
+  const check = () => {
+    if (!lost(memo) || timer) return;
+    const held = memo;
+    timer = setTimeout(() => {
+      timer = null;
+      if (memo !== held || !lost(held)) return;
+      if (focusedElement() && isPainted(document.activeElement)) return;
+      memo = null;
+      restore(held);
+    }, 0);
+  };
+  root.addEventListener('focusin', onFocusIn);
+  const observer = new MutationObserver(check);
+  observer.observe(observe || root, {
+    childList: true,
+    subtree: true,
+    ...(attributes ? { attributes: true, attributeFilter: ['hidden', 'style', 'class'] } : {}),
+  });
+  note(document.activeElement);
+  return {
+    stop() {
+      root.removeEventListener('focusin', onFocusIn);
+      observer.disconnect();
+      clearTimeout(timer);
+      memo = null;
+    },
+  };
 }

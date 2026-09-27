@@ -44,8 +44,11 @@ test('an administrator sees whose job is whose, and an owner is told when anothe
     await expect(admin.locator('[data-job-owner] dd')).toHaveText(authSeed.user.username);
 
     await admin.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const drawer = admin.getByRole('dialog', { name: 'Jobs' });
+    await drawer.getByText('Everyone\'s', { exact: true }).click();
     const row = admin.locator(`[data-job-panel-row][data-job-id="${jobId}"]`);
     await expect(row.locator('[data-job-panel-owner]')).toHaveText(`Owner: ${authSeed.user.username}`);
+    await drawer.getByText('My jobs', { exact: true }).click();
 
     // The administrator retries the user's job; the successor is theirs.
     const detail = await (await admin.request.get(`/v1/jobs/${encodeURIComponent(jobId)}`)).json();
@@ -94,6 +97,60 @@ test('an administrator listing their own jobs keeps that choice when they change
     await expect(form.getByRole('combobox', { name: 'Owner' })).toHaveValue('me');
     await expect(list.locator(`[data-job-id="${mine}"]`)).toHaveCount(1);
     await expect(list.locator(`[data-job-id="${theirs}"]`)).toHaveCount(0);
+  } finally {
+    await userContext.close();
+    await adminContext.close();
+  }
+});
+
+test('an administrator\'s drawer lists their own jobs until they choose everyone\'s, and remembers the choice', async ({ browser, baseURL, authSeed }) => {
+  const stamp = Date.now();
+  const userContext = await browser.newContext({ baseURL });
+  const adminContext = await browser.newContext({ baseURL });
+  try {
+    const user = await userContext.newPage();
+    await loginAs(user, authSeed.user);
+    const theirs = await failedDownload(user, authSeed.scopeGroupId, `drawer-theirs-${stamp}.bin`);
+    const admin = await adminContext.newPage();
+    await loginAs(admin, authSeed.admin);
+    const mine = await failedDownload(admin, authSeed.scopeGroupId, `drawer-mine-${stamp}.bin`);
+
+    await admin.goto('/dashboard');
+    await admin.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const drawer = admin.getByRole('dialog', { name: 'Jobs' });
+    const choice = drawer.getByRole('group', { name: 'Whose jobs to show' });
+    // Their own work by default: another account's failure does not ask this
+    // administrator for attention.
+    await expect(choice.getByRole('radio', { name: 'My jobs' })).toBeChecked();
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${mine}"]`)).toHaveCount(1);
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(0);
+
+    // A radio pair: the keyboard moves the choice with the arrow keys.
+    await choice.getByRole('radio', { name: 'My jobs' }).focus();
+    await admin.keyboard.press('ArrowRight');
+    await expect(choice.getByRole('radio', { name: 'Everyone\'s' })).toBeChecked();
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(1);
+
+    // Kept for the next page, opened straight away.
+    await admin.reload();
+    await admin.getByRole('button', { name: 'Open Jobs panel' }).click();
+    await expect(choice.getByRole('radio', { name: 'Everyone\'s' })).toBeChecked();
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(1);
+
+    // Switched back and away in the same moment: the next page still lists
+    // only this administrator's jobs, and the choice is stored.
+    await choice.getByText('My jobs', { exact: true }).click();
+    await admin.goto('/dashboard');
+    await admin.getByRole('button', { name: 'Open Jobs panel' }).click();
+    await expect(choice.getByRole('radio', { name: 'My jobs' })).toBeChecked();
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${mine}"]`)).toHaveCount(1);
+    await expect(drawer.locator(`[data-job-panel-row][data-job-id="${theirs}"]`)).toHaveCount(0);
+    await expect.poll(async () => (await (await admin.request.get('/v1/account/settings')).json()).jobsPanelScope).toBe('mine');
+
+    // Only an administrator is offered the choice: anyone else sees only their own.
+    await user.goto('/dashboard');
+    await user.getByRole('button', { name: 'Open Jobs panel' }).click();
+    await expect(user.getByRole('dialog', { name: 'Jobs' }).getByRole('group', { name: 'Whose jobs to show' })).toHaveCount(0);
   } finally {
     await userContext.close();
     await adminContext.close();

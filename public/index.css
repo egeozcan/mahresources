@@ -25,6 +25,10 @@
 html {
     height: 100%;
     overflow-x: hidden;
+    /* The site header is sticky at the top of the page (2.25rem tall). A
+       control scrolled into view by keyboard focus, or a fragment link, lands
+       below it rather than under it. */
+    scroll-padding-top: 3rem;
 }
 
 .site {

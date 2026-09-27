@@ -1,5 +1,6 @@
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { focusOn, keepFocusWithin } from '../utils/focus.js';
 import {
     applyProgressFrame,
     formatAmount,
@@ -25,10 +26,15 @@ export function advertisedCommands(job) {
     return Array.isArray(job?.commands) ? job.commands : [];
 }
 
+// Pin and Unpin, and Dismiss and Undismiss, are advertised in pairs, since
+// each is idempotent and a mixed selection may take either; one Job shows the
+// one its viewer's own preference leaves to do.
 export function jobCommands(job) {
     return advertisedCommands(job).filter(command => {
         if (command?.key === 'pin') return job?.pinned !== true;
         if (command?.key === 'unpin') return job?.pinned === true;
+        if (command?.key === 'dismiss') return job?.dismissed !== true;
+        if (command?.key === 'undismiss') return job?.dismissed === true;
         return true;
     });
 }
@@ -41,6 +47,15 @@ export function warningEvents(events) {
     return (Array.isArray(events) ? events : []).filter(event =>
         event?.type === 'warning' || event?.type === 'events-truncated',
     );
+}
+
+// Where focus goes when the command control that had it is re-rendered away:
+// its counterpart first, since Pin becomes Unpin, then the same command drawn
+// again.
+const COMMAND_COUNTERPARTS = { pin: 'unpin', unpin: 'pin', pause: 'resume', resume: 'pause', dismiss: 'undismiss', undismiss: 'dismiss' };
+
+export function commandFocusSuccessorKeys(key) {
+    return [COMMAND_COUNTERPARTS[key], key].filter(Boolean);
 }
 
 export function commandLabel(command) {
@@ -240,11 +255,15 @@ export function selectedBulkCommands(jobs, selectedIds) {
     ));
     const hasPinned = chosenJobs.some(job => job.pinned === true);
     const hasUnpinned = chosenJobs.some(job => job.pinned !== true);
+    const hasDismissed = chosenJobs.some(job => job.dismissed === true);
+    const hasUndismissed = chosenJobs.some(job => job.dismissed !== true);
     return advertisedCommands(chosenJobs[0])
         .filter(command => command.bulk && commandMaps.every(commands => commands.has(command.key)))
         .filter(command => {
             if (command.key === 'pin' && hasPinned && !hasUnpinned) return false;
             if (command.key === 'unpin' && hasUnpinned && !hasPinned) return false;
+            if (command.key === 'dismiss' && hasDismissed && !hasUndismissed) return false;
+            if (command.key === 'undismiss' && hasUndismissed && !hasDismissed) return false;
             return true;
         });
 }
@@ -319,8 +338,7 @@ export function reduceJobSnapshot(jobs, incoming, replay = false, lastSequence =
     }
 
     const merged = {
-        ...(current || {}),
-        ...incoming,
+        ...mergeJobSnapshot(current, incoming),
         uiExpanded: current?.uiExpanded ?? incoming.uiExpanded ?? false,
         uiSelected: current?.uiSelected ?? incoming.uiSelected ?? false,
     };
@@ -481,6 +499,11 @@ export function jobCenter(options = {}) {
         loading: true,
         error: '',
         notice: '',
+        // A requested control's notice leaves once the Job has moved past the
+        // version the command answered with: the page says the rest.
+        _noticeWatch: null,
+        // A command is in flight; the controls take no second press.
+        commandBusy: false,
         connectionStatus: 'disconnected',
         eventSource: null,
         lastSequence: 0,
@@ -513,12 +536,16 @@ export function jobCenter(options = {}) {
             this._preferences = openJobPreferenceChannel(message => this.hearPreferenceChange(message));
             // Keeps "about 14 s left" counting down between progress frames.
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
+            // Kept: a method called from a directive sees that element as $el.
+            this._root = this.$el || null;
+            this._focusKeeper = this.$el ? keepCommandFocus(this.$el) : null;
             this.connect();
             this.load();
         },
 
         destroy() {
             this._destroyed = true;
+            this._focusKeeper?.stop();
             if (this._clockTimer) clearInterval(this._clockTimer);
             clearTimeout(this._streamRetryTimer);
             clearTimeout(this._reconcileTimer);
@@ -603,6 +630,22 @@ export function jobCenter(options = {}) {
             return freshJob;
         },
 
+        get noticeText() {
+            const watch = this._noticeWatch;
+            if (watch && requestPassed(watch, this.detail)) return '';
+            return this.notice;
+        },
+
+        // The Job's detail read again after a command: the answer's snapshot
+        // carries no commands, and a command such as Forget moves no version, so
+        // nothing else would replace the controls the command made stale. It is
+        // the preference-fenced read, so a pin changed elsewhere meanwhile is
+        // read again rather than overwritten.
+        async rereadJob(id) {
+            const freshJob = await this.refreshJobPreference(id);
+            return freshJob?.id ? freshJob : null;
+        },
+
         // Another page (or this page's drawer) changed this Job's viewer
         // preferences: no Job event says so, so the page reads it again.
         hearPreferenceChange(message) {
@@ -620,17 +663,28 @@ export function jobCenter(options = {}) {
             return `/job?id=${encodeURIComponent(job?.id || '')}`;
         },
 
+        // One command at a time: a second press while the first is in flight
+        // would be decided from the version the first is changing.
         async runCommand(job, command) {
+            if (this.commandBusy) return null;
+            this.commandBusy = true;
+            try {
+                return await this.runCommandUnguarded(job, command);
+            } finally {
+                this.commandBusy = false;
+            }
+        },
+
+        async runCommandUnguarded(job, command) {
             const confirmation = commandConfirmation(command);
             if (confirmation) {
                 const accepted = await globalThis.Alpine?.store('confirmDialog')?.ask(confirmation, {
-                    title: commandLabel(command),
-                    confirmLabel: commandLabel(command),
+                    ...commandConfirmOptions(job, command),
+                    fallbackFocus: () => commandFocusTarget(this._root, command.key),
                 });
                 if (!accepted) return null;
             }
             const key = idempotencyKey();
-            this.notice = '';
             try {
                 const payload = await this.fetchJSON(commandEndpoint(job, command), {
                     method: 'POST',
@@ -640,28 +694,34 @@ export function jobCenter(options = {}) {
                 const outcome = payload.result || payload;
                 const freshJob = outcome.job || payload.job;
                 if (freshJob?.id) this.updateJob(freshJob);
-                let preferenceRefreshFailed = false;
-                if (command?.key === 'pin' || command?.key === 'unpin') {
-                    try {
-                        await this.refreshJobPreference(job.id);
-                    } catch {
-                        preferenceRefreshFailed = true;
-                    }
-                }
+                let now = freshJob?.id ? freshJob : null;
+                let rereadFailed = false;
+                try { now = await this.rereadJob(job.id) || now; }
+                catch { rereadFailed = true; }
+                // This page is the Job's own, so a successor or a page the answer
+                // names is opened: nothing unsaved is left behind here.
                 const successorId = outcome.successorId || outcome.successorID || payload.successorId || payload.successorID;
                 const location = successorId ? `/job?id=${encodeURIComponent(successorId)}` : commandLocation(outcome);
                 if (location) globalThis.location?.assign?.(location);
-                this.notice = preferenceRefreshFailed
+                const settled = requestSettled(job, freshJob, now, outcome);
+                this.notice = rereadFailed && (command?.key === 'pin' || command?.key === 'unpin')
                     ? `${commandLabel(command)} completed. Reload this job to see its current pin status.`
-                    : outcome.message || payload.message || `${commandLabel(command)} requested.`;
+                    : settled ? lifecycleAnnouncement({ ...job, ...latestSnapshot(freshJob, now) }) : commandNoticeText(job, command, outcome);
+                this._noticeWatch = outcome.code === 'requested' && !settled ? requestWatch(job) : null;
                 this._liveRegion?.announce(this.notice);
                 return outcome;
             } catch (error) {
-                if (error.status === 409) {
-                    const fresh = error.payload?.job || error.payload?.snapshot;
-                    if (fresh?.id) this.updateJob(fresh);
-                    this.notice = error.message || 'This job changed. The latest details are shown.';
-                } else this.notice = error.message || 'The command could not be completed.';
+                const fresh = error.payload?.job || error.payload?.result?.job || error.payload?.snapshot;
+                if (fresh?.id) this.updateJob(fresh);
+                let now = fresh?.id ? fresh : null;
+                // Whatever refused it, the controls offered a command the Job did
+                // not take: they are read again.
+                if (error.status !== 404) {
+                    try { now = await this.rereadJob(job.id) || now; }
+                    catch { /* the refusal is still said */ }
+                }
+                this.notice = commandRefusalText(job, command, error, now);
+                this._noticeWatch = null;
                 this._liveRegion?.announce(this.notice);
                 return null;
             }
@@ -815,8 +875,11 @@ export function jobCenter(options = {}) {
             const result = previousResult || reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
             const held = new Map(this.jobs.map(current => [current.id, current]));
             if (result.changed) this.jobs = result.jobs.map(next => mergeFetchedProgress(next, held.get(next.id)));
-            this.details[job.id] = mergeFetchedProgress({ ...(this.details[job.id] || {}), ...job }, this.details[job.id]);
-            if (this.detail?.id === job.id) this.detail = mergeFetchedProgress({ ...this.detail, ...job }, this.detail);
+            // An older snapshot than the one shown is not applied: it would roll
+            // the page back.
+            const stale = current => current && Number(job.version || 0) > 0 && Number(job.version || 0) < Number(current.version || 0);
+            if (!stale(this.details[job.id])) this.details[job.id] = mergeFetchedProgress(mergeJobSnapshot(this.details[job.id], job), this.details[job.id]);
+            if (this.detail?.id === job.id && !stale(this.detail)) this.detail = mergeFetchedProgress(mergeJobSnapshot(this.detail, job), this.detail);
             if (announce && result.announcement) this._liveRegion?.announce(result.announcement);
         },
 
@@ -859,17 +922,154 @@ export function jobCenter(options = {}) {
     };
 }
 
+// The dismiss label of a command's confirmation. Pause is asked about a download
+// that also offers Cancel, so a "Cancel" button in its dialog reads as cancelling
+// the download: it dismisses with "Go back" instead. Every other command keeps the
+// dialog's own default.
+export function commandDismissLabel(command) {
+    return command?.key === 'pause' ? 'Go back' : undefined;
+}
+
+const FORGET_CONFIRMATION = 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
+
+// A command asks first only when it stops work or cannot be taken back: a
+// Kind's own confirmation, a destructive command, and Forget. Dismiss, Pin and
+// their inverses change only the viewer's own list and retention, and each can
+// be undone, so they run at once, however many Jobs they reach.
+// The detail page's commands are drawn from the Job's current offer, so a
+// command that changes it takes away the button that ran it, and so does a live
+// change that ends the Job. Focus goes to the button that replaced it, else the
+// first command left, else the Job's heading.
+function keepCommandFocus(root) {
+    const group = () => root.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    return keepFocusWithin(root, {
+        describe: element => (element.dataset?.commandKey && group()?.contains(element) ? { key: element.dataset.commandKey } : null),
+        restore: ({ key }) => {
+            const target = commandFocusTarget(root, key);
+            if (target) focusOn(target);
+        },
+    });
+}
+
+// The control that stands in for a detail-page command that is gone: its
+// counterpart, the same command drawn again, the first command left, else the
+// Job's heading.
+function commandFocusTarget(root, key) {
+    const buttons = root?.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    const candidates = [
+        ...commandFocusSuccessorKeys(key).map(other => buttons?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+        buttons?.querySelector('button'),
+        root?.querySelector('h1'),
+    ];
+    return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
+}
+
 export function commandConfirmation(command) {
-    if (command?.key === 'pin') {
-        return "Pin this job's metadata and event history against ordinary retention. Linked jobs and artifacts keep their own retention.";
-    }
-    if (command?.key === 'pin-lineage') {
-        return 'Pin this job and each related job you can see against ordinary retention. Artifacts keep their own retention.';
-    }
-    if (command?.key === 'forget') {
-        return 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
-    }
+    if (command?.key === 'forget') return FORGET_CONFIRMATION;
     if (command?.confirmation) return command.confirmation;
     if (command?.destructive) return `Run ${commandLabel(command)}?`;
     return '';
+}
+
+// The confirmation dialog's title names the Job as well as the command, and
+// its confirming button is styled as destructive only for a command that is.
+export function commandConfirmOptions(job, command) {
+    const label = commandLabel(command);
+    const title = String(job?.title || job?.kind || '').trim();
+    return {
+        title: title ? `${label}: ${title}` : label,
+        confirmLabel: label,
+        cancelLabel: commandDismissLabel(command),
+        destructive: command?.destructive === true,
+    };
+}
+
+function jobName(job) {
+    return String(job?.title || job?.kind || 'This job').trim();
+}
+
+// What a refused command says. A Kind's refusal is its own reason; the other
+// refusals are the service's codes, said in terms of this Job. `now` is the
+// Job as read after the refusal, when it could be read.
+export function commandRefusalText(job, command, error, now = null) {
+    const payload = error?.payload || {};
+    const result = payload.result || {};
+    const label = commandLabel(command);
+    const name = jobName(job);
+    switch (result.code) {
+    case 'refused':
+        return withReason(`${label} refused for ${name}`, result.message || payload.error);
+    case 'not-advertised':
+        return now?.state && stateOf(now) !== stateOf(job)
+            ? `${label} is no longer offered for ${name}, which is now ${stateLabel(now).toLowerCase()}.`
+            : `${label} is no longer offered for ${name}.`;
+    case 'conflict':
+        return `${name} changed before ${label} was sent. Its latest details are shown.`;
+    case 'in-flight':
+        return `${label} is already being run for ${name}.`;
+    case 'chain-conflict':
+        return `${name} has already been retried. Open its latest retry instead.`;
+    case 'not-found':
+        return `${name} is no longer available.`;
+    default:
+        return withReason(`${label} could not be completed for ${name}`, result.message || payload.error || error?.message);
+    }
+}
+
+// "<what happened>: <the reason as it was given>", or the first part alone.
+function withReason(what, reason) {
+    const text = String(reason || '').trim();
+    return text ? `${what}: ${text}` : `${what}.`;
+}
+
+// The box a command leaves once it answered, naming its Job. A requested
+// control waits on the executor, so it says what was asked for; an applied
+// one says what the service did.
+export function commandNoticeText(job, command, outcome) {
+    const label = commandLabel(command);
+    const name = jobName(job);
+    if (outcome?.code === 'requested') return `${label} requested for ${name}.`;
+    const message = String(outcome?.message || '').trim();
+    return message ? `${name}: ${message}.`.replace(/\.\.$/, '.') : `${label} completed for ${name}.`;
+}
+
+// A requested control is settled once the Job has left the state the reader
+// acted on: that is the command's result, or whatever overtook it, at whatever
+// version it arrived, the answer's own included. Until then its box says
+// "requested"; after, it would say that of something already done.
+export function requestSettled(job, answered, now, outcome) {
+    if (outcome?.code !== 'requested') return false;
+    const latest = latestSnapshot(answered, now);
+    return !!latest?.state && requestPassed(requestWatch(job), latest);
+}
+
+// The newer of a command's answer and the read after it: a read served before
+// the answer was written is older than it, and says nothing about the result.
+export function latestSnapshot(answered, now) {
+    return now && Number(now.version || 0) >= Number(answered?.version || 0) ? now : answered || now;
+}
+
+// What a requested control's box waits for: the Job leaving `job`'s state.
+export function requestWatch(job) {
+    return { state: stateOf(job) };
+}
+
+// Whether `current` (the Job as shown now, or nothing once it is gone) has
+// passed what the box was waiting for.
+export function requestPassed(watch, current) {
+    return !current || stateOf(current) !== watch.state;
+}
+
+// Fields a snapshot leaves out when they are empty. A newer snapshot that
+// leaves one out says it is empty now, so the value an older one carried must
+// not survive the merge: a cancelled Job has no phase, not the "cancelling" it
+// had while it stopped.
+const SNAPSHOT_OMITTED_WHEN_EMPTY = ['phase', 'failure', 'controlIntent', 'replayAvailability', 'scheduledFor', 'queuedAt', 'startedAt', 'lastResumedAt', 'finishedAt', 'expiresAt'];
+
+export function mergeJobSnapshot(current, incoming) {
+    const merged = { ...(current || {}), ...incoming };
+    if (current && incoming && Number(incoming.version || 0) > Number(current.version || 0)) {
+        for (const key of SNAPSHOT_OMITTED_WHEN_EMPTY) if (!(key in incoming)) delete merged[key];
+    }
+    return merged;
 }

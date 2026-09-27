@@ -26,6 +26,7 @@ const MIGRATIONS = [
 const _cache = {};             // key -> parsed JS value (the source of truth in-page)
 const _dirty = new Set();      // keys with local changes not yet confirmed on the server
 const _timers = {};            // key -> debounce timer id
+const _writes = {};            // key -> the last write queued for it (see writeKey)
 let _loaded = false;           // true only after a SUCCESSFUL GET
 let _loadPromise = null;       // shared promise, resolves once the GET settles (ok or give-up)
 
@@ -74,11 +75,26 @@ async function putNow(key, value, keepalive = false) {
   }
 }
 
-async function flushKey(key) {
-  if (!_loaded) return;
-  const value = _cache[key];
-  if (value === undefined) return;
-  if (await putNow(key, value)) _dirty.delete(key);
+// Writes of one key go out one after another, each once the one before it has
+// been answered, and each sends the value as it stands when its turn comes. So
+// an earlier write still in flight can never land after a later one, and a
+// write queued behind a newer choice sends that choice. Resolves true when the
+// value it sent was stored.
+function writeKey(key, keepalive = false) {
+  const turn = (_writes[key] || Promise.resolve()).then(async () => {
+    const value = _cache[key];
+    if (value === undefined) return false;
+    const ok = await putNow(key, value, keepalive);
+    if (ok && _loaded && _cache[key] === value) _dirty.delete(key);
+    return ok;
+  });
+  _writes[key] = turn;
+  return turn;
+}
+
+function flushKey(key) {
+  if (!_loaded) return Promise.resolve(false);
+  return writeKey(key);
 }
 
 function scheduleFlush(key) {
@@ -228,7 +244,23 @@ export function set(key, value) {
   if (_loaded) scheduleFlush(key);
 }
 
+/**
+ * Write a setting the reader chose explicitly, and send it at once rather than after the
+ * debounce, so a page opened straight afterwards is rendered with it. keepalive lets the
+ * request outlive a navigation that follows. The data-loss guard above exists for state a
+ * page sets by itself; an explicit choice is never that, so it is sent even before the
+ * initial load has settled. The key stays dirty until the load has, so the load cannot
+ * overwrite it with the value it read before the choice. It waits only for a write of the
+ * same key still in flight (writeKey).
+ */
+export function saveNow(key, value) {
+  _cache[key] = value;
+  _dirty.add(key);
+  clearTimeout(_timers[key]);
+  return writeKey(key, true);
+}
+
 // Start loading as early as possible so consumers' whenLoaded() resolves quickly.
 if (typeof window !== 'undefined') whenLoaded();
 
-export default { whenLoaded, isLoaded, get, set, snapshot };
+export default { whenLoaded, isLoaded, get, set, saveNow, snapshot };

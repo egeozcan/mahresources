@@ -85,6 +85,21 @@ describe('the panel is asked for after this modal has actually gone', () => {
         expect((dispatched[0] as any).detail.returnFocusTo).toBe(actionButton);
     });
 
+    test('the panel is told which Jobs the run started, so it can show them', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+            jobs: [
+                { entity_id: 1, job_id: 'a', canonicalJobId: 'job-a' },
+                { entity_id: 2, job_id: 'b', canonicalJobId: 'job-b' },
+            ],
+            job_ids: ['a', 'b'],
+        }), { status: 202 })));
+
+        await component.submit();
+        flushTicks();
+
+        expect((dispatched[0] as any).detail.jobIds).toEqual(['job-a', 'job-b']);
+    });
+
     test('the control: a synchronous action does not ask for the panel at all', async () => {
         // A plain result reloads the page instead, so the hand-off must not fire.
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(

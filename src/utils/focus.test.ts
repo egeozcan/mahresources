@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { focusedElement } from './focus.js';
+import { captureTrigger, focusedElement } from './focus.js';
 
 /**
  * Review remediation finding 4: a dialog opened by a keyboard shortcut has no
@@ -32,5 +32,18 @@ describe('focusedElement', () => {
 
         vi.stubGlobal('document', { activeElement: null, body: {}, documentElement: {} });
         expect(focusedElement()).toBeNull();
+    });
+});
+
+describe('captureTrigger', () => {
+    test('reports the element whose listener the event is dispatched to', () => {
+        const button = { nodeType: 1, tagName: 'BUTTON' };
+        expect(captureTrigger({ currentTarget: button })).toBe(button);
+    });
+
+    test('reports nothing for a listener on the document or the window, which cannot take focus back', () => {
+        expect(captureTrigger({ currentTarget: { nodeType: 9 } })).toBeNull();
+        expect(captureTrigger({ currentTarget: {} })).toBeNull();
+        expect(captureTrigger(null)).toBeNull();
     });
 });

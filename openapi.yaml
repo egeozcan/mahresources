@@ -867,6 +867,8 @@ components:
                     type: array
                 controlIntent:
                     type: string
+                dismissed:
+                    type: boolean
                 executionPrincipal:
                     type: string
                 expiresAt:
@@ -1167,6 +1169,8 @@ components:
                     type: integer
                 controlIntent:
                     type: string
+                dismissed:
+                    type: boolean
                 executionPrincipal:
                     type: string
                 expiresAt:

@@ -6,7 +6,7 @@
 <div class="px-4" x-data="jobBulkCommands()" data-testid="job-bulk-commands">
     <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Commands for the selected jobs">
         <template x-for="command in commands()" :key="command.key">
-            <button type="button" @click="run(command)" :aria-disabled="busy || loading"
+            <button type="button" @click="run(command)" :aria-disabled="busy || loading" :data-command-key="command.key"
                     class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed"
                     x-text="commandLabel(command)"></button>
         </template>

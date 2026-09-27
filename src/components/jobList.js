@@ -3,9 +3,10 @@ import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import {
-    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandLabel, nextStreamRetryDelay,
+    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel, nextStreamRetryDelay,
     reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
 } from './jobCenter.js';
+import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
 // After a failed refetch: long enough not to hammer a struggling server, short
@@ -339,15 +340,36 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         init() {
             this.$watch(() => this.selectionKey(), () => { void this.sync(); });
             void this.sync();
+            // A command that changes the offer takes away the button that ran it
+            // (Pin becomes Unpin), and one that empties the selection hides the
+            // whole bar. Focus goes to the button that replaced it, else Select
+            // All, which shows once nothing is selected, else the first card,
+            // else the page's main region when the list is left empty.
+            // Kept: a method called from a directive sees that element as $el.
+            this._root = this.$el || null;
+            const bar = this.$el?.closest?.('.bulk-editors');
+            this._focusKeeper = this.$el ? keepFocusWithin(this.$el, {
+                observe: bar?.parentElement || this.$el,
+                attributes: true,
+                describe: element => (element.dataset?.commandKey ? { key: element.dataset.commandKey } : null),
+                restore: ({ key }) => {
+                    const target = bulkFocusTarget(this._root, key);
+                    if (target) focusOn(target);
+                },
+            }) : null;
+        },
+
+        destroy() {
+            this._focusKeeper?.stop();
         },
 
         selectionKey() {
             const selection = this.$selection;
-            // A pin is the viewer's preference, not a change to the Job, so it moves
-            // no version: the row's pinned bit is part of the key too.
+            // A pin or a dismissal is the viewer's preference, not a change to the
+            // Job, so it moves no version: the row's bits are part of the key too.
             return [...selection.selectedIds].map(id => {
                 const entity = selection.options[id]?.entity;
-                return `${id}:${entity?.version ?? ''}:${entity?.pinned ? 1 : 0}`;
+                return `${id}:${entity?.version ?? ''}:${entity?.pinned ? 1 : 0}:${entity?.dismissed ? 1 : 0}`;
             }).join(',');
         },
 
@@ -366,7 +388,8 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             const stale = this.selectedIds().filter(id => {
                 const detail = this.details[id];
                 const entity = selection.options[id]?.entity;
-                return !detail || detail.version !== entity?.version || Boolean(detail.pinned) !== Boolean(entity?.pinned);
+                return !detail || detail.version !== entity?.version || Boolean(detail.pinned) !== Boolean(entity?.pinned) ||
+                    Boolean(detail.dismissed) !== Boolean(entity?.dismissed);
             });
             if (!stale.length) {
                 // A newer selection with nothing to read supersedes any read still
@@ -400,13 +423,13 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             // live refresh moved past its cached detail offers nothing until the
             // re-read lands, rather than a command its new state may no longer have;
             // selectedBulkCommands answers nothing when any selected Job is missing.
-            // The rendered row's pin state is current the moment the list refreshes,
-            // since a pin moves no version.
+            // The rendered row's pin and dismissal are current the moment the list
+            // refreshes, since neither moves a version.
             const jobs = ids.map(id => {
                 const detail = this.details[id];
                 const entity = options[id]?.entity;
                 if (!detail || detail.version !== entity?.version) return null;
-                return { ...detail, pinned: Boolean(entity?.pinned) };
+                return { ...detail, pinned: Boolean(entity?.pinned), dismissed: Boolean(entity?.dismissed) };
             });
             return selectedBulkCommands(jobs.filter(Boolean), ids);
         },
@@ -434,7 +457,10 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,
-                    { title: commandLabel(command), confirmLabel: commandLabel(command) },
+                    {
+                        title: commandLabel(command), confirmLabel: commandLabel(command), cancelLabel: commandDismissLabel(command),
+                        destructive: command?.destructive === true, fallbackFocus: () => bulkFocusTarget(this._root, command.key),
+                    },
                 );
                 if (!accepted) return;
                 // The dialog blocks the reader, not the live refresh: a card can leave
@@ -477,6 +503,20 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             }
         },
     };
+}
+
+// The control that stands in for a bulk command that is gone: its counterpart,
+// the same command drawn again, the first command left, else Select All (shown
+// once nothing is selected), the first card, or the page's main region.
+function bulkFocusTarget(root, key) {
+    const candidates = [
+        ...commandFocusSuccessorKeys(key).map(other => root?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
+        root?.querySelector('button[data-command-key]'),
+        ...document.querySelectorAll('[data-bulk-select-all]'),
+        document.querySelector('[data-job-id] a[href]'),
+        document.querySelector('main'),
+    ];
+    return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
 }
 
 function pad(value, width = 2) {

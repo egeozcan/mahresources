@@ -287,7 +287,7 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 		return Snapshot{}, err
 	}
 	snapshots := []Snapshot{s.snapshotFor(deps, access, job)}
-	if err := fillViewerPinState(deps.DB, access, snapshots); err != nil {
+	if err := fillViewerPreferences(deps.DB, access, snapshots); err != nil {
 		return Snapshot{}, err
 	}
 	return snapshots[0], nil

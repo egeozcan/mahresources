@@ -694,7 +694,7 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	}
 	entity, _ := json.Marshal(map[string]any{
 		"id": snapshot.ID, "title": title, "kind": snapshot.Kind, "state": snapshot.State,
-		"phase": snapshot.Phase, "version": snapshot.Version, "pinned": snapshot.Pinned,
+		"phase": snapshot.Phase, "version": snapshot.Version, "pinned": snapshot.Pinned, "dismissed": snapshot.Dismissed,
 	})
 	row.Entity = string(entity)
 	return row

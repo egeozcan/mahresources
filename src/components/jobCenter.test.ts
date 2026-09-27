@@ -5,8 +5,12 @@ import {
     advertisedCommands,
     advertisedOutputs,
     classifyJobState,
+    commandConfirmation,
+    commandConfirmOptions,
     commandEndpoint,
     commandLocation,
+    commandRefusalText,
+    mergeJobSnapshot,
     failureOutput,
     failureText,
     jobCenter,
@@ -176,7 +180,7 @@ describe('command locations', () => {
         await center.runCommand({ id: 'job-command', version: 3 } as any, inspect);
 
         expect(assign).toHaveBeenCalledWith('/admin/plugin-command-runs?id=abc');
-        expect(center._liveRegion.announce).toHaveBeenCalledWith('Opening the command history.');
+        expect(center._liveRegion.announce).toHaveBeenCalledWith('This job: Opening the command history.');
     });
 
     test('a location that leaves this site, or is not a path, is never followed', async () => {
@@ -187,6 +191,198 @@ describe('command locations', () => {
         }
         expect(commandLocation({ detail: 'not an object' })).toBe('');
         expect(commandLocation(null)).toBe('');
+    });
+});
+
+describe('Job detail commands', () => {
+    function detailCenter(detail: any, answer: (url: string, init: any) => any) {
+        const center = jobCenter();
+        center._liveRegion = { announce: vi.fn() } as any;
+        center.detail = detail;
+        center.jobs = [detail];
+        center.details[detail.id] = detail;
+        center.fetchJSON = vi.fn(async (url: string, init: any = {}) => answer(String(url), init)) as any;
+        vi.stubGlobal('Alpine', { store: () => ({ ask: vi.fn(async () => true) }) });
+        vi.stubGlobal('location', { origin: 'http://localhost', assign: vi.fn() });
+        return center;
+    }
+
+    function refusal(status: number, payload: any) {
+        const error: any = new Error(payload.error || `Request failed (${status})`);
+        error.status = status;
+        error.payload = payload;
+        return error;
+    }
+
+    const failed = {
+        id: 'job-1', title: 'photo.jpg', kind: 'remote-download', state: 'failed', version: 3,
+        commands: [
+            { key: 'retry', label: 'Retry', jobVersion: 3 },
+            { key: 'forget', label: 'Forget replay input', jobVersion: 3, destructive: true },
+            { key: 'dismiss', label: 'Dismiss', jobVersion: 3, bulk: true },
+            { key: 'undismiss', label: 'Undismiss', jobVersion: 3, bulk: true },
+        ],
+    };
+
+    test('a command that moves no version still has its controls read again', async () => {
+        const center = detailCenter({ ...failed }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'applied', message: 'replay input forgotten', job: { ...failed, commands: undefined } } }
+            : { ...failed, commands: [failed.commands[2], failed.commands[3]] });
+
+        await center.runCommand(center.detail, failed.commands[1]);
+
+        expect(center.commandsFor(center.detail).map(command => command.key)).toEqual(['dismiss']);
+        expect(center.notice).toBe('photo.jpg: replay input forgotten.');
+    });
+
+    test('a refused command says why in this Job\'s terms and reads its controls again', async () => {
+        const center = detailCenter({ ...failed }, (_url, init) => {
+            if (init.method === 'POST') throw refusal(409, { error: 'the retry lineage already has a successor', result: { code: 'chain-conflict' } });
+            return { ...failed, commands: [failed.commands[2]] };
+        });
+
+        await center.runCommand(center.detail, failed.commands[0]);
+
+        expect(center.notice).toBe('photo.jpg has already been retried. Open its latest retry instead.');
+        expect(center.commandsFor(center.detail).map(command => command.key)).toEqual(['dismiss']);
+    });
+
+    test('a second press while a command is in flight sends nothing', async () => {
+        let release = () => {};
+        let posts = 0;
+        const center = detailCenter({ ...failed, state: 'blocked', commands: [{ key: 'resume', label: 'Resume', jobVersion: 3 }] }, (_url, init) => {
+            if (init.method !== 'POST') return { ...failed };
+            posts += 1;
+            return new Promise(resolve => { release = () => resolve({ result: { status: 'succeeded', code: 'applied', message: 'queued to start again' } }); });
+        });
+        const resume = center.detail.commands[0];
+
+        const first = center.runCommand(center.detail, resume);
+        await vi.waitFor(() => expect(posts).toBe(1));
+        expect(center.commandBusy).toBe(true);
+        expect(await center.runCommand(center.detail, resume)).toBeNull();
+        release();
+        await first;
+
+        expect(posts).toBe(1);
+        expect(center.commandBusy).toBe(false);
+    });
+
+    test('a requested control\'s notice leaves once the Job moves past it, and its old phase with it', async () => {
+        const running = { id: 'job-2', title: 'big.iso', kind: 'remote-download', state: 'running', phase: 'downloading', version: 5,
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5, destructive: true, confirmation: 'Stop this download?' }] };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...running, phase: 'cancelling', controlIntent: 'cancel', version: 6 } } }
+            : { ...running, phase: 'cancelling', controlIntent: 'cancel', version: 6, commands: [] });
+
+        await center.runCommand(center.detail, running.commands[0]);
+        expect(center.noticeText).toBe('Cancel requested for big.iso.');
+        expect(center.phaseText(center.detail)).toBe('cancelling');
+
+        // The terminal snapshot leaves out the phase it no longer has.
+        const { phase: _phase, controlIntent: _intent, ...cancelled } = { ...running, state: 'cancelled', version: 7 };
+        center.applyStreamSnapshot(cancelled);
+
+        expect(center.noticeText).toBe('');
+        expect(center.phaseText(center.detail)).toBe('');
+        expect(center.detail.controlIntent).toBeUndefined();
+    });
+
+    test('a request whose answer already carries the result says the result, whatever version the reread shows', async () => {
+        const running = { id: 'job-4', title: 'big.iso', kind: 'remote-download', state: 'running', phase: 'downloading', version: 5,
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5, destructive: true, confirmation: 'Stop this download?' }] };
+        // The executor finished stopping before the service wrote its answer, so
+        // the answer and the read after it are the same cancelled version.
+        const { phase: _phase, ...cancelled } = { ...running, state: 'cancelled', version: 7 };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...cancelled, commands: undefined } } }
+            : { ...cancelled, commands: [] });
+
+        await center.runCommand(center.detail, running.commands[0]);
+
+        expect(center.noticeText).toBe('big.iso cancelled.');
+        expect(center._noticeWatch).toBeNull();
+    });
+
+    test('a request answered with its result is said as that result when an older read comes back after it', async () => {
+        const running = { id: 'job-5', title: 'big.iso', kind: 'remote-download', state: 'running', version: 5,
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5, destructive: true, confirmation: 'Stop this download?' }] };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'cancelling', job: { ...running, state: 'cancelled', version: 7, commands: undefined } } }
+            // A read that was served before the executor finished.
+            : { ...running, controlIntent: 'cancel', version: 6, commands: [] });
+
+        await center.runCommand(center.detail, running.commands[0]);
+
+        expect(center.detail.state).toBe('cancelled');
+        expect(center.noticeText).toBe('big.iso cancelled.');
+    });
+
+    test('a request the executor carried out before the reread says the result, and a pending one waits for the Job to leave its state', async () => {
+        const running = { id: 'job-3', title: 'held.iso', kind: 'remote-download', state: 'running', version: 5,
+            commands: [{ key: 'pause', label: 'Pause', jobVersion: 5, confirmation: 'Pause?' }] };
+        let reread: any = { ...running, state: 'paused', version: 7, commands: [] };
+        const center = detailCenter({ ...running }, (_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'requested', message: 'Pause requested.', job: { ...running, controlIntent: 'pause', version: 6 } } }
+            : reread);
+
+        await center.runCommand(center.detail, running.commands[0]);
+        expect(center.noticeText).toBe('held.iso paused.');
+
+        // Not yet held at the reread: the box stands until the Job leaves the
+        // state the reader acted on, not merely until a later version.
+        center.detail = { ...running };
+        reread = { ...running, controlIntent: 'pause', version: 6 };
+        await center.runCommand(center.detail, running.commands[0]);
+        expect(center.noticeText).toBe('Pause requested for held.iso.');
+        center.applyStreamSnapshot({ ...running, controlIntent: 'pause', version: 7 });
+        expect(center.noticeText).toBe('Pause requested for held.iso.');
+        center.applyStreamSnapshot({ ...running, state: 'paused', version: 8, commands: [] });
+        expect(center.noticeText).toBe('');
+    });
+
+    test('an older snapshot never rolls the page back', () => {
+        const center = detailCenter({ ...failed, version: 5 }, () => ({}));
+        center.applyStreamSnapshot({ ...failed, state: 'running', version: 4 });
+        expect(center.detail.state).toBe('failed');
+    });
+
+    test('a dismissed Job says so and offers Undismiss in place of Dismiss', () => {
+        const center = detailCenter({ ...failed, dismissed: true }, () => ({}));
+        expect(center.commandsFor(center.detail).map(command => command.key)).toEqual(['retry', 'forget', 'undismiss']);
+        expect(jobCommands({ ...failed, dismissed: false }).map(command => command.key)).toEqual(['retry', 'forget', 'dismiss']);
+        expect(readFileSync(fileURLToPath(new URL('../../templates/displayJob.tpl', import.meta.url)), 'utf8')).toContain('Dismissed by you');
+    });
+});
+
+describe('command confirmation rule', () => {
+    test('asks only for what stops work or cannot be undone, red only for what is destructive', () => {
+        for (const key of ['dismiss', 'undismiss', 'pin', 'unpin', 'pin-lineage']) expect(commandConfirmation({ key })).toBe('');
+        expect(commandConfirmation({ key: 'forget', destructive: true })).toMatch(/cannot be undone/);
+        expect(commandConfirmation({ key: 'retry', confirmation: 'Download now starts it immediately.' })).toBe('Download now starts it immediately.');
+
+        expect(commandConfirmOptions({ title: 'big.iso' }, { key: 'cancel', label: 'Cancel', destructive: true }))
+            .toEqual({ title: 'Cancel: big.iso', confirmLabel: 'Cancel', destructive: true });
+        expect(commandConfirmOptions({ title: 'later.bin' }, { key: 'retry', label: 'Download now', confirmation: 'x' }).destructive).toBe(false);
+        // Pause is asked about a download that also offers Cancel.
+        expect(commandConfirmOptions({ title: 'big.iso' }, { key: 'pause', label: 'Pause', confirmation: 'x' }).cancelLabel).toBe('Go back');
+    });
+
+    test('refusal words follow the code, and a Kind\'s own reason is said as it gave it', () => {
+        const job = { title: 'big.iso', state: 'running' };
+        const cancel = { key: 'cancel', label: 'Cancel' };
+        const refused = (payload: any) => ({ status: 409, payload });
+        expect(commandRefusalText(job, cancel, refused({ result: { code: 'refused', message: 'The target group is gone.' } }))).toBe('Cancel refused for big.iso: The target group is gone.');
+        expect(commandRefusalText(job, cancel, refused({ result: { code: 'not-advertised' } }), { state: 'succeeded' }))
+            .toBe('Cancel is no longer offered for big.iso, which is now succeeded.');
+        expect(commandRefusalText(job, cancel, refused({ result: { code: 'not-advertised' } }))).toBe('Cancel is no longer offered for big.iso.');
+        expect(commandRefusalText(job, cancel, refused({ result: { code: 'in-flight' } }))).toBe('Cancel is already being run for big.iso.');
+        expect(commandRefusalText(job, cancel, { status: 500, message: 'Request failed (500)', payload: {} })).toBe('Cancel could not be completed for big.iso: Request failed (500)');
+    });
+
+    test('a newer snapshot that leaves a field out empties it, an equal or older one does not', () => {
+        expect(mergeJobSnapshot({ version: 2, phase: 'downloading' }, { version: 3 })).toEqual({ version: 3 });
+        expect(mergeJobSnapshot({ version: 3, phase: 'downloading' }, { version: 3 })).toEqual({ version: 3, phase: 'downloading' });
     });
 });
 

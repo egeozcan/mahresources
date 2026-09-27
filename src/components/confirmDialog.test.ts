@@ -224,3 +224,54 @@ describe('focus returns to the control that opened the dialog', () => {
         expect(opener.focus).not.toHaveBeenCalled();
     });
 });
+
+describe('how the confirming button reads', () => {
+    test('is destructive unless the caller says the command destroys nothing', async () => {
+        const deletion = store.ask('Delete 3 resources?');
+        expect(store.destructive).toBe(true);
+        store.cancel();
+        await deletion;
+
+        const download = store.ask('Start this download now?', { confirmLabel: 'Download now', destructive: false });
+        expect(store.destructive).toBe(false);
+        store.cancel();
+        await download;
+
+        // A later ask starts from the default again.
+        const next = store.ask('Delete 1 note?');
+        expect(store.destructive).toBe(true);
+        store.cancel();
+        await next;
+    });
+});
+
+describe('where focus goes when the dialog closes', () => {
+    test('to the opener while it is there, else to the fallback the caller named', async () => {
+        vi.useFakeTimers();
+        const focused: string[] = [];
+        const element = (name: string, connected = true) => ({
+            name, isConnected: connected, matches: () => true,
+            focus() { focused.push(name); (globalThis.document as any).activeElement = this; },
+        });
+        const opener = element('opener');
+        const fallback = element('fallback');
+        const body = { children: [] };
+        vi.stubGlobal('document', { activeElement: opener, body, documentElement: {} });
+
+        // The opener is still there: it gets focus back.
+        store.ask('Cancel?', { fallbackFocus: () => fallback });
+        store.cancel();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(focused).toEqual(['opener']);
+
+        // A live update removed the opener while the dialog was open: the fallback.
+        focused.length = 0;
+        (globalThis.document as any).activeElement = opener;
+        store.ask('Cancel?', { fallbackFocus: () => fallback });
+        opener.isConnected = false;
+        store.accept();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(focused).toEqual(['fallback']);
+        vi.useRealTimers();
+    });
+});

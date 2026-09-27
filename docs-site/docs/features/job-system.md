@@ -252,6 +252,59 @@ announced by name if the drawer reads it later.
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
 shows the speed and time left under each running Job's bar.
 
+**Needs attention** lists only failures nobody has retried or continued
+(`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
+to watch, and a retry that fails is listed there in its own right. Known
+limit: an account that cannot write, such as a guest, is not told of a retry it
+cannot see, so a failure another account retried stays in its Needs attention.
+
+An administrator's drawer offers **My jobs** and **Everyone's**. It starts on
+**My jobs** (`owner=me`), so its badges count only the administrator's own work,
+and remembers the choice for the account (the user setting `jobsPanelScope`).
+Choices are stored in the order they are made, and the last one is carried to
+the next page opened in the same tab, which applies it and stores it again.
+Known limit: a write the page left behind still had in flight can land after
+the next page's write, and is then the stored choice.
+**Dismiss finished** dismisses what the chosen scope lists. Other accounts see
+only their own Jobs and are offered no choice.
+
+A command asks for confirmation only when it stops work or cannot be undone:
+Cancel and any other command marked destructive, a command whose Kind gives a
+confirmation (a deferred download's **Download now**), and **Forget replay
+input**. Its confirming button is red only for a destructive command. Dismiss,
+Undismiss, Pin, Unpin and Pin visible lineage run at once, because each only
+changes the viewer's own list or retention and can be reversed. A dismissed
+Job's page reads **Dismissed by you** and offers **Undismiss**, and a row
+dismissed in the drawer leaves a notice with **Undo**. **Dismiss finished**
+reaches every finished Job the viewer has not dismissed, not only the rows
+shown, so it asks first and says how many.
+
+The drawer never leaves the page it is open on, which may hold unsaved work.
+**Retry** and **Continue** leave a notice naming the new Job with a link to it,
+and a command whose answer names a page (**Inspect command history**) offers
+that page as a link. The Job's own page opens both directly. A notice names its
+Job; one for a request, such as "Cancel requested for ...", stays until the Job
+leaves the state it was in when the command was sent, and closing the drawer
+clears it. A request the executor has already carried out by the time the
+answer or the read after it arrives is said as its result ("<Job> cancelled.")
+instead. After every command, and after
+a refusal of a Job that still exists, the Job's controls are read again, so a
+control the Job no longer offers disappears. A refusal names the command and
+the Job and says why: a Kind's refusal in its own words ("Retry refused for
+<Job>: <reason>"), and the service's own in terms of the Job ("Cancel is no
+longer offered for <Job>, which is now succeeded."). While a command runs, the
+Job's controls take no second press.
+
+When a row changes group while the keyboard is on it, or a command replaces the
+control that had focus, focus stays on that row: the same control, its
+counterpart (Pin and Unpin), or the row's title. Running a plugin action opens
+the drawer with focus on the Job it started (for a run that started several, the
+newest of them the drawer lists), or, when a full group leaves that Job out,
+with a notice linking to it. On the Job's page and in the
+`/jobs` bulk bar, focus moves to the command that replaced the one pressed, else
+to the first command left; when a command empties the bulk selection, focus
+moves to **Select All**.
+
 ## CLI
 
 The plural `mr jobs` command is the canonical browsing and analytics surface:
@@ -506,7 +559,8 @@ database with separate staging roots.
 The list, detail page, and Jobs panel mark Jobs pinned by the current viewer.
 Unpin removes that viewer's preference. While anyone keeps a Job pinned, its
 metadata and events are exempt from ordinary expiry; dismissal only changes a
-person's view. Output artifacts are reauthorized when opened; holding a visible
+person's view, and Undismiss reverses it. A Job's `pinned` and `dismissed`
+fields report the asking viewer's own preferences. Output artifacts are reauthorized when opened; holding a visible
 Job does not grant an output access token.
 
 ## Related pages

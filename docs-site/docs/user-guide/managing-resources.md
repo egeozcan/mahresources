@@ -406,13 +406,18 @@ entity link such as **View resource**. Older plugin Jobs with only a result
 summary show **View result** for the entity; their Job detail page also shows
 **View JSON result** for the stored summary.
 
-A Retry creates a linked successor. Dismiss hides a finished Job from your
-view; Forget removes its stored replay input and cannot be undone. A pin keeps
-Job metadata and its event history from ordinary retention, while linked Jobs
-and output artifacts keep their own retention rules. Pinned Jobs show **Pinned
-by you** in the list, detail page, and Jobs panel; **Unpin** removes your pin.
-Administrators can see Jobs across accounts; other accounts see only work
-allowed by current scope.
+A Retry creates a linked successor. In the Jobs panel, Retry stays on the page
+you are on and offers **Open the new job**; the retried failure leaves **Needs
+attention**. Dismiss hides a finished Job from your view: in the panel the
+notice offers **Undo**, and a dismissed Job's page reads **Dismissed by you**
+and offers **Undismiss**. **Dismiss finished** asks first, saying how many Jobs
+it dismisses. Forget removes a Job's stored replay input and cannot be undone,
+so it asks for confirmation. A pin keeps Job metadata and its event history from
+ordinary retention, while linked Jobs and output artifacts keep their own
+retention rules. Pinned Jobs show **Pinned by you** in the list, detail page,
+and Jobs panel; **Unpin** removes your pin. Administrators can see Jobs across
+accounts; their Jobs panel lists **My jobs** until they choose **Everyone's**,
+and remembers the choice. Other accounts see only work allowed by current scope.
 
 Old `/downloads` links redirect to `/jobs` with recognized filters translated.
 Legacy `/v1/downloads` API routes remain available during the compatibility

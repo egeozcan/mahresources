@@ -44,7 +44,7 @@ import (
 // only the control plane can do: a viewer's own preferences, a Job's sealed
 // input, and the lineage a re-run creates.
 var hostCommandKeys = []string{
-	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat, CommandContinue,
+	CommandDismiss, CommandUndismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget, CommandRetry, CommandRepeat, CommandContinue,
 }
 
 // hostOnlyCommandKeys lists the host-executed keys whose *advertisement* the host
@@ -57,7 +57,7 @@ var hostCommandKeys = []string{
 // at all is the Kind's policy and its adapter answers it; whether the lineage and
 // the sealed input allow it right now is the host's, which narrows that answer.
 var hostOnlyCommandKeys = []string{
-	CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget,
+	CommandDismiss, CommandUndismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget,
 }
 
 // isHostCommandKey reports whether the host implements one key.
@@ -369,7 +369,11 @@ func (s *Service) hostCommands(deps Deps, access Access, job models.Job) []Comma
 
 	if access.UserID != 0 {
 		if terminal {
+			// Both, as Pin and Unpin are: each is idempotent, so a mixed
+			// selection can take either, and a detail view reads the snapshot's
+			// Dismissed bit to show the one that applies.
 			commands = append(commands, hostCommand(job, CommandDismiss, "Dismiss", false, true, ""))
+			commands = append(commands, hostCommand(job, CommandUndismiss, "Undismiss", false, true, ""))
 		}
 		// Pin remains a bulk operation for mixed selections and is idempotent for a
 		// viewer who already pinned this Job. Unpin is an idempotent bulk operation
@@ -627,7 +631,7 @@ func commandOffered(commands []Command, request CommandRequest) bool {
 // refusedResult is one command's refusal, carrying the Job as the asker may see
 // it so a caller that lost a race is shown what it lost to.
 func refusedResult(db *gorm.DB, job models.Job, request CommandRequest, code, message string, err error) (CommandResult, error) {
-	snapshot, snapshotErr := viewerSnapshotWithPin(db, request.Actor, job)
+	snapshot, snapshotErr := viewerSnapshotWithPreferences(db, request.Actor, job)
 	return CommandResult{
 		JobID: job.ID, Key: request.Key,
 		Status: CommandStatusFailed, Code: code, Message: message,
@@ -878,7 +882,7 @@ func (s *Service) replayCommandResult(deps Deps, request CommandRequest, row mod
 		SuccessorID: row.SuccessorJobID,
 	}
 	snapshots := []Snapshot{viewerSnapshot(job, request.Actor)}
-	if err := fillViewerPinState(deps.DB, request.Actor, snapshots); err != nil {
+	if err := fillViewerPreferences(deps.DB, request.Actor, snapshots); err != nil {
 		return CommandResult{}, err
 	}
 	result.Job = snapshots[0]
@@ -897,7 +901,7 @@ func (s *Service) finishSettledResult(deps Deps, request CommandRequest, result 
 		return CommandResult{}, err
 	}
 	snapshots := []Snapshot{viewerSnapshot(job, request.Actor)}
-	if err := fillViewerPinState(deps.DB, request.Actor, snapshots); err != nil {
+	if err := fillViewerPreferences(deps.DB, request.Actor, snapshots); err != nil {
 		return CommandResult{}, err
 	}
 	result.Job = snapshots[0]
@@ -976,7 +980,7 @@ func (s *Service) executeBulkEntry(ctx context.Context, deps Deps, request BulkC
 		settled.Key = request.Key
 	}
 	if settled.Job.ID == "" {
-		if snapshot, err := viewerSnapshotWithPin(deps.DB, request.Actor, job); err == nil {
+		if snapshot, err := viewerSnapshotWithPreferences(deps.DB, request.Actor, job); err == nil {
 			settled.Job = snapshot
 		}
 	}
@@ -1574,6 +1578,11 @@ func (s *Service) applyHostCommand(_ context.Context, deps Deps, request Command
 			return commandOutcome{}, err
 		}
 		return appliedOutcome("dismissed", nil), nil
+	case CommandUndismiss:
+		if err := s.SetPreference(deps, request.Actor, PreferenceRequest{JobID: job.ID, Dismissed: boolPointer(false)}); err != nil {
+			return commandOutcome{}, err
+		}
+		return appliedOutcome("undismissed", nil), nil
 	case CommandPin:
 		if err := s.SetPreference(deps, request.Actor, PreferenceRequest{JobID: job.ID, Pinned: boolPointer(true)}); err != nil {
 			return commandOutcome{}, err

@@ -1127,7 +1127,10 @@ type Snapshot struct {
 	// Pinned reports whether the viewer who requested this snapshot pinned the
 	// Job. It is a viewer preference, so executor-side transition snapshots leave
 	// it false until a reader projects the preference for a specific viewer.
-	Pinned        bool
+	Pinned bool
+	// Dismissed reports whether that viewer dismissed the Job from their default
+	// list, projected the same way as Pinned.
+	Dismissed     bool
 	Version       uint64
 	ControlIntent string
 	Failure       *Failure
@@ -1877,6 +1880,8 @@ const (
 	CommandContinue = "continue"
 	// CommandDismiss hides a Job from one viewer's default list.
 	CommandDismiss = "dismiss"
+	// CommandUndismiss returns a Job this viewer dismissed to their default list.
+	CommandUndismiss = "undismiss"
 	// CommandPin exempts a Job's metadata and events from ordinary retention for
 	// as long as any viewer keeps it pinned.
 	CommandPin = "pin"
