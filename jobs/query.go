@@ -1351,7 +1351,7 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 	if err != nil {
 		return Lineage{}, err
 	}
-	lineage := Lineage{Job: snap}
+	lineage := Lineage{Job: snap, Relations: map[string]LinkType{}}
 
 	outgoing, err := visibleLinks(deps.DB, access, "from_job_id = ?", jobID)
 	if err != nil {
@@ -1362,6 +1362,9 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 		return Lineage{}, err
 	}
 
+	for _, link := range append(append([]relativeLink(nil), outgoing...), incoming...) {
+		lineage.Relations[link.other.ID] = LinkType(link.row.Type)
+	}
 	for _, link := range outgoing {
 		switch link.row.Type {
 		case string(LinkRetryOf), string(LinkRepeatOf):

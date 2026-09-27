@@ -78,14 +78,22 @@ type JobOutputResponse struct {
 }
 
 type JobLineageResponse struct {
-	Ancestors  []JobSnapshotResponse `json:"ancestors"`
-	Successors []JobSnapshotResponse `json:"successors"`
-	Parents    []JobSnapshotResponse `json:"parents"`
-	Children   []JobSnapshotResponse `json:"children"`
+	Ancestors  []JobLineageEntryResponse `json:"ancestors"`
+	Successors []JobLineageEntryResponse `json:"successors"`
+	Parents    []JobLineageEntryResponse `json:"parents"`
+	Children   []JobLineageEntryResponse `json:"children"`
 	// RetriedElsewhere reports a Retry or Continue successor the caller cannot
 	// see, which is why the Job no longer offers Retry. The successor stays hidden,
 	// and a caller who cannot write is never told.
 	RetriedElsewhere bool `json:"retriedElsewhere,omitempty"`
+}
+
+// JobLineageEntryResponse is one related Job and the link that relates it:
+// retry-of (a Retry, or a Continue of a partial success), repeat-of, or
+// parent-child.
+type JobLineageEntryResponse struct {
+	JobSnapshotResponse
+	Relation jobs.LinkType `json:"relation,omitempty"`
 }
 
 type JobDetailResponse struct {
@@ -200,10 +208,13 @@ func jobOutputResponse(jobID, jobKind string, output jobs.Output) JobOutputRespo
 }
 
 func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {
-	convert := func(snapshots []jobs.Snapshot) []JobSnapshotResponse {
-		out := make([]JobSnapshotResponse, 0, len(snapshots))
+	convert := func(snapshots []jobs.Snapshot) []JobLineageEntryResponse {
+		out := make([]JobLineageEntryResponse, 0, len(snapshots))
 		for _, snapshot := range snapshots {
-			out = append(out, jobSnapshotResponse(snapshot))
+			out = append(out, JobLineageEntryResponse{
+				JobSnapshotResponse: jobSnapshotResponse(snapshot),
+				Relation:            lineage.Relations[snapshot.ID],
+			})
 		}
 		return out
 	}

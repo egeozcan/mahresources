@@ -1904,6 +1904,62 @@ func TestLineageNamesOnlyVisibleRelatives(t *testing.T) {
 	}
 }
 
+// TestLineageSaysHowEachRelativeIsRelated: a retry chain lists Jobs of one title,
+// so each relative carries the link that relates it — a Retry and a Repeat read
+// differently — and a hidden relative's link is not named either.
+func TestLineageSaysHowEachRelativeIsRelated(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	accept := func(title string, class VisibilityClass) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	retried := accept("download", "")
+	repeated := accept("download", VisibilityAdmin)
+	job := accept("download", "")
+	child := accept("stage", "")
+	for _, link := range []LinkRequest{
+		{Type: LinkRetryOf, FromJobID: job.ID, ToJobID: retried.ID},
+		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: repeated.ID},
+		{Type: LinkParentChild, FromJobID: job.ID, ToJobID: child.ID},
+	} {
+		if err := svc.Link(deps, link); err != nil {
+			t.Fatalf("link %+v: %v", link, err)
+		}
+	}
+
+	lineage, err := svc.Lineage(deps, Access{UserID: 7}, job.ID)
+	if err != nil {
+		t.Fatalf("Lineage: %v", err)
+	}
+	if got := lineage.Relations[retried.ID]; got != LinkRetryOf {
+		t.Fatalf("the retried Job is related by %q, want %q", got, LinkRetryOf)
+	}
+	if got := lineage.Relations[child.ID]; got != LinkParentChild {
+		t.Fatalf("the child stage is related by %q, want %q", got, LinkParentChild)
+	}
+	if _, named := lineage.Relations[repeated.ID]; named || len(lineage.Relations) != 2 {
+		t.Fatalf("relations %v name a relative the viewer cannot see", lineage.Relations)
+	}
+	admin, err := svc.Lineage(deps, Access{UserID: 1, Administrator: true}, job.ID)
+	if err != nil {
+		t.Fatalf("Lineage as an administrator: %v", err)
+	}
+	if got := admin.Relations[repeated.ID]; got != LinkRepeatOf {
+		t.Fatalf("the repeated Job is related by %q, want %q", got, LinkRepeatOf)
+	}
+	successor, err := svc.Lineage(deps, Access{UserID: 7}, retried.ID)
+	if err != nil {
+		t.Fatalf("Lineage of the retried Job: %v", err)
+	}
+	if got := successor.Relations[job.ID]; got != LinkRetryOf {
+		t.Fatalf("the Retry is related to the Job it retried by %q, want %q", got, LinkRetryOf)
+	}
+}
+
 func idsOf(snapshots []Snapshot) []string {
 	ids := make([]string, 0, len(snapshots))
 	for _, snap := range snapshots {
