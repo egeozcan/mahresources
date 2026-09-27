@@ -151,7 +151,10 @@ its outcome is announced even though the drawer never showed it running. A Job
 whose outcome the live stream had already published when the page connected,
 or published while the stream was reconnecting, is shown but not announced. The
 stream publishes about every two seconds, so an outcome from the moment before
-a page connected can still be announced.
+a page connected can still be announced. The drawer keeps track of at most
+1,000 Jobs whose outcome arrived before it could read them; past that, the rest
+are announced together as a count ("12 more jobs finished or need attention;
+see the Jobs panel.").
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
 shows the speed and time left under each running Job's bar.

@@ -1083,7 +1083,7 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('conflict.bin failed. This job changed. The latest details are shown.');
     });
 
-    test('a live event\'s proof does not outlive a disconnect', async () => {
+    test('across a disconnect a live event\'s proof covers only its own version', async () => {
         const queued = { id: 'dl-23', title: 'replayed.bin', kind: 'remote-download', state: 'queued', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([queued]);
         panel.lastSequence = 10;
@@ -1529,20 +1529,90 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('retried.bin failed.');
     });
 
-    test('proofs no read took are kept until a refresh has read, then dropped to the ledger\'s size', async () => {
+    test('a read that leaves a job out keeps its proof, and the read that first lists it says the outcome', async () => {
+        const failed = { id: 'dl-52', title: 'paged-out.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T09:00:00Z' };
         const panel = refreshingPanel([]);
         panel.lastSequence = 10;
         showHeard(panel, []);
 
+        await deliverLive(panel, 'dl-52', fastLife, 11);
+        // Newer failures fill the Needs attention page, so this read succeeds
+        // without the job.
+        await panel.refresh();
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        // More events than the store holds follow, from other jobs.
         await otherJobsBurst(panel, 1500, 20);
-        expect(panel._liveVersions.size).toBe(1500);
-        expect(panel._liveVersions.has('other-20')).toBe(true);
+        expect(panel._liveVersions.has('dl-52')).toBe(true);
 
+        // The newer failures are dismissed, and the job moves up into the page.
+        panel.requestJSON = refreshingPanel([failed]).requestJSON;
         await panel.refresh();
 
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('paged-out.bin failed.');
+    });
+
+    test('a full proof store drops a proof that is not an outcome before an unread outcome', async () => {
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-54', [['failed', 3]], 11);
+        await otherJobsBurst(panel, 1500, 20);
+
         expect(panel._liveVersions.size).toBe(1000);
-        expect(panel._liveVersions.has('other-20')).toBe(false);
-        expect(panel._liveVersions.has('other-1519')).toBe(true);
+        expect(panel._liveVersions.has('dl-54')).toBe(true);
+    });
+
+    test('outcomes the proof store cannot keep while reads keep failing are said once, as a count', async () => {
+        vi.useFakeTimers();
+        const panel = refreshingPanel([]);
+        panel.requestJSON = vi.fn(async () => { throw new Error('Request failed (503)'); });
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        for (let index = 0; index < 1500; index++) {
+            await deliverLive(panel, `lost-${index}`, [['failed', 3]], 20 + index);
+            if (index % 500 === 499) await panel.refresh();
+            expect(panel._liveVersions.size).toBeLessThanOrEqual(1000);
+        }
+        expect(panel.error).toBe('Request failed (503)');
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['500 more jobs finished or need attention; see the Jobs panel.']);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('an outcome delivered live just before a disconnect is said by the first read after the reconnect', async () => {
+        const failed = { id: 'dl-53', title: 'dropped.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-53', fastLife, 11);
+        panel.dropStream();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('dropped.bin failed.');
+    });
+
+    test('a job accepted live that failed while disconnected is history after the reconnect', async () => {
+        const failed = { id: 'dl-55', title: 'meanwhile.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-55', [['accepted', 1]], 11);
+        panel.dropStream();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        expect(panel._liveVersions.has('dl-55')).toBe(false);
     });
 
     test('a read that began before catch-up withholds a first-seen outcome for its live event', async () => {
