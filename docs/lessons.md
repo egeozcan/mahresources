@@ -2145,3 +2145,12 @@ where the review's own record lives.
 - A security fix needs a scope rule before its review loop, or each round lists the next surface. Redaction of plugin secrets went 8 findings, then 3, once the rule was fixed: the Job plane and the host's own error logs, not a plugin's deliberate output to its caller.
 - A test fixture that re-executes the test binary runs `TestMain` again. Under the `postgres` tag each command child started its own container, and the tests timed out only when other lanes kept Docker busy, which looked like a leak between tests.
 - Changing a shared rule breaks other lanes' tests at integration, not in the lane that changed it. A `/jobs` redirect, "another boot is Unknown" and `BEGIN IMMEDIATE` each broke tests written against the old behaviour; grep the other lanes for the old assumption before merging.
+
+## Jobs QA remediation, batch 3 — 2026-09-28
+
+- A lane reads the coordinator's messages only between its own turns, so a lane inside long runs acts before it hears. Three decisions reached b3-flakes after it had done the opposite. Restate the whole decision in every message, and when a lane has already acted, adjust the plan to its work instead of reversing it.
+- Caching by version is wrong for anything the version does not cover. Pins and Forget moved no Job version, and b3-stream's detail cache drew one finding of that class in each of four review rounds. Decide at the start what else invalidates a cache, and route every read through that rule.
+- Prefer a rule on the server's clock to a rule on what the page has seen. Refreshing lists for downloads the page had seen finish had three holes (a finish just before render, a finish during a stream outage, eviction of the evidence); comparing the finish time to the render time has none that matter.
+- When two lanes share an interface, let the consumer build against a marked stand-in in its own commit. The merge deleted the stand-in and kept everything else without judgment calls.
+- A reviewer of one lane keeps finding faults in code another lane is replacing. Say up front that such findings are declined as superseded, and check them after the merge instead.
+- A test that claims Jobs by hand must run on a harness without a dispatch loop. Eight tests did not, and the loop took their Job first under load.

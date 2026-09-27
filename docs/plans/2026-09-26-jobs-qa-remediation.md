@@ -111,3 +111,39 @@ Routed to batch 3:
 - Dispatch-time give-back on a failed account read.
 - A readiness blocker for the legacy rows above.
 - The admin Mine/Everyone drawer, with an owner-filtered stream.
+
+### Batch 3 (merged 2026-09-28)
+
+All 21 issues are fixed; U2 had been fixed in batch 2 and was verified. A fourth lane,
+b3-flakes, took the recurring test flakes and found one of them to be a product race.
+Counts are P0 plus P1 per review round.
+
+| Lane | Outcome | pi rounds |
+|---|---|---|
+| b3-stream | L1: the canonical stream takes `start=head` and a page load replays nothing (2,091 events and 504 KB before, on a 600-Job instance). L2: the drawer reads details only while it is open and only for rows that changed; a page load with the drawer closed went from 6 list and 120 detail requests to 3 and 0. L3: every Job page reopens a stream the browser closed, backing off from 1 s to 30 s, and a 401 says the session ended. L4: a failed read keeps its rows, says so and retries. L5: lists order by state entry, one indexed seek per state; group reads at 1M Jobs on SQLite went from 16–307 ms to under 1.3 ms. L6: capped groups and badges read "50+" and link to the rest. L9: dismiss, pin and forget reach the viewer's other tabs. The stream takes `owner=me`. | 2, 3, 2, 2, 0 |
+| b3-drawer-ux | U3: controls are read again after every command, a running command takes no second press, and a refusal names the command and the Job. U4: a new `undismiss` command undoes a dismissal, and Dismiss finished says how many Jobs and whose. U5 and U6: the drawer links instead of navigating, and focuses the Job a plugin action started. U7: Needs attention leaves out a failure someone retried. U12: a notice names its Job, and a "requested" notice lasts until the Job leaves the state it was in. U13: only a command that stops work or cannot be undone asks first. X3: focus stays on the row or control through re-renders. X4 and X6. An administrator's drawer lists their own Jobs or everyone's, remembered per account. An announcement is kept until a live region has spoken it. | 2, 3, 6, 2, 3, 1, 0 |
+| b3-states | U1: a person's pause is the real `paused` state. It reaches the process running the transfer as a recorded intent, is confirmed only by the Job's own answer, and survives the loss of that process. S3: Go and JS read one state table; scheduled work says when it starts, and only running work reads as working. J3: progress shows only for a report. J7: the drawer's last group is "Finished, no attention needed". A dispatch whose account read fails gives the Job back to the queue, and one that finds the account deleted fails it. Migration readiness lists unfinished legacy Jobs that may belong to a deleted account, as a warning. | 2, 2, 2, 1, 0 |
+| b3-flakes | The recurring inline tag editor flake was a product race: the drawer told the page to refresh its resource lists for downloads that had finished before the page loaded, and the refresh removed an open editor (37 of 40 probe runs). The lists now refresh only for downloads that finished after the page was rendered, by the server's clock. Eleven test flakes are fixed at their causes, each with measured rates; three did not reproduce. It also found that dispatch blocked a Job whose account was deleted after its claim, which b3-states fixed. | 3, 3, 1, 0, 0 |
+
+Three lanes rewrote parts of `jobPanel.js`. The merge kept b3-stream's reads and stream,
+b3-drawer-ux's commands, notices and focus, and b3-states' state table; b3-drawer-ux had
+written its owner-scope code against a marked stand-in of b3-stream's interface, which the
+merge deleted. One test failed at integration: b3-stream's cross-tab test clicked a
+Dismiss confirmation that b3-drawer-ux had removed. The final gates ran after local
+midnight, and two suites failed that fail the same way on master at that hour: the Project
+Management overdue test and the `mr ... timeline` doctests. Both passed in every run before
+midnight, the three-lane merge's included.
+
+Known limits carried forward:
+- Clock skew between two processes can miss, or add, one resource-list refresh around a page load.
+- A read-only account whose failed Job an administrator retried still sees it under Needs attention, because it is not told of a retry it cannot see.
+- Changing Mine and Everyone several times and navigating at once can store the choice before the last.
+- During a rolling upgrade, a pause of a download an older process runs reads "Pausing" until the transfer ends; Cancel still works.
+- A legacy pause answers 409 when the hold has not settled within 5 s; asking again is safe.
+
+Routed to batch 4:
+- An administrator's Retry of another account's failed Job leaves the owner's open drawer stale until its next list read.
+- A download that finishes outside the drawer's capped finished group triggers no list refresh by itself.
+- An `owner=me` stream re-reads other accounts' events on every poll.
+- The drawer orders scheduled Jobs by when they were scheduled, not by when they start, and does not show why a Job is blocked.
+- Between local midnight and UTC midnight, the Project Management overdue test and the CLI timeline doctests fail on master: dates are compared across the two calendars.
