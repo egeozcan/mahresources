@@ -87,7 +87,9 @@ An owner may inspect their Jobs, subject to the Kind's visibility rule. Admin
 visibility and resource scope are checked on every read. Ownership grants
 visibility, not permanent authority: each command and output access rechecks
 current role, scope, plugin permission, and Kind policy. A filter for another
-owner or actor never grants access to that person's Jobs.
+owner or actor never grants access to that person's Jobs. Every command is a
+write, so a guest sees its own Jobs and is offered no command on them, including
+Pin, Dismiss and Forget.
 
 The Job event streams apply the same rule for as long as they stay open. The
 canonical stream checks the connection's session or API token again on every

@@ -667,6 +667,11 @@ func pageSize(limit int) (int, error) {
 // must answer this database query contract before command-filter reads are
 // enabled.
 func (s *Service) applyCommandFilter(base *gorm.DB, deps Deps, access Access, key string) (*gorm.DB, error) {
+	if access.ReadOnly {
+		// advertisedCommands offers a read-only principal nothing, so nothing
+		// matches a filter on what it is offered.
+		return base.Where("1 = 0"), nil
+	}
 	if query, handled, err := s.applyHostOnlyCommandFilter(base, deps, access, key); handled || err != nil {
 		return query, err
 	}

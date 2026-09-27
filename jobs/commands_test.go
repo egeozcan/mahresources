@@ -2097,3 +2097,42 @@ func TestAControlIntentIsRecheckedInsideItsTransaction(t *testing.T) {
 		t.Fatalf("the Job moved to %s under token %q", row.State, row.ExecutionToken)
 	}
 }
+
+// A viewer whose role may not write is refused every command at the HTTP gate, so
+// a Job offers it none: not the adapter's, and not the host's own preference and
+// forget commands, which are writes like any other. The command filter answers
+// the same way, so a list cannot advertise what the detail withholds.
+func TestAReadOnlyViewerIsOfferedNoCommand(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	h.advertiseStateful()
+
+	running := h.acceptReplayable(&owner)
+	h.claim(running.ID)
+	failed := h.acceptReplayable(&owner)
+	h.fail(failed.ID)
+
+	writer := Access{UserID: owner}
+	requireCommandKeys(t, "a finished job, to its owner", h.advertise(failed.ID, writer),
+		CommandRetry, "inspect", CommandDismiss, CommandPin, CommandUnpin, CommandPinLineage, CommandForget)
+
+	readOnly := Access{UserID: owner, ReadOnly: true}
+	requireCommandKeys(t, "a running job, to a read-only owner", h.advertise(running.ID, readOnly))
+	requireCommandKeys(t, "a finished job, to a read-only owner", h.advertise(failed.ID, readOnly))
+
+	for _, key := range []string{CommandDismiss, CommandPin, CommandForget, CommandRetry, CommandCancel} {
+		page, err := h.svc.List(h.deps, readOnly, Filter{Command: key}, Cursor{}, 0)
+		if err != nil {
+			t.Fatalf("list command=%s for a read-only viewer: %v", key, err)
+		}
+		if len(page.Jobs) != 0 {
+			t.Fatalf("command=%s lists %d jobs to a read-only viewer, who is offered none", key, len(page.Jobs))
+		}
+	}
+
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(failed.ID, CommandDismiss, "read-only-dismiss", readOnly))
+	if !errors.Is(err, ErrCommandNotAdvertised) || result.Code != CommandCodeNotAdvertised {
+		t.Fatalf("a read-only dismissal = %#v, %v; want not-advertised", result, err)
+	}
+}

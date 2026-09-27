@@ -107,7 +107,10 @@ func (ctx *MahresourcesContext) JobService() *jobs.Service {
 	return ctx.jobService
 }
 
-// jobAccess is the asking principal as the visibility predicate needs it.
+// jobAccess is the asking principal as the visibility predicate and the command
+// surface need it. ReadOnly is Principal.CanWrite, the predicate the HTTP layer's
+// capWrite gate answers every command route with, so what a Job offers and what
+// the route accepts are one answer.
 //
 // A context with no principal is the implicit administrator, which is the
 // no-auth rule every other surface follows: authentication is opt-in, and with it
@@ -116,7 +119,7 @@ func (ctx *MahresourcesContext) JobService() *jobs.Service {
 // where it opens a Job it owns.
 func (ctx *MahresourcesContext) jobAccess() jobs.Access {
 	principal := ctx.Principal()
-	return jobs.Access{UserID: principal.UserID, Administrator: principal.IsAdmin()}
+	return jobs.Access{UserID: principal.UserID, Administrator: principal.IsAdmin(), ReadOnly: !principal.CanWrite()}
 }
 
 // ListJobs returns one bounded page of the Jobs this context's principal may see.

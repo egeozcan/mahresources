@@ -124,6 +124,12 @@ func loadVisibleJob(db *gorm.DB, access Access, jobID string) (models.Job, error
 // what the work supports either. The host's own bookkeeping is unaffected — none
 // of it needs an executor.
 func (s *Service) advertisedCommands(ctx context.Context, deps Deps, access Access, job models.Job) ([]Command, error) {
+	if access.ReadOnly {
+		// Every command is a write, the host's preference commands included: a pin
+		// exempts the Job's history from retention for everybody. What a read-only
+		// principal is offered is therefore what it may run, which is nothing.
+		return []Command{}, nil
+	}
 	commands := make([]Command, 0, 8)
 	seen := make(map[string]bool, 8)
 

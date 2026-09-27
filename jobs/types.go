@@ -603,9 +603,17 @@ func (d Deps) now() time.Time {
 // Access is the asking principal as the visibility predicate needs it: an
 // administrator sees everything, everybody else sees Jobs they own under the
 // public visibility class.
+//
+// ReadOnly marks a principal whose role may not write at all, a guest. It
+// narrows no read: it is what the command surface answers from, because every
+// command is a write the HTTP layer refuses such a principal, and a control
+// offered to someone whose only outcome is that refusal is not a control. The
+// zero value is a principal that may write, which is what every internal caller
+// acting as the host means.
 type Access struct {
 	UserID        uint
 	Administrator bool
+	ReadOnly      bool
 }
 
 // Filter selects the Jobs one visible listing, summary or event scan returns.
