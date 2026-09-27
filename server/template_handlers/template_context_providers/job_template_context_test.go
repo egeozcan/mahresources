@@ -496,14 +496,16 @@ func TestTheOwnerSelectAsksForOneOwnerChoice(t *testing.T) {
 		want   func(jobs.Filter) bool
 		shown  string
 	}{
-		{"/jobs?owner=me", func(f jobs.Filter) bool { return f.OwnedByViewer && f.OwnerID == nil && !f.OwnerDeleted }, "me"},
-		{"/jobs?owner=deleted", func(f jobs.Filter) bool { return f.OwnerDeleted && f.OwnerID == nil && !f.OwnedByViewer }, "deleted"},
-		{"/jobs?owner=7", func(f jobs.Filter) bool {
+		{"/jobs?owner=me&dismissed=false", func(f jobs.Filter) bool { return f.OwnedByViewer && f.OwnerID == nil && !f.OwnerDeleted }, "me"},
+		{"/jobs?owner=deleted&dismissed=false", func(f jobs.Filter) bool { return f.OwnerDeleted && f.OwnerID == nil && !f.OwnedByViewer }, "deleted"},
+		{"/jobs?owner=7&dismissed=false", func(f jobs.Filter) bool {
 			return f.OwnerID != nil && *f.OwnerID == 7 && !f.OwnerDeleted && !f.OwnedByViewer
 		}, "7"},
-		{"/jobs?ownerDeleted=true", func(f jobs.Filter) bool { return f.OwnerDeleted }, "deleted"},
-		{"/jobs?ownerId=7", func(f jobs.Filter) bool { return f.OwnerID != nil && *f.OwnerID == 7 }, "7"},
+		{"/jobs?ownerDeleted=true&dismissed=false", func(f jobs.Filter) bool { return f.OwnerDeleted }, "deleted"},
+		{"/jobs?ownerId=7&dismissed=false", func(f jobs.Filter) bool { return f.OwnerID != nil && *f.OwnerID == 7 }, "7"},
 	}
+	// Each address names the dismissed filter, as the page's own links do: a bare
+	// /jobs redirects to that default before anything is listed.
 	for _, c := range cases {
 		reader := &fakeJobListReader{}
 		ctx := renderJobList(t, reader, c.target)
