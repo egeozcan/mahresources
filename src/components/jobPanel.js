@@ -1054,7 +1054,14 @@ export function jobPanel() {
         // server's, so the rule holds whenever and however the drawer first sees
         // the download: a read before or after the stream's catch-up, after a
         // reconnect, or in a command's answer. A page that does not say when it
-        // was rendered refreshes for nothing, since it cannot tell.
+        // was rendered refreshes for nothing, since it cannot tell. The render
+        // time is read once, at init: a list morphed in later carries no head,
+        // and the page's head does not change.
+        // Known limit: the two times can come from different processes. With a
+        // skew of d between their clocks, a download finishing within d of the
+        // render is misread: refreshed for although the page lists it, or not
+        // refreshed for although it does not (its resource then appears on the
+        // next load). Widening the comparison moves the error to the other side.
         trackResourceCompletion(job) {
             if (!job?.id || job.state !== 'succeeded' ||
                 (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||
