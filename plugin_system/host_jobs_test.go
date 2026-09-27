@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -482,6 +483,11 @@ func TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone(t *testing.T) {
 	}
 	if current.Nonce == "" {
 		t.Fatal("the current runtime identity carries no nonce")
+	}
+	// A nonce equal by chance would read a dead predecessor as this process
+	// forever, so it carries 128 random bits (base64url, 22 characters).
+	if raw, err := base64.RawURLEncoding.DecodeString(current.Nonce); err != nil || len(raw) < 16 {
+		t.Fatalf("nonce %q carries %d random bytes (err %v), want at least 16", current.Nonce, len(raw), err)
 	}
 	if again := CurrentRuntimeIdentity(); again != current {
 		t.Fatalf("the nonce changed within one process: %+v then %+v", current, again)

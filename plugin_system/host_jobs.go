@@ -2,7 +2,7 @@ package plugin_system
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -222,8 +222,8 @@ var (
 
 // MaxRuntimeHostBytes bounds the recorded hostname so the whole identity fits a
 // Job claimant (jobs.MaxClaimantBytes, 120 bytes) with a 36-byte boot session,
-// a 10-digit pid namespace inode, a 7-digit pid and the nonce.
-const MaxRuntimeHostBytes = 48
+// a 7-digit pid, the 22-character nonce and a 10-digit pid namespace inode.
+const MaxRuntimeHostBytes = 40
 
 // runtimeHost cuts a hostname to the recorded bound. Two hosts that differ only
 // past it compare equal and are then told apart by their boot session.
@@ -234,12 +234,14 @@ func runtimeHost(name string) string {
 	return name
 }
 
-// processNonce is this process's nonce: 32 random bits, enough to tell apart the
-// few processes that can hold one pid in one pid namespace of one boot.
+// processNonce is this process's nonce: 128 random bits, base64url so it holds
+// no "/". A predecessor that held this pid in this pid namespace carries
+// another, and two that match by chance would read a dead process as this one,
+// so the size is what makes that a residual rather than a case.
 var processNonce = func() string {
-	var raw [4]byte
+	var raw [16]byte
 	_, _ = rand.Read(raw[:])
-	return hex.EncodeToString(raw[:])
+	return base64.RawURLEncoding.EncodeToString(raw[:])
 }()
 
 // CurrentRuntimeIdentity names this process.
