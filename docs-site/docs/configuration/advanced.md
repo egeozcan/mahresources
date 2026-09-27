@@ -293,7 +293,8 @@ During rollout, an administrator can inspect the current barrier through
 `GET /v1/admin/jobs/migration-readiness`. The response's `ready` field is true
 only when the migration barrier is satisfied; `writerEpoch` reports the
 database minimum, `phase` reports the current migration phase, `sourceCounts`
-reports per-source counts, and `blockers` lists remaining conditions. The
+reports per-source counts, `blockers` lists remaining conditions, and
+`reviewCandidates` lists unfinished Jobs to review (see the next section). The
 endpoint is read-only and requires an administrator role. Check readiness
 before admitting traffic after an epoch advance, and investigate every blocker
 before proceeding.
@@ -323,6 +324,13 @@ WHERE state IN ('scheduled', 'queued', 'running', 'paused', 'blocked')
   AND owner_user_id IS NULL AND actor_user_id IS NULL
   AND owner_deleted = false AND actor_deleted = false;
 ```
+
+The server finds the same rows itself. The readiness check reports them as
+`reviewCandidates` (their count, and the oldest 100 by id, Kind, state and
+acceptance time), and each start logs a warning naming them while any remain.
+They do not make `ready` false and do not stop the server from starting,
+because the row cannot tell them apart from legitimate work, and cancelling one
+needs a running server.
 
 A row here either belongs to an account deleted before this release or was
 started with no account at all, such as plugin work that no request started;

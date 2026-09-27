@@ -728,6 +728,7 @@ func main() {
 			fail("%v", err)
 			return
 		}
+		warnJobPrincipalReviewCandidates(readiness.ReviewCandidates)
 	}
 	// Deferred download rows still open behind a Job that already ended: one an
 	// earlier release cancelled before it ran, or one retention has deleted. A

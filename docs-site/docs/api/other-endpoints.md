@@ -35,11 +35,15 @@ independently of the canonical Job Center release gate.
 
 | Method | Endpoint | Behavior |
 |--------|----------|----------|
-| `GET` | `/v1/admin/jobs/migration-readiness` | Return whether the migration barrier is ready, the minimum writer epoch, current phase, source counts, and blockers; requires an administrator |
+| `GET` | `/v1/admin/jobs/migration-readiness` | Return whether the migration barrier is ready, the minimum writer epoch, current phase, source counts, blockers, and the unfinished Jobs to review; requires an administrator |
 
 The JSON response contains `ready` (boolean), `writerEpoch` (integer), `phase`
-(string), `sourceCounts` (source name to count), and `blockers` (array of
-strings). The route does not change migration state. Recheck it after restoring
+(string), `sourceCounts` (source kind to mapping status to count), `blockers`
+(blocker code to count), and `reviewCandidates`: `count`, and `jobs`, the
+oldest 100 as `id`, `kind`, `state` and `acceptedAt`. A review candidate is an
+unfinished Job that may belong to an account deleted before this release (see
+[Advanced Configuration](../configuration/advanced.md#unfinished-jobs-of-accounts-deleted-before-this-release));
+candidates do not make `ready` false. The route does not change migration state. Recheck it after restoring
 a pre-retirement backup; a completion marker from the original database does
 not establish readiness for the restored copy. A `403` means the caller is not
 an administrator.

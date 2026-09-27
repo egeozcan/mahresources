@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 
@@ -27,5 +29,32 @@ func TestJobCenterCutoverRequiresRetirementAndCompleteKinds(t *testing.T) {
 	}
 	if err := validateJobCenterCutover(jobs.NewService(), application_context.JobMigrationReadiness{Ready: true}); err == nil {
 		t.Fatal("missing Kind inventory was admitted")
+	}
+}
+
+// The review list is said at startup, naming the Jobs, and nothing is said when it
+// is empty.
+func TestStartupNamesTheJobsToReviewAndOnlyThem(t *testing.T) {
+	var buffer bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&buffer)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	warnJobPrincipalReviewCandidates(application_context.JobReviewCandidates{})
+	if buffer.Len() != 0 {
+		t.Fatalf("an empty review list logged %q", buffer.String())
+	}
+	warnJobPrincipalReviewCandidates(application_context.JobReviewCandidates{
+		Count: 3,
+		Jobs: []application_context.JobReviewCandidate{
+			{ID: "job-a", Kind: "remote-download", State: "queued"},
+			{ID: "job-b", Kind: "plugin-action", State: "blocked"},
+		},
+	})
+	said := buffer.String()
+	for _, want := range []string{"WARNING: 3 unfinished Job(s)", "job-a (remote-download, queued)", "job-b (plugin-action, blocked)", "and 1 more", "reviewCandidates"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("the startup warning %q does not say %q", said, want)
+		}
 	}
 }

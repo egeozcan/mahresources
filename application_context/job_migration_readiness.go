@@ -25,6 +25,71 @@ type JobMigrationReadiness struct {
 	Phase        string                      `json:"phase"`
 	SourceCounts map[string]map[string]int64 `json:"sourceCounts"`
 	Blockers     map[string]int64            `json:"blockers"`
+	// ReviewCandidates lists the unfinished Jobs an operator should look at
+	// before admitting traffic, without closing the gate (see
+	// jobPrincipalReviewCandidates).
+	ReviewCandidates JobReviewCandidates `json:"reviewCandidates"`
+}
+
+// JobReviewCandidates is how many unfinished Jobs may run as the host because
+// the account they belonged to was deleted before deletion marks existed, and
+// the oldest of them. A Job is named by its id, Kind, state and acceptance time:
+// enough to find it (mr job get) and nothing from its input or its title.
+type JobReviewCandidates struct {
+	Count int64                `json:"count"`
+	Jobs  []JobReviewCandidate `json:"jobs"`
+}
+
+// JobReviewCandidate is one Job in that list.
+type JobReviewCandidate struct {
+	ID         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	State      string    `json:"state"`
+	AcceptedAt time.Time `json:"acceptedAt"`
+}
+
+// jobReviewCandidateLimit bounds how many candidates the report names.
+const jobReviewCandidateLimit = 100
+
+// jobPrincipalReviewCandidates finds the unfinished Jobs an earlier release wrote
+// before Jobs recorded which principal they act as, whose owner and actor are both
+// empty and carry no deletion mark. Such a Job runs as the host. The row cannot say
+// whether that is what it was accepted for (plugin work no request started, an
+// actorless command run, a download under -auth off) or what is left of a deleted
+// account's work, whose references that release cleared without marking them.
+//
+// It is a list for review rather than a blocker. Readiness gates startup, so a
+// blocker would refuse to start a server whose only such Jobs are legitimate, and
+// the remedy the operator procedure gives, cancelling one, needs a running server.
+// The list only shrinks: every Job this release accepts records its principal.
+func jobPrincipalReviewCandidates(tx *gorm.DB) (JobReviewCandidates, error) {
+	query := func() *gorm.DB {
+		return tx.Model(&models.Job{}).
+			Where("state IN ?", []string{
+				string(jobs.StateScheduled), string(jobs.StateQueued), string(jobs.StateRunning),
+				string(jobs.StatePaused), string(jobs.StateBlocked),
+			}).
+			Where("COALESCE(execution_principal, '') = ''").
+			Where("owner_user_id IS NULL AND actor_user_id IS NULL").
+			Where("owner_deleted = ? AND actor_deleted = ?", false, false)
+	}
+	var review JobReviewCandidates
+	if err := query().Count(&review.Count).Error; err != nil {
+		return review, err
+	}
+	review.Jobs = []JobReviewCandidate{}
+	if review.Count == 0 {
+		return review, nil
+	}
+	var rows []models.Job
+	if err := query().Select("id", "kind", "state", "accepted_at").
+		Order("accepted_at ASC, id ASC").Limit(jobReviewCandidateLimit).Find(&rows).Error; err != nil {
+		return review, err
+	}
+	for _, row := range rows {
+		review.Jobs = append(review.Jobs, JobReviewCandidate{ID: row.ID, Kind: row.Kind, State: row.State, AcceptedAt: row.AcceptedAt.UTC()})
+	}
+	return review, nil
 }
 
 // GetJobMigrationReadiness recomputes the retirement gate from the current
@@ -39,6 +104,7 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 	var report JobMigrationReadiness
 	report.SourceCounts = make(map[string]map[string]int64, len(jobMigrationSourceKinds))
 	report.Blockers = make(map[string]int64)
+	report.ReviewCandidates.Jobs = []JobReviewCandidate{}
 	report.Phase = models.JobMigrationPhaseCopy
 	for _, required := range []any{
 		&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{},
@@ -199,6 +265,12 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 			}
 			cursor = canonicalOnly[len(canonicalOnly)-1].ID
 		}
+
+		review, err := jobPrincipalReviewCandidates(tx)
+		if err != nil {
+			return errors.New("job principal review candidates could not be read")
+		}
+		report.ReviewCandidates = review
 		return nil
 	}, models.ReadOnlyTxOptions(ctx.db)...); err != nil {
 		return report, err
