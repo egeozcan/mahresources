@@ -72,7 +72,8 @@ test.describe('Template section generation', () => {
 
     await page.getByTestId('generate-prompt-CustomHeader').fill('a header with the name');
     await page.getByTestId('generate-button-CustomHeader').click();
-    await expect(page.getByTestId('generate-button-CustomHeader')).toBeDisabled();
+    await expect(page.getByTestId('generate-status-CustomHeader')).toHaveText('Waiting for the editor to load…');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeEnabled();
     await expect(page.getByTestId('generate-error-CustomHeader')).toHaveCount(0);
 
     releaseEditors();

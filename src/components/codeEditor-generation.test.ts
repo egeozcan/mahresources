@@ -80,14 +80,38 @@ describe('template cluster generation', () => {
 
     const generation = editor.generateFromPrompt();
     await Promise.resolve();
-    expect(editor.generating).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+    // Waiting is said as waiting, and the control is not locked by it.
+    expect(editor.generationStatus).toBe('Waiting for the editor to load…');
+    expect(editor.generating).toBe(false);
     mounted.forEach(mount => mount());
     await generation;
 
     expect(editor.generationError).toBe('');
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
     expect(editor.generationStatus).toBe('Generated content applied.');
+  });
+
+  it('lets a second prompt replace one still waiting for the editors', async () => {
+    const { editor, views } = fixture();
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const first = editor.generateFromPrompt();
+    editor.generationPrompt = 'Restyle this card in blue';
+    const second = editor.generateFromPrompt();
+    mounted.forEach(mount => mount());
+    await Promise.all([first, second]);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).prompt).toBe('Restyle this card in blue');
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
   it('says so when an editor never mounts', async () => {

@@ -66,24 +66,30 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       if (base !== 'Custom' && pair.every((name) => form?.querySelector(`input[name="${name}"]`))) target = 'cluster';
 
       const requestId = ++this._generationRequestId;
-      this.generating = true;
-      this.generationStatus = 'Generating…';
 
       // Every editor the draft will be written into has to exist before the request goes
-      // out: the snapshot that decides whether to auto-apply is read from them, and a
-      // prompt submitted while they are still mounting waits for them rather than being
-      // refused. A pair waits for its CSS editor too, or the draft would be dropped at apply.
+      // out: the snapshot that decides whether to auto-apply is read from them. A pair
+      // needs its CSS editor too, or the draft would be dropped at apply. A prompt
+      // submitted while they are still mounting waits for them rather than being refused,
+      // and says so. The control stays usable while it waits, so a load that stalls reads
+      // as a wait rather than as a generation in progress, and submitting again replaces
+      // the waiting request.
       const editors = target === 'cluster'
         ? pair.map((name) => form.querySelector(`input[name="${name}"]`)?.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]'))
         : [container];
-      const views = await Promise.all(editors.map(editorFor));
-      if (requestId !== this._generationRequestId) return;
+      let views = editors.map((editor) => editor?._cmView || null);
       if (views.some((editorView) => !editorView)) {
-        this.generationError = 'The editor could not be loaded. Reload the page to try again.';
-        this.generationStatus = '';
-        this.generating = false;
-        return;
+        this.generationStatus = 'Waiting for the editor to load…';
+        views = await Promise.all(editors.map(editorFor));
+        if (requestId !== this._generationRequestId) return;
+        if (views.some((editorView) => !editorView)) {
+          this.generationError = 'The editor could not be loaded. Reload the page to try again.';
+          this.generationStatus = '';
+          return;
+        }
       }
+      this.generating = true;
+      this.generationStatus = 'Generating…';
       const view = target === 'cluster' ? views[pair.indexOf(fieldName)] : views[0];
       const pairSnapshot = Object.fromEntries(pair.map((name) => [name, form?.querySelector(`input[name="${name}"]`)?.value || '']));
       this._generatedForm = form;
