@@ -151,6 +151,10 @@ Every surface uses the same **effective status** rule: a missing or empty task
 status means `default_status`. That rule drives board placement, badges,
 status-aware avatars, progress, dashboard totals and overdue treatment. A
 past-due task is overdue only while its effective status is not `done_status`.
+The *(overdue)* mark on a task means its due date is before today's date in the
+local calendar: the server's for the summaries and hover cards it renders
+(`task-date`), the viewer's browser for the board and the task controls. A task
+due today is not marked until tomorrow.
 
 Status and priority colours are code-level (they feed both the taxonomy
 schemas' `x-color` and the rendered pills, so they must agree). Unknown

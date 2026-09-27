@@ -9,9 +9,15 @@
   }
   function status(task, cfg) { return meta(task).status || cfg.default_status; }
   function localInput(iso) { return (String(iso || '').match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/) || [''])[0]; }
+  // The viewer's calendar date. Task dates are wall-clock values without a zone,
+  // so they compare with the local date; UTC's is a day away for hours of every day.
+  function localToday() {
+    var now = new Date();
+    return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+  }
   function overdue(task, cfg, today) {
     var due = task.end_date || task.EndDate;
-    return !!due && status(task, cfg) !== cfg.done_status && due.slice(0, 10) < (today || new Date().toISOString().slice(0, 10));
+    return !!due && status(task, cfg) !== cfg.done_status && due.slice(0, 10) < (today || localToday());
   }
   function pill(entry) {
     var node = document.createElement('span');
@@ -36,7 +42,7 @@
     return result;
   }
   var configPromise;
-  window.PMCore = { meta, status, localInput, overdue, pill, api,
+  window.PMCore = { meta, status, localInput, today: localToday, overdue, pill, api,
     config() { return configPromise || (configPromise = api('/api/config').catch(error => { configPromise = null; throw error; })); },
   };
 })();

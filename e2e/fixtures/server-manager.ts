@@ -139,6 +139,8 @@ export interface StartServerOptions {
   sqliteDsn?: string;
   /** Trusted executable path for deterministic plugin-command fixtures. */
   pluginCommandPath?: string;
+  /** IANA zone the server runs in (its TZ); the machine's zone when unset. */
+  timezone?: string;
 }
 
 /**
@@ -268,6 +270,9 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
     // drain. Attest that fact so startup can complete plaintext retirement.
     JOB_MIGRATION_WRITERS_DRAINED: '1',
   };
+  if (opts.timezone) {
+    childEnv.TZ = opts.timezone;
+  }
   for (const key of Object.keys(childEnv)) {
     if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {
       delete childEnv[key];

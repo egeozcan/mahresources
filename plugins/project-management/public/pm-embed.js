@@ -201,7 +201,7 @@
         } else if (action === 'add') {
           if (!Array.isArray(content[key])) content[key] = [];
           if (!['items','entries'].includes(key) && (!Number.isInteger(reference) || reference < 1)) throw new Error('Enter a note ID first.');
-          content[key].push(key === 'items' ? {id:crypto.randomUUID(),label:'New subtask'} : key === 'entries' ? {date:new Date().toISOString().slice(0,10),hours:1,note:''} : reference);
+          content[key].push(key === 'items' ? {id:crypto.randomUUID(),label:'New subtask'} : key === 'entries' ? {date:core.today(),hours:1,note:''} : reference);
         } else if (action === 'remove') content[key].splice(index,1);
         else if (action === 'up' && index > 0) [content[key][index-1],content[key][index]] = [content[key][index],content[key][index-1]];
         else if (action === 'down' && index < content[key].length-1) [content[key][index+1],content[key][index]] = [content[key][index],content[key][index+1]];
