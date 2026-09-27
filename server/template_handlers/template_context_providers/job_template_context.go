@@ -310,7 +310,13 @@ func jobAccountSelectOptions(accounts []application_context.JobAccountOption, cu
 // plus any Kind the URL names that is not among them — a retained Job of a
 // retired Kind — so resubmitting the form does not silently drop it.
 func jobKindOptions(registered, requested []string) []string {
-	return withRequestedTokens(registered, requested)
+	options := append([]string(nil), registered...)
+	for _, kind := range requested {
+		if !slices.Contains(options, kind) {
+			options = append(options, kind)
+		}
+	}
+	return options
 }
 
 // jobOrigins are the origins the host records on the Jobs it accepts: a request
@@ -324,16 +330,10 @@ var jobOrigins = []string{"api", "cli", "plugin", "schedule", "admin"}
 // the URL names that is not among them — one a client chose itself — so
 // resubmitting the form does not silently drop it.
 func jobOriginOptions(requested []string) []string {
-	return withRequestedTokens(jobOrigins, requested)
-}
-
-// withRequestedTokens is a checkbox list's values: the known ones, then each
-// value the URL names that is not among them.
-func withRequestedTokens(known, requested []string) []string {
-	options := append([]string(nil), known...)
-	for _, token := range requested {
-		if !slices.Contains(options, token) {
-			options = append(options, token)
+	options := append([]string(nil), jobOrigins...)
+	for _, origin := range requested {
+		if !slices.Contains(options, origin) {
+			options = append(options, origin)
 		}
 	}
 	return options
