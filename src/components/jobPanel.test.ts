@@ -1580,7 +1580,30 @@ describe('Job Center panel accessibility hooks', () => {
         await vi.advanceTimersByTimeAsync(1000);
 
         const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
-        expect(said).toEqual(['500 more jobs finished or need attention; see the Jobs panel.']);
+        expect(said).toEqual(['500 jobs finished or need attention; see the Jobs panel.']);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('an outcome of a job heard before a reconnect is counted when the full store drops its proof', async () => {
+        vi.useFakeTimers();
+        const running = { id: 'dl-56', title: 'reconnected.bin', kind: 'remote-download', state: 'running', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([{ ...running, state: 'failed', version: 3 }]);
+        panel.lastSequence = 10;
+        showHeard(panel, [running]);
+        panel.dropStream();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:10' }) });
+
+        await deliverLive(panel, 'dl-56', [['failed', 3]], 11);
+        for (let index = 0; index < 1000; index++) {
+            await deliverLive(panel, `unread-${index}`, [['failed', 3]], 20 + index);
+        }
+        expect(panel._liveVersions.has('dl-56')).toBe(false);
+        await panel.refresh();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
         panel.destroy();
         vi.useRealTimers();
     });

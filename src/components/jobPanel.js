@@ -156,8 +156,8 @@ const UNSAID_OUTCOMES_COALESCE_MS = 1000;
 
 export function unsaidOutcomesText(count) {
     return count === 1
-        ? '1 more job finished or needs attention; see the Jobs panel.'
-        : `${count} more jobs finished or need attention; see the Jobs panel.`;
+        ? '1 job finished or needs attention; see the Jobs panel.'
+        : `${count} jobs finished or need attention; see the Jobs panel.`;
 }
 
 // Where focus goes when the command control that had it leaves the row: its
@@ -607,9 +607,13 @@ export function jobPanel() {
         // store is full, a proof that is not an outcome goes first: without it
         // a job's first read withholds its outcome, and the job's own outcome
         // event, still to come, releases it. Only when every proof is an
-        // outcome does the oldest go, and if its job was never heard that
-        // outcome is counted and said with the others in one message
-        // (sayUnsaidOutcomes) rather than lost without a word.
+        // outcome does the oldest go, and that outcome is counted and said
+        // with the others in one message (sayUnsaidOutcomes) rather than lost
+        // without a word. Every one is counted: a proof still in the store has
+        // not been used up, so nothing has said its outcome, and whether a
+        // later read could say it depends on the reconnects between. If one
+        // does, the job is heard twice, once in the count, which is the lesser
+        // harm.
         boundLiveProofs() {
             while (this._liveVersions.size > HEARD_LIMIT) {
                 let dropped = null;
@@ -618,9 +622,7 @@ export function jobPanel() {
                 }
                 if (dropped === null) {
                     dropped = this._liveVersions.keys().next().value;
-                    // A row on screen counts as heard (hearJob): its change is
-                    // said by the next read, not counted as well.
-                    if (!this._heard.has(dropped) && !this.jobs.some(row => row.id === dropped)) this.countUnsaidOutcome();
+                    this.countUnsaidOutcome();
                 }
                 this._liveVersions.delete(dropped);
             }
