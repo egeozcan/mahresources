@@ -719,30 +719,53 @@ func applySearch(db *gorm.DB, term string) *gorm.DB {
 	}
 	pattern, escape := database_scopes.LikePattern(term)
 	operator := database_scopes.GetLikeOperator(db)
+	summary, summaryArgs := summaryValueMatches(db, term, pattern, operator, escape)
+	args := append([]any{pattern, pattern}, summaryArgs...)
+	args = append(args, pattern, pattern)
 	return db.Where(
 		"(jobs.id "+operator+" ?"+escape+
 			" OR jobs.title "+operator+" ?"+escape+
-			" OR "+summaryValueMatches(db, operator, escape)+
+			" OR "+summary+
 			" OR jobs.failure_message "+operator+" ?"+escape+
 			" OR EXISTS (SELECT 1 FROM job_outputs o WHERE o.job_id = jobs.id AND o.label "+operator+" ?"+escape+"))",
-		pattern, pattern, pattern, pattern, pattern,
+		args...,
 	)
 }
 
-// summaryValueMatches is the predicate, taking one pattern, that some string or
-// number in the Job's summary matches it. Each engine walks the document with
-// its own JSON functions: SQLite's json_tree gives every node with its type and
-// its value as SQL text (atom), and PostgreSQL's strict `$.**` path yields every
-// node once, whose text `#>> '{}'` is. A summary that is not valid JSON has no
-// values to match on SQLite, where json_tree would otherwise fail the query;
-// PostgreSQL's json column cannot hold one.
-func summaryValueMatches(db *gorm.DB, operator, escape string) string {
+// summaryValueMatches is the predicate, with its arguments, that some string or
+// number in the Job's summary matches a search pattern. Each engine walks the
+// document with its own JSON functions: SQLite's json_tree gives every node with
+// its type and its value as SQL text (atom), and PostgreSQL's strict `$.**` path
+// yields every node once, whose text `#>> '{}'` is. A summary that is not valid
+// JSON has no values to match on SQLite, where json_tree would otherwise fail the
+// query; PostgreSQL's json column cannot hold one.
+//
+// Walking a document costs several times what matching its text does, and a
+// search that finds one Job reads every row. So the walk only reads a summary
+// whose text holds the term, when that test is sound: a summary is written by
+// Go's JSON encoder, which writes a value's characters as they are unless it
+// must escape them, and a term holding none of those characters appears in the
+// text of every summary that has it in a value. A term with one is walked alone.
+func summaryValueMatches(db *gorm.DB, term, pattern, operator, escape string) (string, []any) {
+	walk := "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
+		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
 	if db.Dialector.Name() == "postgres" {
-		return "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
+		walk = "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
 			" WHERE jsonb_typeof(node.value) IN ('string', 'number') AND (node.value #>> '{}') " + operator + " ?" + escape + ")"
 	}
-	return "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
-		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
+	if !termIsWrittenAsIs(term) {
+		return walk, []any{pattern}
+	}
+	return "(COALESCE(CAST(jobs.summary AS TEXT), '') " + operator + " ?" + escape + " AND " + walk + ")", []any{pattern, pattern}
+}
+
+// termIsWrittenAsIs reports whether Go's JSON encoder writes every character of
+// a term unchanged inside a string: it escapes a quote, a backslash, a control
+// character, <, > and &, and the line and paragraph separators.
+func termIsWrittenAsIs(term string) bool {
+	return !strings.ContainsFunc(term, func(r rune) bool {
+		return r < 0x20 || r == '"' || r == '\\' || r == '<' || r == '>' || r == '&' || r == '\u2028' || r == '\u2029'
+	})
 }
 
 // continueAfter applies a keyset position. A zero cursor is the start of the

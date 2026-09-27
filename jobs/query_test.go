@@ -2680,4 +2680,8 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 		}
 	}
 	requireIDs(t, "a summary that is one string", search("in common"), plain.ID)
+	// A character the JSON encoder escapes is in the value, not in the text.
+	escaped := accept("an escaped summary", `{"note":"fish \u0026 chips","quote":"say \"when\""}`)
+	requireIDs(t, "a value with an escaped character", search("fish & chips"), escaped.ID)
+	requireIDs(t, "a value with quotes", search(`"when"`), escaped.ID)
 }
