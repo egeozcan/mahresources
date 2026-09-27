@@ -587,6 +587,37 @@ describe('Job detail stream connection', () => {
         await vi.waitFor(() => expect(center.detail.pinned).toBe(false));
     });
 
+    test('a Job read an event started, answered after a pin changed elsewhere, applies the change but not the old pin', async () => {
+        const center = jobCenter({ detailId: 'job-11' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.streamCaughtUp = true;
+        center.jobs = [{ id: 'job-11', title: 'Export', state: 'running', version: 2, pinned: true }];
+        center.detail = center.jobs[0];
+        center.loading = false;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let reads = 0;
+        center.fetchJSON = vi.fn(async () => {
+            reads += 1;
+            if (reads === 1) {
+                await firstHeld;
+                return { id: 'job-11', title: 'Export', state: 'failed', version: 3, pinned: true };
+            }
+            return { id: 'job-11', title: 'Export', state: 'failed', version: 3, pinned: false };
+        });
+        center.handleStreamMessage({
+            data: JSON.stringify({ id: 'e-11', jobId: 'job-11', jobVersion: 3, type: 'failed', deliverySequence: 21 }),
+            lastEventId: 'v2:21',
+        });
+        center.detail = { ...center.detail, pinned: false };
+        center.hearPreferenceChange({ command: 'unpin', jobIds: ['job-11'] });
+        releaseFirst();
+        await vi.waitFor(() => expect(center.detail.state).toBe('failed'));
+        await vi.waitFor(() => expect(reads).toBeGreaterThanOrEqual(2));
+        await Promise.resolve();
+        expect(center.detail.pinned).toBe(false);
+    });
+
     test('a reconciling read that fails is tried again', async () => {
         vi.useFakeTimers();
         const center = jobCenter({ detailId: 'job-9' });

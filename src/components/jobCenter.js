@@ -762,12 +762,22 @@ export function jobCenter(options = {}) {
                     if (String(result.jobId) === String(this.detailId)) this._reconcileAfterLoad = true;
                     return;
                 }
+                const epoch = this._preferenceEpoch;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
-                        const snapshot = payload.job || payload;
-                        if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announceSnapshot);
+                        let snapshot = payload.job || payload;
+                        if (!this.jobs.some(job => job.id === snapshot.id)) return;
+                        // A pin changed elsewhere during the read: the Job's
+                        // change applies, its pin is settled by a fresh read.
+                        if (epoch !== this._preferenceEpoch && String(snapshot.id) === String(this.detailId)) {
+                            snapshot = { ...snapshot, pinned: this.detail?.pinned };
+                            this.reconcileDetail();
+                        }
+                        this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
-                    .catch(() => {});
+                    // A read that failed repairs nothing: this page's Job is
+                    // read again until it answers.
+                    .catch(() => { if (String(result.jobId) === String(this.detailId)) this.reconcileDetail(); });
                 return;
             }
             this.jobs = result.jobs;
