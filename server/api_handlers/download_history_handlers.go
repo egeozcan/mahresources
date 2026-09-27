@@ -325,10 +325,11 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	projection, handleFound, err := canonical.ProjectDownloadJobForRetry(entry.JobID)
 	if err != nil {
 		if handleFound && errors.Is(err, jobs.ErrNotFound) {
-			// A durable handle did resolve, so ErrNotFound means its current target is
-			// hidden: another account's Retry moved the handle onto a Job this caller
-			// cannot see. The refusal says so without naming that Job.
-			return "", "", true, errDownloadRetriedElsewhere
+			// A durable handle did resolve, so ErrNotFound means the Job it names is
+			// not one this caller can read: another account's Retry moved the handle
+			// onto a Job they cannot see, or retention deleted the Job. The refusal
+			// names neither Job and claims neither cause.
+			return "", "", true, errDownloadJobUnavailable
 		}
 		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
 			// Any other projection failure is also fail-closed: it is no evidence that
@@ -380,18 +381,18 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	return entry.JobID, result.SuccessorID, true, nil
 }
 
-// errDownloadRetriedElsewhere refuses the retry of a row whose handle another
-// account's Retry has moved onto a Job this caller cannot see. It is still
-// jobs.ErrNotFound underneath, and its text names neither Job.
-var errDownloadRetriedElsewhere error = retriedElsewhereError{}
+// errDownloadJobUnavailable refuses the retry of a row whose handle names a Job
+// this caller cannot read. It is still jobs.ErrNotFound underneath, and its text
+// names no Job.
+var errDownloadJobUnavailable error = downloadJobUnavailableError{}
 
-type retriedElsewhereError struct{}
+type downloadJobUnavailableError struct{}
 
-func (retriedElsewhereError) Error() string {
-	return "another account has already retried this download, and its retry is not visible to you"
+func (downloadJobUnavailableError) Error() string {
+	return "this download cannot be retried: the job it names is no longer available to you"
 }
 
-func (retriedElsewhereError) Unwrap() error { return jobs.ErrNotFound }
+func (downloadJobUnavailableError) Unwrap() error { return jobs.ErrNotFound }
 
 // The retry slot's claim marker. A claim is written before the download is
 // submitted and replaced by the real job id immediately after, so a marker still

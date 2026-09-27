@@ -96,7 +96,9 @@ Job Center list and the Jobs drawer name the owner of a Job that is not the
 administrator's own, and the Job page names its owner and actor. The API
 returns them as `ownerName` and `actorName`; anyone else is told only their own
 name. On the Job Center page an administrator filters by **Owner** and **Actor**
-from a list of accounts instead of typing a user number.
+from a list of accounts instead of typing a user number. The Owner list also
+offers **Mine**, which is `owner=me` in the page's address, so a link to
+`/jobs?owner=me` opens with it chosen and changing another filter keeps it.
 
 Deleting an account removes its id from its Jobs, and marks them instead: they
 read **Deleted account** as owner or actor (`ownerDeleted` and `actorDeleted`

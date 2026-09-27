@@ -66,3 +66,36 @@ test('an administrator sees whose job is whose, and an owner is told when anothe
     await adminContext.close();
   }
 });
+
+test('an administrator listing their own jobs keeps that choice when they change another filter', async ({ browser, baseURL, authSeed }) => {
+  const stamp = Date.now();
+  const userContext = await browser.newContext({ baseURL });
+  const adminContext = await browser.newContext({ baseURL });
+  try {
+    const user = await userContext.newPage();
+    await loginAs(user, authSeed.user);
+    const theirs = await failedDownload(user, authSeed.scopeGroupId, `mine-theirs-${stamp}.bin`);
+
+    const admin = await adminContext.newPage();
+    await loginAs(admin, authSeed.admin);
+    const mine = await failedDownload(admin, authSeed.scopeGroupId, `mine-own-${stamp}.bin`);
+
+    const list = admin.locator('[data-testid="job-center"]');
+    await admin.goto('/jobs?owner=me&dismissed=any');
+    const form = admin.getByRole('form', { name: 'Filter jobs' });
+    await expect(form.getByRole('combobox', { name: 'Owner' })).toHaveValue('me');
+    await expect(list.locator(`[data-job-id="${mine}"]`)).toHaveCount(1);
+    await expect(list.locator(`[data-job-id="${theirs}"]`)).toHaveCount(0);
+
+    await form.getByRole('checkbox', { name: 'failed' }).check();
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(admin).toHaveURL(/[?&]state=failed/);
+    expect(new URL(admin.url()).searchParams.get('owner')).toBe('me');
+    await expect(form.getByRole('combobox', { name: 'Owner' })).toHaveValue('me');
+    await expect(list.locator(`[data-job-id="${mine}"]`)).toHaveCount(1);
+    await expect(list.locator(`[data-job-id="${theirs}"]`)).toHaveCount(0);
+  } finally {
+    await userContext.close();
+    await adminContext.close();
+  }
+});

@@ -86,7 +86,8 @@ func (movedHandleRetryContext) ProjectDownloadJobForRetry(string) (download_queu
 
 // An administrator's Retry moves the row's handle onto a Job the row's owner
 // cannot see. The owner's retry is refused, and the refusal must neither name
-// that Job nor read as an internal error.
+// that Job nor read as an internal error. Retention deleting the Job the handle
+// names looks the same from here, so the refusal claims neither cause.
 func TestRetryThroughAHandleAnotherAccountMovedNamesNoJob(t *testing.T) {
 	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
 	t.Cleanup(manager.Shutdown)
@@ -99,7 +100,7 @@ func TestRetryThroughAHandleAnotherAccountMovedNamesNoJob(t *testing.T) {
 	if strings.Contains(err.Error(), "01a0ddc1") || strings.Contains(err.Error(), "jobs:") {
 		t.Fatalf("the refusal %q names the hidden job or reads as an internal error", err.Error())
 	}
-	if !strings.Contains(err.Error(), "another account") {
-		t.Fatalf("the refusal %q does not say another account retried the download", err.Error())
+	if strings.Contains(err.Error(), "another account") || !strings.Contains(err.Error(), "no longer available to you") {
+		t.Fatalf("the refusal %q claims a cause, or does not say the job is no longer available", err.Error())
 	}
 }

@@ -420,22 +420,30 @@ func TestJobRowNamesAPartialSuccess(t *testing.T) {
 	}
 }
 
-// The Owner select offers a deleted account beside the named ones, so the form
-// cannot submit an owner and "a deleted owner" at once, which the list refuses.
-// A link written with the API's own parameter shows that option chosen.
-func TestTheOwnerSelectAsksForADeletedOwnerAsOneChoice(t *testing.T) {
-	reader := &fakeJobListReader{}
-	renderJobList(t, reader, "/jobs?ownerId=deleted")
-	if got := reader.listed[0]; !got.OwnerDeleted || got.OwnerID != nil {
-		t.Fatalf("ownerId=deleted asked %+v, want a deleted owner and no owner id", got)
+// The Owner select is one field, named owner, whose choices are "Mine", an
+// account, or a deleted account, so the form can submit only one of them, and
+// "Mine" travels as the API's own owner=me. A link written with the API's own
+// parameters shows its choice selected.
+func TestTheOwnerSelectAsksForOneOwnerChoice(t *testing.T) {
+	cases := []struct {
+		target string
+		want   func(jobs.Filter) bool
+		shown  string
+	}{
+		{"/jobs?owner=me", func(f jobs.Filter) bool { return f.OwnedByViewer && f.OwnerID == nil && !f.OwnerDeleted }, "me"},
+		{"/jobs?owner=deleted", func(f jobs.Filter) bool { return f.OwnerDeleted && f.OwnerID == nil && !f.OwnedByViewer }, "deleted"},
+		{"/jobs?owner=7", func(f jobs.Filter) bool { return f.OwnerID != nil && *f.OwnerID == 7 && !f.OwnerDeleted && !f.OwnedByViewer }, "7"},
+		{"/jobs?ownerDeleted=true", func(f jobs.Filter) bool { return f.OwnerDeleted }, "deleted"},
+		{"/jobs?ownerId=7", func(f jobs.Filter) bool { return f.OwnerID != nil && *f.OwnerID == 7 }, "7"},
 	}
-
-	reader = &fakeJobListReader{}
-	ctx := renderJobList(t, reader, "/jobs?ownerDeleted=true")
-	if got := reader.listed[0]; !got.OwnerDeleted {
-		t.Fatalf("ownerDeleted=true asked %+v", got)
-	}
-	if form := ctx["jobFilter"].(JobFilterForm); form.OwnerID != jobOwnerDeletedOption {
-		t.Fatalf("the form shows owner %q for ownerDeleted=true, want the deleted-account option", form.OwnerID)
+	for _, c := range cases {
+		reader := &fakeJobListReader{}
+		ctx := renderJobList(t, reader, c.target)
+		if len(reader.listed) != 1 || !c.want(reader.listed[0]) {
+			t.Fatalf("%s asked %+v", c.target, reader.listed)
+		}
+		if form := ctx["jobFilter"].(JobFilterForm); form.Owner != c.shown {
+			t.Fatalf("%s shows the Owner select as %q, want %q", c.target, form.Owner, c.shown)
+		}
 	}
 }

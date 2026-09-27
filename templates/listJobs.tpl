@@ -85,12 +85,13 @@
             {% if jobOwnerOptions %}
             {# An administrator sees every account's Jobs, so they pick a person rather than type a user number. #}
             <label for="job-filter-owner" class="block text-xs font-mono font-medium text-stone-600 mt-2">Owner</label>
-            <select name="ownerId" id="job-filter-owner" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+            <select name="owner" id="job-filter-owner" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
                 <option value="">Anyone</option>
+                <option value="me"{% if jobFilter.Owner == "me" %} selected{% endif %}>Mine</option>
                 {% for option in jobOwnerOptions %}
-                <option value="{{ option.Value }}"{% if jobFilter.OwnerID == option.Value %} selected{% endif %}>{{ option.Label }}</option>
+                <option value="{{ option.Value }}"{% if jobFilter.Owner == option.Value %} selected{% endif %}>{{ option.Label }}</option>
                 {% endfor %}
-                <option value="deleted"{% if jobFilter.OwnerID == "deleted" %} selected{% endif %}>A deleted account</option>
+                <option value="deleted"{% if jobFilter.Owner == "deleted" %} selected{% endif %}>A deleted account</option>
             </select>
             <label for="job-filter-actor" class="block text-xs font-mono font-medium text-stone-600 mt-2">Actor</label>
             <select name="actorId" id="job-filter-actor" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
@@ -139,7 +140,7 @@
                 <option value="{{ option.Value }}"{% if jobFilter.NoInboundRelationship == option.Value %} selected{% endif %}>{{ option.Label }}</option>
                 {% endfor %}
             </select>
-            <p id="job-filter-no-inbound-help" class="mt-0.5 text-xs text-stone-500">Counts only jobs you can see.</p>
+            <p id="job-filter-no-inbound-help" class="mt-0.5 text-xs text-stone-500">Counts only jobs you can see; if you can retry jobs, another account's retry of yours counts too.</p>
 
             <label for="job-filter-pinned" class="block text-xs font-mono font-medium text-stone-600 mt-2">Pinned</label>
             <select name="pinned" id="job-filter-pinned" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">

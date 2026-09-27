@@ -33,11 +33,17 @@ const jobListPageSize = jobs.DefaultPageSize
 // API.
 const dismissedAny = "any"
 
-// jobOwnerDeletedOption is the Owner select's value for "an account that was
-// deleted". The page reads it as the API's ownerDeleted=true; being one choice of
-// the one select, it cannot be submitted beside an owner id, which the list
+// The administrator's Owner select is one field, owner, so it submits one choice:
+// "Mine" (jobOwnerMineOption), an account's id, or a deleted account
+// (jobOwnerDeletedOption). "Mine" is the API's own owner=me, so a link to
+// /jobs?owner=me opens with it chosen and every later submit keeps it. The page
+// reads an id as the API's ownerId and "deleted" as ownerDeleted=true; being
+// choices of one select, none can be submitted beside another, which the list
 // refuses.
-const jobOwnerDeletedOption = "deleted"
+const (
+	jobOwnerMineOption    = "me"
+	jobOwnerDeletedOption = "deleted"
+)
 
 // Quick-filter groupings. Their names are the glossary's (CONTEXT.md): Active
 // and Finished Jobs, and the Jobs that Need Attention.
@@ -139,12 +145,15 @@ type JobQuickFilter struct {
 
 // JobFilterForm is what the sidebar form shows as currently chosen.
 type JobFilterForm struct {
-	Search         string
-	Command        string
-	Kinds          []string
-	States         []string
-	Origins        []string
-	OriginText     string
+	Search     string
+	Command    string
+	Kinds      []string
+	States     []string
+	Origins    []string
+	OriginText string
+	// Owner is the administrator's Owner select: "me", an account id, or
+	// "deleted" (jobOwnerChoice). OwnerID is the plain owner id field others see.
+	Owner          string
 	OwnerID        string
 	ActorID        string
 	OwnerDeleted   string
@@ -229,7 +238,7 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 				if err != nil {
 					return addJobListError(err, base)
 				}
-				base["jobOwnerOptions"] = jobAccountSelectOptions(options, query.Get("ownerId"))
+				base["jobOwnerOptions"] = jobAccountSelectOptions(options, jobOwnerChoice(query))
 				base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
 			}
 		}
@@ -279,7 +288,7 @@ func jobAccountSelectOptions(accounts []application_context.JobAccountOption, cu
 	for _, account := range accounts {
 		options = append(options, JobSelectOption{Value: strconv.FormatUint(uint64(account.ID), 10), Label: account.Label})
 	}
-	if current == jobOwnerDeletedOption {
+	if current == jobOwnerMineOption || current == jobOwnerDeletedOption {
 		return options
 	}
 	return withURLOption(options, current)
@@ -370,9 +379,13 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 	if dismissed == dismissedAny {
 		query.Del("dismissed")
 	}
-	if query.Get("ownerId") == jobOwnerDeletedOption {
-		query.Del("ownerId")
+	switch owner := query.Get("owner"); {
+	case owner == jobOwnerDeletedOption:
+		query.Del("owner")
 		query.Set("ownerDeleted", "true")
+	case owner != "" && owner != jobOwnerMineOption && query.Get("ownerId") == "":
+		query.Del("owner")
+		query.Set("ownerId", owner)
 	}
 	filter, err := jobview.ParseFilter(query)
 	if err != nil {
@@ -423,8 +436,9 @@ func jobFilterForm(query url.Values) JobFilterForm {
 		Pinned:                query.Get("pinned"),
 		Dismissed:             query.Get("dismissed"),
 	}
-	if form.OwnerID == "" && form.OwnerDeleted == "true" {
-		form.OwnerID = jobOwnerDeletedOption
+	form.Owner = jobOwnerChoice(query)
+	if owner := query.Get("owner"); form.OwnerID == "" && owner != jobOwnerMineOption && owner != jobOwnerDeletedOption {
+		form.OwnerID = owner
 	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
@@ -435,6 +449,21 @@ func jobFilterForm(query url.Values) JobFilterForm {
 		form.Dismissed = ""
 	}
 	return form
+}
+
+// jobOwnerChoice is the Owner select's value for a query: its own owner
+// parameter, or the choice the API's ownerId or ownerDeleted=true names.
+func jobOwnerChoice(query url.Values) string {
+	switch {
+	case strings.TrimSpace(query.Get("owner")) != "":
+		return query.Get("owner")
+	case strings.TrimSpace(query.Get("ownerId")) != "":
+		return query.Get("ownerId")
+	case query.Get("ownerDeleted") == "true":
+		return jobOwnerDeletedOption
+	default:
+		return ""
+	}
 }
 
 func nonEmptyTokens(query url.Values, names ...string) []string {
