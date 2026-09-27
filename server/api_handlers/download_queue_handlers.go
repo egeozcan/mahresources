@@ -856,11 +856,23 @@ const maxHeldJobEvents = 256
 // do that as they are written.
 type legacyStreamItem func(bound JobEventsContext) []legacyStreamFrame
 
-// legacyStreamFrame renders one frame immediately before it is written, from
-// what the connection holds, and reports false when there is nothing to send.
-// It reads no database: that is the item's projection, which the credential
-// check has to follow.
-type legacyStreamFrame func() (event string, data []byte, send bool)
+// legacyStreamFrame renders one frame just before it is written, from what the
+// connection holds, and reports false when there is nothing to send. It reads
+// no database (that is the item's projection, which the credential check has to
+// follow) and changes no connection state: sent does that, once the frame has
+// been written, so a frame rendered and then not written leaves no trace.
+type legacyStreamFrame func() (rendered renderedLegacyFrame, send bool)
+
+// renderedLegacyFrame is a frame ready to write, and what writing it changes.
+type renderedLegacyFrame struct {
+	event string
+	data  []byte
+	sent  func()
+}
+
+// legacyStreamFrameRendered is a test seam called after a frame is rendered and
+// before its freshness is tested. Production leaves it nil.
+var legacyStreamFrameRendered func()
 
 // pluginActionJobsProjector supplies the current visible rows for legacy action
 // handles. Like the single-row projection, it is optional so a context without
@@ -900,21 +912,25 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 		// Background jobs are per-user: a non-admin only receives the jobs it
 		// created, so it can't observe other users' download URLs, import/export
 		// progress, or action targets.
+		// A check is as old as its credential read, so it is stamped with the
+		// moment it began: an answer that took longer than jobEventsCheckInterval to
+		// come back is already too old to write on.
+		lastCheck := time.Now()
 		ctx, err := source.CurrentJobEvents()
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusUnauthorized)
 			return
 		}
-		lastCheck := time.Now()
 		// revalidate rebinds ctx to the credential as it stands now, and reports
 		// false once it no longer authenticates.
 		revalidate := func() bool {
+			began := time.Now()
 			current, err := source.CurrentJobEvents()
 			if err != nil {
 				return false
 			}
 			ctx = current
-			lastCheck = time.Now()
+			lastCheck = began
 			return true
 		}
 
@@ -944,10 +960,11 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 
 		// emit is the only place this stream writes a frame. It projects the
 		// items for the bound account, takes the credential check after that,
-		// and writes each frame on a check taken after its projection and
-		// younger than jobEventsCheckInterval. A check that finds the account
-		// changed sends what is left back to be projected for the account as it
-		// is now. It reports false once the credential no longer authenticates.
+		// then renders each frame and writes it on that check, or, when the check
+		// is older than jobEventsCheckInterval by the time the frame is rendered,
+		// on a new one taken then. A check that finds the account changed sends
+		// what is left back to be projected for the account as it is now. It
+		// reports false once the credential no longer authenticates.
 		emit := func(items ...legacyStreamItem) bool {
 			for len(items) > 0 {
 				bound := ctx
@@ -965,6 +982,13 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 			frames:
 				for i, frames := range projected {
 					for _, frame := range frames {
+						rendered, send := frame()
+						if !send {
+							continue
+						}
+						if legacyStreamFrameRendered != nil {
+							legacyStreamFrameRendered()
+						}
 						if time.Since(lastCheck) >= jobEventsCheckInterval {
 							if !revalidate() {
 								return false
@@ -974,12 +998,11 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 								break frames
 							}
 						}
-						event, data, send := frame()
-						if !send {
-							continue
-						}
-						fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, data)
+						fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", rendered.event, rendered.data)
 						flusher.Flush()
+						if rendered.sent != nil {
+							rendered.sent()
+						}
 					}
 				}
 				if redo < 0 {
@@ -1023,12 +1046,13 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				}
 			}
 			initErr = nil
-			return []legacyStreamFrame{func() (string, []byte, bool) {
-				for _, job := range actions {
-					actionRows[job.ID] = job
-				}
+			return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
 				data, _ := json.Marshal(map[string]any{"jobs": downloads, "actionJobs": actions})
-				return "init", data, true
+				return renderedLegacyFrame{event: "init", data: data, sent: func() {
+					for _, job := range actions {
+						actionRows[job.ID] = job
+					}
+				}}, true
 			}}
 		}
 		if !emit(initial) {
@@ -1056,9 +1080,9 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					return nil
 				}
 				projected := download_queue.JobEvent{Type: event.Type, Job: row.Row}
-				return []legacyStreamFrame{func() (string, []byte, bool) {
+				return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
 					data, _ := json.Marshal(projected)
-					return projected.Type, data, true
+					return renderedLegacyFrame{event: projected.Type, data: data}, true
 				}}
 			}
 		}
@@ -1069,11 +1093,11 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 				if !found || !jobVisibleToPrincipal(bound.Principal(), job.Owner()) {
 					return nil
 				}
-				return []legacyStreamFrame{func() (string, []byte, bool) {
+				return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
 					eventType := eventType
 					if previous, exists := actionRows[job.ID]; exists {
 						if eventType != "removed" && sameLegacyActionProjection(previous, job) {
-							return "", nil, false
+							return renderedLegacyFrame{}, false
 						}
 						if eventType == "added" {
 							eventType = "updated"
@@ -1081,13 +1105,14 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					} else if eventType == "updated" {
 						eventType = "added"
 					}
-					if eventType == "removed" {
-						delete(actionRows, job.ID)
-					} else {
-						actionRows[job.ID] = job
-					}
 					data, _ := json.Marshal(map[string]any{"job": job})
-					return "action_" + eventType, data, true
+					return renderedLegacyFrame{event: "action_" + eventType, data: data, sent: func() {
+						if eventType == "removed" {
+							delete(actionRows, job.ID)
+						} else {
+							actionRows[job.ID] = job
+						}
+					}}, true
 				}}
 			}
 		}
@@ -1113,32 +1138,34 @@ func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseW
 					continue
 				}
 				current[job.ID] = true
-				frames = append(frames, func() (string, []byte, bool) {
+				frames = append(frames, func() (renderedLegacyFrame, bool) {
 					previous, exists := actionRows[job.ID]
 					if exists && sameLegacyActionProjection(previous, job) {
-						return "", nil, false
+						return renderedLegacyFrame{}, false
 					}
 					eventType := "added"
 					if exists {
 						eventType = "updated"
 					}
-					actionRows[job.ID] = job
 					data, _ := json.Marshal(map[string]any{"job": job})
-					return "action_" + eventType, data, true
+					return renderedLegacyFrame{event: "action_" + eventType, data: data, sent: func() {
+						actionRows[job.ID] = job
+					}}, true
 				})
 			}
 			for id := range actionRows {
 				if current[id] {
 					continue
 				}
-				frames = append(frames, func() (string, []byte, bool) {
+				frames = append(frames, func() (renderedLegacyFrame, bool) {
 					previous, exists := actionRows[id]
 					if !exists {
-						return "", nil, false
+						return renderedLegacyFrame{}, false
 					}
-					delete(actionRows, id)
 					data, _ := json.Marshal(map[string]any{"job": previous})
-					return "action_removed", data, true
+					return renderedLegacyFrame{event: "action_removed", data: data, sent: func() {
+						delete(actionRows, id)
+					}}, true
 				})
 			}
 			return frames

@@ -306,3 +306,105 @@ func TestTheInitialStateProjectedBeforeADemotionIsNotSentAfterIt(t *testing.T) {
 		t.Fatalf("the initial state projected for the administrator was sent after the demotion: %s", response.String())
 	}
 }
+
+// slowCheckSource answers one armed check with the context current when the
+// check began, after the test has had time to change the account: a credential
+// read whose validation is held up (a session touch waiting on a locked row).
+type slowCheckSource struct {
+	*changingJobEventsSource
+	mu      sync.Mutex
+	armed   bool
+	began   chan struct{}
+	release chan struct{}
+}
+
+func (s *slowCheckSource) CurrentJobEvents() (JobEventsContext, error) {
+	s.mu.Lock()
+	armed := s.armed
+	s.armed = false
+	s.mu.Unlock()
+	if !armed {
+		return s.changingJobEventsSource.CurrentJobEvents()
+	}
+	answer, err := s.changingJobEventsSource.CurrentJobEvents()
+	close(s.began)
+	<-s.release
+	return answer, err
+}
+
+// A check is as old as the credential read it made, not as the moment it
+// returned: an answer that took longer than the check interval to come back is
+// not fresh enough to write on.
+func TestASlowCredentialCheckIsNotTakenAsFresh(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	admin := &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}}
+	demoted := &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleUser}}
+	source := &slowCheckSource{changingJobEventsSource: &changingJobEventsSource{}, began: make(chan struct{}), release: make(chan struct{})}
+	source.set(admin)
+	response, _ := startLegacyEventsHandler(t, source)
+	t.Cleanup(func() {
+		select {
+		case <-source.release:
+		default:
+			close(source.release)
+		}
+	})
+
+	// The next check, the one emit takes after projecting the event, reads the
+	// administrator and is then held while the account is demoted.
+	time.Sleep(jobEventsCheckInterval)
+	source.mu.Lock()
+	source.armed = true
+	source.mu.Unlock()
+	hidden := submitOwnedLegacyJob(t, manager, 8)
+	select {
+	case <-source.began:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no check was taken for the event")
+	}
+	source.set(demoted)
+	time.Sleep(jobEventsCheckInterval + 50*time.Millisecond)
+	close(source.release)
+
+	own := submitOwnedLegacyJob(t, manager, 7)
+	if !waitForBody(response, own, 3*time.Second) {
+		t.Fatalf("the demoted viewer's stream stopped delivering its own job %q: %s", own, response.String())
+	}
+	if strings.Contains(response.String(), hidden) {
+		t.Fatalf("a frame was written on a check whose credential read predated the demotion: %s", response.String())
+	}
+}
+
+// Rendering a frame (encoding what can be a long list) happens before the
+// freshness test, so a check that ages while the frame is encoded is taken
+// again before the write.
+func TestAFrameThatTakesLongToRenderIsWrittenOnAFreshCheck(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	stub := &legacyJobEventsContextStub{manager: manager}
+	admin := &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleAdmin}}
+	demoted := &principalJobEventsContext{stub, &auth.Principal{UserID: 7, Role: models.RoleUser}}
+	source := &changingJobEventsSource{}
+	source.set(admin)
+	response, _ := startLegacyEventsHandler(t, source)
+
+	var once sync.Once
+	legacyStreamFrameRendered = func() {
+		once.Do(func() {
+			source.set(demoted)
+			time.Sleep(jobEventsCheckInterval + 50*time.Millisecond)
+		})
+	}
+	t.Cleanup(func() { legacyStreamFrameRendered = nil })
+
+	hidden := submitOwnedLegacyJob(t, manager, 8)
+	own := submitOwnedLegacyJob(t, manager, 7)
+	if !waitForBody(response, own, 3*time.Second) {
+		t.Fatalf("the demoted viewer's stream stopped delivering its own job %q: %s", own, response.String())
+	}
+	if strings.Contains(response.String(), hidden) {
+		t.Fatalf("a frame rendered across a demotion was written on the check taken before it: %s", response.String())
+	}
+}
