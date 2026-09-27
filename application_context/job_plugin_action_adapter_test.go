@@ -242,6 +242,8 @@ function init()
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
+    mah.schedule({ id = "cancellable-tick", every = "1m", overlap = "skip", cancel = true,
+                   handler = function(job_id) long_work({ job_id = job_id }) end })
     mah.schedule({ id = "retryable-tick", every = "1m", overlap = "skip", retry = true,
                    handler = function(job_id) bump("retryable-scheduled") end })
     -- Runs for longer than the short dispatch budget a test gives it, and

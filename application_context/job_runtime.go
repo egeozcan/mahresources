@@ -451,11 +451,19 @@ func (r *JobRuntime) depsFor(ctx context.Context) jobs.Deps {
 }
 
 // runtimeClaimantGone reports whether a claimant is a runtime identity whose
-// process is proved gone: this host has booted since, or the process no longer
-// exists. Any other claimant, and one the proof cannot answer for, is not.
+// process is proved gone, for expiring its claims before their lease runs out.
+//
+// It asks Liveness, and only of an identity recorded in this process's own boot
+// session: a hostname is not unique across machines, and a different boot id may
+// be another live machine configured with the same name rather than this one
+// having rebooted. Such a claim waits for its lease, as one no proof answers for
+// does.
 func runtimeClaimantGone(claimant string) bool {
 	identity, ok := plugin_system.ParseRuntimeIdentity(claimant)
-	return ok && identity.Liveness() == plugin_system.RuntimeGone
+	if !ok || identity.BootSession == "" || identity.BootSession != plugin_system.CurrentRuntimeIdentity().BootSession {
+		return false
+	}
+	return identity.Liveness() == plugin_system.RuntimeGone
 }
 
 // defaultJobRuntimeClaimant names this runtime: the host and process that holds

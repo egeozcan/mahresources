@@ -444,14 +444,6 @@ func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, no
 	return capacityExhausted(budget)
 }
 
-// CapacityAvailable reports, with ErrCapacityExhausted, a budget that is already
-// full. It is capacityAvailable for a caller that has to decide whether to create
-// work at all: an answer of room is no promise that a claim will get a slot, and
-// the claim's own count is what decides that.
-func (s *Service) CapacityAvailable(deps Deps, budgets []CapacityRef) error {
-	return capacityAvailable(deps.DB, budgets)
-}
-
 // capacityAvailable reports a budget that is already full, outside any
 // transaction. It can be stale in either direction, which is why it only ever
 // saves a claim that would be refused: a slot freed a moment ago is found on the

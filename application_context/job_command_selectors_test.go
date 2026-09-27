@@ -199,7 +199,8 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 		input, err := json.Marshal(pluginActionJobInput{
 			Subtype: subtype, Plugin: pluginActionTestPlugin, Action: action, ScheduleID: schedule,
 			EntityType: "resource", Overlap: plugin_system.ScheduleOverlapSkip,
-			Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+			Runtime:     plugin_system.CurrentRuntimeIdentity().String(),
+			Cancellable: action == "cancellable-work",
 		})
 		if err != nil {
 			t.Fatalf("build plugin-action input: %v", err)
@@ -227,8 +228,8 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 		return seedPluginIn(jobs.StateFailed, subtype, action, schedule, owner, replayable)
 	}
 	// Cancel: every Job whose handler has not started, a running one only where
-	// its registration declares it may be stopped, and never a blocked one whose
-	// claim is still held.
+	// the Job records that its handler may be stopped, and never a blocked one
+	// whose claim is still held.
 	seedPluginIn(jobs.StateQueued, pluginActionSubtypeRegistered, "async-work", "", ownerID, true)
 	seedPluginIn(jobs.StateQueued, pluginActionSubtypeClosure, "", "", ownerID, false)
 	seedPluginIn(jobs.StateRunning, pluginActionSubtypeRegistered, "cancellable-work", "", ownerID, true)

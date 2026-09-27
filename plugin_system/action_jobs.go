@@ -169,9 +169,8 @@ func reportHostJobOnce(job *ActionJob, report func(HostJobSink) error) {
 // the handler gives its VM back, can. An execution named here is marked lost, so
 // a handler that returns afterwards reports nothing more.
 func (pm *PluginManager) reportLostCallbacks(reason string) {
-	pm.actionJobsMu.RLock()
-	running := make([]*ActionJob, 0, len(pm.actionJobs))
-	for _, job := range pm.actionJobs {
+	var running []*ActionJob
+	for _, job := range pm.inFlight() {
 		// Claimed under the job's own lock, which is where an execution whose
 		// handler returns records that it settles itself: exactly one of the two
 		// speaks for the Job.
@@ -185,7 +184,6 @@ func (pm *PluginManager) reportLostCallbacks(reason string) {
 			running = append(running, job)
 		}
 	}
-	pm.actionJobsMu.RUnlock()
 
 	for _, job := range running {
 		_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
@@ -368,6 +366,7 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
+	pm.trackExecution(job)
 
 	pm.notifyActionJobSubscribers("added", job)
 
@@ -380,12 +379,8 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	go func() {
 		defer wg.Done()
 		defer pm.releaseHostJob(host)
-		switch pm.runAsyncActionGoroutine(job, ticket, revoked, entityID, params, expectFilters) {
-		case asyncGaveUp, asyncWithdrawn, asyncNotEntered:
-			pm.dropUnstartedJob(job)
-		case asyncRevoked:
-			pm.abandonUnstartedJob(job)
-		}
+		defer pm.untrackExecution(job)
+		pm.endUnstarted(job, pm.runAsyncActionGoroutine(job, ticket, revoked, entityID, params, expectFilters))
 	}()
 
 	return jobID, nil
@@ -626,6 +621,22 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 	// The handler gives the VM back from here, on every way out: a panic in the
 	// report just below included, which would otherwise leave it locked for good.
 	defer h.Unlock()
+	if job.cancelledBeforeEntry() {
+		// A person cancelled the Job between its claim and here. Nothing of
+		// the handler has run, so it is not entered, and the Job ends
+		// cancelled, as the cancellation asked.
+		h.Unlock()
+		job.mu.Lock()
+		job.Status = "cancelled"
+		job.Message = stoppedMessage(StopCancelled)
+		job.mu.Unlock()
+		pm.notifyActionJobSubscribers("updated", job)
+		if pm.reportsFor(job) {
+			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Stopped(StopCancelled) })
+		}
+		finishSettling(job)
+		return asyncNotEntered
+	}
 	if reason := pm.cannotEnter(work); reason != "" {
 		// Admitted, and not to be entered after all: the plugin was disabled or
 		// reloaded while the claim was being asked for — the VM was revoked under
@@ -753,14 +764,40 @@ func isClosed(ch <-chan struct{}) bool {
 	}
 }
 
+// endUnstarted does what an async execution's outcome leaves to do for an
+// execution that never entered its handler: the entry goes, and one whose VM went
+// away or whose manager is closing tells the host its callback is lost.
+func (pm *PluginManager) endUnstarted(job *ActionJob, outcome asyncOutcome) {
+	switch outcome {
+	case asyncGaveUp, asyncWithdrawn, asyncNotEntered:
+		pm.dropUnstartedJob(job)
+	case asyncRevoked, asyncClosing:
+		pm.abandonUnstartedJob(job)
+	}
+}
+
 // abandonUnstartedJob ends the in-memory entry of an execution that will never
-// start because its VM went away while it waited. With a host Job the host is
-// told the callback is lost — it decides whether the Job waits for another
-// process or ends — and the entry goes; without one the entry is the only
-// record, so it ends failed, as work whose plugin disappeared always has.
+// start because its VM went away, or its manager began closing, while it waited.
+// With a host Job the host is told the callback is lost — it decides whether the
+// Job waits for another process or ends — and the entry goes; without one the
+// entry is the only record, so it ends failed, as work whose plugin disappeared
+// always has. The report is claimed under the job's lock, so a shutdown's own
+// lost report and this one are one report.
 func (pm *PluginManager) abandonUnstartedJob(job *ActionJob) {
 	if ref := job.hostJobRef(); ref != nil && ref.Sink != nil {
-		ref.Sink.CallbackLost("plugin-unavailable")
+		reason := "plugin-unavailable"
+		if pm.closed.Load() {
+			reason = StopRuntimeStopping
+		}
+		job.mu.Lock()
+		report := !job.lost && !job.settlesItself
+		if report {
+			job.lost = true
+		}
+		job.mu.Unlock()
+		if report {
+			ref.Sink.CallbackLost(reason)
+		}
 		pm.dropUnstartedJob(job)
 		return
 	}

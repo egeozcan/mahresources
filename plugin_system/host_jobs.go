@@ -157,6 +157,10 @@ type HostJobRef struct {
 	// was started outside any Job.
 	ParentJobID string
 	Sink        HostJobSink
+	// Cancellable records that the Job was accepted against a registration that
+	// declares its handler may be stopped partway (cancel = true). A person's
+	// Cancel stops a handler that has entered only when this is set.
+	Cancellable bool
 	// Admission, when set, is the claim this execution must be granted before it
 	// starts: the host accepted the Job as waiting and has not claimed it, so the
 	// execution asks from the head of its plugin's lane. Nil means the host

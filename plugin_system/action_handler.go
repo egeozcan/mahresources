@@ -57,6 +57,9 @@ type handlerRun struct {
 	job  *ActionJob
 	vm   *vmMutex
 	live func() bool
+	// cancellable is whether a person's Cancel may stop this handler once it
+	// has entered: the Job records that its handler may be stopped partway.
+	cancellable bool
 
 	stopCtx context.Context
 	stop    context.CancelCauseFunc
@@ -68,14 +71,21 @@ type handlerRun struct {
 func (pm *PluginManager) enterHandler(job *ActionJob, vm *vmMutex, live func() bool) *handlerRun {
 	stopCtx, stop := context.WithCancelCause(context.Background())
 	h := &handlerRun{job: job, vm: vm, live: live, stopCtx: stopCtx, stop: stop}
+	if ref := job.hostJobRef(); ref != nil {
+		h.cancellable = ref.Cancellable
+	}
 	job.mu.Lock()
 	job.handler = h
-	pending := job.pendingStop
 	job.mu.Unlock()
-	if pending != "" {
-		h.requestStop(pending)
-	}
 	return h
+}
+
+// cancelledBeforeEntry reports whether a person cancelled the Job while its
+// execution was on its way to the handler: then the handler is not entered.
+func (job *ActionJob) cancelledBeforeEntry() bool {
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	return job.pendingStop == StopCancelled
 }
 
 // Context is the context the handler's Lua call runs under: withValues' values
@@ -128,12 +138,48 @@ func (h *handlerRun) ended() (stopReason string, timedOut bool) {
 	return "", false
 }
 
+// An execution is in flight from its submission until its goroutine has
+// settled it, and exactly one party reports its outcome: the execution itself,
+// once its handler is over or it was given up before its handler
+// (settlesItself, recorded under the job's lock before the VM is released), or a
+// shutdown's lost report for one that has not (lost, under the same lock). Every
+// walk that stops, waits for or reports executions goes through trackExecution's
+// registry, never through the panel's list, whose entries a person can clear
+// while their handler still runs.
+
+// trackExecution records that an async execution is in flight.
+func (pm *PluginManager) trackExecution(job *ActionJob) {
+	pm.executionsMu.Lock()
+	if pm.executions == nil {
+		pm.executions = make(map[*ActionJob]struct{})
+	}
+	pm.executions[job] = struct{}{}
+	pm.executionsMu.Unlock()
+}
+
+// untrackExecution records that an execution's goroutine is done with it.
+func (pm *PluginManager) untrackExecution(job *ActionJob) {
+	pm.executionsMu.Lock()
+	delete(pm.executions, job)
+	pm.executionsMu.Unlock()
+}
+
+// inFlight answers the executions in flight now.
+func (pm *PluginManager) inFlight() []*ActionJob {
+	pm.executionsMu.Lock()
+	defer pm.executionsMu.Unlock()
+	jobs := make([]*ActionJob, 0, len(pm.executions))
+	for job := range pm.executions {
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
 // stopHandlers ends the Lua call of every running handler match selects, with
 // reason as its cause, and answers how many it asked.
 func (pm *PluginManager) stopHandlers(reason string, match func(job *ActionJob, h *handlerRun) bool) int {
-	pm.actionJobsMu.RLock()
 	var running []*handlerRun
-	for _, job := range pm.actionJobs {
+	for _, job := range pm.inFlight() {
 		job.mu.RLock()
 		h := job.handler
 		job.mu.RUnlock()
@@ -141,7 +187,6 @@ func (pm *PluginManager) stopHandlers(reason string, match func(job *ActionJob, 
 			running = append(running, h)
 		}
 	}
-	pm.actionJobsMu.RUnlock()
 	for _, h := range running {
 		h.requestStop(reason)
 	}
@@ -150,10 +195,8 @@ func (pm *PluginManager) stopHandlers(reason string, match func(job *ActionJob, 
 
 // runningHandlers counts the handlers whose Lua call is in progress.
 func (pm *PluginManager) runningHandlers() int {
-	pm.actionJobsMu.RLock()
-	defer pm.actionJobsMu.RUnlock()
 	running := 0
-	for _, job := range pm.actionJobs {
+	for _, job := range pm.inFlight() {
 		job.mu.RLock()
 		if job.handler != nil {
 			running++
@@ -166,10 +209,8 @@ func (pm *PluginManager) runningHandlers() int {
 // unsettledOutcomes counts the executions whose handler is over and whose own
 // goroutine has not finished reporting the outcome yet.
 func (pm *PluginManager) unsettledOutcomes() int {
-	pm.actionJobsMu.RLock()
-	defer pm.actionJobsMu.RUnlock()
 	pending := 0
-	for _, job := range pm.actionJobs {
+	for _, job := range pm.inFlight() {
 		job.mu.RLock()
 		if job.settlesItself && !job.settleFinished {
 			pending++
@@ -206,14 +247,12 @@ func (pm *PluginManager) StopHostJob(jobID string) bool {
 	if jobID == "" {
 		return false
 	}
-	pm.actionJobsMu.RLock()
 	var held []*ActionJob
-	for _, job := range pm.actionJobs {
+	for _, job := range pm.inFlight() {
 		if ref := job.hostJobRef(); ref != nil && ref.JobID == jobID {
 			held = append(held, job)
 		}
 	}
-	pm.actionJobsMu.RUnlock()
 	for _, job := range held {
 		job.mu.Lock()
 		h := job.handler
@@ -221,7 +260,11 @@ func (pm *PluginManager) StopHostJob(jobID string) bool {
 			job.pendingStop = StopCancelled
 		}
 		job.mu.Unlock()
-		if h != nil {
+		// A handler that has entered is stopped only where the Job records that
+		// it may be: the Job's own declaration (HostJobRef.Cancellable) is what
+		// every process advertised Cancel from, so a process whose registration
+		// says otherwise cannot authorize stopping this one.
+		if h != nil && h.cancellable {
 			h.requestStop(StopCancelled)
 		}
 	}

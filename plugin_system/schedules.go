@@ -343,6 +343,8 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
+	pm.trackExecution(job)
+	defer pm.untrackExecution(job)
 	pm.notifyActionJobSubscribers("added", job)
 	defer pm.releaseHostJob(host)
 

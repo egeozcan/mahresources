@@ -301,11 +301,12 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 // The wait and the holdClaim policy are the scheduler's own either way: they are
 // why the row's claim is held for the whole run under "skip", and moving them
 // into the executor would make the claim and the execution two different
-// lifetimes. onAdmitted, when set, is told the moment the occurrence is admitted
-// to run; the inline run tells it before it starts, since nothing there admits.
-func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, onAdmitted func()) pluginActionRun {
+// lifetimes. decided, when set, is told once whether the occurrence started, as
+// its handler is entered or as it gives up; the inline run, which has no
+// admission to report entry, tells it after the run.
+func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, decided func(started bool)) pluginActionRun {
 	if s.ctx != nil && s.ctx.JobService() != nil {
-		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, onAdmitted)
+		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, decided)
 		if err != nil {
 			// The Job could not be materialized at all. The row is given back
 			// rather than reported as a failed run: nothing was executed, and the
@@ -321,9 +322,6 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 	if pm == nil {
 		return pluginActionRun{}
 	}
-	if onAdmitted != nil {
-		onAdmitted()
-	}
 	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, holdClaim)
 	if !ran {
 		return pluginActionRun{}
@@ -335,6 +333,9 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 // row. It reads the execution's own outcome rather than an error, because a
 // plugin job reports what happened through its Job rather than by returning.
 func scheduleRunOutcome(run pluginActionRun) (status, message string) {
+	if run.Cancelled {
+		return models.PluginScheduleStatusCancelled, "a person cancelled the run"
+	}
 	if run.Failed {
 		if run.Message == "" {
 			return models.PluginScheduleStatusFailed, "the plugin's handler failed"
@@ -425,11 +426,11 @@ func (s *PluginScheduler) RunNow(pluginName, scheduleID string) error {
 		}
 		return nil
 	case <-time.After(s.dispatchWait + runNowAnswerMargin):
-		// Every way out of the dispatch wait decides, so this is a run that is
-		// still getting under way; it reports itself through its Job.
-		log.Printf("[plugin] schedule %s/%s was asked to run now and had not started after %s",
-			pluginName, scheduleID, s.dispatchWait+runNowAnswerMargin)
-		return nil
+		// Every way out of the dispatch wait decides well inside this, so an
+		// answer this late means the database is not answering. That it has not
+		// started is what is known; if it starts after all, its Job reports it.
+		return fmt.Errorf("%w: %s/%s had not started after %s; if it starts later, the jobs panel shows it",
+			ErrScheduleDidNotStart, pluginName, scheduleID, s.dispatchWait+runNowAnswerMargin)
 	}
 }
 
@@ -477,7 +478,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 		return
 	}
 
-	run := s.runOccurrence(row, reg, scheduleActor(row), true, func() { decide(true) })
+	run := s.runOccurrence(row, reg, scheduleActor(row), true, decide)
 	if !run.Started {
 		// The handler was never entered, so there is no outcome to record — the
 		// same "not this tick" a full job budget or a busy VM gives a ticked run.

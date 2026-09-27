@@ -498,11 +498,16 @@ func validateScheme(url string) error {
 func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction, actor uint) {
 	defer pm.httpWg.Done()
 
-	// Acquire concurrency semaphore
-	pm.httpSem <- struct{}{}
+	// Acquire concurrency semaphore. A request still waiting for one when the
+	// manager closes is dropped: its callback could never run.
+	select {
+	case pm.httpSem <- struct{}{}:
+	case <-pm.httpCtx.Done():
+		return
+	}
 	defer func() { <-pm.httpSem }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(pm.httpCtx, timeout)
 	defer cancel()
 
 	var bodyReader io.Reader

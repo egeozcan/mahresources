@@ -445,7 +445,10 @@ nothing running, and none of it has run. It ends `cancelled` at once and its
 handler never runs. A bulk run's queued jobs can be selected and cancelled
 together in the Job Center.
 
-A running handler offers **Cancel** only when the action declares `cancel = true`.
+A running handler offers **Cancel** only when the action declared `cancel = true`
+when the job was accepted; the job records it, so every server process answers the
+same. A job accepted that way whose action no longer declares `cancel = true` when
+its turn comes is not run: it is blocked with the reason `registration-changed`.
 Cancelling it stops the handler at its next step: between two Lua instructions,
 or when a `mah.sleep` or `mah.http` call it is waiting in returns early. What the
 handler did before that stays done, so declare `cancel = true` only for a handler
@@ -454,7 +457,8 @@ item in its own `mah.db.transaction`. The job ends `cancelled`, also when the
 handler had already called `mah.job_complete` or finished before the stop reached
 it: once a person asks for a cancellation, the job does not end as succeeded.
 With several server processes, the process running the handler stops it within
-about a second of the request.
+about a second of the request. A job cancelled after it was claimed but before its
+handler started never starts, and ends `cancelled`.
 
 A running `mah.start_job` job has no registration to declare `cancel = true`, so
 it can be cancelled only before it starts.
@@ -478,7 +482,9 @@ message reads "the plugin's handler failed".
 
 ### When the server stops
 
-A graceful shutdown gives a running handler 5 seconds to finish by itself. Then it
+A graceful shutdown first ends the plugins' `mah.http` requests still in flight;
+their callbacks do not run. It then gives a running handler 5 seconds to finish by
+itself. Then it
 is stopped at its next step and has 5 more seconds to unwind, and its job ends
 `interrupted` with the reason "The server shut down while this was running." A
 handler waiting inside a call that does not end when it is stopped is left behind
@@ -487,11 +493,15 @@ turn never started: a queued action stays `queued` and the next server process
 runs it, a queued `mah.start_job` job is cancelled as not started, and a schedule
 run that had not started records nothing and runs at a tick after the restart.
 
-After a crash, the next server process on the same host interrupts the jobs the
-crashed process was running on its first pass, with the reason "The server
-process running this stopped before it finished." A job whose process ran on
-another host cannot be proved stopped; once its 2-minute lease runs out it is
-blocked for a person to resolve. A queued `mah.start_job` job that a crashed
+After a crash, the next server process on the same machine, in the same boot
+session, interrupts the jobs the crashed process was running on its next pass,
+with the reason "The server process running this stopped before it finished." A
+job whose process cannot be proved stopped that way, because the machine has
+rebooted since or the process ran on another machine, waits for its 2-minute
+lease; then it is interrupted if its process is proved gone, and otherwise
+blocked for a person to resolve. If recording a finished handler's outcome takes
+longer than 5 seconds at shutdown, the next process resolves that job the same
+way, as `runtime-lost`. A queued `mah.start_job` job that a crashed
 process on another host accepted stays `queued` until someone cancels it, because
 only that process could ever run its callback.
 

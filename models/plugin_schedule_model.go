@@ -90,6 +90,9 @@ const (
 const (
 	PluginScheduleStatusCompleted = "completed"
 	PluginScheduleStatusFailed    = "failed"
+	// PluginScheduleStatusCancelled is a run a person cancelled after its
+	// handler had started: it neither completed nor failed.
+	PluginScheduleStatusCancelled = "cancelled"
 )
 
 // ValidPluginScheduleOverlap reports whether a declared overlap policy is one the

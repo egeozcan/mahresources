@@ -36,13 +36,13 @@ import (
 type pluginActionAdmission struct {
 	ctx     *MahresourcesContext
 	subtype string
-	// accept, when set, accepts the Job this execution runs at its first
-	// admission rather than before it waited (see acceptAtAdmission). It answers
-	// the Job's id.
-	accept func(bounded context.Context) (string, error)
-	// onAdmitted, when set, is told once the claim is taken: the execution is
-	// about to enter its handler.
-	onAdmitted func()
+	// accept, when set, is the acceptance of the Job this execution runs, made
+	// at its first admission together with the claim, rather than before it
+	// waited (see acceptAtAdmission).
+	accept *jobs.Acceptance
+	// decided, when set, is told once whether the execution started: true as
+	// its handler is entered, false when it gave up without entering it.
+	decided func(started bool)
 	// input is what the execution reports with when its Job stores none: a
 	// closure's input is not replayable, so the claim opens nothing and the
 	// accepting call's own description stands in for it.
@@ -80,14 +80,22 @@ func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pl
 }
 
 // acceptAtAdmission makes this admission accept its Job when it is first
-// admitted, through accept, and tells onAdmitted once the claim is taken. It is
-// for a scheduled occurrence: a tick whose plugin, job slot or deployment budget
-// stays busy for the whole dispatch wait is "not this tick" and leaves the row
-// due, and a Job accepted before that wait would be a cancelled Job recorded for
-// every such tick.
-func (a *pluginActionAdmission) acceptAtAdmission(accept func(bounded context.Context) (string, error), onAdmitted func()) {
-	a.accept = accept
-	a.onAdmitted = onAdmitted
+// admitted, accepted and claimed in one transaction (jobs.Service.AcceptClaimed),
+// and tells decided whether the execution started. It is for a scheduled
+// occurrence: a tick whose plugin, job slot or deployment budget stays busy for
+// the whole dispatch wait is "not this tick" and leaves the row due, and a Job
+// that existed before that wait, or before its claim had a slot of the budget,
+// would be a cancelled Job recorded for every such tick.
+func (a *pluginActionAdmission) acceptAtAdmission(acceptance jobs.Acceptance, decided func(started bool)) {
+	a.accept = &acceptance
+	a.decided = decided
+}
+
+// decide tells the admission's caller, once, whether the execution started.
+func (a *pluginActionAdmission) decide(started bool) {
+	if a.decided != nil {
+		a.decided(started)
+	}
 }
 
 // JobID implements plugin_system.HostJobNamer: the durable Job, once there is one.
@@ -107,31 +115,33 @@ func (a *pluginActionAdmission) setJobID(jobID string) {
 func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_system.HostJobRef {
 	return &plugin_system.HostJobRef{
 		JobID: a.JobID(), Handle: handle, ParentJobID: parentJobID,
-		Sink: a, Admission: a,
+		Sink: a, Admission: a, Cancellable: a.input != nil && a.input.Cancellable,
 	}
 }
 
-// acceptNow accepts the Job of an admission that accepts it at admission, within
-// bounded. A deployment budget that is already full answers "later" without
-// accepting anything: the Job would only wait and be withdrawn.
-func (a *pluginActionAdmission) acceptNow(bounded context.Context) plugin_system.AdmitResult {
+// acceptClaimed accepts this admission's Job and claims it in one transaction,
+// within bounded, and keeps the claim alive as claimPluginActionJobNamed does. A
+// full deployment budget rolls the whole transaction back: no Job is left behind
+// for a tick that could not start.
+func (a *pluginActionAdmission) acceptClaimed(bounded context.Context) (jobs.Execution, func(), error) {
 	deps := a.ctx.jobDeps()
 	if deps.DB != nil {
 		deps.DB = deps.DB.WithContext(bounded)
 	}
-	if err := a.ctx.JobService().CapacityAvailable(deps, a.ctx.hostClaimCapacityBudget()); err != nil {
-		if !errors.Is(err, jobs.ErrCapacityExhausted) {
-			log.Printf("warning: could not read the job budget before accepting a plugin job: %v", err)
+	execution, _, err := a.ctx.JobService().AcceptClaimed(context.Background(), deps, *a.accept, jobs.ClaimRequest{
+		Kind:        JobKindPluginAction,
+		KindVersion: jobPluginActionKindVersion,
+		Claimant:    plugin_system.CurrentRuntimeIdentity().String(),
+		Capacity:    a.ctx.hostClaimCapacityBudget(),
+	})
+	if execution.ExecutionToken == "" {
+		if err == nil {
+			err = errors.New("the acceptance answered no claim")
 		}
-		return plugin_system.AdmitLater
+		return jobs.Execution{}, func() {}, err
 	}
-	jobID, err := a.accept(bounded)
-	if err != nil {
-		log.Printf("warning: could not accept a plugin job at its admission: %v", err)
-		return plugin_system.AdmitLater
-	}
-	a.setJobID(jobID)
-	return plugin_system.Admitted
+	a.setJobID(execution.JobID)
+	return execution, a.ctx.startPluginActionHeartbeat(execution), err
 }
 
 // Admit claims the Job for this execution.
@@ -170,16 +180,11 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	}
 	bounded, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	if a.JobID() == "" {
-		if a.accept == nil {
-			return plugin_system.AdmitWithdrawn
-		}
-		if accepted := a.acceptNow(bounded); accepted != plugin_system.Admitted {
-			return accepted
-		}
-	}
 	jobID := a.JobID()
-	if !a.checksAnswerBeforeClaim(bounded, jobID) {
+	if jobID == "" && a.accept == nil {
+		return plugin_system.AdmitWithdrawn
+	}
+	if jobID != "" && !a.checksAnswerBeforeClaim(bounded, jobID) {
 		return plugin_system.AdmitDeferred
 	}
 
@@ -202,9 +207,19 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	}()
 	// The claim is known the moment it commits, so a panic in what follows it
 	// is settled by the recovery above rather than leaving the Job running.
-	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, jobID, func(ref jobs.ExecutionRef) {
-		claimed = &jobs.Execution{JobID: ref.JobID, ExecutionToken: ref.ExecutionToken}
-	})
+	var (
+		execution     jobs.Execution
+		stopHeartbeat func()
+		err           error
+	)
+	if jobID == "" {
+		execution, stopHeartbeat, err = a.acceptClaimed(bounded)
+		jobID = a.JobID()
+	} else {
+		execution, stopHeartbeat, err = a.ctx.claimPluginActionJobNamed(bounded, jobID, func(ref jobs.ExecutionRef) {
+			claimed = &jobs.Execution{JobID: ref.JobID, ExecutionToken: ref.ExecutionToken}
+		})
+	}
 	var unrunnable *jobs.UnrunnableClaimError
 	switch {
 	case err == nil:
@@ -254,9 +269,6 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	a.execution = execution
 	a.sink = newPluginActionSink(a.ctx, execution, input)
 	a.mu.Unlock()
-	if a.onAdmitted != nil {
-		a.onAdmitted()
-	}
 	return plugin_system.Admitted
 }
 
@@ -471,8 +483,10 @@ func (a *pluginActionAdmission) liveSink() *pluginActionSink {
 	return a.sink
 }
 
-// Started implements plugin_system.HostJobSink.
+// Started implements plugin_system.HostJobSink. It is reported as the handler
+// is entered, which is the one moment "it started" is true.
 func (a *pluginActionAdmission) Started(message string) {
+	a.decide(true)
 	if sink := a.liveSink(); sink != nil {
 		sink.Started(message)
 	}

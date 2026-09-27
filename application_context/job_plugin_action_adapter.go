@@ -173,6 +173,13 @@ type pluginActionJobInput struct {
 	// whose work cannot be restored. It is what reconciliation reads instead of
 	// guessing from a lease.
 	Runtime string `json:"runtime,omitempty"`
+	// Cancellable records that the registration this Job was accepted against
+	// declares that its handler may be stopped partway (cancel = true). It is the
+	// one answer every process gives to "may a person stop this running
+	// handler": the advertisement, the selector and the executor all read it, so
+	// a process running a different plugin.lua cannot authorize stopping a
+	// handler whose own registration never allowed it.
+	Cancellable bool `json:"cancellable,omitempty"`
 	// NoTerminalHook marks a Job whose outcome is not announced to the plugin hook
 	// feed, because the work itself came from that feed: an after_job_* handler
 	// that starts work must not be handed the completion of the work it started,
@@ -194,6 +201,9 @@ type pluginActionSummary struct {
 	EntityID   uint   `json:"entityId,omitempty"`
 	EntityType string `json:"entityType,omitempty"`
 	Runtime    string `json:"runtime,omitempty"`
+	// Cancellable is the input's own, carried where a Cancel advertisement can
+	// read it without opening the sealed envelope.
+	Cancellable bool `json:"cancellable,omitempty"`
 	// NoTerminalHook is the causal-suppression flag, carried in the readable
 	// summary so a child Job can inherit it from its parent without anybody having
 	// to open a sealed envelope to find out.
@@ -217,6 +227,7 @@ func pluginActionJobCodec() jobs.ReplayCodec {
 				EntityID:       decoded.EntityID,
 				EntityType:     decoded.EntityType,
 				Runtime:        decoded.Runtime,
+				Cancellable:    decoded.Cancellable,
 				NoTerminalHook: decoded.NoTerminalHook,
 			})
 		},
@@ -394,6 +405,7 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 		Params:      params,
 		Fingerprint: expectFilters,
 		Runtime:     plugin_system.CurrentRuntimeIdentity().String(),
+		Cancellable: action.Cancellable,
 	})
 	if err != nil {
 		return "", "", err
@@ -481,6 +493,9 @@ type pluginActionRun struct {
 	Started bool
 	// Failed reports that the handler was entered and ended unsuccessfully.
 	Failed bool
+	// Cancelled reports that the handler was entered and a person cancelled the
+	// run: it neither completed nor failed.
+	Cancelled bool
 	// Message is the bounded message the run produced.
 	Message string
 }
@@ -658,9 +673,10 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, exe
 			neverStarted, err := ctx.pluginActionNeverStarted(snap)
 			if err == nil {
 				run := pluginActionRun{
-					JobID:   execution.JobID,
-					Started: !neverStarted,
-					Failed:  snap.State == jobs.StateFailed || snap.State == jobs.StateInterrupted,
+					JobID:     execution.JobID,
+					Started:   !neverStarted,
+					Failed:    snap.State == jobs.StateFailed || snap.State == jobs.StateInterrupted,
+					Cancelled: snap.State == jobs.StateCancelled && !neverStarted,
 				}
 				if snap.Failure != nil {
 					run.Message = snap.Failure.Message
@@ -806,6 +822,12 @@ func (ctx *MahresourcesContext) pluginActionRegistrationRefusal(pm *plugin_syste
 	if validationErrs := plugin_system.ValidateActionParams(action, input.Params); len(validationErrs) > 0 {
 		return "params-changed"
 	}
+	if input.Cancellable && !action.Cancellable {
+		// The Job was offered to be stopped partway on the word of a registration
+		// that no longer gives it; its handler is not run on a promise it cannot
+		// keep.
+		return "registration-changed"
+	}
 	return ""
 }
 
@@ -896,8 +918,13 @@ func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.Co
 // could prove its work stopped) is not offered one, because there is no execution
 // to stop and the host may not end it until one is proved gone. A running Job is
 // offered one only where its registration declares that its handler may be stopped
-// partway; the execution running it stops it (ExecuteCommand, or the intent watch
-// in the process that holds it) and ends the Job cancelled.
+// partway, as the Job records it (pluginActionJobInput.Cancellable) rather than as
+// this process's registration says; the execution running it stops it
+// (ExecuteCommand, or the intent watch in the process that holds it) and ends the
+// Job cancelled. A running Job whose handler has not been entered yet — claimed,
+// and still being checked — is offered no more than one whose handler has: the
+// window is one admission attempt, and whether the handler entered is not a fact
+// the command can read in the same transaction it records the cancellation in.
 func (a *pluginActionAdapter) cancelCommands(commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	summary, ok := pluginActionSummaryDecoded(commandContext.Snapshot.Summary)
 	if !ok || a.ctx == nil {
@@ -917,7 +944,7 @@ func (a *pluginActionAdapter) cancelCommands(commandContext jobs.CommandContext)
 			return nil, nil
 		}
 	case jobs.StateRunning:
-		if !a.handlerCancellable(summary) {
+		if !summary.Cancellable {
 			return nil, nil
 		}
 		return []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Bulk: true,
@@ -927,25 +954,6 @@ func (a *pluginActionAdapter) cancelCommands(commandContext jobs.CommandContext)
 	}
 	return []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Bulk: true,
 		Confirmation: "Cancel this plugin action? It has not started, so nothing of it has run."}}, nil
-}
-
-// handlerCancellable reports whether the registration a running Job belongs to
-// declares that its handler may be stopped partway, as it is registered now.
-func (a *pluginActionAdapter) handlerCancellable(summary pluginActionSummary) bool {
-	pm := a.ctx.PluginManager()
-	if pm == nil {
-		return false
-	}
-	switch summary.Subtype {
-	case pluginActionSubtypeRegistered:
-		action, _, err := pm.FindAction(summary.Plugin, summary.Action)
-		return err == nil && action.Cancellable
-	case pluginActionSubtypeScheduled:
-		reg, found := a.ctx.pluginScheduleRegistration(pm, summary.Plugin, summary.ScheduleID)
-		return found && reg.Cancellable
-	default:
-		return false
-	}
 }
 
 // pluginActionClaimUnresolved reports whether a Job's claim is still held or
@@ -1601,8 +1609,8 @@ func pluginActionStoppedOutcome(reason string) pluginActionOutcome {
 // records: why its runtime stopped under it, in words a reader can act on.
 func pluginActionInterruption(reason string) *jobs.Failure {
 	switch reason {
-	case plugin_system.StopPluginDisabled:
-		return &jobs.Failure{Code: reason, Class: jobs.FailureClassCancellation,
+	case plugin_system.StopPluginDisabled, "plugin-unavailable":
+		return &jobs.Failure{Code: plugin_system.StopPluginDisabled, Class: jobs.FailureClassCancellation,
 			Message: "The plugin was disabled while this was running."}
 	default:
 		return &jobs.Failure{Code: plugin_system.StopRuntimeStopping, Class: jobs.FailureClassCancellation,
@@ -1723,6 +1731,7 @@ func (s *pluginActionSink) CallbackLost(reason string) {
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateInterrupted,
 		Event:           jobs.EventInput{Type: jobs.EventInterrupted, Detail: detail},
+		Failure:         pluginActionInterruption(reason),
 	}); err != nil && !mirrorRefusalIsSilent(err) {
 		log.Printf("warning: could not interrupt job %s: %v", s.execution.JobID, err)
 	}
@@ -2047,9 +2056,10 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 // schedule every tick, pushing people's own finished work out of view.
 //
 // Started=false means the handler was never entered: the row keeps its claim (the
-// caller releases it), and no outcome is recorded. onAdmitted, when set, is told
-// the moment the occurrence is admitted, which is when it is about to run.
-func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.ScheduleRegistration, actorUserID uint, overlap string, wait time.Duration, onAdmitted func()) (pluginActionRun, error) {
+// caller releases it), and no outcome is recorded. decided, when set, is told once
+// whether the occurrence started: true as its handler is entered, false as soon as
+// this attempt gives up without entering it.
+func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.ScheduleRegistration, actorUserID uint, overlap string, wait time.Duration, decided func(started bool)) (pluginActionRun, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return pluginActionRun{}, errors.New("this context has no job control plane installed")
@@ -2061,12 +2071,13 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 
 	label := fmt.Sprintf("%s: %s", reg.PluginName, reg.ScheduleID)
 	input, err := json.Marshal(pluginActionJobInput{
-		Subtype:    pluginActionSubtypeScheduled,
-		Plugin:     reg.PluginName,
-		ScheduleID: reg.ScheduleID,
-		Label:      truncateTo(label, jobs.MaxTitleBytes),
-		Overlap:    overlap,
-		Runtime:    plugin_system.CurrentRuntimeIdentity().String(),
+		Subtype:     pluginActionSubtypeScheduled,
+		Plugin:      reg.PluginName,
+		ScheduleID:  reg.ScheduleID,
+		Label:       truncateTo(label, jobs.MaxTitleBytes),
+		Overlap:     overlap,
+		Runtime:     plugin_system.CurrentRuntimeIdentity().String(),
+		Cancellable: reg.Cancellable,
 	})
 	if err != nil {
 		return pluginActionRun{}, err
@@ -2086,30 +2097,20 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 	// from its acceptance on.
 	handle := download_queue.NewJobID()
 	admission := ctx.newPluginActionAdmission("", decoded, ctx.occurrenceActorRefusal)
-	admission.acceptAtAdmission(func(bounded context.Context) (string, error) {
-		deps := ctx.jobDeps()
-		if deps.DB != nil {
-			deps.DB = deps.DB.WithContext(bounded)
-		}
-		accepted, err := service.Accept(deps, jobs.Acceptance{
-			Kind:        JobKindPluginAction,
-			KindVersion: jobPluginActionKindVersion,
-			State:       jobs.StateQueued,
-			OwnerUserID: owner,
-			ActorUserID: owner,
-			// The origin is the Schedule, not a person: §1's provenance list has an
-			// entry for it precisely because "a plugin asked on a timer" is not the
-			// same fact as "somebody clicked a button".
-			Origin:     "schedule",
-			Title:      truncateTo(label, jobs.MaxTitleBytes),
-			Replay:     jobs.ReplayInput{Input: input},
-			LegacyRefs: []jobs.LegacyRef{{Namespace: PluginActionHandleNamespace, Handle: handle}},
-		})
-		if err != nil {
-			return "", err
-		}
-		return accepted.ID, nil
-	}, onAdmitted)
+	admission.acceptAtAdmission(jobs.Acceptance{
+		Kind:        JobKindPluginAction,
+		KindVersion: jobPluginActionKindVersion,
+		State:       jobs.StateQueued,
+		OwnerUserID: owner,
+		ActorUserID: owner,
+		// The origin is the Schedule, not a person: §1's provenance list has an
+		// entry for it precisely because "a plugin asked on a timer" is not the
+		// same fact as "somebody clicked a button".
+		Origin:     "schedule",
+		Title:      truncateTo(label, jobs.MaxTitleBytes),
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: PluginActionHandleNamespace, Handle: handle}},
+	}, decided)
 	return ctx.runOccurrenceThrough(pm, admission, handle, reg, actorUserID, decoded, wait)
 }
 
@@ -2139,6 +2140,12 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 func (ctx *MahresourcesContext) runOccurrenceThrough(pm *plugin_system.PluginManager, admission *pluginActionAdmission, handle string, reg plugin_system.ScheduleRegistration, actorUserID uint, input *pluginActionJobInput, wait time.Duration) (pluginActionRun, error) {
 	holdClaim := input.Overlap == plugin_system.ScheduleOverlapSkip
 	_, ran, runErr := pm.RunScheduleForHost(reg, actorUserID, wait, holdClaim, admission.hostJobRef(handle, ""))
+	if !ran {
+		// This attempt never entered the handler, which is the answer a caller
+		// waiting to hear whether the run started needs; whatever settling the Job
+		// takes below is not.
+		admission.decide(false)
+	}
 	if ran || errors.Is(runErr, plugin_system.ErrHostJobHeld) {
 		// Either the handler ran here — RunScheduleForHost blocks until it has
 		// finished, so this is the confirmation that its outcome is recorded — or
@@ -2150,8 +2157,16 @@ func (ctx *MahresourcesContext) runOccurrenceThrough(pm *plugin_system.PluginMan
 }
 
 // occurrenceActorRefusal is a scheduled occurrence's re-check: whether the
+// schedule still declares what the occurrence was accepted with, and whether the
 // operator it runs as may still run its plugin's work.
 func (ctx *MahresourcesContext) occurrenceActorRefusal(bounded context.Context, execution jobs.Execution, claimed *pluginActionJobInput) (string, error) {
+	if claimed.Cancellable {
+		if pm := ctx.PluginManager(); pm != nil {
+			if reg, found := ctx.pluginScheduleRegistration(pm, claimed.Plugin, claimed.ScheduleID); found && !reg.Cancellable {
+				return "registration-changed", nil
+			}
+		}
+	}
 	deps := ctx.jobDeps()
 	if deps.DB != nil {
 		deps.DB = deps.DB.WithContext(bounded)

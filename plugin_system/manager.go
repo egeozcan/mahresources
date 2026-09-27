@@ -264,6 +264,13 @@ type PluginManager struct {
 	// hostHeld names the durable Jobs this process already has an execution
 	// for, under actionJobsMu (see holdHostJobLocked).
 	hostHeld map[string]string
+	// executions holds every async execution from its submission until its
+	// goroutine has settled it, under executionsMu. It is what a stop, a
+	// shutdown's drain and its lost-callback report walk: actionJobs is the
+	// panel's list, whose finished-looking entries a person can clear while a
+	// handler that already reported its outcome is still running.
+	executions   map[*ActionJob]struct{}
+	executionsMu sync.Mutex
 
 	// lanes serialize each plugin's async executions (see action_lanes.go).
 	lanes   map[string]*pluginLane
@@ -292,6 +299,11 @@ type PluginManager struct {
 	done         chan struct{}  // closed to stop background goroutines (HTTP drain, job cleanup)
 	httpWg       sync.WaitGroup // tracks in-flight HTTP goroutines
 	httpSem      chan struct{}  // concurrency semaphore
+	// httpCtx is what every async request runs under, and httpStop ends it at
+	// Close: a request may be allowed 120 seconds, and a shutdown that waited
+	// for a few of them in turn would outlast its supervisor's stop timeout.
+	httpCtx  context.Context
+	httpStop context.CancelFunc
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -319,6 +331,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionSubs:             make(map[chan ActionJobEvent]struct{}),
 		actionInFlight:         make(map[string]*sync.WaitGroup),
 		hostHeld:               make(map[string]string),
+		executions:             make(map[*ActionJob]struct{}),
 		lanes:                  make(map[string]*pluginLane),
 		loading:                make(map[string]chan struct{}),
 		fallbackConsent:        newMemoryConsentStore(),
@@ -330,6 +343,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		httpSem:                make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
+	pm.httpCtx, pm.httpStop = context.WithCancel(context.Background())
 	go pm.drainHttpCallbacks()
 
 	// Start action job cleanup ticker.
@@ -1805,6 +1819,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		pm.actionJobsMu.Lock()
 		pm.actionJobs[jobID] = job
 		pm.actionJobsMu.Unlock()
+		pm.trackExecution(job)
 
 		pm.notifyActionJobSubscribers("added", job)
 
@@ -1814,15 +1829,11 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 
 		go func() {
 			defer wg.Done()
+			defer pm.untrackExecution(job)
 			// mainState: start_job is callable from a coroutine, whose LState is
 			// not in vmLocks — the worker would fail the job it just created with
 			// "plugin is no longer available".
-			switch pm.runStartJobGoroutine(job, ticket, mainState(L), fn, jobID) {
-			case asyncGaveUp, asyncWithdrawn, asyncNotEntered:
-				pm.dropUnstartedJob(job)
-			case asyncRevoked:
-				pm.abandonUnstartedJob(job)
-			}
+			pm.endUnstarted(job, pm.runStartJobGoroutine(job, ticket, mainState(L), fn, jobID))
 		}()
 
 		L.Push(lua.LString(jobID))
@@ -2906,8 +2917,15 @@ func (pm *PluginManager) Close() {
 	}
 
 	// closed was set under pm.mu above, and beginHTTP adds under pm.mu.RLock —
-	// so every Add that will ever happen has happened before this Wait.
-	pm.httpWg.Wait()
+	// so every Add that will ever happen has happened before this Wait. The
+	// requests are ended first (their context and any wait for the request
+	// semaphore), so the wait is for their goroutines to notice, and it is
+	// bounded all the same.
+	pm.httpStop()
+	if !waitWithin(&pm.httpWg, shutdownHandlerStopWait) {
+		log.Printf("[plugin] warning: plugin HTTP requests were still ending after %s; shutting down without them",
+			shutdownHandlerStopWait)
+	}
 
 	// Every policy client holds its own connection pool, and they are the only
 	// clients plugin egress uses now.

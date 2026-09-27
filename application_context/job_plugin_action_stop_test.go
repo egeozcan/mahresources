@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -315,4 +316,150 @@ func unusedPIDForTest(t *testing.T) int {
 	}
 	t.Skip("no process id that is provably unused was found")
 	return 0
+}
+
+// TestAHandlerLostAtShutdownSaysWhy pins the last-resort path of a shutdown: a
+// handler that would not stop is reported lost, and its Job says the server shut
+// down rather than ending interrupted with no reason.
+func TestAHandlerLostAtShutdownSaysWhy(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	actor := models.User{Username: "lost-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 1)
+	execution, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: accepted.ID,
+		Claimant: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	newPluginActionSink(ctx, execution, input).CallbackLost(plugin_system.StopRuntimeStopping)
+	job := jobSnapshot(t, ctx.JobService(), ctx, accepted.ID)
+	if job.State != jobs.StateInterrupted || job.Failure == nil ||
+		job.Failure.Message != "The server shut down while this was running." {
+		t.Fatalf("a lost handler's Job is %s (%+v), want interrupted with the shutdown as its reason", job.State, job.Failure)
+	}
+}
+
+// TestCancelFollowsWhatTheJobRecordsNotTheCurrentRegistration pins where a
+// running handler's permission to be stopped comes from. The Job records it at
+// acceptance, and every process reads that one fact, so a process whose
+// plugin.lua declares cancel = true cannot authorize stopping a Job accepted
+// against one that did not; and a Job accepted as cancellable is not run by a
+// registration that no longer allows it.
+func TestCancelFollowsWhatTheJobRecordsNotTheCurrentRegistration(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	actor := models.User{Username: "cancel-authority-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	owner := actor.ID
+
+	// Accepted against a registration that did not declare cancel, though the
+	// one registered now does.
+	raw, err := json.Marshal(pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "cancellable-work",
+		EntityType: "resource", EntityID: 1, Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	unmarked := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Cancellable Work", OwnerUserID: &owner, ActorUserID: &owner,
+		Replay: jobs.ReplayInput{Input: raw},
+	})
+	if _, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: unmarked.ID,
+		Claimant: plugin_system.CurrentRuntimeIdentity().String(),
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if offersCommand(advertisedForTest(t, ctx, unmarked.ID), jobs.CommandCancel) {
+		t.Fatal("a running Job accepted without cancel = true offers Cancel because today's registration declares it")
+	}
+
+	// Accepted as cancellable, against a registration that no longer is.
+	marked := &pluginActionJobInput{
+		Subtype: pluginActionSubtypeRegistered, Plugin: pluginActionTestPlugin, Action: "long-work",
+		EntityType: "resource", EntityID: 1, Cancellable: true,
+	}
+	if refusal := ctx.pluginActionRegistrationRefusal(ctx.PluginManager(), marked); refusal != "registration-changed" {
+		t.Fatalf("a Job accepted as cancellable against a registration that no longer is was refused %q, want registration-changed", refusal)
+	}
+}
+
+// TestACancelledScheduledRunIsRecordedAsCancelled pins the schedule row's history
+// for a run a person cancelled: it did not complete, so it is not recorded as a
+// completed run.
+func TestACancelledScheduledRunIsRecordedAsCancelled(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	pm := ctx.PluginManager()
+	operator := models.User{Username: "cancelled-run-operator", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&operator).Error; err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	if err := ctx.SyncPluginSchedules(pluginActionTestPlugin, pm.DeclaredSchedules(pluginActionTestPlugin)); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	defer scheduler.Stop()
+	if err := scheduler.RunNow(pluginActionTestPlugin, "cancellable-tick"); err != nil {
+		t.Fatalf("run now: %v", err)
+	}
+	running := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
+	waitForLongWork(t, ctx, running.ID)
+	if err := cancelJobForTest(t, ctx, running.ID, "cancel-scheduled-run"); err != nil {
+		t.Fatalf("cancel the run: %v", err)
+	}
+	waitForJobState(t, ctx, running.ID, "the run to end", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var row models.PluginSchedule
+		if err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "cancellable-tick").First(&row).Error; err != nil {
+			t.Fatalf("read the row: %v", err)
+		}
+		if row.LastStatus != "" {
+			if row.LastStatus != models.PluginScheduleStatusCancelled {
+				t.Fatalf("a cancelled run is recorded %q on its schedule, want %q", row.LastStatus, models.PluginScheduleStatusCancelled)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the cancelled run never recorded its outcome on the schedule")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestOnlyAClaimantOfThisBootSessionIsExpiredEarly pins what counts as proof that
+// the process holding a claim is gone. A hostname is not unique across machines:
+// a claim recorded under this hostname with another boot session may belong to a
+// live machine configured with the same name, so it waits for its lease. Only
+// this boot session's missing process is proof.
+func TestOnlyAClaimantOfThisBootSessionIsExpiredEarly(t *testing.T) {
+	current := plugin_system.CurrentRuntimeIdentity()
+	if current.BootSession == "" {
+		t.Skip("this platform records no boot session, so no process can be proved gone")
+	}
+	otherBoot := current
+	otherBoot.BootSession = "another-machine-with-this-name"
+	if runtimeClaimantGone(otherBoot.String()) {
+		t.Fatal("a claimant with this hostname and another boot session was treated as gone")
+	}
+	gone := current
+	gone.PID = unusedPIDForTest(t)
+	if !runtimeClaimantGone(gone.String()) {
+		t.Fatal("a claimant of this boot session with no such process was not treated as gone")
+	}
+	if runtimeClaimantGone(current.String()) {
+		t.Fatal("this very process was treated as gone")
+	}
+	if runtimeClaimantGone("plugin-command:0123") {
+		t.Fatal("a claimant that is not a runtime identity was treated as gone")
+	}
 }

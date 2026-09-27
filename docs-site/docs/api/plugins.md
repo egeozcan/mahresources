@@ -217,7 +217,7 @@ curl "http://localhost:8181/v1/plugin/schedules?name=image-processor"
 ]
 ```
 
-`lastRunAt` is present once the schedule has run. `lastStatus` is `completed` or `failed`. `registered` is false when the row exists but the plugin no longer declares that id, which is what a disabled plugin, a renamed schedule and a removed `mah.schedule` call all look like. `owned` is false when the row carries no creator, at which point the schedule has stopped rather than merely lost its label.
+`lastRunAt` is present once the schedule has run. `lastStatus` is `completed`, `failed`, or `cancelled` for a run a person cancelled after it started (a schedule that declares `cancel = true`). `registered` is false when the row exists but the plugin no longer declares that id, which is what a disabled plugin, a renamed schedule and a removed `mah.schedule` call all look like. `owned` is false when the row carries no creator, at which point the schedule has stopped rather than merely lost its label.
 
 ### Run a Schedule
 

@@ -1,6 +1,11 @@
 package plugin_system
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,6 +41,14 @@ function blocker(ctx)
     mah.job_complete(ctx.job_id, { message = "released" })
 end
 
+-- reports its outcome, then keeps working: its panel entry reads finished while
+-- its handler still runs
+function lingerer(ctx)
+    mah.job_complete(ctx.job_id, { message = "reported early" })
+    entered(ctx.entity_id)
+    for i = 1, 100 do mah.sleep(1) end
+end
+
 -- finishes by itself
 function quick(ctx)
     entered(ctx.entity_id)
@@ -48,6 +61,7 @@ function init()
     mah.action({ id = "spinner", label = "Spinner", entity = "resource", async = true, handler = spinner })
     mah.action({ id = "blocker", label = "Blocker", entity = "resource", async = true, handler = blocker })
     mah.action({ id = "quick", label = "Quick", entity = "resource", async = true, handler = quick })
+    mah.action({ id = "lingerer", label = "Lingerer", entity = "resource", async = true, handler = lingerer })
 end
 `
 
@@ -353,7 +367,7 @@ func TestAHandlerThatWillNotStopIsReportedLostOnce(t *testing.T) {
 func TestCancellingARunningHandlerStopsIt(t *testing.T) {
 	pm, hooks := newStoppablePlugin(t)
 	sink := &recordingSink{}
-	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "to-cancel", Handle: "to-cancel", Sink: sink},
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "to-cancel", Handle: "to-cancel", Sink: sink, Cancellable: true},
 		nil, "stoppable", "sleeper", 1, nil, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -375,5 +389,149 @@ func TestCancellingARunningHandlerStopsIt(t *testing.T) {
 	if sink.stopped[0] != StopCancelled || sink.completed != 0 || sink.failed != 0 {
 		t.Fatalf("the host was told stopped=%v completed=%d failed=%d, want one cancellation",
 			sink.stopped, sink.completed, sink.failed)
+	}
+}
+
+// TestACancelDoesNotStopAHandlerTheJobNeverAllowedToStop pins the executor's half
+// of Cancel's authority. Whether a running handler may be stopped is what the Job
+// recorded when it was accepted (HostJobRef.Cancellable); a stop asked of a Job
+// that did not record it leaves the handler running, whichever process asked.
+func TestACancelDoesNotStopAHandlerTheJobNeverAllowedToStop(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "quick", 1, sink)
+	if !pm.StopHostJob(sinkJobIDForTest(t, pm, sink)) {
+		t.Fatal("the cancel found no execution for the Job")
+	}
+	waitUntil(t, "the handler to finish by itself", 5*time.Second, func() bool {
+		_, completed, _, _ := sink.counts()
+		return completed == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.stopped) != 0 {
+		t.Fatalf("a handler whose Job never allowed a stop was stopped (%v)", sink.stopped)
+	}
+}
+
+// sinkJobIDForTest answers the host Job id of the one execution reporting into
+// sink.
+func sinkJobIDForTest(t *testing.T, pm *PluginManager, sink HostJobSink) string {
+	t.Helper()
+	for _, job := range pm.inFlight() {
+		if ref := job.hostJobRef(); ref != nil && ref.Sink == sink {
+			return ref.JobID
+		}
+	}
+	t.Fatal("no execution reports into this sink")
+	return ""
+}
+
+// TestACancelBeforeTheHandlerKeepsItFromStarting pins a cancel that lands between
+// the claim and the handler: nothing of the handler has run, so it is never
+// entered, and the Job ends cancelled rather than started and stopped.
+func TestACancelBeforeTheHandlerKeepsItFromStarting(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	admission := &cancellingAdmission{pm: pm, jobID: "cancelled-in-admission"}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: admission.jobID, Handle: admission.jobID,
+		Sink: sink, Admission: admission}, nil, "stoppable", "quick", 1, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	waitUntil(t, "the cancelled execution to report", 5*time.Second, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return len(sink.stopped) == 1
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.stopped[0] != StopCancelled || sink.started != 0 || sink.completed != 0 {
+		t.Fatalf("the host was told stopped=%v started=%d completed=%d, want a cancellation and no start",
+			sink.stopped, sink.started, sink.completed)
+	}
+	if hooks.enteredCount() != 0 {
+		t.Fatal("the handler was entered after its Job was cancelled")
+	}
+}
+
+// cancellingAdmission admits its execution and, in the same moment, has a person
+// cancel the Job: the stop reaches the execution after its claim and before its
+// handler.
+type cancellingAdmission struct {
+	pm    *PluginManager
+	jobID string
+}
+
+func (a *cancellingAdmission) Admit(time.Time) AdmitResult {
+	a.pm.StopHostJob(a.jobID)
+	return Admitted
+}
+
+// TestAStopReachesAHandlerWhosePanelEntryWasCleared pins that the panel's list is
+// not the registry a stop walks. A handler that reported its outcome and kept
+// working reads as finished there, and a person can clear it; the disable must
+// still find it and stop it.
+func TestAStopReachesAHandlerWhosePanelEntryWasCleared(t *testing.T) {
+	pm, hooks := newStoppablePlugin(t)
+	sink := &recordingSink{}
+	runStoppable(t, pm, hooks, "lingerer", 1, sink)
+	if cleared := pm.ClearFinishedActionJobs(nil); len(cleared) != 1 {
+		t.Fatalf("cleared %d entries, want the lingering handler's", len(cleared))
+	}
+	if pm.runningHandlers() != 1 {
+		t.Fatalf("%d handlers are known to be running, want the one whose entry was cleared", pm.runningHandlers())
+	}
+	began := time.Now()
+	if err := pm.DisablePlugin("stoppable"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("the disable took %s: it did not find the handler to stop", took)
+	}
+	waitUntil(t, "the handler to settle", 5*time.Second, func() bool {
+		_, completed, _, _ := sink.counts()
+		return completed == 1
+	})
+}
+
+// TestCloseEndsSlowPluginHTTPRequests pins the first wait of a shutdown. An async
+// mah.http request may be allowed 120 seconds; Close ends the requests rather
+// than waiting for them in turn.
+func TestCloseEndsSlowPluginHTTPRequests(t *testing.T) {
+	shortenShutdown(t, 200*time.Millisecond, 2*time.Second, time.Second)
+	release := make(chan struct{})
+	defer close(release)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("test bug: %v", err)
+	}
+	pm := mustEnable(t, t.TempDir(), "slowhttp", `
+plugin = { name = "slowhttp", version = "1.0", api_version = 1, capabilities = { "api", "http" },
+           network = { "`+host+`" }, allow_private_hosts = true }
+function init()
+    mah.api("GET", "fetch", function(ctx)
+        for i = 1, 20 do
+            mah.http.get("`+srv.URL+`/slow", { timeout = 120 }, function(resp) end)
+        end
+        ctx.json({ ok = true })
+    end)
+end
+`)
+	pm.HandleAPI(context.Background(), "slowhttp", "GET", "fetch", PageContext{Path: "/v1/plugins/slowhttp/fetch", Method: "GET"})
+	time.Sleep(200 * time.Millisecond)
+
+	// Shorter than the bounded wait for the requests (2s here): the requests
+	// are ended, not waited out.
+	began := time.Now()
+	pm.Close()
+	if took := time.Since(began); took > 1500*time.Millisecond {
+		t.Fatalf("Close took %s with slow plugin HTTP requests in flight", took)
 	}
 }

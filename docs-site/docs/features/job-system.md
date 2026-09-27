@@ -87,10 +87,11 @@ running this stopped before it finished." (code `runtime-lost`). The summary's
 failures by class count both states; see [Summary analytics and exports](#summary-analytics-and-exports).
 
 A Job's claim is kept alive by the process running it. When that process stops
-without a graceful shutdown, the next process on the same host proves it gone
-from its recorded host, boot session and process id, and reconciles its Jobs on
-its first pass rather than once their 2-minute lease runs out. A process on
-another host cannot be proved gone, so its Jobs wait for their lease.
+without a graceful shutdown, a process of the same boot session on the same
+machine proves it gone (its recorded process no longer exists) and reconciles its
+Jobs on its next pass rather than once their 2-minute lease runs out. A claim
+recorded in another boot session cannot be proved gone that way, because a
+hostname does not identify one machine, so its Jobs wait for their lease.
 
 When a plugin action succeeds, its final progress is stored with the completed
 Job. The Job Center also shows older successful plugin actions as complete when
