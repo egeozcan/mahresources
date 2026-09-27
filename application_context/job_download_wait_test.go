@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
+
+	"gorm.io/gorm"
 )
 
 // gatedDownloadServer holds every request until release is closed (or the
@@ -304,5 +307,59 @@ func TestJobsWaitingForAURLHoldNoCapacity(t *testing.T) {
 	for _, id := range waiting {
 		waitForSnapshot(t, ctx, id, "each duplicate to run once the URL is free",
 			func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	}
+}
+
+// A due row whose Job could not be moved to the queue for a reason that says
+// nothing about the Job (a failed read or write) is not recorded as failed: the
+// Job is still there and still runs, so a failed row would disagree with it. The
+// row goes back to the sweep and is handed to its Job on a later pass.
+func TestADeferredRowWhoseJobCouldNotBeReadIsNotFailed(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	actor, err := ctx.CreateUser(&UserInput{Username: "deferrer", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.test/deferred-outage.bin"}, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+
+	var failed atomic.Bool
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("test:job_write_outage", func(db *gorm.DB) {
+		if db.Statement.Table == "jobs" && failed.CompareAndSwap(false, true) {
+			_ = db.AddError(errors.New("injected write outage"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := ScheduledDownloadFireConfig{
+		Now:             time.Now(),
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatalf("a deferred row with a durable Job was submitted to the queue")
+			return "", nil
+		},
+	}
+	if _, err := ctx.FireDueScheduledDownloads(cfg); err != nil {
+		t.Fatalf("the sweep stopped at a row it could not hand over: %v", err)
+	}
+	if !failed.Load() {
+		t.Fatal("the outage was never injected")
+	}
+	_ = ctx.db.Callback().Update().Remove("test:job_write_outage")
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusPending || got.ClaimToken != "" {
+		t.Fatalf("after the outage the row is %s (claim %q, %s), want pending and unclaimed for the next pass", got.Status, got.ClaimToken, got.LastError)
+	}
+
+	cfg.Now = time.Now()
+	if _, err := ctx.FireDueScheduledDownloads(cfg); err != nil {
+		t.Fatalf("fire again: %v", err)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != job.ID || got.Attempts != 1 {
+		t.Fatalf("the row is %s naming %q after %d attempts (%s), want submitted naming %s after one", got.Status, got.JobID, got.Attempts, got.LastError, job.ID)
 	}
 }

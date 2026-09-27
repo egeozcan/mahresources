@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -127,5 +128,59 @@ func TestAHeldDownloadDoesNotHoldItsURL(t *testing.T) {
 	waitForCanonical(t, "the other transfer to end", func() bool { return downloadQueueStatusTerminal(other.GetStatus()) })
 	if err := dm.ResumeExclusive(held.ID); err != nil {
 		t.Fatalf("resuming the held download once its URL is free: %v", err)
+	}
+}
+
+// A legacy retry is arbitrated like every other start: the check and the start
+// are one step, so two retries of one URL that race each other start one
+// transfer, and a retry of a URL in flight is refused.
+func TestTwoRetriesOfOneURLStartOneTransfer(t *testing.T) {
+	for round := 0; round < 25; round++ {
+		dm := createTestManager()
+		dm.resourceCtx = &capturingResourceCreator{}
+		// Every slot held, so a retried worker parks before it can finish and the
+		// retried entry stays pending while the other retry asks.
+		for i := 0; i < cap(dm.semaphore); i++ {
+			dm.semaphore <- struct{}{}
+		}
+		url := "http://example.com/retried-" + strconv.Itoa(round) + ".bin"
+		first := addTestJob(dm, "first", JobStatusFailed)
+		second := addTestJob(dm, "second", JobStatusFailed)
+		for _, job := range []*DownloadJob{first, second} {
+			job.URL, job.Source = url, JobSourceDownload
+			job.creator = &query_models.ResourceFromRemoteCreator{URL: url}
+		}
+
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for _, id := range []string{"first", "second"} {
+			go func(id string) {
+				<-start
+				results <- dm.RetryExclusive(id)
+			}(id)
+		}
+		close(start)
+		var started, refused int
+		for i := 0; i < 2; i++ {
+			var busy *URLActiveError
+			switch err := <-results; {
+			case err == nil:
+				started++
+			case errors.As(err, &busy):
+				refused++
+			default:
+				t.Fatalf("round %d: a retry failed: %v", round, err)
+			}
+		}
+		if started != 1 || refused != 1 {
+			t.Fatalf("round %d: %d retries started and %d were refused, want one of each", round, started, refused)
+		}
+		for _, job := range []*DownloadJob{first, second} {
+			_ = dm.Cancel(job.ID)
+		}
+		for i := 0; i < cap(dm.semaphore); i++ {
+			<-dm.semaphore
+		}
+		dm.workers.Wait()
 	}
 }

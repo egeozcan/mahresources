@@ -278,7 +278,9 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 		if !job.CanRetry() {
 			return "", "", fmt.Errorf("this download is already queued; wait for it to finish")
 		}
-		if err := dm.Retry(entry.JobID); err != nil {
+		// Exclusive, because the busy check above released the queue's lock and
+		// another start of the URL can land before this one.
+		if err := dm.RetryExclusive(entry.JobID); err != nil {
 			return "", "", err
 		}
 		return entry.JobID, "", nil
@@ -303,7 +305,8 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// every public host — and a retry is exactly where that is easy to miss,
 	// because it runs on a worker in a process that may never have seen the
 	// original job.
-	job, err := dm.SubmitForPlugin(creator, owner, entry.PluginName)
+	job, err := dm.SubmitForPluginWithOptions(creator, owner, entry.PluginName,
+		download_queue.SubmissionOptions{ExclusiveURL: true})
 	if err != nil {
 		// Hand the slot back, or a queue that was momentarily full would leave the
 		// row claimed by an attempt that never started.

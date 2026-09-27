@@ -1614,7 +1614,22 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	// cancelled) are exactly the states ClearFinished removes.
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
+	return dm.retryLocked(jobID, false)
+}
 
+// RetryExclusive retries a failed or cancelled download unless another entry is
+// fetching its URL, which it answers with a *URLActiveError. The check and the
+// start are one step under the registry's write lock, as in ResumeExclusive, so
+// two retries of one URL, or a retry and any other start, cannot both pass the
+// check and both transfer it.
+func (dm *DownloadManager) RetryExclusive(jobID string) error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	return dm.retryLocked(jobID, true)
+}
+
+// retryLocked is Retry's body, with dm.mu held (read or write).
+func (dm *DownloadManager) retryLocked(jobID string, exclusiveURL bool) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		return &NotFoundError{JobID: jobID}
@@ -1628,6 +1643,11 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	// contract ADR 0007 states. The legacy door is for ids from before a Job existed.
 	if ref, ok := job.CanonicalExecution(); ok && ref.JobID != "" {
 		return &CanonicalJobError{JobID: jobID, Canonical: ref.JobID, Action: "retried"}
+	}
+	if exclusiveURL && job.runFn == nil {
+		if live := dm.activeEntryForURLLocked(job.GetURL(), SubmissionOptions{}); live != "" && live != job.ID {
+			return &URLActiveError{JobID: live}
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -399,6 +400,22 @@ func (ctx *MahresourcesContext) ReserveScheduledDownloadSubmit(id uint, claimTok
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
+}
+
+// unreserveScheduledDownloadSubmit takes back a reservation that submitted nothing:
+// the row is pending and unclaimed again, and the attempt the reservation counted
+// is uncounted.
+func (ctx *MahresourcesContext) unreserveScheduledDownloadSubmit(id uint, claimToken string, at time.Time) error {
+	return ctx.db.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusSubmitted).
+		Updates(map[string]any{
+			"status":      models.ScheduledDownloadStatusPending,
+			"attempts":    gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END"),
+			"claim_token": "",
+			"claimed_at":  nil,
+			"updated_at":  at,
+		}).Error
 }
 
 // MarkScheduledDownloadSubmitted records the queue job a fire produced and
@@ -925,11 +942,20 @@ func (ctx *MahresourcesContext) submitDeferredRowToItsJob(rowID uint, claim stri
 	if errors.As(err, &ended) {
 		return false, ctx.markScheduledDownloadEnded(rowID, claim, ended.state, now)
 	}
-	if err == nil && !materialized {
-		err = errors.New("the deferred download's Job is no longer recorded")
-	}
 	if err != nil {
-		return false, ctx.markScheduledDownloadFailed(rowID, claim, err, now, false)
+		// A read or write that failed says nothing about the Job, which is still
+		// there and still runs at its time. Failing the row would disagree with it,
+		// so the reservation is taken back and a later pass hands the row over. The
+		// sweep goes on to the rows behind it rather than stopping at this one.
+		if undoErr := ctx.unreserveScheduledDownloadSubmit(rowID, claim, now); undoErr != nil {
+			return false, errors.Join(err, undoErr)
+		}
+		log.Printf("warning: deferred download %d could not be handed to its Job this pass: %v", rowID, err)
+		return false, nil
+	}
+	if !materialized {
+		return false, ctx.markScheduledDownloadFailed(rowID, claim,
+			errors.New("the deferred download's Job is no longer recorded"), now, false)
 	}
 	if err := ctx.MarkScheduledDownloadSubmitted(rowID, claim, jobID, now); err != nil {
 		return false, err

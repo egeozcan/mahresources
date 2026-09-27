@@ -707,7 +707,9 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
-		if err := ctx.DownloadManager().Retry(projection.Entry.ID); err != nil {
+		// Checked again where it starts: the check above released the queue's lock,
+		// and another start of the URL can land in between.
+		if err := ctx.DownloadManager().RetryExclusive(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
