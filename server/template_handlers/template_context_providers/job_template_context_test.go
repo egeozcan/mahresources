@@ -358,26 +358,49 @@ func TestJobListPaginatesByKeyset(t *testing.T) {
 	}
 }
 
+// A filter the page cannot use answers 400 with the Job Center itself: the
+// filter form, so the reader can correct or clear it, and the problem said in
+// the list's place rather than on an error page with no way back.
 func TestJobListRefusesAnUnreadableFilter(t *testing.T) {
-	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?ownerId=nobody&dismissed=false")
-	if ctx["_statusCode"] != http.StatusBadRequest {
-		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
-	}
-	if _, ok := ctx["jobFilter"]; !ok {
-		t.Fatal("the refused page must still render the filter form so the reader can fix it")
+	for _, target := range []string{
+		"/jobs?ownerId=nobody&dismissed=false",
+		"/jobs?cursor=garbage&dismissed=false",
+		"/jobs?before=garbage&dismissed=false",
+	} {
+		ctx := renderJobList(t, &fakeJobListReader{}, target)
+		if ctx["_statusCode"] != http.StatusBadRequest || ctx["_statusKeepsPage"] != true {
+			t.Fatalf("%s: status = %v, keeps page = %v; want 400 on the page itself", target, ctx["_statusCode"], ctx["_statusKeepsPage"])
+		}
+		if _, ok := ctx["jobFilter"]; !ok {
+			t.Fatalf("%s: the refused page must still render the filter form so the reader can fix it", target)
+		}
+		if ctx["jobListError"] == nil || ctx["jobListError"] == "" {
+			t.Fatalf("%s: the page does not say what is wrong", target)
+		}
+		if _, errorPage := ctx["errorMessage"]; errorPage {
+			t.Fatalf("%s: the refusal is an error page, not the Job Center", target)
+		}
+		if got := ctx["pageTitle"]; got != "Job Center" {
+			t.Fatalf("%s: pageTitle = %v", target, got)
+		}
 	}
 }
 
 // A filter the service refuses reads on the page as the API reads it: the
-// problem in the reader's terms, without the service's internal wrapping.
+// problem in the reader's terms, without the service's internal wrapping. A
+// read that failed for another reason is still an error page.
 func TestJobListRefusalNamesOnlyTheFilterProblem(t *testing.T) {
 	refused := fmt.Errorf("jobs: list: %w", fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus"))
 	ctx := renderJobList(t, &fakeJobListReader{listErr: refused}, "/jobs?state=bogus&dismissed=false")
-	if ctx["_statusCode"] != http.StatusBadRequest {
-		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
+	if ctx["_statusCode"] != http.StatusBadRequest || ctx["_statusKeepsPage"] != true {
+		t.Fatalf("status = %v, keeps page = %v", ctx["_statusCode"], ctx["_statusKeepsPage"])
 	}
-	if got := ctx["errorMessage"]; got != `invalid filter: unknown state "bogus"` {
-		t.Fatalf("errorMessage = %q", got)
+	if got := ctx["jobListError"]; got != `unknown state "bogus"` {
+		t.Fatalf("jobListError = %q", got)
+	}
+	failed := renderJobList(t, &fakeJobListReader{listErr: fmt.Errorf("database is locked")}, "/jobs?dismissed=false")
+	if failed["_statusCode"] != http.StatusInternalServerError || failed["_statusKeepsPage"] == true {
+		t.Fatalf("a failed read answered %v, keeps page = %v; want the 500 error page", failed["_statusCode"], failed["_statusKeepsPage"])
 	}
 }
 

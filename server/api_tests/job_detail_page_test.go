@@ -60,3 +60,34 @@ func TestTheJobPageAnswersForTheJobItNames(t *testing.T) {
 		}
 	}
 }
+
+// A filter the Job Center cannot use answers 400 with the Job Center itself:
+// its filter form, the problem in the reader's terms, and a way to clear it,
+// rather than an error page whose only link leaves the Job Center.
+func TestAnUnusableJobCenterFilterKeepsTheFilterForm(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlaneWithoutRuntime(t, tc)
+	html := map[string]string{"Accept": "text/html"}
+
+	for _, query := range []string{
+		"state=bogus&kind=remote-download&dismissed=false",
+		"acceptedAfter=2026-09-27&acceptedBefore=2026-09-26&dismissed=false",
+		"cursor=garbage&dismissed=false",
+		"ownerId=abc&dismissed=false",
+	} {
+		page := doReq(tc, http.MethodGet, "/jobs?"+query, html, nil, nil)
+		if page.Code != http.StatusBadRequest {
+			t.Fatalf("/jobs?%s answered %d, want 400", query, page.Code)
+		}
+		body := page.Body.String()
+		if !strings.Contains(body, `aria-label="Filter jobs"`) {
+			t.Fatalf("/jobs?%s dropped the filter form", query)
+		}
+		if !strings.Contains(body, "data-job-list-error") || !strings.Contains(body, `href="/jobs?dismissed=false"`) {
+			t.Fatalf("/jobs?%s does not say what is wrong or offer to clear the filters", query)
+		}
+		if strings.Contains(body, "<title>Error 400") || strings.Contains(body, "jobs: list:") || strings.Contains(body, "invalid filter:") {
+			t.Fatalf("/jobs?%s rendered an error page or the service's wrapping", query)
+		}
+	}
+}

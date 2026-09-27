@@ -205,3 +205,16 @@ test.describe('The Job page', () => {
     }
   });
 });
+
+test.describe('A Job Center address with a filter it cannot use', () => {
+  test('keeps the filter form, says what is wrong, and offers to clear the filters', async ({ page }) => {
+    const response = await page.goto('/jobs?state=bogus&kind=remote-download&dismissed=false');
+    expect(response?.status()).toBe(400);
+    await expect(page).toHaveTitle(/^Job Center - /);
+    await expect(page.getByRole('alert')).toHaveText('This filter cannot be used: unknown state "bogus".');
+    await expect(page.getByRole('form', { name: 'Filter jobs' })).toBeAttached();
+    await page.getByRole('link', { name: 'clear all filters' }).click();
+    await expect(page).toHaveURL(/\/jobs\?dismissed=false$/);
+    await expect(page.getByTestId('job-live-status')).toBeVisible();
+  });
+});

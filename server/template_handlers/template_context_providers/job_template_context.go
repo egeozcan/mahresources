@@ -205,15 +205,15 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 
 		filter, err := jobListFilter(query)
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 		after, err := jobview.DecodeCursor(query.Get("cursor"))
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 		before, err := jobview.DecodeCursor(query.Get("before"))
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 
 		var page jobs.Page
@@ -441,9 +441,32 @@ func withoutEmptyValues(values url.Values) url.Values {
 func addJobListError(err error, ctx pongo2.Context) pongo2.Context {
 	if errors.Is(err, jobs.ErrInvalidFilter) || errors.Is(err, jobs.ErrInvalidCursor) ||
 		errors.Is(err, jobs.ErrInvalidPage) || errors.Is(err, jobs.ErrInvalidCommand) {
-		return addMessageErrContext(jobview.RequestErrorMessage(err), http.StatusBadRequest, ctx)
+		return refuseJobListFilter(err, ctx)
 	}
 	return addErrContext(err, ctx)
+}
+
+// refuseJobListFilter answers a filter the page cannot use, from a hand-edited
+// address or a stale bookmark, with the Job Center itself: status 400, the
+// filter form, and the problem in the list's place (listJobs.tpl), so the reader
+// can correct or clear it. An error page would drop the form and offer only a
+// way out of the Job Center.
+func refuseJobListFilter(err error, ctx pongo2.Context) pongo2.Context {
+	return ctx.Update(pongo2.Context{
+		"jobListError":     jobListErrorText(err),
+		"_statusCode":      http.StatusBadRequest,
+		"_statusKeepsPage": true,
+	})
+}
+
+// jobListErrorText is the problem as the page says it after "This filter cannot
+// be used:": the API's message without the category the page already names.
+func jobListErrorText(err error) string {
+	message := jobview.RequestErrorMessage(err)
+	for _, sentinel := range []error{jobs.ErrInvalidFilter, jobs.ErrInvalidCursor, jobs.ErrInvalidPage, jobs.ErrInvalidCommand} {
+		message = strings.TrimPrefix(message, strings.TrimPrefix(sentinel.Error(), "jobs: ")+": ")
+	}
+	return message
 }
 
 func jobFilterForm(query url.Values) JobFilterForm {
