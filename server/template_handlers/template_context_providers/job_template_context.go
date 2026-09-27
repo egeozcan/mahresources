@@ -822,8 +822,10 @@ func jobSummaryPresentation(raw json.RawMessage) (string, []JobSummaryField) {
 	decoder.UseNumber()
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		// Not an object: the whole value is one field.
+		whole := json.NewDecoder(bytes.NewReader(trimmed))
+		whole.UseNumber()
 		var value any
-		if err := decodeJSONValue(json.NewDecoder(bytes.NewReader(trimmed)), &value); err != nil {
+		if err := whole.Decode(&value); err != nil {
 			return "", nil
 		}
 		if shown := jobSummaryValue(value); shown != "" {
@@ -847,11 +849,6 @@ func jobSummaryPresentation(raw json.RawMessage) (string, []JobSummaryField) {
 		}
 	}
 	return "", fields
-}
-
-func decodeJSONValue(decoder *json.Decoder, value *any) error {
-	decoder.UseNumber()
-	return decoder.Decode(value)
 }
 
 // jobSummaryValue is one summary value as text, or "" for nothing to show. A

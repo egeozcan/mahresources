@@ -683,6 +683,7 @@ func TestJobSummaryReadsAsFieldsNotJSON(t *testing.T) {
 			},
 		},
 		{raw: `"a sentence the Kind wrote"`, text: "a sentence the Kind wrote"},
+		{raw: `["one","two"]`, want: []JobSummaryField{{Label: "Summary", Value: "one, two"}}},
 		{raw: `null`},
 		{raw: ``},
 	} {
