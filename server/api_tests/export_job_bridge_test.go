@@ -485,7 +485,7 @@ func TestAGroupExportArchiveDownloadsUnderAFileNameWithItsExtension(t *testing.T
 		t.Fatalf("parse Content-Disposition %q: %v", res.Header().Get("Content-Disposition"), err)
 	}
 	name := params["filename"]
-	if !regexp.MustCompile(`^exported-archive-\d{8}-\d{6}\.tar(\.gz)?$`).MatchString(name) {
-		t.Fatalf("the archive downloads as %q, want exported-archive-<time>.tar or .tar.gz", name)
+	if !regexp.MustCompile(`^exported-archive-\d{8}-\d{6}-` + jobs.ShortID(canonicalID) + `\.tar(\.gz)?$`).MatchString(name) {
+		t.Fatalf("the archive downloads as %q, want exported-archive-<time>-<job>.tar or .tar.gz", name)
 	}
 }

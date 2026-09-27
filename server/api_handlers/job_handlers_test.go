@@ -270,10 +270,12 @@ func TestJobDetailSaysHowEachRelatedJobIsRelated(t *testing.T) {
 	ctx := &jobDetailContextStub{
 		snapshot: job,
 		lineage: jobs.Lineage{
-			Job:        job,
-			Ancestors:  []jobs.Snapshot{{ID: "job-2", Kind: "remote-download", State: jobs.StateFailed}},
-			Successors: []jobs.Snapshot{{ID: "job-4", Kind: "remote-download", State: jobs.StateSucceeded}},
-			Relations:  map[string]jobs.LinkType{"job-2": jobs.LinkRetryOf, "job-4": jobs.LinkRepeatOf},
+			Job:            job,
+			Ancestors:      []jobs.Snapshot{{ID: "job-2", Kind: "remote-download", State: jobs.StateFailed}},
+			AncestorLinks:  []jobs.LinkType{jobs.LinkRetryOf},
+			Successors:     []jobs.Snapshot{{ID: "job-4", Kind: "remote-download", State: jobs.StateSucceeded}},
+			SuccessorLinks: []jobs.LinkType{jobs.LinkRepeatOf},
+			Children:       []jobs.Snapshot{{ID: "job-5", Kind: "group-import-apply", State: jobs.StateQueued}},
 		},
 	}
 	recorder := httptest.NewRecorder()
@@ -286,6 +288,7 @@ func TestJobDetailSaysHowEachRelatedJobIsRelated(t *testing.T) {
 		Lineage struct {
 			Ancestors  []map[string]any `json:"ancestors"`
 			Successors []map[string]any `json:"successors"`
+			Children   []map[string]any `json:"children"`
 		} `json:"lineage"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -297,6 +300,9 @@ func TestJobDetailSaysHowEachRelatedJobIsRelated(t *testing.T) {
 	}
 	if len(response.Lineage.Successors) != 1 || response.Lineage.Successors[0]["relation"] != "repeat-of" {
 		t.Fatalf("successors = %v, want job-4 related by repeat-of", response.Lineage.Successors)
+	}
+	if len(response.Lineage.Children) != 1 || response.Lineage.Children[0]["relation"] != "parent-child" {
+		t.Fatalf("children = %v, want job-5 related by parent-child", response.Lineage.Children)
 	}
 }
 

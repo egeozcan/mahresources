@@ -1905,26 +1905,30 @@ func TestLineageNamesOnlyVisibleRelatives(t *testing.T) {
 }
 
 // TestLineageSaysHowEachRelativeIsRelated: a retry chain lists Jobs of one title,
-// so each relative carries the link that relates it — a Retry and a Repeat read
-// differently — and a hidden relative's link is not named either.
+// so each listed relative carries the link that relates it — a Retry and a
+// Repeat read differently, even of the same Job — and a hidden relative's link
+// is not named either.
 func TestLineageSaysHowEachRelativeIsRelated(t *testing.T) {
 	deps := newTestDeps(t)
 	svc := NewService()
+	clock := time.Date(2031, 6, 11, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
 	accept := func(title string, class VisibilityClass) Snapshot {
+		clock = clock.Add(time.Minute)
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: uintPtr(7), Title: title, Visibility: class,
 			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
-	retried := accept("download", "")
-	repeated := accept("download", VisibilityAdmin)
+	earlier := accept("download", "")
+	hidden := accept("download", VisibilityAdmin)
 	job := accept("download", "")
-	child := accept("stage", "")
 	for _, link := range []LinkRequest{
-		{Type: LinkRetryOf, FromJobID: job.ID, ToJobID: retried.ID},
-		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: repeated.ID},
-		{Type: LinkParentChild, FromJobID: job.ID, ToJobID: child.ID},
+		// Two links between one pair: each listed entry names its own.
+		{Type: LinkRetryOf, FromJobID: job.ID, ToJobID: earlier.ID},
+		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: earlier.ID},
+		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: hidden.ID},
 	} {
 		if err := svc.Link(deps, link); err != nil {
 			t.Fatalf("link %+v: %v", link, err)
@@ -1935,28 +1939,36 @@ func TestLineageSaysHowEachRelativeIsRelated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lineage: %v", err)
 	}
-	if got := lineage.Relations[retried.ID]; got != LinkRetryOf {
-		t.Fatalf("the retried Job is related by %q, want %q", got, LinkRetryOf)
+	requireIDs(t, "ancestors", idsOf(lineage.Ancestors), earlier.ID, earlier.ID)
+	if len(lineage.AncestorLinks) != len(lineage.Ancestors) {
+		t.Fatalf("%d ancestor links for %d ancestors", len(lineage.AncestorLinks), len(lineage.Ancestors))
 	}
-	if got := lineage.Relations[child.ID]; got != LinkParentChild {
-		t.Fatalf("the child stage is related by %q, want %q", got, LinkParentChild)
+	links := map[LinkType]bool{}
+	for i, link := range lineage.AncestorLinks {
+		if lineage.Ancestors[i].ID != earlier.ID {
+			t.Fatalf("ancestor %d is %s", i, lineage.Ancestors[i].ID)
+		}
+		links[link] = true
 	}
-	if _, named := lineage.Relations[repeated.ID]; named || len(lineage.Relations) != 2 {
-		t.Fatalf("relations %v name a relative the viewer cannot see", lineage.Relations)
+	if !links[LinkRetryOf] || !links[LinkRepeatOf] {
+		t.Fatalf("the two links to one Job read as %v, want a retry-of and a repeat-of", lineage.AncestorLinks)
+	}
+
+	successor, err := svc.Lineage(deps, Access{UserID: 7}, earlier.ID)
+	if err != nil {
+		t.Fatalf("Lineage of the earlier Job: %v", err)
+	}
+	if len(successor.SuccessorLinks) != 2 || len(successor.Successors) != 2 {
+		t.Fatalf("successors %v with links %v, want the Job twice, once per link", idsOf(successor.Successors), successor.SuccessorLinks)
 	}
 	admin, err := svc.Lineage(deps, Access{UserID: 1, Administrator: true}, job.ID)
 	if err != nil {
 		t.Fatalf("Lineage as an administrator: %v", err)
 	}
-	if got := admin.Relations[repeated.ID]; got != LinkRepeatOf {
-		t.Fatalf("the repeated Job is related by %q, want %q", got, LinkRepeatOf)
-	}
-	successor, err := svc.Lineage(deps, Access{UserID: 7}, retried.ID)
-	if err != nil {
-		t.Fatalf("Lineage of the retried Job: %v", err)
-	}
-	if got := successor.Relations[job.ID]; got != LinkRetryOf {
-		t.Fatalf("the Retry is related to the Job it retried by %q, want %q", got, LinkRetryOf)
+	for i, ancestor := range admin.Ancestors {
+		if ancestor.ID == hidden.ID && admin.AncestorLinks[i] != LinkRepeatOf {
+			t.Fatalf("the repeated Job is related by %q, want %q", admin.AncestorLinks[i], LinkRepeatOf)
+		}
 	}
 }
 

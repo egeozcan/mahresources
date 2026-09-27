@@ -247,12 +247,23 @@ export function jobHeading(job) {
     return 'Job';
 }
 
-// The Job page's document title: the Job and its state, so two Job tabs, the
-// history, and the page a Retry opens each say which Job they are. The server
-// renders the same words (job_template_context.go jobDocumentTitle); this keeps
-// them current as the state changes.
+// The part of a Job's id that tells it from other Jobs of the same title: its
+// last eight letters and digits, lowercased. A UUIDv7 begins with its acceptance
+// time, which Jobs accepted together share; its tail is random. jobs.ShortID is
+// the same rule on the server.
+export function shortJobId(id) {
+    const kept = String(id ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return kept.slice(-8);
+}
+
+// The Job page's document title: the Job, its state and the end of its id, so
+// two Job tabs, the history, and the page a Retry opens each say which Job they
+// are, attempts of one download included. The server renders the same words
+// (job_template_context.go jobDocumentTitle); this keeps them current as the
+// state changes.
 export function jobDocumentTitle(job, siteTitle = '') {
-    const title = `${jobHeading(job)} (${stateLabel(job)}) - Job`;
+    const short = shortJobId(job?.id);
+    const title = `${jobHeading(job)} (${stateLabel(job)}) - Job${short ? ` ${short}` : ''}`;
     return siteTitle ? `${title} - ${siteTitle}` : title;
 }
 
@@ -310,7 +321,8 @@ export function outputCountText(count) {
 }
 
 // A Job's relatives as the page lists them: each says how it is related, its
-// state and when it was accepted, since a retry chain is Jobs of one title.
+// state, when it was accepted and the end of its id, since a retry chain is Jobs
+// of one title.
 // `relation` is the link the API names (retry-of, repeat-of, parent-child); a
 // retry-of whose earlier Job succeeded is a Continue of a partial success.
 const LINEAGE_GROUPS = [
@@ -345,11 +357,12 @@ export function lineageGroups(job) {
         ...group,
         entries: (Array.isArray(job?.lineage?.[group.key]) ? job.lineage[group.key] : []).map(related => ({
             id: related?.id || '',
+            short: shortJobId(related?.id),
             name: jobHeading(related),
             relation: lineageRelationText(group.key, related, job),
             state: stateLabel(related),
             acceptedAt: related?.acceptedAt || '',
-            accepted: formatLocalTime(related?.acceptedAt),
+            accepted: formatLocalTime(related?.acceptedAt, { seconds: true }),
         })),
     })).filter(group => group.entries.length > 0);
 }
@@ -1150,8 +1163,15 @@ export function jobCenter(options = {}) {
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
         scheduledText(job) { return scheduledStartText(job, this.now, date => formatLocalTime(date)); },
+        // Keeps the document title's state current. The heading is the server's,
+        // and names the Job once the server has read it; when that read failed
+        // and this page's own read succeeded, it names the Job from here.
         syncDocumentTitle() {
-            if (this.detail && typeof document !== 'undefined') document.title = jobDocumentTitle(this.detail, this._siteTitle);
+            if (!this.detail || typeof document === 'undefined') return;
+            document.title = jobDocumentTitle(this.detail, this._siteTitle);
+            const heading = document.getElementById?.('page-title')?.querySelector('span');
+            const name = jobHeading(this.detail);
+            if (heading && heading.textContent.trim() !== name) heading.textContent = name;
         },
         timeRows(job) { return jobTimeRows(job, this.now); },
         durationRows(job) { return jobDurationRows(job, this.now); },

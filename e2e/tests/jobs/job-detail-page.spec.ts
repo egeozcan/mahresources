@@ -64,7 +64,7 @@ test.describe('The Job page', () => {
       await waitForState(request, id, 'failed');
       await page.goto(`/job?id=${encodeURIComponent(id)}`);
 
-      await expect(page).toHaveTitle(new RegExp(`^${name.replace(/\./g, '\\.')} \\(Failed\\) - Job - `));
+      await expect(page).toHaveTitle(new RegExp(`^${name.replace(/\./g, '\\.')} \\(Failed\\) - Job [0-9a-z]{1,8} - `));
       await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
 
@@ -104,6 +104,7 @@ test.describe('The Job page', () => {
     try {
       await waitForState(request, id, 'failed');
       await page.goto(`/job?id=${encodeURIComponent(id)}`);
+      const originalTitle = await page.title();
       await page.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Retry', exact: true }).click();
       await expect(page).not.toHaveURL(new RegExp(`id=${id}$`));
       const successorId = new URL(page.url()).searchParams.get('id')!;
@@ -111,8 +112,10 @@ test.describe('The Job page', () => {
       await waitForState(request, successorId, 'failed');
       await page.reload();
 
-      // The retry's own page says it is one, and which Job it retried.
-      await expect(page).toHaveTitle(new RegExp(`^${name.replace(/\./g, '\\.')} \\(Failed\\) - Job - `));
+      // The retry's own page says it is one, and which Job it retried; failed
+      // like the original, its title still differs from it.
+      await expect(page).toHaveTitle(new RegExp(`^${name.replace(/\./g, '\\.')} \\(Failed\\) - Job [0-9a-z]{1,8} - `));
+      expect(await page.title()).not.toBe(originalTitle);
       const earlier = page.locator('[data-job-lineage="ancestors"]');
       await expect(earlier.getByRole('heading', { name: 'Earlier runs' })).toBeVisible();
       const entry = earlier.getByRole('listitem');
@@ -193,7 +196,7 @@ test.describe('The Job page', () => {
       await expect(outputs).toContainText('1 output');
       const link = outputs.getByRole('link', { name: 'Download exported archive' });
       const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
-      expect(download.suggestedFilename()).toMatch(/^exported-archive-\d{8}-\d{6}\.tar(\.gz)?$/);
+      expect(download.suggestedFilename()).toMatch(/^exported-archive-\d{8}-\d{6}-[0-9a-z]{8}\.tar(\.gz)?$/);
 
       // The /jobs card offers it too; the drawer draws its row from the same rule (resultOutput).
       await page.goto('/jobs?kind=group-export&dismissed=false');

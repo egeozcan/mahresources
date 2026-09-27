@@ -931,10 +931,13 @@ type Lineage struct {
 	Parents []Snapshot
 	// Children are this Job's child stages.
 	Children []Snapshot
-	// Relations names the link that relates each relative above to this Job, by
-	// the relative's id: a retry chain lists Jobs of one title, and a Retry and a
-	// Repeat of the same Job read differently.
-	Relations map[string]LinkType
+	// AncestorLinks and SuccessorLinks name the link behind each entry of
+	// Ancestors and Successors, index for index: retry-of (a Retry, or a Continue
+	// of a partial success) or repeat-of. A retry chain lists Jobs of one title,
+	// and one pair of Jobs may be linked both ways, so each entry carries its
+	// own. Parents and Children are always related by parent-child.
+	AncestorLinks  []LinkType
+	SuccessorLinks []LinkType
 	// RetriedElsewhere reports that the Job has a Retry or Continue successor
 	// the asker cannot see: an administrator retried an owner's Job. Retry
 	// lineage is linear whoever extended it, so the Job offers the owner no Retry,

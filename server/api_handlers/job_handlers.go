@@ -208,19 +208,28 @@ func jobOutputResponse(jobID, jobKind string, output jobs.Output) JobOutputRespo
 }
 
 func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {
-	convert := func(snapshots []jobs.Snapshot) []JobLineageEntryResponse {
+	convert := func(snapshots []jobs.Snapshot, relation func(int) jobs.LinkType) []JobLineageEntryResponse {
 		out := make([]JobLineageEntryResponse, 0, len(snapshots))
-		for _, snapshot := range snapshots {
+		for i, snapshot := range snapshots {
 			out = append(out, JobLineageEntryResponse{
 				JobSnapshotResponse: jobSnapshotResponse(snapshot),
-				Relation:            lineage.Relations[snapshot.ID],
+				Relation:            relation(i),
 			})
 		}
 		return out
 	}
+	linkAt := func(links []jobs.LinkType) func(int) jobs.LinkType {
+		return func(i int) jobs.LinkType {
+			if i < len(links) {
+				return links[i]
+			}
+			return ""
+		}
+	}
+	parentChild := func(int) jobs.LinkType { return jobs.LinkParentChild }
 	return JobLineageResponse{
-		Ancestors: convert(lineage.Ancestors), Successors: convert(lineage.Successors),
-		Parents: convert(lineage.Parents), Children: convert(lineage.Children),
+		Ancestors: convert(lineage.Ancestors, linkAt(lineage.AncestorLinks)), Successors: convert(lineage.Successors, linkAt(lineage.SuccessorLinks)),
+		Parents: convert(lineage.Parents, parentChild), Children: convert(lineage.Children, parentChild),
 		RetriedElsewhere: lineage.RetriedElsewhere,
 	}
 }

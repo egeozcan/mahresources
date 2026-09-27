@@ -129,7 +129,7 @@ test.describe('Job states on every surface', () => {
 
     await gotoMockedJobPage(page, id);
     const detail = page.getByTestId('job-detail');
-    await expect(page).toHaveTitle(/^Held elsewhere \(Pausing\) - Job - /);
+    await expect(page).toHaveTitle(/^Held elsewhere \(Pausing\) - Job [0-9a-z]+ - /);
     await expect(detail).toContainText('Pausing');
     await expect(detail).not.toContainText('Paused');
   });

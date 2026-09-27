@@ -33,7 +33,7 @@ func TestTheJobPageAnswersForTheJobItNames(t *testing.T) {
 		t.Fatalf("the Job's page answered %d", page.Code)
 	}
 	body := page.Body.String()
-	if !strings.Contains(body, "<title>Download from example.test (Queued) - Job - ") {
+	if !strings.Contains(body, "<title>Download from example.test (Queued) - Job "+jobs.ShortID(snapshot.ID)+" - ") {
 		t.Fatalf("the page is not titled by its Job: %s", regexp.MustCompile(`<title>[^<]*</title>`).FindString(body))
 	}
 	if count := strings.Count(body, "<h1"); count != 1 {

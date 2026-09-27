@@ -70,16 +70,17 @@ func renderJobDetail(reader JobDetailReader, target string) map[string]any {
 	return jobDetailContextProvider(reader)(httptest.NewRequest(http.MethodGet, target, nil))
 }
 
-// A Job's page is titled by the Job and its state, so two open Job tabs, the
-// history, and a Retry's landing page each say which Job they are; the page's
-// one h1 is the Job's title.
+// A Job's page is titled by the Job, its state and the end of its id, so two open
+// Job tabs, the history, and a Retry's landing page each say which Job they are,
+// even for two failed attempts of one download; the page's one h1 is the Job's
+// title.
 func TestAJobPageIsTitledByItsJob(t *testing.T) {
 	reader := &fakeJobDetailReader{jobs: map[string]jobs.Snapshot{
 		"job-1": {ID: "job-1", Kind: "remote-download", Title: "Download from example.test", State: jobs.StateFailed},
 		"job-2": {ID: "job-2", Kind: "group-export", State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause},
 	}}
 	context := renderJobDetail(reader, "/job?id=job-1")
-	if got := context["pageTitle"]; got != "Download from example.test (Failed) - Job" {
+	if got := context["pageTitle"]; got != "Download from example.test (Failed) - Job job1" {
 		t.Fatalf("pageTitle = %v", got)
 	}
 	if got := context["headingTitle"]; got != "Download from example.test" {
@@ -93,7 +94,7 @@ func TestAJobPageIsTitledByItsJob(t *testing.T) {
 	}
 	// A Job with no title is named by its Kind, as every other surface names it.
 	context = renderJobDetail(reader, "/job?id=job-2")
-	if got := context["pageTitle"]; got != "group-export (Pausing) - Job" {
+	if got := context["pageTitle"]; got != "group-export (Pausing) - Job job2" {
 		t.Fatalf("pageTitle = %v", got)
 	}
 }

@@ -410,7 +410,8 @@ size the remote server never reported. When a Job created a Resource, Note, or
 Group, open it from the **Jobs** panel, the Job Center list, or the Job detail
 page. A download shows **View created resource**; a plugin action shows a typed
 entity link such as **View resource**. A finished export shows **Download
-exported archive**, and the file saves under a name with its date and extension. Older plugin Jobs with only a result
+exported archive**, and the file saves under a name with its date, the end of
+the Job's id and its extension. Older plugin Jobs with only a result
 summary show **View result** for the entity; their Job detail page also shows
 **View JSON result** for the stored summary.
 

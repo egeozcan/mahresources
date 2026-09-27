@@ -219,7 +219,8 @@ Commands print `::mah-progress` lines; see
 The **Jobs** button in the header, or Control/Command + Shift + D, opens the
 Jobs drawer on the right. Pressed inside another dialog, such as search, the
 shortcut does not open the drawer over it; that dialog shows and announces
-"Close this dialog first to open Jobs." It groups Jobs into **Needs attention**, **Active and
+"Close this dialog first to open Jobs." at the bottom of the screen for ten
+seconds. It groups Jobs into **Needs attention**, **Active and
 scheduled** and **Finished**. A running Job shows its progress bar, the amount
 completed, its speed, the time left, its metrics and a graph for its speed and
 for each graphed metric. A finished Job shows its average speed.
@@ -330,10 +331,11 @@ moves to **Select All**.
 
 ### The Job page
 
-`/job?id=<id>` shows one Job. The page's title names the Job and its state, for
-example "cat.jpg (Failed) - Job", and follows the state as it changes, so open
-tabs, the browser history and the page a Retry opens each say which Job they
-are. The page's one heading is the Job's title, or its Kind when it has none.
+`/job?id=<id>` shows one Job. The page's title names the Job, its state and the
+last eight letters and digits of its id, for example "cat.jpg (Failed) - Job
+456789ab", and follows the state as it changes, so open tabs, the browser
+history and the page a Retry opens each say which Job they are, two failed
+attempts of one download included. The page's one heading is the Job's title, or its Kind when it has none.
 An id that names no Job you can see answers 404, with a link back to the Job
 Center; a legacy id from the download queue or a plugin action opens the Job it
 currently names.
@@ -346,8 +348,8 @@ counted from the finish). A pin keeps the history past that date; a file output
 keeps its own expiry. Times are in your browser's time zone, which the section
 names, and are written as on the `/jobs` cards: `2026-09-26 14:17:03`.
 
-**Related jobs** lists each linked Job with how it is related, its state and
-when it was accepted. **Earlier runs** holds the Job this one retried ("Retry
+**Related jobs** lists each linked Job with how it is related, its state, when
+it was accepted, and the end of its id beside its title. **Earlier runs** holds the Job this one retried ("Retry
 of"), continued ("Continuation of") or repeated ("Repeat of"); **Later runs**
 holds its own Retry, Continue or Repeat ("Retried as", "Continued as",
 "Repeated as"); **Part of** and **Stages** hold its parent and child stages.
@@ -359,9 +361,10 @@ so and offers **Show later events**.
 Each output link says what it does: **View** an entity and **Download** a
 file, followed by the output's name, and **Open report**, **Open log** or
 **Open link** for the rest, whose accessible names add the output's name after
-those words. A file downloads under its label, the time it was published (UTC)
-and its own extension, such as `exported-archive-20260926-124207.tar.gz` or
-`job-summary-export-20260926-124207.csv`.
+those words. A file downloads under its label, the time it was published (UTC),
+the end of its Job's id and its own extension, such as
+`exported-archive-20260926-124207-456789ab.tar.gz` or
+`job-summary-export-20260926-124207-456789ab.csv`.
 
 ## CLI
 

@@ -398,10 +398,10 @@ func rootedJobOutputPath(raw string) (string, error) {
 }
 
 // jobOutputFilename is the name a file output is saved under: its label, when
-// it was published, and the stored file's own extension, as
-// "exported-archive-20260926-124207.tar.gz". The label says what it is but not
-// which one, so two exports would otherwise save under one name, and without the
-// extension the saved file opens with nothing. The label is reduced to letters
+// it was published, the end of its Job's id (jobs.ShortID) and the stored file's
+// own extension, as "exported-archive-20260926-124207-456789ab.tar.gz". The
+// label says what it is but not which one, so two exports would otherwise save
+// under one name, and without the extension the saved file opens with nothing. The label is reduced to letters
 // and digits joined by hyphens, which also keeps any path or control character
 // out of the name. The time is UTC, as the legacy export download names it.
 func jobOutputFilename(output jobs.Output, rawPath string) string {
@@ -423,6 +423,9 @@ func jobOutputFilename(output jobs.Output, rawPath string) string {
 	}
 	if !output.CreatedAt.IsZero() {
 		stem += "-" + output.CreatedAt.UTC().Format("20060102-150405")
+	}
+	if short := jobs.ShortID(output.JobID); short != "" {
+		stem += "-" + short
 	}
 	return stem + extension
 }

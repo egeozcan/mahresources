@@ -915,7 +915,7 @@ func jobDetailContextProvider(reader JobDetailReader) func(request *http.Request
 			return base
 		}
 		heading := jobHeading(snapshot)
-		base["pageTitle"] = jobDocumentTitle(heading, jobStateLabel(snapshot))
+		base["pageTitle"] = jobDocumentTitle(heading, jobStateLabel(snapshot), jobs.ShortID(snapshot.ID))
 		base["headingTitle"] = heading
 		return base
 	}
@@ -932,10 +932,15 @@ func jobHeading(snapshot jobs.Snapshot) string {
 	return "Job"
 }
 
-// jobDocumentTitle is the Job page's title before the site name: the Job and its
-// state, so two Job tabs, the history, and the page a Retry opens each say which
-// Job they are. src/components/jobCenter.js jobDocumentTitle keeps it current as
-// the state changes.
-func jobDocumentTitle(heading, stateLabel string) string {
-	return fmt.Sprintf("%s (%s) - Job", heading, stateLabel)
+// jobDocumentTitle is the Job page's title before the site name: the Job, its
+// state and the end of its id, so two Job tabs, the history, and the page a
+// Retry opens each say which Job they are, attempts of one download included.
+// src/components/jobCenter.js jobDocumentTitle keeps it current as the state
+// changes.
+func jobDocumentTitle(heading, stateLabel, shortID string) string {
+	title := fmt.Sprintf("%s (%s) - Job", heading, stateLabel)
+	if shortID != "" {
+		title += " " + shortID
+	}
+	return title
 }

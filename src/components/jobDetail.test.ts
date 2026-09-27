@@ -9,6 +9,7 @@ import {
     lineageGroups,
     outputCountText,
     relativeTimeText,
+    shortJobId,
 } from './jobCenter.js';
 import { formatLocalTime } from '../utils/localTime.js';
 
@@ -17,19 +18,51 @@ const detailTemplate = readFileSync(fileURLToPath(new URL('../../templates/displ
 const SECOND = 1_000_000_000;
 
 describe('the Job page title', () => {
-    test('names the Job and its state, as the server rendered it', () => {
-        expect(jobDocumentTitle({ title: 'Download from example.test', state: 'failed' }, 'mahresources'))
-            .toBe('Download from example.test (Failed) - Job - mahresources');
-        expect(jobDocumentTitle({ kind: 'group-export', state: 'running', controlIntent: 'pause' }, 'mahresources'))
-            .toBe('group-export (Pausing) - Job - mahresources');
+    test('names the Job, its state and the end of its id, as the server rendered it', () => {
+        expect(jobDocumentTitle({ id: 'job-1', title: 'Download from example.test', state: 'failed' }, 'mahresources'))
+            .toBe('Download from example.test (Failed) - Job job1 - mahresources');
+        expect(jobDocumentTitle({ id: 'job-2', kind: 'group-export', state: 'running', controlIntent: 'pause' }, 'mahresources'))
+            .toBe('group-export (Pausing) - Job job2 - mahresources');
         expect(jobDocumentTitle({ id: 'job-1', state: 'succeeded', phase: 'partial' }, ''))
-            .toBe('job-1 (Partially completed) - Job');
+            .toBe('job-1 (Partially completed) - Job job1');
+    });
+
+    test('tells two attempts of one download apart by the end of their ids, as jobs.ShortID does', () => {
+        // The same cases as jobs/short_id_test.go.
+        expect(shortJobId('01a0ddb2-7830-7abc-8def-0123456789AB')).toBe('456789ab');
+        expect(shortJobId('job-1')).toBe('job1');
+        expect(shortJobId('a/b')).toBe('ab');
+        expect(shortJobId('')).toBe('');
+        expect(shortJobId('dışa-ID-12345678')).toBe('12345678');
+        const failed = { title: 'Download', state: 'failed' };
+        expect(jobDocumentTitle({ ...failed, id: '01a0ddb2-7830-7abc-8def-000000000001' }, 'm'))
+            .not.toBe(jobDocumentTitle({ ...failed, id: '01a0ddb2-7830-7abc-8def-000000000002' }, 'm'));
     });
 
     test('keeps the title current from the component and has the one h1 in the layout', () => {
         expect(detailTemplate).toContain('x-effect="syncDocumentTitle()"');
         expect(detailTemplate).toContain('data-site-title="{{ title }}"');
         expect(detailTemplate).not.toContain('<h1');
+    });
+
+    test('names the Job in the page heading once it reads the Job the server could not', () => {
+        const heading = { textContent: 'Job' };
+        const title = { textContent: 'Job' };
+        vi.stubGlobal('document', {
+            title: 'Job - mahresources',
+            getElementById: (id: string) => (id === 'page-title' ? { querySelector: () => heading } : null),
+        });
+        try {
+            const center = jobCenter({ detailId: 'job-9' }) as any;
+            center._siteTitle = 'mahresources';
+            center.detail = { id: 'job-9', title: 'Recovered download', state: 'running' };
+            center.syncDocumentTitle();
+            expect((globalThis as any).document.title).toBe('Recovered download (Running) - Job job9 - mahresources');
+            expect(heading.textContent).toBe('Recovered download');
+            expect(title.textContent).toBe('Job');
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 });
 
@@ -109,7 +142,10 @@ describe('the Job page lineage', () => {
     test('says how each related Job is related, its state and when it was accepted', () => {
         const groups = lineageGroups({ ...job, lineage: { ancestors: [retried], successors: [retry], parents: [], children: [] } });
         expect(groups.map(group => group.heading)).toEqual(['Earlier runs', 'Later runs']);
-        expect(groups[0].entries[0]).toMatchObject({ id: 'job-2', relation: 'Retry of', name: 'Download', state: 'Failed', accepted: formatLocalTime(retried.acceptedAt) });
+        expect(groups[0].entries[0]).toMatchObject({
+            id: 'job-2', short: 'job2', relation: 'Retry of', name: 'Download', state: 'Failed',
+            accepted: formatLocalTime(retried.acceptedAt, { seconds: true }),
+        });
         expect(groups[1].entries[0]).toMatchObject({ id: 'job-4', relation: 'Retried as', state: 'Succeeded' });
     });
 

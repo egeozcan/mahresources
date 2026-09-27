@@ -169,7 +169,7 @@
                             <ul class="mt-1 space-y-2">
                                 <template x-for="related in group.entries" :key="related.id">
                                     <li class="text-sm text-stone-800">
-                                        <span x-show="related.relation" x-text="related.relation + ' '"></span><a :href="detailURL(related)" class="break-words text-amber-900 underline decoration-amber-300 underline-offset-2" x-text="related.name"></a>
+                                        <span x-show="related.relation" x-text="related.relation + ' '"></span><a :href="detailURL(related)" class="break-words text-amber-900 underline decoration-amber-300 underline-offset-2"><span x-text="related.name"></span> <span class="font-mono text-xs" x-text="related.short"></span></a>
                                         <span class="block text-xs text-stone-600"><span x-text="related.state"></span><template x-if="related.accepted"><span> · accepted <time class="tabular-nums" :datetime="related.acceptedAt" x-text="related.accepted"></time></span></template></span>
                                     </li>
                                 </template>
