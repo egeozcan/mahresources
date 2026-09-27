@@ -10,6 +10,7 @@
      x-init="initMobileNav()"
      data-current-path="{{ path }}"
      data-active-nav="{{ activeNavUrl }}"
+     :class="{ 'navbar--collapsed': linksCollapsed }"
      class="navbar flex items-center gap-1">
     {# Finding 3: the mobile panel could not be closed. The toggle is the one #}
     {# affordance that has to survive the panel being painted over it, so it  #}
