@@ -16,17 +16,18 @@ import (
 )
 
 // commitAfterEveryFirstRead has another connection try to commit right after each
-// transaction's first read, and counts the attempts.
+// transaction's first read, and counts the attempts and the ones that landed.
 //
 // That is the moment a deferred BEGIN is exposed: the read has taken a WAL snapshot,
 // and once anything commits on top of it the transaction's first write fails at once
 // with SQLITE_BUSY_SNAPSHOT, which SQLite never puts through the busy handler. The
 // server's driver begins every write transaction by taking the writer lock, so the
-// attempt is refused and the transaction goes on to commit.
-func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) *atomic.Int32 {
+// attempt is refused and the transaction goes on to commit. A commit that lands
+// means the writer read without the lock, whatever it then managed to do.
+func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) (attempts, landed *atomic.Int32) {
 	t.Helper()
 	competitor := noWaitConnection(t, ctx.db)
-	var attempts atomic.Int32
+	attempts, landed = new(atomic.Int32), new(atomic.Int32)
 	var mu sync.Mutex
 	seen := map[gorm.ConnPool]bool{}
 	competingCommit := func(tx *gorm.DB) {
@@ -41,7 +42,11 @@ func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) *atomic.I
 			return
 		}
 		attempts.Add(1)
-		if _, err := competitor.Exec(`UPDATE resource_categories SET description = description || '.' WHERE id = 1`); err != nil && !strings.Contains(err.Error(), "database is locked") {
+		_, err := competitor.Exec(`UPDATE resource_categories SET description = description || '.' WHERE id = 1`)
+		switch {
+		case err == nil:
+			landed.Add(1)
+		case !strings.Contains(err.Error(), "database is locked"):
 			t.Errorf("competing commit: %v", err)
 		}
 	}
@@ -52,7 +57,7 @@ func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) *atomic.I
 		_ = ctx.db.Callback().Query().Remove(queryName)
 		_ = ctx.db.Callback().Row().Remove(rowName)
 	})
-	return &attempts
+	return attempts, landed
 }
 
 // requireMappedJob reports a Resource Reduction source whose mapping does not name
@@ -176,9 +181,10 @@ func TestTransactionsThatReadBeforeTheyWriteSurviveACommitAfterTheirRead(t *test
 			ctx := newWALTestContext(t, 0)
 			require.NoError(t, ctx.db.AutoMigrate(&models.Category{}, &models.GroupRelationType{}))
 			write := tc.setup(t, ctx)
-			attempts := commitAfterEveryFirstRead(t, ctx)
+			attempts, landed := commitAfterEveryFirstRead(t, ctx)
 			require.NoError(t, write())
 			require.NotZero(t, attempts.Load(), "the writer read nothing inside a transaction, so the interleave never happened")
+			require.Zero(t, landed.Load(), "a competing commit landed after the writer's first read: the writer read without the writer lock")
 		})
 	}
 }

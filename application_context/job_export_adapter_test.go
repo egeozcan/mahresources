@@ -344,7 +344,7 @@ func TestAnExportCancelAsksTheExecutorRatherThanEndingTheJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-read the export: %v", err)
 	}
-	if running.State.Terminal() && running.State != jobs.StateCancelled {
+	if running.State.Terminal() {
 		t.Fatalf("the cancellation ended the Job as %s without the executor", running.State)
 	}
 
