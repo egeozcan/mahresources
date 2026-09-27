@@ -166,9 +166,6 @@ export const panelLifecycleEvents = new Set([
 // The lifecycle event types that leave a Job in a state the drawer lists under
 // Needs attention or Finished.
 const OUTCOME_EVENTS = new Set(['blocked', 'succeeded', 'failed', 'cancelled', 'interrupted', 'not-started']);
-// Both live regions replace a message that has not landed within 50 ms. News
-// made that close together is said together rather than cancelled.
-const NEWS_COALESCE_MS = 50;
 // Outcomes the proof store could not keep are counted for this long and then
 // said as one message.
 const UNSAID_OUTCOMES_COALESCE_MS = 1000;
@@ -272,15 +269,12 @@ export function jobPanel() {
         // yet said.
         _unsaidOutcomes: 0,
         _unsaidOutcomesTimer: null,
-        // The count most recently said, until the message carrying it has
-        // landed (see announce).
+        // What the last message carried, until a region has spoken it (see
+        // messageInFlight): the count of outcomes, news, and at most one notice
+        // (the newest notice wins).
         _countNews: null,
-        _landTimer: null,
-        // What was said within the last NEWS_COALESCE_MS, which may not have
-        // landed: news, and at most one notice (the newest notice wins).
         _recentNews: [],
         _recentNotice: '',
-        _newsAt: 0,
         // Which rows a stream snapshot changed, and when, by a counter a refresh
         // reads at its start: a row changed after that may be missing from the
         // group lists, which are read one after another.
@@ -344,7 +338,6 @@ export function jobPanel() {
             this._liveRegion?.destroy();
             clearTimeout(this._drawerAnnounceTimer);
             clearTimeout(this._unsaidOutcomesTimer);
-            clearTimeout(this._landTimer);
         },
 
         onDrawerClosed() {
@@ -512,14 +505,21 @@ export function jobPanel() {
                     else this._liveRegion?.announce(message);
                 }, 50);
             }
-            // Timers of one delay run in the order they were set, so this one
-            // runs once the region has put the message in place: from then on a
-            // count it carried has been spoken.
-            clearTimeout(this._landTimer);
-            this._landTimer = setTimeout(() => {
-                this._landTimer = null;
-                this._countNews = null;
-            }, 50);
+        },
+
+        // Whether the last message is still on its way: waiting in the drawer's
+        // delay, or in the page region's, which a message the closing drawer
+        // handed over waits in too. What it carries has not been spoken yet.
+        messageInFlight() {
+            return !!this._drawerAnnounceTimer || !!this._liveRegion?.pending?.();
+        },
+
+        // Once the last message has been spoken, nothing it carried is owed.
+        forgetLanded() {
+            if (this.messageInFlight()) return;
+            this._countNews = null;
+            this._recentNews = [];
+            this._recentNotice = '';
         },
 
         // A message the page had not yet spoken when the drawer opened would land
@@ -795,6 +795,7 @@ export function jobPanel() {
 
         sayUnsaidOutcomes() {
             this._unsaidOutcomesTimer = null;
+            this.forgetLanded();
             // A count still on its way to the region is replaced, so it is added in.
             const count = this._unsaidOutcomes + (this._countNews?.count || 0);
             this._unsaidOutcomes = 0;
@@ -857,33 +858,34 @@ export function jobPanel() {
             return [...byJob.values()];
         },
 
-        // News said so recently it may not have landed, still true.
+        // News the last message carried and no region has spoken yet, still true.
         pendingNews() {
-            return Date.now() - this._newsAt < NEWS_COALESCE_MS ? this.currentNews(this._recentNews) : [];
+            return this.messageInFlight() ? this.currentNews(this._recentNews) : [];
         },
 
         pendingNotice() {
-            return Date.now() - this._newsAt < NEWS_COALESCE_MS ? this._recentNotice : '';
+            return this.messageInFlight() ? this._recentNotice : '';
         },
 
         // Every panel message goes through here: news, a notice, or both. What
-        // was said within the window and may not have landed is said again with
-        // it, since the region would otherwise replace it. A new notice replaces
-        // a pending one; news accumulates, less anything superseded. A count of
-        // outcomes is carried until its message has actually landed, whatever
-        // the clock says and across a drop: nothing else would say it again.
+        // the last message carried and no region has spoken yet is said again
+        // with it, since the region would otherwise replace it, however long
+        // the message has waited (a drawer closing hands it to the page region,
+        // which waits again). A new notice replaces a pending one; news
+        // accumulates, less anything superseded. A count of outcomes is carried
+        // across a drop too: nothing else would say it again.
         say(entries = [], notice = '') {
             // A stopped drawer says nothing about Jobs: they came from the
             // database a reset replaced. A notice, such as the stop itself, is
             // still said.
             if (this.streamStopped) entries = [];
+            this.forgetLanded();
             const carried = this._countNews ? [this._countNews] : [];
             const news = this.currentNews([...carried, ...this.pendingNews(), ...entries]);
             const text = notice || this.pendingNotice();
             this._countNews = news.find(entry => entry.jobId === null) || null;
             this._recentNews = news;
             this._recentNotice = text;
-            this._newsAt = Date.now();
             const message = [...news.map(entry => entry.text), text].filter(Boolean).join(' ');
             if (message) this.announce(message);
         },
@@ -1071,15 +1073,12 @@ export function jobPanel() {
             // said, and say() says nothing about a Job from here on.
             clearTimeout(this._drawerAnnounceTimer);
             clearTimeout(this._unsaidOutcomesTimer);
-            clearTimeout(this._landTimer);
             this._drawerAnnounceTimer = null;
             this._unsaidOutcomesTimer = null;
-            this._landTimer = null;
             this._unsaidOutcomes = 0;
             this._countNews = null;
             this._recentNews = [];
             this._recentNotice = '';
-            this._newsAt = 0;
             this._heard = new Map();
             this._liveVersions = new Map();
             this._streamTouched = new Map();
@@ -1699,12 +1698,13 @@ function buildPanelListURL(group, ownerScope = '') {
 // What Dismiss finished asks before it runs. `count` is the first page of
 // finished jobs the viewer has not dismissed, and `more` says there are pages
 // after it; `shown` is how many of them the drawer lists.
+// It names the states it reaches, so nobody expects a failure to go with them.
 export function dismissFinishedConfirmation(count, more, shown) {
-    const after = 'Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.';
-    if (more) return `Dismiss every finished job you have not dismissed? That is more than ${count}, and the drawer shows ${shown}. ${after}`;
+    const after = 'Failed jobs stay in Needs attention. Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.';
+    if (more) return `Dismiss every job that succeeded or was cancelled and that you have not dismissed? That is more than ${count}, and the drawer shows ${shown}. ${after}`;
     const hidden = Math.max(0, count - shown);
-    const plural = count === 1 ? '' : 's';
-    return `Dismiss ${count} finished job${plural}?${hidden > 0 ? ` ${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown here.` : ''} ${after}`;
+    const which = count === 1 ? 'finished job that succeeded or was cancelled' : 'finished jobs that succeeded or were cancelled';
+    return `Dismiss ${count} ${which}?${hidden > 0 ? ` ${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown here.` : ''} ${after}`;
 }
 
 function buildFinishedPageURL(cursor, ownerScope = '') {

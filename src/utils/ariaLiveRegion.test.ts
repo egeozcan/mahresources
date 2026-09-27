@@ -30,4 +30,16 @@ describe('createLiveRegion', () => {
         expect(region.element.textContent).toBe('B');
         region.destroy();
     });
+
+    test('pending reports the message still waiting, without withdrawing it', () => {
+        vi.useFakeTimers();
+        const region = createLiveRegion();
+        expect(region.pending()).toBeNull();
+        region.announce('A');
+        expect(region.pending()).toBe('A');
+        vi.advanceTimersByTime(50);
+        expect(region.pending()).toBeNull();
+        expect(region.element.textContent).toBe('A');
+        region.destroy();
+    });
 });

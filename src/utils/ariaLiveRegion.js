@@ -2,7 +2,7 @@
  * Create a visually hidden ARIA live region for screen reader announcements.
  * @param {HTMLElement} [parent=document.body] - The parent element to append the region to.
  * @param {{ assertive?: boolean }} [options] - assertive=true uses role="alert"/aria-live="assertive" (for errors); default is polite.
- * @returns {{ element: HTMLElement, announce: (message: string) => void, cancel: () => (string|null), destroy: () => void }}
+ * @returns {{ element: HTMLElement, announce: (message: string) => void, cancel: () => (string|null), pending: () => (string|null), destroy: () => void }}
  */
 export function createLiveRegion(parent = document.body, { assertive = false } = {}) {
     const element = document.createElement('div');
@@ -51,6 +51,11 @@ export function createLiveRegion(parent = document.body, { assertive = false } =
         return message;
     }
 
+    // The message waiting to be spoken, or null once it has been (or none was).
+    function pending() {
+        return pendingMessage;
+    }
+
     function destroy() {
         if (announceTimeout) {
             clearTimeout(announceTimeout);
@@ -61,5 +66,5 @@ export function createLiveRegion(parent = document.body, { assertive = false } =
         }
     }
 
-    return { element, announce, cancel, destroy };
+    return { element, announce, cancel, pending, destroy };
 }

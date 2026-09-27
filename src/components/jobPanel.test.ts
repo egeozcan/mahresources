@@ -7,6 +7,24 @@ import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, pan
 
 afterEach(() => vi.unstubAllGlobals());
 
+// A page region with createLiveRegion's own 50 ms delay: announce replaces a
+// message still waiting, pending reports it, and it is spoken (pushed to
+// `spoken`) when the delay ends.
+function liveRegion(spoken: string[] = []) {
+    let pending: string | null = null;
+    let timer: any;
+    return {
+        announce: vi.fn((message: string) => {
+            clearTimeout(timer);
+            pending = message;
+            timer = setTimeout(() => { spoken.push(message); pending = null; }, 50);
+        }),
+        pending: () => pending,
+        cancel: () => { clearTimeout(timer); const message = pending; pending = null; return message; },
+        destroy: () => clearTimeout(timer),
+    };
+}
+
 describe('Job Center panel', () => {
     test('counts the undismissed rows shown, including older actionable jobs', async () => {
         const olderActive = {
@@ -208,7 +226,7 @@ describe('Job Center panel', () => {
         const asked: any[] = [];
         vi.stubGlobal('Alpine', { store: () => ({ ask: async (...args: any[]) => { asked.push(args); return answer; } }) });
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.jobs = [{
             id: 'shown-1', state: 'succeeded', version: 7,
             commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 7, bulk: true }],
@@ -246,7 +264,7 @@ describe('Job Center panel', () => {
         await panel.dismissFinished();
 
         expect(asked).toHaveLength(1);
-        expect(asked[0][0]).toBe('Dismiss 3 finished jobs? 2 of them are not shown here. Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.');
+        expect(asked[0][0]).toBe('Dismiss 3 finished jobs that succeeded or were cancelled? 2 of them are not shown here. Failed jobs stay in Needs attention. Dismissed jobs stay on All jobs under the Dismissed filter, where each can be undismissed.');
         expect(asked[0][1]).toEqual({ title: 'Dismiss finished jobs', confirmLabel: 'Dismiss 3', destructive: false });
         expect(posts).toHaveLength(1);
     });
@@ -265,7 +283,7 @@ describe('Job Center panel', () => {
 
         await expect(panel.dismissFinished()).resolves.toEqual({ dismissed: 0, total: 0 });
 
-        expect(asked[0][0]).toMatch(/^Dismiss every finished job you have not dismissed\? That is more than 200, and the drawer shows 1\./);
+        expect(asked[0][0]).toMatch(/^Dismiss every job that succeeded or was cancelled and that you have not dismissed\? That is more than 200, and the drawer shows 1\./);
         expect(asked[0][1].confirmLabel).toBe('Dismiss all');
         expect(posts).toEqual([]);
         expect(panel.busy).toBe(false);
@@ -306,7 +324,7 @@ describe('Job Center panel', () => {
         const assign = vi.fn();
         vi.stubGlobal('location', { origin: 'http://localhost', assign });
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         const row = { id: 'cmd-1', title: 'encode', kind: 'plugin-command', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:02Z',
             commands: [{ key: 'inspect', label: 'Inspect command history', jobVersion: 3 }] };
         panel.jobs = [row];
@@ -326,7 +344,7 @@ describe('Job Center panel', () => {
         const assign = vi.fn();
         vi.stubGlobal('location', { origin: 'http://localhost', assign });
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         const row = { id: 'failed-1', title: 'photo.jpg', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:02Z',
             commands: [{ key: 'retry', label: 'Retry', jobVersion: 3 }] };
         panel.jobs = [row];
@@ -346,7 +364,7 @@ describe('Job Center panel', () => {
 
     function rowCommandPanel(answer: (url: string, init: any) => any) {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.jobs = [
             { id: 'row-1', title: 'first.bin', kind: 'remote-download', state: 'failed', version: 4, acceptedAt: '2026-09-26T10:00:02Z', commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 4 }] },
             { id: 'row-2', title: 'second.bin', kind: 'remote-download', state: 'failed', version: 2, acceptedAt: '2026-09-26T10:00:01Z', commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 2 }] },
@@ -766,7 +784,7 @@ describe('Job Center drawer live progress', () => {
 
     test('a progress frame updates its row in place, never refetches, inserts or announces', () => {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.requestJSON = vi.fn();
         const scheduled = vi.spyOn(panel, 'schedulePanelRefresh');
         panel.jobs = [{
@@ -862,7 +880,7 @@ describe('Job Center panel accessibility hooks', () => {
 
     test('does not announce the initial timeline snapshot as new work', () => {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         const job = { id: 'job-1', state: 'succeeded', version: 2, acceptedAt: '2026-09-22T10:00:00Z' };
         vi.stubGlobal('fetch', vi.fn(async url => ({
             ok: true,
@@ -879,7 +897,7 @@ describe('Job Center panel accessibility hooks', () => {
 
     test('announces a newly delivered lifecycle outcome from a complete stream snapshot', () => {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.jobs = [{ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'running', version: 2 }];
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
@@ -910,7 +928,7 @@ describe('Job Center panel accessibility hooks', () => {
 
     function refreshingPanel(listed: any[]) {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url.startsWith('/v1/jobs?')) {
@@ -948,7 +966,7 @@ describe('Job Center panel accessibility hooks', () => {
         const reload = vi.fn();
         vi.stubGlobal('location', { reload });
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         const close = vi.fn();
         panel.eventSource = { close } as any;
         panel.jobs = [{ id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 }];
@@ -979,7 +997,7 @@ describe('Job Center panel accessibility hooks', () => {
 
     test('a command confirmed after the drawer stopped is never sent', async () => {
         const panel = jobPanel();
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         let answerConfirmation: (value: boolean) => void = () => {};
         vi.stubGlobal('Alpine', { store: () => ({ ask: () => new Promise(resolve => { answerConfirmation = resolve; }) }) });
         panel.requestJSON = vi.fn(async () => ({ result: {} }));
@@ -1021,7 +1039,7 @@ describe('Job Center panel accessibility hooks', () => {
             pending.push(body => resolve({ ok: true, status: 200, json: async () => body }));
         }));
         vi.stubGlobal('fetch', fetchMock);
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         return { fetchMock, answer: (body: unknown) => pending.shift()!(body) };
     }
 
@@ -2238,6 +2256,60 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('a count handed from the closing drawer to the page region is still carried until the page region speaks it', async () => {
+        vi.useFakeTimers();
+        let announcer = { textContent: '', isConnected: true };
+        vi.stubGlobal('document', {
+            querySelector: vi.fn((selector: string) =>
+                selector === '#job-center-panel [data-job-panel-announcer]' ? announcer : null),
+        });
+        const spoken: string[] = [];
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.streamCaughtUp = true;
+        panel.isOpen = true;
+
+        panel.countUnsaidOutcome();
+        await vi.advanceTimersByTimeAsync(1000);
+        // Said into the drawer's region; the drawer closes before it lands, so
+        // the message goes to the page region, which waits its own 50 ms.
+        panel.isOpen = false;
+        announcer.isConnected = false;
+        await vi.advanceTimersByTimeAsync(70);
+        panel.announceNotice('A dialog is open. Close it before opening Jobs.');
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(spoken).toEqual(['1 job finished or needs attention; see the Jobs panel. A dialog is open. Close it before opening Jobs.']);
+        announcer = { textContent: '', isConnected: true };
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('job news not yet spoken is carried by the next message, however late in the region\'s delay it comes', async () => {
+        vi.useFakeTimers();
+        vi.stubGlobal('document', { querySelector: () => null });
+        const spoken: string[] = [];
+        const failed = { id: 'dl-80', title: 'boundary.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', failure: { message: 'HTTP 404' } };
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.streamCaughtUp = true;
+        panel.jobs = [{ ...failed, state: 'running', version: 2, failure: undefined }];
+        panel.hearJob(panel.jobs[0]);
+
+        await panel.handleStreamMessage({ data: JSON.stringify({ id: 'e-80', jobId: 'dl-80', jobVersion: 3, type: 'failed', job: failed, deliverySequence: 11 }), lastEventId: 'v2:11' });
+        expect(panel._liveRegion.announce).toHaveBeenLastCalledWith('boundary.bin failed: HTTP 404.');
+        // The clock reaches the end of the delay before the region's timer runs.
+        vi.setSystemTime(Date.now() + 50);
+        panel.announceNotice('A dialog is open. Close it before opening Jobs.');
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(spoken).toHaveLength(1);
+        expect(spoken[0]).toContain('boundary.bin failed: HTTP 404.');
+        expect(spoken[0]).toContain('A dialog is open. Close it before opening Jobs.');
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('a job accepted live that failed while disconnected is history after the reconnect', async () => {
         const failed = { id: 'dl-55', title: 'meanwhile.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([failed]);
@@ -2292,7 +2364,7 @@ describe('Job Center panel accessibility hooks', () => {
         const panel = jobPanel();
         panel.streamCaughtUp = true;
         panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         const listRequests: string[] = [];
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
@@ -2331,7 +2403,7 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useFakeTimers();
         const panel = jobPanel();
         panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url === '/v1/jobs/summary') return { byState: { failed: 1 } };
@@ -2369,7 +2441,7 @@ describe('Job Center panel accessibility hooks', () => {
         vi.stubGlobal('EventSource', FakeEventSource);
         const panel = jobPanel();
         panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url === '/v1/jobs/summary') return { byState: { failed: 1 } };
@@ -2416,7 +2488,7 @@ describe('Job Center panel accessibility hooks', () => {
         vi.stubGlobal('EventSource', FakeEventSource);
         const panel = jobPanel();
         panel.jobs = [{ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.connect();
         const stream = panel.eventSource as unknown as FakeEventSource;
         const sendJob = (state: string, version: number, sequence: number) => stream.listeners.get('job')?.({
@@ -2445,7 +2517,7 @@ describe('Job Center panel accessibility hooks', () => {
         const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
         const panel = jobPanel();
         const visibleJob = { id: 'job-1', title: 'Index rebuild', state: 'queued', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
-        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel._liveRegion = liveRegion() as any;
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
             if (url === '/v1/jobs/summary') return { byState: { queued: 1 } };
