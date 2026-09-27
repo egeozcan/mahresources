@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"mahresources/download_queue"
+	"mahresources/groupio"
 	"mahresources/jobs"
 
 	"github.com/spf13/afero"
@@ -508,6 +510,21 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
 	default:
+		if importArchiveRefused(snap.FailureCode) {
+			// The reader's own sentence, which names what is wrong with the archive
+			// and nothing about where this server keeps it.
+			return a.ctx.finishQueueJob(execution, jobs.StateFailed,
+				&jobs.Failure{
+					Code:    snap.FailureCode,
+					Class:   jobs.FailureClassValidation,
+					Message: downloadFailureMessage(snap.FailureReason),
+				},
+				nil)
+		}
+		// A failure of this server rather than of the archive. Its text can name
+		// where the archive is staged, so the Job keeps the fixed reason and the
+		// operator's log gets the rest.
+		log.Printf("warning: import parse %s failed: %s", execution.JobID, snap.Error)
 		return a.ctx.finishQueueJob(execution, jobs.StateFailed,
 			&jobs.Failure{
 				Code:    "import-parse-failed",
@@ -516,6 +533,49 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 			},
 			nil)
 	}
+}
+
+// Failure codes of an archive the reader refused on its content. Bytes that are
+// not an archive never will be, so the first offers no Retry; a schema version
+// this release does not read may be one a later release does, so the second keeps
+// it.
+const (
+	importArchiveInvalidCode     = "import-archive-invalid"
+	importArchiveUnsupportedCode = "import-archive-unsupported"
+)
+
+// importArchiveFailure carries a refused archive's code through the queue entry to
+// the Job (download_queue.CodedFailure).
+type importArchiveFailure struct {
+	err *groupio.ArchiveError
+}
+
+func (f importArchiveFailure) Error() string { return f.err.Error() }
+func (f importArchiveFailure) Unwrap() error { return f.err }
+
+func (f importArchiveFailure) FailureCode() string {
+	if f.err.Unsupported() {
+		return importArchiveUnsupportedCode
+	}
+	return importArchiveInvalidCode
+}
+
+// importArchiveRefused reports whether a parse failure is the reader refusing the
+// archive on its content, rather than this server failing to read it.
+func importArchiveRefused(code string) bool {
+	return code == importArchiveInvalidCode || code == importArchiveUnsupportedCode
+}
+
+// importParseFailureRepeats reports whether a Retry of a failed parse would read
+// the staged bytes the same way whatever changes around them.
+func importParseFailureRepeats(code string) bool {
+	return code == importArchiveInvalidCode
+}
+
+// importParseFailureCodesThatRepeat lists every code importParseFailureRepeats
+// answers true for, for the command selector's predicate.
+func importParseFailureCodesThatRepeat() []string {
+	return []string{importArchiveInvalidCode}
 }
 
 // Reconcile answers what should happen to one parse whose claim expired.
@@ -588,7 +648,9 @@ func (a *importParseAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 
 // Commands reports what one parse offers. Retry is advertised only while the
 // staged archive is still there, because the archive is the input a Retry needs and
-// a button that dispatches a Job which cannot read its own input is not a control.
+// a button that dispatches a Job which cannot read its own input is not a control;
+// and never for an archive the reader refused on its content, which a re-parse of
+// the same bytes would refuse again.
 func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	// §8: a principal demoted below "may write" keeps the history and loses the
 	// controls over it.
@@ -602,7 +664,9 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Confirmation: "Stop reading this archive? Nothing is added to the library by a parse.",
 	}}
 	state := commandContext.Snapshot.State
-	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
+	failure := commandContext.Snapshot.Failure
+	if (state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted) &&
+		(failure == nil || !importParseFailureRepeats(failure.Code)) {
 		if summary, ok := importParseSummaryOf(commandContext.Snapshot.Summary); ok {
 			available, err := a.ctx.importCommandFileAvailable(commandContext.Deps, summary.Handle, "archive_available")
 			if err != nil {
@@ -1045,6 +1109,10 @@ func (ctx *MahresourcesContext) runImportParseJob(jobCtx context.Context, j *dow
 
 	plan, err := ctx.ParseImport(jobCtx, input.Handle, canonicalPath)
 	if err != nil {
+		var unreadable *groupio.ArchiveError
+		if errors.As(err, &unreadable) {
+			return importArchiveFailure{err: unreadable}
+		}
 		return err
 	}
 

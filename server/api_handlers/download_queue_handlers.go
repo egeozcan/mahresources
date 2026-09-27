@@ -218,7 +218,8 @@ func submitRemoteDownloadBatch(ctx DownloadSubmitter, creator *query_models.Reso
 			firstErr = fmt.Errorf("no valid URLs provided")
 		}
 		status := http.StatusServiceUnavailable
-		if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) {
+		if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) ||
+			errors.Is(firstErr, download_queue.ErrInvalidDownloadURL) {
 			status = http.StatusBadRequest
 		}
 		return nil, status, firstErr
@@ -298,6 +299,10 @@ func statusCodeForJobError(err error) int {
 	// about where the retry belongs rather than a malformed request.
 	var canonical *download_queue.CanonicalJobError
 	if errors.As(err, &canonical) {
+		return http.StatusConflict
+	}
+	var busy *download_queue.URLActiveError
+	if errors.As(err, &busy) {
 		return http.StatusConflict
 	}
 	// Anything else is unexpected from these four entry points; fall back to the
@@ -611,7 +616,9 @@ func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
-		if err := ctx.DownloadManager().Resume(projection.Entry.ID); err != nil {
+		// Arbitrated like every other start: a held download holds no URL, so
+		// resuming it while another transfer fetches the URL would run two.
+		if err := ctx.DownloadManager().ResumeExclusive(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
@@ -671,9 +678,7 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 		// fetching this URL means running this one too would transfer it twice.
 		if projection.Entry != nil {
 			if live, running := download_queue.ActiveDownloadForURL(ctx.DownloadManager(), projection.Entry.GetURL()); running {
-				http_utils.HandleError(
-					fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
-					writer, request, http.StatusConflict)
+				http_utils.HandleError(&download_queue.URLActiveError{JobID: live}, writer, request, http.StatusConflict)
 				return
 			}
 		}
@@ -704,7 +709,9 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
-		if err := ctx.DownloadManager().Retry(projection.Entry.ID); err != nil {
+		// Checked again where it starts: the check above released the queue's lock,
+		// and another start of the URL can land in between.
+		if err := ctx.DownloadManager().RetryExclusive(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}

@@ -847,8 +847,134 @@ func TestDownloadHistoryRetryRefusesAURLAlreadyDownloading(t *testing.T) {
 	if res.Code != http.StatusConflict {
 		t.Fatalf("retry of a URL already downloading: status %d, want 409 (%s)", res.Code, res.Body.String())
 	}
+	// The transfer in the way may be another account's, and its id is not the
+	// caller's to learn.
+	if strings.Contains(res.Body.String(), live.ID) {
+		t.Fatalf("the refusal names the other transfer: %s", res.Body.String())
+	}
 	if after := len(tc.AppCtx.DownloadManager().GetJobs()); after != before {
 		t.Fatalf("the queue grew from %d to %d: the same URL is being fetched twice", before, after)
+	}
+}
+
+// A paused download fetches nothing and may wait for a person indefinitely, so
+// it does not hold its URL against a retry. Resuming it is what is arbitrated: a
+// resume while another transfer fetches the URL is refused, and the download
+// stays paused.
+func TestAPausedDownloadDoesNotBlockARetryOfItsURL(t *testing.T) {
+	tc := SetupTestEnv(t)
+	dm := tc.AppCtx.DownloadManager()
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	paused, err := dm.Submit(&query_models.ResourceFromRemoteCreator{URL: server.URL}, nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForJobStatus(t, tc, paused.ID, download_queue.JobStatusDownloading)
+	if err := dm.Pause(paused.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	waitForJobStatus(t, tc, paused.ID, download_queue.JobStatusPaused)
+
+	entry := recordDownload(t, tc, "earlier-attempt-of-a-paused-url", models.DownloadHistoryStatusFailed, nil, server.URL, time.Now())
+	before := len(dm.GetJobs())
+	res := postJSON(tc, "/v1/downloads/retry", fmt.Sprintf(`{"ids":[%d]}`, entry.ID), nil)
+	if res.Code == http.StatusConflict {
+		t.Fatalf("a paused download blocked the retry of its URL: %s", res.Body.String())
+	}
+	if after := len(dm.GetJobs()); after != before+1 {
+		t.Fatalf("the queue grew from %d to %d, want one retried download (%d %s)", before, after, res.Code, res.Body.String())
+	}
+
+	var retried string
+	for _, job := range dm.GetJobs() {
+		if job.ID != paused.ID && job.URL == server.URL {
+			retried = job.ID
+		}
+	}
+	resumed := postJSON(tc, "/v1/download/resume?id="+paused.ID, "", nil)
+	if resumed.Code != http.StatusConflict {
+		t.Fatalf("resuming a paused download while its URL downloads: status %d, want 409 (%s)", resumed.Code, resumed.Body.String())
+	}
+	if retried == "" || strings.Contains(resumed.Body.String(), retried) {
+		t.Fatalf("the refusal names the other transfer %q: %s", retried, resumed.Body.String())
+	}
+	if status := paused.GetStatus(); status != download_queue.JobStatusPaused {
+		t.Fatalf("the refused resume moved the paused download to %s", status)
+	}
+}
+
+// A resubmitted row's start is arbitrated with its check, not after it: a transfer
+// of the same URL that starts between the busy check and the resubmission (here,
+// injected while the row's retry slot is being claimed) makes the resubmission
+// refuse rather than fetch the URL a second time, and the slot is handed back.
+func TestAHistoryResubmissionRefusesAURLThatStartedAfterItsCheck(t *testing.T) {
+	tc := SetupTestEnv(t)
+	dm := tc.AppCtx.DownloadManager()
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	entry := recordDownload(t, tc, "resubmitted-into-a-race", models.DownloadHistoryStatusFailed, nil, server.URL, time.Now())
+
+	var injected sync.Once
+	var competitor *download_queue.DownloadJob
+	if err := tc.DB.Callback().Update().After("gorm:update").Register("test:competing_transfer", func(db *gorm.DB) {
+		if db.Statement.Table != "download_history_entries" {
+			return
+		}
+		injected.Do(func() {
+			job, err := dm.Submit(&query_models.ResourceFromRemoteCreator{URL: server.URL}, nil)
+			if err != nil {
+				t.Errorf("submit the competing transfer: %v", err)
+				return
+			}
+			competitor = job
+			waitForJobStatus(t, tc, job.ID, download_queue.JobStatusDownloading)
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tc.DB.Callback().Update().Remove("test:competing_transfer") })
+
+	res := postJSON(tc, "/v1/downloads/retry", fmt.Sprintf(`{"ids":[%d]}`, entry.ID), nil)
+	if competitor == nil {
+		t.Fatalf("the competing transfer was never injected (%d %s)", res.Code, res.Body.String())
+	}
+	if res.Code != http.StatusConflict {
+		t.Fatalf("a resubmission of a URL that started downloading after its check: status %d, want 409 (%s)", res.Code, res.Body.String())
+	}
+	active := 0
+	for _, job := range dm.GetJobs() {
+		if job.URL == server.URL && (job.Status == download_queue.JobStatusPending || job.Status == download_queue.JobStatusDownloading) {
+			active++
+		}
+	}
+	if active != 1 {
+		t.Fatalf("%d transfers of the URL are running, want the one that started first", active)
+	}
+	var row models.DownloadHistoryEntry
+	if err := tc.DB.First(&row, entry.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.LastRetryJobID != "" {
+		t.Fatalf("the refused resubmission kept the row's retry slot: %q", row.LastRetryJobID)
 	}
 }
 

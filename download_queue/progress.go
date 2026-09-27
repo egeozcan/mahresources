@@ -2,7 +2,7 @@ package download_queue
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -139,7 +139,7 @@ func (tr *TimeoutReaderWithContext) watchTimeout() {
 			return
 		case <-tr.ctx.Done():
 			tr.mu.Lock()
-			tr.err = fmt.Errorf("download cancelled")
+			tr.err = contextEndedErr(tr.ctx)
 			tr.mu.Unlock()
 			close(tr.failed)
 			return
@@ -147,7 +147,7 @@ func (tr *TimeoutReaderWithContext) watchTimeout() {
 			tr.mu.Lock()
 			elapsed := time.Since(tr.lastRead)
 			if elapsed > tr.idleTimeout {
-				tr.err = fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+				tr.err = &idleTimeoutError{limit: tr.idleTimeout}
 				tr.mu.Unlock()
 				close(tr.failed)
 				return
@@ -191,7 +191,7 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 
 	select {
 	case <-tr.ctx.Done():
-		return 0, fmt.Errorf("download cancelled")
+		return 0, contextEndedErr(tr.ctx)
 	default:
 	}
 
@@ -280,9 +280,9 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 		}
 		return 0, result.err
 	case <-tr.ctx.Done():
-		return 0, fmt.Errorf("download cancelled")
+		return 0, contextEndedErr(tr.ctx)
 	case <-tr.done:
-		return 0, fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+		return 0, &idleTimeoutError{limit: tr.idleTimeout}
 	case <-tr.failed:
 		return 0, tr.watcherErr()
 	}
@@ -314,11 +314,26 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 func (tr *TimeoutReaderWithContext) cancelled() error {
 	select {
 	case <-tr.ctx.Done():
-		return fmt.Errorf("download cancelled")
+		return contextEndedErr(tr.ctx)
 	default:
 		return nil
 	}
 }
+
+// contextEndedErr says why a transfer's context ended. A deadline that carries its
+// own cause (the overall time limit) is reported as that cause; anything else is a
+// decision to stop, which is what "download cancelled" has always meant here.
+func contextEndedErr(ctx context.Context) error {
+	cause := context.Cause(ctx)
+	if cause == nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return errDownloadCancelled
+	}
+	return cause
+}
+
+// errDownloadCancelled is a transfer given up on by a Cancel, a Pause or a
+// shutdown. The worker, not this text, decides which one it was.
+var errDownloadCancelled = errors.New("download cancelled")
 
 func (tr *TimeoutReaderWithContext) abandoned() error {
 	if err := tr.cancelled(); err != nil {
@@ -326,7 +341,7 @@ func (tr *TimeoutReaderWithContext) abandoned() error {
 	}
 	select {
 	case <-tr.done:
-		return fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+		return &idleTimeoutError{limit: tr.idleTimeout}
 	default:
 	}
 	select {

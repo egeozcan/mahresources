@@ -94,6 +94,17 @@ func (ctx *MahresourcesContext) recordDualPublishedDownloadHistory(row models.Do
 	})
 }
 
+// recordDualPublishedDownloadHistoryTx maps one history row to the Job its legacy
+// handle names now.
+//
+// A history row is keyed by that handle and describes its latest outcome, and a
+// Retry moves the handle to its successor, whose outcome the row then takes; so the
+// row's Job is the handle's, and both this write and the refresh below resolve it
+// through the handle. A deferred row is the other way round: it is one deferral of
+// the Job it was accepted with, which a Retry does not change, so its mapping keeps
+// that Job (deferredDownloadJobIDOn). Every execution a history row can describe
+// answers to a download handle: a deferred download is given one when it starts
+// (downloadJobAdapter.start).
 func (ctx *MahresourcesContext) recordDualPublishedDownloadHistoryTx(tx *gorm.DB, row models.DownloadHistoryEntry, scrubbed bool, now time.Time) error {
 	var handle models.JobLegacyHandle
 	if err := tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error; err != nil {
@@ -122,7 +133,9 @@ func (ctx *MahresourcesContext) recordDualPublishedScheduledDownloadTx(tx *gorm.
 // recover a source mutation from an older dual-publisher that did not know about
 // JobSourceMapping. They only advance the source revision after the current
 // canonical handle still opens to the exact execution input in the source row.
-// A purge marker wins and is carried forward without recreating replay input.
+// A purge marker wins and is carried forward without recreating replay input. A
+// history row follows its handle and a deferred row keeps its own Job, for the
+// reason recordDualPublishedDownloadHistoryTx gives.
 func (ctx *MahresourcesContext) refreshChangedDownloadHistoryMapping(tx *gorm.DB, mapping *models.JobSourceMapping, now time.Time) error {
 	if tx == nil || mapping == nil {
 		return errors.New("download history mapping is unavailable")

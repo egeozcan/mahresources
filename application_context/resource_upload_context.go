@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log"
 	"mahresources/contracts"
+	"mahresources/download_queue"
 	"mahresources/hash_worker"
 	"mahresources/hls"
 	"mahresources/hostfetch"
@@ -379,9 +380,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 				name = resourceQuery.FileName
 			}
 
-			// if the name is an empty string, try to get the name from the URL
+			// With no name given, the name the response carries: see
+			// hostfetch.FileName, which the background download uses too.
 			if name == "" {
-				name = path.Base(url)
+				name = hostfetch.FileName(resp, url)
 			}
 			name = TrimEntityName(name)
 
@@ -1074,6 +1076,20 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 	return &refreshed, nil
 }
 
+// errSubmitterRefused is a background download whose submitter may no longer add
+// content by the time its bytes are in: the account was deleted or disabled, or its
+// role no longer writes. It is decided here, where the account is resolved, and it
+// names its own failure code for the download's Job.
+var errSubmitterRefused error = submitterRefusedError{}
+
+type submitterRefusedError struct{}
+
+func (submitterRefusedError) Error() string {
+	return "the account that submitted this download can no longer add content to the library, so nothing was saved"
+}
+
+func (submitterRefusedError) FailureCode() string { return download_queue.FailureSubmitterRefused }
+
 // submitterResourceCreator is the ResourceCreator WithActorUserID returns: every
 // create goes through addResourceWithOptions with the submitter to rebind after
 // the body has been copied.
@@ -1286,7 +1302,11 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	// what follows (deduplication, the insert, the after-create hooks) answers to
 	// the account as it stands now.
 	if opts.RebindSubmitter != 0 {
-		ctx = ctx.boundToSubmitter(opts.RebindSubmitter)
+		bound, permitted := ctx.bindSubmitter(opts.RebindSubmitter)
+		if !permitted {
+			return nil, errSubmitterRefused
+		}
+		ctx = bound
 	}
 
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads

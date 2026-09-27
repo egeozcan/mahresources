@@ -16,6 +16,11 @@ deployment's job budget has room.
 Because the server does not keep partial bytes across pauses, resume
 effectively restarts the download from the beginning.
 
+One URL is transferred once at a time. If another download of the same
+URL is fetching when this one would start again, a download the Job
+Center records waits in the queue until that transfer ends; one it does
+not record is refused with HTTP 409 and stays paused.
+
 # Example
 
   # Resume a specific paused download

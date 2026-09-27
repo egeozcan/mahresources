@@ -53,6 +53,10 @@ type DownloadJob struct {
 	// no URL beyond its origin (see failureReason). It is not part of the legacy
 	// representation, which keeps showing the submitter the error's own text.
 	FailureReason string `json:"-"`
+	// FailureCode names the cause of the failure (see failureCode), for the
+	// durable Job, which groups on it and decides from it whether a Retry could
+	// answer differently.
+	FailureCode string `json:"-"`
 	// ExistingResourceID is set when the attempt failed because the library
 	// already holds the downloaded bytes: the resource that holds them. Like
 	// FailureReason it is for the durable Job, which links to it.
@@ -88,6 +92,15 @@ type DownloadJob struct {
 	// cancellation the caller was told about cannot be overwritten by a later
 	// control. Cleared by claimRetry, which is the user asking for the job again.
 	cancelRequested bool
+	// stoppedForShutdown records that the deployment's shutdown, and not a person,
+	// ended the attempt stoppedForShutdownRun names. Set under mu by
+	// claimShutdownStop, and only when no cancel was accepted first: a person's
+	// cancel that landed before the shutdown is still what stopped the download.
+	// It names one attempt because an older one, which a pause stopped and a resume
+	// replaced, can still be unwinding when the shutdown lands, and the shutdown
+	// did not stop that one.
+	stoppedForShutdown    bool
+	stoppedForShutdownRun uint64
 	// discarded records that the user deleted this job's history row, so a terminal
 	// write still in flight does not re-insert it. See markDiscarded.
 	discarded bool
@@ -189,6 +202,66 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, *DownloadJo
 	}
 	j.cancelLocked()
 	return prev, j.snapshotLocked(), true
+}
+
+// claimShutdownStop ends the running attempt because the deployment is stopping,
+// and records that this, rather than a person, is what ended it. It is claimCancel's
+// counterpart for the one stop nobody asked for: the worker reads the record when it
+// unwinds and hands the work back instead of reporting it cancelled.
+//
+// It reports false for a job no attempt owns (paused or terminal), which the
+// shutdown handles on its own.
+func (j *DownloadJob) claimShutdownStop() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.activeLocked() {
+		return false
+	}
+	if !j.cancelRequested {
+		j.stoppedForShutdown, j.stoppedForShutdownRun = true, j.runID
+	}
+	j.cancelLocked()
+	return true
+}
+
+// stoppedForShutdownBy reports whether the deployment's shutdown ended the given
+// attempt (see claimShutdownStop). An attempt the shutdown did not stop, however
+// it ended, gets false, and its own terminal writes are then refused by the
+// ownership check like any other stale attempt's.
+func (j *DownloadJob) stoppedForShutdownBy(runID uint64) bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.stoppedForShutdown && j.stoppedForShutdownRun == runID
+}
+
+// canonicalForRun answers the durable execution an attempt publishes under, read
+// together with the check that the attempt still owns the job (ownedByRunLocked).
+// An attempt that no longer does publishes nothing: the execution attached now
+// may belong to the attempt that replaced it.
+func (j *DownloadJob) canonicalForRun(runID uint64) (CanonicalRef, bool) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if !j.ownedByRunLocked(runID) || j.canonical == nil || j.canonical.JobID == "" {
+		return CanonicalRef{}, false
+	}
+	return *j.canonical, true
+}
+
+// claimHeldShutdown stamps a paused download that the deployment's shutdown is
+// about to take away with the process. A paused job has no attempt left to
+// report anything, so the stamp is taken here, under the job's own lock, with the
+// snapshot the history row is built from.
+func (j *DownloadJob) claimHeldShutdown(message string, completedAt time.Time) (*DownloadJob, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.Status != JobStatusPaused {
+		return nil, false
+	}
+	j.Status = JobStatusFailed
+	j.Error = message
+	j.FailureReason = message
+	j.CompletedAt = &completedAt
+	return j.snapshotLocked(), true
 }
 
 // cancelLocked cancels the context the claim just observed.
@@ -429,7 +502,8 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 	j.ctx, j.cancel = ctx, cancel
 	j.Status = JobStatusPending
 	j.Error = ""
-	j.FailureReason, j.ExistingResourceID = "", nil
+	j.FailureReason, j.FailureCode, j.ExistingResourceID = "", "", nil
+	j.stoppedForShutdown, j.stoppedForShutdownRun = false, 0
 	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
 	j.StartedAt, j.CompletedAt, j.ResourceID = nil, nil, nil
 	// The previous attempt's *reported* leftovers go too, which the counters and the
@@ -519,6 +593,9 @@ func (j *DownloadJob) finishSnapshotWithReason(runID uint64, status JobStatus, e
 	}
 	if failure.reason != "" {
 		j.FailureReason = failure.reason
+	}
+	if failure.code != "" {
+		j.FailureCode = failure.code
 	}
 	if failure.existingResourceID != 0 {
 		existing := failure.existingResourceID
@@ -907,6 +984,7 @@ func (j *DownloadJob) snapshotLocked() *DownloadJob {
 		ProgressPercent:     j.ProgressPercent,
 		Error:               j.Error,
 		FailureReason:       j.FailureReason,
+		FailureCode:         j.FailureCode,
 		ExistingResourceID:  j.ExistingResourceID,
 		ResourceID:          j.ResourceID,
 		CreatedAt:           j.CreatedAt,

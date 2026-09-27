@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"mahresources/auth"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -79,6 +81,9 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	}
 	if creator == nil {
 		return nil, errors.New("scheduled download needs a payload")
+	}
+	if err := download_queue.ValidateDownloadURL(creator.URL); err != nil {
+		return nil, err
 	}
 	payload, err := scheduledDownloadPayload(creator)
 	if err != nil {
@@ -395,6 +400,22 @@ func (ctx *MahresourcesContext) ReserveScheduledDownloadSubmit(id uint, claimTok
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
+}
+
+// unreserveScheduledDownloadSubmit takes back a reservation that submitted nothing:
+// the row is pending and unclaimed again, and the attempt the reservation counted
+// is uncounted.
+func (ctx *MahresourcesContext) unreserveScheduledDownloadSubmit(id uint, claimToken string, at time.Time) error {
+	return ctx.db.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusSubmitted).
+		Updates(map[string]any{
+			"status":      models.ScheduledDownloadStatusPending,
+			"attempts":    gorm.Expr("CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END"),
+			"claim_token": "",
+			"claimed_at":  nil,
+			"updated_at":  at,
+		}).Error
 }
 
 // MarkScheduledDownloadSubmitted records the queue job a fire produced and
@@ -780,9 +801,10 @@ func (ctx *MahresourcesContext) PluginScheduledDownloadsFor(pluginName string) (
 }
 
 // FireDueScheduledDownloads claims and submits due rows. It returns the count of
-// rows that actually produced queue jobs; rows refused during re-validation or
-// submit are marked failed, while rows blocked by a live download of the same URL
-// are released still-pending for a later tick.
+// rows that were handed on. A row with a durable Job is handed to that Job, whose
+// dispatch re-validates it; a row from before there was one is re-validated here,
+// marked failed when refused, and released still pending for a later tick while a
+// live download fetches the same URL.
 func (ctx *MahresourcesContext) FireDueScheduledDownloads(cfg ScheduledDownloadFireConfig) (int, error) {
 	now := cfg.Now
 	if now.IsZero() {
@@ -833,10 +855,23 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	// checked: a refusal found now would record the failure of a deferral that was
 	// never going to run. So does a row whose Job retention has deleted, which is
 	// never submitted again.
-	if rowJob, err := ctx.loadDeferredRowJob(ctx.db, row.ID, false); err != nil {
+	rowJob, err := ctx.loadDeferredRowJob(ctx.db, row.ID, false)
+	if err != nil {
 		return false, err
-	} else if state, ended := rowJob.ended(); ended {
+	}
+	if state, ended := rowJob.ended(); ended {
 		return false, ctx.markScheduledDownloadEnded(row.ID, claim, state, now)
+	}
+	if rowJob.ID != "" {
+		// A row with a durable Job is handed to that Job and to nothing else. The
+		// plugin, the acting user's role and scope and whether the URL is already
+		// downloading are all decided by the Job's own dispatch, which the dispatch
+		// loop can reach first: it claims a scheduled Job at its due time whether
+		// or not this sweep has seen the row. Deciding them here as well made two
+		// decisions of one deferral, and they disagreed. A row failed for a
+		// disabled plugin left its Job runnable, and a row deferred for a busy URL
+		// moved its own due time but not its Job's.
+		return ctx.submitDeferredRowToItsJob(row.ID, claim, now)
 	}
 	if !ctx.scheduledDownloadPluginAvailable(row.PluginName, cfg.PluginAvailable) {
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim,
@@ -873,23 +908,6 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 		return false, nil
 	}
 
-	// A row with a durable Job behind it is materialized rather than submitted: the
-	// Job was accepted as `scheduled` when the deferral was made, and its due time
-	// moves *that* Job to the queue — one execution, one identity, and the dispatch
-	// loop is what starts it. Submitting here as well would be the second execution
-	// the design forbids.
-	var ended *deferredJobEndedError
-	if jobID, materialized, err := ctx.materializeDeferredDownloadJob(row.ID); errors.As(err, &ended) {
-		return false, ctx.markScheduledDownloadEnded(row.ID, claim, ended.state, now)
-	} else if err != nil {
-		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
-	} else if materialized {
-		if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-
 	owner := actorID
 	jobID, err := cfg.Submit(creator, &owner, row.PluginName)
 	if err != nil {
@@ -899,6 +917,47 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 		return false, ctx.markScheduledDownloadFailed(row.ID, claim, errors.New("scheduled download submitter returned no job id"), now, false)
 	}
 	if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// submitDeferredRowToItsJob records a due row as handed to its durable Job,
+// moving that Job to the queue if it is still waiting for its time.
+//
+// The Job is materialized rather than a transfer submitted: it was accepted as
+// `scheduled` when the deferral was made, and its due time moves *that* Job to the
+// queue — one execution, one identity, and the dispatch loop is what starts it.
+// Submitting here as well would be the second execution the design forbids.
+func (ctx *MahresourcesContext) submitDeferredRowToItsJob(rowID uint, claim string, now time.Time) (bool, error) {
+	reserved, err := ctx.ReserveScheduledDownloadSubmit(rowID, claim, now)
+	if err != nil {
+		return false, err
+	}
+	if !reserved {
+		return false, nil
+	}
+	var ended *deferredJobEndedError
+	jobID, materialized, err := ctx.materializeDeferredDownloadJob(rowID)
+	if errors.As(err, &ended) {
+		return false, ctx.markScheduledDownloadEnded(rowID, claim, ended.state, now)
+	}
+	if err != nil {
+		// A read or write that failed says nothing about the Job, which is still
+		// there and still runs at its time. Failing the row would disagree with it,
+		// so the reservation is taken back and a later pass hands the row over. The
+		// sweep goes on to the rows behind it rather than stopping at this one.
+		if undoErr := ctx.unreserveScheduledDownloadSubmit(rowID, claim, now); undoErr != nil {
+			return false, errors.Join(err, undoErr)
+		}
+		log.Printf("warning: deferred download %d could not be handed to its Job this pass: %v", rowID, err)
+		return false, nil
+	}
+	if !materialized {
+		return false, ctx.markScheduledDownloadFailed(rowID, claim,
+			errors.New("the deferred download's Job is no longer recorded"), now, false)
+	}
+	if err := ctx.MarkScheduledDownloadSubmitted(rowID, claim, jobID, now); err != nil {
 		return false, err
 	}
 	return true, nil

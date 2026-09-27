@@ -41,10 +41,10 @@ available commands. Current adapters include:
 
 | Kind | Work | Recovery and visibility |
 |------|------|------------------------|
-| `remote-download@1` | Fetch one remote URL into a Resource | Replayable; owner-visible |
+| `remote-download@1` | Fetch one remote URL into a Resource | Replayable; owner-visible; no Retry for a stored address that is not an `http` or `https` URL (see [Download Queue](./download-queue.md#failure-reasons-and-retry)) |
 | `deferred-download@1` | A remote download accepted for a future time | Replayable; owner-visible; Retry of one that never started is offered as **Download now** and starts at once, without its scheduled time |
 | `group-export@1` | Build a group archive | Replayable; owner-visible; artifact retention is separate from Job history |
-| `group-import-parse@1` | Parse an uploaded archive into a review plan | Replayable from durable staged input; owner-visible |
+| `group-import-parse@1` | Parse an uploaded archive into a review plan | Replayable from durable staged input; owner-visible; no Retry for a file the reader refused as not an archive |
 | `group-import-apply@1` | Apply a reviewed plan | Replayable only when import evidence proves it safe; owner-visible |
 | `resource-reduction-compute@1` | Compute clusters for a Resource Reduction | Replayable; owner-visible |
 | `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |

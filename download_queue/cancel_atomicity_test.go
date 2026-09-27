@@ -70,6 +70,11 @@ func (b *blockingResourceCreator) AddResource(file contracts.File, _ string, _ *
 	return nil, errors.New("aborted while the test held the worker")
 }
 
+// AddResourceForJob parks a canonical download's worker the same way.
+func (b *blockingResourceCreator) AddResourceForJob(_ string, _ *uint, file contracts.File, fileName string, q *query_models.ResourceCreator) (*models.Resource, error) {
+	return b.AddResource(file, fileName, q)
+}
+
 // takeGate returns the next gate, waiting for a worker to park if none has yet.
 func (b *blockingResourceCreator) takeGate(t *testing.T) chan struct{} {
 	t.Helper()

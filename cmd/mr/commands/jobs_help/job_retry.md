@@ -13,13 +13,24 @@ outcome as it was; the answer's `canonicalJobId` names the new Job.
 submit` returns as `id`. A legacy handle moves to the new Job, so the
 same handle can be retried again later; a Job id keeps naming the Job
 it was, and a Job that already has a Retry cannot be retried again
-through its own id.
+through its own id. A download from before the Job Center is retried
+in place: its progress, error message and completion times are
+cleared, then the worker fetches the URL again.
 
 Retry only works against a Job that failed or was cancelled; the
 server rejects it for a Job that is still active, paused, or
-succeeded. A retry is also refused with HTTP 409 while any queued or
-running job is already fetching the same URL, so one URL is never
-transferred twice.
+succeeded. It also refuses a download whose stored address is not an
+absolute http or https URL, which no retry can fetch.
+
+One URL is transferred once at a time. While the server's queue still
+holds the failed attempt and another download of the same URL is
+pending, downloading or processing there, this command is refused
+with HTTP 409. A paused download does not count: it fetches nothing.
+Otherwise the retry is accepted, and if the URL is downloading when
+the new attempt would start, it waits in the queue with the phase
+`waiting` until that transfer ends. A retry from the Job Center
+(`POST /v1/jobs/{id}/commands/retry`) is never refused for this: it
+always waits.
 
 Useful when a transient network error blew up the first attempt.
 Persistent failures need an updated URL, which means calling

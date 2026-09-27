@@ -25,10 +25,11 @@ type recordedMirror struct {
 
 // recordingCanonicalSink records every mirror the queue publishes.
 type recordingCanonicalSink struct {
-	mu       sync.Mutex
-	progress []recordedMirror
-	held     []recordedMirror
-	finished []recordedMirror
+	mu          sync.Mutex
+	progress    []recordedMirror
+	held        []recordedMirror
+	finished    []recordedMirror
+	interrupted []recordedMirror
 }
 
 func (s *recordingCanonicalSink) DownloadProgress(ref CanonicalRef, snap *DownloadJob) error {
@@ -49,6 +50,13 @@ func (s *recordingCanonicalSink) DownloadFinished(ref CanonicalRef, snap *Downlo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finished = append(s.finished, recordedMirror{ref: ref, snap: snap})
+	return nil
+}
+
+func (s *recordingCanonicalSink) DownloadInterrupted(ref CanonicalRef, snap *DownloadJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interrupted = append(s.interrupted, recordedMirror{ref: ref, snap: snap})
 	return nil
 }
 

@@ -1523,6 +1523,10 @@ func (e *UnrunnableClaimError) Unwrap() error { return e.Cause }
 type ClaimRequest struct {
 	Kind        string
 	KindVersion uint
+	// ExcludeJobIDs names waiting Jobs the next-of-this-Kind claim passes over:
+	// work its Kind knows cannot start yet, left waiting rather than claimed only
+	// to be handed back. It never widens a claim, and a JobID claim ignores it.
+	ExcludeJobIDs []string
 	// JobID names one specific waiting Job to claim instead of the next one, or
 	// is empty for the ordinary "next of this Kind" claim.
 	//

@@ -3,6 +3,8 @@ package download_queue
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"mahresources/contracts"
@@ -90,5 +92,48 @@ func TestDownloadWorker_FallsBackToURLSegment(t *testing.T) {
 	if rc.resourceName != "sunset.jpg" {
 		t.Errorf("unnamed background download produced %q, want the URL segment %q",
 			rc.resourceName, "sunset.jpg")
+	}
+}
+
+// With no Name supplied, the resource is named after what the server delivered:
+// its Content-Disposition filename, or the decoded last path segment of the URL
+// the response came from, never the raw URL tail with its escapes and query.
+func TestDownloadWorker_NamesTheResourceAfterWhatTheServerDelivered(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/img/landed.png?size=large", http.StatusFound)
+			return
+		case "/report":
+			w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''Quarterly%20Report%20%CE%A9.pdf")
+		}
+		_, _ = w.Write([]byte("body of " + r.URL.Path))
+	}))
+	defer server.Close()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/img/Caf%C3%A9%20terrace.png?w=96&h=64", "Café terrace.png"},
+		{"/report?kb=4&cd=x", "Quarterly Report Ω.pdf"},
+		{"/redirect", "landed.png"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want, func(t *testing.T) {
+			rc := &nameCapturingResourceCreator{}
+			dm := createTestManager()
+			dm.resourceCtx = rc
+			job := &DownloadJob{
+				ID: "unnamed", URL: server.URL + tc.path, Status: JobStatusDownloading,
+				creator: &query_models.ResourceFromRemoteCreator{}, ctx: context.Background(),
+			}
+			if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
+				t.Fatalf("downloadWithProgress: %v", err)
+			}
+			if rc.resourceName != tc.want || rc.fileName != tc.want {
+				t.Fatalf("named the resource %q (file %q), want %q", rc.resourceName, rc.fileName, tc.want)
+			}
+		})
 	}
 }

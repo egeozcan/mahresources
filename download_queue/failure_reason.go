@@ -56,6 +56,8 @@ func failureReason(submitted string, headers map[string]string, err error) strin
 // attemptFailure is what the durable Job is told about one failed attempt.
 type attemptFailure struct {
 	reason string
+	// code names the cause (see failureCode).
+	code string
 	// existingResourceID is the resource holding the downloaded bytes, when the
 	// attempt was refused because the library already had them.
 	existingResourceID uint
@@ -63,7 +65,7 @@ type attemptFailure struct {
 
 // describeFailure renders err for the durable Job.
 func describeFailure(submitted string, headers map[string]string, err error) attemptFailure {
-	failure := attemptFailure{reason: failureReason(submitted, headers, err)}
+	failure := attemptFailure{reason: failureReason(submitted, headers, err), code: failureCode(err)}
 	var existing existingResourceError
 	if errors.As(err, &existing) {
 		failure.existingResourceID = existing.ExistingResourceID()

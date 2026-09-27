@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"mahresources/models"
@@ -364,6 +365,32 @@ func (s *Service) ResolveLegacyHandle(deps Deps, namespace, handle string) (stri
 		return "", fmt.Errorf("jobs: resolve legacy handle: %w", err)
 	}
 	return row.JobID, nil
+}
+
+// AddLegacyHandle records one more legacy identifier an accepted Job answers to.
+//
+// It is for an executor that gives an execution an id of its own after
+// acceptance: a deferred download is accepted under its row's id and runs as an
+// ordinary queue entry, and the download surfaces look that entry up by its own id.
+// A handle another Job already answers to is refused rather than moved, because
+// only a Retry moves a handle (moveLegacyHandles).
+//
+// The insert is the transaction's first statement, so on SQLite the writer lock is
+// taken before anything is read.
+func (s *Service) AddLegacyHandle(deps Deps, jobID string, ref LegacyRef) error {
+	if deps.DB == nil {
+		return fmt.Errorf("%w: no database handle", ErrNotFound)
+	}
+	if strings.TrimSpace(ref.Namespace) == "" || strings.TrimSpace(ref.Handle) == "" {
+		return fmt.Errorf("%w: a legacy reference needs both a namespace and a handle", ErrInvalidAcceptance)
+	}
+	return deps.DB.Transaction(func(tx *gorm.DB) error {
+		if err := storeLegacyHandles(tx, jobID, []LegacyRef{ref}, deps.now()); err != nil {
+			return err
+		}
+		_, err := loadJob(tx, jobID)
+		return err
+	})
 }
 
 // LegacyHandlesFor lists the handles one Job currently answers to, ordered so a

@@ -1,23 +1,18 @@
 package download_queue
 
-// ActiveDownloadForURL reports a job that is already fetching this URL.
+// ActiveDownloadForURL reports an entry that is fetching this URL, for the paths
+// that have no durable Job to name: the legacy retry routes and deferred rows
+// written before the Job Service.
 //
-// The queue is the authority on one-transfer-per-URL checks: history rows can
-// lose the marker that links them to a retry attempt, and scheduled downloads do
-// not have a job id yet. This helper is shared by the retry path and by deferred
-// downloads so the status predicate cannot drift.
+// It is the queue's one busy-URL predicate (activeEntryForURLLocked), the same
+// one a submission, a canonical dispatch and a resume are arbitrated by, so no
+// two paths can disagree about whether a URL is busy. A held (paused) entry is
+// not fetching and holds no URL; a spelling that sends the same request is the
+// same URL (TransferKey).
 func ActiveDownloadForURL(dm *DownloadManager, url string) (string, bool) {
 	if dm == nil || url == "" {
 		return "", false
 	}
-	for _, job := range dm.GetJobs() {
-		if job.Source != JobSourceDownload || job.URL != url {
-			continue
-		}
-		if job.Status == JobStatusPaused || job.Status == JobStatusPending ||
-			job.Status == JobStatusDownloading || job.Status == JobStatusProcessing {
-			return job.ID, true
-		}
-	}
-	return "", false
+	id := dm.OtherActiveTransfer(url, "")
+	return id, id != ""
 }

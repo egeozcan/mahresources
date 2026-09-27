@@ -321,9 +321,9 @@ func TestDiscardedJobIsNotRecorded(t *testing.T) {
 	}
 }
 
-// A deployment restart cancels whatever is downloading. The record of that
-// cancellation is the point of the history table, so Shutdown waits for the
-// workers to write it instead of exiting under them.
+// A deployment restart stops whatever is downloading. A download no durable Job
+// owns has nothing to go back to, so the history row is its only record, and
+// Shutdown waits for the workers to write it instead of exiting under them.
 func TestShutdownWaitsForTheTerminalWrite(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -356,15 +356,13 @@ func TestShutdownWaitsForTheTerminalWrite(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("history records after shutdown = %d, want 1: the process would have exited before the download's outcome was stored", len(records))
 	}
-	if records[0].Status != string(JobStatusCancelled) {
-		t.Errorf("status = %q, want cancelled", records[0].Status)
-	}
+	assertStoppedByShutdown(t, records[0])
 }
 
 // A paused download has no worker left to stamp anything — Pause ended it — so a
-// restart would take it away with the process and leave no record at all. It is
-// abandoned like any cancellation on the way out, which is also what a restart
-// does to it in fact.
+// restart would take it away with the process and leave no record at all. One no
+// durable Job owns is recorded as stopped by the shutdown on the way out, which is
+// what a restart does to it in fact.
 func TestShutdownRecordsPausedDownloads(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -404,9 +402,7 @@ func TestShutdownRecordsPausedDownloads(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("history records after shutdown = %d, want 1: the paused download left no record", len(records))
 	}
-	if records[0].Status != string(JobStatusCancelled) {
-		t.Errorf("status = %q, want cancelled", records[0].Status)
-	}
+	assertStoppedByShutdown(t, records[0])
 	if len(records[0].Payload) == 0 {
 		t.Error("no payload stored: the row could not be retried after the restart")
 	}

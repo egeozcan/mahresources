@@ -282,7 +282,7 @@ func TestPrincipalForPluginActor_ExpectedRefusalsAreNotLogged(t *testing.T) {
 	countActorLogs := func() int64 {
 		var n int64
 		if err := ctx.db.Model(&models.LogEntry{}).
-			Where("entity_name = ?", "Plugin actor unresolved").Count(&n).Error; err != nil {
+			Where("entity_name = ?", actorUnresolvedLogName).Count(&n).Error; err != nil {
 			t.Fatalf("count log entries: %v", err)
 		}
 		return n
@@ -318,7 +318,7 @@ func TestPrincipalForPluginActor_AnOutageIsLogged(t *testing.T) {
 	countActorLogs := func() int64 {
 		var n int64
 		if err := ctx.db.Model(&models.LogEntry{}).
-			Where("entity_name = ?", "Plugin actor unresolved").Count(&n).Error; err != nil {
+			Where("entity_name = ?", actorUnresolvedLogName).Count(&n).Error; err != nil {
 			t.Fatalf("count log entries: %v", err)
 		}
 		return n

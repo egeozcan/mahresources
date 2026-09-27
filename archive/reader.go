@@ -2,8 +2,10 @@ package archive
 
 import (
 	"archive/tar"
+	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -50,13 +52,19 @@ func NewReaderWithManifestLimit(src io.Reader, maxBytes int64) (*Reader, error) 
 }
 
 func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
-	pr := &peekedReader{r: src}
-	header, _ := pr.Peek(2)
+	pr := &peekedReader{r: &sourceReader{r: src}}
+	header, err := pr.Peek(2)
+	if err != nil && !isFormatFailure(err) {
+		// A read that failed says nothing about what the file holds. Carrying on
+		// would hand the tar reader whatever the source says next, and a source
+		// that ends after its error would be read as an archive that is not one.
+		return nil, fmt.Errorf("archive: read the first bytes: %w", err)
+	}
 	r := &Reader{maxManifestBytes: maxManifestBytes}
 	if len(header) >= 2 && header[0] == 0x1f && header[1] == 0x8b {
 		gz, err := gzip.NewReader(pr)
 		if err != nil {
-			return nil, fmt.Errorf("archive: gzip header invalid: %w", err)
+			return nil, formatOrRead(fmt.Errorf("archive: gzip header invalid: %w", err))
 		}
 		r.gz = gz
 		r.tr = tar.NewReader(gz)
@@ -80,13 +88,17 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	// reader needs belongs here, where the file is first found not to be ours.
 	hdr, err := r.tr.Next()
 	if err != nil {
-		return nil, fmt.Errorf("this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry is manifest.json")
+		if !isFormatFailure(err) {
+			// The file could not be read, which says nothing about what is in it.
+			return nil, fmt.Errorf("archive: read the first entry: %w", err)
+		}
+		return nil, &FormatError{Err: fmt.Errorf("this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry is manifest.json")}
 	}
 	if hdr.Name != "manifest.json" {
-		return nil, fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)
+		return nil, &FormatError{Err: fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)}
 	}
 	if r.maxManifestBytes > 0 && hdr.Size > r.maxManifestBytes {
-		return nil, fmt.Errorf("archive: manifest exceeds %d byte limit", r.maxManifestBytes)
+		return nil, &FormatError{Err: fmt.Errorf("archive: manifest exceeds %d byte limit", r.maxManifestBytes)}
 	}
 	// BH-017: read the manifest body once so we can parse it twice — once as
 	// a map to presence-check required fields, once into the typed Manifest.
@@ -95,28 +107,67 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	// misled users who had simply omitted the field.
 	raw, err := io.ReadAll(r.tr)
 	if err != nil {
-		return nil, fmt.Errorf("archive: read manifest body: %w", err)
+		return nil, formatOrRead(fmt.Errorf("archive: read manifest body: %w", err))
 	}
 
 	var rawFields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &rawFields); err != nil {
-		return nil, fmt.Errorf("archive: parse manifest: %w", err)
+		return nil, &FormatError{Err: fmt.Errorf("archive: parse manifest: %w", err)}
 	}
 	if _, hasVersion := rawFields["schema_version"]; !hasVersion {
-		return nil, &ErrMissingSchemaVersion{}
+		return nil, &FormatError{Err: &ErrMissingSchemaVersion{}}
 	}
 
 	var m Manifest
 	// Do NOT call DisallowUnknownFields — §6.4 requires forward compatibility
 	// with unknown top-level keys.
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("archive: parse manifest: %w", err)
+		return nil, &FormatError{Err: fmt.Errorf("archive: parse manifest: %w", err)}
 	}
 	if !isSupportedVersion(m.SchemaVersion) {
-		return nil, &ErrUnsupportedSchemaVersion{Got: m.SchemaVersion, Supported: SupportedVersions}
+		return nil, &FormatError{Err: &ErrUnsupportedSchemaVersion{Got: m.SchemaVersion, Supported: SupportedVersions}}
 	}
 	r.manifest = &m
 	return &m, nil
+}
+
+// FormatError is an archive the reader refused on its content: not a tar, a
+// manifest it cannot read or whose schema version it does not support, an entry
+// that is truncated or malformed. Reading the same bytes again reads them the
+// same way. A read that failed under the reader is never one: it says nothing
+// about the archive, and is returned with its own cause instead.
+type FormatError struct {
+	Err error
+}
+
+func (e *FormatError) Error() string { return e.Err.Error() }
+func (e *FormatError) Unwrap() error { return e.Err }
+
+// isFormatFailure reports whether err is what the archive's own bytes produce
+// when they are not a well-formed archive, as against a failure to read them: a
+// stream that ends early, a header or checksum tar or gzip refuses, a compressed
+// stream that does not decode, or JSON that does not parse.
+func isFormatFailure(err error) bool {
+	var source *sourceError
+	if errors.As(err, &source) {
+		return false
+	}
+	var corrupt flate.CorruptInputError
+	var syntax *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, tar.ErrHeader) || errors.Is(err, tar.ErrFieldTooLong) ||
+		errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) ||
+		errors.As(err, &corrupt) || errors.As(err, &syntax) || errors.As(err, &typeErr)
+}
+
+// formatOrRead marks err as a FormatError when it is the archive's own.
+func formatOrRead(err error) error {
+	var format *FormatError
+	if err == nil || errors.As(err, &format) || !isFormatFailure(err) {
+		return err
+	}
+	return &FormatError{Err: err}
 }
 
 // Manifest returns the already-parsed manifest, or nil if ReadManifest has
@@ -184,12 +235,38 @@ func (r *Reader) Walk(v any) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("archive: walk entry: %w", err)
+			return formatOrRead(fmt.Errorf("archive: walk entry: %w", err))
 		}
+		// Returned as it is: dispatch marks what the entry's own bytes caused
+		// where it reads them, and anything else is the visitor's.
 		if err := r.dispatch(hdr, v); err != nil {
 			return err
 		}
 	}
+}
+
+// entryReader is the current entry's bytes as dispatch hands them on. A failure
+// reading them is marked here, where it happens (formatOrRead), so that an error
+// a visitor returns reaches the caller unchanged: the visitor's own failure is
+// never read as the archive's, and a read of an entry the archive cut short
+// still is.
+type entryReader struct{ r io.Reader }
+
+func (e entryReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && err != io.EOF {
+		err = formatOrRead(err)
+	}
+	return n, err
+}
+
+// decodeEntry decodes the current entry into into, marking the failure as the
+// archive's or the read's.
+func (r *Reader) decodeEntry(name string, into any) error {
+	if err := json.NewDecoder(entryReader{r.tr}).Decode(into); err != nil {
+		return formatOrRead(fmt.Errorf("archive: parse %s: %w", name, err))
+	}
+	return nil
 }
 
 func (r *Reader) dispatch(hdr *tar.Header, v any) error {
@@ -198,49 +275,49 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case strings.HasPrefix(name, "groups/") && strings.HasSuffix(name, ".json"):
 		if gv, ok := v.(GroupVisitor); ok {
 			var p GroupPayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return gv.OnGroup(&p)
 		}
 	case strings.HasPrefix(name, "notes/") && strings.HasSuffix(name, ".json"):
 		if nv, ok := v.(NoteVisitor); ok {
 			var p NotePayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return nv.OnNote(&p)
 		}
 	case strings.HasPrefix(name, "resources/") && strings.HasSuffix(name, ".json"):
 		if rv, ok := v.(ResourceVisitor); ok {
 			var p ResourcePayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return rv.OnResource(&p)
 		}
 	case strings.HasPrefix(name, "series/") && strings.HasSuffix(name, ".json"):
 		if sv, ok := v.(SeriesVisitor); ok {
 			var p SeriesPayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return sv.OnSeries(&p)
 		}
 	case strings.HasPrefix(name, "blobs/"):
 		if bv, ok := v.(BlobVisitor); ok {
 			hash := name[len("blobs/"):]
-			return bv.OnBlob(hash, r.tr, hdr.Size)
+			return bv.OnBlob(hash, entryReader{r.tr}, hdr.Size)
 		}
 	case strings.HasPrefix(name, "previews/"):
 		if pv, ok := v.(PreviewVisitor); ok {
 			id := name[len("previews/"):]
-			return pv.OnPreview(id, r.tr, hdr.Size)
+			return pv.OnPreview(id, entryReader{r.tr}, hdr.Size)
 		}
 	case name == "schemas/categories.json":
 		if cv, ok := v.(CategoryDefsVisitor); ok {
 			var defs []CategoryDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return cv.OnCategoryDefs(defs)
@@ -248,7 +325,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/note_types.json":
 		if nv, ok := v.(NoteTypeDefsVisitor); ok {
 			var defs []NoteTypeDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return nv.OnNoteTypeDefs(defs)
@@ -256,7 +333,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/resource_categories.json":
 		if rcv, ok := v.(ResourceCategoryDefsVisitor); ok {
 			var defs []ResourceCategoryDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return rcv.OnResourceCategoryDefs(defs)
@@ -264,7 +341,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/tags.json":
 		if tv, ok := v.(TagDefsVisitor); ok {
 			var defs []TagDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return tv.OnTagDefs(defs)
@@ -272,7 +349,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/group_relation_types.json":
 		if gtv, ok := v.(GroupRelationTypeDefsVisitor); ok {
 			var defs []GroupRelationTypeDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return gtv.OnGroupRelationTypeDefs(defs)
@@ -299,6 +376,40 @@ func isSupportedVersion(v int) bool {
 	}
 	return false
 }
+
+// sourceReader marks every failure the archive's own source returns, other than
+// its end, as a sourceError, so that what the source says about itself is never
+// read as what the archive's bytes say: a source may fail with
+// io.ErrUnexpectedEOF, which from the tar or gzip reader means a truncated
+// archive.
+//
+// The failure is kept and answered to every later read. A source may return it
+// together with its last bytes, and io.ReadFull, which the peek, tar and gzip all
+// read through, keeps those bytes and drops the error when they complete its
+// read; the source may then report a plain end, which would read as an archive
+// cut short.
+type sourceReader struct {
+	r   io.Reader
+	err error
+}
+
+func (s *sourceReader) Read(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		s.err = &sourceError{err: err}
+		return n, s.err
+	}
+	return n, err
+}
+
+// sourceError is a failure of the source an archive is read from.
+type sourceError struct{ err error }
+
+func (e *sourceError) Error() string { return e.err.Error() }
+func (e *sourceError) Unwrap() error { return e.err }
 
 // peekedReader wraps an io.Reader with a 2-byte peek so we can detect gzip
 // magic without consuming the bytes from the source.
