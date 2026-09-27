@@ -308,12 +308,11 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 				return a.waitForTheURL(execution, entry.GetURL())
 			}
 			var conflict *download_queue.StateConflictError
-			if errors.As(err, &conflict) {
-				// The entry moved while this dispatch held its claim: whatever it moved
-				// to is the executor's answer, and the wait below publishes it.
-				return a.ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, entry.Snapshot())
+			if !errors.As(err, &conflict) {
+				return err
 			}
-			return err
+			// The entry moved while this dispatch held its claim: whatever it moved
+			// to is the executor's answer, and the wait below publishes it.
 		}
 	}
 
@@ -979,9 +978,12 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Confirmation: "Stop this download? A file already saved stays in the library.",
 	})
 	if state == jobs.StateRunning {
+		// Said before the pause, where the choice is made: the queue keeps no
+		// partial bytes, so a pause costs everything received so far.
 		commands = append(commands, jobs.Command{
-			Key:   jobs.CommandPause,
-			Label: "Pause",
+			Key:          jobs.CommandPause,
+			Label:        "Pause",
+			Confirmation: jobDownloadPauseConfirmation,
 		})
 	}
 	if state == jobs.StateBlocked || state == jobs.StatePaused {
@@ -1100,6 +1102,9 @@ func (s *jobDownloadSink) DownloadHeld(ref download_queue.CanonicalRef, snap *do
 	}
 	return s.mirrorRefusal(s.ctx.recordDownloadPause(ref.JobID, ref.ExecutionToken, snap))
 }
+
+// jobDownloadPauseConfirmation is what Pause asks before it holds a download.
+const jobDownloadPauseConfirmation = "Pause this download? The bytes received so far are discarded, and Resume starts it again from the beginning."
 
 // jobDownloadPausedMessage is what a paused download's row says. The queue keeps no
 // partial bytes, so Resume starts the transfer again, and the person deciding

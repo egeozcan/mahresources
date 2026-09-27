@@ -61,7 +61,7 @@
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
                             <h3 :id="'job-panel-group-' + group.key" class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
                                 <span x-text="group.title"></span>
-                                <span class="font-normal text-stone-500" x-text="groupCountText(group)"></span>
+                                <span class="font-normal text-stone-500" x-text="'(' + group.jobs.length + ')'"></span>
                             </h3>
                             {# role="list": Safari drops list semantics from a list styled without markers. #}
                             <ul role="list" class="divide-y divide-stone-100 border-b border-stone-200">

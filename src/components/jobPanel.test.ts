@@ -617,18 +617,13 @@ describe('Job Center drawer live progress', () => {
         ]);
     });
 
-    test('the finished group says it holds only finished jobs that need nothing, and when it is capped', () => {
+    test('the finished group says it holds only finished jobs that need nothing', () => {
         const panel = jobPanel();
         panel.jobs = [{ id: 's', state: 'succeeded', acceptedAt: '2026-09-25T10:00:03Z' }];
         const finished = panel.groups.find(group => group.key === 'finished');
         // The Job Center's Finished includes failed jobs; this group does not, so it
         // is not called that alone.
         expect(finished.title).toBe('Finished, no attention needed');
-        expect(panel.groupCountText(finished)).toBe('(1)');
-        panel.finishedHasMore = true;
-        expect(panel.groupCountText(finished)).toBe('(newest 1)');
-        const active = { key: 'active', jobs: [{ id: 'r' }] };
-        expect(panel.groupCountText(active)).toBe('(1)');
     });
 
     test('a scheduled row says when it starts; a paused row shows what it reported without pulsing', () => {

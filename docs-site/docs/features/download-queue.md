@@ -253,7 +253,10 @@ deployment's policy and limits.
   the transfer, and the Job becomes `paused`, whether the pause came from the
   Job Center, from another server process or from the compatibility endpoints.
   The queue keeps no partial bytes, so **Resume** starts the download again
-  from the beginning, and the paused row says so. A paused Job holds no slot of
+  from the beginning. Pause asks for confirmation and says so before it acts,
+  and the paused row says it again. When the request reaches a server process
+  that is not running the transfer, the command is recorded as requested and
+  the process running it pauses it when it next reads the Job, once a second. A paused Job holds no slot of
   the concurrency budget. It is listed under active work, not under **Needs
   attention**, and the `paused` state filter finds it. A download an earlier
   release paused was stored as `blocked`; the server records it as `paused`

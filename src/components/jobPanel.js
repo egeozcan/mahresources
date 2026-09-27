@@ -337,12 +337,6 @@ export function jobPanel() {
                 { key: 'finished', title: 'Finished, no attention needed', jobs: this.finishedJobs },
             ].filter(group => group.jobs.length > 0);
         },
-        // The finished group is capped at the newest few, and says so when older
-        // ones are left for All jobs; the others list every row up to their limit.
-        groupCountText(group) {
-            const count = group?.jobs?.length || 0;
-            return group?.key === 'finished' && this.finishedHasMore ? `(newest ${count})` : `(${count})`;
-        },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
         get countsText() { return panelCountsText(this.counts); },

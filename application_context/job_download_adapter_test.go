@@ -517,6 +517,11 @@ func TestAPauseIsPausedAndResumedThroughTheCanonicalSurface(t *testing.T) {
 	if !hasCommand(commands, jobs.CommandPause) {
 		t.Fatalf("a running download offers no pause: %+v", commands)
 	}
+	for _, command := range commands {
+		if command.Key == jobs.CommandPause && !strings.Contains(command.Confirmation, "Resume starts it again from the beginning") {
+			t.Fatalf("Pause does not say what Resume will do before it is used: %q", command.Confirmation)
+		}
+	}
 	if hasCommand(commands, jobs.CommandResume) {
 		t.Fatalf("a running download offers resume: %+v", commands)
 	}
@@ -590,6 +595,34 @@ func TestALegacyPauseIsPaused(t *testing.T) {
 	}
 	if status := downloadStatusFromState(held.State); status != download_queue.JobStatusPaused {
 		t.Fatalf("the legacy status of a paused Job is %s, want paused", status)
+	}
+}
+
+// TestAPauseAfterACancellationWonEndsTheJobCancelled: a cancellation already
+// recorded against the Job owns its outcome, so a hold the queue confirms after
+// it ends the Job cancelled rather than leaving it paused behind a Resume the
+// cancellation refuses.
+func TestAPauseAfterACancellationWonEndsTheJobCancelled(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server, _, _ := heldTransferServer(t)
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/cancel-then-pause.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	waitForSnapshot(t, ctx, jobID, "the transfer to start",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", jobID).
+		Update("control_intent", jobs.ControlIntentCancel).Error; err != nil {
+		t.Fatalf("record the cancellation: %v", err)
+	}
+	if err := ctx.DownloadManager().Pause(submissions[0].Row.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	ended := waitForSnapshot(t, ctx, jobID, "the Job to end",
+		func(snap jobs.Snapshot) bool { return snap.State != jobs.StateRunning })
+	if ended.State != jobs.StateCancelled {
+		t.Fatalf("a hold confirmed after a cancellation won left the Job %s, want cancelled", ended.State)
 	}
 }
 

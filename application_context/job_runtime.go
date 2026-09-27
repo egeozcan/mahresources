@@ -292,7 +292,9 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		}
 		// And every Kind's waiting Jobs whose last dispatch could not check the
 		// account they act as, until their deferral runs out.
-		passOver = append(passOver, r.ctx.dispatchChecks.passOver(registration.Definition.Kind, time.Now())...)
+		if r.ctx != nil {
+			passOver = append(passOver, r.ctx.dispatchChecks.passOver(registration.Definition.Kind, time.Now())...)
+		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:          registration.Definition.Kind,

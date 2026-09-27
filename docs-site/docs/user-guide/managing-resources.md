@@ -368,8 +368,7 @@ Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
 `/jobs` for the full Job Center. The panel is a drawer on the right that
 groups work needing attention, active and scheduled work, and recently finished
 work that needs nothing more (**Finished, no attention needed**: succeeded and
-cancelled Jobs, since failed ones are under **Needs attention**). When it holds
-only the newest of those, its heading says so. A scheduled Job says when it
+cancelled Jobs, since failed ones are under **Needs attention**). A scheduled Job says when it
 starts, and how long that is from now, in the panel, on the Job Center card and
 on its page. Only running work shows a moving progress bar; a Job that is
 waiting, paused or stopped shows only what it reported. A running

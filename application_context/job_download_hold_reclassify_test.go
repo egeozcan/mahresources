@@ -38,6 +38,9 @@ func blockDownloadForTest(t *testing.T, ctx *MahresourcesContext, phase, detail 
 // a Job whose latest block is a refusal even though it was held before.
 func TestAHoldAnEarlierReleaseRecordedAsBlockedIsPaused(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
+	if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
+		t.Fatalf("empty migration = %+v, %v", result, err)
+	}
 
 	withPhase := blockDownloadForTest(t, ctx, "paused", `{"reason":"paused","resume":"restarts-from-the-beginning"}`)
 	withoutPhase := blockDownloadForTest(t, ctx, "", `{"reason":"paused"}`)
@@ -57,6 +60,10 @@ func TestAHoldAnEarlierReleaseRecordedAsBlockedIsPaused(t *testing.T) {
 		t.Fatalf("block for a refusal: %v", err)
 	}
 
+	before, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatalf("readiness before: %v", err)
+	}
 	reclassified, err := ctx.ReclassifyDownloadHolds()
 	if err != nil {
 		t.Fatalf("reclassify: %v", err)
@@ -73,6 +80,31 @@ func TestAHoldAnEarlierReleaseRecordedAsBlockedIsPaused(t *testing.T) {
 	for _, id := range []string{refused.ID, heldThenRefused.ID} {
 		if snap := jobSnapshot(t, ctx.JobService(), ctx, id); snap.State != jobs.StateBlocked {
 			t.Fatalf("a refused download reads %s, want it still blocked", snap.State)
+		}
+	}
+
+	// Readiness reads paused and blocked work alike, so moving a hold changes
+	// nothing it reports.
+	after, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatalf("readiness after: %v", err)
+	}
+	if !after.Ready || after.Ready != before.Ready || len(after.Blockers) != len(before.Blockers) {
+		t.Fatalf("readiness before %+v, after %+v", before, after)
+	}
+	// The states the legacy /downloads?Status=paused address translates to list the
+	// moved holds, and a filter for paused work alone now finds them too.
+	for _, states := range [][]string{{string(jobs.StatePaused), string(jobs.StateBlocked)}, {string(jobs.StatePaused)}} {
+		page, err := ctx.ListJobs(jobs.Filter{States: states, Kinds: []string{JobKindRemoteDownload, JobKindDeferredDownload}}, jobs.Cursor{}, 0)
+		if err != nil {
+			t.Fatalf("list %v: %v", states, err)
+		}
+		listed := map[string]bool{}
+		for _, job := range page.Jobs {
+			listed[job.ID] = true
+		}
+		if !listed[withPhase.ID] || !listed[withoutPhase.ID] {
+			t.Fatalf("a filter for %v does not list the moved holds", states)
 		}
 	}
 

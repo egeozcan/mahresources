@@ -1033,6 +1033,8 @@ components:
                     type: string
                 ready:
                     type: boolean
+                reviewCandidates:
+                    $ref: '#/components/schemas/JobReviewCandidates'
                 sourceCounts:
                     additionalProperties:
                         additionalProperties:
@@ -1114,6 +1116,27 @@ components:
                     additionalProperties:
                         type: string
                     type: object
+            type: object
+        JobReviewCandidatePartial:
+            properties:
+                acceptedAt:
+                    format: date-time
+                    type: string
+                id:
+                    type: string
+                kind:
+                    type: string
+                state:
+                    type: string
+            type: object
+        JobReviewCandidates:
+            properties:
+                count:
+                    type: integer
+                jobs:
+                    items:
+                        $ref: '#/components/schemas/JobReviewCandidatePartial'
+                    type: array
             type: object
         JobSeriesPointResponse:
             properties:
@@ -3386,7 +3409,7 @@ paths:
                 - admin
     /v1/admin/jobs/migration-readiness:
         get:
-            description: Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, and blockers. A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.
+            description: Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, blockers, and the unfinished Jobs an operator should review because they may belong to an account deleted before deletion marks existed (reviewCandidates, which do not make ready false). A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.
             operationId: getJobMigrationReadiness
             responses:
                 "200":

@@ -3366,10 +3366,12 @@ func registerPluginRoutes(r *openapi.Registry) {
 }
 
 func registerAdminRoutes(r *openapi.Registry) {
+	// A review candidate is flat, so its partial form is its whole wire shape.
+	r.SetPartialFields("JobReviewCandidate", "ID", "Kind", "State", "AcceptedAt")
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/admin/jobs/migration-readiness",
 		OperationID: "getJobMigrationReadiness", Summary: "Inspect Job migration readiness",
-		Description: "Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, and blockers. A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.",
+		Description: "Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, blockers, and the unfinished Jobs an operator should review because they may belong to an account deleted before deletion marks existed (reviewCandidates, which do not make ready false). A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.",
 		Tags:        []string{"admin", "jobs"}, ResponseType: reflect.TypeOf(application_context.JobMigrationReadiness{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       map[int]string{http.StatusForbidden: "Administrator role required"},
