@@ -119,6 +119,15 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 2 || strings.Contains(plan, "SCAN jobs") {
 			t.Errorf("the %s's state-entered page does not seek %s once per state:\n%s", tc.name, tc.index, plan)
 		}
+		// States beside the partial token are split too; the partial token
+		// keeps its own branch, which seeks its state on the same index and
+		// reads the phase off the rows.
+		mixed := Filter{States: []string{FilterStatePartial, string(StateFailed), string(StateInterrupted)}, Dismissed: &dismissed}
+		sql, vars = listRowsStatement(t, svc, deps, tc.access, mixed, true, Cursor{Order: OrderStateEntered})
+		plan = explainSQLite(t, deps, sql, vars)
+		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 3 || strings.Contains(plan, "SCAN jobs") {
+			t.Errorf("the %s's state-entered page beside partial does not seek %s once per state:\n%s", tc.name, tc.index, plan)
+		}
 		// No state filter is every state, one seek each, rather than a sort of
 		// the whole table.
 		sql, vars = listRowsStatement(t, svc, deps, tc.access, Filter{}, true, Cursor{Order: OrderStateEntered})

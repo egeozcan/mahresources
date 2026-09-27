@@ -244,27 +244,36 @@ func listBranches(filter Filter) []Filter {
 // slow at scale: sort every match (a million succeeded Jobs, to show ten), or
 // walk the whole ordering filtering by state (every Job, to find three old
 // failures). A filter with no state at all would sort the whole table.
+//
+// The partial token keeps the branch listBranches gives it; the states beside
+// it are split like any others.
 func orderedBranches(filter Filter, order ListOrder) []Filter {
 	branches := listBranches(filter)
-	if order != OrderStateEntered || len(branches) != 1 || len(filter.States) == 1 || slices.Contains(filter.States, FilterStatePartial) {
+	if order != OrderStateEntered {
 		return branches
 	}
-	states := filter.States
-	if len(states) == 0 {
-		for _, state := range AllStates {
-			states = append(states, string(state))
-		}
-	}
-	split := make([]Filter, 0, len(states))
-	seen := make(map[string]bool, len(states))
-	for _, state := range states {
-		if seen[state] {
+	split := make([]Filter, 0, len(AllStates)+1)
+	for _, branch := range branches {
+		if len(branch.States) == 1 || slices.Contains(branch.States, FilterStatePartial) {
+			split = append(split, branch)
 			continue
 		}
-		seen[state] = true
-		branch := filter
-		branch.States = []string{state}
-		split = append(split, branch)
+		states := branch.States
+		if len(states) == 0 {
+			for _, state := range AllStates {
+				states = append(states, string(state))
+			}
+		}
+		seen := make(map[string]bool, len(states))
+		for _, state := range states {
+			if seen[state] {
+				continue
+			}
+			seen[state] = true
+			one := branch
+			one.States = []string{state}
+			split = append(split, one)
+		}
 	}
 	return split
 }
