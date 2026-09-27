@@ -57,17 +57,12 @@ func databaseFilesIn(t *testing.T, dir string) []string {
 	return names
 }
 
-// writeSQLiteDatabase creates a real SQLite database at path.
-func writeSQLiteDatabase(t *testing.T, path string) {
+// startsWithSQLiteHeader reports whether the file at path is a written SQLite
+// database.
+func startsWithSQLiteHeader(t *testing.T, path string) bool {
 	t.Helper()
-	db, err := sql.Open("sqlite3", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec("CREATE TABLE leftover (id INTEGER PRIMARY KEY)"); err != nil {
-		t.Fatal(err)
-	}
+	content, err := os.ReadFile(path)
+	return err == nil && strings.HasPrefix(string(content), "SQLite format 3\x00")
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -144,7 +139,7 @@ func TestEphemeralDatabaseOpensTheFileInATempDirWithURISyntaxInItsPath(t *testin
 	if !strings.HasPrefix(ctx.ephemeralDB.path, odd+string(filepath.Separator)) {
 		t.Fatalf("database at %s, want it under %s", ctx.ephemeralDB.path, odd)
 	}
-	if !isOwnSQLiteDatabase(ctx.ephemeralDB.path) {
+	if !startsWithSQLiteHeader(t, ctx.ephemeralDB.path) {
 		t.Fatalf("%s is not the database that was written", ctx.ephemeralDB.path)
 	}
 	var tables int
@@ -243,8 +238,9 @@ func TestAnEmptyPrivateEphemeralDirectoryWithoutTheMarkerIsClaimed(t *testing.T)
 }
 
 // A directory of that name the process did not make its own (no marker, or open
-// to others) is neither written to nor swept.
-func TestAnEphemeralDirectoryThatIsNotOursIsNeitherUsedNorSwept(t *testing.T) {
+// to others) is neither written to nor swept, and the start is refused: a
+// directory of its own instead would leak whenever the server was killed.
+func TestAnEphemeralDirectoryThatIsNotOursRefusesTheStart(t *testing.T) {
 	for name, prepare := range map[string]func(t *testing.T, dir string){
 		"without the marker": func(t *testing.T, dir string) {
 			if err := os.Mkdir(dir, 0o700); err != nil {
@@ -267,58 +263,24 @@ func TestAnEphemeralDirectoryThatIsNotOursIsNeitherUsedNorSwept(t *testing.T) {
 			prepare(t, dir)
 			stranger := filepath.Join(dir, fmt.Sprintf("%d_1.db", exitedPID(t)))
 			writeFile(t, stranger, "x")
+			before := databaseFilesIn(t, dir)
 
-			ctx, exec := openEphemeralContext(t)
-			if err := exec("CREATE TABLE ephemeral_probe (id INTEGER PRIMARY KEY)"); err != nil {
-				t.Fatalf("writing to the ephemeral database: %v", err)
+			ctx, _, _, err := OpenContextWithConfig(&MahresourcesInputConfig{MemoryDB: true, MemoryFS: true})
+			if err == nil {
+				_ = ctx.ReleaseEphemeralDatabase()
+				t.Fatal("started with an ephemeral directory that is not ours")
 			}
-			if _, err := os.Stat(stranger); err != nil {
-				t.Fatalf("swept a directory that is not ours: %v", err)
+			if !strings.Contains(err.Error(), dir) {
+				t.Errorf("the refusal does not name the directory: %v", err)
 			}
-			if filepath.Dir(ctx.ephemeralDB.path) == dir {
-				t.Fatalf("wrote the database into a directory that is not ours: %s", ctx.ephemeralDB.path)
+			if after := databaseFilesIn(t, dir); strings.Join(after, ",") != strings.Join(before, ",") {
+				t.Fatalf("touched a directory that is not ours: %v, then %v", before, after)
 			}
-			own := filepath.Dir(ctx.ephemeralDB.path)
-			if err := ctx.ReleaseEphemeralDatabase(); err != nil {
-				t.Fatalf("releasing: %v", err)
-			}
-			if _, err := os.Stat(own); !os.IsNotExist(err) {
-				t.Fatalf("the database's own directory %s survived its release (stat err %v)", own, err)
+			entries, err := os.ReadDir(tempDir)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("made something else in the temp directory: %v, %v", entries, err)
 			}
 		})
-	}
-}
-
-// The directory an older release wrote into is shared with everything else, so
-// only a file that proves to be one of its databases is deleted there.
-func TestLegacySweepDeletesOnlyVerifiedDatabasesOfExitedProcesses(t *testing.T) {
-	legacy := t.TempDir()
-	dead := exitedPID(t)
-	live := os.Getppid()
-
-	database := filepath.Join(legacy, fmt.Sprintf("mahresources_ephemeral_%d.db", dead))
-	writeSQLiteDatabase(t, database)
-	writeFile(t, database+"-wal", "")
-	writeFile(t, database+"-shm", "")
-
-	notADatabase := filepath.Join(legacy, fmt.Sprintf("mahresources_ephemeral_%d.db", exitedPID(t)))
-	writeFile(t, notADatabase, "x")
-	liveOwner := filepath.Join(legacy, fmt.Sprintf("mahresources_ephemeral_%d.db", live))
-	writeSQLiteDatabase(t, liveOwner)
-	notTheLegacyName := filepath.Join(legacy, fmt.Sprintf("mahresources_ephemeral_%d_9.db", dead))
-	writeSQLiteDatabase(t, notTheLegacyName)
-
-	sweepLegacyEphemeralDatabases(legacy)
-
-	for _, path := range []string{database, database + "-wal", database + "-shm"} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("%s is a legacy database of an exited process and should have been swept (stat err %v)", filepath.Base(path), err)
-		}
-	}
-	for _, path := range []string{notADatabase, liveOwner, notTheLegacyName} {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("%s should have been kept: %v", filepath.Base(path), err)
-		}
 	}
 }
 

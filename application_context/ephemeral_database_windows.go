@@ -21,12 +21,6 @@ func ephemeralDirectoryName() string {
 	return "mahresources-ephemeral"
 }
 
-// ownedByCurrentUser cannot be answered from a FileInfo on Windows; nothing that
-// asks deletes anything there.
-func ownedByCurrentUser(info os.FileInfo) bool {
-	return false
-}
-
 // privateToCurrentUser answers yes: the per-user temp directory is private
 // already, and Windows reports no Unix permission bits to check.
 func privateToCurrentUser(info os.FileInfo) bool {

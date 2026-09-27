@@ -1,15 +1,12 @@
 package application_context
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,77 +33,41 @@ const ephemeralDirectoryMarkerText = "Scratch databases of mahresources -ephemer
 // directory, and captures the database's own file name and the owner's pid.
 var ephemeralDatabaseName = regexp.MustCompile(`^(([0-9]+)_[0-9]+\.db)(?:-wal|-shm|-journal)?$`)
 
-// legacyEphemeralDatabaseName is where releases before the private directory put
-// an ephemeral database: /tmp/mahresources_ephemeral_<pid>.db, and its -wal and
-// -shm. It captures the database's file name and the owner's pid.
-var legacyEphemeralDatabaseName = regexp.MustCompile(`^(mahresources_ephemeral_([0-9]+)\.db)(?:-wal|-shm)?$`)
-
 // ephemeralDatabaseSuffixes are the files SQLite keeps beside a database in WAL
 // or rollback-journal mode.
 var ephemeralDatabaseSuffixes = []string{"", "-wal", "-shm", "-journal"}
-
-// sqliteFileHeader opens every SQLite database file.
-var sqliteFileHeader = []byte("SQLite format 3\x00")
-
-// legacyEphemeralDatabaseDir is where releases before the private directory put
-// their databases. Nothing in it is ours by construction, so it is only swept of
-// files that prove to be one (see sweepLegacyEphemeralDatabases).
-func legacyEphemeralDatabaseDir() string {
-	if runtime.GOOS == "windows" {
-		return ""
-	}
-	return "/tmp"
-}
 
 // ownPIDSweep runs once per process, before its first ephemeral database exists:
 // at that point a database carrying this process's pid can only have been left by
 // an earlier process that had the same pid, so it is removed as well.
 var ownPIDSweep sync.Once
 
-// legacySweep runs once per process.
-var legacySweep sync.Once
-
 type ephemeralDatabase struct {
-	path string
-	// ownDir is a directory made for this database alone, removed with it; empty
-	// when the database lives in the shared ephemeral directory.
-	ownDir  string
+	path    string
 	release sync.Once
 	err     error
 }
 
 // createEphemeralDatabase sweeps the databases of exited owners and reserves a new
-// database file for this process.
+// database file for this process. It refuses when the ephemeral directory exists
+// but is not one it can prove is mahresources': writing there could not be swept
+// safely later, and a directory of its own per start would leak whenever a server
+// was killed.
 func createEphemeralDatabase() (*ephemeralDatabase, error) {
-	legacySweep.Do(func() {
-		if legacy := legacyEphemeralDatabaseDir(); legacy != "" {
-			sweepLegacyEphemeralDatabases(legacy)
-		}
-	})
-
 	dir := filepath.Join(os.TempDir(), ephemeralDirectoryName())
-	ownDir := ""
-	if claimEphemeralDirectory(dir) {
-		ownPIDSweep.Do(func() { sweepEphemeralDatabases(dir, true) })
-		sweepEphemeralDatabases(dir, false)
-	} else {
-		// Someone else's directory, or one that is not private: never write into it,
-		// and never sweep it. A directory of this database's own takes its place.
-		private, err := os.MkdirTemp(os.TempDir(), ephemeralDirectoryName()+"-")
-		if err != nil {
-			return nil, fmt.Errorf("create ephemeral database directory: %w", err)
-		}
-		dir, ownDir = private, private
+	if !claimEphemeralDirectory(dir) {
+		return nil, fmt.Errorf("ephemeral database directory %s is not one mahresources made: it must be a "+
+			"directory of this user that no one else may open, containing %s; remove it, or set TMPDIR "+
+			"to another directory", dir, ephemeralDirectoryMarker)
 	}
+	ownPIDSweep.Do(func() { sweepEphemeralDatabases(dir, true) })
+	sweepEphemeralDatabases(dir, false)
 
 	file, err := os.CreateTemp(dir, strconv.Itoa(os.Getpid())+"_*.db")
 	if err != nil {
-		if ownDir != "" {
-			_ = os.Remove(ownDir)
-		}
 		return nil, fmt.Errorf("create ephemeral database file: %w", err)
 	}
-	database := &ephemeralDatabase{path: file.Name(), ownDir: ownDir}
+	database := &ephemeralDatabase{path: file.Name()}
 	if err := file.Close(); err != nil {
 		_ = database.remove()
 		return nil, fmt.Errorf("create ephemeral database file: %w", err)
@@ -131,7 +92,10 @@ func claimEphemeralDirectory(dir string) bool {
 	// Made here, or left empty by a start that stopped before writing the marker:
 	// either way nothing in it can be anyone else's.
 	if entries, err := os.ReadDir(dir); !created && (err != nil || len(entries) > 0) {
-		return false
+		// A start racing this one writes the marker before anything else, so what
+		// this read found may be that marker.
+		markerInfo, err := os.Lstat(marker)
+		return err == nil && markerInfo.Mode().IsRegular()
 	}
 	return os.WriteFile(marker, []byte(ephemeralDirectoryMarkerText), 0o600) == nil
 }
@@ -181,63 +145,6 @@ func sweepEphemeralDatabases(dir string, includeOwnPID bool) {
 	}
 }
 
-// sweepLegacyEphemeralDatabases deletes databases an older release left in dir,
-// which is shared with everything else on the machine, so a name is not enough:
-// the database must be named exactly as that release named it, be a regular file
-// of this user that starts with SQLite's header, and belong to a process that has
-// exited and that nobody has open. Its -wal and -shm go with it; anything that
-// fails a check stays.
-func sweepLegacyEphemeralDatabases(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	self := os.Getpid()
-	abandoned := map[string]bool{}
-	for _, entry := range entries {
-		match := legacyEphemeralDatabaseName.FindStringSubmatch(entry.Name())
-		if match == nil {
-			continue
-		}
-		database := filepath.Join(dir, match[1])
-		decided, seen := abandoned[database]
-		if !seen {
-			pid, err := strconv.Atoi(match[2])
-			// This process never wrote there, so a database under its own pid is an
-			// earlier process's.
-			decided = err == nil && (pid == self || ephemeralOwnerExited(pid)) &&
-				isOwnSQLiteDatabase(database) && !ephemeralDatabaseOpen(database)
-			abandoned[database] = decided
-		}
-		if !decided {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && ownedByCurrentUser(info) {
-			_ = os.Remove(path)
-		}
-	}
-}
-
-// isOwnSQLiteDatabase reports whether path is a regular file of this user that
-// starts with SQLite's header.
-func isOwnSQLiteDatabase(path string) bool {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || !ownedByCurrentUser(info) {
-		return false
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-	header := make([]byte, len(sqliteFileHeader))
-	if _, err := io.ReadFull(file, header); err != nil {
-		return false
-	}
-	return bytes.Equal(header, sqliteFileHeader)
-}
-
 // ownerGone reports whether the process named by pid can no longer be using its
 // database, remembering the answer for each pid in exited.
 func ownerGone(pid, self int, includeOwnPID bool, exited map[int]bool) bool {
@@ -252,17 +159,11 @@ func ownerGone(pid, self int, includeOwnPID bool, exited map[int]bool) bool {
 	return gone
 }
 
-// remove deletes the database, its sidecar files and, when it had one, its own
-// directory.
+// remove deletes the database and its sidecar files.
 func (eph *ephemeralDatabase) remove() error {
 	var errs []error
 	for _, suffix := range ephemeralDatabaseSuffixes {
 		if err := os.Remove(eph.path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, err)
-		}
-	}
-	if eph.ownDir != "" {
-		if err := os.Remove(eph.ownDir); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}
