@@ -284,7 +284,11 @@ func TestAJobHeldByAProcessThatIsGoneIsReconciledWithoutWaitingForItsLease(t *te
 	if current.BootSession == "" {
 		t.Skip("this platform records no boot session, so no process can be proved gone")
 	}
-	dead := plugin_system.RuntimeIdentity{Host: current.Host, BootSession: current.BootSession, PID: unusedPIDForTest(t)}.String()
+	// This process's own identity with another process's id: whatever else an
+	// identity records, only the process differs.
+	deadIdentity := current
+	deadIdentity.PID = unusedPIDForTest(t)
+	dead := deadIdentity.String()
 	job := acceptClosureJobForTest(t, ctx, dead)
 	claimJobForTestAs(t, ctx, job.ID, dead)
 
@@ -303,7 +307,8 @@ func unusedPIDForTest(t *testing.T) int {
 	t.Helper()
 	current := plugin_system.CurrentRuntimeIdentity()
 	for pid := 4_000_000; pid > 3_000_000; pid -= 7919 {
-		candidate := plugin_system.RuntimeIdentity{Host: current.Host, BootSession: current.BootSession, PID: pid}
+		candidate := current
+		candidate.PID = pid
 		if candidate.Liveness() == plugin_system.RuntimeGone {
 			return pid
 		}

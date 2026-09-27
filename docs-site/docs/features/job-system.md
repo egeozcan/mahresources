@@ -83,8 +83,8 @@ A failed Job records why, as a failure code, a class and a message. An
 `interrupted` Job may record one too, and the Jobs panel and the Job Center show
 it the same way: a plugin action stopped by a shutdown or by its plugin being
 disabled says so, and a Job whose server process stopped says "The server process
-running this stopped before it finished." (code `runtime-lost`). The class counts
-toward the summary's failures by class for both states.
+running this stopped before it finished." (code `runtime-lost`). The summary's
+failures by class count both states; see [Summary analytics and exports](#summary-analytics-and-exports).
 
 A Job's claim is kept alive by the process running it. When that process stops
 without a graceful shutdown, the next process on the same host proves it gone
@@ -247,6 +247,10 @@ mr jobs summary export \
   --kind remote-download \
   --format csv
 ```
+
+A summary's failures by class count every Job that recorded a failure: each
+failed Job, and each interrupted Job that recorded why it was interrupted. An
+interrupted Job that recorded no reason is not in that figure.
 
 The export Job applies the same visibility predicate and filters as interactive
 summary, except `state=partial`, `inboundRelationship` and
