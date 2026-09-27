@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"mahresources/auth"
 	"mahresources/contracts"
@@ -381,7 +382,7 @@ func (ctx *MahresourcesContext) openJobFileOutput(output jobs.Output) (contracts
 	}
 	return contracts.JobOutputContent{
 		Body: file, ContentType: contentType,
-		Filename: safeJobOutputFilename(output.Label, path), Inline: inline,
+		Filename: jobOutputFilename(output, path), Inline: inline,
 	}, nil
 }
 
@@ -396,21 +397,54 @@ func rootedJobOutputPath(raw string) (string, error) {
 	return clean, nil
 }
 
-func safeJobOutputFilename(label, rawPath string) string {
-	name := strings.TrimSpace(label)
-	if name == "" {
-		name = filepath.Base(rawPath)
+// jobOutputFilename is the name a file output is saved under: its label, when
+// it was published, and the stored file's own extension, as
+// "exported-archive-20260926-124207.tar.gz". The label says what it is but not
+// which one, so two exports would otherwise save under one name, and without the
+// extension the saved file opens with nothing. The label is reduced to letters
+// and digits joined by hyphens, which also keeps any path or control character
+// out of the name. The time is UTC, as the legacy export download names it.
+func jobOutputFilename(output jobs.Output, rawPath string) string {
+	base := filepath.Base(filepath.ToSlash(rawPath))
+	if base == "." || base == "/" {
+		base = ""
 	}
-	name = strings.ReplaceAll(name, "\\", "/")
-	name = filepath.Base(name)
-	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, name)
-	if name == "" || name == "." || name == string(filepath.Separator) {
-		return "job-output"
+	extension := jobOutputExtension(base)
+	label := strings.TrimSpace(output.Label)
+	if extension != "" && strings.HasSuffix(strings.ToLower(label), extension) {
+		label = label[:len(label)-len(extension)]
 	}
-	return name
+	stem := jobOutputFilenameStem(label)
+	if stem == "" {
+		stem = jobOutputFilenameStem(strings.TrimSuffix(base, extension))
+	}
+	if stem == "" {
+		stem = "job-output"
+	}
+	if !output.CreatedAt.IsZero() {
+		stem += "-" + output.CreatedAt.UTC().Format("20060102-150405")
+	}
+	return stem + extension
+}
+
+// jobOutputExtension is a stored file name's extension, lowercased, keeping a
+// compressed tar's two parts together (".tar.gz").
+func jobOutputExtension(name string) string {
+	extension := strings.ToLower(filepath.Ext(name))
+	if extension == "" || extension == name {
+		return ""
+	}
+	if inner := strings.ToLower(filepath.Ext(strings.TrimSuffix(name, filepath.Ext(name)))); inner == ".tar" {
+		return inner + extension
+	}
+	return extension
+}
+
+// jobOutputFilenameStem lowercases a name and joins its runs of letters and
+// digits with single hyphens.
+func jobOutputFilenameStem(name string) string {
+	words := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	return strings.Join(words, "-")
 }

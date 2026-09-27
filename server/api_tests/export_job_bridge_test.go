@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -454,5 +456,36 @@ func TestAQueuedExportIsReadableAndCancellableThroughTheJobRoutes(t *testing.T) 
 	})
 	if cancelled.State != jobs.StateCancelled {
 		t.Fatalf("the cancelled export ended %s (%+v)", cancelled.State, cancelled.Failure)
+	}
+}
+
+// TestAGroupExportArchiveDownloadsUnderAFileNameWithItsExtension opens the
+// archive the way the Job page's link does. The saved file must carry the
+// archive's extension, or the operating system cannot open it, and its name must
+// tell one export from the next.
+func TestAGroupExportArchiveDownloadsUnderAFileNameWithItsExtension(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	groupID := createGroupForExport(t, tc, "export-bridge-filename")
+
+	_, canonicalID := submitGroupExport(t, tc, []uint{groupID})
+	snap := waitForCanonicalState(t, tc, canonicalID, "the export to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if snap.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s/%s", snap.State, snap.Failure)
+	}
+
+	res := tc.MakeRequest(http.MethodGet, "/v1/jobs/"+canonicalID+"/outputs?key=artifact", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("opening the archive answered %d: %s", res.Code, res.Body.String())
+	}
+	_, params, err := mime.ParseMediaType(res.Header().Get("Content-Disposition"))
+	if err != nil {
+		t.Fatalf("parse Content-Disposition %q: %v", res.Header().Get("Content-Disposition"), err)
+	}
+	name := params["filename"]
+	if !regexp.MustCompile(`^exported-archive-\d{8}-\d{6}\.tar(\.gz)?$`).MatchString(name) {
+		t.Fatalf("the archive downloads as %q, want exported-archive-<time>.tar or .tar.gz", name)
 	}
 }
