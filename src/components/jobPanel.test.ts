@@ -1083,7 +1083,7 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledWith('conflict.bin failed. This job changed. The latest details are shown.');
     });
 
-    test('across a disconnect a live event\'s proof covers only its own version', async () => {
+    test('a live event\'s proof does not outlive a disconnect', async () => {
         const queued = { id: 'dl-23', title: 'replayed.bin', kind: 'remote-download', state: 'queued', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([queued]);
         panel.lastSequence = 10;
@@ -1608,7 +1608,8 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
-    test('an outcome delivered live just before a disconnect is said by the first read after the reconnect', async () => {
+    test('an outcome delivered live just before a disconnect is counted, and the read after the reconnect adds nothing', async () => {
+        vi.useFakeTimers();
         const failed = { id: 'dl-53', title: 'dropped.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([failed]);
         panel.lastSequence = 10;
@@ -1616,11 +1617,78 @@ describe('Job Center panel accessibility hooks', () => {
 
         await deliverLive(panel, 'dl-53', fastLife, 11);
         panel.dropStream();
+        // A refresh while the stream is reconnecting.
+        await panel.refresh();
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
         await panel.refresh();
+        await vi.advanceTimersByTimeAsync(1000);
 
-        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
-        expect(panel._liveRegion.announce).toHaveBeenCalledWith('dropped.bin failed.');
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    // A refresh begun while the stream reconnects answers after its catch-up.
+    function straddlingPanel(listed: any[]) {
+        const panel = refreshingPanel(listed);
+        const list = panel.requestJSON;
+        let releaseLists = () => {};
+        const listsHeld = new Promise<void>(resolve => { releaseLists = resolve; });
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) await listsHeld;
+            return list(raw);
+        });
+        return { panel, list, releaseLists };
+    }
+
+    test('an outcome made while disconnected stays silent when a read straddles the catch-up', async () => {
+        vi.useFakeTimers();
+        // Rows that carry their commands: no detail read follows the lists.
+        const failed = { id: 'dl-57', title: 'straddled.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', commands: [{ key: 'retry' }] };
+        const { panel, list, releaseLists } = straddlingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-57', [['accepted', 1]], 11);
+        panel.dropStream();
+        // The job fails while disconnected; the refresh begun now answers after
+        // the catch-up, and the next one reads it again.
+        const straddling = panel.refresh();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
+        releaseLists();
+        await straddling;
+        panel.requestJSON = list;
+        await panel.refresh();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a detail read in a refresh that straddles the catch-up does not swallow a live outcome', async () => {
+        vi.useFakeTimers();
+        const failed = { id: 'dl-58', title: 'swallowed.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const { panel, list, releaseLists } = straddlingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        panel.dropStream();
+        const straddling = panel.refresh();
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
+        // Published just after the catch-up, so delivered live: news.
+        await deliverLive(panel, 'dl-58', fastLife, 14);
+        releaseLists();
+        await straddling;
+        panel.requestJSON = list;
+        await panel.refresh();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['swallowed.bin failed.']);
+        panel.destroy();
+        vi.useRealTimers();
     });
 
     test('a job accepted live that failed while disconnected is history after the reconnect', async () => {

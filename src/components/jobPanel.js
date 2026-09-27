@@ -459,7 +459,7 @@ export function jobPanel() {
                 nextJobs.forEach(job => this.trackResourceCompletion(job));
                 this.jobs = nextJobs;
                 try {
-                    await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation, spoken).catch(() => null)));
+                    await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation, spoken, streamGeneration).catch(() => null)));
                 } finally {
                     this.announceHeld(spoken, streamGeneration);
                 }
@@ -527,18 +527,11 @@ export function jobPanel() {
             if (entry && version > 0 && version < entry.version) return '';
             const changed = !!entry && entry.state !== job.state;
             const firstSeenOutcome = !entry && ['attention', 'finished'].includes(classifyJobState(job));
-            const proof = this._liveVersions.get(job.id);
-            const liveFrom = proof?.version;
-            // Within the stream generation it was recorded on, a proof covers
-            // every later version too, since all of them happened live. Across
-            // a reconnect it covers only its own: a later version may have come
-            // about while disconnected.
-            const provenLive = !!proof &&
-                (proof.generation === generation ? version >= liveFrom : version === liveFrom);
-            // An observation that could speak, at or past the proof's version,
-            // hears the job and so uses the proof up, whether or not it proved
-            // anything; a stale read must leave it for the live one that follows.
-            if (proof && version >= liveFrom && (live || proofOnly)) this._liveVersions.delete(job.id);
+            const liveFrom = this._liveVersions.get(job.id)?.version;
+            const provenLive = liveFrom !== undefined && version >= liveFrom;
+            // Only an observation that could speak uses the proof up; a stale
+            // read must leave it for the live one that follows.
+            if (provenLive && this.streamCaughtUp && (live || proofOnly)) this._liveVersions.delete(job.id);
             let said = this.streamCaughtUp && (changed || firstSeenOutcome) && (
                 proofOnly ? provenLive
                     : live && (!sameGenerationOnly || (changed && entry.generation === generation) || provenLive)
@@ -594,17 +587,17 @@ export function jobPanel() {
             this._liveVersions.set(jobId, {
                 version: Math.max(version, previous?.version || 0),
                 outcome: OUTCOME_EVENTS.has(message.type),
-                generation: this._streamGeneration,
             });
             this.boundLiveProofs();
             return '';
         },
 
-        // A proof leaves the store in two ways only: its job is heard (hearJob
-        // uses it up), or the store is past HEARD_LIMIT. Nothing else drops one:
-        // not a list read that left the job out, which a later read after a
-        // dismissal may list, not a failed read, not a reconnect. When the
-        // store is full, a proof that is not an outcome goes first: without it
+        // A proof leaves the store in three ways only: its job is heard (hearJob
+        // uses it up), the store is past HEARD_LIMIT, or the stream drops
+        // (dropStream). Nothing else drops one: not a list read that left the
+        // job out, which a later read after a dismissal may list, and not a
+        // failed read. When the store is full, a proof that is not an outcome
+        // goes first: without it
         // a job's first read withholds its outcome, and the job's own outcome
         // event, still to come, releases it. Only when every proof is an
         // outcome does the oldest go, and that outcome is counted and said
@@ -761,7 +754,12 @@ export function jobPanel() {
 
         // A detail read after the list can find the job already moved on; it is
         // heard like the list, and what it says joins the refresh's `spoken`.
-        async loadAdvertisedCommands(job, generation = this._refreshGeneration, spoken = null) {
+        // It is part of that refresh's read, so it is heard under the stream
+        // generation the refresh began on (`heardAs`), even when it starts
+        // after a catch-up: the refresh says nothing begun before one
+        // (announceHeld), so a detail read speaking for the new generation
+        // would use its news up unsaid, and a later read would not say it.
+        async loadAdvertisedCommands(job, generation = this._refreshGeneration, spoken = null, heardAs = undefined) {
             if (advertisedCommands(job).length) {
                 this.details[job.id] = job;
                 return job;
@@ -773,7 +771,7 @@ export function jobPanel() {
             const current = this.jobs.find(currentJob => currentJob.id === job.id);
             if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
-            if (spoken) this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
+            if (spoken) this.hearFromRead({ ...current, ...detail }, heardAs ?? streamGeneration, spoken);
             else this.hearJob({ ...current, ...detail });
             this.jobs = this.bounded(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
             return detail;
@@ -818,13 +816,19 @@ export function jobPanel() {
         },
 
         // The stream dropped. What happens before it catches up again arrives as
-        // replay. A proof already recorded stays, for its own version only
-        // (hearJob): that transition was delivered live.
+        // replay, so no proof crosses into the next stream generation: a later
+        // read cannot tell a transition proved live from one made while
+        // disconnected. An outcome still unheard was delivered live, though,
+        // so it goes into the count (sayUnsaidOutcomes) rather than silently.
         dropStream() {
             this.connectionStatus = 'reconnecting';
             this.streamCaughtUp = false;
             this._refreshGeneration += 1;
             this._streamGeneration += 1;
+            for (const proof of this._liveVersions.values()) {
+                if (proof.outcome) this.countUnsaidOutcome();
+            }
+            this._liveVersions.clear();
             // News said just before the drop must not be said again with the
             // next message as if it were new.
             this._recentNews = [];
