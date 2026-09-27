@@ -3,6 +3,8 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,5 +129,76 @@ func TestAPendingPauseSurvivesAShutdownHandBack(t *testing.T) {
 	})
 	if ended.State != jobs.StatePaused {
 		t.Fatalf("a download paused as the server stopped is %s, want paused", ended.State)
+	}
+}
+
+// TestALateHoldPublicationCannotPauseTheResumedExecution forces the interleave a
+// hold's publication has with a Resume: the attempt a pause stopped settles, the
+// dispatch that runs it records the Job paused, a Resume dispatches a new execution
+// and its transfer runs, and only then does the old attempt publish its hold. It
+// publishes under its own execution, which the fence refuses, so the running Job
+// stays running rather than being paused (and losing its claim) under the new
+// transfer.
+func TestALateHoldPublicationCannotPauseTheResumedExecution(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	server, requests, _ := heldTransferServer(t)
+
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/late-hold.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	command := func(key string, attempt int) {
+		t.Helper()
+		current := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+		if _, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+			JobID: jobID, Key: key, IdempotencyKey: fmt.Sprintf("late-hold-%s-%d", key, attempt), ExpectedVersion: current.Version,
+		}); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+	}
+	runningAgain := func(what string, requestsAtLeast int64) {
+		t.Helper()
+		waitForSnapshot(t, ctx, jobID, what, func(snap jobs.Snapshot) bool { return snap.State == jobs.StateRunning })
+		waitFor(t, what+" to reach the server", func() bool { return requests.Load() >= requestsAtLeast })
+	}
+
+	// The submission's own admission runs the first attempt; a pause and a resume
+	// hand the Job to the dispatch loop, whose wait is the second recorder of a
+	// hold.
+	runningAgain("the transfer to start", 1)
+	command(jobs.CommandPause, 1)
+	waitForSnapshot(t, ctx, jobID, "the first hold", func(snap jobs.Snapshot) bool { return snap.State == jobs.StatePaused })
+	command(jobs.CommandResume, 1)
+	runningAgain("the dispatched transfer to run", 2)
+
+	// From here the attempt the next pause stops parks after settling, before it
+	// publishes.
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(download_queue.SetHoldPublicationHookForTest(func(string) {
+		once.Do(func() { <-release })
+	}))
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	command(jobs.CommandPause, 2)
+	waitForSnapshot(t, ctx, jobID, "the dispatch to record the hold",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StatePaused })
+	command(jobs.CommandResume, 2)
+	runningAgain("the resumed execution to run", 3)
+
+	close(release)
+	time.Sleep(300 * time.Millisecond)
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, jobID); snap.State != jobs.StateRunning {
+		t.Fatalf("the old attempt's late hold left the resumed Job %s, want running", snap.State)
+	}
+	if entry, ok := ctx.DownloadManager().GetJobByCanonicalJobID(jobID); !ok || entry.GetStatus() != download_queue.JobStatusDownloading {
+		t.Fatalf("the resumed transfer is %v, want downloading", entry)
 	}
 }

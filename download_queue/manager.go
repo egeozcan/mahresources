@@ -1558,10 +1558,73 @@ func (dm *DownloadManager) Pause(jobID string) error {
 // again from the beginning, since the queue keeps no partial bytes; how the hold is
 // recorded is the mirror's decision.
 func (dm *DownloadManager) confirmHeldAttempt(job *DownloadJob, runID uint64) {
-	if !job.settleHeldAttempt(runID) {
+	held, ok := job.settleHeldAttempt(runID)
+	if !ok {
 		return
 	}
-	dm.mirrorHeld(job)
+	if holdPublicationHookForTest != nil {
+		holdPublicationHookForTest(job)
+	}
+	if held.canonical && job.Source == JobSourceDownload && job.runFn == nil {
+		if sink := dm.currentCanonicalSink(); sink != nil {
+			// A refusal is the fence doing its job (the execution moved on) or a
+			// write the dispatch's own wait records again; it never changes what
+			// the download does.
+			_ = sink.DownloadHeld(held.ref, held.snapshot)
+		}
+	}
+	job.markHoldPublished(runID)
+}
+
+// holdPublicationHookForTest runs between a hold's settlement and its publication,
+// so a test can land a Resume in that gap.
+var holdPublicationHookForTest func(*DownloadJob)
+
+// SetHoldPublicationHookForTest installs a function run between a hold's
+// settlement and its publication, and returns what restores the previous one. It
+// is for tests that land a Resume in that gap.
+func SetHoldPublicationHookForTest(hook func(queueJobID string)) func() {
+	previous := holdPublicationHookForTest
+	if hook == nil {
+		holdPublicationHookForTest = nil
+	} else {
+		holdPublicationHookForTest = func(job *DownloadJob) { hook(job.ID) }
+	}
+	return func() { holdPublicationHookForTest = previous }
+}
+
+// pauseSettleWaitPoll is how often PauseSettled looks at the hold.
+const pauseSettleWaitPoll = 10 * time.Millisecond
+
+// PauseSettled pauses a download and answers once the hold is recorded: the
+// attempt the pause stopped has exited and the durable Job has been told. A
+// caller that acts on the answer (a legacy client resuming or cancelling next)
+// then finds the Job paused. A hold not recorded within wait answers a
+// *HoldPendingError; a download that completed or ended instead (a pause that
+// landed after its file was saved) answers a *StateConflictError naming what it
+// became.
+func (dm *DownloadManager) PauseSettled(jobID string, wait time.Duration) error {
+	if err := dm.Pause(jobID); err != nil {
+		return err
+	}
+	job, err := dm.lookup(jobID)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		status, recorded := job.holdAnswer()
+		if recorded {
+			return nil
+		}
+		if status != JobStatusPaused {
+			return &StateConflictError{JobID: jobID, Action: "paused", Status: status}
+		}
+		if !time.Now().Before(deadline) {
+			return &HoldPendingError{JobID: jobID}
+		}
+		time.Sleep(pauseSettleWaitPoll)
+	}
 }
 
 // Resume resumes a paused download job by ID
@@ -1810,15 +1873,6 @@ func (dm *DownloadManager) currentCanonicalSink() CanonicalSink {
 func (dm *DownloadManager) mirrorProgressForRun(job *DownloadJob, runID uint64) {
 	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
 		return sink.DownloadProgress(ref, snap)
-	})
-}
-
-// mirrorHeld publishes the fact that a transfer is paused and waiting for a
-// person. It is the one nonterminal mirror that changes the Job's state, because
-// "paused" is a decision the executor made rather than a progress tick.
-func (dm *DownloadManager) mirrorHeld(job *DownloadJob) {
-	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
-		return sink.DownloadHeld(ref, snap)
 	})
 }
 

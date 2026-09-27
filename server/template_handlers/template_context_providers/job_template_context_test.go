@@ -369,6 +369,9 @@ func TestOnlyRunningWorkReadsAsWorking(t *testing.T) {
 		if bar := jobRowProgress(jobs.Snapshot{State: state, Phase: "queued", Progress: jobs.Progress{Phase: "queued"}}); bar != nil {
 			t.Fatalf("a %s Job whose only report is its phase drew %+v", state, bar)
 		}
+		if bar := jobRowProgress(jobs.Snapshot{State: state, Progress: jobs.Progress{Total: i64(100)}}); bar != nil {
+			t.Fatalf("a %s Job whose only report is a total drew %+v", state, bar)
+		}
 	}
 	running := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning})
 	if running == nil || running.Text != "Working" || !running.Indeterminate {

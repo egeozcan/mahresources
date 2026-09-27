@@ -33,6 +33,18 @@ func (e *StateConflictError) Error() string {
 	return fmt.Sprintf("job %s cannot be %s (status: %s)", e.JobID, e.Action, e.Status)
 }
 
+// HoldPendingError answers a pause whose hold was not confirmed in time: the
+// attempt it stopped was still unwinding (typically saving a file) when the caller
+// stopped waiting. It maps to HTTP 409, as a download that is busy does; asking
+// again once the attempt has exited is safe.
+type HoldPendingError struct {
+	JobID string
+}
+
+func (e *HoldPendingError) Error() string {
+	return fmt.Sprintf("job %s is still stopping; its pause is not confirmed yet", e.JobID)
+}
+
 // CanonicalJobError is returned when an in-place control is asked for work a durable Job
 // owns. It maps to HTTP 409.
 //

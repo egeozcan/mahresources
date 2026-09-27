@@ -100,3 +100,68 @@ func TestAPauseThatLandedAfterTheFileWasSavedCompletesTheDownload(t *testing.T) 
 	ref, _ := job.CanonicalExecution()
 	waitForCanonical(t, "the completion to be mirrored", func() bool { return len(sink.finishedFor(ref.JobID)) == 1 })
 }
+
+// A hold is published under the execution its attempt ran for. A Resume
+// dispatched between the settlement and the publication attaches a new execution;
+// publishing under whatever is attached then would pause the new execution's
+// running Job while its transfer runs.
+func TestAHoldIsPublishedUnderTheExecutionItsAttemptRanFor(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, sink := parkedCanonicalTransfer(t, creator)
+	creator.waitParked(t)
+	old, _ := job.CanonicalExecution()
+	replacement := CanonicalRef{JobID: old.JobID, ExecutionToken: "0192f0aa-0000-7000-8000-00000000pt02"}
+
+	holdPublicationHookForTest = func(held *DownloadJob) {
+		if !held.AttachCanonical(replacement) {
+			t.Errorf("the replacement execution was not attached")
+		}
+	}
+	t.Cleanup(func() { holdPublicationHookForTest = nil })
+
+	if err := dm.Pause(job.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	creator.releaseOne(t)
+	waitForWorkerToExit(t, dm)
+	waitForCanonical(t, "the hold to be published", func() bool { return heldMirrors(sink) == 1 })
+	sink.mu.Lock()
+	published := sink.held[0].ref
+	sink.mu.Unlock()
+	if published.ExecutionToken != old.ExecutionToken {
+		t.Fatalf("the hold was published under %q, want the attempt's own %q", published.ExecutionToken, old.ExecutionToken)
+	}
+}
+
+// PauseSettled answers once the hold is recorded, and a hold still settling
+// when the caller stops waiting is answered as pending rather than as paused.
+func TestPauseSettledAnswersOnceTheHoldIsRecorded(t *testing.T) {
+	creator := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm, job, sink := parkedCanonicalTransfer(t, creator)
+	creator.waitParked(t)
+
+	var pending *HoldPendingError
+	if err := dm.PauseSettled(job.ID, 50*time.Millisecond); !errors.As(err, &pending) {
+		t.Fatalf("a pause whose attempt is still saving answered %v, want a pending hold", err)
+	}
+	creator.releaseOne(t)
+	waitForWorkerToExit(t, dm)
+	if status, recorded := job.holdAnswer(); status != JobStatusPaused || !recorded || heldMirrors(sink) != 1 {
+		t.Fatalf("after the attempt exited the job is %s, recorded=%v, held mirrors %d", status, recorded, heldMirrors(sink))
+	}
+
+	// With nothing being saved the hold settles at once.
+	quick := newParkingCreator(nil, errors.New("the transfer was stopped"))
+	dm2, job2, sink2 := parkedCanonicalTransfer(t, quick)
+	quick.waitParked(t)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		quick.releaseOne(t)
+	}()
+	if err := dm2.PauseSettled(job2.ID, 5*time.Second); err != nil {
+		t.Fatalf("a pause answered %v, want the hold recorded", err)
+	}
+	if heldMirrors(sink2) != 1 {
+		t.Fatalf("PauseSettled answered before the hold was published")
+	}
+}

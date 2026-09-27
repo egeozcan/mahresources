@@ -256,3 +256,82 @@ func TestADispatchWhoseAccountWasDeletedAfterItsClaimFails(t *testing.T) {
 		})
 	}
 }
+
+// A read that stalls is a read that failed, once its bound runs out: the Job goes
+// back to the queue rather than holding its claim and its capacity for as long as
+// the database does not answer. The binding a dispatch that did answer runs its
+// work under carries no deadline of the check's.
+func TestADispatchWhoseAccountReadStallsIsDeferredWithinItsBound(t *testing.T) {
+	previous := dispatchCheckReadBound
+	dispatchCheckReadBound = 100 * time.Millisecond
+	t.Cleanup(func() { dispatchCheckReadBound = previous })
+
+	ctx := newJobHarnessContext(t, false)
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{Claimant: "dispatch-stall-test", Interval: time.Hour})
+	t.Cleanup(runtime.Stop)
+	user, err := ctx.CreateUser(&UserInput{Username: "dispatch-stall", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	input, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/stalled.bin"}, "")
+	if err != nil {
+		t.Fatalf("input: %v", err)
+	}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindRemoteDownload, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: &user.ID, ActorUserID: &user.ID, Replay: jobs.ReplayInput{Input: input},
+	})
+
+	const name = "test:stall-the-account-read"
+	if err := ctx.db.Callback().Query().Before("gorm:query").Register(name, func(db *gorm.DB) {
+		if db.Statement.Table == "users" {
+			<-db.Statement.Context.Done()
+			_ = db.AddError(db.Statement.Context.Err())
+		}
+	}); err != nil {
+		t.Fatalf("register the stall: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
+
+	started := time.Now()
+	runtime.tick(context.Background())
+	waiting := waitForSnapshot(t, ctx, accepted.ID, "the stalled check to give the Job back", func(snap jobs.Snapshot) bool {
+		return snap.State != jobs.StateRunning && givenBackCount(t, ctx, accepted.ID) > 0
+	})
+	if waiting.State != jobs.StateQueued {
+		t.Fatalf("a Job whose account read stalled is %s, want queued", waiting.State)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the stalled check held the Job for %s", elapsed)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the Job given back still holds %d capacity slots", held)
+	}
+
+	// A binding that answered carries no deadline into the work.
+	_ = ctx.db.Callback().Query().Remove(name)
+	bound, err := ctx.dispatchBinding(user.ID)
+	if err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if _, has := bound.db.Statement.Context.Deadline(); has {
+		t.Fatalf("the binding a dispatch runs its work under carries the check's deadline")
+	}
+	if bound.Principal() == nil || bound.Principal().UserID != user.ID {
+		t.Fatalf("the binding lost its principal: %+v", bound.Principal())
+	}
+	// Nor does it lose the scope a group-limited account's work runs inside.
+	scope := createGroupNamed(t, ctx, "dispatch-stall-scope", nil)
+	scoped, err := ctx.CreateUser(&UserInput{Username: "dispatch-stall-scoped", Password: "password1",
+		Role: models.RoleUser, ScopeGroupId: &scope.ID})
+	if err != nil {
+		t.Fatalf("create the scoped user: %v", err)
+	}
+	scopedBound, err := ctx.dispatchBinding(scoped.ID)
+	if err != nil {
+		t.Fatalf("bind the scoped user: %v", err)
+	}
+	if _, has := scopedBound.db.Statement.Context.Deadline(); has || scopeFromContext(scopedBound.db.Statement.Context) == nil {
+		t.Fatalf("the scoped binding lost its scope or kept the check's deadline")
+	}
+}

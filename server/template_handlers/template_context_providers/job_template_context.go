@@ -771,7 +771,8 @@ func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	progress := snapshot.Progress
 	working := jobview.PresentJob(snapshot).Working
-	hasData := progress.Completed != nil || progress.Total != nil || progress.Message != ""
+	// A total alone reports no work done, so it is not something to show.
+	hasData := progress.Completed != nil || progress.Message != ""
 	succeeded := snapshot.State == jobs.StateSucceeded
 	if !hasData && !succeeded && !working {
 		return nil

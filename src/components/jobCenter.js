@@ -406,7 +406,8 @@ export function progressText(job) {
 export function showsProgress(job) {
     if (stateOf(job) === 'succeeded' || isWorking(job)) return true;
     const progress = job?.progress || {};
-    return Number.isFinite(progress.completed) || Number.isFinite(progress.total) || !!progress.message ||
+    // A total alone reports no work done.
+    return Number.isFinite(progress.completed) || !!progress.message ||
         (Array.isArray(progress.metrics) && progress.metrics.length > 0);
 }
 

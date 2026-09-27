@@ -179,6 +179,7 @@ describe('progress on work nobody is doing', () => {
         for (const state of ['scheduled', 'queued', 'paused', 'blocked', 'failed', 'cancelled', 'interrupted']) {
             expect(showsProgress({ state, progress: {} })).toBe(false);
             expect(showsProgress({ state, progress: { phase: 'queued' } })).toBe(false);
+            expect(showsProgress({ state, progress: { total: 100 } })).toBe(false);
             expect(progressIndeterminate({ state, progress: {} })).toBe(false);
         }
         const failedPart = { state: 'failed', progress: { completed: 102400, unit: 'bytes' } };

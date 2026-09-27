@@ -136,20 +136,37 @@ func (ctx *MahresourcesContext) dispatchChecksAnswered(jobID string) {
 // that no longer exists answers errDispatchAccountDeleted, and a read which failed
 // (the account's, or the scope subtree's) is returned rather than bound as
 // deny-all. Work the host runs as itself (no account) gets this context unchanged.
+//
+// The reads are bounded by dispatchCheckReadBound, so a stalled one ends as a
+// failed read the caller defers, rather than holding the claim and its capacity
+// for as long as it stalls. The binding it answers carries the scope and the
+// acting user without that deadline: the work it runs is not bounded by it.
 func (ctx *MahresourcesContext) dispatchBinding(userID uint) (*MahresourcesContext, error) {
 	if userID == 0 {
 		return ctx, nil
 	}
-	principal, deleted, err := accountLookup(ctx.db, userID)
+	bounded, cancel := context.WithTimeout(context.Background(), dispatchCheckReadBound)
+	defer cancel()
+	var db = ctx.db
+	if db != nil {
+		db = db.WithContext(bounded)
+	}
+	principal, deleted, err := accountLookup(db, userID)
 	if err != nil {
 		return nil, err
 	}
 	if deleted {
 		return nil, errDispatchAccountDeleted
 	}
-	bound, err := ctx.withPrincipalWithin(context.Background(), principal)
+	bound, err := ctx.withPrincipalWithin(bounded, principal)
 	if err != nil {
 		return nil, err
 	}
+	if bound.db != nil && bound.db.Statement != nil && bound.db.Statement.Context != nil {
+		bound.db = bound.db.WithContext(context.WithoutCancel(bound.db.Statement.Context))
+	}
 	return bound, nil
 }
+
+// dispatchCheckReadBound bounds each read dispatchBinding makes.
+var dispatchCheckReadBound = 10 * time.Second

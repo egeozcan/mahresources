@@ -103,9 +103,11 @@ type DownloadJob struct {
 	stoppedForShutdownRun uint64
 	// heldSettledRun names the attempt a pause stopped once that attempt's worker
 	// has exited, so nothing of it can write any more (settleHeldAttempt).
-	// heldSettled says it is set: run ids start at zero.
+	// heldSettled says it is set: run ids start at zero. heldPublished says the
+	// hold has also been told to the durable Job (confirmHeldAttempt).
 	heldSettled    bool
 	heldSettledRun uint64
+	heldPublished  bool
 	// discarded records that the user deleted this job's history row, so a terminal
 	// write still in flight does not re-insert it. See markDiscarded.
 	discarded bool
@@ -245,14 +247,49 @@ func (j *DownloadJob) stoppedForShutdownBy(runID uint64) bool {
 // is behind it; confirming at Pause released the Job's claim while the attempt
 // could still be saving a file. An attempt a Resume has replaced, or one that ended
 // any other way, is not held.
-func (j *DownloadJob) settleHeldAttempt(runID uint64) bool {
+//
+// It answers the execution the attempt published under and the paused snapshot,
+// both read under the lock the settlement is recorded with: the hold is published
+// under that execution only. Read later, a Resume dispatched in between could have
+// attached a new execution, and the old attempt's hold would pause the new one's
+// running Job.
+func (j *DownloadJob) settleHeldAttempt(runID uint64) (heldAttempt, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.runID != runID || j.Status != JobStatusPaused {
-		return false
+		return heldAttempt{}, false
 	}
-	j.heldSettled, j.heldSettledRun = true, runID
-	return true
+	j.heldSettled, j.heldSettledRun, j.heldPublished = true, runID, false
+	held := heldAttempt{snapshot: j.snapshotLocked()}
+	if j.canonical != nil && j.canonical.JobID != "" {
+		held.ref, held.canonical = *j.canonical, true
+	}
+	return held, true
+}
+
+// heldAttempt is what settleHeldAttempt read with the settlement.
+type heldAttempt struct {
+	ref       CanonicalRef
+	canonical bool
+	snapshot  *DownloadJob
+}
+
+// markHoldPublished records that a settled hold has been told to the durable Job,
+// unless a Resume has replaced the attempt since.
+func (j *DownloadJob) markHoldPublished(runID uint64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.heldSettled && j.heldSettledRun == runID {
+		j.heldPublished = true
+	}
+}
+
+// holdAnswer reports where a pause of this job stands for a caller waiting on it:
+// the job's status, and whether it is paused with its hold settled and published.
+func (j *DownloadJob) holdAnswer() (JobStatus, bool) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.Status, j.Status == JobStatusPaused && j.heldSettled && j.heldSettledRun == j.runID && j.heldPublished
 }
 
 // HoldSettled reports whether the job is paused and the attempt the pause stopped

@@ -305,6 +305,10 @@ func statusCodeForJobError(err error) int {
 	if errors.As(err, &busy) {
 		return http.StatusConflict
 	}
+	var pending *download_queue.HoldPendingError
+	if errors.As(err, &pending) {
+		return http.StatusConflict
+	}
 	// Anything else is unexpected from these four entry points; fall back to the
 	// shared classifier rather than inventing a code.
 	return statusCodeForError(err, http.StatusBadRequest)
@@ -529,6 +533,12 @@ func restartScopeDeniedForCreator(ctx DownloadSubmitter, request *http.Request, 
 	return validateDownloadScope(ctx, auth.PrincipalFromContext(request.Context()), creator)
 }
 
+// legacyPauseSettleWait bounds how long the legacy pause waits for the attempt it
+// stopped to exit and the hold to be recorded. An attempt saving its file can take
+// longer; the answer is then a 409, like a busy download's, and asking again is
+// safe.
+const legacyPauseSettleWait = 5 * time.Second
+
 // GetDownloadPauseHandler handles POST /v1/download/pause
 // Pauses a download job by ID
 //
@@ -558,7 +568,9 @@ func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.Response
 			return
 		}
 
-		if err := ctx.DownloadManager().Pause(projection.Entry.ID); err != nil {
+		// Answered once the hold is recorded, not when the transfer is asked to
+		// stop: a legacy client resumes or cancels next, and finds the Job paused.
+		if err := ctx.DownloadManager().PauseSettled(projection.Entry.ID, legacyPauseSettleWait); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}

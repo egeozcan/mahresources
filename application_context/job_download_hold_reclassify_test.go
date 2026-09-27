@@ -1,9 +1,11 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"mahresources/jobs"
 	"mahresources/models/query_models"
@@ -165,5 +167,28 @@ func TestAHoldReclassificationDoesNotRelabelANewerBlock(t *testing.T) {
 	}
 	if snap := jobSnapshot(t, ctx.JobService(), ctx, held.ID); snap.State != jobs.StateBlocked {
 		t.Fatalf("a Job blocked again for a refusal reads %s, want blocked", snap.State)
+	}
+}
+
+// An older process of a rolling upgrade can record a hold as blocked after every
+// newer process has started, so the runtime moves such holds on its own cadence,
+// not only at startup.
+func TestTheRuntimeRecordsHoldsAnOlderProcessWritesAfterStartup(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{
+		Claimant: "hold-cadence-test", Interval: time.Hour, HoldReclassifyInterval: time.Millisecond,
+	})
+	t.Cleanup(runtime.Stop)
+
+	late := blockDownloadForTest(t, ctx, "paused", `{"reason":"paused","resume":"restarts-from-the-beginning"}`)
+	refused := blockDownloadForTest(t, ctx, "", `{"reason":"role-refused"}`)
+	time.Sleep(5 * time.Millisecond)
+	runtime.tick(context.Background())
+
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, late.ID); snap.State != jobs.StatePaused {
+		t.Fatalf("a hold recorded after startup reads %s after a runtime pass, want paused", snap.State)
+	}
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, refused.ID); snap.State != jobs.StateBlocked {
+		t.Fatalf("a refusal reads %s after a runtime pass, want blocked", snap.State)
 	}
 }
