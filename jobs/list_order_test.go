@@ -12,7 +12,11 @@ import (
 // entered its state the newest.
 func stateEnteredFixture(t *testing.T) (*Service, Deps, Snapshot, []Snapshot) {
 	t.Helper()
-	deps := newTestDeps(t)
+	return stateEnteredFixtureOn(t, newTestDeps(t))
+}
+
+func stateEnteredFixtureOn(t *testing.T, deps Deps) (*Service, Deps, Snapshot, []Snapshot) {
+	t.Helper()
 	svc := NewService()
 	clock := time.Date(2031, 7, 1, 9, 0, 0, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
@@ -45,8 +49,14 @@ func stateEnteredFixture(t *testing.T) (*Service, Deps, Snapshot, []Snapshot) {
 // panel reads its groups in: a long Job that finishes after newer ones is the
 // first finished Job, where acceptance order leaves it off the page.
 func TestStateEnteredOrderLeadsWithTheJobThatJustFinished(t *testing.T) {
-	svc, deps, long, quick := stateEnteredFixture(t)
-	finished := Filter{States: []string{string(StateSucceeded)}}
+	requireStateEnteredOrder(t, stateEnteredFixture)
+}
+
+func requireStateEnteredOrder(t *testing.T, fixture func(*testing.T) (*Service, Deps, Snapshot, []Snapshot)) {
+	t.Helper()
+	svc, deps, long, quick := fixture(t)
+	// Two states, so the listing reads one branch per state.
+	finished := Filter{States: []string{string(StateSucceeded), string(StateCancelled)}}
 	for _, access := range []Access{{UserID: 1, Administrator: true}, {UserID: 7}} {
 		byAcceptance := listFor(t, svc, deps, access, finished, Cursor{}, 3)
 		requireIDs(t, "acceptance order", pageIDs(byAcceptance), quick[3].ID, quick[2].ID, quick[1].ID)
@@ -123,7 +133,12 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 // listing in state-entered order: every state is its own branch, and the pages
 // hold every Job once, newest state change first.
 func TestStateEnteredOrderWithoutAStateListsEveryJobOnce(t *testing.T) {
-	svc, deps, long, quick := stateEnteredFixture(t)
+	requireEveryJobOnceWithoutAState(t, stateEnteredFixture)
+}
+
+func requireEveryJobOnceWithoutAState(t *testing.T, fixture func(*testing.T) (*Service, Deps, Snapshot, []Snapshot)) {
+	t.Helper()
+	svc, deps, long, quick := fixture(t)
 	admin := Access{UserID: 1, Administrator: true}
 	var seen []string
 	cursor := Cursor{Order: OrderStateEntered}
