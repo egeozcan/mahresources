@@ -253,7 +253,12 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		return err
 	}
 
-	if reason := a.refusalReason(execution, &decoded); reason != "" {
+	reason, err := a.refusalReason(execution, &decoded)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
+	if reason != "" {
 		return a.block(execution, reason)
 	}
 
@@ -540,19 +545,20 @@ func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobI
 // Everything rechecked here was checked when the submission arrived. None of it is
 // a standing permission: the plugin may have been disabled, the principal's role or
 // scope may have narrowed, and a retry or a dispatch after a restart runs on a
-// worker with no request behind it at all.
-func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *downloadJobInput) string {
+// worker with no request behind it at all. A read that failed is not an answer: it
+// comes back as the error, and dispatch neither runs the work nor blocks it.
+func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *downloadJobInput) (string, error) {
 	if input.Plugin != "" && !a.ctx.scheduledDownloadPluginAvailable(input.Plugin, nil) {
-		return "plugin-unavailable"
+		return "plugin-unavailable", nil
 	}
 	if execution.Access.UserID != 0 {
-		// A read that failed keeps the refusal it implies: dispatch blocks rather
-		// than run work whose account it could not check.
-		if refusal, _ := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator); refusal.Reason != "" {
-			return refusal.Reason
+		refusal, err := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator)
+		if err != nil {
+			return "", err
 		}
+		return refusal.Reason, nil
 	}
-	return ""
+	return "", nil
 }
 
 // block records that this Job cannot proceed and who has to decide. It is the

@@ -429,9 +429,12 @@ front: the Job is accepted, and then blocked with `scope-refused` or
 `group-out-of-scope` before anything runs. When the account or group read
 behind the check fails, the command answers `500` instead of refusing, and
 asking again once the database answers is safe. The same read failing as a
-download or an export is about to start currently blocks the Job with the
-reason the check would have given (`role-refused`, `scope-refused` or
-`group-out-of-scope`) instead of leaving it queued; Resume starts it again.
+Job is about to start (a download, an export, an import, a Job summary export,
+a clustering run or a similarity recompute) neither runs the Job nor blocks it:
+the Job goes back to `queued` with the event reason `checks-unanswered` and the
+message "Waiting for the account and scope checks", and the server process
+that tried waits 1 second before asking again, doubling after each failure in
+a row up to 30 seconds. Another server process may ask sooner.
 Bulk requests accept at most 200 Job IDs; each result commits independently, so
 a response can contain both successes and refusals.
 

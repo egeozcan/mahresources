@@ -595,6 +595,10 @@ type MahresourcesContext struct {
 	// way — see job_faults.go. Nil is every production context, and every use is a
 	// nil check.
 	jobFaults *jobDurabilityFaults
+	// dispatchChecks records the Jobs whose dispatch could not read the account
+	// they act as, and how long this process passes over them
+	// (job_dispatch_checks.go). Shared by every clone of the context.
+	dispatchChecks *dispatchCheckDeferrals
 	// jobTerminalSink observes Jobs reaching an end state, whoever ran them. It
 	// is the same observer the download queue publishes through, installed here
 	// as well because plugin background work is a Job now and its completion is
@@ -971,6 +975,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		rootAdmin:                 newRootAdminCache(),
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
 		shareServerListening:      &atomic.Bool{},
+		dispatchChecks:            newDispatchCheckDeferrals(),
 	}
 
 	ctx.pluginCommandController = newPluginCommandRuntimeController(ctx)

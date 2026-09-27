@@ -203,7 +203,12 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 	if err != nil {
 		return err
 	}
-	a = a.forExecution(execution)
+	bound, err := a.forExecution(execution)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a = bound
+	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if execution.Access.UserID != 0 {
 		if err := a.ctx.requireWriteRole("export a Job summary"); err != nil {
 			return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "role-refused")
@@ -232,11 +237,17 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 	return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobSummaryExportOutput})
 }
 
-func (a *jobSummaryExportAdapter) forExecution(execution jobs.Execution) *jobSummaryExportAdapter {
+// forExecution binds the account the export acts as. A read that failed binds
+// nothing and is returned (dispatchBinding).
+func (a *jobSummaryExportAdapter) forExecution(execution jobs.Execution) (*jobSummaryExportAdapter, error) {
 	if a.ctx == nil || execution.Access.UserID == 0 {
-		return a
+		return a, nil
 	}
-	return &jobSummaryExportAdapter{ctx: a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))}
+	bound, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return &jobSummaryExportAdapter{ctx: bound}, nil
 }
 
 func (a *jobSummaryExportAdapter) Reconcile(_ context.Context, request jobs.ReconcileRequest) (jobs.ReconcileDecision, error) {

@@ -151,8 +151,17 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 	// singleton context is unscoped. The Extent is resolved through the handle's own
 	// scope filter, so an unbound dispatch clustered — and could destroy — Resources
 	// outside the acting principal's subtree.
-	a = a.forExecution(execution)
-	if reason := a.refusalReason(execution, input); reason != "" {
+	bound, err := a.forExecution(execution)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a = bound
+	reason, err := a.refusalReason(execution, input)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
+	if reason != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, reason)
 	}
 
@@ -199,16 +208,17 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 // singleton unless something binds it. A capacity-queued run, a Retry and a
 // redispatched Job all reach here with no request behind them, so the recorded actor
 // is the only principal left — and resolving it once, here, is what makes the check
-// and the run answer the same question.
-func (a *reductionComputeAdapter) forExecution(execution jobs.Execution) *reductionComputeAdapter {
+// and the run answer the same question. A read that failed binds nothing and is
+// returned (dispatchBinding).
+func (a *reductionComputeAdapter) forExecution(execution jobs.Execution) (*reductionComputeAdapter, error) {
 	if a.ctx == nil || execution.Access.UserID == 0 {
-		return a
+		return a, nil
 	}
-	principal := a.ctx.principalForPluginActor(execution.Access.UserID)
-	if principal == nil {
-		return a
+	bound, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return nil, err
 	}
-	return &reductionComputeAdapter{ctx: a.ctx.WithPrincipal(principal), kind: a.kind}
+	return &reductionComputeAdapter{ctx: bound, kind: a.kind}, nil
 }
 
 // refusalReason answers why this execution may not start, or an empty string.
@@ -219,18 +229,22 @@ func (a *reductionComputeAdapter) forExecution(execution jobs.Execution) *reduct
 // The Reduction's own visibility is the owner predicate — the row is not subtree-scoped
 // itself, only everything it reaches is — so it is asked with the acting principal's
 // owner filter, exactly as the HTTP surface asks it.
-func (a *reductionComputeAdapter) refusalReason(execution jobs.Execution, input *reductionComputeJobInput) string {
+func (a *reductionComputeAdapter) refusalReason(execution jobs.Execution, input *reductionComputeJobInput) (string, error) {
 	if execution.Access.UserID == 0 {
-		return ""
+		return "", nil
 	}
 	if err := a.ctx.requireWriteRole("run a clustering run"); err != nil {
-		return "role-refused"
+		return "role-refused", nil
 	}
 	owner, restricted := reductionOwnerFilter(a.ctx.Principal())
 	if _, err := a.ctx.loadReductionForUpdate(input.ReductionID, owner, restricted); err != nil {
-		return "reduction-refused"
+		if errors.Is(err, ErrReductionNotFound) {
+			return "reduction-refused", nil
+		}
+		// A read that failed says nothing about the Reduction or the account.
+		return "", err
 	}
-	return ""
+	return "", nil
 }
 
 // reductionOwnerFilter is the owner predicate a principal reads a Reduction under:

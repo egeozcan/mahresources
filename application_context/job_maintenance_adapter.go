@@ -130,7 +130,12 @@ func (a *similarityRecomputeAdapter) Dispatch(ctx context.Context, execution job
 	if execution.KindVersion != jobMaintenanceKindVersion {
 		return fmt.Errorf("%w: maintenance v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
-	if reason := a.refusalReason(execution); reason != "" {
+	reason, err := a.refusalReason(execution)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
+	if reason != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, reason)
 	}
 
@@ -169,16 +174,20 @@ func (a *similarityRecomputeAdapter) Dispatch(ctx context.Context, execution job
 // whoever asked for the retry: the original submission was an administrator's, and
 // that says nothing about the account asking for the second run. A principal the
 // resolver cannot find — a deleted or disabled account — is deny-all rather than
-// unscoped, which is what `principalForPluginActor` answers.
-func (a *similarityRecomputeAdapter) refusalReason(execution jobs.Execution) string {
+// unscoped, and a read that failed is returned rather than answered
+// (dispatchBinding).
+func (a *similarityRecomputeAdapter) refusalReason(execution jobs.Execution) (string, error) {
 	if execution.Access.UserID == 0 {
-		return ""
+		return "", nil
 	}
-	scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
+	scoped, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return "", err
+	}
 	if err := scoped.requireAdminRole("recompute similarities"); err != nil {
-		return "role-refused"
+		return "role-refused", nil
 	}
-	return ""
+	return "", nil
 }
 
 // start submits the recompute this execution needs.

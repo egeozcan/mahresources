@@ -547,16 +547,18 @@ func exportSeriesIDsVisible(ctx *MahresourcesContext, ids []uint) bool {
 // that asked for it was checked against them. Resolving the actor once and using
 // that context for the authorization check *and* the worker is what makes the two
 // answer the same question; a second resolution, or a check on one context and a
-// run on another, is the defect this method exists to prevent.
-func (a *groupExportAdapter) forExecution(execution jobs.Execution) *groupExportAdapter {
+// run on another, is the defect this method exists to prevent. A read that failed
+// binds nothing and is returned (dispatchBinding): the export neither runs under a
+// deny-all binding nor is refused for it.
+func (a *groupExportAdapter) forExecution(execution jobs.Execution) (*groupExportAdapter, error) {
 	if a.ctx == nil || execution.Access.UserID == 0 {
-		return a
+		return a, nil
 	}
-	principal := a.ctx.principalForPluginActor(execution.Access.UserID)
-	if principal == nil {
-		return a
+	bound, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return nil, err
 	}
-	return &groupExportAdapter{ctx: a.ctx.WithPrincipal(principal), kind: a.kind}
+	return &groupExportAdapter{ctx: bound, kind: a.kind}, nil
 }
 
 // Dispatch runs one claimed export: it makes sure this process's queue is running
@@ -576,9 +578,17 @@ func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	// One binding for both halves: the refusal below and the run function built
 	// beneath it read the same context, so an export that passed the check cannot
 	// then stream a tree the check would have refused.
-	a = a.forExecution(execution)
-
-	if reason := a.refusalReason(execution, input); reason != "" {
+	bound, err := a.forExecution(execution)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a = bound
+	reason, err := a.refusalReason(execution, input)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
+	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
+	if reason != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, reason)
 	}
 
@@ -615,15 +625,17 @@ func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 // Everything rechecked here was checked when the submission arrived, and none of it
 // is a standing permission: a group-limited principal may have lost the group since,
 // a retry replays a request made under an older decision, and the group may simply
-// be gone.
-func (a *groupExportAdapter) refusalReason(execution jobs.Execution, request *ExportRequest) string {
+// be gone. It asks the context forExecution bound, which is the context the export
+// then runs under. A read that failed is returned, not answered.
+func (a *groupExportAdapter) refusalReason(execution jobs.Execution, request *ExportRequest) (string, error) {
 	if execution.Access.UserID == 0 {
-		return ""
+		return "", nil
 	}
-	// A read that failed keeps the refusal it implies: dispatch blocks rather than
-	// run work whose account it could not check.
-	refusal, _ := a.ctx.exportPrincipalRefusal(execution.Access.UserID, request.RootGroupIDs)
-	return refusal.Reason
+	refusal, err := a.ctx.exportRefusalAsBound(request.RootGroupIDs)
+	if err != nil {
+		return "", err
+	}
+	return refusal.Reason, nil
 }
 
 // start submits the export this execution needs, taking the id from the Job's own

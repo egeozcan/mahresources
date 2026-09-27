@@ -421,12 +421,14 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	if execution.KindVersion != jobImportKindVersion {
 		return fmt.Errorf("%w: import parse v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
-	parsePrincipal := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
-	if execution.Access.UserID == 0 {
-		// An intentionally actorless execution runs as the host, which is the same
-		// permissive branch every role guard takes for a context with no principal.
-		parsePrincipal = a.ctx
+	// An intentionally actorless execution runs as the host, which is the same
+	// permissive branch every role guard takes for a context with no principal
+	// (dispatchBinding answers this context for it).
+	parsePrincipal, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
 	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if refusal := importWriteRefusal(parsePrincipal, "parse an import"); refusal != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refusal)
 	}
@@ -752,8 +754,9 @@ func (a *importApplyAdapter) Definition() jobs.Definition {
 // principal so every row the apply creates is attributed to whoever asked for it.
 //
 // The binding is what the handler does at submission and what a Retry has no
-// request for: the Job records the actor, and `principalForPluginActor` resolves it
-// to the stored account — deny-all when that account is gone, never unscoped.
+// request for: the Job records the actor, and dispatchBinding resolves it to the
+// stored account — deny-all when that account is gone, never unscoped, and when
+// the read fails, nothing: the Job waits in the queue to be asked again.
 func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execution) error {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return errors.New("the download queue is not available")
@@ -765,10 +768,11 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	if execution.KindVersion != jobImportKindVersion {
 		return fmt.Errorf("%w: import apply v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
-	bound := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
-	if execution.Access.UserID == 0 {
-		bound = a.ctx
+	bound, err := a.ctx.dispatchBinding(execution.Access.UserID)
+	if err != nil {
+		return a.ctx.deferDispatch(execution, err)
 	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
 	if refusal := importWriteRefusal(bound, "apply an import"); refusal != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refusal)
 	}
