@@ -301,6 +301,10 @@ func statusCodeForJobError(err error) int {
 	if errors.As(err, &canonical) {
 		return http.StatusConflict
 	}
+	var busy *download_queue.URLActiveError
+	if errors.As(err, &busy) {
+		return http.StatusConflict
+	}
 	// Anything else is unexpected from these four entry points; fall back to the
 	// shared classifier rather than inventing a code.
 	return statusCodeForError(err, http.StatusBadRequest)
@@ -610,7 +614,9 @@ func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
-		if err := ctx.DownloadManager().Resume(projection.Entry.ID); err != nil {
+		// Arbitrated like every other start: a held download holds no URL, so
+		// resuming it while another transfer fetches the URL would run two.
+		if err := ctx.DownloadManager().ResumeExclusive(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}

@@ -104,6 +104,9 @@ func TestAHeldDownloadDoesNotHoldItsURL(t *testing.T) {
 	if got := dm.OtherActiveTransfer(url, "job-other"); got != "" {
 		t.Fatalf("a held download was reported as fetching its URL: %s", got)
 	}
+	if got, active := ActiveDownloadForURL(dm, url); active {
+		t.Fatalf("a held download was reported as fetching its URL to the legacy paths: %s", got)
+	}
 	other, err := dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: url}, nil, "",
 		SubmissionOptions{Canonical: &CanonicalRef{JobID: "job-other", ExecutionToken: "t2"}, ExclusiveURL: true})
 	if err != nil {

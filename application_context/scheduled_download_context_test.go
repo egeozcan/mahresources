@@ -3,6 +3,8 @@ package application_context
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"mahresources/constants"
+	"mahresources/download_queue"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
@@ -24,7 +27,7 @@ import (
 // reason the plugin schedule tests do: the claim is a real database race, and an
 // in-memory private-cache database would hand each pooled connection its own
 // empty copy.
-func newScheduledDownloadTestContext(t *testing.T) *MahresourcesContext {
+func newScheduledDownloadTestContext(t *testing.T, mutate ...func(*MahresourcesConfig)) *MahresourcesContext {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "scheduled-downloads.db")
 	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", path)
@@ -43,6 +46,9 @@ func newScheduledDownloadTestContext(t *testing.T) *MahresourcesContext {
 	}
 	sqlDB, _ := db.DB()
 	cfg := &MahresourcesConfig{DbType: constants.DbTypeSqlite}
+	for _, apply := range mutate {
+		apply(cfg)
+	}
 	return NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
 }
 
@@ -638,6 +644,61 @@ func TestFireScheduledDownloadDefersWhenURLIsAlreadyDownloading(t *testing.T) {
 	}
 	if got.Attempts != 0 {
 		t.Fatalf("Attempts = %d, want 0 when nothing was submitted", got.Attempts)
+	}
+}
+
+// A paused download holds no URL, so a due legacy row for the same URL fires: the
+// scheduler asks the same question the queue asks when it starts a transfer.
+func TestAPausedDownloadDoesNotDeferALegacyRowForItsURL(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t, func(cfg *MahresourcesConfig) {
+		cfg.AllowPrivateFetch = []string{"127.0.0.1", "::1"}
+	})
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+	paused, err := ctx.downloadManager.Submit(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/held"}, nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitFor(t, "the transfer to start", func() bool { return paused.GetStatus() == download_queue.JobStatusDownloading })
+	if err := ctx.downloadManager.Pause(paused.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	waitFor(t, "the pause", func() bool { return paused.GetStatus() == download_queue.JobStatusPaused })
+	t.Cleanup(func() { _ = ctx.downloadManager.Cancel(paused.ID) })
+
+	active := (&PluginScheduler{ctx: ctx}).scheduledDownloadActiveFunc()
+	submitted := false
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now(),
+		PluginAvailable: func(string) bool { return true },
+		ActiveDownload: func(string) (string, bool) {
+			// The row's own URL, answered about the paused entry's URL: the question
+			// the production wiring asks.
+			return active(paused.URL)
+		},
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			submitted = true
+			return "job-after-pause", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire due downloads: %v", err)
+	}
+	if fired != 1 || !submitted {
+		t.Fatalf("fired = %d, submitted = %v: a paused download deferred a row for its URL", fired, submitted)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.Status != models.ScheduledDownloadStatusSubmitted {
+		t.Fatalf("status = %q, want submitted", got.Status)
 	}
 }
 

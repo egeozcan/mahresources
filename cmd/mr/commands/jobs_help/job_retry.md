@@ -14,8 +14,8 @@ not an absolute http or https URL, which no retry can fetch.
 
 One URL is transferred once at a time. While the server's queue still
 holds the failed attempt and another download of the same URL is
-pending, downloading, processing or paused there, this command is
-refused with HTTP 409. Otherwise the retry is accepted, and if the URL
+pending, downloading or processing there, this command is refused
+with HTTP 409. A paused download does not count: it fetches nothing. Otherwise the retry is accepted, and if the URL
 is downloading when the new attempt would start, it waits in the queue
 with the phase `waiting` until that transfer ends. A retry from the Job
 Center (`POST /v1/jobs/{id}/commands/retry`) is never refused for this:

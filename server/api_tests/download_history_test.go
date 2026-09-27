@@ -852,6 +852,53 @@ func TestDownloadHistoryRetryRefusesAURLAlreadyDownloading(t *testing.T) {
 	}
 }
 
+// A paused download fetches nothing and may wait for a person indefinitely, so
+// it does not hold its URL against a retry. Resuming it is what is arbitrated: a
+// resume while another transfer fetches the URL is refused, and the download
+// stays paused.
+func TestAPausedDownloadDoesNotBlockARetryOfItsURL(t *testing.T) {
+	tc := SetupTestEnv(t)
+	dm := tc.AppCtx.DownloadManager()
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	paused, err := dm.Submit(&query_models.ResourceFromRemoteCreator{URL: server.URL}, nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForJobStatus(t, tc, paused.ID, download_queue.JobStatusDownloading)
+	if err := dm.Pause(paused.ID); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	waitForJobStatus(t, tc, paused.ID, download_queue.JobStatusPaused)
+
+	entry := recordDownload(t, tc, "earlier-attempt-of-a-paused-url", models.DownloadHistoryStatusFailed, nil, server.URL, time.Now())
+	before := len(dm.GetJobs())
+	res := postJSON(tc, "/v1/downloads/retry", fmt.Sprintf(`{"ids":[%d]}`, entry.ID), nil)
+	if res.Code == http.StatusConflict {
+		t.Fatalf("a paused download blocked the retry of its URL: %s", res.Body.String())
+	}
+	if after := len(dm.GetJobs()); after != before+1 {
+		t.Fatalf("the queue grew from %d to %d, want one retried download (%d %s)", before, after, res.Code, res.Body.String())
+	}
+
+	resumed := postJSON(tc, "/v1/download/resume?id="+paused.ID, "", nil)
+	if resumed.Code != http.StatusConflict {
+		t.Fatalf("resuming a paused download while its URL downloads: status %d, want 409 (%s)", resumed.Code, resumed.Body.String())
+	}
+	if status := paused.GetStatus(); status != download_queue.JobStatusPaused {
+		t.Fatalf("the refused resume moved the paused download to %s", status)
+	}
+}
+
 // Two rows, two jobs still in memory, one URL. Retrying each in place ran both at
 // once: the queue is the authority on what is being downloaded, so it is asked
 // before the in-place branch and not after it.
