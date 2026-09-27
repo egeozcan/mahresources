@@ -660,7 +660,8 @@ type Filter struct {
 	NoInboundRelationship string
 
 	// Search matches the bounded, sanitized text a viewer may read: the UUID,
-	// title, sanitized summary, sanitized failure message and output labels. It
+	// title, the values of the sanitized summary (not its keys or JSON
+	// punctuation), sanitized failure message and output labels. It
 	// never reaches ciphertext or a protected diagnostic reference.
 	Search string
 

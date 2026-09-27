@@ -342,7 +342,10 @@ advertised command, and the viewer's pin and dismissal preferences, which take
 dismissed Jobs too; the `/jobs` page instead writes its default,
 `dismissed=false`, into its address. On the API, `owner=me` lists the asking
 account's own Jobs without naming its id, and `ownerDeleted=true` lists Jobs
-whose owner's account was deleted.
+whose owner's account was deleted. The text filter (`search`) matches a Job's
+id, title, the values in its summary (not its field names), its failure message
+and its outputs' labels without regard to case (ASCII letters only on SQLite),
+and ignores spaces around the term.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent

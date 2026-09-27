@@ -2643,3 +2643,41 @@ func TestEventSequenceHeadNeverFallsWhenEventsAreDeleted(t *testing.T) {
 		t.Fatalf("visible head after the events were deleted = %d, %v; want 0", visible, err)
 	}
 }
+
+// TestListSearchMatchesSummaryValuesNotItsSyntax pins what the search box reads
+// of a Job's structured summary: its values, the text and numbers a person can
+// see in it, and not its keys or JSON punctuation. A quote once matched every
+// Job and a key name every Job of a Kind.
+func TestListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T) {
+	testListSearchMatchesSummaryValuesNotItsSyntax(t, newTestDeps(t))
+}
+
+func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
+	t.Helper()
+	svc := NewService()
+	admin := Access{UserID: 1, Administrator: true}
+	accept := func(title, summary string) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Summary: json.RawMessage(summary), Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	download := accept("sunrise.png", `{"scheme":"http","host":"files.example.test","targets":["owner:12","group:3"]}`)
+	export := accept("an export", `{"rootGroups":[4077],"subtree":true,"fidelity":["blobs"]}`)
+	plain := accept("a plain summary", `"nothing in common"`)
+
+	search := func(term string) []string {
+		t.Helper()
+		return pageIDs(listFor(t, svc, deps, admin, Filter{Search: term}, Cursor{}, 0))
+	}
+	requireIDs(t, "a string value", search("files.example"), download.ID)
+	requireIDs(t, "a value inside a list", search("group:3"), download.ID)
+	requireIDs(t, "a number inside a list", search("4077"), export.ID)
+	requireIDs(t, "a value in any case", search("BLOBS"), export.ID)
+	for _, term := range []string{`"`, "{", "scheme", "rootGroups", `":"`, "true"} {
+		if got := search(term); len(got) != 0 {
+			t.Errorf("search for %q matched %v through the summary's syntax, want nothing", term, got)
+		}
+	}
+	requireIDs(t, "a summary that is one string", search("in common"), plain.ID)
+}

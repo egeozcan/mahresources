@@ -696,8 +696,13 @@ func preferencePredicate(column string, want bool) string {
 }
 
 // applySearch narrows a listing to the bounded sanitized text a viewer may read:
-// the Job's identity, title, sanitized summary and sanitized failure message,
-// and the labels of its outputs.
+// the Job's identity, title, the values of its sanitized summary, its sanitized
+// failure message, and the labels of its outputs.
+//
+// The summary is read by its values — every string and number in it, however
+// deep — and never as JSON text: its keys and punctuation are notation, not
+// something a person saw, and matching them made a quote find every Job and a
+// key name every Job of a Kind (summaryValueMatches).
 //
 // Two things are deliberately out of reach. The replay envelope is another
 // table, and its contents are ciphertext — a search can never reach them. The
@@ -717,11 +722,27 @@ func applySearch(db *gorm.DB, term string) *gorm.DB {
 	return db.Where(
 		"(jobs.id "+operator+" ?"+escape+
 			" OR jobs.title "+operator+" ?"+escape+
-			" OR COALESCE(CAST(jobs.summary AS TEXT), '') "+operator+" ?"+escape+
+			" OR "+summaryValueMatches(db, operator, escape)+
 			" OR jobs.failure_message "+operator+" ?"+escape+
 			" OR EXISTS (SELECT 1 FROM job_outputs o WHERE o.job_id = jobs.id AND o.label "+operator+" ?"+escape+"))",
 		pattern, pattern, pattern, pattern, pattern,
 	)
+}
+
+// summaryValueMatches is the predicate, taking one pattern, that some string or
+// number in the Job's summary matches it. Each engine walks the document with
+// its own JSON functions: SQLite's json_tree gives every node with its type and
+// its value as SQL text (atom), and PostgreSQL's strict `$.**` path yields every
+// node once, whose text `#>> '{}'` is. A summary that is not valid JSON has no
+// values to match on SQLite, where json_tree would otherwise fail the query;
+// PostgreSQL's json column cannot hold one.
+func summaryValueMatches(db *gorm.DB, operator, escape string) string {
+	if db.Dialector.Name() == "postgres" {
+		return "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
+			" WHERE jsonb_typeof(node.value) IN ('string', 'number') AND (node.value #>> '{}') " + operator + " ?" + escape + ")"
+	}
+	return "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
+		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
 }
 
 // continueAfter applies a keyset position. A zero cursor is the start of the
