@@ -21,14 +21,14 @@ import (
 var pgContainer *testpgutil.Container
 
 func TestMain(m *testing.M) {
-	// The plugin command tests run this binary again as a command's own process
-	// (TestPluginCommandFixtureProcess), which needs no database. Starting a
-	// container there made every command run as slow as Docker is to start and
-	// stop one, which under load is longer than those tests wait.
+	// A plugin command fixture re-executes this binary as its child process
+	// (TestPluginCommandFixtureProcess), and the runner gives every child a
+	// MAHR_COMMAND_RUN_ID. The child needs no database, and a container started
+	// per child costs seconds, enough under a busy Docker to outlive the command
+	// deadlines of the tests that spawned it.
 	if os.Getenv("MAHR_COMMAND_RUN_ID") != "" {
 		os.Exit(m.Run())
 	}
-
 	ctx := context.Background()
 
 	var err error
