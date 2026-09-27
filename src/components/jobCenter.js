@@ -821,7 +821,7 @@ export function commandRefusalText(job, command, error, now = null) {
     const name = jobName(job);
     switch (result.code) {
     case 'refused':
-        return String(result.message || payload.error || `${name} refused ${label}.`);
+        return withReason(`${label} refused for ${name}`, result.message || payload.error);
     case 'not-advertised':
         return now?.state && stateOf(now) !== stateOf(job)
             ? `${label} is no longer offered for ${name}, which is now ${stateLabel(now).toLowerCase()}.`
@@ -835,8 +835,14 @@ export function commandRefusalText(job, command, error, now = null) {
     case 'not-found':
         return `${name} is no longer available.`;
     default:
-        return String(result.message || payload.error || error?.message || `${label} could not be completed.`);
+        return withReason(`${label} could not be completed for ${name}`, result.message || payload.error || error?.message);
     }
+}
+
+// "<what happened>: <the reason as it was given>", or the first part alone.
+function withReason(what, reason) {
+    const text = String(reason || '').trim();
+    return text ? `${what}: ${text}` : `${what}.`;
 }
 
 // The box a command leaves once it answered, naming its Job. A requested

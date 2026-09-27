@@ -534,7 +534,7 @@ describe('Job Center panel', () => {
         await panel.runCommand(panel.jobs[0], panel.jobs[0].commands[0]);
 
         expect(panel.jobs.map(job => job.id)).toEqual(['row-1', 'row-2']);
-        expect(panel.notice).toBe('Request failed (500)');
+        expect(panel.notice).toBe('Dismiss could not be completed for first.bin: Request failed (500)');
     });
 
     test('a command that moves no version still has its row\'s controls read again', async () => {
@@ -553,6 +553,25 @@ describe('Job Center panel', () => {
         await panel.runCommand(panel.jobs[0], commands[1]);
 
         expect(panel.commandsFor(panel.jobs[0]).map(command => command.key)).toEqual(['pin']);
+    });
+
+    test('a reread answered after the row moved on keeps the newer row\'s controls', async () => {
+        let answerRead: (value: any) => void = () => {};
+        const commands = [{ key: 'forget', label: 'Forget replay input', jobVersion: 4 }, { key: 'retry', label: 'Retry', jobVersion: 4 }];
+        const panel = rowCommandPanel((_url, init) => init.method === 'POST'
+            ? { result: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } }
+            : new Promise(resolve => { answerRead = resolve; }));
+        panel.jobs[0] = { ...panel.jobs[0], commands };
+        panel.details[panel.jobs[0].id] = panel.jobs[0];
+
+        const running = panel.runCommand(panel.jobs[0], commands[0]);
+        await vi.waitFor(() => expect(panel.requestJSON).toHaveBeenCalledTimes(2));
+        // A refresh shows version 5, with its own controls, before the read answers.
+        panel.applyStreamSnapshot({ ...panel.jobs[0], version: 5, commands: [{ key: 'dismiss', label: 'Dismiss', jobVersion: 5 }] });
+        answerRead({ ...panel.jobs[0], version: 4, commands });
+        await running;
+
+        expect(panel.commandsFor(panel.jobs[0]).map(command => command.key)).toEqual(['dismiss']);
     });
 
     function refusal(status: number, payload: any) {
@@ -574,7 +593,7 @@ describe('Job Center panel', () => {
 
         await panel.runCommand(panel.jobs[0], retry);
 
-        expect(panel.notice).toBe('The group this download files into no longer exists.');
+        expect(panel.notice).toBe('Retry refused for first.bin: The group this download files into no longer exists.');
         expect(panel.commandsFor(panel.jobs[0]).map(command => command.key)).toEqual(['dismiss']);
     });
 

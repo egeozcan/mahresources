@@ -319,12 +319,12 @@ describe('command confirmation rule', () => {
         const job = { title: 'big.iso', state: 'running' };
         const cancel = { key: 'cancel', label: 'Cancel' };
         const refused = (payload: any) => ({ status: 409, payload });
-        expect(commandRefusalText(job, cancel, refused({ result: { code: 'refused', message: 'The target group is gone.' } }))).toBe('The target group is gone.');
+        expect(commandRefusalText(job, cancel, refused({ result: { code: 'refused', message: 'The target group is gone.' } }))).toBe('Cancel refused for big.iso: The target group is gone.');
         expect(commandRefusalText(job, cancel, refused({ result: { code: 'not-advertised' } }), { state: 'succeeded' }))
             .toBe('Cancel is no longer offered for big.iso, which is now succeeded.');
         expect(commandRefusalText(job, cancel, refused({ result: { code: 'not-advertised' } }))).toBe('Cancel is no longer offered for big.iso.');
         expect(commandRefusalText(job, cancel, refused({ result: { code: 'in-flight' } }))).toBe('Cancel is already being run for big.iso.');
-        expect(commandRefusalText(job, cancel, { status: 500, message: 'Request failed (500)', payload: {} })).toBe('Request failed (500)');
+        expect(commandRefusalText(job, cancel, { status: 500, message: 'Request failed (500)', payload: {} })).toBe('Cancel could not be completed for big.iso: Request failed (500)');
     });
 
     test('a newer snapshot that leaves a field out empties it, an equal or older one does not', () => {

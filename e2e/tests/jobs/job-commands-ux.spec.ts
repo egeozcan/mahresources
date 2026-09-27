@@ -275,7 +275,7 @@ test.describe('Job commands keep their controls current', () => {
     const commands = page.getByRole('group', { name: 'Advertised job commands' });
     await commands.getByRole('button', { name: 'Retry', exact: true }).click();
 
-    await expect(page.locator('[data-job-notice]')).toHaveText('The group this download files into no longer exists.');
+    await expect(page.locator('[data-job-notice]')).toHaveText('Retry refused for Refused detail job: The group this download files into no longer exists.');
     await expect(commands.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
   });
 
@@ -513,6 +513,37 @@ test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
       await expect(title).toBeInViewport();
     });
   }
+
+  test('a row that moves while another row\'s command is still running keeps focus too', async ({ page }) => {
+    const store = jobStore([
+      withCommands(failedJob('focus-a', 'Commanded row', { acceptedAt: '2026-09-26T10:02:00Z' }), [['forget', 'Forget replay input', { destructive: true }]]),
+      runningJob('focus-b', 'Moving row', { acceptedAt: '2026-09-26T10:01:00Z' }),
+    ]);
+    await serveStore(page, store);
+    let release = () => {};
+    await page.route('**/v1/jobs/focus-a/commands/forget', async route => {
+      await new Promise<void>(resolve => { release = resolve; });
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } });
+    });
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    const rowA = drawer.locator('article[data-job-id="focus-a"]');
+    await rowA.locator('summary').click();
+    await rowA.getByRole('button', { name: 'Forget replay input' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+    // The confirmation hands focus back to Forget once it has closed.
+    await expect(rowA.getByRole('button', { name: 'Forget replay input' })).toBeFocused();
+
+    // While A's command waits, the reader moves to B, and B finishes.
+    const titleB = drawer.locator('article[data-job-id="focus-b"]').getByRole('link', { name: 'Moving row' });
+    await titleB.focus();
+    store.set('focus-b', { state: 'succeeded', version: 3, phase: undefined, progress: { completed: 100, total: 100, unit: 'bytes' }, commands: [] });
+    await refreshDrawer(page);
+    await expect(drawer.locator('[data-job-panel-group="finished"] article[data-job-id="focus-b"]')).toHaveCount(1);
+    await expect(titleB).toBeFocused();
+    release();
+  });
 
   test('a Resume whose row moves on later keeps focus on that row', async ({ page }) => {
     const blocked = withCommands({ ...failedJob('focus-resume', 'Focus resume download'), state: 'blocked', failure: undefined }, [

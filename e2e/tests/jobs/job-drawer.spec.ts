@@ -177,15 +177,16 @@ test.describe('Jobs drawer', () => {
     const id = 'drawer-more-disclosure';
     let pinned = false;
     const pinRequests: string[] = [];
+    // A pin is the viewer's preference and moves no Job version.
     const job = () => ({
-      id, kind: 'remote-download', state: 'failed', version: pinned ? 2 : 1, pinned,
+      id, kind: 'remote-download', state: 'failed', version: 1, pinned,
       title: 'More disclosure job', acceptedAt: new Date().toISOString(),
       failure: { message: 'connection refused' },
       commands: [
-        { key: 'retry', label: 'Retry', endpoint: `/v1/jobs/${id}/commands/retry`, jobVersion: pinned ? 2 : 1 },
+        { key: 'retry', label: 'Retry', endpoint: `/v1/jobs/${id}/commands/retry`, jobVersion: 1 },
         { key: 'pin', label: 'Pin', endpoint: `/v1/jobs/${id}/commands/pin`, jobVersion: 1 },
-        { key: 'unpin', label: 'Unpin', endpoint: `/v1/jobs/${id}/commands/unpin`, jobVersion: 2 },
-        { key: 'forget', label: 'Forget replay input', endpoint: `/v1/jobs/${id}/commands/forget`, jobVersion: pinned ? 2 : 1 },
+        { key: 'unpin', label: 'Unpin', endpoint: `/v1/jobs/${id}/commands/unpin`, jobVersion: 1 },
+        { key: 'forget', label: 'Forget replay input', endpoint: `/v1/jobs/${id}/commands/forget`, jobVersion: 1 },
       ],
       outputs: [],
       lineage: { ancestors: [], successors: [], parents: [], children: [] },

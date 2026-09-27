@@ -227,8 +227,9 @@ export function jobPanel() {
         commandBusy: {},
         // The Jobs the drawer was opened to show (see openFromEvent).
         _revealJobIds: [],
-        // Commands whose focus keepFocusOnRow still has to place.
-        _commandFocusPending: 0,
+        // Commands whose focus keepFocusOnRow still has to place, counted per
+        // Job id.
+        _commandFocusPending: {},
         // Where the reader's focus is in the drawer, for when a re-render takes
         // the element away (see startFocusKeeper).
         _focusMemo: null,
@@ -1238,6 +1239,10 @@ export function jobPanel() {
         async rereadJob(id, spoken = null) {
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
+            // A read the row has since moved past carries the controls of an
+            // older version: it is not kept, or the row would offer them again.
+            const shown = this.jobs.find(row => row.id === id) || this.details[id];
+            if (freshJob?.id && Number(freshJob.version || 0) < Number(shown?.version || 0)) return shown;
             if (freshJob?.id) {
                 this.details[id] = freshJob;
                 // A read: any change of state in it is someone else's.
@@ -1253,7 +1258,7 @@ export function jobPanel() {
             if (!job?.id || this.commandBusy[job.id]) return null;
             this.commandBusy = { ...this.commandBusy, [job.id]: true };
             const watch = this.watchReaderFocus();
-            if (watch) this._commandFocusPending += 1;
+            if (watch) this._commandFocusPending = { ...this._commandFocusPending, [job.id]: (this._commandFocusPending[job.id] || 0) + 1 };
             this._commandRefresh = null;
             try {
                 return await this.runCommandUnfocused(job, command);
@@ -1326,7 +1331,12 @@ export function jobPanel() {
             if (!watch) return;
             Promise.resolve(settled).catch(() => {}).then(() => this.$nextTick?.(() => setTimeout(() => {
                 watch.stop();
-                this._commandFocusPending = Math.max(0, this._commandFocusPending - 1);
+                const left = (this._commandFocusPending[jobId] || 1) - 1;
+                const { [jobId]: _settled, ...others } = this._commandFocusPending;
+                this._commandFocusPending = left > 0 ? { ...others, [jobId]: left } : others;
+                // Focus lost elsewhere while this command's was pending was left
+                // to it; whatever it did not place is looked at again.
+                setTimeout(() => this.checkFocusLost(), 0);
                 if (watch.opener.isConnected || watch.movedByReader || !this.isOpen) return;
                 const panel = document.querySelector('#job-center-panel');
                 const active = document.activeElement;
@@ -1428,8 +1438,10 @@ export function jobPanel() {
         checkFocusLost() {
             const memo = this._focusMemo;
             if (!(memo?.jobId || memo?.inNotice) || memo.element.isConnected || this._focusRestoreTimer) return;
-            // A command places focus itself once it settles (keepFocusOnRow).
-            if (this._commandFocusPending > 0) return;
+            // A command places focus itself on its own row once it settles
+            // (keepFocusOnRow), and a control in the box goes because of one.
+            const pending = this._commandFocusPending;
+            if (memo.jobId ? pending[memo.jobId] > 0 : Object.keys(pending).length > 0) return;
             // After the trap's own rescue, which runs on the same mutations.
             this._focusRestoreTimer = setTimeout(() => {
                 this._focusRestoreTimer = null;
