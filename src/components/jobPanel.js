@@ -1599,6 +1599,13 @@ export function jobPanel() {
         // render is misread: refreshed for although the page lists it, or not
         // refreshed for although it does not (its resource then appears on the
         // next load). Widening the comparison moves the error to the other side.
+        // Known limit: only the rows the drawer reads are seen, and its Finished
+        // group holds the newest finishedLimit. A download that more than that
+        // many Jobs finish after, before the drawer reads again, refreshes
+        // nothing by itself. A burst of downloads is not lost, since its newest
+        // are read and one refresh re-reads the whole list; seeing every success
+        // would need a Kind the stream's events do not carry, or a refresh for
+        // any Job's success, which morphs the lists under the reader far more.
         trackResourceCompletion(job) {
             if (!job?.id || job.state !== 'succeeded' ||
                 (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||

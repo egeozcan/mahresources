@@ -199,6 +199,13 @@ and the host when the path names no file. The query and fragment never reach
 the title. An old `/downloads?URL=` link opens the Job Center searching for
 the file the URL names, or its host, since a Job keeps no URL.
 
+A page that lists resources reads its lists again when the Jobs drawer sees a
+download succeed after the page was rendered, so the new resource appears
+without a reload. Known limit: the drawer reads only the newest finished Jobs
+(its Finished group's limit, 10 by default), so a download that more than that
+many other Jobs finish after, before the drawer reads again, does not refresh
+the page by itself; the next refresh, or a reload, shows its resource.
+
 A failed download's Job records why it failed: for example
 `HTTP 403 Forbidden`, `connect: connection refused`, or the timeout that ended
 the transfer. A transfer that runs past `-remote-overall-timeout` says it did
