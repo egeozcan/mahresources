@@ -441,6 +441,12 @@ func validateFilter(filter Filter) error {
 		filter.AcceptedAfter.After(*filter.AcceptedBefore) {
 		return invalid("the accepted window ends before it starts")
 	}
+	if filter.OwnerDeleted && filter.OwnerID != nil {
+		return invalid("a job whose owner was deleted has no owner id; ask for one or the other")
+	}
+	if filter.OwnedByViewer && (filter.OwnerID != nil || filter.OwnerDeleted) {
+		return invalid("owner=me names the owner already; ask for one owner filter")
+	}
 	if filter.Command != "" {
 		if strings.TrimSpace(filter.Command) == "" {
 			return invalid("command key is empty")
@@ -494,6 +500,12 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 	}
 	if filter.ActorID != nil {
 		db = db.Where("jobs.actor_user_id = ?", *filter.ActorID)
+	}
+	if filter.OwnerDeleted {
+		db = db.Where("jobs.owner_deleted = ?", true)
+	}
+	if filter.OwnedByViewer {
+		db = db.Where("jobs.owner_user_id = ?", access.UserID)
 	}
 	if filter.AcceptedAfter != nil {
 		db = db.Where("jobs.accepted_at >= ?", filter.AcceptedAfter.UTC())
@@ -558,6 +570,16 @@ func applyStateFilter(db *gorm.DB, tokens []string) *gorm.DB {
 // EXISTS the same rule makes a Job whose only successor is hidden read as not
 // followed. Lineage already drops those relatives; the filters agree with it.
 //
+// One relation is the exception, for a viewer who may act: a retry-of link read
+// from its TO end, "this Job was retried". Retry lineage is linear whoever
+// extended it, so a Job an administrator retried offers its owner no Retry, and
+// the owner's lineage says another account retried it (Lineage.RetriedElsewhere).
+// A filter that read that Job as not retried would disagree with both, so the
+// link row alone answers it. That publishes nothing the missing Retry had not:
+// only the far Job's existence, never its identity, and only on the asker's own
+// Job. A read-only viewer is offered no Retry on any Job, so no missing Retry has
+// told them anything, and the ordinary rule applies to them.
+//
 // Each link is checked against its own far Job rather than against "IN (every
 // Job the asker may see)", which materializes that whole set — all of them, for
 // an administrator — before one page is read. The far Job is its own FROM clause
@@ -567,11 +589,14 @@ func applyStateFilter(db *gorm.DB, tokens []string) *gorm.DB {
 // which would hide relations rather than authorize them.
 func linkedJobs(db *gorm.DB, access Access, linkType, nearColumn, farColumn string) *gorm.DB {
 	fresh := db.Session(&gorm.Session{NewDB: true})
+	links := fresh.Table("job_links AS l").Select("1").
+		Where("l.type = ? AND l."+nearColumn+" = jobs.id", linkType)
+	if linkType == string(LinkRetryOf) && nearColumn == "to_job_id" && !access.ReadOnly {
+		return links
+	}
 	far := visibleTo(fresh.Table("jobs AS far"), access).
 		Select("1").Where("far.id = l." + farColumn)
-	return fresh.Table("job_links AS l").Select("1").
-		Where("l.type = ? AND l."+nearColumn+" = jobs.id", linkType).
-		Where("EXISTS (?)", far)
+	return links.Where("EXISTS (?)", far)
 }
 
 // preferencePredicate is one viewer-preference predicate over the asker's own
@@ -667,6 +692,11 @@ func pageSize(limit int) (int, error) {
 // must answer this database query contract before command-filter reads are
 // enabled.
 func (s *Service) applyCommandFilter(base *gorm.DB, deps Deps, access Access, key string) (*gorm.DB, error) {
+	if access.ReadOnly {
+		// advertisedCommands offers a read-only principal nothing, so nothing
+		// matches a filter on what it is offered.
+		return base.Where("1 = 0"), nil
+	}
 	if query, handled, err := s.applyHostOnlyCommandFilter(base, deps, access, key); handled || err != nil {
 		return query, err
 	}
@@ -761,9 +791,11 @@ func (s *Service) applyCommandHostNarrowing(query *gorm.DB, deps Deps, key strin
 		return query.Where("jobs.state = ?", StateRunning).
 			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel), nil
 	case CommandResume:
+		present, presentArgs := executionPrincipalPresentSQL()
 		return query.Where("jobs.state IN ?", []State{StatePaused, StateBlocked}).
 			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel).
-			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()), nil
+			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()).
+			Where(present, presentArgs...), nil
 	case CommandRetry:
 		query = query.Where("jobs.state IN ?", []State{StateFailed, StateCancelled, StateInterrupted}).
 			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
@@ -813,6 +845,38 @@ func (s *Service) applyReplayAvailableFilter(query *gorm.DB, deps Deps) (*gorm.D
 	query = query.Where("jobs.replay_class = ?", ReplayClassReplayable).
 		Where("EXISTS (SELECT 1 FROM job_replay_envelopes e WHERE e.job_id = jobs.id AND e.purged_at IS NULL AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.key_id IN ? AND ("+strings.Join(codecPredicates, " OR ")+"))", args...)
 	return query, nil
+}
+
+// executionPrincipalClassSQL is executionPrincipalOf over the jobs table: the
+// class a Job's execution acts as, derived for a row written before the class was
+// recorded from its references and the marks the deletion sweep leaves where it
+// cleared one. Every query that asks which account a Job acts as is built on it,
+// so none can derive the class another way.
+func executionPrincipalClassSQL() (string, []any) {
+	return "(CASE WHEN jobs.execution_principal <> '' THEN jobs.execution_principal " +
+			"WHEN jobs.actor_user_id IS NOT NULL OR jobs.actor_deleted = ? THEN ? " +
+			"WHEN jobs.owner_user_id IS NOT NULL OR jobs.owner_deleted = ? THEN ? " +
+			"ELSE ? END)",
+		[]any{true, string(PrincipalActor), true, string(PrincipalOwner), string(PrincipalHost)}
+}
+
+// ExecutionAccountSQL is executionAccess's account over the jobs table: the
+// account a Job's execution acts as, or NULL for the host and for a principal
+// whose account was deleted. It returns the expression and the values it binds,
+// in order.
+func ExecutionAccountSQL() (string, []any) {
+	class, args := executionPrincipalClassSQL()
+	return "(CASE " + class + " WHEN ? THEN NULL WHEN ? THEN jobs.owner_user_id ELSE jobs.actor_user_id END)",
+		append(args, string(PrincipalHost), string(PrincipalOwner))
+}
+
+// executionPrincipalPresentSQL is executionAccess's answer as a predicate: the
+// principal a Job's execution acts as still exists.
+func executionPrincipalPresentSQL() (string, []any) {
+	class, classArgs := executionPrincipalClassSQL()
+	account, accountArgs := ExecutionAccountSQL()
+	args := append(append(classArgs, string(PrincipalHost)), accountArgs...)
+	return "(" + class + " = ? OR " + account + " IS NOT NULL)", args
 }
 
 func terminalJobStates() []State {
@@ -1160,13 +1224,24 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 			lineage.Children = append(lineage.Children, link.other)
 		}
 	}
+	visibleRetries := 0
 	for _, link := range incoming {
 		switch link.row.Type {
 		case string(LinkRetryOf), string(LinkRepeatOf):
 			lineage.Successors = append(lineage.Successors, link.other)
+			if link.row.Type == string(LinkRetryOf) {
+				visibleRetries++
+			}
 		case string(LinkParentChild):
 			lineage.Parents = append(lineage.Parents, link.other)
 		}
+	}
+	if !access.Administrator && !access.ReadOnly {
+		successors, err := retrySuccessors(deps.DB, jobID)
+		if err != nil {
+			return Lineage{}, err
+		}
+		lineage.RetriedElsewhere = len(successors) > visibleRetries
 	}
 	return lineage, nil
 }
@@ -1174,7 +1249,8 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 // relativeLink is one link together with the far endpoint, if the asker may see
 // it. A link whose far endpoint is hidden is dropped rather than reported with a
 // placeholder, because "there is something here you may not see" is itself a
-// leak.
+// leak. The one fact Lineage keeps about a hidden relative is RetriedElsewhere,
+// which the missing Retry control has already published to a viewer who may act.
 type relativeLink struct {
 	row   models.JobLink
 	other Snapshot

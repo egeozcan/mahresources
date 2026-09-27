@@ -124,6 +124,12 @@ func loadVisibleJob(db *gorm.DB, access Access, jobID string) (models.Job, error
 // what the work supports either. The host's own bookkeeping is unaffected — none
 // of it needs an executor.
 func (s *Service) advertisedCommands(ctx context.Context, deps Deps, access Access, job models.Job) ([]Command, error) {
+	if access.ReadOnly {
+		// Every command is a write, the host's preference commands included: a pin
+		// exempts the Job's history from retention for everybody. What a read-only
+		// principal is offered is therefore what it may run, which is nothing.
+		return []Command{}, nil
+	}
 	commands := make([]Command, 0, 8)
 	seen := make(map[string]bool, 8)
 
@@ -220,6 +226,11 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 		// Job a cancellation owns ends cancelled, and handing its work back to the
 		// queue would be resuming work that can never publish a success again.
 		if (state != StatePaused && state != StateBlocked) || job.ControlIntent == ControlIntentCancel {
+			return false, nil
+		}
+		// Nor while the principal the work acts as is gone: dispatch refuses it
+		// every time, so a Resume would only queue it to fail.
+		if _, err := executionAccess(job); err != nil {
 			return false, nil
 		}
 		// And only while nothing unresolved still owns the work. Returning a Job to
@@ -497,6 +508,25 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 			if !valid {
 				return refusedResult(deps.DB, job, request, CommandCodeNotAdvertised, "the job no longer offers that command",
 					fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, job.ID, request.Key))
+			}
+		}
+	}
+
+	if adapter, _, adapterErr := s.adapterFor(job.Kind, job.KindVersion); adapterErr == nil {
+		if preflight, ok := adapter.(CommandPreflight); ok {
+			refusal, err := preflight.PreflightCommand(ctx, CommandContext{
+				Snapshot: viewerSnapshot(job, request.Actor),
+				Access:   request.Actor,
+				Deps:     deps,
+			}, request.Key)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("jobs: preflight %s command: %w", request.Key, err)
+			}
+			if refusal.Reason != "" {
+				result, err := refusedResult(deps.DB, job, request, CommandCodeRefused, refusal.Message,
+					fmt.Errorf("%w: job %s: %s", ErrCommandRefused, job.ID, refusal.Reason))
+				result.Detail = refusalDetail(refusal)
+				return result, err
 			}
 		}
 	}
@@ -974,6 +1004,15 @@ func commandByKey(commands []Command, key string) (Command, bool) {
 	return Command{}, false
 }
 
+// refusalDetail is a Kind refusal's reason in the form a result's detail carries.
+func refusalDetail(refusal CommandRefusal) json.RawMessage {
+	detail, err := json.Marshal(map[string]string{"reason": refusal.Reason})
+	if err != nil {
+		return nil
+	}
+	return detail
+}
+
 // commandCodeForError classifies a command refusal that carried no result of its
 // own, so a bulk answer is machine-readable whichever way the Job was refused.
 func commandCodeForError(err error) string {
@@ -990,6 +1029,8 @@ func commandCodeForError(err error) string {
 		return CommandCodeKeyReused
 	case errors.Is(err, ErrCommandChainConflict):
 		return CommandCodeChainConflict
+	case errors.Is(err, ErrCommandRefused):
+		return CommandCodeRefused
 	default:
 		return CommandCodeFailed
 	}

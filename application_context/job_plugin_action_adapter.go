@@ -168,7 +168,9 @@ type pluginActionJobInput struct {
 	Overlap string `json:"overlap,omitempty"`
 	// Runtime names the process that owns the callback, when the subtype is one
 	// whose work cannot be restored. It is what reconciliation reads instead of
-	// guessing from a lease.
+	// guessing from a lease, from the Job's OriginRuntime, where acceptance copies
+	// it: a closure's input is never sealed, and the identity names the host, its
+	// boot session and a pid, which no summary a viewer reads may carry.
 	Runtime string `json:"runtime,omitempty"`
 	// NoTerminalHook marks a Job whose outcome is not announced to the plugin hook
 	// feed, because the work itself came from that feed: an after_job_* handler
@@ -182,7 +184,7 @@ type pluginActionJobInput struct {
 
 // pluginActionSummary is the bounded, sanitized, *searchable* view. It carries
 // where the work came from and what it acts on — never a param, never a value the
-// plugin supplied.
+// plugin supplied, and never the runtime identity, which is the deployment's own.
 type pluginActionSummary struct {
 	Subtype    string `json:"subtype"`
 	Plugin     string `json:"plugin"`
@@ -190,7 +192,6 @@ type pluginActionSummary struct {
 	ScheduleID string `json:"scheduleId,omitempty"`
 	EntityID   uint   `json:"entityId,omitempty"`
 	EntityType string `json:"entityType,omitempty"`
-	Runtime    string `json:"runtime,omitempty"`
 	// NoTerminalHook is the causal-suppression flag, carried in the readable
 	// summary so a child Job can inherit it from its parent without anybody having
 	// to open a sealed envelope to find out.
@@ -213,7 +214,6 @@ func pluginActionJobCodec() jobs.ReplayCodec {
 				ScheduleID:     decoded.ScheduleID,
 				EntityID:       decoded.EntityID,
 				EntityType:     decoded.EntityType,
-				Runtime:        decoded.Runtime,
 				NoTerminalHook: decoded.NoTerminalHook,
 			})
 		},
@@ -381,6 +381,7 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 	}
 
 	handle := download_queue.NewJobID()
+	runtime := plugin_system.CurrentRuntimeIdentity().String()
 	input, err := json.Marshal(pluginActionJobInput{
 		Subtype:     pluginActionSubtypeRegistered,
 		Plugin:      pluginName,
@@ -390,7 +391,7 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 		EntityType:  action.Entity,
 		Params:      params,
 		Fingerprint: expectFilters,
-		Runtime:     plugin_system.CurrentRuntimeIdentity().String(),
+		Runtime:     runtime,
 	})
 	if err != nil {
 		return "", "", err
@@ -401,15 +402,16 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 		title = pluginName + ": " + actionID
 	}
 	accepted, err := service.Accept(ctx.jobDeps(), jobs.Acceptance{
-		Kind:        JobKindPluginAction,
-		KindVersion: jobPluginActionKindVersion,
-		State:       jobs.StateQueued,
-		OwnerUserID: owner,
-		ActorUserID: owner,
-		Origin:      "plugin",
-		Title:       truncateTo(title, jobs.MaxTitleBytes),
-		Replay:      jobs.ReplayInput{Input: input},
-		LegacyRefs:  []jobs.LegacyRef{{Namespace: PluginActionHandleNamespace, Handle: handle}},
+		Kind:          JobKindPluginAction,
+		KindVersion:   jobPluginActionKindVersion,
+		State:         jobs.StateQueued,
+		OwnerUserID:   owner,
+		ActorUserID:   owner,
+		Origin:        "plugin",
+		Title:         truncateTo(title, jobs.MaxTitleBytes),
+		Replay:        jobs.ReplayInput{Input: input},
+		LegacyRefs:    []jobs.LegacyRef{{Namespace: PluginActionHandleNamespace, Handle: handle}},
+		OriginRuntime: runtime,
 	})
 	if err != nil {
 		return "", "", err
@@ -1795,7 +1797,8 @@ func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobR
 		// Kind's sanitizer to run on at acceptance: the summary is derived here,
 		// through the same codec, so it is still one description of one Job and
 		// still carries no value the plugin supplied.
-		Summary: pluginActionSummaryOf(input),
+		Summary:       pluginActionSummaryOf(input),
+		OriginRuntime: closure.Runtime,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("accept the plugin job: %w", err)
@@ -1839,13 +1842,14 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 	}
 
 	label := fmt.Sprintf("%s: %s", reg.PluginName, reg.ScheduleID)
+	runtime := plugin_system.CurrentRuntimeIdentity().String()
 	input, err := json.Marshal(pluginActionJobInput{
 		Subtype:    pluginActionSubtypeScheduled,
 		Plugin:     reg.PluginName,
 		ScheduleID: reg.ScheduleID,
 		Label:      truncateTo(label, jobs.MaxTitleBytes),
 		Overlap:    overlap,
-		Runtime:    plugin_system.CurrentRuntimeIdentity().String(),
+		Runtime:    runtime,
 	})
 	if err != nil {
 		return pluginActionRun{}, err
@@ -1865,9 +1869,10 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 		// The origin is the Schedule, not a person: §1's provenance list has an
 		// entry for it precisely because "a plugin asked on a timer" is not the
 		// same fact as "somebody clicked a button".
-		Origin: "schedule",
-		Title:  truncateTo(label, jobs.MaxTitleBytes),
-		Replay: jobs.ReplayInput{Input: input},
+		Origin:        "schedule",
+		Title:         truncateTo(label, jobs.MaxTitleBytes),
+		Replay:        jobs.ReplayInput{Input: input},
+		OriginRuntime: runtime,
 	})
 	if err != nil {
 		return pluginActionRun{}, err
@@ -2182,19 +2187,6 @@ func pluginActionSummaryOf(input json.RawMessage) json.RawMessage {
 	return sanitized
 }
 
-// pluginActionRuntimeOf reads the recorded runtime identity out of a sanitized
-// summary. An unreadable summary yields an empty identity, which proves nothing.
-func pluginActionRuntimeOf(summary json.RawMessage) string {
-	if len(summary) == 0 {
-		return ""
-	}
-	var decoded pluginActionSummary
-	if err := json.Unmarshal(summary, &decoded); err != nil {
-		return ""
-	}
-	return decoded.Runtime
-}
-
 // pluginActionJobIsQuiet reports whether an already-accepted Job carries the
 // causal-suppression flag, read from its sanitized summary so no envelope has to
 // be opened for it. A Job that cannot be read is not quiet: suppression has to be
@@ -2313,8 +2305,13 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 		if output.Key != "result" || output.Type != jobs.OutputTypeSummary || output.Availability != jobs.OutputAvailable {
 			continue
 		}
+		// The result as the Job API offers it, redirect included or not.
+		offered, shown, err := ctx.offeredJobOutputs(ctx.JobService(), []jobOutputOf{{Snapshot: projected, Output: output}})
+		if err != nil {
+			return nil, err
+		}
 		var result map[string]any
-		if err := json.Unmarshal(output.Reference, &result); err == nil {
+		if shown[0] && json.Unmarshal(offered[0].Reference, &result) == nil {
 			job.Result = result
 		}
 		break
@@ -2367,9 +2364,26 @@ func (ctx *MahresourcesContext) ProjectActionJobs() ([]*plugin_system.ActionJob,
 			Select("job_id", "reference").Find(&outputs).Error; err != nil {
 			return nil, fmt.Errorf("application_context: read visible plugin action results: %w", err)
 		}
+		// Each result as the Job API offers it, projected together so the
+		// entities their redirects name are read once per entity type.
+		snapshots := make(map[string]jobs.Snapshot, len(candidates))
+		for _, candidate := range candidates {
+			snapshots[candidate.Job.ID] = pluginActionSnapshotFromModel(candidate.Job)
+		}
+		items := make([]jobOutputOf, 0, len(outputs))
 		for _, output := range outputs {
+			items = append(items, jobOutputOf{Snapshot: snapshots[output.JobID], Output: jobs.Output{
+				Key: "result", Type: jobs.OutputTypeSummary, Availability: jobs.OutputAvailable,
+				Reference: json.RawMessage(output.Reference),
+			}})
+		}
+		offered, shown, err := ctx.offeredJobOutputs(ctx.JobService(), items)
+		if err != nil {
+			return nil, err
+		}
+		for i, output := range outputs {
 			var result map[string]any
-			if err := json.Unmarshal(output.Reference, &result); err == nil {
+			if shown[i] && json.Unmarshal(offered[i].Reference, &result) == nil {
 				results[output.JobID] = result
 			}
 		}

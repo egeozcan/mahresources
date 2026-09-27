@@ -305,6 +305,44 @@ that advanced the epoch available until the rollback window closes.
 Legacy download and Job compatibility routes remain supported for at least one
 documented release and six months after canonical cutover.
 
+### Unfinished Jobs of accounts deleted before this release
+
+A Job whose `execution_principal` column is empty was written before the Job
+recorded which account it runs as, and that account is worked out from its
+actor and owner. Deleting an account clears both references and, from this
+release on, marks them (`actor_deleted`, `owner_deleted`), so such a Job ends
+failed as `principal-missing` instead of running. A Job whose account was
+deleted before this release carries no mark: with both references empty it
+reads as work the server does for itself, and it would run with no account
+check. Before admitting traffic after the upgrade, list the unfinished ones:
+
+```sql
+SELECT id, kind, title, state, accepted_at FROM jobs
+WHERE state IN ('scheduled', 'queued', 'running', 'paused', 'blocked')
+  AND execution_principal = ''
+  AND owner_user_id IS NULL AND actor_user_id IS NULL
+  AND owner_deleted = false AND actor_deleted = false;
+```
+
+A row here either belongs to an account deleted before this release or was
+started with no account at all, such as plugin work that no request started;
+the row does not record which. Judge each by its Kind, title and time, and
+cancel the ones a person submitted, or any you cannot place, since cancelled
+work can be submitted again. Cancel as an administrator with
+`mr job command <id> cancel --confirm`, which reads the Job's current version
+and sends an idempotency key for you. Through the API it is
+`POST /v1/jobs/{id}/commands/cancel` with a JSON body carrying the Job's
+current `version` from `GET /v1/jobs/{id}` as `expectedVersion` and a unique
+`idempotencyKey` (see
+[the Job Center API](../api/other-endpoints.md#canonical-job-center-api)).
+
+Cancel works only where the Job offers it (`jobs get` lists its commands). Two
+Kinds offer none while unfinished. For a `plugin-action` Job, disable the plugin
+it belongs to until the Job has ended: a disabled plugin's waiting work does not
+run. A `job-summary-export` Job summarizes Job history under the scope sealed
+when it was accepted, and what it writes can be opened only by an
+administrator, so it can be left to finish.
+
 ## Restoring a Pre-Retirement Backup
 
 A database backup taken before plaintext retirement may contain old replay

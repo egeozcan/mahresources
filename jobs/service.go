@@ -132,6 +132,7 @@ func (s *Service) accept(ctx context.Context, deps Deps, acceptance Acceptance, 
 		// references beside it are cleared when an account is deleted.
 		ExecutionPrincipal: string(principalClassOf(acceptance)),
 		ReplayClass:        string(replayClassOf(acceptance.Replay)),
+		OriginRuntime:      acceptance.OriginRuntime,
 		Version:            1,
 		AcceptedAt:         now,
 		ScheduledFor:       utcPtr(acceptance.ScheduledFor),
@@ -292,6 +293,22 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 	return snapshots[0], nil
 }
 
+// OriginRuntime answers the process a Job's work was accepted in, as recorded at
+// acceptance, for the reconciliation that has to prove that process gone. It
+// takes no access: it is the host asking about its own bookkeeping, and nothing
+// a viewer reads carries the value. A Job that recorded none answers "".
+func (s *Service) OriginRuntime(deps Deps, jobID string) (string, error) {
+	var runtimes []string
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", jobID).Limit(1).
+		Pluck("origin_runtime", &runtimes).Error; err != nil {
+		return "", fmt.Errorf("jobs: read the origin runtime of %s: %w", jobID, err)
+	}
+	if len(runtimes) == 0 {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, jobID)
+	}
+	return runtimes[0], nil
+}
+
 // snapshotFor projects a stored row and answers the one question about replay
 // input a public snapshot carries: whether this process can open it. It never
 // returns the envelope and never decrypts it — a listing or a detail read must
@@ -368,6 +385,9 @@ func validateAcceptance(a *Acceptance) error {
 		}
 	} else {
 		a.Summary = nil
+	}
+	if len(a.OriginRuntime) > MaxOriginRuntimeBytes {
+		return invalid("origin runtime is %d bytes, over the %d-byte ceiling", len(a.OriginRuntime), MaxOriginRuntimeBytes)
 	}
 	if a.OwnerUserID != nil && *a.OwnerUserID == 0 {
 		return invalid("owner user id 0 is not an identity")
@@ -488,10 +508,13 @@ func executionPrincipalOf(job models.Job) PrincipalClass {
 	if job.ExecutionPrincipal != "" {
 		return PrincipalClass(job.ExecutionPrincipal)
 	}
+	// A reference the deletion sweep cleared still counts: the Job acted as that
+	// account, and reading it as the next reference, or as the host, would run it
+	// with authority the deletion removed.
 	switch {
-	case job.ActorUserID != nil:
+	case job.ActorUserID != nil || job.ActorDeleted:
 		return PrincipalActor
-	case job.OwnerUserID != nil:
+	case job.OwnerUserID != nil || job.OwnerDeleted:
 		return PrincipalOwner
 	default:
 		return PrincipalHost

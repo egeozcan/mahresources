@@ -521,6 +521,12 @@ curl "http://localhost:8181/v1/jobs/action/job?id=a1b2c3d4e5f6g7h8"
 }
 ```
 
+A finished job also carries `result`, its stored result summary as the Job API
+offers it: an account that cannot write gets no `result`, and a `redirect` to a
+Resource, Note or Group the caller can no longer open is left out while the
+rest of the summary stays. The `actionJobs` rows of `GET /v1/jobs/events` follow
+the same rule.
+
 ## Plugin Block Rendering
 
 ```

@@ -143,8 +143,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		// The Job cannot run, and the control plane could not record why within
 		// the bound. It is recorded from here, under the claim.
 		claimed = &execution
-		reason := unrunnable.Reason
-		a.endClaimed(execution, func() error { return a.ctx.blockPluginActionJob(execution, reason) })
+		a.endClaimed(execution, func() error { return a.ctx.settleUnrunnablePluginActionJob(execution, unrunnable) })
 		return plugin_system.AdmitWithdrawn
 	case errors.Is(err, jobs.ErrExecutionNotLoaded):
 		// The sealed input could not be read in time. The admission holds the
@@ -635,7 +634,15 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 		ownedByItsProcess = !successor
 	}
 	if ownedByItsProcess {
-		identity, ok := plugin_system.ParseRuntimeIdentity(summary.Runtime)
+		recorded, err := ctx.JobService().OriginRuntime(ctx.jobDeps(), job.ID)
+		if err != nil {
+			log.Printf("warning: could not read the origin runtime of plugin job %s: %v", job.ID, err)
+			return false
+		}
+		if recorded == "" {
+			recorded = legacySummaryRuntime(job.Summary)
+		}
+		identity, ok := plugin_system.ParseRuntimeIdentity(recorded)
 		if ok && identity.Liveness() == plugin_system.RuntimeGone {
 			if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: job.ID}, "not-started",
 				"the process that started this job stopped before it ran"); err != nil {

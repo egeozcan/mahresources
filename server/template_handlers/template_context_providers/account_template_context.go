@@ -3,6 +3,7 @@ package template_context_providers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
@@ -21,6 +22,7 @@ func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Reques
 		c["pageTitle"] = "Users"
 		if users, err := ctx.GetUsers(0, 0); err == nil {
 			c["users"] = users
+			c["userDeleteMessages"] = userDeleteMessages(ctx, users)
 		} else {
 			c["users"] = []models.User{}
 			c["errorMessage"] = err.Error()
@@ -34,6 +36,36 @@ func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Reques
 		c["formSubmitted"] = request.URL.Query().Has("error")
 		return c
 	}
+}
+
+// UnfinishedJobCounter counts the unfinished Jobs that act as each account. It is
+// optional: a context that cannot count them still renders the page, with the
+// delete dialog saying nothing about Jobs.
+type UnfinishedJobCounter interface {
+	UnfinishedJobCounts() (map[uint]int64, error)
+}
+
+// userDeleteMessages is each account's delete confirmation, keyed by its id. Deleting an account leaves the Jobs that act as it with nobody
+// to run as, so the dialog says how many there are and what becomes of them.
+func userDeleteMessages(ctx any, users []models.User) map[uint]string {
+	counts := map[uint]int64{}
+	if counter, ok := ctx.(UnfinishedJobCounter); ok {
+		if read, err := counter.UnfinishedJobCounts(); err == nil {
+			counts = read
+		}
+	}
+	messages := make(map[uint]string, len(users))
+	for _, user := range users {
+		message := fmt.Sprintf("Delete user %s? This also destroys their tokens and sessions, and clears them as the creator of everything they made.", user.Username)
+		switch count := counts[user.ID]; {
+		case count == 1:
+			message += " One of their jobs has not finished: if it is still waiting or scheduled it will fail rather than run, and if it is already running it may still finish."
+		case count > 1:
+			message += fmt.Sprintf(" %d of their jobs have not finished: those still waiting or scheduled will fail rather than run, and those already running may still finish.", count)
+		}
+		messages[user.ID] = message
+	}
+	return messages
 }
 
 // AdminUserEditContextProvider renders /admin/users/edit?id=N.

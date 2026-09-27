@@ -850,6 +850,10 @@ components:
                 acceptedAt:
                     format: date-time
                     type: string
+                actorDeleted:
+                    type: boolean
+                actorName:
+                    type: string
                 actorUserId:
                     nullable: true
                     type: integer
@@ -891,6 +895,10 @@ components:
                     items:
                         $ref: '#/components/schemas/JobOutputResponsePartial'
                     type: array
+                ownerDeleted:
+                    type: boolean
+                ownerName:
+                    type: string
                 ownerUserId:
                     nullable: true
                     type: integer
@@ -971,6 +979,8 @@ components:
                     items:
                         $ref: '#/components/schemas/JobSnapshotResponsePartial'
                     type: array
+                retriedElsewhere:
+                    type: boolean
                 successors:
                     items:
                         $ref: '#/components/schemas/JobSnapshotResponsePartial'
@@ -1128,6 +1138,10 @@ components:
                 acceptedAt:
                     format: date-time
                     type: string
+                actorDeleted:
+                    type: boolean
+                actorName:
+                    type: string
                 actorUserId:
                     nullable: true
                     type: integer
@@ -1158,6 +1172,10 @@ components:
                     nullable: true
                     type: string
                 origin:
+                    type: string
+                ownerDeleted:
+                    type: boolean
+                ownerName:
                     type: string
                 ownerUserId:
                     nullable: true
@@ -6044,6 +6062,16 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
@@ -7743,6 +7771,16 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter
@@ -7868,6 +7906,16 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
+                - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
+                  in: query
+                  name: ownerDeleted
+                  schema:
+                    type: boolean
                 - description: 'Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second.'
                   in: query
                   name: acceptedAfter

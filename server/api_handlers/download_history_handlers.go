@@ -324,10 +324,16 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	}
 	projection, handleFound, err := canonical.ProjectDownloadJobForRetry(entry.JobID)
 	if err != nil {
+		if handleFound && errors.Is(err, jobs.ErrNotFound) {
+			// A durable handle did resolve, so ErrNotFound means the Job it names is
+			// not one this caller can read: another account's Retry moved the handle
+			// onto a Job they cannot see, or retention deleted the Job. The refusal
+			// names neither Job and claims neither cause.
+			return "", "", true, errDownloadJobUnavailable
+		}
 		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
-			// A durable handle did resolve, so ErrNotFound means its current target is
-			// hidden. Any other projection failure is also fail-closed: neither case is
-			// evidence that queue-level Retry or payload resubmission is safe.
+			// Any other projection failure is also fail-closed: it is no evidence that
+			// queue-level Retry or payload resubmission is safe.
 			return "", "", true, err
 		}
 		return "", "", false, nil
@@ -374,6 +380,19 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	}
 	return entry.JobID, result.SuccessorID, true, nil
 }
+
+// errDownloadJobUnavailable refuses the retry of a row whose handle names a Job
+// this caller cannot read. It is still jobs.ErrNotFound underneath, and its text
+// names no Job.
+var errDownloadJobUnavailable error = downloadJobUnavailableError{}
+
+type downloadJobUnavailableError struct{}
+
+func (downloadJobUnavailableError) Error() string {
+	return "this download cannot be retried: the job it names is no longer available to you"
+}
+
+func (downloadJobUnavailableError) Unwrap() error { return jobs.ErrNotFound }
 
 // The retry slot's claim marker. A claim is written before the download is
 // submitted and replaced by the real job id immediately after, so a marker still

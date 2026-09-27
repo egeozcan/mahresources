@@ -70,6 +70,18 @@ export function panelFinishedLimit(doc = globalThis.document) {
     return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_FINISHED_LIMIT) : DEFAULT_FINISHED_LIMIT;
 }
 
+// The owner line an administrator's drawer shows on somebody else's Job. The
+// viewer's own Jobs, and work that never had an owner, show none; a viewer who is
+// not an administrator (no viewer id) sees only their own Jobs and is told
+// nothing.
+export function panelOwnerText(job, viewerId) {
+    if (!viewerId) return '';
+    if (job?.ownerDeleted) return 'Owner: deleted account';
+    const owner = job?.ownerUserId;
+    if (owner === null || owner === undefined || Number(owner) === Number(viewerId)) return '';
+    return `Owner: ${job.ownerName || `account ${owner}`}`;
+}
+
 export function panelCounts(jobs) {
     return (jobs || []).reduce((counts, job) => {
         const classification = classifyJobState(job);
@@ -243,9 +255,13 @@ export function jobPanel() {
         // group lists, which are read one after another.
         _streamTouchSeq: 0,
         _streamTouched: new Map(),
+        _ownerViewer: 0,
 
         init() {
             this.finishedLimit = panelFinishedLimit();
+            // Set on an administrator's drawer only: whose Job a row is matters
+            // when the drawer lists every account's.
+            this._ownerViewer = Number(this.$el?.dataset?.jobPanelViewer) || 0;
             this._liveRegion = createLiveRegion();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
@@ -1000,6 +1016,7 @@ export function jobPanel() {
         primaryCommandsFor(job) { return panelCommandSplit(this.commandsFor(job)).primary; },
         moreCommandsFor(job) { return panelCommandSplit(this.commandsFor(job)).more; },
         stateTone(job) { return panelStateTone(job); },
+        ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
 
         async refreshJobPreference(id, spoken = null) {
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);

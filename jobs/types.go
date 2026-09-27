@@ -603,9 +603,17 @@ func (d Deps) now() time.Time {
 // Access is the asking principal as the visibility predicate needs it: an
 // administrator sees everything, everybody else sees Jobs they own under the
 // public visibility class.
+//
+// ReadOnly marks a principal whose role may not write at all, a guest. It
+// narrows no read: it is what the command surface answers from, because every
+// command is a write the HTTP layer refuses such a principal, and a control
+// offered to someone whose only outcome is that refusal is not a control. The
+// zero value is a principal that may write, which is what every internal caller
+// acting as the host means.
 type Access struct {
 	UserID        uint
 	Administrator bool
+	ReadOnly      bool
 }
 
 // Filter selects the Jobs one visible listing, summary or event scan returns.
@@ -624,6 +632,14 @@ type Filter struct {
 
 	OwnerID *uint
 	ActorID *uint
+	// OwnerDeleted narrows to Jobs whose owner was an account that has since been
+	// deleted. Deletion nulls the owner reference, so OwnerID cannot find them
+	// again, and it is refused beside OwnerID for the same reason.
+	OwnerDeleted bool
+	// OwnedByViewer narrows to the asking account's own Jobs, without the asker
+	// naming their id: it is Access.UserID, read under the same visibility
+	// predicate as everything else. A principal with no account owns nothing.
+	OwnedByViewer bool
 
 	AcceptedAfter  *time.Time
 	AcceptedBefore *time.Time
@@ -878,6 +894,12 @@ type Lineage struct {
 	Parents []Snapshot
 	// Children are this Job's child stages.
 	Children []Snapshot
+	// RetriedElsewhere reports that the Job has a Retry or Continue successor
+	// the asker cannot see: an administrator retried an owner's Job. Retry
+	// lineage is linear whoever extended it, so the Job offers the owner no Retry,
+	// and this is what says why. The successor itself stays hidden. A read-only
+	// asker, who is offered no Retry on any Job, is never told.
+	RetriedElsewhere bool
 }
 
 // ReplayAvailability is what a viewer can do with a Job's replay input right
@@ -1015,6 +1037,11 @@ type Acceptance struct {
 	Replay             ReplayInput
 	ScheduledFor       *time.Time
 	LegacyRefs         []LegacyRef
+	// OriginRuntime names the process whose memory the work lives in, for a Kind
+	// whose work cannot be restored by another process. It is stored on the Job
+	// for reconciliation and never returned by a read a viewer makes: a host
+	// name, a boot session and a pid are the deployment's, not the owner's.
+	OriginRuntime string
 	// Parents names the Jobs this Job is a parent-child child of. They are linked in
 	// the same transaction as the acceptance, and a parent that is gone rolls the
 	// acceptance back rather than committing a child that names nothing.
@@ -1041,8 +1068,13 @@ type Snapshot struct {
 	Summary     json.RawMessage
 	OwnerUserID *uint
 	ActorUserID *uint
-	Origin      string
-	Visibility  VisibilityClass
+	// OwnerDeleted and ActorDeleted say the reference beside them named an
+	// account that has been deleted since, which is what tells a deleted
+	// person's Job apart from work that never had an owner or an actor.
+	OwnerDeleted bool
+	ActorDeleted bool
+	Origin       string
+	Visibility   VisibilityClass
 	// ExecutionPrincipal is the principal this execution acts as. It is a
 	// durable fact, not a live lookup: an account deleted since acceptance still
 	// names the class, which is what the dispatch refusal reads.
@@ -1325,6 +1357,10 @@ var (
 	// retry lineage: a successor already exists, so a second one would fork the
 	// chain and make "the current leaf" mean two things.
 	ErrCommandChainConflict = errors.New("jobs: the retry lineage already has a successor")
+	// ErrCommandRefused means the Job's Kind refused the command before it took
+	// effect, because its dispatch would refuse the work the command starts. The
+	// result carries the Kind's reason; nothing was written.
+	ErrCommandRefused = errors.New("jobs: the job's kind refused the command")
 	// ErrCommandFailed means a command was attempted and did not succeed. The
 	// recorded outcome is returned beside it, and a repeat of the same request is
 	// answered with that record rather than by running the executor again.
@@ -1362,6 +1398,10 @@ const (
 	DefaultClaimBatch = 8
 	// MaxClaimantBytes bounds the claimant identity a claim records.
 	MaxClaimantBytes = 120
+	// MaxOriginRuntimeBytes bounds the runtime identity an acceptance records.
+	// It is wider than a claimant because the identity carries a host name, which
+	// may be long, and it is stored opaque: a field added to it later must fit.
+	MaxOriginRuntimeBytes = 512
 	// MaxCapacityGroupBytes bounds a concurrency budget's name, which is stored
 	// on every capacity row that occupies it and on nothing else.
 	MaxCapacityGroupBytes = 120
@@ -1457,13 +1497,17 @@ type CapacityRef struct {
 }
 
 // UnrunnableClaimError is ClaimJob's answer for a Job it claimed that cannot run
-// — its principal is gone, or its input cannot be opened — when blocking it could
+// — its principal is gone, or its input cannot be opened — when settling it could
 // not be written within the claim's bound. The Execution returned with it holds
-// the claim: its holder records Reason as the block, retrying until it lands. It
-// is never run.
+// the claim: its holder records what the control plane would have, retrying until
+// it lands — Failure when it is set, and otherwise Reason as the block. It is
+// never run.
 type UnrunnableClaimError struct {
 	// Reason is the bounded block reason the control plane would have recorded.
 	Reason string
+	// Failure, when set, is the outcome the control plane would have ended the Job
+	// with instead of blocking it: the reason can never clear.
+	Failure *Failure
 	// Cause is why the Job cannot run, and why the block was not written.
 	Cause error
 }
@@ -1836,6 +1880,9 @@ const (
 	CommandCodeInFlight = "in-flight"
 	// CommandCodeChainConflict means the retry lineage already has a successor.
 	CommandCodeChainConflict = "chain-conflict"
+	// CommandCodeRefused means the Job's Kind refused the command: the work it
+	// starts would be refused at dispatch. The message says why.
+	CommandCodeRefused = "refused"
 	// CommandCodeFailed means the command was attempted and did not succeed.
 	CommandCodeFailed = "failed"
 	// CommandCodeInvalid means the request itself is malformed, which is the one

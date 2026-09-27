@@ -68,6 +68,13 @@ type Job struct {
 
 	OwnerUserID *uint `gorm:"index:idx_jobs_visible,priority:2" json:"ownerUserId,omitempty"`
 	ActorUserID *uint `gorm:"index:idx_jobs_actor" json:"actorUserId,omitempty"`
+	// OwnerDeleted and ActorDeleted record that the reference beside them named
+	// an account that has since been deleted. Deletion nulls the reference, so
+	// without them a deleted person's Job reads exactly like work that never had
+	// an owner or an actor. They keep no id: the account is gone, and its id
+	// grants nothing.
+	OwnerDeleted bool `gorm:"not null;default:false" json:"ownerDeleted,omitempty"`
+	ActorDeleted bool `gorm:"not null;default:false" json:"actorDeleted,omitempty"`
 
 	// Origin names what initiated the Job: ui, api, cli, plugin, schedule or
 	// system.
@@ -94,6 +101,14 @@ type Job struct {
 	// Job. An executor may publish only with the token its claim was created
 	// with. Empty means no claim owns the Job.
 	ExecutionToken string `gorm:"size:36" json:"-"`
+
+	// OriginRuntime names the process whose memory a non-restorable Job's work
+	// lives in, so reconciliation can prove that process gone. It is stored as
+	// the identity's own string form and never parsed on the way in, so a field
+	// the identity gains later survives. It is host-internal like
+	// ExecutionToken: it belongs to no summary, no public projection and no
+	// search. Empty for every Kind that does not record one.
+	OriginRuntime string `gorm:"size:512;not null;default:''" json:"-"`
 
 	// ControlIntent is durable control intent that has been requested but not
 	// yet reached its outcome state: "" or "cancel" or "pause".

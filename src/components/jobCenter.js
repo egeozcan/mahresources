@@ -207,6 +207,17 @@ export function failureText(job) {
 
 // The phase shown beside the state, or nothing when the state label already
 // says it: a partial success's label is its phase.
+// A Job's owner or actor as the server named it, "Deleted account" when that
+// account has been deleted, and the bare user number only when the server named
+// nobody: a viewer is told another account's name only if they administer it.
+export function jobAccountText(job, role) {
+    if (job?.[`${role}Deleted`]) return 'Deleted account';
+    const name = job?.[`${role}Name`];
+    if (name) return name;
+    const id = job?.[`${role}UserId`];
+    return id === null || id === undefined ? '' : `Account ${id}`;
+}
+
 export function phaseText(job) {
     return isPartialSuccess(job) ? '' : String(job?.phase || '');
 }
@@ -661,6 +672,7 @@ export function jobCenter(options = {}) {
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
         phaseText(job) { return phaseText(job); },
+        accountText(job, role) { return jobAccountText(job, role); },
         stateClass(job) { return classifyJobState(job); },
         commandLabel(command) { return commandLabel(command); },
         advertisedCommands(job) { return advertisedCommands(this.details[job.id] || job); },

@@ -18,7 +18,7 @@ import (
 // The check is skipped for:
 //   - auth disabled (no sessions exist),
 //   - safe methods (GET/HEAD/OPTIONS/TRACE) and read-via-POST endpoints,
-//   - the login/logout flow (no session yet, or low-risk; SameSite covers it),
+//   - login (there is no session yet to carry a token),
 //   - Bearer-authenticated requests (no ambient cookie → not CSRF-exposed).
 //
 // It runs after withAuthentication (so the session CSRF token is on the context)
@@ -54,10 +54,9 @@ func csrfExempt(r *http.Request) bool {
 		return true
 	}
 	switch r.URL.Path {
-	// The login/logout flow: login has no session yet to carry a token, and
-	// logout is low-risk (the worst a forgery achieves is signing the user out);
-	// SameSite=Lax already blocks the cross-site form post.
-	case "/login", "/logout", "/v1/auth/login", "/v1/auth/logout":
+	// Login has no session yet to carry a token. Logout is checked like every
+	// other state change: a forged one signs a person out of every tab at once.
+	case "/login", "/v1/auth/login":
 		return true
 	}
 	// Read-via-POST endpoints (MRQL, search, …) do not change state, so a forged

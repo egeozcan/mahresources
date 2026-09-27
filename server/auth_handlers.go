@@ -146,8 +146,8 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 	}
 }
 
-// LogoutHandler revokes the current session and clears the cookie. Accepts GET
-// (convenience link) and POST.
+// LogoutHandler revokes the current session and clears the cookie. It serves the
+// POST only; the CSRF middleware has already checked the token by the time it runs.
 func LogoutHandler(appCtx *application_context.MahresourcesContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(appCtx.SessionCookieName()); err == nil {

@@ -87,16 +87,30 @@ func principalRefColumns(model any) []string {
 	return []string{"created_by_user_id"}
 }
 
+// deletedMarkerColumns names, per swept column, the flag that records the
+// reference named an account that was deleted. Only a Job keeps one: its Job
+// Center shows an owner and an actor, and a nulled reference alone reads as work
+// that never had either.
+var deletedMarkerColumns = map[string]string{
+	"owner_user_id": "owner_deleted",
+	"actor_user_id": "actor_deleted",
+}
+
 // nullCreatorReferences nulls the live user references on every swept table for
 // the given user, so deleting the user leaves their content intact with a NULL
 // creator rather than a dangling id. Runs inside the DeleteUser transaction.
 // Correct on SQLite + Postgres (both accept UPDATE ... SET col = NULL).
 func nullCreatorReferences(tx *gorm.DB, userID uint) error {
 	for _, model := range stampedModels() {
+		_, isJob := model.(*models.Job)
 		for _, column := range principalRefColumns(model) {
+			updates := map[string]any{column: nil}
+			if marker, ok := deletedMarkerColumns[column]; ok && isJob {
+				updates[marker] = true
+			}
 			if err := tx.Model(model).
 				Where(column+" = ?", userID).
-				Update(column, nil).Error; err != nil {
+				Updates(updates).Error; err != nil {
 				return err
 			}
 		}

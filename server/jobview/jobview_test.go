@@ -55,6 +55,29 @@ func TestParseFilterReadsBothEndsOfARelationship(t *testing.T) {
 	}
 }
 
+func TestParseFilterReadsADeletedOwner(t *testing.T) {
+	filter, err := ParseFilter(url.Values{"ownerDeleted": {"true"}})
+	if err != nil || !filter.OwnerDeleted {
+		t.Fatalf("ParseFilter(ownerDeleted=true) = %+v, %v", filter, err)
+	}
+	if filter, err := ParseFilter(url.Values{"ownerDeleted": {"false"}}); err != nil || filter.OwnerDeleted {
+		t.Fatalf("ParseFilter(ownerDeleted=false) = %+v, %v; want not asked", filter, err)
+	}
+	if _, err := ParseFilter(url.Values{"ownerDeleted": {"yes"}}); err == nil {
+		t.Fatal("ownerDeleted=yes was accepted")
+	}
+}
+
+func TestParseFilterReadsTheViewerAsOwner(t *testing.T) {
+	filter, err := ParseFilter(url.Values{"owner": {"me"}})
+	if err != nil || !filter.OwnedByViewer {
+		t.Fatalf("ParseFilter(owner=me) = %+v, %v", filter, err)
+	}
+	if _, err := ParseFilter(url.Values{"owner": {"7"}}); err == nil {
+		t.Fatal("owner=7 was accepted; an id belongs in ownerId")
+	}
+}
+
 func TestCursorRoundTrips(t *testing.T) {
 	cursor := jobs.Cursor{AcceptedAt: time.Date(2026, 9, 1, 8, 0, 0, 5, time.UTC), ID: "abc"}
 	token, err := EncodeCursor(cursor)

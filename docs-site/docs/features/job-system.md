@@ -30,7 +30,9 @@ release and six months after canonical cutover. A legacy download handle follows
 its latest Retry leaf during that window; a canonical UUID continues to identify
 one immutable Job. See [Download Queue](./download-queue.md) for the older
 download routes and [Backup and Restore](../deployment/backups.md) for the
-restore barrier.
+restore barrier. After upgrading, check for unfinished Jobs of accounts deleted
+before this release, which carry no deleted-account mark; see
+[Advanced Configuration](../configuration/advanced.md#unfinished-jobs-of-accounts-deleted-before-this-release).
 
 ## Job Kinds
 
@@ -94,7 +96,29 @@ An owner may inspect their Jobs, subject to the Kind's visibility rule. Admin
 visibility and resource scope are checked on every read. Ownership grants
 visibility, not permanent authority: each command and output access rechecks
 current role, scope, plugin permission, and Kind policy. A filter for another
-owner or actor never grants access to that person's Jobs.
+owner or actor never grants access to that person's Jobs. Every command is a
+write, so a guest sees its own Jobs and is offered no command on them, including
+Pin, Dismiss and Forget.
+
+An administrator sees every account's Jobs and is told whose each one is: the
+Job Center list and the Jobs drawer name the owner of a Job that is not the
+administrator's own, and the Job page names its owner and actor. The API
+returns them as `ownerName` and `actorName`; anyone else is told only their own
+name. On the Job Center page an administrator filters by **Owner** and **Actor**
+from a list of accounts instead of typing a user number. The Owner list also
+offers **Mine**, which is `owner=me` in the page's address, so a link to
+`/jobs?owner=me` opens with it chosen and changing another filter keeps it.
+
+Deleting an account removes its id from its Jobs, and marks them instead: they
+read **Deleted account** as owner or actor (`ownerDeleted` and `actorDeleted`
+in the API), and `ownerDeleted=true`, **A deleted account** in the Job Center's
+Owner filter, lists them. Work that was still waiting to act as the deleted account never
+runs as anyone else: when its turn comes it ends failed with the code
+`principal-missing`, and a Job that an earlier release blocked for the same
+reason is not offered Resume. A Job claimed or accepted in the same moment as
+the deletion can instead end up blocked as `role-refused`; it still never runs.
+Work already running when the account was deleted may still finish. The delete confirmation on `/admin/users` says how
+many of the account's jobs have not finished.
 
 The Job event streams apply the same rule for as long as they stay open. The
 canonical stream checks the connection's session or API token again on every
@@ -201,7 +225,9 @@ mr jobs summary --window 30d --json
 
 `jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
-advertised command, and the viewer's pin and dismissal preferences.
+advertised command, and the viewer's pin and dismissal preferences. On the API,
+`owner=me` lists the asking account's own Jobs without naming its id, and
+`ownerDeleted=true` lists Jobs whose owner's account was deleted.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent
@@ -209,9 +235,15 @@ stage. `inboundRelationship` matches the Job it points at: one that was retried
 or continued (`retry-of`), repeated (`repeat-of`), or a child stage
 (`parent-child`). `noInboundRelationship` is its negation, so
 `state=failed&noInboundRelationship=retry-of` lists failed Jobs nobody has
-retried. Only Jobs the viewer can see count as the other end, so a Job whose
-only retry is hidden from the viewer reads as not retried. On the Job Center
-page these are the **Has been** and **Has not been** selects. `get`
+retried. Only Jobs the viewer can see count as the other end, with one
+exception: a Retry or Continue made by another account, such as an
+administrator retrying your Job, still counts. Retry lineage is linear whoever
+extends it, so such a Job no longer offers you Retry, reads as retried in these
+filters, and its detail page says that another account retried it. The retry
+itself stays hidden from you. The exception does not apply to an account that
+cannot write, such as a guest, which is offered no Retry on any Job: to it, such
+a Job reads as not retried. On the Job Center page these filters are the
+**Has been** and **Has not been** selects. `get`
 returns the current command and output declarations. `timeline` reads ordered
 durable events by per-Job sequence. `summary` uses the same visibility and
 filters as listing and accepts windows up to 90 days.
@@ -243,8 +275,9 @@ mr jobs summary export \
 ```
 
 The export Job applies the same visibility predicate and filters as interactive
-summary, except `state=partial`, `inboundRelationship` and
-`noInboundRelationship`, which an export refuses with a 400. An export's filter
+summary, except `state=partial`, `inboundRelationship`,
+`noInboundRelationship`, `ownerDeleted` and `owner=me`, which an export refuses
+with a 400. An export's filter
 is stored and run later, possibly by a worker from an older release. Such a
 worker fails an export filtered by `state=partial`, which it reads as an unknown
 state, but it silently ignores the inbound relationship filters and exports a
@@ -271,12 +304,17 @@ includes them.
 
 A succeeded download publishes the Resource it created as its `resource` entity
 output. Plugin actions that return a local Resource, Note, or Group redirect
-publish an entity output too. Opening an entity output rechecks access before
-navigating to the entity. The Jobs panel, the Job Center list, and the Job
+publish an entity output too. An entity output is offered, and opened, only
+while the viewer can see the entity it names: once the entity is deleted or
+leaves the viewer's scope, the Job no longer lists it and its link disappears
+from every surface. The Jobs panel, the Job Center list, and the Job
 detail page link a succeeded Job's available entity output. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail
-still offers “View JSON result” for the stored summary. A download that failed
+still offers “View JSON result” for the stored summary. A summary whose redirect
+names an entity the viewer can no longer open is offered without the redirect,
+here and in the legacy plugin-action reads (`GET /v1/jobs/action/job` and the
+action rows of the legacy event stream). A download that failed
 because the library already holds its bytes publishes the Resource holding them
 as its `existing-resource` entity output. The Job detail page links to it from
 the Failure section. Only a Resource the submitter can see counts as already
@@ -308,10 +346,32 @@ than appends a point whose `t` equals its last point's. Progress timestamps are
 written by whichever process runs the Job, and the 30-second window is what
 absorbs clock skew between those processes.
 
+The stream's cursor, the SSE `id` (`v2:<n>`) and the `deliverySequence` of
+every event, including those `GET /v1/jobs/{id}/events` returns, is one counter
+for the whole deployment, which is what lets a reconnect resume exactly where
+it stopped. A viewer receives only the events of Jobs they can see, so the gap
+between two sequences they receive counts the Job events produced in between
+on Jobs they cannot see: other accounts' work, and work no account owns. The
+gap names no Job and no account.
+
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
-version. Bulk requests accept at most 200 Job IDs; each result commits
-independently, so a response can contain both successes and refusals.
+version. A Retry, Continue, Repeat or Resume whose work the Job's Kind would
+refuse when it came to run is refused up front with `409`, result code
+`refused` and the reason in `message`, and nothing is created: for example a
+download or an export whose target group has left the scope of the account it
+would run as. A Retry, Continue or Repeat runs as the account that asks for it;
+a Resume runs as the account the Job was accepted for. A target that leaves
+the scope after that check but before the new Job is created is not caught up
+front: the Job is accepted, and then blocked with `scope-refused` or
+`group-out-of-scope` before anything runs. When the account or group read
+behind the check fails, the command answers `500` instead of refusing, and
+asking again once the database answers is safe. The same read failing as a
+download or an export is about to start currently blocks the Job with the
+reason the check would have given (`role-refused`, `scope-refused` or
+`group-out-of-scope`) instead of leaving it queued; Resume starts it again.
+Bulk requests accept at most 200 Job IDs; each result commits independently, so
+a response can contain both successes and refusals.
 
 ## Replay keys and writer epoch
 

@@ -84,7 +84,7 @@ There are two ways to present an identity.
 
 ### Browser session (login page)
 
-Visit `/login` and sign in with a username and password. On success the server sets a session cookie, and the browser carries it on subsequent requests. Sign out at `/logout`.
+Visit `/login` and sign in with a username and password. On success the server sets a session cookie, and the browser carries it on subsequent requests. Sign out with **Sign out** in the account menu. Signing out is a `POST` to `/logout` that carries the session's CSRF token; opening `/logout` directly shows a page with the same button and does not end the session by itself, so a link on another site cannot sign you out.
 
 ### API token (Bearer)
 
@@ -149,6 +149,7 @@ Passwords must contain at least **8 Unicode code points** and occupy at most **7
 - Saving a disabled account revokes all of that account's browser sessions and API tokens. An administrator password reset also revokes all of the target account's sessions and tokens. Changing your own password signs out other browser sessions while keeping the browser session that submitted the change active; existing API tokens remain valid.
 - The last enabled administrator cannot be deleted, demoted, or disabled: the save is refused with `409 Conflict`, and the edit page comes back with the message and the values you typed. Renaming that account or setting a new password is allowed.
 - A group that is still used as an account scope cannot be deleted. The delete is refused with `409 Conflict`; move or clear each affected account scope first. This prevents a scoped account from becoming unrestricted because its scope disappeared.
+- Deleting an account also destroys its sessions and API tokens and clears it as the creator of everything it made. Its Jobs stay visible to administrators, marked as a deleted account's; those still waiting to run fail instead of running, and the delete confirmation says how many of its jobs have not finished. See [Job System](./job-system.md#state-and-visibility).
 - Both `/admin/users` and `/admin/users/edit` are admin-only. Editors, users and guests receive `403`.
 - **Every signed-in user** has a self-service account page at `/account` where they can change their own password and manage their own API tokens.
 

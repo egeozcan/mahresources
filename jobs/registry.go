@@ -89,6 +89,33 @@ type CommandExecutionRevalidator interface {
 	RevalidateCommand(context.Context, CommandContext, string) (bool, error)
 }
 
+// CommandPreflight is an optional Kind check a command runs after its
+// advertisement and before it takes effect. It answers whether the Kind's own
+// dispatch would refuse the work the command starts, for a durable reason the
+// Kind can already read without opening sealed input: a target outside the
+// principal's scope, a role that no longer writes. A fact only true of this
+// process (whether it has a plugin loaded) is not one: another process may claim
+// the work. A refusal is
+// returned to the caller with its reason instead of creating work whose only
+// outcome is to block, and nothing is written.
+//
+// It is the same question dispatch asks, asked earlier; dispatch still asks it.
+// An advertisement does not ask it, because a list render must not open every
+// Job's sealed input or resolve every principal's subtree.
+type CommandPreflight interface {
+	PreflightCommand(context.Context, CommandContext, string) (CommandRefusal, error)
+}
+
+// CommandRefusal is a Kind's reason a command would be refused. The zero value
+// allows the command.
+type CommandRefusal struct {
+	// Reason is a bounded code, the one dispatch would record for the block.
+	Reason string
+	// Message says why, in words a person reads. It must carry nothing the
+	// caller may not see.
+	Message string
+}
+
 // CommandFilterRequest asks one Kind adapter to select Jobs where its Commands
 // method would advertise Key to Access. Jobs is an unpaginated query already
 // narrowed to the registered Kind/version, the shared visibility predicate,

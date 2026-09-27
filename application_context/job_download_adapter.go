@@ -334,12 +334,10 @@ func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *down
 		return "plugin-unavailable"
 	}
 	if execution.Access.UserID != 0 {
-		scoped := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
-		if err := scoped.requireWriteRole("run a download"); err != nil {
-			return "role-refused"
-		}
-		if err := scoped.validateDownloadTargetsInScope(input.Creator); err != nil {
-			return "scope-refused"
+		// A read that failed keeps the refusal it implies: dispatch blocks rather
+		// than run work whose account it could not check.
+		if refusal, _ := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator); refusal.Reason != "" {
+			return refusal.Reason
 		}
 	}
 	if input.Creator != nil {
