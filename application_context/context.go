@@ -1356,10 +1356,10 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 }
 
 // WithActorUserID returns a ResourceCreator bound to a background download's
-// submitter as their account stands now: CreatedByUserId is stamped with them,
-// and a group-limited submitter's resource is created inside their subtree the
-// way their own upload would be. Returns the receiver for id 0. Consumed via the
-// download_queue actorResourceCreator capability.
+// submitter: CreatedByUserId is stamped with them, and a group-limited
+// submitter's resource is created inside their subtree the way their own upload
+// would be. Returns the receiver for id 0. Consumed via the download_queue
+// actorResourceCreator capability.
 //
 // The scope is what the targets validated at enqueue cannot give. The resource
 // that already holds the downloaded bytes is only found when the transfer ends,
@@ -1371,15 +1371,26 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 // own resource over the same file. The owner and groups are also re-checked
 // against the subtree as it is now, rather than as it was at enqueue.
 //
-// The account is resolved as principalForPluginActor resolves an actor, so a
-// deleted or disabled account, or one that cannot be read, binds deny-all rather
-// than unscoped, and the create is refused. So does an account whose role no
-// longer writes: a guest keeps a subtree it can read, and scope alone would let
-// the create land there.
+// The creator binds the account twice. The first binding covers what runs
+// before the body is read, the before-create hooks among it. The body is then
+// copied, which is most of a transfer, and the account is resolved again after
+// the copy (addResourceOptions.RebindSubmitter), so deduplication and the insert
+// answer to the account as it stands when the bytes are all in, not as it stood
+// when the first of them arrived.
 func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.ResourceCreator {
 	if userID == 0 {
 		return ctx
 	}
+	return &submitterResourceCreator{bound: ctx.boundToSubmitter(userID), submitter: userID}
+}
+
+// boundToSubmitter binds a download's submitter as their account stands now. The
+// account is resolved as principalForPluginActor resolves an actor, so a deleted
+// or disabled account, or one that cannot be read, binds deny-all rather than
+// unscoped, and the create is refused. So does an account whose role no longer
+// writes: a guest keeps a subtree it can read, and scope alone would let the
+// create land there.
+func (ctx *MahresourcesContext) boundToSubmitter(userID uint) *MahresourcesContext {
 	principal := ctx.principalForPluginActor(userID)
 	if !principal.CanWrite() {
 		principal = deniedPluginPrincipal(userID)

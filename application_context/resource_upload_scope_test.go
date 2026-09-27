@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/afero"
 	"mahresources/auth"
+	"mahresources/hls"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -314,7 +315,13 @@ func TestADownloadWhoseSubmitterLostWriteAccessMidTransferCreatesNothing(t *test
 			ctx := newDownloadJobContext(t)
 			release := make(chan struct{})
 			started := make(chan struct{}, 1)
+			// The head goes out first, past the playlist sniff, so the worker has
+			// bound its submitter and is copying the body when the account
+			// changes; the rest of the body waits for the change.
+			head := strings.Repeat("h", hls.SniffLen()+1024)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(head))
+				w.(http.Flusher).Flush()
 				select {
 				case started <- struct{}{}:
 				default:
@@ -347,6 +354,8 @@ func TestADownloadWhoseSubmitterLostWriteAccessMidTransferCreatesNothing(t *test
 			case <-time.After(10 * time.Second):
 				t.Fatal("the transfer never started")
 			}
+			// Long enough for the worker to sniff the head and start the copy.
+			time.Sleep(300 * time.Millisecond)
 
 			if _, err := ctx.UpdateUser(user.ID, change(owner)); err != nil {
 				t.Fatalf("change the submitter: %v", err)
@@ -495,4 +504,123 @@ end
 	if exists {
 		t.Fatalf("the deleted resource's file was kept with nothing referencing it")
 	}
+}
+
+// midCopyReader hands over its first half, then runs onMid before the rest: an
+// account change landing while a download's body is still being copied.
+type midCopyReader struct {
+	data  []byte
+	pos   int
+	onMid func()
+	fired bool
+}
+
+func (r *midCopyReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	if r.pos > 0 && !r.fired {
+		r.fired = true
+		r.onMid()
+	}
+	end := len(r.data)
+	if r.pos == 0 {
+		end = len(r.data) / 2
+	}
+	n := copy(p, r.data[r.pos:end])
+	r.pos += n
+	return n, nil
+}
+
+func (*midCopyReader) Close() error { return nil }
+
+// The download worker binds its submitter before the body is copied, and most of
+// a transfer is that copy. The account is resolved again once the bytes are in,
+// before deduplication and the insert, so what decides the resource is the
+// account as it stands when the transfer has finished.
+func TestADownloadIsCreatedForItsSubmitterAsTheyAreWhenTheCopyEnds(t *testing.T) {
+	type arranged struct {
+		ctx     *MahresourcesContext
+		user    *models.User
+		target  *models.Group
+		outside *models.Resource
+	}
+	const body = "downloaded bytes whose submitter changes while they are copied"
+	arrange := func(t *testing.T, scoped bool) arranged {
+		ctx := newJobHarnessContext(t, false)
+		root := createGroupNamed(t, ctx, "mid-copy-root", nil)
+		target := createGroupNamed(t, ctx, "mid-copy-target", &root.ID)
+		elsewhere := createGroupNamed(t, ctx, "mid-copy-elsewhere", &root.ID)
+		input := &UserInput{Username: "mid-copy-submitter", Password: "password1", Role: models.RoleUser}
+		if scoped {
+			input.ScopeGroupId = &root.ID
+		}
+		user, err := ctx.CreateUser(input)
+		if err != nil {
+			t.Fatalf("create submitter: %v", err)
+		}
+		return arranged{ctx: ctx, user: user, target: target, outside: uploadAs(t, ctx, body, "elsewhere.txt", elsewhere.ID)}
+	}
+	download := func(t *testing.T, a arranged, change func()) (*models.Resource, error) {
+		t.Helper()
+		creator := a.ctx.WithActorUserID(a.user.ID)
+		reader := &midCopyReader{data: []byte(body), onMid: change}
+		created, err := creator.AddResource(reader, "fetched.txt",
+			&query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{OwnerId: a.target.ID}})
+		if !reader.fired {
+			t.Fatal("the account change never ran mid-copy")
+		}
+		return created, err
+	}
+
+	for name, update := range map[string]func(a arranged) *UserUpdate{
+		"disabled": func(arranged) *UserUpdate {
+			return &UserUpdate{Disabled: UserField[bool]{Set: true, Value: true}}
+		},
+		"demoted to a guest of the target group": func(a arranged) *UserUpdate {
+			return &UserUpdate{
+				Role:         UserField[models.Role]{Set: true, Value: models.RoleGuest},
+				ScopeGroupID: UserField[*uint]{Set: true, Value: &a.target.ID},
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := arrange(t, false)
+			created, err := download(t, a, func() {
+				if _, err := a.ctx.UpdateUser(a.user.ID, update(a)); err != nil {
+					t.Fatalf("change the submitter: %v", err)
+				}
+			})
+			if err == nil {
+				t.Fatalf("created resource %d for an account that lost write access while its bytes were copied", created.ID)
+			}
+			if containsID(relatedGroupIDs(t, a.ctx, a.outside.ID), a.target.ID) {
+				t.Fatalf("the refused download still attached its group to resource %d", a.outside.ID)
+			}
+		})
+	}
+
+	t.Run("rescoped away from the resource holding the bytes", func(t *testing.T) {
+		// Scoped to the root, the submitter can see the resource that already
+		// holds these bytes; rescoped to the target mid-copy, it cannot, so the
+		// download must become the submitter's own resource rather than a group
+		// attached to one outside the scope they now have.
+		a := arrange(t, true)
+		created, err := download(t, a, func() {
+			if _, err := a.ctx.UpdateUser(a.user.ID, &UserUpdate{
+				ScopeGroupID: UserField[*uint]{Set: true, Value: &a.target.ID},
+			}); err != nil {
+				t.Fatalf("rescope the submitter: %v", err)
+			}
+		})
+		if err != nil {
+			t.Fatalf("download: %v", err)
+		}
+		if created.ID == a.outside.ID {
+			t.Fatalf("the download was filed onto resource %d, outside the scope its submitter now has", a.outside.ID)
+		}
+		if containsID(relatedGroupIDs(t, a.ctx, a.outside.ID), a.target.ID) {
+			t.Fatalf("the download attached its group to resource %d, outside the submitter's new scope", a.outside.ID)
+		}
+	})
 }
