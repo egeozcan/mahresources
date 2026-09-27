@@ -37,7 +37,7 @@
             <div><dt class="font-semibold">Exit code</dt><dd>{% if exitCodeAvailable %}{{ commandRun.ExitCode }}{% else %}&mdash;{% endif %}</dd></div>
             <div><dt class="font-semibold">Actor provenance</dt><dd>{% if commandRun.ActorlessAtSubmission %}System (actorless at submission){% elif commandRun.CreatedByUserID %}User ID {{ commandRun.CreatedByUserID }}{% else %}Submitting user was deleted{% endif %}</dd></div>
             <div><dt class="font-semibold">Cancellation requested</dt><dd>{% if commandRun.CancelRequested %}Yes{% else %}No{% endif %}</dd></div>
-            <div><dt class="font-semibold">Job</dt><dd>{% if commandRun.JobID %}<a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600" href="/job?id={{ commandRun.JobID }}" data-testid="command-run-job-link">View job</a>{% else %}&mdash;{% endif %}</dd></div>
+            <div><dt class="font-semibold">Job</dt><dd>{% if commandRunJobPresent %}<a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600" href="/job?id={{ commandRun.JobID }}" data-testid="command-run-job-link">View job</a>{% else %}&mdash;{% endif %}</dd></div>
             <div class="sm:col-span-2"><dt class="font-semibold">Terminal reason</dt><dd>{% if commandRun.Error %}{{ commandRun.Error }}{% else %}&mdash;{% endif %}</dd></div>
         </dl>
         <div>
@@ -119,7 +119,7 @@
                 <td class="p-2">{{ run.PluginName }}</td><td class="p-2">{{ run.CommandName }}</td><td class="p-2">{{ run.Status }}</td><td class="p-2">{{ run.CreatedAt }}</td>
                 <td class="p-2">
                     <div class="flex flex-wrap items-center gap-3">
-                    {% if run.JobID %}
+                    {% if run.JobPresent %}
                     <a class="text-amber-700 underline rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600" href="/job?id={{ run.JobID }}" aria-label="View the job of run {{ run.ID }}">View job</a>
                     {% endif %}
                     {% if run.Status == "queued" %}
@@ -133,7 +133,7 @@
                         {% else %}
                         <button type="button" disabled aria-label="Cancel queued run {{ run.ID }}" aria-describedby="command-runtime-quarantine-reason" data-testid="command-cancel-disabled" class="cursor-not-allowed rounded text-stone-500">Cancel unavailable</button>
                         {% endif %}
-                    {% elif not run.JobID %}<span class="text-stone-500">&mdash;</span>{% endif %}
+                    {% elif not run.JobPresent %}<span class="text-stone-500">&mdash;</span>{% endif %}
                     </div>
                 </td>
             </tr>

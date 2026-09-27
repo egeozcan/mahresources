@@ -163,3 +163,16 @@ func TestInspectingACommandJobOpensItsRunHistory(t *testing.T) {
 	require.Equal(t, "inspected-run", detail["runId"])
 	require.Equal(t, "/admin/plugin-command-runs?id=inspected-run", detail["location"])
 }
+
+// TestPresentJobIDsReportsOnlyJobsThatExist backs the command history page's
+// Job links: a Job retention deleted is absent, and an empty request reads
+// nothing.
+func TestPresentJobIDsReportsOnlyJobsThatExist(t *testing.T) {
+	ctx, _, jobID := finishClaimedCommandRun(t, "present-job", plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded})
+	present, err := ctx.PresentJobIDs([]string{jobID, "01a0dda5-0000-7000-8000-000000000000", ""})
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{jobID: true}, present)
+	present, err = ctx.PresentJobIDs(nil)
+	require.NoError(t, err)
+	require.Empty(t, present)
+}
