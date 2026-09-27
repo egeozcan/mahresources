@@ -378,8 +378,9 @@ func TestRuntimeIdentityLiveness_isConservative(t *testing.T) {
 // container: the hostname, the kernel's boot session and the pid all survive a
 // `docker restart`, so a process that finds its own pid in a record can only
 // tell itself from its predecessor by the per-process nonce. The pid is held by
-// this process now, so whoever recorded it with another nonce, or before nonces
-// were recorded, has exited.
+// this process now, so whoever recorded it with another nonce has exited. A
+// record with no nonce proves nothing either way: it is neither this process
+// nor provably gone.
 func TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone(t *testing.T) {
 	current := CurrentRuntimeIdentity()
 	if current.Host == "" || current.BootSession == "" {
@@ -401,8 +402,8 @@ func TestRuntimeIdentityOfAnEarlierProcessWithThisPidIsGone(t *testing.T) {
 	if !ok {
 		t.Fatal("a three-part identity recorded by an earlier release no longer parses")
 	}
-	if got := recordedBeforeNonces.Liveness(); got != RuntimeGone {
-		t.Errorf("an earlier release's record of this pid: liveness = %v, want gone", got)
+	if got := recordedBeforeNonces.Liveness(); got != RuntimeUnknown {
+		t.Errorf("a record of this pid without a nonce: liveness = %v, want unknown", got)
 	}
 	parsed, ok := ParseRuntimeIdentity(current.String())
 	if !ok || parsed.Liveness() != RuntimeAlive {

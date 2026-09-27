@@ -201,7 +201,8 @@ type RuntimeIdentity struct {
 	// Nonce is drawn once per process. A restarted container keeps its hostname,
 	// the kernel's boot session and usually its pid, so without it a new process
 	// reads its predecessor's record as its own and that predecessor never ends.
-	// Empty in a record written before nonces were recorded.
+	// Empty in a record written before nonces were recorded, which proves
+	// nothing about a pid this process now holds.
 	Nonce string
 }
 
@@ -305,10 +306,13 @@ const (
 //     so no process from that boot exists, whatever its pid does now.
 //   - this host, this boot, our own pid and our own nonce: Alive, and provably
 //     *this* runtime.
-//   - this host, this boot, our own pid and any other nonce, or none: Gone. One
-//     pid names one process at a time and this process holds it, so the process
-//     that recorded it has exited. This process always records its nonce, so a
-//     record without one is an earlier process's.
+//   - this host, this boot, our own pid and another nonce: Gone. One pid names
+//     one process at a time and this process holds it, so the process that
+//     recorded it has exited.
+//   - this host, this boot, our own pid and no nonce: Unknown. The record was
+//     written without one, by an earlier release or by a store that kept only
+//     some of the fields, so it can neither name this process nor prove its
+//     writer gone.
 //   - this host, this boot, another pid: Gone when the process does not exist,
 //     Alive when one does. A reused pid reads as Alive, which errs toward
 //     leaving a Job blocked rather than interrupting work that may still run.
@@ -326,10 +330,14 @@ func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 		return RuntimeGone
 	}
 	if r.PID == current.PID {
-		if r.Nonce != "" && r.Nonce == current.Nonce {
+		switch r.Nonce {
+		case "":
+			return RuntimeUnknown
+		case current.Nonce:
 			return RuntimeAlive
+		default:
+			return RuntimeGone
 		}
-		return RuntimeGone
 	}
 	return pidLiveness(r.PID)
 }
