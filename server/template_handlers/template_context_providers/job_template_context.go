@@ -318,7 +318,7 @@ func withoutEmptyValues(values url.Values) url.Values {
 func addJobListError(err error, ctx pongo2.Context) pongo2.Context {
 	if errors.Is(err, jobs.ErrInvalidFilter) || errors.Is(err, jobs.ErrInvalidCursor) ||
 		errors.Is(err, jobs.ErrInvalidPage) || errors.Is(err, jobs.ErrInvalidCommand) {
-		return addMessageErrContext(err.Error(), http.StatusBadRequest, ctx)
+		return addMessageErrContext(jobview.RequestErrorMessage(err), http.StatusBadRequest, ctx)
 	}
 	return addErrContext(err, ctx)
 }

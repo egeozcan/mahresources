@@ -1,6 +1,7 @@
 package template_context_providers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -65,12 +66,13 @@ type fakeJobListReader struct {
 	counted     []jobs.Filter
 	counts      func(jobs.Filter) map[string]int64
 	outputs     map[string][]jobs.Output
+	listErr     error
 }
 
 func (f *fakeJobListReader) ListJobs(filter jobs.Filter, cursor jobs.Cursor, _ int) (jobs.Page, error) {
 	f.listed = append(f.listed, filter)
 	f.listedAfter = append(f.listedAfter, cursor)
-	return f.page, nil
+	return f.page, f.listErr
 }
 
 func (f *fakeJobListReader) ListJobsBefore(filter jobs.Filter, before jobs.Cursor, _ int) (jobs.Page, error) {
@@ -218,6 +220,19 @@ func TestJobListRefusesAnUnreadableFilter(t *testing.T) {
 	}
 	if _, ok := ctx["jobFilter"]; !ok {
 		t.Fatal("the refused page must still render the filter form so the reader can fix it")
+	}
+}
+
+// A filter the service refuses reads on the page as the API reads it: the
+// problem in the reader's terms, without the service's internal wrapping.
+func TestJobListRefusalNamesOnlyTheFilterProblem(t *testing.T) {
+	refused := fmt.Errorf("jobs: list: %w", fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus"))
+	ctx := renderJobList(t, &fakeJobListReader{listErr: refused}, "/jobs?state=bogus")
+	if ctx["_statusCode"] != http.StatusBadRequest {
+		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
+	}
+	if got := ctx["errorMessage"]; got != `invalid filter: unknown state "bogus"` {
+		t.Fatalf("errorMessage = %q", got)
 	}
 }
 
