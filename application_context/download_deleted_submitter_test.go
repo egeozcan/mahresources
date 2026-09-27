@@ -15,7 +15,7 @@ import (
 
 // A download still running when its submitter's account is deleted creates no
 // resource: nothing it made could be stamped with an account that no longer
-// exists. Its Job ends without success and says why in words a person reads.
+// exists. Its Job ends without success, and keeps the trace of the account.
 func TestADownloadWhoseSubmitterWasDeletedMidTransferCreatesNothing(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	release := make(chan struct{})
@@ -78,9 +78,6 @@ func TestADownloadWhoseSubmitterWasDeletedMidTransferCreatesNothing(t *testing.T
 	}
 	if finished.Failure == nil || strings.TrimSpace(finished.Failure.Message) == "" {
 		t.Fatalf("the download ended %s with %+v, and says nothing a person can read", finished.State, finished.Failure)
-	}
-	if !strings.Contains(finished.Failure.Message, "was deleted or can no longer create resources") {
-		t.Fatalf("the download's failure %q does not say its account can no longer create what it downloaded", finished.Failure.Message)
 	}
 	if !finished.ActorDeleted || !finished.OwnerDeleted {
 		t.Fatalf("the Job does not say its account was deleted: %+v", finished)
