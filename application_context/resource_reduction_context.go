@@ -55,104 +55,96 @@ func (ctx *MahresourcesContext) CreateOrExtendResourceReduction(creator *query_m
 	if creator == nil {
 		return nil, errors.New("no Resource Reduction given")
 	}
+	return retryReductionWrite(func() (*models.ResourceReduction, error) {
+		return ctx.createOrExtendResourceReductionOnce(creator, ownerUserID, ownerRestricted)
+	})
+}
+
+// createOrExtendResourceReductionOnce is one attempt of
+// CreateOrExtendResourceReduction: every read first, then the one write.
+func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *query_models.ResourceReductionCreator, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
 	resourceIDs := dedupeUints(creator.ResourceIds)
 	groupIDs := dedupeUints(creator.GroupIds)
-	var reduction *models.ResourceReduction
-	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
-		if creator.OwnerId != 0 {
-			// Check the root before traversing: subtree collection uses raw SQL,
-			// while the Resource query below retains the caller's scope filter.
-			if !txCtx.GroupVisible(creator.OwnerId) {
-				return errors.New("no such Group")
-			}
-			owners := []uint{creator.OwnerId}
-			if creator.IncludeDescendants {
-				var err error
-				owners, err = txCtx.collectSubtreeGroupIDs(creator.OwnerId)
-				if err != nil {
-					return err
-				}
-			}
-			var owned []uint
-			for _, chunk := range chunkUints(owners, idChunk) {
-				var ids []uint
-				if err := txCtx.db.Model(&models.Resource{}).
-					Where("resources.owner_id IN ?", chunk).
-					Pluck("resources.id", &ids).Error; err != nil {
-					return fmt.Errorf("selecting owned Resources: %w", err)
-				}
-				owned = append(owned, ids...)
-			}
-			if len(owned) == 0 {
-				return errors.New("no owned Resources found in the selected group scope")
-			}
-			resourceIDs = dedupeUints(append(resourceIDs, owned...))
+	if creator.OwnerId != 0 {
+		// Check the root before traversing: subtree collection uses raw SQL,
+		// while the Resource query below retains the caller's scope filter.
+		if !ctx.GroupVisible(creator.OwnerId) {
+			return nil, errors.New("no such Group")
 		}
-		if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
-			return errors.New("a Resource Reduction needs at least one Resource or Group")
+		owners := []uint{creator.OwnerId}
+		if creator.IncludeDescendants {
+			var err error
+			owners, err = ctx.collectSubtreeGroupIDs(creator.OwnerId)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if creator.ID != 0 {
-			existing, err := txCtx.loadReductionForUpdate(creator.ID, ownerUserID, ownerRestricted)
-			if err != nil {
-				return err
+		var owned []uint
+		for _, chunk := range chunkUints(owners, idChunk) {
+			var ids []uint
+			if err := ctx.db.Model(&models.Resource{}).
+				Where("resources.owner_id IN ?", chunk).
+				Pluck("resources.id", &ids).Error; err != nil {
+				return nil, fmt.Errorf("selecting owned Resources: %w", err)
 			}
-			extent, err := DecodeReductionExtent(existing.Extent)
-			if err != nil {
-				return err
-			}
-			extent.ResourceIDs = dedupeUints(append(extent.ResourceIDs, resourceIDs...))
-			extent.GroupIDs = dedupeUints(append(extent.GroupIDs, groupIDs...))
-			encoded, err := encodeJSON(extent)
-			if err != nil {
-				return err
-			}
-			// The version is bumped even though only the Extent moved: the page
-			// shows "how much has entered the Extent since the last compute", and
-			// a concurrent recompute reading a narrower Extent would report that
-			// figure against a plan it no longer describes.
-			ok, err := txCtx.casReduction(existing.ID, existing.Version, map[string]any{"extent": encoded})
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return ErrReductionConflict
-			}
-			reduction, err = txCtx.loadReductionForUpdate(existing.ID, ownerUserID, ownerRestricted)
-			return err
+			owned = append(owned, ids...)
 		}
+		if len(owned) == 0 {
+			return nil, errors.New("no owned Resources found in the selected group scope")
+		}
+		resourceIDs = dedupeUints(append(resourceIDs, owned...))
+	}
+	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
+		return nil, errors.New("a Resource Reduction needs at least one Resource or Group")
+	}
+	if creator.ID != 0 {
+		existing, err := ctx.loadReductionForUpdate(creator.ID, ownerUserID, ownerRestricted)
+		if err != nil {
+			return nil, err
+		}
+		extent, err := DecodeReductionExtent(existing.Extent)
+		if err != nil {
+			return nil, err
+		}
+		extent.ResourceIDs = dedupeUints(append(extent.ResourceIDs, resourceIDs...))
+		extent.GroupIDs = dedupeUints(append(extent.GroupIDs, groupIDs...))
+		encoded, err := encodeJSON(extent)
+		if err != nil {
+			return nil, err
+		}
+		// The version is bumped even though only the Extent moved: the page
+		// shows "how much has entered the Extent since the last compute", and
+		// a concurrent recompute reading a narrower Extent would report that
+		// figure against a plan it no longer describes.
+		return ctx.casReductionAndReload(existing.ID, existing.Version, map[string]any{"extent": encoded}, ownerUserID, ownerRestricted)
+	}
 
-		name := strings.TrimSpace(creator.Name)
-		if name == "" {
-			name = "Resource Reduction"
-		}
-		extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs})
-		if err != nil {
-			return err
-		}
-		ruleJSON, err := encodeJSON(models.NormalizeWinnerRule(creator.WinnerRule))
-		if err != nil {
-			return err
-		}
-		row := &models.ResourceReduction{
-			Name:                     truncateRunes(name, maxReductionName),
-			Status:                   models.ReductionStatusDraft,
-			MatchingMode:             normalizeMatchingMode(creator.MatchingMode),
-			ExcludeExternalResources: creator.ExcludeExternalResources,
-			KeepAsVersionIdentical:   boolOr(creator.KeepAsVersionIdentical, false),
-			KeepAsVersionNear:        boolOr(creator.KeepAsVersionNear, true),
-			WinnerRule:               ruleJSON,
-			Extent:                   extentJSON,
-		}
-		if err := txCtx.db.Create(row).Error; err != nil {
-			return err
-		}
-		reduction = row
-		return nil
-	})
+	name := strings.TrimSpace(creator.Name)
+	if name == "" {
+		name = "Resource Reduction"
+	}
+	extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs})
 	if err != nil {
 		return nil, err
 	}
-	return reduction, nil
+	ruleJSON, err := encodeJSON(models.NormalizeWinnerRule(creator.WinnerRule))
+	if err != nil {
+		return nil, err
+	}
+	row := &models.ResourceReduction{
+		Name:                     truncateRunes(name, maxReductionName),
+		Status:                   models.ReductionStatusDraft,
+		MatchingMode:             normalizeMatchingMode(creator.MatchingMode),
+		ExcludeExternalResources: creator.ExcludeExternalResources,
+		KeepAsVersionIdentical:   boolOr(creator.KeepAsVersionIdentical, false),
+		KeepAsVersionNear:        boolOr(creator.KeepAsVersionNear, true),
+		WinnerRule:               ruleJSON,
+		Extent:                   extentJSON,
+	}
+	if err := ctx.db.Create(row).Error; err != nil {
+		return nil, err
+	}
+	return row, nil
 }
 
 // UpdateResourceReductionSettings changes a Reduction's own settings. Guarded by
@@ -162,50 +154,37 @@ func (ctx *MahresourcesContext) UpdateResourceReductionSettings(editor *query_mo
 		return nil, errors.New("no Resource Reduction given")
 	}
 
-	var reduction *models.ResourceReduction
-	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
-		existing, err := txCtx.loadReductionForUpdate(editor.ID, ownerUserID, ownerRestricted)
-		if err != nil {
-			return err
-		}
-		updates := map[string]any{}
-		if name := strings.TrimSpace(editor.Name); name != "" {
-			updates["name"] = truncateRunes(name, maxReductionName)
-		}
-		if editor.MatchingMode != "" {
-			updates["matching_mode"] = normalizeMatchingMode(editor.MatchingMode)
-		}
-		if len(editor.WinnerRule) > 0 {
-			ruleJSON, err := encodeJSON(models.NormalizeWinnerRule(editor.WinnerRule))
-			if err != nil {
-				return err
-			}
-			updates["winner_rule"] = ruleJSON
-		}
-		if editor.KeepAsVersionIdentical != nil {
-			updates["keep_as_version_identical"] = *editor.KeepAsVersionIdentical
-		}
-		if editor.KeepAsVersionNear != nil {
-			updates["keep_as_version_near"] = *editor.KeepAsVersionNear
-		}
-		if len(updates) == 0 {
-			reduction = existing
-			return nil
-		}
-		ok, err := txCtx.casReduction(existing.ID, editor.Version, updates)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return ErrReductionConflict
-		}
-		reduction, err = txCtx.loadReductionForUpdate(existing.ID, ownerUserID, ownerRestricted)
-		return err
-	})
-	if err != nil {
-		return nil, err
+	updates := map[string]any{}
+	if name := strings.TrimSpace(editor.Name); name != "" {
+		updates["name"] = truncateRunes(name, maxReductionName)
 	}
-	return reduction, nil
+	if editor.MatchingMode != "" {
+		updates["matching_mode"] = normalizeMatchingMode(editor.MatchingMode)
+	}
+	if len(editor.WinnerRule) > 0 {
+		ruleJSON, err := encodeJSON(models.NormalizeWinnerRule(editor.WinnerRule))
+		if err != nil {
+			return nil, err
+		}
+		updates["winner_rule"] = ruleJSON
+	}
+	if editor.KeepAsVersionIdentical != nil {
+		updates["keep_as_version_identical"] = *editor.KeepAsVersionIdentical
+	}
+	if editor.KeepAsVersionNear != nil {
+		updates["keep_as_version_near"] = *editor.KeepAsVersionNear
+	}
+
+	return retryReductionWrite(func() (*models.ResourceReduction, error) {
+		// Read first even with updates to make: it is the visibility check, and a
+		// row the caller may not see has to answer as absent rather than as a
+		// version conflict.
+		existing, err := ctx.loadReductionForUpdate(editor.ID, ownerUserID, ownerRestricted)
+		if err != nil || len(updates) == 0 {
+			return existing, err
+		}
+		return ctx.casReductionAndReload(existing.ID, editor.Version, updates, ownerUserID, ownerRestricted)
+	})
 }
 
 // GetResourceReductions lists the Reductions the caller may see.
@@ -285,6 +264,67 @@ func (ctx *MahresourcesContext) casReduction(id, expectedVersion uint, updates m
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
+}
+
+// casReductionAndReload lands one compare-and-set and reads the row back in the
+// same transaction, so the caller is answered with the state its own write made.
+//
+// The compare-and-set is the transaction's first statement, and that is the point
+// of this helper; see retryReductionWrite for why. Reads after it are safe: the
+// transaction already holds the writer lock.
+func (ctx *MahresourcesContext) casReductionAndReload(id, expectedVersion uint, updates map[string]any, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
+	var reduction *models.ResourceReduction
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		ok, err := txCtx.casReduction(id, expectedVersion, updates)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrReductionConflict
+		}
+		reduction, err = txCtx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reduction, nil
+}
+
+// retryReductionWrite runs one request-side Reduction writer, from its first read,
+// again while it loses to lock contention.
+//
+// Each writer reads everything it needs outside any transaction and then writes
+// through casReductionAndReload or a single INSERT, so the write is the first
+// statement its transaction sends. On SQLite in WAL mode that order is what keeps
+// busy_timeout in play: a deferred transaction that reads first holds a snapshot,
+// and a commit landing before its write (the compute Job's bookkeeping, a hash or
+// thumbnail worker, a job migration pass) makes promoting that snapshot fail at
+// once with SQLITE_BUSY_SNAPSHOT, which SQLite never hands to the busy handler.
+// Re-reading and trying again does not escape that under sustained writes, because
+// every attempt reads first. The reads lose nothing by leaving the transaction: the
+// version compare-and-set refuses a write whose reads went stale, and on Postgres
+// READ COMMITTED gave them no shared snapshot to begin with.
+//
+// The retry covers what the order does not remove: the small residue AddResource's
+// write-first transaction still sees, and a shared-cache table lock on one of the
+// reads. A rolled-back attempt left nothing behind, so starting over is safe.
+func retryReductionWrite(attempt func() (*models.ResourceReduction, error)) (*models.ResourceReduction, error) {
+	var reduction *models.ResourceReduction
+	var err error
+	for i := 0; i < reductionCASRetries; i++ {
+		if i > 0 {
+			waitOutContention(i - 1)
+		}
+		reduction, err = attempt()
+		if err == nil || !isLockContentionError(err) {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return reduction, nil
 }
 
 // EffectiveReductionStatus reports what a Reduction's status actually reads as.

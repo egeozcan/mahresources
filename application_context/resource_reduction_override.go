@@ -67,94 +67,60 @@ func (ctx *MahresourcesContext) OverrideReductionCluster(override *query_models.
 		return nil, errors.New("no Resource Reduction given")
 	}
 
-	// The transaction reads the row before it writes it, so on SQLite in WAL mode
-	// any commit landing between the two (the compute Job's own bookkeeping, a
-	// hash or thumbnail worker) fails the write with "database is locked" at once:
-	// promoting a stale read snapshot never goes through busy_timeout. That is
-	// contention, not a verdict on the decision, and a rolled-back attempt left
-	// nothing behind, so the whole transaction is re-run from a fresh read, as the
-	// rest of this module's compare-and-set writers do. The version check inside
-	// still refuses a decision made against a plan that has since changed.
-	var updated *models.ResourceReduction
-	var err error
-	for attempt := 0; attempt < reductionCASRetries; attempt++ {
-		if attempt > 0 {
-			waitOutContention(attempt - 1)
-		}
-		updated, err = ctx.overrideReductionClusterOnce(override, ownerUserID, ownerRestricted)
-		if err == nil || !isLockContentionError(err) {
-			break
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	return updated, nil
+	return retryReductionWrite(func() (*models.ResourceReduction, error) {
+		return ctx.overrideReductionClusterOnce(override, ownerUserID, ownerRestricted)
+	})
 }
 
-// overrideReductionClusterOnce is one attempt of OverrideReductionCluster.
+// overrideReductionClusterOnce is one attempt of OverrideReductionCluster: every
+// read first, then the compare-and-set as its transaction's first statement.
 func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_models.ReductionOverride, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
-	var updated *models.ResourceReduction
-	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
-		reduction, err := txCtx.loadReductionForUpdate(override.ID, ownerUserID, ownerRestricted)
-		if err != nil {
-			return err
-		}
-		if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
-			return ErrReductionBusy
-		}
-
-		plan, err := DecodeReductionPlan(reduction.Plan)
-		if err != nil {
-			return err
-		}
-		cluster := findCluster(&plan, override.ClusterID)
-		if cluster == nil {
-			return ErrReductionClusterNotFound
-		}
-		// A Cluster reaching a Resource this caller may not see answers exactly as
-		// an unknown id does, and that identity is the whole point. The Cluster id
-		// is a hash of the tier and the member ids, and ids here are small integers,
-		// so any endpoint that distinguishes "that Cluster exists" from "no such
-		// Cluster" lets a caller guess a hidden id, derive the id, and confirm it —
-		// recovering by enumeration exactly what the render refuses to print.
-		//
-		// It costs the reviewer nothing they could otherwise do: such a Cluster
-		// cannot be applied either. It does mean a Cluster whose member was deleted
-		// outside this Reduction becomes unaddressable, since "deleted" and "outside
-		// your access" are deliberately one answer — and there is nothing left to
-		// decide about it, so a recompute is the right way past it.
-		if reachable, err := txCtx.clusterFullyVisible(cluster); err != nil {
-			return err
-		} else if !reachable {
-			return ErrReductionClusterNotFound
-		}
-		if cluster.State == models.ReductionClusterApplied {
-			return ErrReductionClusterSettled
-		}
-
-		if err := txCtx.applyOverride(cluster, override); err != nil {
-			return err
-		}
-
-		encoded, err := encodeJSON(plan)
-		if err != nil {
-			return err
-		}
-		ok, err := txCtx.casReduction(reduction.ID, override.Version, map[string]any{"plan": encoded})
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return ErrReductionConflict
-		}
-		updated, err = txCtx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
-		return err
-	})
+	reduction, err := ctx.loadReductionForUpdate(override.ID, ownerUserID, ownerRestricted)
 	if err != nil {
 		return nil, err
 	}
-	return updated, nil
+	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
+		return nil, ErrReductionBusy
+	}
+
+	plan, err := DecodeReductionPlan(reduction.Plan)
+	if err != nil {
+		return nil, err
+	}
+	cluster := findCluster(&plan, override.ClusterID)
+	if cluster == nil {
+		return nil, ErrReductionClusterNotFound
+	}
+	// A Cluster reaching a Resource this caller may not see answers exactly as
+	// an unknown id does, and that identity is the whole point. The Cluster id
+	// is a hash of the tier and the member ids, and ids here are small integers,
+	// so any endpoint that distinguishes "that Cluster exists" from "no such
+	// Cluster" lets a caller guess a hidden id, derive the id, and confirm it —
+	// recovering by enumeration exactly what the render refuses to print.
+	//
+	// It costs the reviewer nothing they could otherwise do: such a Cluster
+	// cannot be applied either. It does mean a Cluster whose member was deleted
+	// outside this Reduction becomes unaddressable, since "deleted" and "outside
+	// your access" are deliberately one answer — and there is nothing left to
+	// decide about it, so a recompute is the right way past it.
+	if reachable, err := ctx.clusterFullyVisible(cluster); err != nil {
+		return nil, err
+	} else if !reachable {
+		return nil, ErrReductionClusterNotFound
+	}
+	if cluster.State == models.ReductionClusterApplied {
+		return nil, ErrReductionClusterSettled
+	}
+
+	if err := ctx.applyOverride(cluster, override); err != nil {
+		return nil, err
+	}
+
+	encoded, err := encodeJSON(plan)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.casReductionAndReload(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted)
 }
 
 func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride) error {
