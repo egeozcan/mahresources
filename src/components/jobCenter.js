@@ -1,3 +1,4 @@
+import { announcePreferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import {
     applyProgressFrame,
@@ -522,6 +523,7 @@ export function jobCenter(options = {}) {
                 error.payload = payload;
                 throw error;
             }
+            announcePreferenceCommand(url, init);
             return payload;
         },
 

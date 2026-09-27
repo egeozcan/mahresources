@@ -1,6 +1,7 @@
 import { findListContainer } from '../utils/listContainer.js';
 import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import {
     EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandLabel, nextStreamRetryDelay,
     reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
@@ -203,6 +204,7 @@ export function jobList() {
         _liveRegion: null,
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
+        _preferences: null,
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -223,6 +225,8 @@ export function jobList() {
             this._onNotice = event => { this.notice = event.detail?.message || ''; };
             window.addEventListener('job-list-refresh', this._onRefreshRequest);
             window.addEventListener('job-list-notice', this._onNotice);
+            // A dismissal, pin or forget made elsewhere emits no Job event.
+            this._preferences = openJobPreferenceChannel(() => this._refresher?.request());
             this.connect();
         },
 
@@ -232,6 +236,7 @@ export function jobList() {
             this.eventSource = null;
             source?.close();
             this._refresher?.destroy();
+            this._preferences?.close();
             this._liveRegion?.destroy();
             window.removeEventListener('job-list-refresh', this._onRefreshRequest);
             window.removeEventListener('job-list-notice', this._onNotice);
@@ -448,6 +453,11 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                     body: JSON.stringify({ jobIds: ids, idempotencyKey: key }),
                 });
                 const payload = await response.json().catch(() => ({}));
+                if (response.ok) {
+                    announcePreferenceCommand(`/v1/jobs/commands/${encodeURIComponent(command.key)}`, {
+                        method: 'POST', body: JSON.stringify({ jobIds: ids }),
+                    });
+                }
                 this.outcomes = payload.results || payload.outcomes || [];
                 const applied = this.outcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;
                 if (response.ok) {

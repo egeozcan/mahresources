@@ -1,4 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered } from '../utils/modality.js';
 import {
@@ -185,41 +186,6 @@ export function panelCountsText({
     const activeText = `${active} active or scheduled job${active === 1 ? '' : 's'}${activeMore ? more : ''}`;
     const attentionText = `${attention} needing attention${attentionMore ? more : ''}`;
     return activeMore ? `Showing ${activeText}, and ${attentionText}` : `Showing ${activeText} and ${attentionText}`;
-}
-
-// Dismissing, pinning and forgetting change what this viewer's drawer shows
-// without any Job event, so the stream never tells the viewer's other tabs.
-// The tab that ran such a command says so on a channel every tab of the site
-// listens to, and each one reads its lists again.
-const PREFERENCE_CHANNEL = 'mahresources-job-preferences';
-const PREFERENCE_COMMAND = /^\/v1\/jobs\/(?:([^/?]+)\/)?commands\/([^/?]+)/;
-
-export function openJobPreferenceChannel(onMessage) {
-    if (typeof BroadcastChannel === 'undefined') return null;
-    try {
-        const channel = new BroadcastChannel(PREFERENCE_CHANNEL);
-        channel.onmessage = event => onMessage(event.data);
-        return channel;
-    } catch {
-        return null;
-    }
-}
-
-// The jobs a successful request changed a viewer preference of, or null when it
-// was not such a command: a single Job's command names its Job in the path, a
-// bulk one in its body.
-export function preferenceCommandJobIDs(url, init = {}) {
-    if (String(init.method || 'GET').toUpperCase() !== 'POST') return null;
-    const path = new URL(String(url), 'http://localhost').pathname;
-    const match = PREFERENCE_COMMAND.exec(path);
-    if (!match || !(RECORD_COMMANDS.has(decodeURIComponent(match[2])) || match[2] === 'dismiss')) return null;
-    if (match[1]) return [decodeURIComponent(match[1])];
-    try {
-        const ids = JSON.parse(init.body || '{}').jobIds;
-        return Array.isArray(ids) ? ids.map(String) : [];
-    } catch {
-        return [];
-    }
 }
 
 // What the drawer says, and shows in place of its list, once its stream reset.
@@ -632,8 +598,7 @@ export function jobPanel() {
                 error.payload = payload;
                 throw error;
             }
-            const changed = preferenceCommandJobIDs(url, init);
-            if (changed) this._broadcast?.postMessage?.({ jobIds: changed });
+            announcePreferenceCommand(url, init, this._broadcast);
             return payload;
         },
 

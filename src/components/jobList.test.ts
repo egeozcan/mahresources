@@ -529,6 +529,24 @@ describe('job list stream', () => {
         vi.useRealTimers();
     });
 
+    test('a dismissal, pin or forget made in another tab or panel refreshes the list', () => {
+        const channels: any[] = [];
+        vi.stubGlobal('BroadcastChannel', class {
+            onmessage: any = null;
+            constructor(public name: string) { channels.push(this); }
+            postMessage() {}
+            close() {}
+        });
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const list = jobList();
+        (list as any).$root = document.body;
+        list.init();
+        list._refresher = { request: vi.fn(), destroy: vi.fn() } as any;
+        channels.find(channel => channel.name === 'mahresources-job-preferences').onmessage({ data: { jobIds: ['a'] } });
+        expect(list._refresher.request).toHaveBeenCalledTimes(1);
+        list.destroy();
+    });
+
     test('says when the list could not be refreshed, until a refresh succeeds', async () => {
         document.body.innerHTML = '<div class="list-container"></div>';
         const failed = vi.fn();
