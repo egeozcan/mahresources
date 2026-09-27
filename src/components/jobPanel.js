@@ -445,12 +445,17 @@ export function jobPanel() {
             const rowFor = () => panel()?.querySelector(`article[data-job-id="${CSS.escape(String(id))}"]`);
             const initialFocus = document.activeElement;
             if (!rowFor() && !this.jobs.some(job => job.id === id)) {
+                // Heard as any read is: an outcome it finds is said only when a
+                // live event proves it happened on this stream (hearFromRead).
+                const streamGeneration = this._streamGeneration;
                 try {
                     const job = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
                     if (job?.id === id && !this.jobs.some(row => row.id === id)) {
+                        const spoken = [];
                         this.details[id] = job;
-                        this.hearJob(job);
+                        this.hearFromRead(job, streamGeneration, spoken);
                         this.upsert(job);
+                        if (streamGeneration === this._streamGeneration) this.announceNews(spoken);
                     }
                 } catch {
                     return;

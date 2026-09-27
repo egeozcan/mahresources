@@ -922,6 +922,28 @@ describe('Job Center panel accessibility hooks', () => {
         return panel;
     }
 
+    test('a job the drawer reads to show a just-started run is heard like any read: a live outcome is said once', async () => {
+        vi.stubGlobal('CSS', { escape: (value: string) => value });
+        vi.stubGlobal('document', { querySelector: () => null, activeElement: null, body: {} });
+        const failed = { id: 'dl-50', title: 'sweep', kind: 'plugin-action', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', failure: { message: 'boom' } };
+        const panel = refreshingPanel([]);
+        panel.isOpen = true;
+        panel.streamCaughtUp = true;
+        panel.lastSequence = 10;
+        // The run failed at once; its live events arrived before the drawer read it.
+        await panel.handleStreamMessage({ data: JSON.stringify({ id: 'e-50', jobId: 'dl-50', jobVersion: 3, type: 'failed', deliverySequence: 11 }), lastEventId: 'v2:11' });
+        panel.requestJSON = vi.fn(async () => failed) as any;
+
+        await panel.revealJob('dl-50');
+
+        expect(panel.jobs.map((job: any) => job.id)).toEqual(['dl-50']);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('sweep failed: boom.');
+        // A later read does not say it again.
+        panel.requestJSON = vi.fn(async (raw: string) => (String(raw).startsWith('/v1/jobs?') ? { jobs: [failed] } : failed)) as any;
+        await panel.refresh();
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+    });
+
     test('a stream reset stops the drawer instead of reloading the page it sits on', async () => {
         const reload = vi.fn();
         vi.stubGlobal('location', { reload });
