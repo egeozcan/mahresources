@@ -70,7 +70,11 @@ func (pm *PluginManager) enterHandler(job *ActionJob, vm *vmMutex, live func() b
 	h := &handlerRun{job: job, vm: vm, live: live, stopCtx: stopCtx, stop: stop}
 	job.mu.Lock()
 	job.handler = h
+	pending := job.pendingStop
 	job.mu.Unlock()
+	if pending != "" {
+		h.requestStop(pending)
+	}
 	return h
 }
 
@@ -193,18 +197,35 @@ func pollUntil(deadline time.Time, done func() bool) bool {
 // waiting for.
 const handlerDrainPoll = 25 * time.Millisecond
 
-// StopHostJob stops the running handler of the durable Job named, because a
-// person cancelled it, and reports whether this process was running one. The
-// handler ends at its next instruction; its execution then reports that it was
-// stopped.
+// StopHostJob stops the handler of the durable Job named, because a person
+// cancelled it, and reports whether this process holds an execution of it. A
+// running handler ends at its next instruction and reports that it was
+// cancelled; one this process holds and has not entered yet is stopped the moment
+// it is, so a cancel that lands between the claim and the handler is not lost.
 func (pm *PluginManager) StopHostJob(jobID string) bool {
 	if jobID == "" {
 		return false
 	}
-	return pm.stopHandlers(StopCancelled, func(job *ActionJob, _ *handlerRun) bool {
-		ref := job.hostJobRef()
-		return ref != nil && ref.JobID == jobID
-	}) > 0
+	pm.actionJobsMu.RLock()
+	var held []*ActionJob
+	for _, job := range pm.actionJobs {
+		if ref := job.hostJobRef(); ref != nil && ref.JobID == jobID {
+			held = append(held, job)
+		}
+	}
+	pm.actionJobsMu.RUnlock()
+	for _, job := range held {
+		job.mu.Lock()
+		h := job.handler
+		if h == nil && !job.settlesItself {
+			job.pendingStop = StopCancelled
+		}
+		job.mu.Unlock()
+		if h != nil {
+			h.requestStop(StopCancelled)
+		}
+	}
+	return len(held) > 0
 }
 
 // stopRevokedHandlers stops the running handlers of one plugin whose VM is no

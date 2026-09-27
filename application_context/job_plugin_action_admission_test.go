@@ -131,7 +131,8 @@ func lastEventType(t *testing.T, ctx *MahresourcesContext, jobID string) string 
 // TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack pins the admission inside the
 // dispatch budget. A due tick of a plugin whose occurrence finds the deployment's
 // budget full for the whole dispatch wait is not run, is not claimed, releases the
-// row's claim, and runs on a later tick once the budget has room.
+// row's claim, records no Job — however many ticks find the budget full — and runs
+// on a later tick once the budget has room.
 func TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	ctx.Config.MaxJobConcurrency = 1
@@ -166,10 +167,13 @@ func TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack(t *testing.T) {
 		t.Fatalf("hold the budget: %v", err)
 	}
 
-	scheduler := NewPluginScheduler(ctx, time.Minute)
-	scheduler.dispatchWait = 300 * time.Millisecond
-	scheduler.Tick(time.Now())
-	scheduler.Stop()
+	for tick := 0; tick < 3; tick++ {
+		makeDue()
+		scheduler := NewPluginScheduler(ctx, time.Minute)
+		scheduler.dispatchWait = 300 * time.Millisecond
+		scheduler.Tick(time.Now())
+		scheduler.Stop()
+	}
 
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "" {
 		t.Fatalf("the handler ran %q times with the budget full", got)
@@ -181,10 +185,8 @@ func TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack(t *testing.T) {
 	if row.ClaimToken != "" || row.Runs != 0 {
 		t.Fatalf("a tick that could not be admitted left claim %q and %d runs, want the row given back", row.ClaimToken, row.Runs)
 	}
-	occurrence := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
-	if occurrence.State != jobs.StateCancelled || occurrence.StartedAt != nil {
-		t.Fatalf("the unadmitted occurrence is %s (started %v), want withdrawn without a start",
-			occurrence.State, occurrence.StartedAt)
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("three ticks that could not start recorded %d occurrence Jobs, want none", got)
 	}
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 1 {
 		t.Fatalf("the budget holds %d slots, want only the holder's", held)
@@ -197,12 +199,34 @@ func TestAnOccurrenceThatCannotBeAdmittedGivesItsRowBack(t *testing.T) {
 		t.Fatalf("free the budget: %v", err)
 	}
 	makeDue()
-	scheduler = NewPluginScheduler(ctx, time.Minute)
+	scheduler := NewPluginScheduler(ctx, time.Minute)
 	scheduler.Tick(time.Now())
 	scheduler.Stop()
 	if got := pluginKVForTest(t, ctx, "scheduled"); got != "1" {
 		t.Fatalf("the handler ran %q times once the budget freed, want once", got)
 	}
+	occurrence := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
+	if got := countOccurrenceJobs(t, ctx); got != 1 || occurrence.State != jobs.StateSucceeded {
+		t.Fatalf("the tick that ran recorded %d occurrence Jobs (newest %s), want the one that succeeded",
+			got, occurrence.State)
+	}
+}
+
+// countOccurrenceJobs counts the scheduled-occurrence Jobs this context holds.
+func countOccurrenceJobs(t *testing.T, ctx *MahresourcesContext) int {
+	t.Helper()
+	page, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+		jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 200)
+	if err != nil {
+		t.Fatalf("list plugin jobs: %v", err)
+	}
+	count := 0
+	for _, job := range page.Jobs {
+		if pluginActionSubtypeOf(job.Summary) == pluginActionSubtypeScheduled {
+			count++
+		}
+	}
+	return count
 }
 
 // TestAnOccurrenceSomebodyElseWithdrewIsNotReportedAsRun pins what a waiter reads
@@ -734,5 +758,68 @@ func TestAJobThisProcessCannotHandOffStaysQueued(t *testing.T) {
 	}
 	if got := jobStateForTest(t, ctx, job.ID); got != jobs.StateQueued {
 		t.Fatalf("a Job whose plugin this process lost is %s, want queued for a process that has it", got)
+	}
+}
+
+// TestRunNowSaysWhetherTheRunStarted pins the answer an operator gets from "Run
+// now". A run that cannot start within the dispatch wait — here the deployment's
+// budget stays full — is refused as not started, and leaves no Job and no
+// history behind; with room, the same request answers started and the handler
+// runs.
+func TestRunNowSaysWhetherTheRunStarted(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 1
+	pm := ctx.PluginManager()
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	operator := models.User{Username: "run-now-operator", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&operator).Error; err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	if err := ctx.SyncPluginSchedules(pluginActionTestPlugin, pm.DeclaredSchedules(pluginActionTestPlugin)); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	holder := acceptClosureJobForTest(t, ctx, "another-host/boot-1/4242")
+	held, err := ctx.JobService().ClaimJob(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, JobID: holder.ID,
+		Claimant: "holder", Capacity: ctx.hostClaimCapacityBudget(),
+	})
+	if err != nil {
+		t.Fatalf("hold the budget: %v", err)
+	}
+
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.dispatchWait = 300 * time.Millisecond
+	err = scheduler.RunNow(pluginActionTestPlugin, "tick")
+	if !errors.Is(err, ErrScheduleDidNotStart) {
+		t.Fatalf("a run now that could not start answered %v, want ErrScheduleDidNotStart", err)
+	}
+	scheduler.Stop()
+	if got := countOccurrenceJobs(t, ctx); got != 0 {
+		t.Fatalf("a run now that did not start recorded %d Jobs, want none", got)
+	}
+	var row models.PluginSchedule
+	if err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "tick").First(&row).Error; err != nil {
+		t.Fatalf("read the row: %v", err)
+	}
+	if row.ClaimToken != "" || row.Runs != 0 {
+		t.Fatalf("a run now that did not start left claim %q and %d runs", row.ClaimToken, row.Runs)
+	}
+
+	if _, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: held.JobID, ExecutionToken: held.ExecutionToken},
+		ExpectedVersion: held.Version, Outcome: jobs.StateSucceeded,
+	}); err != nil {
+		t.Fatalf("free the budget: %v", err)
+	}
+	scheduler = NewPluginScheduler(ctx, time.Minute)
+	if err := scheduler.RunNow(pluginActionTestPlugin, "tick"); err != nil {
+		t.Fatalf("a run now with room answered %v, want started", err)
+	}
+	scheduler.Stop()
+	if got := pluginKVForTest(t, ctx, "scheduled"); got != "1" {
+		t.Fatalf("the handler ran %q times after run now started it, want once", got)
 	}
 }

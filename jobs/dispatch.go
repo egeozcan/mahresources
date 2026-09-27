@@ -444,6 +444,14 @@ func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, no
 	return capacityExhausted(budget)
 }
 
+// CapacityAvailable reports, with ErrCapacityExhausted, a budget that is already
+// full. It is capacityAvailable for a caller that has to decide whether to create
+// work at all: an answer of room is no promise that a claim will get a slot, and
+// the claim's own count is what decides that.
+func (s *Service) CapacityAvailable(deps Deps, budgets []CapacityRef) error {
+	return capacityAvailable(deps.DB, budgets)
+}
+
 // capacityAvailable reports a budget that is already full, outside any
 // transaction. It can be stale in either direction, which is why it only ever
 // saves a claim that would be refused: a slot freed a moment ago is found on the
@@ -1250,6 +1258,48 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 		})
 	}
 	return report, decisionErr
+}
+
+// ExpireAbandonedClaims ends the lease of each held claim whose claimant gone
+// proves is no longer running, so the next reconciliation pass asks its Kind about
+// it at once rather than after the lease runs out, and answers how many it ended.
+//
+// A lease is what a runtime that may still be alive is given before anybody may
+// decide about its work. A runtime proved gone — the caller's gone answers that,
+// from the claimant's recorded identity — is not coming back to heartbeat, so
+// waiting out its lease only leaves its Jobs reading as running, with frozen
+// progress, for minutes after a restart. Nothing is decided here: the Kind's own
+// reconciliation still decides what the work becomes, exactly as it would have
+// once the lease ran out. gone must answer true only on proof, never on silence.
+func (s *Service) ExpireAbandonedClaims(deps Deps, gone func(claimant string) bool, limit int) (int, error) {
+	if gone == nil {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = DefaultReconcileBatch
+	}
+	now := deps.now()
+	var claims []models.JobClaim
+	if err := deps.DB.Where("state = ? AND lease_expires_at > ?", models.JobClaimStateHeld, now).
+		Order("lease_expires_at, job_id").Limit(limit).Find(&claims).Error; err != nil {
+		return 0, fmt.Errorf("jobs: read held claims: %w", err)
+	}
+	expired := 0
+	for _, claim := range claims {
+		if !gone(claim.Claimant) {
+			continue
+		}
+		// Guarded by the token and the state the claim was read in: a claim that
+		// was released, settled or replaced meanwhile is not this one any more.
+		result := deps.DB.Model(&models.JobClaim{}).
+			Where("job_id = ? AND state = ? AND execution_token = ?", claim.JobID, models.JobClaimStateHeld, claim.ExecutionToken).
+			Update("lease_expires_at", now)
+		if result.Error != nil {
+			return expired, fmt.Errorf("jobs: expire the claim on %s: %w", claim.JobID, result.Error)
+		}
+		expired += int(result.RowsAffected)
+	}
+	return expired, nil
 }
 
 // ReconcileUnrunnable blocks pending work this process has no adapter for.

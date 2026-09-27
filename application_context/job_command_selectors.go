@@ -209,6 +209,8 @@ func maintenanceCommandStates(key string) ([]jobs.State, bool) {
 func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
 	switch request.Key {
 	case jobs.CommandRetry, jobs.CommandContinue:
+	case jobs.CommandCancel:
+		return a.selectCancellable(request)
 	default:
 		return nil, false, nil
 	}
@@ -267,6 +269,50 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 	appendPairs(pluginActionSubtypeRegistered, action, actionPairs)
 	appendPairs(pluginActionSubtypeScheduled, schedule, schedulePairs)
 	query = query.Where("("+strings.Join(clauses, " OR ")+")", args...)
+	if scoped {
+		query = query.Where(pluginScopedAccessPredicate(plugin), true, true)
+	}
+	return query.Select("jobs.id"), true, nil
+}
+
+// selectCancellable is cancelCommands as one predicate: every Job whose handler
+// has not started (queued or scheduled, or blocked or paused with no claim held),
+// and a running Job whose registration declares that it may be stopped partway.
+func (a *pluginActionAdapter) selectCancellable(request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || a.ctx == nil || a.ctx.PluginManager() == nil {
+		return emptyCommandSelection(request), true, nil
+	}
+	pm := a.ctx.PluginManager()
+	plugin := jobSummaryTextExpr(request.Deps.DB, "plugin")
+	action := jobSummaryTextExpr(request.Deps.DB, "action")
+	schedule := jobSummaryTextExpr(request.Deps.DB, "scheduleId")
+	subtype := jobSummaryTextExpr(request.Deps.DB, "subtype")
+
+	clauses := []string{
+		"jobs.state IN ?",
+		"(jobs.state IN ? AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?))",
+	}
+	args := []any{
+		[]jobs.State{jobs.StateQueued, jobs.StateScheduled},
+		[]jobs.State{jobs.StateBlocked, jobs.StatePaused},
+		[]string{models.JobClaimStateHeld, models.JobClaimStateQuarantined},
+	}
+	for _, entity := range []string{"resource", "note", "group"} {
+		for _, registered := range pm.GetActions(entity, nil) {
+			if registered.Cancellable {
+				clauses = append(clauses, "(jobs.state = ? AND "+subtype+" = ? AND "+plugin+" = ? AND "+action+" = ?)")
+				args = append(args, jobs.StateRunning, pluginActionSubtypeRegistered, registered.PluginName, registered.ID)
+			}
+		}
+	}
+	for _, declared := range pm.AllDeclaredSchedules() {
+		if declared.Cancellable {
+			clauses = append(clauses, "(jobs.state = ? AND "+subtype+" = ? AND "+plugin+" = ? AND "+schedule+" = ?)")
+			args = append(args, jobs.StateRunning, pluginActionSubtypeScheduled, declared.PluginName, declared.ScheduleID)
+		}
+	}
+	query := request.Jobs.Where("("+strings.Join(clauses, " OR ")+")", args...)
 	if scoped {
 		query = query.Where(pluginScopedAccessPredicate(plugin), true, true)
 	}

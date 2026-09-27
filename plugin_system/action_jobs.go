@@ -81,6 +81,9 @@ type ActionJob struct {
 	// lost records that the host was told this execution's callback can never
 	// finish. Nothing reports for it after that, so it has one outcome.
 	lost bool
+	// pendingStop is a stop asked for before the handler was entered. The
+	// handler is stopped as soon as it is, rather than the request being lost.
+	pendingStop string
 }
 
 // Owner returns the user that submitted the action job, or nil when it was

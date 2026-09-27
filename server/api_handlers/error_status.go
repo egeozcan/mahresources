@@ -50,15 +50,17 @@ func statusCodeForError(err error, fallback int) int {
 	// running" matches nothing in the scan below, so both would fall through to
 	// 500 — an outage's status for an answer that is simply no.
 	//
-	// The last three are 409 rather than 400: the request is well formed and the
+	// The other four are 409 rather than 400: the request is well formed and the
 	// operator asked for something reasonable, and what refuses is the state of
-	// the row. That is the status ErrLastAdmin already uses for the same shape.
+	// the row, or of the plugin and the job budget a run that did not start was
+	// waiting for. That is the status ErrLastAdmin already uses for the same shape.
 	if errors.Is(err, application_context.ErrScheduleNotFound) {
 		return http.StatusNotFound
 	}
 	if errors.Is(err, application_context.ErrScheduleNotDeclared) ||
 		errors.Is(err, application_context.ErrScheduleUnowned) ||
-		errors.Is(err, application_context.ErrScheduleBusy) {
+		errors.Is(err, application_context.ErrScheduleBusy) ||
+		errors.Is(err, application_context.ErrScheduleDidNotStart) {
 		return http.StatusConflict
 	}
 	// A cancel of a deferred download that had already ended. Its wording matches

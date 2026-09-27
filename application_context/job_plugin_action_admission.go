@@ -35,8 +35,14 @@ import (
 // and after it every report goes to the claimed execution's own sink.
 type pluginActionAdmission struct {
 	ctx     *MahresourcesContext
-	jobID   string
 	subtype string
+	// accept, when set, accepts the Job this execution runs at its first
+	// admission rather than before it waited (see acceptAtAdmission). It answers
+	// the Job's id.
+	accept func(bounded context.Context) (string, error)
+	// onAdmitted, when set, is told once the claim is taken: the execution is
+	// about to enter its handler.
+	onAdmitted func()
 	// input is what the execution reports with when its Job stores none: a
 	// closure's input is not replayable, so the claim opens nothing and the
 	// accepting call's own description stands in for it.
@@ -47,7 +53,10 @@ type pluginActionAdmission struct {
 	// nil refusal re-checks nothing.
 	refusal pluginActionRefusalCheck
 
-	mu        sync.Mutex
+	mu sync.Mutex
+	// jobID is the durable Job, or empty until an admission that accepts it at
+	// admission has done so.
+	jobID     string
 	execution jobs.Execution
 	sink      *pluginActionSink
 	// returning is open while a claim this admission gave back is still being
@@ -56,9 +65,10 @@ type pluginActionAdmission struct {
 	// ending is set once this admission has refused or failed the Job under its
 	// own claim. The write that records it runs, and is retried, on its own.
 	ending bool
-	// givenBack counts the claims this admission has given back because the
-	// re-checks under them could not answer, which is what its deferral grows
-	// with (Deferral).
+	// givenBack counts the attempts in a row whose re-checks could not answer:
+	// the claims given back for that, and the attempts after one that found the
+	// checks still unanswered before claiming. Its deferral and its bound grow
+	// with it (Deferral, attemptBound).
 	givenBack int
 }
 
@@ -69,12 +79,59 @@ func (ctx *MahresourcesContext) newPluginActionAdmission(jobID string, input *pl
 	return &pluginActionAdmission{ctx: ctx, jobID: jobID, subtype: input.Subtype, input: input, refusal: refusal}
 }
 
+// acceptAtAdmission makes this admission accept its Job when it is first
+// admitted, through accept, and tells onAdmitted once the claim is taken. It is
+// for a scheduled occurrence: a tick whose plugin, job slot or deployment budget
+// stays busy for the whole dispatch wait is "not this tick" and leaves the row
+// due, and a Job accepted before that wait would be a cancelled Job recorded for
+// every such tick.
+func (a *pluginActionAdmission) acceptAtAdmission(accept func(bounded context.Context) (string, error), onAdmitted func()) {
+	a.accept = accept
+	a.onAdmitted = onAdmitted
+}
+
+// JobID implements plugin_system.HostJobNamer: the durable Job, once there is one.
+func (a *pluginActionAdmission) JobID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.jobID
+}
+
+func (a *pluginActionAdmission) setJobID(jobID string) {
+	a.mu.Lock()
+	a.jobID = jobID
+	a.mu.Unlock()
+}
+
 // hostJobRef is the reference plugin_system is handed for this execution.
 func (a *pluginActionAdmission) hostJobRef(handle, parentJobID string) *plugin_system.HostJobRef {
 	return &plugin_system.HostJobRef{
-		JobID: a.jobID, Handle: handle, ParentJobID: parentJobID,
+		JobID: a.JobID(), Handle: handle, ParentJobID: parentJobID,
 		Sink: a, Admission: a,
 	}
+}
+
+// acceptNow accepts the Job of an admission that accepts it at admission, within
+// bounded. A deployment budget that is already full answers "later" without
+// accepting anything: the Job would only wait and be withdrawn.
+func (a *pluginActionAdmission) acceptNow(bounded context.Context) plugin_system.AdmitResult {
+	deps := a.ctx.jobDeps()
+	if deps.DB != nil {
+		deps.DB = deps.DB.WithContext(bounded)
+	}
+	if err := a.ctx.JobService().CapacityAvailable(deps, a.ctx.hostClaimCapacityBudget()); err != nil {
+		if !errors.Is(err, jobs.ErrCapacityExhausted) {
+			log.Printf("warning: could not read the job budget before accepting a plugin job: %v", err)
+		}
+		return plugin_system.AdmitLater
+	}
+	jobID, err := a.accept(bounded)
+	if err != nil {
+		log.Printf("warning: could not accept a plugin job at its admission: %v", err)
+		return plugin_system.AdmitLater
+	}
+	a.setJobID(jobID)
+	return plugin_system.Admitted
 }
 
 // Admit claims the Job for this execution.
@@ -113,6 +170,18 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	}
 	bounded, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
+	if a.JobID() == "" {
+		if a.accept == nil {
+			return plugin_system.AdmitWithdrawn
+		}
+		if accepted := a.acceptNow(bounded); accepted != plugin_system.Admitted {
+			return accepted
+		}
+	}
+	jobID := a.JobID()
+	if !a.checksAnswerBeforeClaim(bounded, jobID) {
+		return plugin_system.AdmitDeferred
+	}
 
 	var claimed *jobs.Execution
 	defer func() {
@@ -120,7 +189,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 		if r == nil {
 			return
 		}
-		log.Printf("warning: admitting plugin job %s panicked: %v", a.jobID, r)
+		log.Printf("warning: admitting plugin job %s panicked: %v", a.JobID(), r)
 		result = plugin_system.AdmitLater
 		if claimed != nil {
 			execution := *claimed
@@ -133,7 +202,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	}()
 	// The claim is known the moment it commits, so a panic in what follows it
 	// is settled by the recovery above rather than leaving the Job running.
-	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, a.jobID, func(ref jobs.ExecutionRef) {
+	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, jobID, func(ref jobs.ExecutionRef) {
 		claimed = &jobs.Execution{JobID: ref.JobID, ExecutionToken: ref.ExecutionToken}
 	})
 	var unrunnable *jobs.UnrunnableClaimError
@@ -149,7 +218,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	case errors.Is(err, jobs.ErrExecutionNotLoaded):
 		// The sealed input could not be read in time. The admission holds the
 		// same input in memory, as it was sealed or opened, and runs with that.
-		log.Printf("warning: could not read the input of plugin job %s after claiming it; running with the one it was queued with: %v", a.jobID, err)
+		log.Printf("warning: could not read the input of plugin job %s after claiming it; running with the one it was queued with: %v", jobID, err)
 	case errors.Is(err, jobs.ErrCapacityExhausted):
 		return plugin_system.AdmitLater
 	case errors.Is(err, jobs.ErrJobNotWaiting):
@@ -157,7 +226,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	case errors.Is(err, context.DeadlineExceeded):
 		return plugin_system.AdmitLater
 	default:
-		log.Printf("warning: could not claim plugin job %s: %v", a.jobID, err)
+		log.Printf("warning: could not claim plugin job %s: %v", jobID, err)
 		return plugin_system.AdmitLater
 	}
 	claimed = &execution
@@ -172,7 +241,7 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	if a.refusal != nil {
 		reason, err := a.refusal(bounded, execution, input)
 		if err != nil {
-			log.Printf("warning: could not re-check plugin job %s before it runs; giving its claim back: %v", a.jobID, err)
+			log.Printf("warning: could not re-check plugin job %s before it runs; giving its claim back: %v", jobID, err)
 			a.giveBack(execution, stopHeartbeat)
 			return plugin_system.AdmitDeferred
 		}
@@ -185,7 +254,69 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	a.execution = execution
 	a.sink = newPluginActionSink(a.ctx, execution, input)
 	a.mu.Unlock()
+	if a.onAdmitted != nil {
+		a.onAdmitted()
+	}
 	return plugin_system.Admitted
+}
+
+// checksAnswerBeforeClaim reports whether this admission may ask for its claim.
+//
+// Once a claim has been given back because the re-checks under it could not
+// answer, the next attempt asks them first without a claim, and defers again
+// while they still cannot answer. A claim taken for checks that still cannot
+// answer is given straight back, and every such round trip adds a start and a
+// return to the queue to the Job's timeline — host lifecycle events, which no
+// timeline ceiling bounds — so a failure that lasted a day would write thousands.
+// This way a streak of failures costs one round trip. The checks under the claim
+// still decide: an answer here only lets the admission ask for the claim.
+func (a *pluginActionAdmission) checksAnswerBeforeClaim(bounded context.Context, jobID string) bool {
+	a.mu.Lock()
+	givenBack := a.givenBack
+	a.mu.Unlock()
+	if a.refusal == nil || givenBack == 0 {
+		return true
+	}
+	deps := a.ctx.jobDeps()
+	if deps.DB != nil {
+		deps.DB = deps.DB.WithContext(bounded)
+	}
+	snap, err := a.ctx.JobService().Get(deps, jobs.Access{Administrator: true}, jobID)
+	if err == nil {
+		access, known := waitingExecutionAccess(snap)
+		if !known {
+			// The account the Job acts as is gone; the claim blocks it.
+			return true
+		}
+		if _, err = a.refusal(bounded, jobs.Execution{JobID: jobID, Access: access}, a.input); err == nil {
+			return true
+		}
+	}
+	log.Printf("warning: the checks for plugin job %s still cannot answer; waiting before claiming it: %v", jobID, err)
+	a.mu.Lock()
+	a.givenBack++
+	a.mu.Unlock()
+	return false
+}
+
+// waitingExecutionAccess is the principal a waiting Job would run as, read the way
+// a claim reads it (jobs.executionAccess): nobody for host work, its owner or its
+// actor otherwise. It reports false when that account is gone.
+func waitingExecutionAccess(snap jobs.Snapshot) (jobs.Access, bool) {
+	switch snap.ExecutionPrincipal {
+	case jobs.PrincipalHost:
+		return jobs.Access{}, true
+	case jobs.PrincipalOwner:
+		if snap.OwnerUserID == nil {
+			return jobs.Access{}, false
+		}
+		return jobs.Access{UserID: *snap.OwnerUserID}, true
+	default:
+		if snap.ActorUserID == nil {
+			return jobs.Access{}, false
+		}
+		return jobs.Access{UserID: *snap.ActorUserID}, true
+	}
 }
 
 // attemptBound is how long this admission's database work may hold the plugin's
@@ -209,11 +340,12 @@ func (a *pluginActionAdmission) attemptBound() time.Duration {
 }
 
 // Deferral implements plugin_system.HostDeferral: how long the execution stays
-// out of its lane after a claim it gave back. It doubles with each claim given
-// back in a row, from one second to pluginActionGiveBackCap. That is the whole
-// bound on what a re-check that keeps failing costs: at most one claim given
-// back, a start and a return to the queue on the Job's timeline, per interval,
-// which is 30 seconds once the failure has lasted about a minute.
+// out of its lane after an attempt whose re-checks could not answer. It doubles
+// with each such attempt in a row, from one second to pluginActionGiveBackCap.
+// With checksAnswerBeforeClaim that is the whole cost of a re-check that keeps
+// failing: one claim given back — a start and a return to the queue on the Job's
+// timeline — for the streak, and then one attempt per interval that holds the
+// plugin's VM for its bound and writes nothing.
 func (a *pluginActionAdmission) Deferral() time.Duration {
 	a.mu.Lock()
 	givenBack := a.givenBack
@@ -402,9 +534,14 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 	if a.subtype == pluginActionSubtypeRegistered {
 		return
 	}
+	jobID := a.JobID()
+	if jobID == "" {
+		// Accepted at admission, and never admitted: there is no Job.
+		return
+	}
 	a.afterReturn(func() {
-		a.ctx.settlePluginActionWhile(a.jobID, jobs.StateQueued, func() error {
-			return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: a.jobID}, "not-started",
+		a.ctx.settlePluginActionWhile(jobID, jobs.StateQueued, func() error {
+			return a.ctx.withdrawPluginActionJob(jobs.Execution{JobID: jobID}, "not-started",
 				"the process that was going to run this job stopped first")
 		})
 	})

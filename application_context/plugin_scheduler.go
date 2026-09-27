@@ -250,7 +250,7 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		}
 	}
 
-	run := s.runOccurrence(row, reg, actor, !overlapAllows)
+	run := s.runOccurrence(row, reg, actor, !overlapAllows, nil)
 	if !run.Started {
 		// The handler was never entered, so there is nobody to blame and nothing
 		// to record: the honest outcome is "not this tick", and the row gets its
@@ -286,20 +286,21 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 // runOccurrence runs one claimed schedule's handler and answers what happened to
 // it.
 //
-// Two executors, one policy. With a control plane installed the occurrence is
-// first *materialized* as a durable Job — accepted, then claimed by this very
-// process, then dispatched through the plugin-action adapter — so the run has a
-// durable identity, a fenced outcome and a place in the Job Center. Without one
-// the inline run stands alone, which is what the CLI, a bare embedder and this
-// package's own scheduler tests get.
+// Two executors, one policy. With a control plane installed the occurrence runs as
+// a durable Job — accepted and claimed by this very process when it is admitted,
+// and run through the plugin-action adapter — so the run has a durable identity, a
+// fenced outcome and a place in the Job Center. Without one the inline run stands
+// alone, which is what the CLI, a bare embedder and this package's own scheduler
+// tests get.
 //
 // The wait and the holdClaim policy are the scheduler's own either way: they are
 // why the row's claim is held for the whole run under "skip", and moving them
 // into the executor would make the claim and the execution two different
-// lifetimes.
-func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool) pluginActionRun {
+// lifetimes. onAdmitted, when set, is told the moment the occurrence is admitted
+// to run; the inline run tells it before it starts, since nothing there admits.
+func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, onAdmitted func()) pluginActionRun {
 	if s.ctx != nil && s.ctx.JobService() != nil {
-		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait)
+		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, onAdmitted)
 		if err != nil {
 			// The Job could not be materialized at all. The row is given back
 			// rather than reported as a failed run: nothing was executed, and the
@@ -314,6 +315,9 @@ func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_sy
 	pm := s.ctx.PluginManager()
 	if pm == nil {
 		return pluginActionRun{}
+	}
+	if onAdmitted != nil {
+		onAdmitted()
 	}
 	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, holdClaim)
 	if !ran {
@@ -345,14 +349,17 @@ func scheduleOutcomeMessage(runErr error) string {
 }
 
 // RunNow executes one schedule immediately, on an operator's say-so, and returns
-// as soon as the run has started rather than when it has finished.
+// as soon as the run has started rather than when it has finished — or, when it
+// could not start, says so.
 //
-// Returning early is not a shortcut. RunSchedule blocks for the whole run, which
-// may be the full MaxAsyncJobDuration, and an HTTP request must not be held open
-// for that. What the caller actually needs to know is whether the run *started*,
-// and the claim answers that synchronously: past the claim the run is going to
-// happen, and its progress and outcome are already reported the way every other
-// plugin job's are, through the action_* events the jobs panel subscribes to.
+// Returning at the start is not a shortcut. RunSchedule blocks for the whole run,
+// which may be the full MaxAsyncJobDuration, and an HTTP request must not be held
+// open for that. What the caller actually needs to know is whether the run
+// *started*, and that is known within the dispatch wait: the occurrence is either
+// admitted — its plugin, a job slot and the deployment's budget all free — or it
+// gives up. The claim alone does not answer it, and answering "started" there told
+// an operator a run had begun that then never did. Past the admission its progress
+// and outcome are reported the way every other plugin job's are.
 //
 // The run goes on the same WaitGroup a ticked run does, so Stop drains a manual
 // run too. Without that, a run started from the page and abandoned at exit would
@@ -398,14 +405,32 @@ func (s *PluginScheduler) RunNow(pluginName, scheduleID string) error {
 		return fmt.Errorf("%w: %s/%s", ErrScheduleBusy, pluginName, scheduleID)
 	}
 
+	decided := make(chan bool, 1)
 	s.runs.Add(1)
 	go func(row models.PluginSchedule, token string) {
 		defer s.runs.Done()
-		s.dispatchManual(row, token)
+		s.dispatchManual(row, token, decided)
 	}(*row, token)
 
-	return nil
+	select {
+	case started := <-decided:
+		if !started {
+			return fmt.Errorf("%w: %s/%s did not start because its plugin or the deployment's job budget "+
+				"stayed busy for %s; try again", ErrScheduleDidNotStart, pluginName, scheduleID, s.dispatchWait)
+		}
+		return nil
+	case <-time.After(s.dispatchWait + runNowAnswerMargin):
+		// Every way out of the dispatch wait decides, so this is a run that is
+		// still getting under way; it reports itself through its Job.
+		log.Printf("[plugin] schedule %s/%s was asked to run now and had not started after %s",
+			pluginName, scheduleID, s.dispatchWait+runNowAnswerMargin)
+		return nil
+	}
 }
+
+// runNowAnswerMargin is how much longer than the dispatch wait RunNow waits to
+// learn whether a run started, for the writes that follow the wait.
+const runNowAnswerMargin = 5 * time.Second
 
 // dispatchManual runs one claimed schedule that an operator asked for, and does
 // the bookkeeping a manual run needs rather than the bookkeeping a tick needs.
@@ -420,42 +445,45 @@ func (s *PluginScheduler) RunNow(pluginName, scheduleID string) error {
 //     there is no advance for "allow" to release early. holdClaim is true, which
 //     keeps the VM wait bounded and keeps ScheduleClaimTTL an honest bound on
 //     this path as well as on the ticked one.
-func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string) {
+//
+// decided is told, once, whether the run started: when it is admitted, or when it
+// gives up. It is buffered, so a caller that has stopped listening does not hold
+// the run.
+func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string, decided chan<- bool) {
+	var once sync.Once
+	decide := func(started bool) {
+		once.Do(func() {
+			if decided != nil {
+				decided <- started
+			}
+		})
+	}
 	pm := s.ctx.PluginManager()
 	if pm == nil {
+		decide(false)
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		return
 	}
 	reg, found := s.scheduleRegistration(row)
 	if !found {
-		// Disabled between RunNow's check and here. Logged for the same reason
-		// the !ran branch below is: an operator has already been told this
-		// started, and nothing will retry it.
-		log.Printf("[plugin] schedule %s/%s was asked to run now but the plugin stopped "+
-			"declaring it before the run began", row.PluginName, row.ScheduleID)
+		// Disabled between RunNow's check and here.
+		decide(false)
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		return
 	}
 
-	run := s.runOccurrence(row, reg, scheduleActor(row), true)
+	run := s.runOccurrence(row, reg, scheduleActor(row), true, func() { decide(true) })
 	if !run.Started {
 		// The handler was never entered, so there is no outcome to record — the
 		// same "not this tick" a full job budget or a busy VM gives a ticked run.
 		// Recording a failure here would blame the plugin for a run it did not
-		// have, which is what errJobDidNotStart exists to prevent.
-		//
-		// Logged, unlike the ticked path, and the difference is who is waiting. A
-		// tick that gives up is retried by the next tick a few seconds later, so
-		// there is nothing to tell anyone. Here an operator has already been told
-		// the run started, the job card appears and vanishes, the row gains no
-		// history, and nothing will retry it — so this line is the only trace
-		// that the request went nowhere.
-		log.Printf("[plugin] schedule %s/%s was asked to run now but never started: "+
-			"the job budget or the plugin's VM stayed busy for the whole %s dispatch wait",
-			row.PluginName, row.ScheduleID, s.dispatchWait)
+		// have, which is what errJobDidNotStart exists to prevent. The operator
+		// is told it did not start, which is the answer RunNow is waiting for.
+		decide(false)
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		return
 	}
+	decide(true)
 
 	status, message := scheduleRunOutcome(run)
 	// Record first, release second. While the claim is held nothing else can run

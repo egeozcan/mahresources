@@ -223,6 +223,8 @@ function init()
                  handler = leaky_work })
     mah.action({ id = "long-work", label = "Long Work", entity = "resource", async = true,
                  handler = long_work })
+    mah.action({ id = "cancellable-work", label = "Cancellable Work", entity = "resource", async = true,
+                 cancel = true, handler = long_work })
     mah.action({ id = "erroring-work", label = "Erroring Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = erroring_work })

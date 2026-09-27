@@ -64,6 +64,10 @@ var (
 	ErrScheduleNotDeclared = errors.New("the plugin does not currently declare this schedule")
 	ErrScheduleUnowned     = errors.New("this schedule has stopped because it has no owner")
 	ErrScheduleBusy        = errors.New("this schedule is already running")
+	// ErrScheduleDidNotStart is a run asked for now that could not start within
+	// the dispatch wait: its plugin, a job slot or the deployment's job budget
+	// stayed busy. Nothing ran and nothing was recorded.
+	ErrScheduleDidNotStart = errors.New("the schedule did not start")
 )
 
 // ClaimPluginSchedule takes a due schedule's run slot, and reports whether it

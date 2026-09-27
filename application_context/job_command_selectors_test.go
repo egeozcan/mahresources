@@ -194,7 +194,7 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 	seed(JobKindSimilarityRecompute, jobMaintenanceKindVersion, jobs.StateFailed, ownerID, maintenanceJobInputJSON())
 	seed(JobKindSimilarityRecompute, jobMaintenanceKindVersion, jobs.StateQueued, ownerID, maintenanceJobInputJSON())
 
-	seedPlugin := func(subtype, action, schedule string, owner *uint, replayable bool) jobs.Snapshot {
+	seedPluginIn := func(state jobs.State, subtype, action, schedule string, owner *uint, replayable bool) jobs.Snapshot {
 		t.Helper()
 		input, err := json.Marshal(pluginActionJobInput{
 			Subtype: subtype, Plugin: pluginActionTestPlugin, Action: action, ScheduleID: schedule,
@@ -215,10 +215,33 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 			acceptance.Summary = pluginActionSummaryOf(input)
 		}
 		snap := acceptJobFor(t, ctx, acceptance)
-		if err := ctx.db.Model(&models.Job{}).Where("id = ?", snap.ID).Update("state", jobs.StateFailed).Error; err != nil {
-			t.Fatalf("set plugin action failed: %v", err)
+		if state != jobs.StateQueued {
+			if err := ctx.db.Model(&models.Job{}).Where("id = ?", snap.ID).Update("state", state).Error; err != nil {
+				t.Fatalf("set plugin action %s: %v", state, err)
+			}
 		}
 		return snap
+	}
+	seedPlugin := func(subtype, action, schedule string, owner *uint, replayable bool) jobs.Snapshot {
+		t.Helper()
+		return seedPluginIn(jobs.StateFailed, subtype, action, schedule, owner, replayable)
+	}
+	// Cancel: every Job whose handler has not started, a running one only where
+	// its registration declares it may be stopped, and never a blocked one whose
+	// claim is still held.
+	seedPluginIn(jobs.StateQueued, pluginActionSubtypeRegistered, "async-work", "", ownerID, true)
+	seedPluginIn(jobs.StateQueued, pluginActionSubtypeClosure, "", "", ownerID, false)
+	seedPluginIn(jobs.StateRunning, pluginActionSubtypeRegistered, "cancellable-work", "", ownerID, true)
+	seedPluginIn(jobs.StateRunning, pluginActionSubtypeRegistered, "long-work", "", ownerID, true)
+	seedPluginIn(jobs.StateRunning, pluginActionSubtypeClosure, "", "", ownerID, false)
+	seedPluginIn(jobs.StateBlocked, pluginActionSubtypeRegistered, "long-work", "", ownerID, true)
+	quarantined := seedPluginIn(jobs.StateBlocked, pluginActionSubtypeRegistered, "cancellable-work", "", ownerID, true)
+	if err := ctx.db.Create(&models.JobClaim{
+		JobID: quarantined.ID, ExecutionToken: "selector-quarantine", Claimant: "another-host/boot/1",
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
+		State: models.JobClaimStateQuarantined, ClaimedAt: time.Now(), HeartbeatAt: time.Now(), LeaseExpiresAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("seed a quarantined claim: %v", err)
 	}
 	seedPlugin(pluginActionSubtypeRegistered, "retryable-work", "", ownerID, true)
 	seedPlugin(pluginActionSubtypeRegistered, "failing-work", "", ownerID, true)

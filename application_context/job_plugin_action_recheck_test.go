@@ -346,17 +346,19 @@ func TestAReCheckThatKeepsFailingBacksOff(t *testing.T) {
 	waitForJobState(t, ctx, other.ID, "the plugin's other work to run behind a failing re-check", func(s jobs.Snapshot) bool {
 		return s.State == jobs.StateSucceeded
 	})
-	waitFor(t, "three claims whose re-check failed", func() bool { return stall.hits.Load() >= 3 })
+	waitFor(t, "three attempts whose re-check failed", func() bool { return stall.hits.Load() >= 3 })
 	times := stall.hitTimes()
 	if gap := times[1].Sub(times[0]); gap < 900*time.Millisecond {
-		t.Fatalf("the second claim came %v after the first give-back, want a deferral of about a second", gap)
+		t.Fatalf("the second attempt came %v after the first give-back, want a deferral of about a second", gap)
 	}
 	if gap := times[2].Sub(times[1]); gap < 1800*time.Millisecond {
-		t.Fatalf("the third claim came %v after the second, want the deferral doubled", gap)
+		t.Fatalf("the third attempt came %v after the second, want the deferral doubled", gap)
 	}
-	started := countTimelineEvents(t, ctx, stuck.ID, jobs.EventStarted)
-	if hits := int(stall.hits.Load()); started != hits {
-		t.Fatalf("the Job was started %d times for %d claims: a start that was not a claim, or a claim that was not given back", started, hits)
+	// Only the first attempt took a claim: the later ones asked the checks first
+	// and found them still unanswered, so the streak wrote one start and one
+	// return to the queue, not one pair per attempt.
+	if started := countTimelineEvents(t, ctx, stuck.ID, jobs.EventStarted); started != 1 {
+		t.Fatalf("the Job was started %d times over %d failed attempts, want once", started, stall.hits.Load())
 	}
 	if got := pluginKVForTest(t, ctx, "ran"); got != "1" {
 		t.Fatalf("the handler ran %q times while one Job's re-check failed, want only the other Job's run", got)
