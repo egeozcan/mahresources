@@ -271,8 +271,8 @@ func canonicalJobFilterQueryParams() []openapi.QueryParam {
 		{Name: "actorId", Type: "integer", Description: "Filter by actor user ID."},
 		{Name: "acceptedAfter", Type: "string", Description: "Inclusive lower bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the start of that day, minute or second."},
 		{Name: "acceptedBefore", Type: "string", Description: "Inclusive upper bound: an RFC3339 instant, or a server-local YYYY-MM-DD, YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS meaning the end of that day, minute or second."},
-		{Name: "pinned", Type: "boolean", Description: "Filter this viewer's pin state."},
-		{Name: "dismissed", Type: "boolean", Description: "Filter this viewer's dismissal state."},
+		{Name: "pinned", Type: "string", Enum: []string{"true", "false", "any"}, Description: "Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter."},
+		{Name: "dismissed", Type: "string", Enum: []string{"true", "false", "any"}, Description: "Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter."},
 		{Name: "command", Type: "string", Description: "Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation."},
 	}
 }

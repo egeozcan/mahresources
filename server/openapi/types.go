@@ -99,8 +99,10 @@ type QueryParam struct {
 	Description string
 	Type        string // "string", "integer", "boolean", "array"
 	ItemType    string // For arrays, the type of items
-	Required    bool
-	Default     interface{}
+	// Enum lists the only values a string parameter accepts.
+	Enum     []string
+	Required bool
+	Default  interface{}
 }
 
 // HeaderParam represents one explicit request header.

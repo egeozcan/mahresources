@@ -6076,16 +6076,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command
@@ -7775,16 +7783,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command
@@ -7900,16 +7916,24 @@ paths:
                   name: acceptedBefore
                   schema:
                     type: string
-                - description: Filter this viewer's pin state.
+                - description: Filter this viewer's pin state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: pinned
                   schema:
-                    type: boolean
-                - description: Filter this viewer's dismissal state.
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
+                - description: Filter this viewer's dismissal state. `any`, like omitting the parameter, applies no filter.
                   in: query
                   name: dismissed
                   schema:
-                    type: boolean
+                    enum:
+                        - "true"
+                        - "false"
+                        - any
+                    type: string
                 - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
                   in: query
                   name: command

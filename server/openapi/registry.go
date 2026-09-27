@@ -233,7 +233,11 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 
 		switch param.Type {
 		case "string":
-			p.Schema = openapi3.NewSchemaRef("", openapi3.NewStringSchema())
+			schema := openapi3.NewStringSchema()
+			for _, value := range param.Enum {
+				schema.Enum = append(schema.Enum, value)
+			}
+			p.Schema = openapi3.NewSchemaRef("", schema)
 		case "integer":
 			p.Schema = openapi3.NewSchemaRef("", openapi3.NewIntegerSchema())
 		case "boolean":
