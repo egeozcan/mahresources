@@ -60,6 +60,8 @@ end)
 
 An **after hook runs once the change is durable** -- after the transaction that made it has committed. A bulk delete of fifty notes commits, then fires fifty `after_note_delete` hooks; if the transaction rolls back, none of them fire. This means a write your after hook makes through `mah.db` is an ordinary write, not one contending with a transaction that is still open.
 
+For `after_resource_create` this also means the new Resource is already visible to other uploads. An upload of the same content that arrives while your hook runs is answered with this Resource as a [duplicate](../concepts/resources.md#duplicate-detection). If your hook then deletes it, that other upload's answer names a Resource that no longer exists.
+
 A **before hook can veto, and a veto means the change does not happen.** On a bulk operation that covers the whole batch: aborting the deletion of one resource in a selection of fifty leaves all fifty in place, and aborting the deletion of one merge loser rolls the entire merge back.
 
 :::warning Writing to the database from a before hook

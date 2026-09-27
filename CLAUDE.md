@@ -282,7 +282,16 @@ commit and the unlink and reused the file about to go. The four version writers
 (upload, rotate, crop, trim) do not take that lock, so the second gap stays open
 for them. `AddResource` releases the lock at its commit, before its synchronous
 after-create hooks: a hook that deletes a resource over those bytes, or uploads
-them again, would otherwise wait on its own upload forever. `resource_upload_scope_test.go` and its `_pg` twin pin all of this.
+them again, would otherwise wait on its own upload forever. **The consequence is
+accepted dedup semantics, not a defect:** an upload of the same bytes that runs
+while those hooks run is answered with the committed row (the collision branches
+merge onto it or report it), and if a hook then deletes that row, the second
+upload's answer names a resource that no longer exists. That is the outcome of
+deduplicating onto any resource that is deleted a moment later, which dedup has
+always allowed; the state stays consistent, because the removal counts under the
+lock and so never leaves a row without its file or a file without a row. Holding
+the lock across the hooks instead would run arbitrary plugin code inside the dedup
+critical section and deadlock the hooks above. `resource_upload_scope_test.go` and its `_pg` twin pin all of this.
 
 **The collision branches validate their association ids *inside* their
 transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
