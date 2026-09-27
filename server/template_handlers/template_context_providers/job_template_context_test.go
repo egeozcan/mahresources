@@ -1,6 +1,7 @@
 package template_context_providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -636,6 +637,53 @@ func TestTheOwnerSelectAsksForOneOwnerChoice(t *testing.T) {
 		}
 		if form := ctx["jobFilter"].(JobFilterForm); form.Owner != c.shown {
 			t.Fatalf("%s shows the Owner select as %q, want %q", c.target, form.Owner, c.shown)
+		}
+	}
+}
+
+// TestJobSummaryReadsAsFieldsNotJSON pins how a card shows a structured summary:
+// each field under a label in words, in the order the Kind wrote them, with a
+// list's items joined, a flag as yes or no, and a nested object as its own
+// pairs, never the JSON text with its braces and quotes.
+func TestJobSummaryReadsAsFieldsNotJSON(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		text string
+		want []JobSummaryField
+	}{
+		{
+			raw: `{"scheme":"http","host":"127.0.0.1:18900","targets":["owner:1","group:4"]}`,
+			want: []JobSummaryField{
+				{Label: "Scheme", Value: "http"}, {Label: "Host", Value: "127.0.0.1:18900"},
+				{Label: "Targets", Value: "owner:1, group:4"},
+			},
+		},
+		{
+			raw: `{"subtype":"action","plugin":"demo","entityId":12,"entityType":"resource","cancellable":true}`,
+			want: []JobSummaryField{
+				{Label: "Subtype", Value: "action"}, {Label: "Plugin", Value: "demo"},
+				{Label: "Entity ID", Value: "12"}, {Label: "Entity type", Value: "resource"}, {Label: "Cancellable", Value: "yes"},
+			},
+		},
+		{
+			raw: `{"rootGroups":[2,3],"subtree":false,"relatedM2M":true,"missing":null}`,
+			want: []JobSummaryField{
+				{Label: "Root groups", Value: "2, 3"}, {Label: "Subtree", Value: "no"}, {Label: "Related M2M", Value: "yes"},
+			},
+		},
+		{
+			raw: `{"format":"csv","filter":{"kind":["remote-download"],"state":["failed","blocked"]}}`,
+			want: []JobSummaryField{
+				{Label: "Format", Value: "csv"}, {Label: "Filter", Value: "kind: remote-download; state: failed, blocked"},
+			},
+		},
+		{raw: `"a sentence the Kind wrote"`, text: "a sentence the Kind wrote"},
+		{raw: `null`},
+		{raw: ``},
+	} {
+		text, fields := jobSummaryPresentation(json.RawMessage(tc.raw))
+		if text != tc.text || !slices.Equal(fields, tc.want) {
+			t.Errorf("summary %s = %q %v, want %q %v", tc.raw, text, fields, tc.text, tc.want)
 		}
 	}
 }

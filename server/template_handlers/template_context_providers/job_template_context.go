@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
@@ -79,10 +80,13 @@ type JobRow struct {
 	State      string
 	StateLabel string
 	// BadgeClass is the badge colour the state's tone takes (jobRowBadgeClasses).
-	BadgeClass     string
-	Phase          string
-	Pinned         bool
+	BadgeClass string
+	Phase      string
+	Pinned     bool
+	// SummaryText is a summary the Kind wrote as one sentence; SummaryFields is
+	// one it wrote as fields (jobSummaryPresentation).
 	SummaryText    string
+	SummaryFields  []JobSummaryField
 	FailureMessage string
 	Accepted       JobRowTime
 	// Started and Finished are pre-formatted because a nil *time.Time is truthy
@@ -693,11 +697,12 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobRowBadgeClasses[presentation.Tone],
 		Phase: snapshot.Phase, Pinned: snapshot.Pinned,
-		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
-		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
+		Accepted: jobRowTime(&snapshot.AcceptedAt),
+		Started:  jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
 		Progress:  jobRowProgress(snapshot),
 		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
 	}
+	row.SummaryText, row.SummaryFields = jobSummaryPresentation(snapshot.Summary)
 	if jobIsPartial(snapshot) {
 		// The badge already says it; the raw phase beside it would say it twice.
 		row.Phase = ""
@@ -752,22 +757,133 @@ var jobRowBadgeClasses = map[string]string{
 	"neutral": "card-badge--muted",
 }
 
-// jobSummaryText shows a Job's structured summary: a JSON string as its text,
-// anything else as compact JSON.
-func jobSummaryText(raw json.RawMessage) string {
+// JobSummaryField is one field of a Job's summary as a card lists it.
+type JobSummaryField struct {
+	Label string
+	Value string
+}
+
+// jobSummaryPresentation reads a Job's summary for a card. A summary the Kind
+// wrote as a string is shown as that sentence. One written as an object is
+// listed field by field, in the Kind's order, each under its key in words; its
+// JSON text, braces and quotes and all, is notation nobody should have to read.
+// A list's items are joined, a flag reads yes or no, a nested object reads as
+// its own key: value pairs, and a null field is left out.
+func jobSummaryPresentation(raw json.RawMessage) (string, []JobSummaryField) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return ""
+		return "", nil
 	}
 	var text string
 	if err := json.Unmarshal(trimmed, &text); err == nil {
-		return text
+		return text, nil
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, trimmed); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		// Not an object: the whole value is one field.
+		var value any
+		if err := decodeJSONValue(json.NewDecoder(bytes.NewReader(trimmed)), &value); err != nil {
+			return "", nil
+		}
+		if shown := jobSummaryValue(value); shown != "" {
+			return "", []JobSummaryField{{Label: "Summary", Value: shown}}
+		}
+		return "", nil
+	}
+	var fields []JobSummaryField
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", nil
+		}
+		key, _ := token.(string)
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return "", nil
+		}
+		if shown := jobSummaryValue(value); shown != "" {
+			fields = append(fields, JobSummaryField{Label: jobSummaryLabel(key), Value: shown})
+		}
+	}
+	return "", fields
+}
+
+func decodeJSONValue(decoder *json.Decoder, value *any) error {
+	decoder.UseNumber()
+	return decoder.Decode(value)
+}
+
+// jobSummaryValue is one summary value as text, or "" for nothing to show. A
+// nested object's keys stay as written: they are a sub-document's own names,
+// such as a list filter's parameters, and sorted, since the order is lost.
+func jobSummaryValue(value any) string {
+	switch typed := value.(type) {
+	case nil:
 		return ""
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case bool:
+		if typed {
+			return "yes"
+		}
+		return "no"
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if shown := jobSummaryValue(item); shown != "" {
+				parts = append(parts, shown)
+			}
+		}
+		return strings.Join(parts, ", ")
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			if shown := jobSummaryValue(typed[key]); shown != "" {
+				parts = append(parts, key+": "+shown)
+			}
+		}
+		return strings.Join(parts, "; ")
 	}
-	return compact.String()
+	return fmt.Sprint(value)
+}
+
+// jobSummaryLabel is a summary key in words: a camelCase key split at each
+// capital that follows a lower-case letter, the first word capitalised, an
+// all-capital or numbered word (M2M) kept as written and Id written ID.
+func jobSummaryLabel(key string) string {
+	var words []string
+	start := 0
+	runes := []rune(key)
+	for i := 1; i < len(runes); i++ {
+		if unicode.IsUpper(runes[i]) && unicode.IsLower(runes[i-1]) {
+			words = append(words, string(runes[start:i]))
+			start = i
+		}
+	}
+	words = append(words, string(runes[start:]))
+	for i, word := range words {
+		switch {
+		case word == "Id" || word == "id":
+			words[i] = "ID"
+		case strings.ToUpper(word) == word:
+		default:
+			words[i] = strings.ToLower(word)
+		}
+	}
+	if len(words) > 0 && words[0] != "" {
+		first := []rune(words[0])
+		first[0] = unicode.ToUpper(first[0])
+		words[0] = string(first)
+	}
+	return strings.Join(words, " ")
 }
 
 // jobRowProgress mirrors the progress rules the detail page and the panel use.
