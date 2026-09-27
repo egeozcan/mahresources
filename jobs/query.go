@@ -236,21 +236,28 @@ func listBranches(filter Filter) []Filter {
 }
 
 // orderedBranches is the filter as a listing in the given order reads it. In
-// state-entered order a filter of several states is read as one branch per
-// state, merged by the keyset: each branch is a seek on an index that leads
-// with the state and is ordered by state_entered_at (job_filter_indexes.go),
-// so a page costs its own size whatever the table holds. As one IN predicate
-// the planner has two ways to read it and both are slow at scale: sort every
-// match (a million succeeded Jobs, to show ten), or walk the whole ordering
-// filtering by state (every Job, to find three old failures).
+// state-entered order a filter of several states, or of none, is read as one
+// branch per state, merged by the keyset: each branch is a seek on an index
+// that leads with the state and is ordered by state_entered_at
+// (job_filter_indexes.go), so a page costs its own size whatever the table
+// holds. As one IN predicate the planner has two ways to read it and both are
+// slow at scale: sort every match (a million succeeded Jobs, to show ten), or
+// walk the whole ordering filtering by state (every Job, to find three old
+// failures). A filter with no state at all would sort the whole table.
 func orderedBranches(filter Filter, order ListOrder) []Filter {
 	branches := listBranches(filter)
-	if order != OrderStateEntered || len(branches) != 1 || len(filter.States) < 2 || slices.Contains(filter.States, FilterStatePartial) {
+	if order != OrderStateEntered || len(branches) != 1 || len(filter.States) == 1 || slices.Contains(filter.States, FilterStatePartial) {
 		return branches
 	}
-	split := make([]Filter, 0, len(filter.States))
-	seen := make(map[string]bool, len(filter.States))
-	for _, state := range filter.States {
+	states := filter.States
+	if len(states) == 0 {
+		for _, state := range AllStates {
+			states = append(states, string(state))
+		}
+	}
+	split := make([]Filter, 0, len(states))
+	seen := make(map[string]bool, len(states))
+	for _, state := range states {
 		if seen[state] {
 			continue
 		}

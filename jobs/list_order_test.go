@@ -109,5 +109,31 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 2 || strings.Contains(plan, "SCAN jobs") {
 			t.Errorf("the %s's state-entered page does not seek %s once per state:\n%s", tc.name, tc.index, plan)
 		}
+		// No state filter is every state, one seek each, rather than a sort of
+		// the whole table.
+		sql, vars = listRowsStatement(t, svc, deps, tc.access, Filter{}, true, Cursor{Order: OrderStateEntered})
+		plan = explainSQLite(t, deps, sql, vars)
+		if strings.Count(plan, "USING INDEX "+tc.index+" (") != len(AllStates) || strings.Contains(plan, "SCAN jobs") {
+			t.Errorf("the %s's unfiltered state-entered page does not seek %s once per state:\n%s", tc.name, tc.index, plan)
+		}
 	}
+}
+
+// TestStateEnteredOrderWithoutAStateListsEveryJobOnce pages an unfiltered
+// listing in state-entered order: every state is its own branch, and the pages
+// hold every Job once, newest state change first.
+func TestStateEnteredOrderWithoutAStateListsEveryJobOnce(t *testing.T) {
+	svc, deps, long, quick := stateEnteredFixture(t)
+	admin := Access{UserID: 1, Administrator: true}
+	var seen []string
+	cursor := Cursor{Order: OrderStateEntered}
+	for page := 0; page < 5; page++ {
+		listed := listFor(t, svc, deps, admin, Filter{}, cursor, 2)
+		seen = append(seen, pageIDs(listed)...)
+		if listed.Next == nil {
+			break
+		}
+		cursor = *listed.Next
+	}
+	requireIDs(t, "every Job", seen, long.ID, quick[3].ID, quick[2].ID, quick[1].ID, quick[0].ID)
 }

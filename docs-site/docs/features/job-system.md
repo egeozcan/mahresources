@@ -420,9 +420,10 @@ hold input that has not been saved. Reloading is still the right next step: a
 form rendered from the other database can name ids the new one has given to
 different entities.
 
-Two limits are known. A reset reveals the highest sequence the database has
-issued, which every event id a viewer receives already approximates, since
-delivery sequences are shared by every account. And a restored database is
+Two limits are known. A reset, and a stream started with `start=head`, reveal
+the highest sequence the database has issued, which every event id a viewer
+receives already approximates, since delivery sequences are shared by every
+account. And a restored database is
 detected only while its sequence is below the tab's cursor: once it has
 published past that cursor, a tab resuming from it skips the events in between.
 A generation stored in the database cannot close this, because a restore
