@@ -432,7 +432,10 @@ type MahresourcesContext struct {
 	db *gorm.DB
 	// the db readonly connection to the main db
 	readOnlyDB *sqlx.DB
-	Config     *MahresourcesConfig
+	// ephemeralDB is the scratch file behind -memory-db, released at shutdown by
+	// ReleaseEphemeralDatabase; nil for every other database.
+	ephemeralDB *ephemeralDatabase
+	Config      *MahresourcesConfig
 	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
 	// groupio owns group import/export. Safe as a field because it holds only
@@ -1666,18 +1669,26 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		}
 	}
 
+	// ephemeralPath is the scratch file behind -memory-db. Until the context that
+	// owns it is returned, a failed start deletes it here.
+	ephemeralPath := ""
+	opened := false
+	defer func() {
+		if ephemeralPath != "" && !opened {
+			_ = removeEphemeralDatabaseFiles(ephemeralPath)
+		}
+	}()
+
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
-		// Use a per-process temp file with WAL mode for better concurrent write handling.
-		// Including the PID ensures multiple ephemeral instances don't share the same file.
-		ephemeralPath := fmt.Sprintf("/tmp/mahresources_ephemeral_%d.db", os.Getpid())
+		// A temp file in WAL mode rather than :memory:, for concurrent writers.
+		path, err := createEphemeralDatabase()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ephemeralPath = path
 		dbDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", ephemeralPath)
 		readOnlyDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&mode=ro", ephemeralPath)
-
-		// Remove any existing temp database files for this PID
-		os.Remove(ephemeralPath)
-		os.Remove(ephemeralPath + "-wal")
-		os.Remove(ephemeralPath + "-shm")
 
 		if cfg.SeedDB != "" {
 			// Copy seed database to temp location
@@ -1889,6 +1900,10 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 	resolvedConfig.PluginCommandOutputRetention = cfg.PluginCommandOutputRetention
 	resolvedConfig.PluginCommandStagingTemporary = cfg.PluginCommandStagingTemporary
 	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, resolvedConfig)
+	if ephemeralPath != "" {
+		mahContext.ephemeralDB = &ephemeralDatabase{path: ephemeralPath}
+	}
+	opened = true
 
 	// The slow-query logger exists before the context does, so its
 	// application-log sink can only be attached now.

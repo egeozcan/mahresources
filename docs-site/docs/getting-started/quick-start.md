@@ -8,7 +8,7 @@ Get up and running in under a minute.
 
 ## Ephemeral Mode (Try It Out)
 
-Ephemeral mode uses transient storage. Uploaded files stay in memory and are lost when the server stops, and the SQLite database is a scratch file at `/tmp/mahresources_ephemeral_<pid>.db` that is never read again after the process exits (it is deleted at the start of the next run that reuses that PID, not at shutdown).
+Ephemeral mode uses transient storage. Uploaded files stay in memory and are lost when the server stops, and the SQLite database is a scratch file named `mahresources_ephemeral_<pid>_<random>.db` in the system temp directory (`$TMPDIR`, or `/tmp` when it is unset). The server deletes it, with its `-wal` and `-shm` files, on a graceful shutdown (SIGINT or SIGTERM). A server that was killed cannot, so on Linux and macOS every ephemeral start deletes the files of processes that are no longer running, in the temp directory and in `/tmp`.
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8181

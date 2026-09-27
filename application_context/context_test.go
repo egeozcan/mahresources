@@ -209,11 +209,6 @@ func TestCreateContextWithConfig_SeedDBWithMemoryDB(t *testing.T) {
 	}
 	db.Close()
 
-	// Clean up any existing ephemeral DB
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
-
 	cfg := &MahresourcesInputConfig{
 		SeedDB:       seedPath,
 		MemoryDB:     true,
@@ -227,6 +222,7 @@ func TestCreateContextWithConfig_SeedDBWithMemoryDB(t *testing.T) {
 	if ctx == nil {
 		t.Fatal("Expected context to be created, got nil")
 	}
+	t.Cleanup(func() { _ = ctx.ReleaseEphemeralDatabase() })
 
 	// Verify the seeded data exists
 	var count int64
@@ -238,10 +234,6 @@ func TestCreateContextWithConfig_SeedDBWithMemoryDB(t *testing.T) {
 		t.Errorf("Expected 1 seeded tag, got %d", count)
 	}
 
-	// Clean up
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
 }
 
 func TestCreateContextWithConfig_SeedFSRequiresOverlay(t *testing.T) {
@@ -353,11 +345,6 @@ func TestCreateContextWithConfig_SeedFSWithMemoryFS(t *testing.T) {
 		t.Fatalf("Failed to create seed file: %v", err)
 	}
 
-	// Clean up any existing ephemeral DB
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
-
 	cfg := &MahresourcesInputConfig{
 		SeedFS:   filesDir,
 		MemoryDB: true,
@@ -370,6 +357,7 @@ func TestCreateContextWithConfig_SeedFSWithMemoryFS(t *testing.T) {
 	if ctx == nil {
 		t.Fatal("Expected context to be created, got nil")
 	}
+	t.Cleanup(func() { _ = ctx.ReleaseEphemeralDatabase() })
 
 	// Verify we can read the seeded file
 	content, err := afero.ReadFile(fs, "test.txt")
@@ -394,10 +382,6 @@ func TestCreateContextWithConfig_SeedFSWithMemoryFS(t *testing.T) {
 		t.Error("Original file was modified by write operation")
 	}
 
-	// Clean up
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
 }
 
 func TestCreateContextWithConfig_SeedFSWithDiskOverlay(t *testing.T) {
@@ -423,11 +407,6 @@ func TestCreateContextWithConfig_SeedFSWithDiskOverlay(t *testing.T) {
 		t.Fatalf("Failed to create seed file: %v", err)
 	}
 
-	// Clean up any existing ephemeral DB
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
-
 	cfg := &MahresourcesInputConfig{
 		SeedFS:       seedDir,
 		FileSavePath: overlayDir,
@@ -440,6 +419,7 @@ func TestCreateContextWithConfig_SeedFSWithDiskOverlay(t *testing.T) {
 	if ctx == nil {
 		t.Fatal("Expected context to be created, got nil")
 	}
+	t.Cleanup(func() { _ = ctx.ReleaseEphemeralDatabase() })
 
 	// Read the seeded file
 	content, err := afero.ReadFile(fs, "test.txt")
@@ -474,8 +454,4 @@ func TestCreateContextWithConfig_SeedFSWithDiskOverlay(t *testing.T) {
 		t.Error("Original seed file was modified!")
 	}
 
-	// Clean up
-	os.Remove("/tmp/mahresources_ephemeral.db")
-	os.Remove("/tmp/mahresources_ephemeral.db-wal")
-	os.Remove("/tmp/mahresources_ephemeral.db-shm")
 }

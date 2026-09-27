@@ -493,6 +493,12 @@ func main() {
 		fail("failed to create application context: %v", err)
 		return
 	}
+	// Registered first so it runs last: every teardown below may still write.
+	defer func() {
+		if err := context.ReleaseEphemeralDatabase(); err != nil {
+			log.Printf("Warning: could not remove the ephemeral database: %v", err)
+		}
+	}()
 	context.SetJobReplayKeyring(jobReplayKeyring)
 	if context.Config.DeepSeekAPIKey != "" {
 		provider := application_context.NewDeepSeekMRQLDraftProvider(
