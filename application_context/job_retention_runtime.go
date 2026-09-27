@@ -184,6 +184,9 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 		log.Printf("job retention: create sweep lease token failed: %v", err)
 		return r.cursor.ID != ""
 	}
+	// Taken before the claim is written, so the lease the database records can
+	// only be younger than this.
+	claimStarted := time.Now()
 	acquired, err := acquireJobRetentionLease(r.lifeCtx, r.ctx.db, token, r.leaseDuration)
 	if err != nil {
 		if isLockContentionError(err) {
@@ -210,7 +213,7 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 	leaseLost := make(chan struct{}, 1)
 	go func() {
 		defer close(heartbeatDone)
-		r.refreshJobRetentionLease(heartbeatCtx, token, cancelSweep, leaseLost)
+		r.refreshJobRetentionLease(heartbeatCtx, token, claimStarted, cancelSweep, leaseLost)
 	}()
 
 	result, sweepErr := r.ctx.SweepJobHistoryContext(sweepCtx, r.cursor, r.batchSize)
@@ -246,41 +249,57 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 	return true
 }
 
-func (r *JobRetentionRuntime) refreshJobRetentionLease(ctx context.Context, token string, cancelSweep context.CancelFunc, lost chan<- struct{}) {
+// refreshJobRetentionLease renews the lease until the sweep returns.
+//
+// Only two things end the fence. A renewal that finds another token in the row
+// proves the lease was taken, so the sweep is cancelled and renewal stops. And
+// a lease with no successful renewal for its whole duration may be claimed by
+// another runtime at any moment, so the sweep is cancelled then too, though
+// renewal continues: while nobody has claimed it, a renewal that lands closes
+// the gap for a cleanup that ignores cancellation. Any other failure, a renewal
+// that ran out of time or met SQLite's writer lock, proves nothing: its UPDATE
+// may have landed, and the row cannot be claimed before it expires, so the next
+// tick simply tries again.
+func (r *JobRetentionRuntime) refreshJobRetentionLease(ctx context.Context, token string, renewedAt time.Time, cancelSweep context.CancelFunc, lost chan<- struct{}) {
 	ticker := time.NewTicker(r.leaseRefreshInterval)
 	defer ticker.Stop()
+	signalLost := func() {
+		select {
+		case lost <- struct{}{}:
+		default:
+		}
+		cancelSweep()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			attempted := time.Now()
 			renewCtx, cancelRenew := context.WithTimeout(ctx, r.leaseRefreshTimeout)
 			err := renewJobRetentionLease(renewCtx, token, r.ctx.db)
 			cancelRenew()
 			if err == nil {
+				renewedAt = attempted
 				continue
 			}
 			if ctx.Err() != nil {
 				return
 			}
-			if isLockContentionError(err) {
-				// A bounded SQLite sweep can hold its writer transaction while a
-				// Kind removes an artifact. That same writer lock temporarily keeps
-				// another process from claiming the lease, so retry renewal instead
-				// of canceling work that still owns the serialized database turn. A
-				// bare context deadline is not enough evidence to retry: unless the
-				// database confirms serialization, loss of lease cancels the sweep.
-				continue
+			if errors.Is(err, errJobRetentionLeaseNotCurrent) {
+				signalLost()
+				return
 			}
-			select {
-			case lost <- struct{}{}:
-			default:
+			if time.Since(renewedAt) >= r.leaseDuration {
+				signalLost()
 			}
-			cancelSweep()
-			return
 		}
 	}
 }
+
+// errJobRetentionLeaseNotCurrent is a renewal that found another token, or none,
+// in the row: proof that this runtime no longer holds the lease.
+var errJobRetentionLeaseNotCurrent = errors.New("sweep lease token is no longer current")
 
 func newJobRetentionLeaseToken() (string, error) {
 	var token [16]byte
@@ -330,7 +349,7 @@ func renewJobRetentionLease(ctx context.Context, token string, db *gorm.DB) erro
 		return fmt.Errorf("renew sweep lease: %w", result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("sweep lease token is no longer current")
+		return errJobRetentionLeaseNotCurrent
 	}
 	return nil
 }
