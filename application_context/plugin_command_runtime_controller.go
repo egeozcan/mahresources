@@ -272,7 +272,7 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 			if errors.Is(fenceErr, errPluginCommandFenceRootIsDurable) {
 				// No retry can move a binding meant to outlive restarts, so the
 				// message says what will, rather than promising a retry.
-				message = fmt.Sprintf("plugin command runtime is unavailable because its database fence is unavailable: %v; commands stay unavailable until the server restarts with that staging root; see /logs", fenceErr)
+				message = fmt.Sprintf("plugin command runtime is unavailable because its database fence is unavailable: %v", fenceErr)
 			}
 			if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
 				return pluginCommandAttemptStopped, nil
