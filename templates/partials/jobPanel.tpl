@@ -130,6 +130,7 @@
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">
                                             <span class="truncate" data-job-panel-kind x-text="kindText(job)"></span>
+                                            <time x-show="sinceText(job)" x-cloak data-job-panel-since :datetime="job.stateEnteredAt" :title="sinceTitle(job)" x-text="sinceText(job)"></time>
                                             <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>

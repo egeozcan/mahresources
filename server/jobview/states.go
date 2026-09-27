@@ -31,6 +31,9 @@ type StatePresentation struct {
 	// so only it may draw an indeterminate "Working" bar.
 	Working  bool `json:"working"`
 	Terminal bool `json:"terminal"`
+	// Since is the word a row puts before how long ago the Job entered the
+	// state: "failed 3 min ago", "started 20 s ago".
+	Since string `json:"since,omitempty"`
 }
 
 type statePresentationTable struct {

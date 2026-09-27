@@ -22,7 +22,7 @@ function isPartial(job) {
 export function presentState(jobOrState) {
     const entry = table.states[stateName(jobOrState)];
     if (!entry) return table.unknown;
-    if (isPartial(jobOrState)) return { ...entry, label: table.partial.label, tone: table.partial.tone };
+    if (isPartial(jobOrState)) return { ...entry, label: table.partial.label, tone: table.partial.tone, since: table.partial.since };
     // A running Job with a pause or cancellation on its way to its executor is
     // still running, and says what the request is doing until the state changes.
     const requested = typeof jobOrState === 'object' ? String(jobOrState?.controlIntent || '') : '';
@@ -63,4 +63,19 @@ export function scheduledStartText(job, now = Date.now(), instantText = defaultI
     const remaining = (at.getTime() - now) / 1000;
     const when = instantText(at);
     return remaining > 0 ? `Starts ${when} (in ${formatDuration(remaining)})` : `Starts ${when} (due now)`;
+}
+
+/**
+ * How long ago a Job entered the state it is in, as a row says it: "failed 3
+ * min ago", "started 20 s ago", "queued just now". Empty for scheduled work,
+ * whose start time (scheduledStartText) says more, and when the time is unknown.
+ */
+export function stateSinceText(job, now = Date.now()) {
+    if (stateName(job) === 'scheduled') return '';
+    const at = Date.parse(job?.stateEnteredAt || '');
+    const since = presentState(job).since;
+    if (!Number.isFinite(at) || !since) return '';
+    const seconds = (now - at) / 1000;
+    // A server clock a little ahead of this one is not a time in the future.
+    return seconds < 1 ? `${since} just now` : `${since} ${formatDuration(seconds)} ago`;
 }

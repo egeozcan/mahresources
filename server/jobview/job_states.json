@@ -1,16 +1,16 @@
 {
   "states": {
-    "scheduled": { "label": "Scheduled", "group": "active", "tone": "waiting", "working": false, "terminal": false },
-    "queued": { "label": "Queued", "group": "active", "tone": "waiting", "working": false, "terminal": false },
-    "running": { "label": "Running", "group": "active", "tone": "working", "working": true, "terminal": false },
-    "paused": { "label": "Paused", "group": "active", "tone": "paused", "working": false, "terminal": false },
-    "blocked": { "label": "Blocked", "group": "attention", "tone": "warning", "working": false, "terminal": false },
-    "succeeded": { "label": "Succeeded", "group": "finished", "tone": "done", "working": false, "terminal": true },
-    "failed": { "label": "Failed", "group": "attention", "tone": "failed", "working": false, "terminal": true },
-    "cancelled": { "label": "Cancelled", "group": "finished", "tone": "neutral", "working": false, "terminal": true },
-    "interrupted": { "label": "Interrupted", "group": "attention", "tone": "failed", "working": false, "terminal": true }
+    "scheduled": { "label": "Scheduled", "since": "scheduled", "group": "active", "tone": "waiting", "working": false, "terminal": false },
+    "queued": { "label": "Queued", "since": "queued", "group": "active", "tone": "waiting", "working": false, "terminal": false },
+    "running": { "label": "Running", "since": "started", "group": "active", "tone": "working", "working": true, "terminal": false },
+    "paused": { "label": "Paused", "since": "paused", "group": "active", "tone": "paused", "working": false, "terminal": false },
+    "blocked": { "label": "Blocked", "since": "blocked", "group": "attention", "tone": "warning", "working": false, "terminal": false },
+    "succeeded": { "label": "Succeeded", "since": "succeeded", "group": "finished", "tone": "done", "working": false, "terminal": true },
+    "failed": { "label": "Failed", "since": "failed", "group": "attention", "tone": "failed", "working": false, "terminal": true },
+    "cancelled": { "label": "Cancelled", "since": "cancelled", "group": "finished", "tone": "neutral", "working": false, "terminal": true },
+    "interrupted": { "label": "Interrupted", "since": "interrupted", "group": "attention", "tone": "failed", "working": false, "terminal": true }
   },
-  "partial": { "label": "Partially completed", "tone": "warning" },
+  "partial": { "label": "Partially completed", "since": "finished", "tone": "warning" },
   "runningIntents": {
     "pause": { "label": "Pausing", "tone": "paused" },
     "cancel": { "label": "Cancelling", "tone": "working" }

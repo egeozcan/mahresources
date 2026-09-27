@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import table from '../../server/jobview/job_states.json';
-import { JOB_STATES, isWorking, presentState, scheduledStartText, statesInGroup, terminalStates } from './jobStates.js';
+import { JOB_STATES, isWorking, presentState, scheduledStartText, stateSinceText, statesInGroup, terminalStates } from './jobStates.js';
 
 describe('the shared state table', () => {
     test('names every state once, in the lifecycle order the Go side presents', () => {
@@ -51,5 +51,28 @@ describe('scheduledStartText', () => {
         expect(scheduledStartText({ state: 'running', scheduledFor: '2026-09-27T13:30:00Z' }, now, instant)).toBe('');
         expect(scheduledStartText({ state: 'scheduled' }, now, instant)).toBe('');
         expect(scheduledStartText({ state: 'scheduled', scheduledFor: 'nonsense' }, now, instant)).toBe('');
+    });
+});
+
+describe('how long ago a Job entered its state', () => {
+    const now = Date.parse('2026-09-28T10:00:00Z');
+    const since = (state: string, secondsAgo: number, extra = {}) =>
+        stateSinceText({ state, stateEnteredAt: new Date(now - secondsAgo * 1000).toISOString(), ...extra }, now);
+
+    test('says the state as a verb and the age', () => {
+        expect(since('failed', 180)).toBe('failed 3 min ago');
+        expect(since('running', 20)).toBe('started 20 s ago');
+        expect(since('queued', 0.2)).toBe('queued just now');
+        expect(since('succeeded', 2 * 3600)).toBe('succeeded 2 h ago');
+        expect(since('succeeded', 60, { phase: 'partial' })).toBe('finished 1 min ago');
+        // A pause asked for is still running work.
+        expect(since('running', 5, { controlIntent: 'pause' })).toBe('started 5 s ago');
+    });
+
+    test('says nothing for scheduled work, whose start says more, or without a time', () => {
+        expect(since('scheduled', 60)).toBe('');
+        expect(stateSinceText({ state: 'failed' }, now)).toBe('');
+        // A server clock ahead of the browser's is not a time in the future.
+        expect(since('failed', -3)).toBe('failed just now');
     });
 });

@@ -156,6 +156,16 @@ test.describe('Job progress figures', () => {
     const blockedRow = drawer.locator('article[data-job-id="figures-blocked"]');
     await expect(blockedRow.locator('[data-job-panel-blocked]')).toHaveText('Reason: Its plugin is disabled or not loaded.');
     await expect(blockedRow.locator('[data-job-panel-kind]')).toHaveText('Plugin action');
+    // How long ago it entered its state, with the full time kept for a pointer,
+    // and outside every live region: the ledger announces changes, not this.
+    const since = blockedRow.locator('time[data-job-panel-since]');
+    await expect(since).toHaveText('blocked 1 min ago');
+    await expect(since).toHaveAttribute('datetime', blocked.stateEnteredAt);
+    await expect(since).toHaveAttribute('title', /\d/);
+    expect(await since.evaluate(element => !!element.closest('[aria-live],[role="status"],[role="alert"]'))).toBe(false);
+    // Scheduled work says when it starts instead.
+    await expect(drawer.locator('article[data-job-id="figures-soon"] [data-job-panel-since]')).toBeHidden();
+    await expect(drawer.locator('article[data-job-id="figures-soon"] [data-job-panel-scheduled]')).toContainText('in 30 min');
 
     const active = drawer.locator('[data-job-panel-group="active"] article');
     await expect(active).toHaveCount(3);

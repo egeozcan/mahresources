@@ -47,7 +47,7 @@ import {
     phaseText,
     scheduledText,
 } from './jobCenter.js';
-import { isWorking, presentState, statesInGroup } from './jobStates.js';
+import { isWorking, presentState, stateSinceText, statesInGroup } from './jobStates.js';
 import { blockedReasonText, kindLabel } from './jobVocabulary.js';
 import {
     applyProgressFrame,
@@ -1679,6 +1679,14 @@ export function jobPanel() {
         stateTone(job) { return panelStateTone(job); },
         ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
         kindText(job) { return kindLabel(job?.kind); },
+        // How long ago the row entered its state, counted on the drawer's own
+        // clock. It is not in a live region: the ledger says what changed, and
+        // this text is read when a reader reaches it, not every second.
+        sinceText(job) { return stateSinceText(job, this.now); },
+        sinceTitle(job) {
+            const at = new Date(job?.stateEnteredAt || '');
+            return Number.isNaN(at.getTime()) ? '' : at.toLocaleString();
+        },
         // Why a blocked Job is blocked, in one line: the detail page's timeline
         // holds the rest.
         blockedText(job) { return stateOf(job) === 'blocked' ? blockedReasonText(job?.blockedReason) : ''; },

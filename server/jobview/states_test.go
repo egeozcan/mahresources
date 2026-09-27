@@ -24,8 +24,8 @@ func TestTheStateTableNamesEveryStateAsTheLifecycleDefinesIt(t *testing.T) {
 		if !ok {
 			t.Fatalf("the table has no entry for %s", state)
 		}
-		if entry.Label == "" || !slices.Contains(tones, entry.Tone) {
-			t.Fatalf("%s has label %q and tone %q", state, entry.Label, entry.Tone)
+		if entry.Label == "" || !slices.Contains(tones, entry.Tone) || entry.Since == "" {
+			t.Fatalf("%s has label %q, tone %q and since %q", state, entry.Label, entry.Tone, entry.Since)
 		}
 		if entry.Terminal != state.Terminal() {
 			t.Fatalf("%s is terminal=%v in the table and %v in the lifecycle", state, entry.Terminal, state.Terminal())
@@ -46,7 +46,7 @@ func TestTheStateTableNamesEveryStateAsTheLifecycleDefinesIt(t *testing.T) {
 	if got, want := TerminalStates(), []string{"succeeded", "failed", "cancelled", "interrupted"}; !slices.Equal(got, want) {
 		t.Fatalf("terminal = %v, want %v", got, want)
 	}
-	if !slices.Contains(tones, statePresentations.Partial.Tone) || statePresentations.Partial.Label == "" {
+	if !slices.Contains(tones, statePresentations.Partial.Tone) || statePresentations.Partial.Label == "" || statePresentations.Partial.Since == "" {
 		t.Fatalf("the partial entry is %+v", statePresentations.Partial)
 	}
 	if len(statePresentations.RunningIntents) != 2 {

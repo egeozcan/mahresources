@@ -251,8 +251,14 @@ however long ago it was accepted. Scheduled Jobs follow the rest of **Active and
 scheduled** in the order they start, the soonest first. A blocked Job says why
 in one line under its title; its page's timeline has the event that blocked it.
 A row names the Job's Kind in words, such as **Download** or **Scheduled
-download**; the API and the Job Center's filters keep the identifier
-(`remote-download`). Work that is running, waiting or needs
+download**, and says how long ago the Job entered its state ("failed 3 min
+ago", "started 20 s ago"), with the full time when you point at it; a
+scheduled row says when it starts instead. The API and the Job Center's
+addresses keep the Kind's identifier (`remote-download`), and the Job Center's
+Kind filter shows the words. Known limit: the drawer orders scheduled rows
+among those it read, and it reads Active and scheduled Jobs by when they
+entered their state, so with more than 50 of them the soonest to start may be
+among the ones on All jobs. Work that is running, waiting or needs
 attention is listed up to 50 Jobs per group, and Finished Jobs up to the
 `download_cockpit_limit` setting (default 10). A group that has more says
 "Showing the 50 most recent." with a link to the same Jobs on the All jobs page,
