@@ -374,7 +374,10 @@ imports, Resource Reduction, maintenance, and plugin work.
 The Job Center is a list page like Notes or Resources. It shows the Jobs you
 have not dismissed, newest first, 50 per page, with **Previous** and **Next**
 at the bottom. Its pages have no numbers, so a page does not shift while new
-Jobs arrive. The list updates in place as Jobs change, without a reload.
+Jobs arrive. The list updates in place as Jobs change, without a reload. If the
+server's database is restored from a backup or replaced while a page is open,
+the Job Center and a Job's page reload themselves, and the Jobs panel on any
+other page stops with a **Reload page** button, so you can save your work first.
 
 The **Show** links in the sidebar select **Needs attention** (blocked, failed,
 or interrupted), **Active** (scheduled, queued, running, or paused),

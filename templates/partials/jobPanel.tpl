@@ -36,8 +36,8 @@
                         <p id="job-center-panel-counts" class="sr-only" x-text="countsText"></p>
                         <p class="flex items-center gap-1.5 text-xs text-stone-600">
                             <span aria-hidden="true" class="h-2 w-2 shrink-0 rounded-full"
-                                  :class="{ 'bg-green-600': connectionStatus === 'connected', 'bg-red-600': connectionStatus === 'reconnecting', 'bg-amber-500 motion-safe:animate-pulse': connectionStatus !== 'connected' && connectionStatus !== 'reconnecting' }"></span>
-                            <span role="status" aria-live="polite" x-text="connectionStatus === 'connected' ? 'Live updates connected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : 'Connecting to live updates'"></span>
+                                  :class="{ 'bg-green-600': connectionStatus === 'connected', 'bg-red-600': connectionStatus === 'reconnecting' || connectionStatus === 'stopped', 'bg-amber-500 motion-safe:animate-pulse': connectionStatus !== 'connected' && connectionStatus !== 'reconnecting' && connectionStatus !== 'stopped' }"></span>
+                            <span role="status" aria-live="polite" x-text="connectionStatus === 'connected' ? 'Live updates connected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus === 'stopped' ? 'Live updates stopped' : 'Connecting to live updates'"></span>
                         </p>
                     </div>
                     <button type="button" @click="close()" class="rounded p-1 text-stone-500 hover:text-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" aria-label="Close Jobs panel">
@@ -50,6 +50,11 @@
 
                 <p x-show="error" x-cloak role="alert" class="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800" x-text="error"></p>
                 <p x-show="notice" x-cloak class="border-b border-stone-200 px-4 py-2 text-sm text-stone-700" data-job-panel-notice x-text="notice"></p>
+                {# After a stream reset the drawer holds nothing from the other database, and the page around it may hold unsaved input, so it offers a reload rather than reloading. #}
+                <div x-show="streamStopped" x-cloak class="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-job-panel-stopped>
+                    <p>Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs.</p>
+                    <button type="button" @click="reloadPage()" class="mt-2 inline-flex min-h-6 items-center rounded border border-amber-700 bg-white px-2 py-0.5 font-medium text-amber-900 hover:bg-amber-100 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Reload page</button>
+                </div>
 
                 <div class="min-h-0 flex-1 overflow-y-auto" aria-label="Recent jobs">
                     <template x-for="group in groups" :key="group.key">
@@ -186,7 +191,7 @@
                             </ul>
                         </section>
                     </template>
-                    <div x-show="jobs.length === 0 && !error" class="flex flex-col items-center justify-center p-8 text-center text-stone-600">
+                    <div x-show="jobs.length === 0 && !error && !streamStopped" class="flex flex-col items-center justify-center p-8 text-center text-stone-600">
                         <svg aria-hidden="true" class="mb-3 h-12 w-12 text-stone-300" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h10M4 18h16" /><circle cx="18" cy="12" r="2" /></svg>
                         <p class="text-sm">No visible jobs yet.</p>
                         <p class="mt-1 text-xs text-stone-500">Downloads, exports, imports and plugin work appear here while they run.</p>

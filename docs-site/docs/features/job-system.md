@@ -300,18 +300,36 @@ which keeps each Job's own events in their own sequence. A reconnect resumes
 after the cursor in `Last-Event-ID`, or in the `cursor` query parameter when
 that header is absent, and first replays what was published since. The stream
 then sends `job-caught-up` with the cursor it reached, as
-`{"cursor":"v2:<n>"}`. A resume cursor above the last event the viewer could
-have been handed was issued by a different database, for example one since
-restored from an older backup, or an ephemeral server that restarted. The
-stream then resumes at the viewer's last published event and adds
-`"reset": true` to `job-caught-up`. That one `job-caught-up` also carries the new
-cursor as its SSE `id`, so a browser that reconnects before the next event
-resumes from it. Nothing the client missed is replayed, so on a reset it
-discards the sequences it holds, takes the new cursor, and reads its Jobs
-again. A page with the Jobs panel, the Job Center or a Job's detail open
-reloads itself on a reset, since everything it shows came from the other
-database. An account whose visibility has narrowed since it received its
-cursor can be reset too; that costs one re-read.
+`{"cursor":"v2:<n>"}`. A resume cursor above the highest delivery sequence this
+database has ever issued was issued by a different database: one restored from
+an older backup, or an ephemeral server that restarted. The stream then resumes
+at the viewer's last published event and adds `"reset": true` to
+`job-caught-up`. That one `job-caught-up` also carries the new cursor as its SSE
+`id`, so a browser that reconnects before the next event resumes from it.
+Nothing the client missed is replayed, so on a reset it discards the sequences
+it holds, takes the new cursor, and reads its Jobs again. A cursor this database
+did issue is never reset, even when the viewer can no longer see anything at or
+above it because retention deleted those Jobs or the viewer's access narrowed.
+
+In the browser, the Job Center and a Job's detail page reload themselves on a
+reset: they show nothing but Jobs from the other database and hold no input. On
+every other page the Jobs panel stops instead, empties its list, and says that
+job updates stopped because the database was restored or replaced, with a
+**Reload page** button. It does not reload the page itself, because the page may
+hold input that has not been saved. Reloading is still the right next step: a
+form rendered from the other database can name ids the new one has given to
+different entities.
+
+Two limits are known. A reset reveals the highest sequence the database has
+issued, which every event id a viewer receives already approximates, since
+delivery sequences are shared by every account. And a restored database is
+detected only while its sequence is below the tab's cursor: once it has
+published past that cursor, a tab resuming from it skips the events in between.
+A generation stored in the database cannot close this, because a restore
+brings back the old generation with the old rows. After a restore, an
+administrator must pass the migration-readiness check before admitting traffic
+(see [Backup and Restore](../deployment/backups.md)), so a tab has to outlive that and then
+reconnect after enough new events to be affected.
 
 Once the canonical stream has sent `job-caught-up`, each poll also sends a
 `job-progress` event for every visible Job whose progress changed in the last

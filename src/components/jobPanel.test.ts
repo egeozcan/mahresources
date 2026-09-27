@@ -677,22 +677,65 @@ describe('Job Center panel accessibility hooks', () => {
         return panel;
     }
 
-    test('a stream that reset its cursor reloads the page rather than repairing it', () => {
+    test('a stream reset stops the drawer instead of reloading the page it sits on', async () => {
         const reload = vi.fn();
         vi.stubGlobal('location', { reload });
         const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
         const close = vi.fn();
         panel.eventSource = { close } as any;
-        panel.lastSequence = 5000;
-        panel.schedulePanelRefresh = vi.fn();
+        panel.jobs = [{ id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 }];
+        panel.details = { 'dl-1': panel.jobs[0] };
+        panel.requestJSON = vi.fn(async () => ({ jobs: [] }));
 
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
 
+        expect(reload).not.toHaveBeenCalled();
         expect(close).toHaveBeenCalledTimes(1);
+        expect(panel.streamStopped).toBe(true);
+        expect(panel.jobs).toEqual([]);
+        expect(panel.details).toEqual({});
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith(expect.stringContaining('Job updates stopped'));
+
+        // Nothing reads or repairs the list from here on, and a stream cannot
+        // be reopened under it.
+        panel.schedulePanelRefresh();
+        await panel.refresh();
+        panel.connect();
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        expect(panel.eventSource).toBeNull();
+
+        panel.reloadPage();
         expect(reload).toHaveBeenCalledTimes(1);
-        expect(panel.lastSequence).toBe(5000);
-        expect(panel.schedulePanelRefresh).not.toHaveBeenCalled();
         vi.unstubAllGlobals();
+    });
+
+    test('a command confirmed after the drawer stopped is never sent', async () => {
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        let confirm: (value: boolean) => void = () => {};
+        vi.stubGlobal('Alpine', { store: () => ({ ask: () => new Promise(resolve => { confirm = resolve; }) }) });
+        panel.requestJSON = vi.fn(async () => ({ result: {} }));
+        const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 };
+
+        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget replay input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
+        confirm(true);
+        await running;
+
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    test('the stopped drawer says why and offers a reload in place of its list', () => {
+        const template = readFileSync(fileURLToPath(new URL('../../templates/partials/jobPanel.tpl', import.meta.url)), 'utf8');
+        const at = template.indexOf('<div x-show="streamStopped"');
+        expect(at).toBeGreaterThan(-1);
+        const stopped = template.slice(at, template.indexOf('</div>', at));
+        expect(stopped).toContain('data-job-panel-stopped');
+        expect(stopped).toContain("Job updates stopped because this server's database was restored or replaced.");
+        expect(stopped).toContain('@click="reloadPage()"');
+        expect(template).toContain('jobs.length === 0 && !error && !streamStopped');
     });
 
     test('announces a transition a refresh reads before the job\'s own event arrives', async () => {
