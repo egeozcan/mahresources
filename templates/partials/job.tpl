@@ -14,6 +14,7 @@
                 <h2 class="card-title card-title--simple"><a href="{{ job.DetailURL }}">{{ job.Title }}</a></h2>
                 <div class="card-meta">
                     <span class="card-meta-item">{{ job.Kind }}</span>
+                    {% if job.Owner %}<span class="card-meta-item" data-testid="job-owner"><span class="card-meta-label">Owner:</span> {{ job.Owner }}</span>{% endif %}
                     {% if job.Phase %}<span class="card-meta-item">{{ job.Phase }}</span>{% endif %}
                     <span class="card-meta-item">
                         <span class="card-meta-label">Accepted:</span>

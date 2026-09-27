@@ -82,8 +82,30 @@
             <p id="job-filter-command-help" class="mt-0.5 text-xs text-stone-500">Jobs currently offering this command.</p>
 
             {% include "/partials/form/textInput.tpl" with name='origin' label='Origin' value=jobFilter.OriginText %}
+            {% if jobOwnerOptions %}
+            {# An administrator sees every account's Jobs, so they pick a person rather than type a user number. #}
+            <label for="job-filter-owner" class="block text-xs font-mono font-medium text-stone-600 mt-2">Owner</label>
+            <select name="ownerId" id="job-filter-owner" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="">Anyone</option>
+                {% for option in jobOwnerOptions %}
+                <option value="{{ option.Value }}"{% if jobFilter.OwnerID == option.Value %} selected{% endif %}>{{ option.Label }}</option>
+                {% endfor %}
+            </select>
+            <label class="flex items-center gap-2 min-h-7 cursor-pointer mt-1">
+                <input type="checkbox" name="ownerDeleted" value="true"{% if jobFilter.OwnerDeleted == "true" %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
+                <span class="text-xs font-mono font-medium text-stone-600">Owner's account was deleted</span>
+            </label>
+            <label for="job-filter-actor" class="block text-xs font-mono font-medium text-stone-600 mt-2">Actor</label>
+            <select name="actorId" id="job-filter-actor" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="">Anyone</option>
+                {% for option in jobActorOptions %}
+                <option value="{{ option.Value }}"{% if jobFilter.ActorID == option.Value %} selected{% endif %}>{{ option.Label }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
             {% include "/partials/form/textInput.tpl" with name='ownerId' label='Owner ID' value=jobFilter.OwnerID %}
             {% include "/partials/form/textInput.tpl" with name='actorId' label='Actor ID' value=jobFilter.ActorID %}
+            {% endif %}
             {# datetime-local, not the shared date input: a bookmark or a legacy link can #}
             {# name an instant, and a date would widen it to a whole day on the next submit. #}
             {# A value with seconds needs step="1", or the browser refuses to submit it. #}

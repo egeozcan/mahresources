@@ -166,6 +166,12 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 			Outputs:             make([]JobOutputResponse, 0, len(outputs)),
 			Lineage:             jobLineageResponse(lineage),
 		}
+		labelled := []JobSnapshotResponse{response.JobSnapshotResponse}
+		if err := labelJobAccounts(ctx, labelled); err != nil {
+			writeJobServiceError(w, err)
+			return
+		}
+		response.JobSnapshotResponse = labelled[0]
 		for _, command := range commands {
 			response.Commands = append(response.Commands, JobCommandResponse{
 				Key: command.Key, Label: command.Label, Endpoint: command.Endpoint,
@@ -246,6 +252,10 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 		response := JobListResponse{Jobs: make([]JobSnapshotResponse, 0, len(page.Jobs))}
 		for _, snap := range page.Jobs {
 			response.Jobs = append(response.Jobs, jobSnapshotResponseAt(snap, now, withSeries))
+		}
+		if err := labelJobAccounts(ctx, response.Jobs); err != nil {
+			writeJobServiceError(w, err)
+			return
 		}
 		if page.Next != nil {
 			response.NextCursor, err = jobview.EncodeCursor(*page.Next)
@@ -400,15 +410,24 @@ func jobSummaryResponse(summary jobs.Summary) JobSummaryResponse {
 // separate from the persistence and Service structs so adding an internal field
 // cannot silently publish it.
 type JobSnapshotResponse struct {
-	ID                 string                  `json:"id"`
-	Kind               string                  `json:"kind"`
-	KindVersion        uint                    `json:"kindVersion"`
-	State              jobs.State              `json:"state"`
-	Phase              string                  `json:"phase,omitempty"`
-	Title              string                  `json:"title,omitempty"`
-	Summary            json.RawMessage         `json:"summary,omitempty"`
-	OwnerUserID        *uint                   `json:"ownerUserId,omitempty"`
-	ActorUserID        *uint                   `json:"actorUserId,omitempty"`
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	KindVersion uint            `json:"kindVersion"`
+	State       jobs.State      `json:"state"`
+	Phase       string          `json:"phase,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	Summary     json.RawMessage `json:"summary,omitempty"`
+	OwnerUserID *uint           `json:"ownerUserId,omitempty"`
+	ActorUserID *uint           `json:"actorUserId,omitempty"`
+	// OwnerName and ActorName name the accounts behind the two ids for a caller
+	// who may be told them: every account for an administrator, and only their
+	// own for anyone else.
+	OwnerName string `json:"ownerName,omitempty"`
+	ActorName string `json:"actorName,omitempty"`
+	// OwnerDeleted and ActorDeleted say the reference named an account that has
+	// since been deleted, which is why its id is gone.
+	OwnerDeleted       bool                    `json:"ownerDeleted,omitempty"`
+	ActorDeleted       bool                    `json:"actorDeleted,omitempty"`
 	Origin             string                  `json:"origin"`
 	Visibility         jobs.VisibilityClass    `json:"visibility"`
 	ExecutionPrincipal jobs.PrincipalClass     `json:"executionPrincipal"`
@@ -537,6 +556,7 @@ func jobSnapshotResponseAt(snap jobs.Snapshot, now time.Time, withSeries bool) J
 		ID: snap.ID, Kind: snap.Kind, KindVersion: snap.KindVersion, State: snap.State,
 		Phase: snap.Phase, Title: snap.Title, Summary: append(json.RawMessage(nil), snap.Summary...),
 		OwnerUserID: snap.OwnerUserID, ActorUserID: snap.ActorUserID, Origin: snap.Origin,
+		OwnerDeleted: snap.OwnerDeleted, ActorDeleted: snap.ActorDeleted,
 		Visibility: snap.Visibility, ExecutionPrincipal: snap.ExecutionPrincipal,
 		ReplayClass: snap.ReplayClass, ReplayAvailability: snap.ReplayAvailability,
 		Pinned:  snap.Pinned,
@@ -551,6 +571,47 @@ func jobSnapshotResponseAt(snap jobs.Snapshot, now time.Time, withSeries bool) J
 		response.Failure = &JobFailureResponse{Code: snap.Failure.Code, Class: snap.Failure.Class, Message: snap.Failure.Message}
 	}
 	return response
+}
+
+// JobAccountLabeler names the accounts a response's Jobs record as owner and
+// actor. It is optional so a context that cannot name anyone still answers, with
+// the ids alone.
+type JobAccountLabeler interface {
+	JobAccountLabels(ids []uint) (map[uint]string, error)
+}
+
+// labelJobAccounts fills the owner and actor names of every response in one read,
+// whatever the number of Jobs: a page of two hundred Jobs asks once, not per row.
+func labelJobAccounts(ctx any, responses []JobSnapshotResponse) error {
+	labeler, ok := ctx.(JobAccountLabeler)
+	if !ok || len(responses) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, 2*len(responses))
+	for _, response := range responses {
+		if response.OwnerUserID != nil {
+			ids = append(ids, *response.OwnerUserID)
+		}
+		if response.ActorUserID != nil {
+			ids = append(ids, *response.ActorUserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	labels, err := labeler.JobAccountLabels(ids)
+	if err != nil {
+		return err
+	}
+	for i := range responses {
+		if id := responses[i].OwnerUserID; id != nil {
+			responses[i].OwnerName = labels[*id]
+		}
+		if id := responses[i].ActorUserID; id != nil {
+			responses[i].ActorName = labels[*id]
+		}
+	}
+	return nil
 }
 
 // parseJobInclude reads a listing's opt-in projections. The only one is the

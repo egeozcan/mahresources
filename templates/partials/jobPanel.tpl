@@ -1,4 +1,4 @@
-<div x-data="jobPanel()" data-testid="job-panel-root" class="relative">
+<div x-data="jobPanel()" data-testid="job-panel-root" class="relative"{% if currentUser and currentUser.IsAdmin %} data-job-panel-viewer="{{ currentUser.UserID }}"{% endif %}>
     <button type="button" class="job-panel-trigger inline-flex items-center gap-2 rounded border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-amber-700"
             @click="toggle($event)" aria-label="Open Jobs panel" :aria-controls="isOpen ? 'job-center-panel' : null"
             :aria-expanded="isOpen.toString()" aria-describedby="job-panel-trigger-counts" title="Jobs (Control or Command + Shift + D)">
@@ -100,6 +100,7 @@
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">
                                             <span class="truncate" x-text="job.kind"></span>
+                                            <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>
 

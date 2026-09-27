@@ -28,13 +28,13 @@
             <section aria-labelledby="job-context-heading" class="rounded border border-stone-200 bg-white p-4">
                 <h2 id="job-context-heading" class="font-mono text-sm font-semibold text-stone-800">Job context</h2>
                 <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3">
-                    <div x-show="detail.ownerUserId !== null && detail.ownerUserId !== undefined">
+                    <div x-show="accountText(detail, 'owner')" data-job-owner>
                         <dt class="text-xs text-stone-500">Owner</dt>
-                        <dd class="break-all font-mono text-stone-800" x-text="detail.ownerUserId"></dd>
+                        <dd class="break-words text-stone-800" x-text="accountText(detail, 'owner')"></dd>
                     </div>
-                    <div x-show="detail.actorUserId !== null && detail.actorUserId !== undefined">
+                    <div x-show="accountText(detail, 'actor')" data-job-actor>
                         <dt class="text-xs text-stone-500">Actor</dt>
-                        <dd class="break-all font-mono text-stone-800" x-text="detail.actorUserId"></dd>
+                        <dd class="break-words text-stone-800" x-text="accountText(detail, 'actor')"></dd>
                     </div>
                     <div x-show="detail.origin">
                         <dt class="text-xs text-stone-500">Origin</dt>

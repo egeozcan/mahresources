@@ -49,7 +49,7 @@
               <a href="/admin/users/edit?id={{ u.ID }}" aria-label="Edit {{ u.Username }}" class="text-amber-700 hover:underline mr-3">Edit</a>
               <form method="post" action="/v1/user/delete" class="inline"
                     x-data="confirmAction()" x-bind="events"
-                    data-confirm-message="Delete user {{ u.Username }}? This also destroys their tokens and sessions, and clears them as the creator of everything they made.">
+                    data-confirm-message="{{ userDeleteMessages|lookup:u.ID|default:"Delete this user?" }}">
                 <input type="hidden" name="id" value="{{ u.ID }}">
                 <button type="submit" aria-label="Delete user {{ u.Username }}" class="text-red-700 hover:underline">Delete</button>
               </form>

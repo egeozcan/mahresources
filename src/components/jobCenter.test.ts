@@ -469,8 +469,8 @@ describe('Job Center templates', () => {
     });
 
     test('shows safe ownership, origin, warnings, output expiry, and log links from detail DTOs', () => {
-        expect(detailTemplate).toContain('detail.ownerUserId');
-        expect(detailTemplate).toContain('detail.actorUserId');
+        expect(detailTemplate).toContain("accountText(detail, 'owner')");
+        expect(detailTemplate).toContain("accountText(detail, 'actor')");
         expect(detailTemplate).toContain('detail.origin');
         expect(detailTemplate).toContain('detail.summary');
         expect(detailTemplate).toContain('warningEvents()');

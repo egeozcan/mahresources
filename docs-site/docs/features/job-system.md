@@ -91,6 +91,23 @@ owner or actor never grants access to that person's Jobs. Every command is a
 write, so a guest sees its own Jobs and is offered no command on them, including
 Pin, Dismiss and Forget.
 
+An administrator sees every account's Jobs and is told whose each one is: the
+Job Center list and the Jobs drawer name the owner of a Job that is not the
+administrator's own, and the Job page names its owner and actor. The API
+returns them as `ownerName` and `actorName`; anyone else is told only their own
+name. On the Job Center page an administrator filters by **Owner** and **Actor**
+from a list of accounts instead of typing a user number.
+
+Deleting an account removes its id from its Jobs, and marks them instead: they
+read **Deleted account** as owner or actor (`ownerDeleted` and `actorDeleted`
+in the API), and `ownerDeleted=true`, the **Owner's account was deleted** box,
+lists them. Work that was still waiting to act as the deleted account never
+runs as anyone else: when its turn comes it ends failed with the code
+`principal-missing`, and a Job that an earlier release blocked for the same
+reason is not offered Resume. Work already running when the account was
+deleted may still finish. The delete confirmation on `/admin/users` says how
+many of the account's jobs have not finished.
+
 The Job event streams apply the same rule for as long as they stay open. The
 canonical stream checks the connection's session or API token again on every
 poll, about once a second. The legacy `/v1/jobs/events` and

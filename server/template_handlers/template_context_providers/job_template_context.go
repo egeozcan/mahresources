@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
@@ -50,6 +52,16 @@ type JobListReader interface {
 
 var _ JobListReader = (*application_context.MahresourcesContext)(nil)
 
+// JobAccountReader names the accounts a page of Jobs records as owners, and lists
+// the accounts an administrator can filter by. It is a separate seam so a reader
+// that cannot name anyone still renders the list, with no owner shown.
+type JobAccountReader interface {
+	JobAccountLabels(ids []uint) (map[uint]string, error)
+	JobAccountOptions() ([]application_context.JobAccountOption, error)
+}
+
+var _ JobAccountReader = (*application_context.MahresourcesContext)(nil)
+
 // JobRow is one Job as the list card draws it.
 type JobRow struct {
 	ID             string
@@ -64,11 +76,15 @@ type JobRow struct {
 	Accepted       JobRowTime
 	// Started and Finished are pre-formatted because a nil *time.Time is truthy
 	// in a pongo2 `if`: the empty string is what the template tests.
-	Started   JobRowTime
-	Finished  JobRowTime
-	Version   uint64
-	Progress  *JobRowProgress
-	Result    jobview.ResultLink
+	Started  JobRowTime
+	Finished JobRowTime
+	Version  uint64
+	Progress *JobRowProgress
+	Result   jobview.ResultLink
+	// Owner names whose Job this is, for an administrator reading somebody
+	// else's: empty for the viewer's own Jobs and for work that never had an
+	// owner.
+	Owner     string
 	DetailURL string
 	// Entity is the selection payload the bulk bar reads.
 	Entity string
@@ -125,6 +141,7 @@ type JobFilterForm struct {
 	OriginText     string
 	OwnerID        string
 	ActorID        string
+	OwnerDeleted   string
 	AcceptedAfter  string
 	AcceptedBefore string
 	// The instants the bounds were read as, for the browser: it shows them in the
@@ -197,6 +214,19 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		for _, snapshot := range page.Jobs {
 			rows = append(rows, jobRow(reader, snapshot))
 		}
+		if accounts, ok := reader.(JobAccountReader); ok {
+			if viewer := auth.PrincipalFromContext(request.Context()); viewer.IsAdmin() {
+				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
+					return addJobListError(err, base)
+				}
+				options, err := accounts.JobAccountOptions()
+				if err != nil {
+					return addJobListError(err, base)
+				}
+				base["jobOwnerOptions"] = jobAccountSelectOptions(options, query.Get("ownerId"))
+				base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
+			}
+		}
 		base["jobs"] = rows
 		base["jobQuickFilters"] = quickFilters
 
@@ -205,6 +235,45 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		}
 		return base
 	}
+}
+
+// nameJobRowOwners names the owner of every row an administrator reads that is
+// not their own, with one read for the whole page. A deleted account says so; a
+// Job that never had an owner shows none.
+func nameJobRowOwners(accounts JobAccountReader, viewerID uint, snapshots []jobs.Snapshot, rows []JobRow) error {
+	ids := make([]uint, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.OwnerUserID != nil && *snapshot.OwnerUserID != viewerID {
+			ids = append(ids, *snapshot.OwnerUserID)
+		}
+	}
+	labels, err := accounts.JobAccountLabels(ids)
+	if err != nil {
+		return err
+	}
+	for i, snapshot := range snapshots {
+		switch {
+		case snapshot.OwnerDeleted:
+			rows[i].Owner = "deleted account"
+		case snapshot.OwnerUserID == nil || *snapshot.OwnerUserID == viewerID:
+		case labels[*snapshot.OwnerUserID] != "":
+			rows[i].Owner = labels[*snapshot.OwnerUserID]
+		default:
+			rows[i].Owner = fmt.Sprintf("account %d", *snapshot.OwnerUserID)
+		}
+	}
+	return nil
+}
+
+// jobAccountSelectOptions is the Owner or Actor select an administrator filters
+// by: every account by name, plus the id the URL names when it is not among them
+// (a deleted account's, from a bookmark), so resubmitting the form keeps it.
+func jobAccountSelectOptions(accounts []application_context.JobAccountOption, current string) []JobSelectOption {
+	options := make([]JobSelectOption, 0, len(accounts)+1)
+	for _, account := range accounts {
+		options = append(options, JobSelectOption{Value: strconv.FormatUint(uint64(account.ID), 10), Label: account.Label})
+	}
+	return withURLOption(options, current)
 }
 
 // jobKindOptions is the Kind checkboxes: the registered Kinds the viewer can see,
@@ -332,6 +401,7 @@ func jobFilterForm(query url.Values) JobFilterForm {
 		Origins:               nonEmptyTokens(query, "origin", "origins"),
 		OwnerID:               query.Get("ownerId"),
 		ActorID:               query.Get("actorId"),
+		OwnerDeleted:          query.Get("ownerDeleted"),
 		AcceptedAfter:         datetimeInputValue(query.Get("acceptedAfter"), false),
 		AcceptedBefore:        datetimeInputValue(query.Get("acceptedBefore"), true),
 		Relationship:          query.Get("relationship"),
