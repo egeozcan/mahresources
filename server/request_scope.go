@@ -41,12 +41,12 @@ func newCurrentJobEventsContext(appCtx *application_context.MahresourcesContext,
 	return &currentJobEventsContext{appCtx: appCtx, request: request}
 }
 
-func (ctx *currentJobEventsContext) GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error) {
+func (ctx *currentJobEventsContext) GetPublishedJobEvents(filter jobs.EventFilter, afterDelivery uint64, limit int) ([]jobs.Event, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
 	}
-	return scoped.GetPublishedJobEvents(afterDelivery, limit)
+	return scoped.GetPublishedJobEvents(filter, afterDelivery, limit)
 }
 
 // GetJobEventSequenceHead revalidates the credential as the event poll does,
@@ -61,22 +61,22 @@ func (ctx *currentJobEventsContext) GetJobEventSequenceHead() (uint64, error) {
 
 // GetPublishedJobEventHead revalidates the credential as the event poll does: the
 // head is read as the principal the stream is delivering to.
-func (ctx *currentJobEventsContext) GetPublishedJobEventHead() (uint64, error) {
+func (ctx *currentJobEventsContext) GetPublishedJobEventHead(filter jobs.EventFilter) (uint64, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return 0, err
 	}
-	return scoped.GetPublishedJobEventHead()
+	return scoped.GetPublishedJobEventHead(filter)
 }
 
 // GetLiveJobProgress revalidates the credential exactly as the event poll does:
 // a live progress frame is as much a read of the Job as its events are.
-func (ctx *currentJobEventsContext) GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error) {
+func (ctx *currentJobEventsContext) GetLiveJobProgress(filter jobs.EventFilter, since time.Time, limit int) ([]jobs.Snapshot, error) {
 	scoped, err := ctx.current()
 	if err != nil {
 		return nil, err
 	}
-	return scoped.GetLiveJobProgress(since, limit)
+	return scoped.GetLiveJobProgress(filter, since, limit)
 }
 
 // CurrentJobEvents is the legacy streams' read of the same credential.

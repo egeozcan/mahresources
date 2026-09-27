@@ -38,6 +38,21 @@ type jobEventContextStub struct {
 	// published head, which a reset resumes from.
 	issued *uint64
 	head   uint64
+	// filters records the stream filter each read was made with.
+	filters   []jobs.EventFilter
+	filtersMu sync.Mutex
+}
+
+func (s *jobEventContextStub) recordFilter(filter jobs.EventFilter) {
+	s.filtersMu.Lock()
+	defer s.filtersMu.Unlock()
+	s.filters = append(s.filters, filter)
+}
+
+func (s *jobEventContextStub) recordedFilters() []jobs.EventFilter {
+	s.filtersMu.Lock()
+	defer s.filtersMu.Unlock()
+	return append([]jobs.EventFilter(nil), s.filters...)
 }
 
 func (s *jobEventContextStub) GetJobEventSequenceHead() (uint64, error) {
@@ -47,11 +62,13 @@ func (s *jobEventContextStub) GetJobEventSequenceHead() (uint64, error) {
 	return *s.issued, nil
 }
 
-func (s *jobEventContextStub) GetPublishedJobEventHead() (uint64, error) {
+func (s *jobEventContextStub) GetPublishedJobEventHead(filter jobs.EventFilter) (uint64, error) {
+	s.recordFilter(filter)
 	return s.head, nil
 }
 
-func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
+func (s *jobEventContextStub) GetLiveJobProgress(filter jobs.EventFilter, since time.Time, _ int) ([]jobs.Snapshot, error) {
+	s.recordFilter(filter)
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	call := len(s.progressSince)
@@ -74,7 +91,8 @@ func (s *jobEventContextStub) GetJobTimeline(_ string, after uint64, _ int) ([]j
 	return s.events, s.err
 }
 
-func (s *jobEventContextStub) GetPublishedJobEvents(after uint64, _ int) ([]jobs.Event, error) {
+func (s *jobEventContextStub) GetPublishedJobEvents(filter jobs.EventFilter, after uint64, _ int) ([]jobs.Event, error) {
+	s.recordFilter(filter)
 	s.called++
 	s.lastAfter = after
 	s.after = append(s.after, after)
@@ -126,8 +144,8 @@ func TestCanonicalJobSSEReconnectPrefersNewerLastEventID(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=v2:5", nil)
 	request.Header.Set("Last-Event-ID", "v2:9")
 
-	cursor, err := canonicalJobEventCursor(request)
-	if err != nil || cursor != 9 {
+	cursor, resumed, err := canonicalJobEventCursor(request)
+	if err != nil || cursor != 9 || !resumed {
 		t.Fatalf("reconnect cursor = %d, err=%v; want Last-Event-ID v2:9 to supersede stale URL cursor v2:5", cursor, err)
 	}
 }
@@ -136,7 +154,7 @@ func TestCanonicalJobSSEReconnectStillValidatesBothCursorFormats(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=legacy:5", nil)
 	request.Header.Set("Last-Event-ID", "v2:9")
 
-	if _, err := canonicalJobEventCursor(request); err == nil {
+	if _, _, err := canonicalJobEventCursor(request); err == nil {
 		t.Fatal("reconnect accepted a malformed URL cursor because Last-Event-ID was valid")
 	}
 }
@@ -607,5 +625,118 @@ func TestCanonicalJobSSEResetsOnlyACursorThisDatabaseNeverIssued(t *testing.T) {
 				t.Fatalf("SSE body = %q, want the marker %q", response.String(), want)
 			}
 		})
+	}
+}
+
+// runCanonicalStreamUntilCaughtUp serves one canonical stream request until its
+// job-caught-up frame is written, then disconnects, and answers the body.
+func runCanonicalStreamUntilCaughtUp(t *testing.T, ctx *jobEventContextStub, url, lastEventID string) string {
+	t.Helper()
+	response := newSSETestWriter()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, url, nil).WithContext(requestCtx)
+	if lastEventID != "" {
+		request.Header.Set("Last-Event-ID", lastEventID)
+	}
+	finished := make(chan struct{})
+	go func() {
+		GetCanonicalJobEventsHandler(ctx)(response, request)
+		close(finished)
+	}()
+	select {
+	case <-response.caughtUpWritten:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-finished
+		t.Fatalf("SSE did not announce the catch-up boundary; body %q", response.String())
+	}
+	cancel()
+	<-finished
+	return response.String()
+}
+
+// A page that reads its Jobs itself needs no history: start=head begins at
+// the newest cursor the database has issued, replays nothing, and gives the
+// caught-up frame that cursor as its SSE id, so the browser's reconnect
+// resumes from it and a restored database is still recognised.
+func TestCanonicalJobSSEStartAtHeadReplaysNothing(t *testing.T) {
+	issued := uint64(875)
+	ctx := &jobEventContextStub{issued: &issued, head: 800}
+	body := runCanonicalStreamUntilCaughtUp(t, ctx, "/v1/jobs/events?version=2&start=head", "")
+
+	if len(ctx.after) == 0 || ctx.after[0] != 875 {
+		t.Fatalf("catch-up read from %v, want the allocator's head 875", ctx.after)
+	}
+	if want := "id: v2:875\nevent: job-caught-up\ndata: {\"cursor\":\"v2:875\"}\n\n"; !strings.HasPrefix(body, want) {
+		t.Fatalf("SSE body = %q, want it to open with %q", body, want)
+	}
+}
+
+// The browser's own reconnect keeps the URL it was opened with, start=head
+// included, and adds Last-Event-ID; that cursor wins, so a reconnect replays
+// what it missed. An explicit cursor wins over start=head the same way.
+func TestCanonicalJobSSEStartAtHeadYieldsToACursor(t *testing.T) {
+	for _, tt := range []struct {
+		name, url, lastEventID string
+		want                   uint64
+	}{
+		{"Last-Event-ID", "/v1/jobs/events?version=2&start=head", "v2:700", 700},
+		{"cursor", "/v1/jobs/events?version=2&start=head&cursor=v2:650", "", 650},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			issued := uint64(875)
+			ctx := &jobEventContextStub{issued: &issued, head: 800}
+			body := runCanonicalStreamUntilCaughtUp(t, ctx, tt.url, tt.lastEventID)
+			if len(ctx.after) == 0 || ctx.after[0] != tt.want {
+				t.Fatalf("catch-up read from %v, want %d", ctx.after, tt.want)
+			}
+			if strings.Contains(body, "id: v2:875") {
+				t.Fatalf("a resumed stream jumped to the head: %q", body)
+			}
+		})
+	}
+}
+
+func TestCanonicalJobSSERefusesAnUnknownStartOrOwner(t *testing.T) {
+	for _, query := range []string{"start=tail", "start=", "owner=7", "owner=everyone"} {
+		ctx := &jobEventContextStub{}
+		// Bounded, so a handler that streams instead of refusing fails the
+		// test rather than hanging it.
+		requestCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&"+query, nil).WithContext(requestCtx)
+		recorder := httptest.NewRecorder()
+		GetCanonicalJobEventsHandler(ctx)(recorder, request)
+		cancel()
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400: %s", query, recorder.Code, recorder.Body.String())
+		}
+		if ctx.called != 0 {
+			t.Errorf("%s: events were read for a refused request", query)
+		}
+	}
+}
+
+// owner=me narrows every read the stream makes, as it narrows a listing: the
+// events, the live progress and the head a reset resumes from.
+func TestCanonicalJobSSEOwnerMeNarrowsEveryRead(t *testing.T) {
+	issued := uint64(10)
+	ctx := &jobEventContextStub{issued: &issued}
+	runCanonicalStreamUntilCaughtUp(t, ctx, "/v1/jobs/events?version=2&owner=me", "v2:5000")
+	filters := ctx.recordedFilters()
+	if len(filters) < 2 {
+		t.Fatalf("reads = %d, want the reset head and the events at least", len(filters))
+	}
+	for i, filter := range filters {
+		if !filter.OwnedByViewer {
+			t.Fatalf("read %d was made with %+v, want the owner filter", i, filter)
+		}
+	}
+
+	unfiltered := &jobEventContextStub{issued: &issued}
+	runCanonicalStreamUntilCaughtUp(t, unfiltered, "/v1/jobs/events?version=2", "v2:5")
+	for i, filter := range unfiltered.recordedFilters() {
+		if filter.OwnedByViewer {
+			t.Fatalf("read %d of an unfiltered stream carried the owner filter", i)
+		}
 	}
 }

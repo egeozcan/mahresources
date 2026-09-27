@@ -76,7 +76,7 @@ func TestOutputPublicationStoresATypedOutputWithAnIndependentVersion(t *testing.
 	if detail := string(timeline[0].Detail); !strings.Contains(detail, `"key":"artifact"`) {
 		t.Errorf("publication detail = %s, want it to name the output", detail)
 	}
-	if delivered, err := svc.PublishedEvents(deps, admin, 0, 0); err != nil {
+	if delivered, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0); err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	} else if len(delivered) != 0 {
 		t.Fatalf("the event was deliverable before the publisher ran: %+v", delivered)
@@ -84,7 +84,7 @@ func TestOutputPublicationStoresATypedOutputWithAnIndependentVersion(t *testing.
 	if _, err := svc.PublishPendingEvents(deps, DefaultPublishBatch); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	delivered, err := svc.PublishedEvents(deps, admin, 0, 0)
+	delivered, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	}

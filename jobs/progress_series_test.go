@@ -358,32 +358,40 @@ func TestLiveProgressReturnsOnlyVisibleChangesAfterTheWatermark(t *testing.T) {
 		return out
 	}
 
-	mine, err := svc.LiveProgress(deps, Access{UserID: 7}, at(0), 0)
+	mine, err := svc.LiveProgress(deps, Access{UserID: 7}, EventFilter{}, at(0), 0)
 	if err != nil {
 		t.Fatalf("LiveProgress: %v", err)
 	}
 	if got := ids(mine); len(got) != 1 || got[0] != owned.ID {
 		t.Fatalf("owner's live progress = %v; want only their own Job %s", got, owned.ID)
 	}
-	if other, _ := svc.LiveProgress(deps, Access{UserID: 9}, at(0), 0); len(other) != 0 {
+	if other, _ := svc.LiveProgress(deps, Access{UserID: 9}, EventFilter{}, at(0), 0); len(other) != 0 {
 		t.Fatalf("a user who owns neither Job saw live progress for %v", ids(other))
 	}
-	all, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, at(0), 0)
+	all, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, EventFilter{}, at(0), 0)
 	if err != nil {
 		t.Fatalf("admin LiveProgress: %v", err)
 	}
 	if got := ids(all); len(got) != 2 || got[0] != theirs.ID || got[1] != owned.ID {
 		t.Fatalf("admin live progress = %v; want both, newest change first", got)
 	}
+	// An administrator's stream limited to their own work gets its own frames.
+	own, err := svc.LiveProgress(deps, Access{UserID: 7, Administrator: true}, EventFilter{OwnedByViewer: true}, at(0), 0)
+	if err != nil {
+		t.Fatalf("owner-filtered LiveProgress: %v", err)
+	}
+	if got := ids(own); len(got) != 1 || got[0] != owned.ID {
+		t.Fatalf("owner-filtered live progress = %v; want only %s", got, owned.ID)
+	}
 
 	// The watermark is exclusive: a reader that saw the change at +1s is not
 	// sent it again, and sees the next one.
-	after, err := svc.LiveProgress(deps, Access{UserID: 7}, at(1), 0)
+	after, err := svc.LiveProgress(deps, Access{UserID: 7}, EventFilter{}, at(1), 0)
 	if err != nil || len(after) != 0 {
 		t.Fatalf("after the watermark: %v, %v; want nothing", ids(after), err)
 	}
 	report(owned, "claim-mine", 3, 200)
-	after, err = svc.LiveProgress(deps, Access{UserID: 7}, at(1), 0)
+	after, err = svc.LiveProgress(deps, Access{UserID: 7}, EventFilter{}, at(1), 0)
 	if err != nil || len(after) != 1 || after[0].Progress.Completed == nil || *after[0].Progress.Completed != 200 {
 		t.Fatalf("next change = %+v, %v; want the owned Job at 200", after, err)
 	}
@@ -418,7 +426,7 @@ func TestLiveProgressKeepsTheNewestChangesWhenOverItsLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, at(0), 1)
+	page, err := svc.LiveProgress(deps, Access{UserID: 1, Administrator: true}, EventFilter{}, at(0), 1)
 	if err != nil || len(page) != 1 || page[0].ID != newer.ID {
 		t.Fatalf("limited read = %+v, %v; want the most recent change", page, err)
 	}

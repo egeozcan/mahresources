@@ -17,10 +17,10 @@ type JobTimelineContext interface {
 }
 
 type CanonicalJobEventContext interface {
-	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
+	GetPublishedJobEvents(filter jobs.EventFilter, afterDelivery uint64, limit int) ([]jobs.Event, error)
 	GetJobEventSequenceHead() (uint64, error)
-	GetPublishedJobEventHead() (uint64, error)
-	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
+	GetPublishedJobEventHead(filter jobs.EventFilter) (uint64, error)
+	GetLiveJobProgress(filter jobs.EventFilter, since time.Time, limit int) ([]jobs.Snapshot, error)
 }
 
 // JobProgressFrame is one live progress update on the canonical stream. It is
@@ -153,13 +153,26 @@ func jobEventResponse(event jobs.Event) JobEventResponse {
 // GetCanonicalJobEventsHandler handles GET /v1/jobs/events?version=2. It polls
 // the durable published-event cursor: notifications may reduce latency, while
 // this query remains the recovery path for disconnects and slow subscribers.
+// owner=me narrows every read it makes to the viewer's own Jobs, as it narrows
+// a listing, and start=head skips the history a reader holding no cursor would
+// otherwise be sent.
 func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("version") != "2" {
 			writeJobError(w, http.StatusBadRequest, "version=2 is required for the canonical Job event stream")
 			return
 		}
-		cursor, err := canonicalJobEventCursor(r)
+		cursor, resumed, err := canonicalJobEventCursor(r)
+		if err != nil {
+			writeJobError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		startAtHead, err := canonicalJobEventStart(r)
+		if err != nil {
+			writeJobError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		filter, err := canonicalJobEventFilter(r)
 		if err != nil {
 			writeJobError(w, http.StatusBadRequest, err.Error())
 			return
@@ -186,18 +199,37 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		// cursor this database did issue above the viewer's head, and a reset
 		// there would reload pages for nothing. A failed read closes the stream,
 		// as a failed poll does, and the client reconnects.
+		//
+		// A reader that asked to start at the head and holds no cursor, a page
+		// that reads its Jobs itself once it is caught up, starts at the newest
+		// cursor this database has issued and replays nothing: history it would
+		// only record, paid for on every page load. The allocator's head is one
+		// row, where the viewer's own head is a search of their events, and
+		// nothing at or below it is published later, because the publisher
+		// assigns sequences in commit order under the allocator row's lock. Its
+		// caught-up marker carries that cursor as its SSE id, as a reset's does,
+		// so the browser's own reconnect resumes from it and a restored database
+		// is still recognised.
 		reset := false
-		if cursor > 0 {
+		movedCursor := false
+		switch {
+		case !resumed && startAtHead:
+			issued, err := ctx.GetJobEventSequenceHead()
+			if err != nil {
+				return
+			}
+			cursor, movedCursor = issued, true
+		case cursor > 0:
 			issued, err := ctx.GetJobEventSequenceHead()
 			if err != nil {
 				return
 			}
 			if cursor > issued {
-				head, err := ctx.GetPublishedJobEventHead()
+				head, err := ctx.GetPublishedJobEventHead(filter)
 				if err != nil {
 					return
 				}
-				cursor, reset = head, true
+				cursor, reset, movedCursor = head, true, true
 			}
 		}
 
@@ -210,7 +242,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		defer heartbeat.Stop()
 		caughtUp := false
 		for {
-			events, err := ctx.GetPublishedJobEvents(cursor, catchupPageSize)
+			events, err := ctx.GetPublishedJobEvents(filter, cursor, catchupPageSize)
 			if err != nil {
 				// The stream may already have sent headers. Do not serialize an error
 				// event into the durable event vocabulary; closing lets the client
@@ -245,11 +277,14 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 				// This control frame marks the boundary between replay and live
 				// delivery. It is not a durable Job event, so it deliberately has no
 				// SSE id and never enters the timeline or delivery cursor — except
-				// on a reset, where moving the browser's cursor is the point: the
-				// id it holds was never issued here, and a reconnect before the
-				// next event would otherwise resume from it again and, once this
-				// database's sequence had passed it, skip everything in between.
-				if reset {
+				// where the stream chose the cursor rather than resuming the
+				// reader's. On a reset the id the browser holds was never issued
+				// here, and a reconnect before the next event would otherwise
+				// resume from it again and, once this database's sequence had
+				// passed it, skip everything in between. A stream started at the
+				// head gave the browser no id at all, so its reconnect would start
+				// at the head again and skip what was published meanwhile.
+				if movedCursor {
 					fmt.Fprintf(w, "id: v2:%d\n", cursor)
 				}
 				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
@@ -262,7 +297,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			// frames rather than ending the stream: the events are the part a
 			// reconnect must recover, and the next tick reads progress afresh.
 			now := time.Now()
-			if snapshots, err := ctx.GetLiveJobProgress(now.Add(-liveProgressWindow), jobs.MaxLiveProgressRows); err == nil {
+			if snapshots, err := ctx.GetLiveJobProgress(filter, now.Add(-liveProgressWindow), jobs.MaxLiveProgressRows); err == nil {
 				seen := make(map[string]time.Time, len(snapshots))
 				wrote := false
 				for _, snap := range snapshots {
@@ -301,7 +336,10 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 	}
 }
 
-func canonicalJobEventCursor(r *http.Request) (uint64, error) {
+// canonicalJobEventCursor reads where a reader resumes, and whether it named a
+// place at all: Last-Event-ID, which a browser's own reconnect sends, over the
+// cursor query parameter.
+func canonicalJobEventCursor(r *http.Request) (uint64, bool, error) {
 	queryCursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 	var (
@@ -312,19 +350,46 @@ func canonicalJobEventCursor(r *http.Request) (uint64, error) {
 	if queryCursor != "" {
 		queryValue, err = parseVersionedJobEventCursor(queryCursor)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
 	if lastEventID != "" {
 		headerValue, err = parseVersionedJobEventCursor(lastEventID)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
 	if lastEventID != "" {
-		return headerValue, nil
+		return headerValue, true, nil
 	}
-	return queryValue, nil
+	return queryValue, queryCursor != "", nil
+}
+
+// canonicalJobEventStart reads start=head: begin at the newest cursor when the
+// reader resumes from none. It applies only then, because the browser's own
+// reconnect keeps the URL it was opened with and adds Last-Event-ID.
+func canonicalJobEventStart(r *http.Request) (bool, error) {
+	values, present := r.URL.Query()["start"]
+	if !present {
+		return false, nil
+	}
+	if len(values) != 1 || values[0] != "head" {
+		return false, fmt.Errorf("start accepts only head")
+	}
+	return true, nil
+}
+
+// canonicalJobEventFilter reads the stream's narrowing: owner=me, as a listing
+// takes it.
+func canonicalJobEventFilter(r *http.Request) (jobs.EventFilter, error) {
+	values, present := r.URL.Query()["owner"]
+	if !present {
+		return jobs.EventFilter{}, nil
+	}
+	if len(values) != 1 || values[0] != "me" {
+		return jobs.EventFilter{}, fmt.Errorf("owner accepts only me")
+	}
+	return jobs.EventFilter{OwnedByViewer: true}, nil
 }
 
 func parseVersionedJobEventCursor(raw string) (uint64, error) {

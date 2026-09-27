@@ -746,7 +746,7 @@ func TestRetentionSweepExpiresOutputsOnTheirOwnDeadline(t *testing.T) {
 	if _, err := svc.PublishPendingEvents(deps, DefaultPublishBatch); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	delivered, err := svc.PublishedEvents(deps, admin, 0, 0)
+	delivered, err := svc.PublishedEvents(deps, admin, EventFilter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("PublishedEvents: %v", err)
 	}

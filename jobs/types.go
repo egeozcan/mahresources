@@ -678,6 +678,15 @@ type Filter struct {
 	Command string
 }
 
+// EventFilter narrows the canonical stream's reads below what visibility
+// allows, as Filter narrows a listing. The zero value narrows nothing.
+type EventFilter struct {
+	// OwnedByViewer keeps the asking account's own Jobs only, as a listing's
+	// OwnedByViewer does: an administrator's drawer limited to their own work
+	// must not hear every other account's outcomes.
+	OwnedByViewer bool
+}
+
 // Cursor is the keyset position a listing continues from: the accepted instant
 // and identity of the last Job the previous page returned. It is a value rather
 // than an offset because history grows under the reader — a Job accepted while a

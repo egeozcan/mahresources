@@ -1155,7 +1155,7 @@ func (s *Service) Timeline(deps Deps, access Access, jobID string, afterSequence
 // assigned by the post-commit publisher, so it describes the order events became
 // durable rather than the order they were allocated. A wake-up is an
 // optimization on top of it; this cursor is what makes a reconnect whole.
-func (s *Service) PublishedEvents(deps Deps, access Access, afterDelivery uint64, limit int) ([]Event, error) {
+func (s *Service) PublishedEvents(deps Deps, access Access, filter EventFilter, afterDelivery uint64, limit int) ([]Event, error) {
 	size, err := eventPageSize(limit)
 	if err != nil {
 		return nil, err
@@ -1163,12 +1163,22 @@ func (s *Service) PublishedEvents(deps Deps, access Access, afterDelivery uint64
 	var rows []models.JobEvent
 	err = deps.DB.
 		Where("delivery_sequence IS NOT NULL AND delivery_sequence > ?", afterDelivery).
-		Where("job_id IN (?)", visibleJobIDs(deps.DB, access)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
 		Order("delivery_sequence ASC").Limit(size).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read published events: %w", err)
 	}
 	return eventsOf(rows), nil
+}
+
+// streamJobIDs is the stream's set of Jobs: the visible ones, narrowed by the
+// stream's filter.
+func streamJobIDs(db *gorm.DB, access Access, filter EventFilter) *gorm.DB {
+	ids := visibleJobIDs(db, access)
+	if filter.OwnedByViewer {
+		ids = ids.Where("jobs.owner_user_id = ?", access.UserID)
+	}
+	return ids
 }
 
 // EventSequenceHead returns the last delivery sequence the allocator handed out,
@@ -1194,11 +1204,11 @@ func (s *Service) EventSequenceHead(deps Deps) (uint64, error) {
 // the asker may see, or zero when there is none. A stream that resets a cursor
 // this database never issued resumes from here: nothing below it is news to a
 // client starting over, and nothing above it has been published for this asker.
-func (s *Service) PublishedEventHead(deps Deps, access Access) (uint64, error) {
+func (s *Service) PublishedEventHead(deps Deps, access Access, filter EventFilter) (uint64, error) {
 	var heads []uint64
 	err := deps.DB.Model(&models.JobEvent{}).
 		Where("delivery_sequence IS NOT NULL").
-		Where("job_id IN (?)", visibleJobIDs(deps.DB, access)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
 		Order("delivery_sequence DESC").Limit(1).
 		Pluck("delivery_sequence", &heads).Error
 	if err != nil {
@@ -1662,12 +1672,16 @@ const MaxLiveProgressRows = 500
 // resumable event stream never carries one. This read is the live feed beside
 // it — no cursor, no durability, and the same visibility predicate as every
 // other read, so a hidden Job's progress is never delivered.
-func (s *Service) LiveProgress(deps Deps, access Access, since time.Time, limit int) ([]Snapshot, error) {
+func (s *Service) LiveProgress(deps Deps, access Access, filter EventFilter, since time.Time, limit int) ([]Snapshot, error) {
 	if limit <= 0 || limit > MaxLiveProgressRows {
 		limit = MaxLiveProgressRows
 	}
 	var rows []models.Job
-	err := jobQuery(deps.DB.Model(&models.Job{}), access).
+	query := jobQuery(deps.DB.Model(&models.Job{}), access)
+	if filter.OwnedByViewer {
+		query = query.Where("jobs.owner_user_id = ?", access.UserID)
+	}
+	err := query.
 		Where("jobs.progress_updated_at > ?", since.UTC()).
 		Order("jobs.progress_updated_at DESC").Order("jobs.id DESC").
 		Limit(limit).Find(&rows).Error

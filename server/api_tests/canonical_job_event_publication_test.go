@@ -414,3 +414,92 @@ func findCanonicalAcceptedEvent(stream, jobID string) (canonicalSSEJobFrame, boo
 	}
 	return canonicalSSEJobFrame{}, false
 }
+
+// openCanonicalStream serves one canonical stream request on the router until
+// the test ends, answering its writer.
+func openCanonicalStream(t *testing.T, tc *TestContext, url string, cookie *http.Cookie) *canonicalSSEWriter {
+	t.Helper()
+	streamCtx, cancel := context.WithCancel(context.Background())
+	response := newCanonicalSSEWriter()
+	request := httptest.NewRequest(http.MethodGet, url, nil).WithContext(streamCtx)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	finished := make(chan struct{})
+	go func() {
+		tc.Router.ServeHTTP(response, request)
+		close(finished)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("canonical Job SSE did not stop after the client disconnected")
+		}
+	})
+	return response
+}
+
+// TestCanonicalJobSSEStartAtHeadSkipsHistory drives the drawer's first
+// connection: it reads its Jobs itself, so the stream sends none of the
+// published history, only what is published after it connected, and gives its
+// caught-up marker the cursor it started from.
+func TestCanonicalJobSSEStartAtHeadSkipsHistory(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	oldID, oldCursor := submitPublishedExport(t, tc, nil, "")
+
+	response := openCanonicalStream(t, tc, "/v1/jobs/events?version=2&start=head", nil)
+	if !response.waitForText("event: job-caught-up", 2*time.Second) {
+		t.Fatalf("the stream never caught up; it was %s", response.body())
+	}
+	if body := response.body(); strings.Contains(body, "event: job\n") ||
+		!strings.Contains(body, fmt.Sprintf("id: v2:%d\nevent: job-caught-up", oldCursor)) {
+		t.Fatalf("a stream started at the head = %s, want only a caught-up marker with id v2:%d", body, oldCursor)
+	}
+
+	newID, _ := submitPublishedExport(t, tc, nil, "")
+	if _, ok := response.waitForAcceptedEvent(t, newID, 5*time.Second); !ok {
+		t.Fatalf("the Job accepted after connecting was never delivered; stream was %s", response.body())
+	}
+	if _, replayed := findCanonicalAcceptedEvent(response.body(), oldID); replayed {
+		t.Fatalf("the stream replayed history published before it connected")
+	}
+}
+
+// TestCanonicalJobSSEOwnerMeKeepsOtherAccountsOut pins the administrator's
+// "mine" drawer: its stream carries its own Jobs' events and no other
+// account's, so its announcements are about its own work.
+func TestCanonicalJobSSEOwnerMeKeepsOtherAccountsOut(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	other, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "sse-owner-other-admin", Password: "password1", Role: models.RoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create the other administrator: %v", err)
+	}
+	otherCookie, otherCSRF := loginSummaryExportSession(t, tc, other.Username, "password1")
+	rootCookie, rootCSRF := loginSummaryExportSession(t, tc, "admin", "adminpw1")
+
+	mine := openCanonicalStream(t, tc, "/v1/jobs/events?version=2&start=head&owner=me", rootCookie)
+	everyone := openCanonicalStream(t, tc, "/v1/jobs/events?version=2&start=head", rootCookie)
+	for _, stream := range []*canonicalSSEWriter{mine, everyone} {
+		if !stream.waitForText("event: job-caught-up", 2*time.Second) {
+			t.Fatalf("a stream never caught up; it was %s", stream.body())
+		}
+	}
+
+	othersID, _ := submitPublishedExport(t, tc, otherCookie, otherCSRF)
+	ownID, _ := submitPublishedExport(t, tc, rootCookie, rootCSRF)
+	if _, ok := mine.waitForAcceptedEvent(t, ownID, 5*time.Second); !ok {
+		t.Fatalf("the owner-filtered stream never delivered the viewer's own Job; it was %s", mine.body())
+	}
+	if _, ok := everyone.waitForAcceptedEvent(t, othersID, 5*time.Second); !ok {
+		t.Fatalf("the unfiltered stream never delivered the other account's Job; it was %s", everyone.body())
+	}
+	if _, leaked := findCanonicalAcceptedEvent(mine.body(), othersID); leaked {
+		t.Fatalf("the owner-filtered stream delivered another account's Job")
+	}
+}
