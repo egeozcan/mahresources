@@ -120,3 +120,20 @@ func TestJobPreferenceFiltersAcceptAny(t *testing.T) {
 		t.Errorf("dismissed=maybe answered error %q", got)
 	}
 }
+
+// TestJobCenterJSONIsAnsweredInPlace covers the Job Center's own address asked
+// for as JSON. The page writes its dismissal default into its address with a
+// redirect, and a request the renderer answers as JSON must get the JSON, with
+// the default applied, rather than a 302.
+func TestJobCenterJSONIsAnsweredInPlace(t *testing.T) {
+	tc := SetupTestEnv(t)
+	for _, accept := range []string{"application/json", "application/json, text/html"} {
+		res := tc.requestWithAccept(http.MethodGet, "/jobs", accept, "")
+		if res.Code != http.StatusOK {
+			t.Fatalf("/jobs with Accept %q answered %d to %q", accept, res.Code, res.Header().Get("Location"))
+		}
+	}
+	if res := tc.requestWithAccept(http.MethodGet, "/jobs", browserAccept, ""); res.Code != http.StatusFound || res.Header().Get("Location") != "/jobs?dismissed=false" {
+		t.Fatalf("a browser navigation to /jobs answered %d to %q, want the default written into the address", res.Code, res.Header().Get("Location"))
+	}
+}

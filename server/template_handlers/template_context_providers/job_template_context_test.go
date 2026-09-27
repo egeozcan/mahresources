@@ -132,10 +132,15 @@ func TestJobListWritesItsUndismissedDefaultIntoTheAddress(t *testing.T) {
 			t.Errorf("%s redirected to %v", target, got)
 		}
 	}
-	jsonRequest := httptest.NewRequest(http.MethodGet, "/jobs?state=failed", nil)
-	jsonRequest.Header.Set("Accept", "application/json")
-	if got, ok := jobListContextProvider(&fakeJobListReader{})(jsonRequest)["_redirect"]; ok {
-		t.Errorf("a JSON request was redirected to %v", got)
+	// A request the renderer answers as JSON is answered in place, whatever
+	// else its Accept header names: the renderer serves it JSON, and a redirect
+	// would answer it 302 instead.
+	for _, accept := range []string{"application/json", "application/json, text/html", "text/html, application/json;q=0.9"} {
+		jsonRequest := httptest.NewRequest(http.MethodGet, "/jobs?state=failed", nil)
+		jsonRequest.Header.Set("Accept", accept)
+		if got, ok := jobListContextProvider(&fakeJobListReader{})(jsonRequest)["_redirect"]; ok {
+			t.Errorf("a request accepting %q was redirected to %v", accept, got)
+		}
 	}
 }
 

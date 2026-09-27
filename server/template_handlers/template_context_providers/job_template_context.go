@@ -15,6 +15,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/jobs"
+	"mahresources/server/http_utils"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
 )
@@ -293,10 +294,7 @@ func undismissedDefaultRedirect(request *http.Request) string {
 	if strings.TrimSpace(request.URL.Query().Get("dismissed")) != "" {
 		return ""
 	}
-	if path := request.URL.Path; strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".body") {
-		return ""
-	}
-	if accept := request.Header.Get("Accept"); strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") {
+	if strings.HasSuffix(request.URL.Path, ".body") || http_utils.TemplateRequestWantsJSON(request) {
 		return ""
 	}
 	target := *request.URL
