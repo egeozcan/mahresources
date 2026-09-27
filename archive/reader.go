@@ -233,10 +233,36 @@ func (r *Reader) Walk(v any) error {
 		if err != nil {
 			return formatOrRead(fmt.Errorf("archive: walk entry: %w", err))
 		}
+		// Returned as it is: dispatch marks what the entry's own bytes caused
+		// where it reads them, and anything else is the visitor's.
 		if err := r.dispatch(hdr, v); err != nil {
-			return formatOrRead(err)
+			return err
 		}
 	}
+}
+
+// entryReader is the current entry's bytes as dispatch hands them on. A failure
+// reading them is marked here, where it happens (formatOrRead), so that an error
+// a visitor returns reaches the caller unchanged: the visitor's own failure is
+// never read as the archive's, and a read of an entry the archive cut short
+// still is.
+type entryReader struct{ r io.Reader }
+
+func (e entryReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && err != io.EOF {
+		err = formatOrRead(err)
+	}
+	return n, err
+}
+
+// decodeEntry decodes the current entry into into, marking the failure as the
+// archive's or the read's.
+func (r *Reader) decodeEntry(name string, into any) error {
+	if err := json.NewDecoder(entryReader{r.tr}).Decode(into); err != nil {
+		return formatOrRead(fmt.Errorf("archive: parse %s: %w", name, err))
+	}
+	return nil
 }
 
 func (r *Reader) dispatch(hdr *tar.Header, v any) error {
@@ -245,49 +271,49 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case strings.HasPrefix(name, "groups/") && strings.HasSuffix(name, ".json"):
 		if gv, ok := v.(GroupVisitor); ok {
 			var p GroupPayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return gv.OnGroup(&p)
 		}
 	case strings.HasPrefix(name, "notes/") && strings.HasSuffix(name, ".json"):
 		if nv, ok := v.(NoteVisitor); ok {
 			var p NotePayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return nv.OnNote(&p)
 		}
 	case strings.HasPrefix(name, "resources/") && strings.HasSuffix(name, ".json"):
 		if rv, ok := v.(ResourceVisitor); ok {
 			var p ResourcePayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return rv.OnResource(&p)
 		}
 	case strings.HasPrefix(name, "series/") && strings.HasSuffix(name, ".json"):
 		if sv, ok := v.(SeriesVisitor); ok {
 			var p SeriesPayload
-			if err := json.NewDecoder(r.tr).Decode(&p); err != nil {
-				return fmt.Errorf("archive: parse %s: %w", name, err)
+			if err := r.decodeEntry(name, &p); err != nil {
+				return err
 			}
 			return sv.OnSeries(&p)
 		}
 	case strings.HasPrefix(name, "blobs/"):
 		if bv, ok := v.(BlobVisitor); ok {
 			hash := name[len("blobs/"):]
-			return bv.OnBlob(hash, r.tr, hdr.Size)
+			return bv.OnBlob(hash, entryReader{r.tr}, hdr.Size)
 		}
 	case strings.HasPrefix(name, "previews/"):
 		if pv, ok := v.(PreviewVisitor); ok {
 			id := name[len("previews/"):]
-			return pv.OnPreview(id, r.tr, hdr.Size)
+			return pv.OnPreview(id, entryReader{r.tr}, hdr.Size)
 		}
 	case name == "schemas/categories.json":
 		if cv, ok := v.(CategoryDefsVisitor); ok {
 			var defs []CategoryDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return cv.OnCategoryDefs(defs)
@@ -295,7 +321,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/note_types.json":
 		if nv, ok := v.(NoteTypeDefsVisitor); ok {
 			var defs []NoteTypeDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return nv.OnNoteTypeDefs(defs)
@@ -303,7 +329,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/resource_categories.json":
 		if rcv, ok := v.(ResourceCategoryDefsVisitor); ok {
 			var defs []ResourceCategoryDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return rcv.OnResourceCategoryDefs(defs)
@@ -311,7 +337,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/tags.json":
 		if tv, ok := v.(TagDefsVisitor); ok {
 			var defs []TagDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return tv.OnTagDefs(defs)
@@ -319,7 +345,7 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 	case name == "schemas/group_relation_types.json":
 		if gtv, ok := v.(GroupRelationTypeDefsVisitor); ok {
 			var defs []GroupRelationTypeDef
-			if err := json.NewDecoder(r.tr).Decode(&defs); err != nil {
+			if err := r.decodeEntry(name, &defs); err != nil {
 				return err
 			}
 			return gtv.OnGroupRelationTypeDefs(defs)

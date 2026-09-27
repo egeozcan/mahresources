@@ -2,8 +2,11 @@ package download_queue
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/contracts"
 	"mahresources/hls"
+	"mahresources/models"
 	"mahresources/models/query_models"
 )
 
@@ -60,6 +65,13 @@ func TestAFailureIsCodedByWhatWentWrong(t *testing.T) {
 		{"connection refused", &url.Error{Op: "Get", URL: "http://127.0.0.1:1", Err: &net.OpError{Op: "dial", Net: "tcp",
 			Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}}, FailureRemoteConnection},
 		{"header timeout", &url.Error{Op: "Get", URL: "http://example.com", Err: netTimeout{}}, FailureRemoteTimeout},
+		{"an untrusted certificate", &url.Error{Op: "Get", URL: "https://example.com", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, FailureRemoteConnection},
+		{"a certificate for another name", &url.Error{Op: "Get", URL: "https://example.com", Err: x509.HostnameError{Certificate: &x509.Certificate{}, Host: "example.com"}}, FailureRemoteConnection},
+		{"an expired certificate", &url.Error{Op: "Get", URL: "https://example.com", Err: x509.CertificateInvalidError{Reason: x509.Expired}}, FailureRemoteConnection},
+		{"a server that does not speak TLS", &url.Error{Op: "Get", URL: "https://example.com", Err: tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}}, FailureRemoteConnection},
+		{"a handshake the server refused", &url.Error{Op: "Get", URL: "https://example.com", Err: tls.AlertError(40)}, FailureRemoteConnection},
+		{"a body cut short", fmt.Errorf("copy the body: %w", io.ErrUnexpectedEOF), FailureRemoteConnection},
+		{"a connection closed before any answer", &url.Error{Op: "Get", URL: "http://example.com", Err: io.EOF}, FailureRemoteConnection},
 		{"idle timeout", &idleTimeoutError{limit: time.Minute}, FailureIdleTimeout},
 		{"overall timeout", &OverallTimeoutError{Limit: time.Minute}, FailureOverallTimeout},
 		{"private address", &policyRefusalError{err: errors.New("blocked request: it resolves to an address this server is not permitted to fetch from")}, FailureAddressRefused},
@@ -106,6 +118,54 @@ func TestATransferRecordsItsFailureCode(t *testing.T) {
 			snap := waitForTerminalStatus(t, job)
 			if snap.Status != JobStatusFailed || snap.FailureCode != tc.want {
 				t.Fatalf("the download ended %s with code %q, want failed with %q", snap.Status, snap.FailureCode, tc.want)
+			}
+		})
+	}
+}
+
+// bodyReadingCreator reads the whole body and fails the way the resource writer
+// does when the read fails.
+type bodyReadingCreator struct{}
+
+func (bodyReadingCreator) AddResource(file contracts.File, _ string, q *query_models.ResourceCreator) (*models.Resource, error) {
+	if _, err := io.Copy(io.Discard, file); err != nil {
+		return nil, fmt.Errorf("copy the download: %w", err)
+	}
+	return &models.Resource{ID: 1, Name: q.Name}, nil
+}
+
+func (c bodyReadingCreator) AddResourceForJob(_ string, _ *uint, file contracts.File, fileName string, q *query_models.ResourceCreator) (*models.Resource, error) {
+	return c.AddResource(file, fileName, q)
+}
+
+// A remote whose certificate this server does not trust, and one that closes the
+// connection before sending the body it announced, are remote connection
+// failures, not failures of this server.
+func TestARemoteConnectionFailureIsCodedAsOne(t *testing.T) {
+	untrusted := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("never read"))
+	}))
+	defer untrusted.Close()
+	truncated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "4096")
+		_, _ = w.Write([]byte("only the first bytes"))
+	}))
+	defer truncated.Close()
+
+	for name, target := range map[string]string{
+		"an untrusted certificate": untrusted.URL + "/file.bin",
+		"a body cut short":         truncated.URL + "/file.bin",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dm := createTestManager()
+			dm.resourceCtx = &bodyReadingCreator{}
+			job, err := dm.Submit(&query_models.ResourceFromRemoteCreator{URL: target}, nil)
+			if err != nil {
+				t.Fatalf("submit: %v", err)
+			}
+			snap := waitForTerminalStatus(t, job)
+			if snap.Status != JobStatusFailed || snap.FailureCode != FailureRemoteConnection {
+				t.Fatalf("the download ended %s with code %q (%s), want failed with %q", snap.Status, snap.FailureCode, snap.Error, FailureRemoteConnection)
 			}
 		})
 	}

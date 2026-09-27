@@ -1,8 +1,11 @@
 package download_queue
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -33,7 +36,8 @@ const (
 	// FailureRemoteServerError is a 5xx or any other status outside 2xx.
 	FailureRemoteServerError = "remote-server-error"
 	// FailureRemoteConnection is a name that did not resolve, a connection that
-	// was refused, reset or dropped, or a TLS handshake that failed.
+	// was refused, reset or dropped (before the answer or inside its body), or a
+	// TLS handshake that failed, an untrusted certificate included.
 	FailureRemoteConnection = "remote-connection-failed"
 	// FailureRemoteTimeout is a connection or response-header timeout, or a 408.
 	FailureRemoteTimeout = "remote-timeout"
@@ -142,12 +146,33 @@ func failureCode(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return FailureRemoteTimeout
 	}
-	var dnsErr *net.DNSError
-	var opErr *net.OpError
-	if errors.As(err, &dnsErr) || errors.As(err, &opErr) {
+	if remoteConnectionFailure(err) {
 		return FailureRemoteConnection
 	}
 	return FailureDownloadFailed
+}
+
+// remoteConnectionFailure reports a failure of the connection to the remote
+// rather than of this server: a name that did not resolve, a dial or read that
+// failed, a TLS handshake that failed or a certificate this server does not
+// trust, and a connection that closed before the answer it announced was in
+// (io.EOF before any response, io.ErrUnexpectedEOF inside a body). Every error
+// that reaches here comes from the transfer or the resource writer, and the
+// writer passes a body read's error on as it is.
+func remoteConnectionFailure(err error) bool {
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var certificate *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var notTLS tls.RecordHeaderError
+	var alert tls.AlertError
+	return errors.As(err, &dnsErr) || errors.As(err, &opErr) ||
+		errors.As(err, &certificate) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &hostname) || errors.As(err, &invalid) ||
+		errors.As(err, &notTLS) || errors.As(err, &alert) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
 // statusFailureCode sorts an HTTP status by whether asking again could change

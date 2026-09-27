@@ -229,7 +229,7 @@ deployment's policy and limits.
 | `remote-forbidden` | `dependency` | yes | The remote answered 403 |
 | `remote-busy` | `dependency` | yes | The remote answered 423, 425 or 429 |
 | `remote-server-error` | `dependency` | yes | The remote answered 5xx or another unexpected status |
-| `remote-connection-failed` | `dependency` | yes | The name did not resolve, or the connection was refused, reset or dropped |
+| `remote-connection-failed` | `dependency` | yes | The name did not resolve; the connection was refused, reset or dropped, before the answer or inside its body; or the TLS handshake failed, an untrusted or invalid certificate included |
 | `remote-timeout` | `timeout` | yes | Connecting or waiting for the response headers timed out, or the remote answered 408 |
 | `idle-timeout` | `timeout` | yes | The remote stopped sending for longer than `-remote-idle-timeout` |
 | `overall-timeout` | `timeout` | yes | The transfer ran past `-remote-overall-timeout` |

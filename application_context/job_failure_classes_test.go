@@ -32,11 +32,18 @@ func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 			http.Error(w, "later", http.StatusServiceUnavailable)
 		case "/forbidden":
 			http.Error(w, "who are you", http.StatusForbidden)
+		case "/truncated":
+			w.Header().Set("Content-Length", "4096")
+			_, _ = w.Write([]byte("only the first bytes"))
 		default:
 			_, _ = w.Write([]byte("the same bytes at two addresses"))
 		}
 	}))
 	t.Cleanup(server.Close)
+	untrusted := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("behind a certificate nobody here trusts"))
+	}))
+	t.Cleanup(untrusted.Close)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +62,8 @@ func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 		{server.URL + "/busy", download_queue.FailureRemoteServerError, jobs.FailureClassDependency, true},
 		{server.URL + "/forbidden", download_queue.FailureRemoteForbidden, jobs.FailureClassDependency, true},
 		{closed, download_queue.FailureRemoteConnection, jobs.FailureClassDependency, true},
+		{untrusted.URL + "/tls.bin", download_queue.FailureRemoteConnection, jobs.FailureClassDependency, true},
+		{server.URL + "/truncated", download_queue.FailureRemoteConnection, jobs.FailureClassDependency, true},
 		// Refused by this deployment's fetch policy, which an operator can change:
 		// the same download may succeed once the address is allowed.
 		{"http://10.255.255.1:9/private.bin", download_queue.FailureAddressRefused, jobs.FailureClassPolicy, true},

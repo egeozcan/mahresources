@@ -2,7 +2,9 @@ package archive
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 )
@@ -85,5 +87,53 @@ func TestAFormatErrorIsTheArchivesOwnAndAReadFailureIsNot(t *testing.T) {
 				t.Errorf("a read failing %s %s answered %v, want the read's own cause and no FormatError", name, kind, err)
 			}
 		}
+	}
+}
+
+type failingGroupVisitor struct{ err error }
+
+func (v failingGroupVisitor) OnGroup(*GroupPayload) error { return v.err }
+
+type blobReadingVisitor struct{}
+
+func (blobReadingVisitor) OnBlob(hash string, body io.Reader, _ int64) error {
+	if _, err := io.ReadAll(body); err != nil {
+		return fmt.Errorf("store blob %s: %w", hash, err)
+	}
+	return nil
+}
+
+// Only the archive's bytes decide a FormatError. A visitor's own failure is
+// passed on as it is, whatever it looks like, while a visitor that fails reading
+// an entry the archive cut short still reports the archive's verdict.
+func TestAVisitorsOwnFailureIsNotAnArchiveVerdict(t *testing.T) {
+	whole := writeFixtureArchive(t).Bytes()
+	walk := func(src []byte, v any) error {
+		r, err := NewReader(bytes.NewReader(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if _, err := r.ReadManifest(); err != nil {
+			t.Fatal(err)
+		}
+		return r.Walk(v)
+	}
+
+	for _, own := range []error{io.EOF, io.ErrUnexpectedEOF, &json.SyntaxError{}} {
+		err := walk(whole, failingGroupVisitor{err: own})
+		var format *FormatError
+		if errors.As(err, &format) || !errors.Is(err, own) {
+			t.Errorf("a visitor failing with %T answered %v, want its own error and no FormatError", own, err)
+		}
+	}
+
+	cut := bytes.Index(whole, []byte("PNGDATA"))
+	if cut < 0 {
+		t.Fatal("the fixture has no blob to cut")
+	}
+	var format *FormatError
+	if err := walk(whole[:cut+3], blobReadingVisitor{}); !errors.As(err, &format) {
+		t.Errorf("a blob the archive cut short answered %v, want a FormatError", err)
 	}
 }
