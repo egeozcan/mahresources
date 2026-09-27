@@ -474,7 +474,8 @@
                                                                         class="px-3 py-1.5 cursor-pointer text-sm truncate"
                                                                         :class="{'bg-amber-700 text-white': index === selectedIndex, 'hover:bg-stone-50': index !== selectedIndex}"
                                                                         @mousedown="setActiveIndex(index); pushVal($event)"
-                                                                        @mouseover="setActiveIndex(index)"
+                                                                        {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                                                                        @mousemove="setActiveIndex(index)"
                                                                         x-text="result.Name"
                                                                     ></div>
                                                                 </template>

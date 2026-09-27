@@ -22,7 +22,8 @@
                         :class="{'bg-amber-700 !text-white': index === selectedIndex}"
                         {# A click names one rendered row, so it commits by identity; the index-based action would drop it while a newer search is in flight. #}
                         @mousedown="startSelecting(); setActiveIndex(index); selectResult(result)"
-                        @mouseover="setActiveIndex(index)"
+                        {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                        @mousemove="setActiveIndex(index)"
                         tabindex="-1"
                     >
                         <span

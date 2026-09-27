@@ -27,7 +27,8 @@
                 tabindex="-1"
                 :id="'mention-option-' + result.type + '-' + result.id"
                 @click.prevent="selectMention(result)"
-                @mouseenter="mentionSelectedIndex = index"
+                {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                @mousemove="mentionSelectedIndex = index"
                 :data-mention-selected="index === mentionSelectedIndex"
                 :class="index === mentionSelectedIndex ? 'bg-amber-50' : ''"
                 class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-stone-50 cursor-pointer text-sm"

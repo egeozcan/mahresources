@@ -527,7 +527,8 @@
                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                 <div
                                     @mousedown.prevent="setActiveIndex(rIndex); selectResult(tag)"
-                                    @mouseover="setActiveIndex(rIndex)"
+                                    {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                                    @mousemove="setActiveIndex(rIndex)"
                                     :id="'lightbox-tag-result-' + rIndex"
                                     role="option"
                                     :aria-selected="rIndex === selectedIndex"
@@ -757,7 +758,8 @@
                                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                                 <div
                                                     @mousedown.prevent="setActiveIndex(rIndex); selectResult(tag)"
-                                                    @mouseover="setActiveIndex(rIndex)"
+                                                    {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                                                    @mousemove="setActiveIndex(rIndex)"
                                                     role="option"
                                                     :aria-selected="rIndex === selectedIndex"
                                                     class="px-3 py-2 cursor-pointer text-sm"
