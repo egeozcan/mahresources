@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,64 @@ const (
 	// required: a partial apply publishes its report *because* it failed, and a
 	// failure that produced one is still a failure.
 	jobImportResultOutput = "result"
+	// jobImportReviewOutput is the review a successful parse leaves open, as an
+	// entity output: /admin/import restores the review from the plan, so the
+	// parse's Job links there while the plan waits to be applied.
+	jobImportReviewOutput = "review"
+	// jobImportGroupOutput is the first group a succeeded apply created, the top of
+	// what it imported, so the apply's Job links to what it made.
+	jobImportGroupOutput = "group"
 )
+
+// importReviewReference is how an entity output names the review of one parse.
+type importReviewReference struct {
+	ImportReview string `json:"importReview"`
+}
+
+// importReviewTarget reads the parse handle an import review output names. Any
+// other reference answers false, and so does a handle with a character a staging
+// path could not carry.
+func importReviewTarget(reference json.RawMessage) (string, bool) {
+	var ref importReviewReference
+	if err := json.Unmarshal(reference, &ref); err != nil || ref.ImportReview == "" {
+		return "", false
+	}
+	if strings.ContainsAny(ref.ImportReview, "/\\?#%") || strings.TrimSpace(ref.ImportReview) != ref.ImportReview {
+		return "", false
+	}
+	return ref.ImportReview, true
+}
+
+// importReviewLocation is the page that restores one parse's review.
+func importReviewLocation(handle string) string {
+	return "/admin/import?job=" + url.QueryEscape(handle)
+}
+
+// importReviewOpen reports whether a parse's review can still be resumed: its plan
+// is waiting to be applied. A plan an apply consumed, or one removed with the
+// import, leaves nothing to review. A check that failed is an error, never
+// "closed".
+func (ctx *MahresourcesContext) importReviewOpen(handle string) (bool, error) {
+	if ctx == nil || handle == "" {
+		return false, nil
+	}
+	return afero.Exists(ctx.GetDefaultFs(), importPlanPathFor(handle))
+}
+
+// publishImportReview publishes the link from a parse's Job to its review.
+func publishImportReview(execution jobs.Execution, handle string) error {
+	reference, err := json.Marshal(importReviewReference{ImportReview: handle})
+	if err != nil {
+		return err
+	}
+	_, err = execution.Output(jobs.OutputInput{
+		Key:       jobImportReviewOutput,
+		Type:      jobs.OutputTypeEntity,
+		Label:     "Import review",
+		Reference: reference,
+	})
+	return err
+}
 
 // ErrImportPlanConsumed is the refusal a second apply answers with 409: the plan was
 // already consumed, and there is nothing left to decide on.
@@ -566,6 +624,11 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 				},
 				[]string{jobImportPlanOutput})
 		}
+		// Like the plan's, a refused publication is a write that did not land: the
+		// execution's owner retries it.
+		if err := publishImportReview(execution, input.Handle); err != nil {
+			return err
+		}
 		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobImportPlanOutput})
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
@@ -667,6 +730,11 @@ func (a *importParseAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 		if !a.ctx.importPlanIsComplete(input.Handle) {
 			return jobs.ReconcileFail, nil
 		}
+		if _, linked := findJobOutput(outputs, jobImportReviewOutput); !linked {
+			if err := publishImportReview(request.Execution, input.Handle); err != nil {
+				return jobs.ReconcileExternalWorkUnproven, nil
+			}
+		}
 		return jobs.ReconcileSucceed, nil
 	}
 	if a.ctx.importPlanIsComplete(input.Handle) {
@@ -680,6 +748,9 @@ func (a *importParseAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 		// claim's token and settle the execution that produced it.
 		if err := a.ctx.publishQueueReport(request.Execution, jobImportPlanOutput, "Import plan",
 			importPlanPathFor(input.Handle), true); err != nil {
+			return jobs.ReconcileExternalWorkUnproven, nil
+		}
+		if err := publishImportReview(request.Execution, input.Handle); err != nil {
 			return jobs.ReconcileExternalWorkUnproven, nil
 		}
 		return jobs.ReconcileSucceed, nil
@@ -964,6 +1035,17 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 	}
 	switch snap.Status {
 	case download_queue.JobStatusCompleted:
+		if groupID, ok := a.ctx.importCreatedGroup(resultPath); ok {
+			reference, err := json.Marshal(map[string]uint{"groupId": groupID})
+			if err != nil {
+				return err
+			}
+			if _, err := execution.Output(jobs.OutputInput{
+				Key: jobImportGroupOutput, Type: jobs.OutputTypeEntity, Label: "Imported group", Reference: reference,
+			}); err != nil {
+				return err
+			}
+		}
 		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, nil)
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
@@ -976,6 +1058,22 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 			},
 			nil)
 	}
+}
+
+// importCreatedGroup reads the first group an apply's report says it created.
+// Groups are created top-down, so the first is a root of the import. A report that
+// cannot be read, or names no created group, links nothing; the link is a
+// convenience and its absence claims nothing about the apply.
+func (ctx *MahresourcesContext) importCreatedGroup(resultPath string) (uint, bool) {
+	data, err := afero.ReadFile(ctx.GetDefaultFs(), resultPath)
+	if err != nil {
+		return 0, false
+	}
+	var result ImportApplyResult
+	if err := json.Unmarshal(data, &result); err != nil || len(result.CreatedGroupIDs) == 0 || result.CreatedGroupIDs[0] == 0 {
+		return 0, false
+	}
+	return result.CreatedGroupIDs[0], true
 }
 
 // Reconcile answers what should happen to one apply whose claim expired.
