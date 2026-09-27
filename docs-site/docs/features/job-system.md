@@ -30,7 +30,9 @@ release and six months after canonical cutover. A legacy download handle follows
 its latest Retry leaf during that window; a canonical UUID continues to identify
 one immutable Job. See [Download Queue](./download-queue.md) for the older
 download routes and [Backup and Restore](../deployment/backups.md) for the
-restore barrier.
+restore barrier. After upgrading, check for unfinished Jobs of accounts deleted
+before this release, which carry no deleted-account mark; see
+[Advanced Configuration](../configuration/advanced.md#unfinished-jobs-of-accounts-deleted-before-this-release).
 
 ## Job Kinds
 
