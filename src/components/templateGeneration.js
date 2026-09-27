@@ -39,6 +39,11 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // editor is untouched since the request started; invalid drafts wait for an
     // explicit "Use anyway".
     async generateFromPrompt() {
+      // Every submission replaces whatever came before it, including one about to be
+      // refused below: a request still waiting for its editors, or still in flight, must
+      // not land a draft after the reader has asked for something else.
+      const requestId = ++this._generationRequestId;
+      this.generating = false;
       const prompt = (this.generationPrompt || '').trim();
       this.generationError = '';
       this.generationStatus = '';
@@ -64,8 +69,6 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       const base = fieldName.endsWith('CSS') ? fieldName.slice(0, -3) : fieldName;
       const pair = [base, `${base}CSS`];
       if (base !== 'Custom' && pair.every((name) => form?.querySelector(`input[name="${name}"]`))) target = 'cluster';
-
-      const requestId = ++this._generationRequestId;
 
       // Every editor the draft will be written into has to exist before the request goes
       // out: the snapshot that decides whether to auto-apply is read from them. A pair

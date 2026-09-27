@@ -114,6 +114,30 @@ describe('template cluster generation', () => {
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
+  it('drops a waiting prompt when a later submission is refused', async () => {
+    const { editor, views } = fixture();
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const waiting = editor.generateFromPrompt();
+    editor.generationPrompt = '';
+    await editor.generateFromPrompt();
+    expect(editor.generationError).toBe('Describe what you want first.');
+    mounted.forEach(mount => mount());
+    await waiting;
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+    expect(editor.generating).toBe(false);
+    expect(editor.generationError).toBe('Describe what you want first.');
+  });
+
   it('says so when an editor never mounts', async () => {
     const { editor } = fixture();
     const css = document.querySelectorAll('[x-ref="editorContainer"]')[1] as HTMLElement & Record<string, unknown>;
