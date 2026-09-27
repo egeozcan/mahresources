@@ -254,8 +254,12 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 
 	entry, found := a.ctx.downloadManager.GetJobByCanonicalJobID(execution.JobID)
 	if !found {
-		entry, err = a.start(execution, &decoded)
-		if err != nil {
+		ended, err := a.whenTheURLIsFree(ctx, execution, func() error {
+			started, err := a.start(execution, &decoded)
+			entry = started
+			return err
+		})
+		if err != nil || ended {
 			return err
 		}
 	} else if ref, ok := entry.CanonicalExecution(); !ok || ref.ExecutionToken != execution.ExecutionToken {
@@ -276,7 +280,16 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		if !a.queuedForDispatch(execution) {
 			return a.block(execution, "paused")
 		}
-		if err := a.ctx.downloadManager.Resume(entry.ID); err != nil {
+		ended, err := a.whenTheURLIsFree(ctx, execution, func() error {
+			if live := a.ctx.downloadManager.OtherActiveTransfer(entry.GetURL(), execution.JobID); live != "" {
+				return &download_queue.URLActiveError{JobID: live}
+			}
+			return a.ctx.downloadManager.Resume(entry.ID)
+		})
+		if ended {
+			return err
+		}
+		if err != nil {
 			var conflict *download_queue.StateConflictError
 			if errors.As(err, &conflict) {
 				// The entry moved while this dispatch held its claim: whatever it moved
@@ -296,8 +309,67 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	})
 }
 
+// downloadWaitingPhase is the phase a download's Job reports while it waits for
+// another transfer of its URL.
+const downloadWaitingPhase = "waiting"
+
+// whenTheURLIsFree runs attempt, which starts or resumes this execution's
+// transfer, once no other transfer in this process is fetching the same URL:
+// attempt answers a *download_queue.URLActiveError while one is, and is asked
+// again until it answers anything else.
+//
+// One URL is fetched once at a time here, and a Job that finds its URL already
+// downloading waits for that transfer rather than being blocked: nothing would
+// release a block when the other transfer ended, and the person who pressed Retry
+// would be left holding a Job that needed them for no reason. It waits holding its
+// claim, so a restart reconciles it like any running Job, and the slot it holds is
+// the one the duplicate transfer would have held. A cancellation recorded while it
+// waits ends it at once (ended is true), and the transfer it waited on is left
+// alone.
+func (a *downloadJobAdapter) whenTheURLIsFree(ctx context.Context, execution jobs.Execution, attempt func() error) (bool, error) {
+	var ticker *time.Ticker
+	var nextIntentCheck time.Time
+	for {
+		err := attempt()
+		var busy *download_queue.URLActiveError
+		if !errors.As(err, &busy) {
+			return false, err
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(jobDownloadPollInterval)
+			defer ticker.Stop()
+			if _, err := execution.Progress(jobs.Progress{
+				Phase:   downloadWaitingPhase,
+				Message: "Waiting for another download of this URL to finish",
+			}); err != nil && !mirrorRefusalIsSilent(err) {
+				log.Printf("warning: recording that download job %s is waiting failed: %v", execution.JobID, err)
+			}
+		}
+		if now := time.Now(); !now.Before(nextIntentCheck) {
+			nextIntentCheck = now.Add(queueJobIntentPollInterval)
+			if a.cancelWon(execution) {
+				return true, a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// cancelWon reports whether a cancellation has been recorded against this
+// execution's Job.
+func (a *downloadJobAdapter) cancelWon(execution jobs.Execution) bool {
+	snap, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
+	return err == nil && !snap.State.Terminal() && snap.ControlIntent == jobs.ControlIntentCancel
+}
+
 // start submits the transfer this execution needs, taking the id from the Job's own
 // download handle when it has one so the panel and the Job Center name one row.
+// It is refused with a *download_queue.URLActiveError while another transfer is
+// fetching the same URL (see whenTheURLIsFree).
 func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobInput) (*download_queue.DownloadJob, error) {
 	if input.Creator == nil {
 		return nil, errors.New("the download Job names no submission")
@@ -319,8 +391,9 @@ func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobI
 	}
 	return a.ctx.downloadManager.SubmitForPluginWithOptions(input.Creator, job.OwnerUserID, input.Plugin,
 		download_queue.SubmissionOptions{
-			JobID:     legacyID,
-			Canonical: &download_queue.CanonicalRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+			JobID:        legacyID,
+			Canonical:    &download_queue.CanonicalRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+			ExclusiveURL: true,
 		})
 }
 
@@ -341,13 +414,6 @@ func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *down
 		}
 		if err := scoped.validateDownloadTargetsInScope(input.Creator); err != nil {
 			return "scope-refused"
-		}
-	}
-	if input.Creator != nil {
-		if live, running := download_queue.ActiveDownloadForURL(a.ctx.downloadManager, input.Creator.URL); running && live != "" {
-			if entry, ok := a.ctx.downloadManager.GetJob(live); !ok || entry.CanonicalJobID != execution.JobID {
-				return "url-already-downloading"
-			}
 		}
 	}
 	return ""

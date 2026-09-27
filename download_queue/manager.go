@@ -237,6 +237,20 @@ type SubmissionOptions struct {
 	// owns the Job — the runtime adopts it a tick later — and until it does, the
 	// transfer knows which Job it belongs to but has no token to publish under.
 	Canonical *CanonicalRef
+	// ExclusiveURL refuses the submission with a *URLActiveError while another
+	// entry is fetching the same URL, decided under the registry lock the entry is
+	// added under, so two submissions that both saw the URL free cannot both start.
+	ExclusiveURL bool
+}
+
+// URLActiveError is a submission refused because another entry in this queue is
+// fetching the same URL right now.
+type URLActiveError struct {
+	JobID string
+}
+
+func (e *URLActiveError) Error() string {
+	return fmt.Sprintf("this URL is already downloading as %s", e.JobID)
 }
 
 // actorResourceCreator is the optional capability (implemented by
@@ -587,6 +601,13 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 
 	dm.mu.Lock()
 
+	if opts.ExclusiveURL {
+		if live := dm.activeEntryForURLLocked(strings.TrimSpace(creator.URL), opts); live != "" {
+			dm.mu.Unlock()
+			return nil, &URLActiveError{JobID: live}
+		}
+	}
+
 	if !dm.makeRoomForNewJob() {
 		dm.mu.Unlock()
 		return nil, fmt.Errorf("download queue is full (max %d jobs) - all jobs are active or paused", MaxQueueSize)
@@ -658,6 +679,39 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 	dm.startDownloadWorker(job)
 
 	return job, nil
+}
+
+// activeEntryForURLLocked answers the id of another entry fetching url, or "". An
+// entry publishing into the same durable Job the submission names is not
+// another one: it is this Job's own earlier attempt. Must be called with dm.mu
+// held.
+func (dm *DownloadManager) activeEntryForURLLocked(url string, opts SubmissionOptions) string {
+	for _, id := range dm.jobOrder {
+		job := dm.jobs[id]
+		if job == nil || job.Source != JobSourceDownload || job.runFn != nil || job.URL != url {
+			continue
+		}
+		if opts.Canonical != nil && job.CanonicalJobID == opts.Canonical.JobID {
+			continue
+		}
+		switch job.GetStatus() {
+		case JobStatusPending, JobStatusDownloading, JobStatusProcessing, JobStatusPaused:
+			return id
+		}
+	}
+	return ""
+}
+
+// OtherActiveTransfer answers the id of an entry fetching url that does not
+// publish into the named durable Job, or "".
+func (dm *DownloadManager) OtherActiveTransfer(url, canonicalJobID string) string {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	opts := SubmissionOptions{}
+	if canonicalJobID != "" {
+		opts.Canonical = &CanonicalRef{JobID: canonicalJobID}
+	}
+	return dm.activeEntryForURLLocked(strings.TrimSpace(url), opts)
 }
 
 // SubmitMultiple submits multiple URLs (newline-separated) as individual jobs,

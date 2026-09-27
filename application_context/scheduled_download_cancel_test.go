@@ -414,42 +414,57 @@ func TestADueRowWhoseJobWasCancelledIsCancelledEvenWhenItsPluginIsGone(t *testin
 	}
 }
 
-// A Job cancelled while the sweep is refusing its row (here, while it asks
-// whether the plugin is available) ends the row first. The refusal then has no
-// row left to record, which is no reason to stop the sweep before the rows
-// behind it.
-func TestCancellingADeferredJobWhileTheSweepRefusesItDoesNotStopTheSweep(t *testing.T) {
+// A Job cancelled while the sweep holds its row (here, just before the sweep
+// reserves it) ends the row first. The sweep then has no row left to hand on,
+// which is no reason to stop before the rows behind it.
+func TestCancellingADeferredJobWhileTheSweepHoldsItsRowDoesNotStopTheSweep(t *testing.T) {
 	ctx, _, actor, earlier := newRetiredDeferredDownloadContext(t)
 	if ok, err := ctx.CancelScheduledDownload(earlier.ID); err != nil || !ok {
 		t.Fatalf("setup: cancel the fixture's other row = %v, %v", ok, err)
 	}
 	first, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/refused.bin"}, time.Now().Add(time.Hour))
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/held.bin"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("create the first deferred download: %v", err)
 	}
 	behind, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
-		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/behind-refused.bin"}, time.Now().Add(time.Hour+time.Minute))
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/behind-held.bin"}, time.Now().Add(time.Hour+time.Minute))
 	if err != nil {
 		t.Fatalf("create the second deferred download: %v", err)
 	}
-	var asked atomic.Bool
+	firstJob := deferredDownloadJob(t, ctx, first.ID)
+
+	// The cancel lands before the first reserve of the sweep runs: the row is
+	// claimed, and nothing has been handed on yet.
+	var injected atomic.Bool
+	const name = "test:cancel-before-reserve"
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "scheduled_downloads" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || updates["status"] != models.ScheduledDownloadStatusSubmitted || !injected.CompareAndSwap(false, true) {
+			return
+		}
+		cancelJobAsItsOwner(t, ctx, firstJob)
+	}); err != nil {
+		t.Fatalf("register the interleave: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(name) })
+
 	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
-		Now: time.Now().Add(2 * time.Hour),
-		PluginAvailable: func(string) bool {
-			if asked.CompareAndSwap(false, true) {
-				cancelJobAsItsOwner(t, ctx, deferredDownloadJob(t, ctx, first.ID))
-				return false
-			}
-			return true
-		},
+		Now:             time.Now().Add(2 * time.Hour),
+		PluginAvailable: func(string) bool { return true },
 		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
 			t.Fatalf("a deferred row with a durable Job was submitted to the queue")
 			return "", nil
 		},
 	})
 	if err != nil {
-		t.Fatalf("the sweep failed when a Job was cancelled while its row was refused: %v", err)
+		t.Fatalf("the sweep failed when a Job was cancelled while it held the row: %v", err)
+	}
+	if !injected.Load() {
+		t.Fatalf("setup: the cancel was never interleaved")
 	}
 	if fired != 1 {
 		t.Fatalf("the sweep fired %d rows, want only the row behind", fired)
