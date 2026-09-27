@@ -2222,6 +2222,7 @@ func (ctx *MahresourcesContext) runQueuedScheduledOccurrence(pm *plugin_system.P
 	// — a person has to decide about it, and a broken schedule would be the wrong
 	// thing to report.
 	admission := ctx.newPluginActionAdmission(jobID, input, ctx.occurrenceActorRefusal)
+	admission.successor = true
 	return ctx.runOccurrenceThrough(pm, admission, ctx.pluginActionHandleFor(jobID), reg, actorUserID, 0, false)
 }
 

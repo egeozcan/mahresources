@@ -54,6 +54,11 @@ type PluginSchedule struct {
 	LastStatus string     `gorm:"size:20" json:"lastStatus,omitempty"`
 	LastError  string     `gorm:"size:2000" json:"lastError,omitempty"`
 	Runs       int64      `gorm:"not null;default:0" json:"runs"`
+	// LastOccurrenceAt is when the run whose outcome LastStatus records was
+	// dispatched, in UTC. Under overlap = "allow" runs finish in any order and
+	// hold no claim, so an outcome is written only by a run at least as new as
+	// this one: an older run finishing late must not replace a newer result.
+	LastOccurrenceAt *time.Time `json:"-"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

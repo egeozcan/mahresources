@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -2582,5 +2583,42 @@ func TestAClaimWhoseClaimantIsProvedGoneIsReconciledBeforeItsLeaseRunsOut(t *tes
 	}
 	if got := jobRow(t, deps, alive.ID).State; got != string(StateRunning) {
 		t.Fatalf("the Job whose claimant is alive is %s, want still running", got)
+	}
+}
+
+// TestAClaimantThatDiedBehindAFullPageOfLiveClaimsIsStillFound pins that the
+// early expiry visits every held claim rather than one page of them: a deployment
+// running more executions than a page holds must not leave a crashed runtime's
+// claim to its lease because live claims sort ahead of it.
+func TestAClaimantThatDiedBehindAFullPageOfLiveClaimsIsStillFound(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "abandoned-paged.db")
+	svc := NewService()
+	now := time.Now()
+	hold := func(jobID, claimant string, lease time.Duration) {
+		t.Helper()
+		claim := models.JobClaim{
+			JobID: jobID, Kind: testKind, KindVersion: 1, Claimant: claimant,
+			ExecutionToken: "token-" + jobID, State: models.JobClaimStateHeld,
+			ClaimedAt: now, HeartbeatAt: now, LeaseExpiresAt: now.Add(lease),
+		}
+		if err := deps.DB.Create(&claim).Error; err != nil {
+			t.Fatalf("hold the claim on %s: %v", jobID, err)
+		}
+	}
+	const page = 5
+	for i := 0; i < 3*page+2; i++ {
+		hold("job-"+strconv.Itoa(100+i), "runtime-alive", time.Minute)
+	}
+	hold("job-zzz", "runtime-gone", 2*time.Minute)
+
+	expired, err := svc.ExpireAbandonedClaims(deps, func(claimant string) bool { return claimant == "runtime-gone" }, page)
+	if err != nil {
+		t.Fatalf("ExpireAbandonedClaims: %v", err)
+	}
+	if expired != 1 {
+		t.Fatalf("expired %d claims, want the one whose claimant is gone behind %d live ones", expired, 3*page+2)
+	}
+	if lease := claimRow(t, deps, "job-zzz").LeaseExpiresAt; lease.After(time.Now()) {
+		t.Fatalf("the gone claimant's lease still runs to %s", lease)
 	}
 }

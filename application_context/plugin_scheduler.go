@@ -239,12 +239,15 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 	}
 
 	actor := scheduleActor(row)
+	// When this run was dispatched, which orders its outcome against the other
+	// runs of this schedule (LastOccurrenceAt).
+	began := time.Now()
 
 	overlapAllows := row.Overlap == models.PluginScheduleOverlapAllow
 	if overlapAllows {
 		// Advance and let go before running, so the following tick may start
 		// another run rather than finding this one still holding the row.
-		if err := s.ctx.AdvancePluginScheduleAtDispatch(row.ID, token, time.Now()); err != nil {
+		if err := s.ctx.AdvancePluginScheduleAtDispatch(row.ID, token, began); err != nil {
 			log.Printf("warning: plugin scheduler could not advance %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 		}
@@ -261,7 +264,7 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		if overlapAllows {
 			claim, advance = "", false
 		}
-		if err := s.ctx.RefusePluginScheduleRun(row.ID, claim, scheduleRefusalMessage(run.Refused), time.Now(), advance); err != nil {
+		if err := s.ctx.RefusePluginScheduleRun(row.ID, claim, scheduleRefusalMessage(run.Refused), began, time.Now(), advance); err != nil {
 			log.Printf("warning: plugin scheduler could not record the refused run of %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 			if claim != "" {
@@ -295,13 +298,13 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 
 	now := time.Now()
 	if overlapAllows {
-		if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, now); err != nil {
+		if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, began, now); err != nil {
 			log.Printf("warning: plugin scheduler could not record %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 		}
 		return
 	}
-	if err := s.ctx.CompletePluginScheduleRun(row.ID, token, status, message, now); err != nil {
+	if err := s.ctx.CompletePluginScheduleRun(row.ID, token, status, message, began, now); err != nil {
 		log.Printf("warning: plugin scheduler could not complete %s/%s: %v",
 			row.PluginName, row.ScheduleID, err)
 	}
@@ -540,6 +543,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 		return
 	}
 
+	began := time.Now()
 	// Entry is told at once; a run that did not start is told only once the row
 	// says so and its claim is released, so an operator who asks again at once is
 	// not refused as busy by the attempt that already gave up.
@@ -552,7 +556,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 	if run.Refused != "" {
 		// Recorded on the row as a ticked refusal is, but a manual run never
 		// moves next_due_at.
-		if err := s.ctx.RefusePluginScheduleRun(row.ID, token, scheduleRefusalMessage(run.Refused), time.Now(), false); err != nil {
+		if err := s.ctx.RefusePluginScheduleRun(row.ID, token, scheduleRefusalMessage(run.Refused), began, time.Now(), false); err != nil {
 			log.Printf("warning: plugin scheduler could not record the refused manual run of %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
@@ -579,7 +583,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 	// has it overwritten by this older one. That is the stale-outcome shape the
 	// download history carries an explicit ON CONFLICT guard for; here the claim
 	// already excludes it, provided the writes are in this order.
-	if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, time.Now()); err != nil {
+	if err := s.ctx.RecordPluginScheduleOutcome(row.ID, status, message, began, time.Now()); err != nil {
 		log.Printf("warning: plugin scheduler could not record manual run of %s/%s: %v",
 			row.PluginName, row.ScheduleID, err)
 	}

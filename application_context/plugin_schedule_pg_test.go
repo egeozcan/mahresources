@@ -135,7 +135,7 @@ func TestCompletePluginScheduleRunPG_AdvancesReleasesAndCounts(t *testing.T) {
 		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
 	}
 	done := time.Now()
-	if err := ctx.CompletePluginScheduleRun(row.ID, "tick", models.PluginScheduleStatusCompleted, "", done); err != nil {
+	if err := ctx.CompletePluginScheduleRun(row.ID, "tick", models.PluginScheduleStatusCompleted, "", done, done); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -237,5 +237,34 @@ func TestClaimPluginScheduleNowPG_AdmitsOneWinner(t *testing.T) {
 	if wins != 1 {
 		t.Fatalf("%d of %d concurrent run-now requests claimed one schedule; exactly one may, "+
 			"or two copies of the handler run at once", wins, racers)
+	}
+}
+
+// TestAnOlderRunDoesNotReplaceANewerOutcomePG is the ordering of outcomes under
+// overlap = "allow" on Postgres, where the CASE over a timestamp and a bound
+// parameter is what carries it.
+func TestAnOlderRunDoesNotReplaceANewerOutcomePG(t *testing.T) {
+	ctx := newPostgresScheduleContext(t)
+	owner := uint(7)
+	row := seedPGSchedule(t, ctx, "ordered", time.Now().Add(time.Hour), &owner)
+	base := time.Now()
+	older, newer := base.Add(100*time.Millisecond), base.Add(250*time.Millisecond)
+
+	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusCompleted, "", newer, time.Now()); err != nil {
+		t.Fatalf("record the newer run: %v", err)
+	}
+	if err := ctx.RefusePluginScheduleRun(row.ID, "", "refused late", older, time.Now(), false); err != nil {
+		t.Fatalf("record the older refusal: %v", err)
+	}
+	if err := ctx.RecordPluginScheduleOutcome(row.ID, models.PluginScheduleStatusFailed, "failed late", older, time.Now()); err != nil {
+		t.Fatalf("record the older run: %v", err)
+	}
+	var got models.PluginSchedule
+	if err := ctx.db.First(&got, row.ID).Error; err != nil {
+		t.Fatalf("read the row: %v", err)
+	}
+	if got.LastStatus != models.PluginScheduleStatusCompleted || got.Runs != 2 {
+		t.Fatalf("after older outcomes the row reads %q with %d runs, want the newer completion and both runs counted",
+			got.LastStatus, got.Runs)
 	}
 }

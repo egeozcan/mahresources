@@ -66,6 +66,8 @@ type pluginActionAdmission struct {
 	// ending is set once this admission has refused or failed the Job under its
 	// own claim. The write that records it runs, and is retried, on its own.
 	ending bool
+	// successor marks a scheduled run's Retry successor (waitsForAnyProcess).
+	successor bool
 	// refused is the reason the checks of an execution accepted at its admission
 	// refused it before its Job existed; nothing was accepted then.
 	refused string
@@ -111,13 +113,13 @@ func (a *pluginActionAdmission) refusedBeforeAcceptance() string {
 	return a.refused
 }
 
-// waitsForAnyProcess reports whether this execution's Job is a scheduled run's
-// Retry successor: it existed before this execution and holds no schedule row's
-// claim, so it waits in the queue for whichever process can run it, as a queued
-// action does, and is never withdrawn for not starting here. A fresh occurrence is
-// accepted at its admission and is the tick of the row its scheduler claimed.
+// waitsForAnyProcess reports whether this execution's Job waits in the queue for
+// whichever process can run it, as a queued action does, so it is never withdrawn
+// for not starting here: a scheduled run's Retry successor, which holds no
+// schedule row's claim (runQueuedScheduledOccurrence). A fresh occurrence is the
+// tick of the row its scheduler claimed.
 func (a *pluginActionAdmission) waitsForAnyProcess() bool {
-	return a.subtype == pluginActionSubtypeScheduled && a.accept == nil
+	return a.successor
 }
 
 // JobID implements plugin_system.HostJobNamer: the durable Job, once there is one.
