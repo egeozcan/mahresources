@@ -435,10 +435,12 @@ func TestCancellingADeferredJobWhileTheSweepHoldsItsRowDoesNotStopTheSweep(t *te
 	firstJob := deferredDownloadJob(t, ctx, first.ID)
 
 	// The cancel lands before the first reserve of the sweep runs: the row is
-	// claimed, and nothing has been handed on yet.
+	// claimed, and nothing has been handed on yet. It is injected before the
+	// reserve's transaction begins, so the reserve does not hold the writer lock
+	// the cancel needs.
 	var injected atomic.Bool
 	const name = "test:cancel-before-reserve"
-	if err := ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+	if err := ctx.db.Callback().Update().Before("gorm:begin_transaction").Register(name, func(tx *gorm.DB) {
 		if tx.Statement.Table != "scheduled_downloads" {
 			return
 		}
