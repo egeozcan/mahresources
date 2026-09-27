@@ -608,6 +608,8 @@ func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID str
 
 	result := &ActionResult{}
 	if retTbl, ok := ret.(*lua.LTable); ok {
+		// The protocol keys stay as the handler wrote them (redactResult keeps
+		// them); what is published from them is redacted.
 		parsed := redactResult(luaTableToGoMap(retTbl), pm.pluginSecrets(pluginName))
 
 		if v, ok := parsed["success"].(bool); ok {

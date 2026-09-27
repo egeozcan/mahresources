@@ -1255,7 +1255,12 @@ func (s *pluginActionSink) safeText(message string, limit int) string {
 func (s *pluginActionSink) sanitizedResult(result map[string]any) map[string]any {
 	sanitized := make(map[string]any, len(result))
 	for key, value := range result {
-		sanitized[s.safeText(key, jobs.MaxTitleBytes)] = s.sanitizedValue(value)
+		// A key the host reads for its meaning is kept as written, or a secret
+		// that happened to equal "redirect" would change what the result does.
+		if !plugin_system.ResultProtocolKey(key) {
+			key = s.safeText(key, jobs.MaxTitleBytes)
+		}
+		sanitized[key] = s.sanitizedValue(value)
 	}
 	return sanitized
 }

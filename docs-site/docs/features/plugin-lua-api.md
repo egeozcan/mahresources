@@ -1277,7 +1277,7 @@ Writes a log entry to the application activity log.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `level` | string | `"info"`, `"warning"`, or `"error"` |
+| `level` | string | `"info"`, `"warning"`, or `"error"`; any other value is logged as `"info"` |
 | `message` | string | Log message |
 | `details` | table | Optional: additional context (JSON-serialized) |
 

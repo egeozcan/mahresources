@@ -206,7 +206,9 @@ timeline, the jobs panel, an action's answer, error messages, `mah.log` entries,
 and the server's log lines about a plugin's errors, failed loads and refused
 requests. It is not removed from what the plugin itself sends to the person using
 it, such as its pages, blocks, shortcodes or API responses: a plugin is trusted
-code, and what it chooses to show is its own. The redaction knows the setting's current
+code, and what it chooses to show is its own. An action's or schedule's id is
+not redacted either: it is part of the plugin's code, and naming one after the
+plugin's own key is the plugin's choice. The redaction knows the setting's current
 value; after changing a key, revoke the old one where it was issued, because
 work that started with the old key is not redacted of it.
 

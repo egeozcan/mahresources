@@ -83,12 +83,33 @@ func redactSecretsIn(value any, secrets []string) any {
 	}
 }
 
-// redactResult is redactSecretsIn for a result table.
+// resultProtocolKeys are the top-level keys of a handler's result table the host
+// reads for their meaning rather than publishing as data.
+var resultProtocolKeys = map[string]bool{
+	"success": true, "message": true, "redirect": true, "job_id": true, "data": true, "continue": true,
+}
+
+// ResultProtocolKey reports whether key is one the host interprets at the top of
+// a result table. Such a key is never redacted, only its value: redaction must
+// not change what a result means, and a password can be any string, "success"
+// included.
+func ResultProtocolKey(key string) bool {
+	return resultProtocolKeys[key]
+}
+
+// redactResult is redactSecretsIn for a result table, keeping the protocol keys
+// at its top level as they are (ResultProtocolKey).
 func redactResult(result map[string]any, secrets []string) map[string]any {
 	if result == nil || len(secrets) == 0 {
 		return result
 	}
-	redacted, _ := redactSecretsIn(result, secrets).(map[string]any)
+	redacted := make(map[string]any, len(result))
+	for key, value := range result {
+		if !ResultProtocolKey(key) {
+			key = redactSecrets(key, secrets)
+		}
+		redacted[key] = redactSecretsIn(value, secrets)
+	}
 	return redacted
 }
 

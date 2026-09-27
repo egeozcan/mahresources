@@ -1256,7 +1256,14 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		if pm.isDocsPreview(L) {
 			return 0
 		}
+		// The level is one of the documented three; anything else is info, so
+		// the plugin's text reaches the log only as the message, redacted.
 		level := L.CheckString(1)
+		switch level {
+		case "info", "warning", "error":
+		default:
+			level = "info"
+		}
 		secrets := pm.pluginSecrets(*pluginNamePtr)
 		message := redactSecrets(L.CheckString(2), secrets)
 

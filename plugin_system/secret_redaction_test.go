@@ -212,3 +212,61 @@ func TestAPluginSecretIsRedactedFromTheJobPlaneAndTheHostsLogs(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestARedactedSecretNeverChangesWhatAResultMeans pins that redaction replaces
+// what the host publishes and never what it interprets: a password can be any
+// string, "success" and "message" included, and the keys of a result table the
+// host reads keep their meaning while the values published from them are
+// redacted. A log level is not published text either: one outside the documented
+// three is logged as info, so a level cannot carry the key into the log.
+func TestARedactedSecretNeverChangesWhatAResultMeans(t *testing.T) {
+	var logged strings.Builder
+	var logMu sync.Mutex
+	previous := log.Writer()
+	log.SetOutput(writerFunc(func(p []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logged.Write(p)
+		return previous.Write(p)
+	}))
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "protocol-keys", `
+plugin = { name = "protocol-keys", version = "1.0", api_version = 1, capabilities = { "actions" },
+           settings = { { name = "api_key", type = "password", label = "API key" } } }
+function init()
+    mah.action({ id = "answers", label = "Answers", entity = "resource", handler = function(ctx)
+        mah.log(ctx.settings.api_key, "a level that is not one")
+        return { success = true, message = "done", data = { success = "kept as data" } }
+    end })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("plugin manager: %v", err)
+	}
+	t.Cleanup(pm.Close)
+	pm.SetPluginSettings("protocol-keys", map[string]any{"api_key": "success"})
+	if err := pm.EnablePlugin("protocol-keys"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	answered, err := pm.RunAction(context.Background(), "protocol-keys", "answers", 1, map[string]any{}, "")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !answered.Success || answered.Message != "done" {
+		t.Fatalf("a password equal to a protocol key changed the answer to %+v", answered)
+	}
+	if _, kept := answered.Data["[redacted]"]; !kept {
+		t.Fatalf("the result's data was not redacted: %v", answered.Data)
+	}
+
+	logMu.Lock()
+	text := logged.String()
+	logMu.Unlock()
+	if !strings.Contains(text, "[plugin][info] a level that is not one") || strings.Contains(text, "[plugin][success]") {
+		t.Fatalf("an unknown log level was not logged as info:\n%s", text)
+	}
+}

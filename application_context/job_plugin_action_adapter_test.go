@@ -2355,3 +2355,29 @@ func TestAPluginSecretIsRedactedFromEveryPublishedSurface(t *testing.T) {
 		t.Fatal("the server log carries the secret")
 	}
 }
+
+// TestAPluginSecretEqualToAResultKeyKeepsTheResultsMeaning pins the durable half
+// of "redaction never changes meaning": a password equal to "redirect" does not
+// rename the result key the host reads the entity output from.
+func TestAPluginSecretEqualToAResultKeyKeepsTheResultsMeaning(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	ctx.PluginManager().SetPluginSettings(pluginActionTestPlugin, map[string]any{"api_key": "redirect"})
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 12, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	job := waitForJobState(t, ctx, jobID, "the action to finish", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+	if job.State != jobs.StateSucceeded {
+		t.Fatalf("the action ended %s (%+v)", job.State, job.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(jobID)
+	if err != nil {
+		t.Fatalf("read the outputs: %v", err)
+	}
+	for _, output := range outputs {
+		if output.Key == "entity" {
+			return
+		}
+	}
+	t.Fatalf("a password equal to \"redirect\" lost the result's entity output: %+v", outputs)
+}
