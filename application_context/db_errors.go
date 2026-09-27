@@ -68,8 +68,12 @@ func retryOnLockContention(attempts int, write func() error) error {
 	return err
 }
 
-// relationWriteAttempts bounds retryOnLockContention for a relation insert.
-const relationWriteAttempts = 4
+// relationWriteAttempts and mergeWriteAttempts bound retryOnLockContention for a
+// relation insert and for a resource merge.
+const (
+	relationWriteAttempts = 4
+	mergeWriteAttempts    = 4
+)
 
 // isDeadlockError reports a database that aborted this transaction to break a
 // deadlock, rather than one that failed on its own merits. Postgres reports

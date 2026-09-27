@@ -932,8 +932,23 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 		}
 	}
 
-	err := ctx.withResourceSeriesRetry("merge", func(transactionCtx *MahresourcesContext) error {
+	merge := func(transactionCtx *MahresourcesContext) error {
 		tx := transactionCtx.db
+		// What an attempt collects is acted on only if that attempt commits.
+		cleanupActions, deleteEffects = nil, nil
+
+		// On SQLite the transaction's first statement is a no-op write, which takes the
+		// writer lock before anything is read. The merge reads its participants and then
+		// writes; read first, and a commit from another connection in between (the hash
+		// worker, a thumbnail, a Job's bookkeeping) fails the first write at once with
+		// SQLITE_BUSY_SNAPSHOT, which never reaches the busy handler. Postgres has no such
+		// failure, and it orders its row locks in lockResourcesAfterSeries (Series before
+		// Resources), which a lock taken here would invert.
+		if transactionCtx.Config.DbType == constants.DbTypeSqlite {
+			if err := tx.Exec("UPDATE resources SET id = id WHERE id = ?", winnerId).Error; err != nil {
+				return err
+			}
+		}
 
 		participantIDs := append(append(make([]uint, 0, len(loserIds)+1), loserIds...), winnerId)
 		participants, err := lockResourcesAfterSeries(tx, participantIDs)
@@ -1123,6 +1138,12 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 		})
 
 		return nil
+	}
+	// Retried on the residue that order does not remove. Each attempt rolls back whole
+	// before the next, and the file work and hooks below run only for the one that
+	// commits.
+	err := retryOnLockContention(mergeWriteAttempts, func() error {
+		return ctx.withResourceSeriesRetry("merge", merge)
 	})
 
 	if err != nil {
