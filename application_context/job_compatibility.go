@@ -56,6 +56,31 @@ func (ctx *MahresourcesContext) ResolveJobHandle(namespace, handle string) (jobs
 	return service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
 }
 
+// JobIDForLegacyHandle answers the canonical Job a legacy job id currently names,
+// for the Job page, which takes either: the download queue's and the other
+// queue-backed Kinds' ids and a plugin action's. It answers "" when the id names
+// no Job this principal may see, which is also the answer for an id that is not
+// a legacy handle at all. A scheduled download's row id is not tried: row ids are
+// small numbers, and a number is not evidence that anyone meant that row.
+func (ctx *MahresourcesContext) JobIDForLegacyHandle(handle string) (string, error) {
+	namespaces := make([]string, 0, len(queueBackedHandleNamespaces)+1)
+	for _, candidate := range queueBackedHandleNamespaces {
+		namespaces = append(namespaces, candidate.Namespace)
+	}
+	namespaces = append(namespaces, PluginActionHandleNamespace)
+	for _, namespace := range namespaces {
+		snapshot, err := ctx.ResolveJobHandle(namespace, handle)
+		if errors.Is(err, jobs.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return snapshot.ID, nil
+	}
+	return "", nil
+}
+
 // JobHandlesFor lists the legacy identifiers one visible Job currently answers to.
 // It is the reverse projection: a surface that has a canonical Job and wants to
 // print the id a legacy client would use asks this, and the visibility check is

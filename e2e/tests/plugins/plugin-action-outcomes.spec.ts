@@ -59,7 +59,7 @@ test.describe('plugin action outcomes', () => {
     await expect.poll(async () => (await readJob(request, id)).state, { timeout: 20_000 }).toBe('running');
 
     await page.goto(`/job?id=${encodeURIComponent(id)}`);
-    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    const commands = page.getByRole('group', { name: 'Job actions' });
     await commands.getByRole('button', { name: 'Cancel', exact: true }).click();
     const confirmation = page.getByRole('alertdialog');
     await expect(confirmation).toContainText('Stop this plugin action?');

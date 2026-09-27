@@ -838,12 +838,81 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	return out
 }
 
-func JobDetailContextProvider(_ *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+// JobDetailReader is what the Job page reads before it renders, as the viewer:
+// the Job, for the page's title and heading, and the Job a legacy id names.
+type JobDetailReader interface {
+	GetJob(jobID string) (jobs.Snapshot, error)
+	JobIDForLegacyHandle(handle string) (string, error)
+}
+
+var _ JobDetailReader = (*application_context.MahresourcesContext)(nil)
+
+// JobDetailContextProvider renders /job. The page reads the Job, its timeline
+// and outputs itself and follows it live; the server reads it once more so the
+// document title and the page's one heading name the Job, and so a Job that
+// does not exist, or that the viewer may not see, is a 404 page with a way back.
+func JobDetailContextProvider(ctx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	var reader JobDetailReader
+	if ctx != nil {
+		reader = ctx
+	}
+	return jobDetailContextProvider(reader)
+}
+
+func jobDetailContextProvider(reader JobDetailReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
-			"pageTitle":               "Job detail",
+		base := pongo2.Context{
+			"pageTitle":               "Job",
 			"hideSidebar":             true,
 			"jobCenterCutoverEnabled": JobCenterCutoverEnabled,
 		}.Update(StaticTemplateCtx(request))
+		if reader == nil {
+			return base
+		}
+		id := strings.TrimSpace(request.URL.Query().Get("id"))
+		if id == "" {
+			return addMessageErrContext("A job ID is required.", http.StatusBadRequest, base)
+		}
+		snapshot, err := reader.GetJob(id)
+		if errors.Is(err, jobs.ErrNotFound) {
+			// An old link or a script may still name a Job by the id the legacy
+			// routes gave it; that id names the Job its lineage ends in now.
+			canonical, handleErr := reader.JobIDForLegacyHandle(id)
+			if handleErr == nil && canonical != "" && canonical != id {
+				return pongo2.Context{"_redirect": "/job?id=" + url.QueryEscape(canonical)}
+			}
+			if handleErr == nil {
+				return addMessageErrContext("That job doesn't exist, or it has been deleted.", http.StatusNotFound, base)
+			}
+			err = handleErr
+		}
+		if err != nil {
+			// A read that failed says nothing about the Job: the page reads it
+			// itself, and offers Try again if that read fails too.
+			return base
+		}
+		heading := jobHeading(snapshot)
+		base["pageTitle"] = jobDocumentTitle(heading, jobStateLabel(snapshot))
+		base["headingTitle"] = heading
+		return base
 	}
+}
+
+// jobHeading names a Job as every surface does: its title, else its Kind, else
+// its id.
+func jobHeading(snapshot jobs.Snapshot) string {
+	for _, name := range []string{snapshot.Title, snapshot.Kind, snapshot.ID} {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "Job"
+}
+
+// jobDocumentTitle is the Job page's title before the site name: the Job and its
+// state, so two Job tabs, the history, and the page a Retry opens each say which
+// Job they are. src/components/jobCenter.js jobDocumentTitle keeps it current as
+// the state changes.
+func jobDocumentTitle(heading, stateLabel string) string {
+	return fmt.Sprintf("%s (%s) - Job", heading, stateLabel)
 }

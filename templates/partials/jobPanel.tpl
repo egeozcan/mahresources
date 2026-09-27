@@ -30,7 +30,8 @@
                 {# The layout follows the download cockpit this drawer replaced: a flat, #}
                 {# divided list with a status icon and pill per row, and quiet text #}
                 {# controls, rather than a stack of bordered cards and buttons. #}
-                <header class="flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3">
+                {# Plain divs, not header and footer: inside the dialog those would read as a second banner and contentinfo landmark. #}
+                <div class="flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3">
                     <div class="flex min-w-0 items-baseline gap-3">
                         <h2 id="job-center-panel-title" class="font-mono text-lg font-semibold text-stone-900">Jobs</h2>
                         {# The trigger's description is outside this aria-modal dialog, so the dialog carries the counts too, zeroes included. #}
@@ -44,7 +45,7 @@
                     <button type="button" @click="close()" class="rounded p-1 text-stone-500 hover:text-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" aria-label="Close Jobs panel">
                         <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" /></svg>
                     </button>
-                </header>
+                </div>
 
                 {% if currentUser and currentUser.IsAdmin %}
                 {# An administrator's drawer can list every account's Jobs; it lists their own until they choose otherwise, and remembers the choice. #}
@@ -92,10 +93,11 @@
                 </div>
 
                 {# scroll-pt clears the sticky group heading, so a control Shift+Tab reaches is scrolled below it rather than under it. #}
-                <div class="min-h-0 flex-1 overflow-y-auto scroll-pt-9" aria-label="Recent jobs">
+                {# On a short viewport (400% zoom) the whole drawer scrolls instead, so its chrome does not leave the list a sliver (index.css). #}
+                <div class="min-h-0 flex-1 overflow-y-auto scroll-pt-9" data-job-panel-list>
                     <template x-for="group in groups" :key="group.key">
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
-                            <h3 :id="'job-panel-group-' + group.key" class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
+                            <h3 :id="'job-panel-group-' + group.key" data-job-panel-group-heading class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
                                 <span x-text="group.title"></span>
                                 <span class="font-normal text-stone-500" x-text="'(' + group.countText + ')'"></span>
                             </h3>
@@ -126,8 +128,9 @@
 
                                     <div class="min-w-0 flex-1">
                                         <div class="flex items-start justify-between gap-2">
-                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || job.kind || job.id"
-                                               class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
+                                            {# Titles wrap rather than truncate: the end of a title is often all that tells two downloads apart. #}
+                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)"
+                                               class="min-w-0 break-words text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
                                                x-text="job.title || job.kind || job.id"></a>
                                             <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
                                                   :class="{
@@ -140,8 +143,8 @@
                                                   x-text="stateLabel(job)"></span>
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">
-                                            <span class="truncate" x-text="job.kind"></span>
-                                            <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
+                                            <span class="min-w-0 break-words" x-text="job.kind"></span>
+                                            <span x-show="ownerText(job)" x-cloak class="min-w-0 break-words" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>
 
@@ -154,7 +157,7 @@
                                         <template x-if="showsProgress(job)">
                                             <div class="mt-2" data-job-panel-progress>
                                                 <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600">
-                                                    <span class="min-w-0 truncate" x-text="progressLabel(job)"></span>
+                                                    <span class="min-w-0 break-words" x-text="progressLabel(job)"></span>
                                                     <span class="shrink-0 font-medium tabular-nums text-amber-900" x-text="progressValue(job) === null ? (progressIndeterminate(job) ? 'In progress' : '') : progressValue(job) + '%'"></span>
                                                 </div>
                                                 <div class="h-2 overflow-hidden rounded-full bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
@@ -170,10 +173,11 @@
                                         <p x-show="statsText(job)" class="mt-1 text-xs tabular-nums text-stone-600" data-job-panel-stats x-text="statsText(job)"></p>
 
                                         <template x-if="metricsFor(job).length > 0">
-                                            <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs" data-job-panel-metrics>
+                                            {# One column on a narrow viewport, and labels wrap, so every label can be read in full. #}
+                                            <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-2" data-job-panel-metrics>
                                                 <template x-for="metric in metricsFor(job)" :key="metric.key">
                                                     <div class="flex min-w-0 justify-between gap-2">
-                                                        <dt class="truncate text-stone-500" x-text="metric.label || metric.key"></dt>
+                                                        <dt class="min-w-0 break-words text-stone-500" x-text="metric.label || metric.key"></dt>
                                                         <dd class="shrink-0 font-medium tabular-nums text-stone-800" x-text="metricText(metric)"></dd>
                                                     </div>
                                                 </template>
@@ -181,11 +185,11 @@
                                         </template>
 
                                         <template x-if="graphsFor(job).length > 0">
-                                            <div class="mt-2 grid gap-2" :class="graphsFor(job).length > 1 ? 'grid-cols-2' : ''" data-job-panel-graphs>
+                                            <div class="mt-2 grid gap-2" :class="graphsFor(job).length > 1 ? 'sm:grid-cols-2' : ''" data-job-panel-graphs>
                                                 <template x-for="series in graphsFor(job)" :key="series.key">
                                                     <figure class="rounded bg-stone-50 px-2 py-1" data-job-panel-graph :data-series="series.key">
                                                         <figcaption class="flex justify-between gap-2 text-xs text-stone-600">
-                                                            <span class="truncate" x-text="series.label"></span>
+                                                            <span class="min-w-0 break-words" x-text="series.label"></span>
                                                             <span class="shrink-0 tabular-nums" x-text="graphLatest(series)"></span>
                                                         </figcaption>
                                                         <svg viewBox="0 0 120 28" preserveAspectRatio="none" class="mt-0.5 h-7 w-full text-amber-800" role="img" :aria-label="graphLabel(series)">
@@ -200,7 +204,7 @@
                                         {# the negative margin lines the first one's text up with the row above. #}
                                         {# Pin, lineage and forget keep the record rather than act on the work, #}
                                         {# so they wait under More; opened, it takes a line of its own. #}
-                                        <div x-show="resultOutput(job) || commandsFor(job).length > 0" class="-ml-1.5 mt-1 flex flex-wrap items-center gap-x-1" role="group" aria-label="Advertised controls">
+                                        <div x-show="resultOutput(job) || commandsFor(job).length > 0" class="-ml-1.5 mt-1 flex flex-wrap items-center gap-x-1" role="group" aria-label="Job actions">
                                             <template x-if="resultOutput(job)">
                                                 <a :href="resultURL(job)" :aria-label="resultAccessibleLabel(job)" class="inline-flex min-h-6 items-center rounded px-1.5 text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"><span x-text="resultLinkLabel(job)"></span>&nbsp;<span aria-hidden="true">&rarr;</span></a>
                                             </template>
@@ -246,7 +250,7 @@
                     </div>
                 </div>
 
-                <footer class="border-t border-stone-200 text-xs text-stone-600">
+                <div class="border-t border-stone-200 text-xs text-stone-600">
                     <div class="flex items-center justify-between gap-2 px-4 py-2">
                         <button type="button" data-job-panel-dismiss-finished x-show="finishedCount > 0 || busy" @click="dismissFinished()" :aria-disabled="busy.toString()" x-text="busy ? 'Dismissing…' : 'Dismiss finished'" class="inline-flex min-h-6 items-center rounded text-stone-700 underline decoration-stone-300 underline-offset-2 hover:decoration-stone-700 focus:outline-hidden focus:ring-2 focus:ring-amber-700 aria-disabled:cursor-not-allowed aria-disabled:opacity-50">Dismiss finished</button>
                         <a href="/jobs" data-job-panel-all-jobs class="ml-auto inline-flex min-h-6 items-center rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">All jobs</a>
@@ -255,7 +259,7 @@
                         Press <kbd class="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono">Esc</kbd> to close
                         or <kbd class="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono"><span x-text="/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'"></span>+Shift+D</kbd> to toggle
                     </p>
-                </footer>
+                </div>
 
                 </section>
             </div>

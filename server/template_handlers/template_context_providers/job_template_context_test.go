@@ -45,15 +45,109 @@ func TestJobCenterTemplateContext(t *testing.T) {
 	}
 }
 
-func TestJobDetailTemplateContext(t *testing.T) {
-	request := httptest.NewRequest("GET", "http://example.test/job?id=job-123", nil)
-	context := JobDetailContextProvider(nil)(request)
+type fakeJobDetailReader struct {
+	jobs    map[string]jobs.Snapshot
+	handles map[string]string
+	readErr error
+}
 
-	if got := context["pageTitle"]; got != "Job detail" {
-		t.Fatalf("pageTitle = %v, want Job detail", got)
+func (f *fakeJobDetailReader) GetJob(jobID string) (jobs.Snapshot, error) {
+	if f.readErr != nil {
+		return jobs.Snapshot{}, f.readErr
+	}
+	snapshot, ok := f.jobs[jobID]
+	if !ok {
+		return jobs.Snapshot{}, fmt.Errorf("jobs: get: %w", jobs.ErrNotFound)
+	}
+	return snapshot, nil
+}
+
+func (f *fakeJobDetailReader) JobIDForLegacyHandle(handle string) (string, error) {
+	return f.handles[handle], nil
+}
+
+func renderJobDetail(reader JobDetailReader, target string) map[string]any {
+	return jobDetailContextProvider(reader)(httptest.NewRequest(http.MethodGet, target, nil))
+}
+
+// A Job's page is titled by the Job and its state, so two open Job tabs, the
+// history, and a Retry's landing page each say which Job they are; the page's
+// one h1 is the Job's title.
+func TestAJobPageIsTitledByItsJob(t *testing.T) {
+	reader := &fakeJobDetailReader{jobs: map[string]jobs.Snapshot{
+		"job-1": {ID: "job-1", Kind: "remote-download", Title: "Download from example.test", State: jobs.StateFailed},
+		"job-2": {ID: "job-2", Kind: "group-export", State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause},
+	}}
+	context := renderJobDetail(reader, "/job?id=job-1")
+	if got := context["pageTitle"]; got != "Download from example.test (Failed) - Job" {
+		t.Fatalf("pageTitle = %v", got)
+	}
+	if got := context["headingTitle"]; got != "Download from example.test" {
+		t.Fatalf("headingTitle = %v", got)
 	}
 	if got := context["hideSidebar"]; got != true {
 		t.Fatalf("hideSidebar = %v, want true", got)
+	}
+	if _, failed := context["_statusCode"]; failed {
+		t.Fatalf("a visible Job's page answered %v", context["_statusCode"])
+	}
+	// A Job with no title is named by its Kind, as every other surface names it.
+	context = renderJobDetail(reader, "/job?id=job-2")
+	if got := context["pageTitle"]; got != "group-export (Pausing) - Job" {
+		t.Fatalf("pageTitle = %v", got)
+	}
+}
+
+// A Job that does not exist, or that the viewer may not see, is a 404 page with
+// a way back to the Job Center, whatever the id looks like.
+func TestAnUnknownJobIsANotFoundPageWithAWayBack(t *testing.T) {
+	reader := &fakeJobDetailReader{}
+	for _, target := range []string{
+		"/job?id=01a0ffff-0000-7000-8000-000000000000",
+		"/job?id=not-a-uuid",
+		"/job?id=a%2Fb",
+		"/job?id=%3Cscript%3E",
+	} {
+		context := renderJobDetail(reader, target)
+		if context["_statusCode"] != http.StatusNotFound {
+			t.Fatalf("%s answered %v, want 404", target, context["_statusCode"])
+		}
+		if got := context["errorMessage"]; got != "That job doesn't exist, or it has been deleted." {
+			t.Fatalf("%s says %q", target, got)
+		}
+		recovery, _ := context["errorRecovery"].([]RecoveryLink)
+		if len(recovery) == 0 || recovery[0] != (RecoveryLink{Name: "Back to Job Center", Url: "/jobs?dismissed=false"}) {
+			t.Fatalf("%s offers %v, want a way back to the Job Center first", target, recovery)
+		}
+	}
+	context := renderJobDetail(reader, "/job")
+	if context["_statusCode"] != http.StatusBadRequest {
+		t.Fatalf("a Job page with no id answered %v, want 400", context["_statusCode"])
+	}
+}
+
+// A legacy handle names the Job its lineage currently ends in, so its page is
+// that Job's.
+func TestALegacyHandleOpensTheJobItNames(t *testing.T) {
+	reader := &fakeJobDetailReader{
+		jobs:    map[string]jobs.Snapshot{"01a0-canonical": {ID: "01a0-canonical", Kind: "remote-download", State: jobs.StateSucceeded}},
+		handles: map[string]string{"5ccbf2199da9ae9f": "01a0-canonical"},
+	}
+	context := renderJobDetail(reader, "/job?id=5ccbf2199da9ae9f")
+	if got := context["_redirect"]; got != "/job?id=01a0-canonical" {
+		t.Fatalf("_redirect = %v, want the canonical Job's page", got)
+	}
+}
+
+// A read that failed proves nothing about the Job: the page renders and reads
+// it itself, where a failure offers Try again.
+func TestAJobPageWhoseReadFailedStillRenders(t *testing.T) {
+	context := renderJobDetail(&fakeJobDetailReader{readErr: fmt.Errorf("database is locked")}, "/job?id=job-1")
+	if _, failed := context["_statusCode"]; failed {
+		t.Fatalf("a failed read answered %v", context["_statusCode"])
+	}
+	if got := context["pageTitle"]; got != "Job" {
+		t.Fatalf("pageTitle = %v, want the generic title", got)
 	}
 }
 

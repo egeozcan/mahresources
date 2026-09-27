@@ -220,6 +220,42 @@ func TestResultLinkForFallsBackToAPluginActionDestination(t *testing.T) {
 	}
 }
 
+// TestResultLinkForOffersAFinishedExportsFile: what an export made is its file, so
+// a finished export's row and card offer it for download the way a download's
+// offer the resource it created. A file that has expired, or is no longer
+// available, is not offered, and a Job that made an entity offers that first.
+func TestResultLinkForOffersAFinishedExportsFile(t *testing.T) {
+	job := jobs.Snapshot{ID: "j3", Kind: "group-export", Title: "Export of one group", State: jobs.StateSucceeded}
+	later := time.Now().Add(time.Hour)
+	archive := jobs.Output{Key: "artifact", Type: jobs.OutputTypeArtifact, Label: "Exported archive",
+		Availability: jobs.OutputAvailable, ExpiresAt: &later}
+	link := ResultLinkFor(job, []jobs.Output{archive})
+	if link.URL != "/v1/jobs/j3/outputs?key=artifact" || link.Label != "Download exported archive" ||
+		link.AccessibleLabel != "Download exported archive for Export of one group" {
+		t.Fatalf("link = %+v", link)
+	}
+
+	earlier := time.Now().Add(-time.Minute)
+	expired := archive
+	expired.ExpiresAt = &earlier
+	if link := ResultLinkFor(job, []jobs.Output{expired}); link != (ResultLink{}) {
+		t.Fatalf("an expired file was offered: %+v", link)
+	}
+	removed := archive
+	removed.Availability = jobs.OutputAvailability("removed")
+	if link := ResultLinkFor(job, []jobs.Output{removed}); link != (ResultLink{}) {
+		t.Fatalf("a removed file was offered: %+v", link)
+	}
+	entity := jobs.Output{Key: "entity", Type: jobs.OutputTypeEntity, Label: "Created group", Availability: jobs.OutputAvailable}
+	if link := ResultLinkFor(job, []jobs.Output{archive, entity}); link.URL != "/v1/jobs/j3/outputs?key=entity" {
+		t.Fatalf("the file was preferred over the entity the Job made: %+v", link)
+	}
+	job.State = jobs.StateFailed
+	if link := ResultLinkFor(job, []jobs.Output{archive}); link != (ResultLink{}) {
+		t.Fatalf("an unsuccessful export offered its file: %+v", link)
+	}
+}
+
 // TestParseFilterReadsALocalDateTimeToItsPrecision pins the datetime inputs: a
 // bound written to the minute or the second names that whole minute or second,
 // the way a bare date names the whole day, so "before 15:00" includes 15:00.

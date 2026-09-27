@@ -1,4 +1,5 @@
 import { test, expect } from '../../fixtures/a11y.fixture';
+import { gotoMockedJobPage } from '../../helpers/job-page';
 
 test.describe('Job Center panel accessibility', () => {
   async function openPanel(page: import('@playwright/test').Page) {
@@ -53,10 +54,10 @@ test.describe('Job Center panel accessibility', () => {
     await page.route(`**/v1/jobs/${job.id}/events**`, route => route.fulfill({ json: { events: [] } }));
     await page.route(`**/v1/jobs/${job.id}`, route => route.fulfill({ json: job }));
 
-    await page.goto(`/job?id=${job.id}`);
+    await gotoMockedJobPage(page, job.id);
 
     const detail = page.getByTestId('job-detail');
-    const controls = detail.getByRole('group', { name: 'Advertised job commands' });
+    const controls = detail.getByRole('group', { name: 'Job actions' });
     await expect(controls).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
@@ -92,14 +93,10 @@ test.describe('Job Center panel accessibility', () => {
     }));
 
     await openPanel(page);
-    const controls = page.getByRole('group', { name: 'Advertised controls' });
+    const controls = page.getByRole('group', { name: 'Job actions' });
     await expect(controls).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
-    await checkComponentA11y('#job-center-panel', {
-      // The dialog uses local header/footer sections; these are not the page's
-      // banner or contentinfo landmarks.
-      disableRules: ['landmark-no-duplicate-banner', 'landmark-no-duplicate-contentinfo'],
-    });
+    await checkComponentA11y('#job-center-panel');
   });
 
   test('axe finds no serious or critical violations in a running job\'s stats, metrics and graphs', async ({ page, checkComponentA11y }) => {
@@ -139,9 +136,7 @@ test.describe('Job Center panel accessibility', () => {
     await expect(row.getByRole('img', { name: /^Speed over 1 s: latest 2\.0 MB\/s/ })).toBeVisible();
     await expect(row.getByRole('img', { name: /^Segments over 2 s: latest 12/ })).toBeVisible();
     await expect(row.getByRole('term').filter({ hasText: 'Segments' })).toBeVisible();
-    await checkComponentA11y('#job-center-panel', {
-      disableRules: ['landmark-no-duplicate-banner', 'landmark-no-duplicate-contentinfo'],
-    });
+    await checkComponentA11y('#job-center-panel');
   });
 
   test('decorative icons in the trigger and close control are hidden from assistive technology', async ({ page }) => {

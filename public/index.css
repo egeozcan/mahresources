@@ -179,6 +179,41 @@ html {
     }
 }
 
+/* On a short viewport (a phone on its side, a desktop at 400% zoom) the drawer's
+   own header, notices and footer would leave its list a sliver below them, less
+   than one row at 320x180. There the whole drawer scrolls as one, and the group
+   headings stop sticking, since a sticky heading would cover the rows too. */
+@media (max-height: 30rem) {
+    .job-drawer[role="dialog"] {
+        overflow-y: auto;
+    }
+    .job-drawer [data-job-panel-list] {
+        flex: none;
+        overflow: visible;
+    }
+    .job-drawer [data-job-panel-group-heading] {
+        position: static;
+    }
+}
+
+/* A shortcut's refusal, inside the dialog it would not open over
+   (src/utils/modality.js refuseOverModal). An empty one takes no room but stays
+   in the accessibility tree, so its words are heard when they arrive. */
+.modal-refusal {
+    margin: 0;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid #d6d3d1;
+    background: #fffbeb;
+    color: #78350f;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+}
+
+.modal-refusal:empty {
+    padding: 0;
+    border: 0;
+}
+
 .navbar-links {
     display: none;
     align-items: center;

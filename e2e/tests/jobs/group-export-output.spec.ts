@@ -36,7 +36,7 @@ test('a completed group export exposes its title and available output in Job Cen
 
   await page.goto(`/job?id=${encodeURIComponent(canonicalJobId)}`);
   const pageDetail = page.getByTestId('job-detail');
-  await expect(pageDetail.getByRole('heading', { name: detail!.title, exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: detail!.title, exact: true })).toBeVisible();
   const outputSection = pageDetail.locator('section[aria-labelledby="job-outputs-heading"]');
   const outputRow = outputSection.getByRole('listitem').filter({ hasText: output!.label || output!.key });
   await expect(outputRow.getByRole('link')).toHaveAttribute('href', output!.url);

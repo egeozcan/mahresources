@@ -27,6 +27,8 @@ import {
     progressValue,
     reduceJobStreamEvent,
     reduceJobSnapshot,
+    resultAccessibleLabel,
+    resultLinkLabel,
     resultOutput,
     resultURL,
     selectedBulkCommands,
@@ -567,6 +569,47 @@ describe('canonical event reducer', () => {
     });
 });
 
+describe('file outputs', () => {
+    const archive = {
+        key: 'artifact', type: 'artifact', label: 'Exported archive', availability: 'available',
+        url: '/v1/jobs/ex-1/outputs?key=artifact',
+    };
+    const exported = { id: 'ex-1', kind: 'group-export', title: 'Export of one group', state: 'succeeded', outputs: [archive] };
+
+    test('a finished export offers its file for download, as the /jobs card does', () => {
+        expect(resultOutput(exported)).toBe(archive);
+        expect(resultURL(exported)).toBe(archive.url);
+        expect(resultLinkLabel(exported)).toBe('Download exported archive');
+        expect(resultAccessibleLabel(exported)).toBe('Download exported archive for Export of one group');
+
+        expect(resultOutput({ ...exported, state: 'failed' })).toBeNull();
+        expect(resultOutput({ ...exported, outputs: [{ ...archive, availability: 'expired' }] })).toBeNull();
+        const past = new Date(Date.now() - 60_000).toISOString();
+        expect(resultOutput({ ...exported, outputs: [{ ...archive, expiresAt: past }] })).toBeNull();
+        const future = new Date(Date.now() + 60_000).toISOString();
+        expect(resultOutput({ ...exported, outputs: [{ ...archive, expiresAt: future }] })).toEqual({ ...archive, expiresAt: future });
+        expect(resultOutput({ ...exported, outputs: [{ ...archive, url: 'https://example.com/x' }] })).toBeNull();
+        // What a Job made as an entity comes first.
+        const entity = { key: 'entity', type: 'entity', label: 'Created group', availability: 'available', url: '/v1/jobs/ex-1/outputs?key=entity' };
+        expect(resultOutput({ ...exported, outputs: [archive, entity] })).toBe(entity);
+    });
+
+    test('every output link\'s accessible name starts with its visible words', () => {
+        for (const [output, visible, name] of [
+            [archive, 'Download exported archive', 'Download exported archive'],
+            [{ type: 'report', key: 'plan', label: 'Import plan' }, 'Open report', 'Open report Import plan'],
+            [{ type: 'log', label: 'stderr' }, 'Open log', 'Open log stderr'],
+            [{ type: 'external-link', label: 'Source page' }, 'Open link', 'Open link Source page'],
+            [{ type: 'future-kind', label: 'Something' }, 'Open output', 'Open output Something'],
+            [{ type: 'artifact' }, 'Download file', 'Download file'],
+        ] as const) {
+            expect(outputLinkLabel(output)).toBe(visible);
+            expect(outputLinkAccessibleLabel(output)).toBe(name);
+            expect(outputLinkAccessibleLabel(output).startsWith(outputLinkLabel(output))).toBe(true);
+        }
+    });
+});
+
 describe('failure output', () => {
     test('a failed job links to the entity its failure is about, and nothing else does', () => {
         const existing = {
@@ -1090,7 +1133,7 @@ describe('Job Center templates', () => {
 
     test('renders commands and outputs only from the advertised detail arrays', () => {
         expect(detailTemplate).toContain('x-for="command in commandsFor(detail)"');
-        expect(detailTemplate).toContain('role="group" aria-label="Advertised job commands"');
+        expect(detailTemplate).toContain('role="group" aria-label="Job actions" data-job-commands');
         expect(detailTemplate).toContain('x-for="output in advertisedOutputs(detail)"');
         expect(detailTemplate).toContain(':href="outputLinkURL(output, advertisedOutputs(detail))"');
         expect(detailTemplate).not.toMatch(/detail\.(?:kind|source)\s*===/);

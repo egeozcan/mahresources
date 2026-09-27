@@ -1,6 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test, expect } from '../../fixtures/base.fixture';
+import { gotoMockedJobPage } from '../../helpers/job-page';
 import type { Page, Route } from '@playwright/test';
 
 // The drawer and the detail page read their Jobs from the canonical API. These
@@ -192,8 +193,8 @@ test.describe('Job command confirmations', () => {
     const rows = [runningJob('confirm-cancel-detail', 'Cancel names detail')];
     await serveJobs(page, () => rows);
     await page.route('**/v1/jobs/confirm-cancel-detail/events*', route => route.fulfill({ json: { events: [] } }));
-    await page.goto('/job?id=confirm-cancel-detail');
-    await page.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+    await gotoMockedJobPage(page, 'confirm-cancel-detail');
+    await page.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Cancel', exact: true }).click();
 
     const confirmation = page.getByRole('alertdialog');
     await expect(confirmation.getByRole('button')).toHaveText(['Go back', 'Cancel']);
@@ -271,8 +272,8 @@ test.describe('Job commands keep their controls current', () => {
       } });
     });
 
-    await page.goto('/job?id=refused-detail');
-    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await gotoMockedJobPage(page, 'refused-detail');
+    const commands = page.getByRole('group', { name: 'Job actions' });
     await commands.getByRole('button', { name: 'Retry', exact: true }).click();
 
     await expect(page.locator('[data-job-notice]')).toHaveText('Retry refused for Refused detail job: The group this download files into no longer exists.');
@@ -292,8 +293,8 @@ test.describe('Job commands keep their controls current', () => {
       return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'queued to start again', job: store.jobs.get('double-resume') } });
     });
 
-    await page.goto('/job?id=double-resume');
-    const resume = page.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Resume', exact: true });
+    await gotoMockedJobPage(page, 'double-resume');
+    const resume = page.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Resume', exact: true });
     await resume.dblclick();
     await expect.poll(() => posts).toBe(1);
     await expect(resume).toHaveAttribute('aria-disabled', 'true');
@@ -437,8 +438,8 @@ test.describe('Job detail page', () => {
       return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'undismissed', job: store.jobs.get('detail-dismissed') } });
     });
 
-    await page.goto('/job?id=detail-dismissed');
-    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await gotoMockedJobPage(page, 'detail-dismissed');
+    const commands = page.getByRole('group', { name: 'Job actions' });
     await expect(page.getByText('Dismissed by you', { exact: true })).toBeVisible();
     await expect(commands.getByRole('button', { name: 'Dismiss', exact: true })).toHaveCount(0);
     await commands.getByRole('button', { name: 'Undismiss', exact: true }).click();
@@ -455,8 +456,8 @@ test.describe('Job detail page', () => {
       return route.fulfill({ json: { status: 'succeeded', code: 'requested', message: 'cancelling', job: store.jobs.get('detail-phase') } });
     });
 
-    await page.goto('/job?id=detail-phase');
-    await page.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+    await gotoMockedJobPage(page, 'detail-phase');
+    await page.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.locator('[data-job-notice]')).toHaveText('Cancel requested for Detail phase download.');
 
@@ -585,8 +586,8 @@ test.describe('Job pages keep focus on their commands', () => {
       return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'pinned', job: store.jobs.get('detail-focus') } });
     });
 
-    await page.goto('/job?id=detail-focus');
-    const commands = page.getByRole('group', { name: 'Advertised job commands' });
+    await gotoMockedJobPage(page, 'detail-focus');
+    const commands = page.getByRole('group', { name: 'Job actions' });
     await commands.getByRole('button', { name: 'Pin', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(commands.getByRole('button', { name: 'Unpin', exact: true })).toBeFocused();
@@ -782,8 +783,8 @@ test.describe('A confirmation whose command went away while it was open', () => 
         error: 'the job does not offer that command', result: { code: 'not-advertised', message: 'the job does not offer that command' },
       } }));
 
-      await page.goto('/job?id=confirm-gone');
-      const commands = page.getByRole('group', { name: 'Advertised job commands' });
+      await gotoMockedJobPage(page, 'confirm-gone');
+      const commands = page.getByRole('group', { name: 'Job actions' });
       await commands.getByRole('button', { name: 'Cancel', exact: true }).click();
       const confirmation = page.getByRole('alertdialog');
       await expect(confirmation).toBeVisible();

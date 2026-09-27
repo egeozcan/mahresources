@@ -3,6 +3,7 @@ package jobview
 import (
 	"net/url"
 	"strings"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/jobs"
@@ -34,8 +35,11 @@ type ResultLink struct {
 // may open. Any available entity output is that — the Resource a download
 // created, the entity a plugin action returned — and its route redirects to the
 // entity after checking the viewer may open it. Only a plugin action records a
-// summary destination instead, so that fallback stays with that Kind. The zero
-// value means the Job offers no result link.
+// summary destination instead, so that fallback stays with that Kind. A Job that
+// made neither but made a file, as an export does, offers the file for download
+// while it is available and has not expired. The zero value means the Job offers
+// no result link. src/components/jobCenter.js resultOutput is the same rule for
+// the Jobs drawer.
 func ResultLinkFor(job jobs.Snapshot, outputs []jobs.Output) ResultLink {
 	if job.State != jobs.StateSucceeded {
 		return ResultLink{}
@@ -68,6 +72,17 @@ func ResultLinkFor(job jobs.Snapshot, outputs []jobs.Output) ResultLink {
 	for _, output := range outputs {
 		if destination := SummaryDestinationURL(job.Kind, output); destination != "" {
 			return ResultLink{URL: destination, Label: "View result", AccessibleLabel: withContext("View result")}
+		}
+	}
+	for _, output := range outputs {
+		if output.Type == jobs.OutputTypeArtifact && output.Availability == jobs.OutputAvailable &&
+			(output.ExpiresAt == nil || output.ExpiresAt.After(time.Now())) {
+			name := strings.ToLower(strings.TrimSpace(output.Label))
+			if name == "" {
+				name = "file"
+			}
+			label := "Download " + name
+			return ResultLink{URL: OutputURL(job.ID, output.Key), Label: label, AccessibleLabel: withContext(label)}
 		}
 	}
 	return ResultLink{}

@@ -398,8 +398,10 @@ without it adds `dismissed=false`, so a copied Job Center address lists the same
 Jobs through the API and the CLI, which include dismissed Jobs unless asked not
 to. Dismissal does not delete Job history. **Saved searches** keep a filter for reuse.
 
-Open a Job to see its progress, timeline, outputs, and related Jobs. Use only
-the controls displayed on that Job; available commands are checked again when
+Open a Job to see its progress, when it ran and how long, its timeline, outputs,
+and related Jobs, each named with how it is related (such as **Retry of**), its
+state and when it was accepted; see [The Job page](../features/job-system.md#the-job-page).
+Use only the controls displayed on that Job; available commands are checked again when
 submitted. Selecting several Jobs offers only commands they all advertise for
 bulk use, with a separate result for each Job.
 
@@ -407,7 +409,8 @@ A succeeded Job always shows complete progress, including a download whose
 size the remote server never reported. When a Job created a Resource, Note, or
 Group, open it from the **Jobs** panel, the Job Center list, or the Job detail
 page. A download shows **View created resource**; a plugin action shows a typed
-entity link such as **View resource**. Older plugin Jobs with only a result
+entity link such as **View resource**. A finished export shows **Download
+exported archive**, and the file saves under a name with its date and extension. Older plugin Jobs with only a result
 summary show **View result** for the entity; their Job detail page also shows
 **View JSON result** for the stored summary.
 

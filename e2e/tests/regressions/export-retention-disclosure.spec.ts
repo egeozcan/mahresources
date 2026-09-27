@@ -43,8 +43,8 @@ test.describe('BH-036: retention disclosure', () => {
 
     await page.goto(`/job?id=${encodeURIComponent(canonicalJobId)}`);
     const outputSection = page.locator('[data-testid="job-detail"] section[aria-labelledby="job-outputs-heading"]');
-    const expiry = outputSection.locator('time');
+    const expiry = outputSection.getByText(/^Expires /);
     await expect(expiry.first()).toBeVisible();
-    await expect(expiry.first()).toContainText(/expire/i);
+    await expect(expiry.first().locator('time')).toHaveAttribute('datetime', /\d{4}-\d{2}-\d{2}T/);
   });
 });

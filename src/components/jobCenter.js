@@ -4,6 +4,7 @@ import { focusOn, keepFocusWithin } from '../utils/focus.js';
 import {
     applyProgressFrame,
     formatAmount,
+    formatDuration,
     mergeFetchedProgress,
     liveEtaText,
     liveRateText,
@@ -16,6 +17,7 @@ import {
     sparklinePath,
 } from './jobProgress.js';
 import { isWorking, presentState, scheduledStartText } from './jobStates.js';
+import { formatLocalTime, readerTimeZone } from '../utils/localTime.js';
 
 export { JOB_STATES } from './jobStates.js';
 
@@ -87,25 +89,37 @@ export function outputJSONLinkURL(output, outputs = []) {
     return '';
 }
 
+// The words on an output's link. An entity or a file is named by its label,
+// the way the /jobs card's result link names it (server/jobview/result.go);
+// any other output gets a verb and says which one in its accessible name.
 export function outputLinkLabel(output, outputs = []) {
     if (output?.type === 'entity') {
         const label = String(output.label || '').trim().toLowerCase();
         return `View ${label || 'entity'}`;
+    }
+    if (output?.type === 'artifact') {
+        const label = String(output.label || '').trim().toLowerCase();
+        return `Download ${label || 'file'}`;
     }
     if (output?.type === 'summary') {
         if (hasEntityCompanion(output, outputs)) return 'View JSON result';
         if (output.destinationUrl) return 'View result';
     }
     if (output?.type === 'log') return 'Open log';
+    if (output?.type === 'report') return 'Open report';
+    if (output?.type === 'external-link') return 'Open link';
     return 'Open output';
 }
 
+// The link's accessible name begins with its visible words, so a person who
+// speaks what they see reaches it (WCAG 2.5.3), and goes on to name the output
+// when those words do not.
 export function outputLinkAccessibleLabel(output, outputs = []) {
     const visibleLabel = outputLinkLabel(output, outputs);
-    if (output?.type === 'entity' || (output?.type === 'summary' && (output.destinationUrl || hasEntityCompanion(output, outputs)))) return visibleLabel;
+    if (output?.type === 'entity' || output?.type === 'artifact' ||
+        (output?.type === 'summary' && (output.destinationUrl || hasEntityCompanion(output, outputs)))) return visibleLabel;
     const name = String(output?.label || output?.key || '').trim();
-    if (!name) return visibleLabel;
-    return output?.type === 'log' ? `Open log ${name}` : `Open ${name}`;
+    return name ? `${visibleLabel} ${name}` : visibleLabel;
 }
 
 function safeResultURL(value) {
@@ -133,20 +147,32 @@ export function commandLocation(outcome) {
 // The one link a finished job offers straight from a list: what it made. Any
 // succeeded job's available entity output is that — the Resource a download
 // created, the entity a plugin action returned. The endpoint it names redirects to
-// the entity after checking the viewer may open it. Only a plugin action records
-// a summary destination instead (historical result.redirect values), so that
-// fallback stays with that kind.
-export function resultOutput(job) {
+// the entity after checking the viewer may open it. Only a plugin action records a
+// summary destination instead (historical result.redirect values), so that
+// fallback stays with that kind. A job that made neither but made a file, as an
+// export does, offers the file for download while it is available and has not
+// expired. server/jobview/result.go ResultLinkFor is the same rule for /jobs.
+export function resultOutput(job, now = Date.now()) {
     if (job?.state !== 'succeeded') return null;
     const outputs = advertisedOutputs(job);
     const entity = openableEntityOutput(outputs.filter(output => output?.key !== FAILURE_OUTPUT_KEY), outputs);
     if (entity) return entity;
-    if (job.kind !== 'plugin-action') return null;
-    return outputs.find(output => {
-        if (output?.type !== 'summary' || output.availability !== 'available' || !output.destinationUrl) return false;
-        const url = outputLinkURL(output, outputs);
-        return url === output.destinationUrl && Boolean(safeResultURL(url));
-    }) || null;
+    if (job.kind === 'plugin-action') {
+        const destination = outputs.find(output => {
+            if (output?.type !== 'summary' || output.availability !== 'available' || !output.destinationUrl) return false;
+            const url = outputLinkURL(output, outputs);
+            return url === output.destinationUrl && Boolean(safeResultURL(url));
+        });
+        if (destination) return destination;
+    }
+    return outputs.find(output => output?.type === 'artifact' && output.availability === 'available' &&
+        !outputExpired(output, now) && safeResultURL(outputLinkURL(output, outputs))) || null;
+}
+
+function outputExpired(output, now) {
+    if (!output?.expiresAt) return false;
+    const expires = Date.parse(output.expiresAt);
+    return Number.isFinite(expires) && expires <= now;
 }
 
 // The entity a failed job's failure is about: the resource a download collided
@@ -210,6 +236,122 @@ export function stateLabel(job) {
 // When scheduled work starts, for a Job still waiting for its time.
 export function scheduledText(job, now = Date.now()) {
     return scheduledStartText(job, now);
+}
+
+// A Job's name on every surface: its title, else its Kind, else its id.
+export function jobHeading(job) {
+    for (const name of [job?.title, job?.kind, job?.id]) {
+        const trimmed = String(name ?? '').trim();
+        if (trimmed) return trimmed;
+    }
+    return 'Job';
+}
+
+// The Job page's document title: the Job and its state, so two Job tabs, the
+// history, and the page a Retry opens each say which Job they are. The server
+// renders the same words (job_template_context.go jobDocumentTitle); this keeps
+// them current as the state changes.
+export function jobDocumentTitle(job, siteTitle = '') {
+    const title = `${jobHeading(job)} (${stateLabel(job)}) - Job`;
+    return siteTitle ? `${title} - ${siteTitle}` : title;
+}
+
+// "3 min ago", "in 30 d", "less than a minute ago"; '' for no instant.
+export function relativeTimeText(value, now = Date.now()) {
+    const at = Date.parse(value || '');
+    if (!Number.isFinite(at)) return '';
+    const seconds = (at - now) / 1000;
+    if (Math.abs(seconds) < 60) return seconds > 0 ? 'in less than a minute' : 'less than a minute ago';
+    const span = formatDuration(Math.abs(seconds));
+    return seconds > 0 ? `in ${span}` : `${span} ago`;
+}
+
+// The instants a Job has reached, in the order they happen, and how long its
+// history is kept once it has finished (retention starts at the finish).
+const JOB_TIMES = [
+    ['accepted', 'Accepted', 'acceptedAt'],
+    ['scheduled', 'Scheduled for', 'scheduledFor'],
+    ['started', 'Started', 'startedAt'],
+    ['resumed', 'Last resumed', 'lastResumedAt'],
+    ['finished', 'Finished', 'finishedAt'],
+    ['expires', 'History kept until', 'expiresAt'],
+];
+
+export function jobTimeRows(job, now = Date.now()) {
+    return JOB_TIMES.flatMap(([key, label, field]) => {
+        const at = job?.[field];
+        const text = formatLocalTime(at, { seconds: true });
+        return text ? [{ key, label, at, text, relative: relativeTimeText(at, now) }] : [];
+    });
+}
+
+// How long a Job has spent in each state it has been in. The server banks the
+// time at each transition, so the state the Job is in now adds the time since
+// it entered it. The durations are nanoseconds, as Go encodes them.
+const JOB_DURATIONS = [
+    ['queue', 'Time queued', 'queueDuration', 'queued'],
+    ['running', 'Time running', 'runningDuration', 'running'],
+    ['paused', 'Time paused', 'pausedDuration', 'paused'],
+    ['blocked', 'Time blocked', 'blockedDuration', 'blocked'],
+];
+
+export function jobDurationRows(job, now = Date.now()) {
+    const entered = Date.parse(job?.stateEnteredAt || '');
+    return JOB_DURATIONS.flatMap(([key, label, field, state]) => {
+        let seconds = (Number(job?.[field]) || 0) / 1e9;
+        if (stateOf(job) === state && Number.isFinite(entered)) seconds += Math.max(0, (now - entered) / 1000);
+        return seconds > 0 ? [{ key, label, text: formatDuration(seconds) }] : [];
+    });
+}
+
+export function outputCountText(count) {
+    if (!count) return '';
+    return count === 1 ? '1 output' : `${count} outputs`;
+}
+
+// A Job's relatives as the page lists them: each says how it is related, its
+// state and when it was accepted, since a retry chain is Jobs of one title.
+// `relation` is the link the API names (retry-of, repeat-of, parent-child); a
+// retry-of whose earlier Job succeeded is a Continue of a partial success.
+const LINEAGE_GROUPS = [
+    { key: 'ancestors', heading: 'Earlier runs' },
+    { key: 'successors', heading: 'Later runs' },
+    { key: 'parents', heading: 'Part of' },
+    { key: 'children', heading: 'Stages' },
+];
+
+function lineageRelationText(group, related, job) {
+    const relation = related?.relation;
+    switch (group) {
+    case 'ancestors':
+        if (relation === 'repeat-of') return 'Repeat of';
+        if (relation === 'retry-of') return stateOf(related) === 'succeeded' ? 'Continuation of' : 'Retry of';
+        return '';
+    case 'successors':
+        if (relation === 'repeat-of') return 'Repeated as';
+        if (relation === 'retry-of') return stateOf(job) === 'succeeded' ? 'Continued as' : 'Retried as';
+        return '';
+    case 'parents':
+        return 'Stage of';
+    case 'children':
+        return 'Stage';
+    default:
+        return '';
+    }
+}
+
+export function lineageGroups(job) {
+    return LINEAGE_GROUPS.map(group => ({
+        ...group,
+        entries: (Array.isArray(job?.lineage?.[group.key]) ? job.lineage[group.key] : []).map(related => ({
+            id: related?.id || '',
+            name: jobHeading(related),
+            relation: lineageRelationText(group.key, related, job),
+            state: stateLabel(related),
+            acceptedAt: related?.acceptedAt || '',
+            accepted: formatLocalTime(related?.acceptedAt),
+        })),
+    })).filter(group => group.entries.length > 0);
 }
 
 // Why a Job failed, in the words its Kind recorded: the message, or the code when
@@ -498,6 +640,12 @@ function idempotencyKey() {
     return `job-command-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+// A timeline is read a page at a time, up to a bound per read: every event a
+// Job ordinarily records (optional traffic stops at 500) fits in one read, and
+// a Job with more says so and reads on when asked.
+const TIMELINE_PAGE_SIZE = 200;
+const TIMELINE_READ_BOUND = 1000;
+
 /**
  * The /job detail page. The /jobs list is server-rendered (listJobs.tpl) and has
  * its own small component in jobList.js; this one reads one Job, its timeline,
@@ -510,6 +658,14 @@ export function jobCenter(options = {}) {
         details: {},
         timeline: [],
         timelineError: '',
+        // The Job has events past the ones read, which the page reads on when
+        // asked rather than by itself.
+        timelineMore: false,
+        _timelineReading: null,
+        _timelineAgain: false,
+        _timelineGeneration: 0,
+        _timelineStarted: false,
+        _siteTitle: '',
         detail: null,
         loading: true,
         error: '',
@@ -553,6 +709,7 @@ export function jobCenter(options = {}) {
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
             // Kept: a method called from a directive sees that element as $el.
             this._root = this.$el || null;
+            this._siteTitle = this.$el?.dataset?.siteTitle || '';
             this._focusKeeper = this.$el ? keepCommandFocus(this.$el) : null;
             this.connect();
             this.load();
@@ -624,15 +781,86 @@ export function jobCenter(options = {}) {
             this.jobs = this.detail ? [this.detail] : [];
             this.timelineError = '';
             this.timeline = [];
+            this.timelineMore = false;
+            this._timelineGeneration += 1;
+            this._timelineStarted = false;
             if (this.detail?.id) {
+                this._timelineStarted = true;
                 try {
-                    const timelinePayload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/events?limit=100`);
-                    this.timeline = timelinePayload.events || [];
+                    await this.readTimeline();
                 } catch (error) {
                     this.timelineError = error.message || 'Timeline is unavailable.';
                 }
             }
             return this.detail;
+        },
+
+        // Reads the Job's events after the last one the page holds, a page at a
+        // time up to the read bound. One read runs at a time: asked again while
+        // one runs, it reads once more after it, from where it stopped, so an
+        // event published during a read is not missed.
+        readTimeline() {
+            if (this._timelineReading) {
+                this._timelineAgain = true;
+                return this._timelineReading;
+            }
+            this._timelineReading = (async () => {
+                try {
+                    do {
+                        this._timelineAgain = false;
+                        await this.readTimelinePages();
+                    } while (this._timelineAgain && !this.timelineMore && !this._destroyed);
+                } finally {
+                    this._timelineReading = null;
+                }
+            })();
+            return this._timelineReading;
+        },
+
+        async readTimelinePages() {
+            const generation = this._timelineGeneration;
+            const id = this.detailId;
+            let read = 0;
+            for (;;) {
+                const held = this.timeline;
+                const last = held.length ? Number(held[held.length - 1].sequence || 0) : 0;
+                const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/events?afterSequence=${last}&limit=${TIMELINE_PAGE_SIZE}`);
+                // The page was read again from the start meanwhile: this answer
+                // belongs to the timeline it replaced.
+                if (this._destroyed || generation !== this._timelineGeneration) return;
+                const fresh = (payload.events || []).filter(event => Number(event?.sequence || 0) > last);
+                if (fresh.length) this.timeline = [...this.timeline, ...fresh];
+                read += fresh.length;
+                if (!payload.nextSequence || fresh.length === 0) {
+                    this.timelineMore = false;
+                    return;
+                }
+                if (read >= TIMELINE_READ_BOUND) {
+                    this.timelineMore = true;
+                    return;
+                }
+            }
+        },
+
+        // "Show later events": the next bounded read.
+        async loadLaterEvents() {
+            if (this._timelineReading) await this._timelineReading.catch(() => {});
+            this.timelineMore = false;
+            this.timelineError = '';
+            try {
+                await this.readTimeline();
+            } catch (error) {
+                this.timelineError = error.message || 'Later events could not be loaded.';
+                this.timelineMore = true;
+            }
+        },
+
+        // An event the stream delivered for this Job: the timeline reads what
+        // follows the last event it holds. Nothing is read while the page holds
+        // only part of the timeline; "Show later events" reaches it.
+        followTimeline() {
+            if (!this._timelineStarted || this.timelineMore || this._destroyed) return;
+            this.readTimeline().catch(() => {});
         },
 
         async refreshJobPreference(id) {
@@ -837,6 +1065,7 @@ export function jobCenter(options = {}) {
             try { message = JSON.parse(event.data); }
             catch { return; }
             if (!message.deliverySequence && event.lastEventId) message.lastEventId = event.lastEventId;
+            if (message?.type && String(message.jobId || '') === String(this.detailId)) this.followTimeline();
             message.replay = message.replay === true || !this.streamCaughtUp;
             const announceSnapshot = !message.replay;
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence);
@@ -920,7 +1149,20 @@ export function jobCenter(options = {}) {
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
-        scheduledText(job) { return scheduledText(job, this.now); },
+        scheduledText(job) { return scheduledStartText(job, this.now, date => formatLocalTime(date)); },
+        syncDocumentTitle() {
+            if (this.detail && typeof document !== 'undefined') document.title = jobDocumentTitle(this.detail, this._siteTitle);
+        },
+        timeRows(job) { return jobTimeRows(job, this.now); },
+        durationRows(job) { return jobDurationRows(job, this.now); },
+        timeText(value) { return formatLocalTime(value, { seconds: true }); },
+        relativeText(value) { return relativeTimeText(value, this.now); },
+        get timeZoneText() {
+            const zone = readerTimeZone();
+            return zone ? `Times are in your time zone, ${zone}.` : 'Times are in your time zone.';
+        },
+        outputCountText(job) { return outputCountText(advertisedOutputs(job).length); },
+        lineageGroups(job) { return lineageGroups(job); },
         showsProgress(job) { return showsProgress(job); },
         phaseText(job) { return phaseText(job); },
         accountText(job, role) { return jobAccountText(job, role); },
@@ -958,7 +1200,7 @@ const FORGET_CONFIRMATION = 'Forget this job’s saved replay input. Retry, Cont
 // change that ends the Job. Focus goes to the button that replaced it, else the
 // first command left, else the Job's heading.
 function keepCommandFocus(root) {
-    const group = () => root.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    const group = () => root.querySelector('[data-job-commands]');
     return keepFocusWithin(root, {
         describe: element => (element.dataset?.commandKey && group()?.contains(element) ? { key: element.dataset.commandKey } : null),
         restore: ({ key }) => {
@@ -970,13 +1212,13 @@ function keepCommandFocus(root) {
 
 // The control that stands in for a detail-page command that is gone: its
 // counterpart, the same command drawn again, the first command left, else the
-// Job's heading.
+// page's heading, which names the Job.
 function commandFocusTarget(root, key) {
-    const buttons = root?.querySelector('[role="group"][aria-label="Advertised job commands"]');
+    const buttons = root?.querySelector('[data-job-commands]');
     const candidates = [
         ...commandFocusSuccessorKeys(key).map(other => buttons?.querySelector(`button[data-command-key="${CSS.escape(other)}"]`)),
         buttons?.querySelector('button'),
-        root?.querySelector('h1'),
+        root?.ownerDocument?.getElementById('page-title'),
     ];
     return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
 }
