@@ -76,6 +76,7 @@ type JobRow struct {
 	ID         string
 	Title      string
 	Kind       string
+	KindLabel  string // the Kind in words, from server/jobview/job_vocabulary.json
 	State      string
 	StateLabel string
 	// BadgeClass is the colour the state's tone takes (jobToneClass).
@@ -666,14 +667,14 @@ func jobListPageLinks(current *url.URL, page jobs.Page) (prev, next string) {
 func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	title := strings.TrimSpace(snapshot.Title)
 	if title == "" {
-		title = snapshot.Kind
+		title = jobview.KindLabel(snapshot.Kind)
 	}
 	if title == "" {
 		title = snapshot.ID
 	}
 	presentation := jobview.PresentJob(snapshot)
 	row := JobRow{
-		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
+		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, KindLabel: jobview.KindLabel(snapshot.Kind), State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobToneClass(presentation.Tone),
 		Phase: jobview.PhaseText(snapshot), Pinned: snapshot.Pinned,
 		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),

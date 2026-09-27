@@ -111,8 +111,9 @@ test.describe('Job progress figures', () => {
       await expect(cancelled.getByTestId('job-stats')).toHaveText(/^\d+(\.\d+)? (KB|MB)$/);
       const bar = cancelled.getByRole('progressbar');
       await expect(bar).toHaveAttribute('aria-valuetext', /(KB|MB) processed; total unknown/);
-      // No fill: a full bar would read as done.
-      await expect(bar.locator('div')).toHaveCount(0);
+      // An empty track: a full bar would read as done.
+      await expect(bar.locator('[data-job-progress-fill]')).toHaveCSS('width', '0px');
+      await expect(cancelled.getByTestId('job-kind')).toHaveText('Download');
     } finally {
       server.close();
     }

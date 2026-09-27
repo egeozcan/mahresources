@@ -301,7 +301,7 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 	if rows[0].Result.URL != "/v1/jobs/ok/outputs?key=entity" || rows[0].Progress == nil || rows[0].Progress.Percent != 100 {
 		t.Fatalf("succeeded row = %+v", rows[0])
 	}
-	if rows[1].Title != "remote-download" || rows[1].FailureMessage != "404" || rows[1].Progress != nil {
+	if rows[1].Title != "Download" || rows[1].FailureMessage != "404" || rows[1].Progress != nil {
 		t.Fatalf("failed row = %+v", rows[1])
 	}
 }
@@ -431,6 +431,15 @@ func TestAStoppedJobThatReportedOnlyMetricsShowsThem(t *testing.T) {
 	running := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Metrics: metrics}})
 	if running == nil || running.Text != "Working" || !running.Indeterminate {
 		t.Fatalf("running work that reported only metrics = %+v", running)
+	}
+}
+
+// TestJobRowNamesItsKindInWords: the card reads "Download", not
+// "remote-download", and a Job with no title is named after its Kind in words.
+func TestJobRowNamesItsKindInWords(t *testing.T) {
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "k", Kind: "remote-download", State: jobs.StateQueued})
+	if row.Kind != "remote-download" || row.KindLabel != "Download" || row.Title != "Download" {
+		t.Fatalf("row kind %q, label %q, title %q", row.Kind, row.KindLabel, row.Title)
 	}
 }
 
