@@ -2136,3 +2136,12 @@ where the review's own record lives.
 - A design choice that keeps producing review findings is itself the finding. Retry reopening a deferred row produced half of one lane's majors; replacing it with "Retry downloads now" removed about 300 lines and the findings with them.
 - After a merge conflict in `public/dist`, rebuild the stylesheet after the bundle. `npm run build` builds CSS first, Tailwind scans `public/dist`, and a stale bundle resurrects classes that the source no longer uses (here the `focus:outline-none` the forced-colors fix had removed).
 - Parallel worktrees multiply the Go build cache (cgo packages embed absolute paths). Five lanes grew it to 132 GB in ten hours and filled the disk; trim it by age (`find ~/Library/Caches/go-build -type f -mmin +180 -delete`) rather than `go clean -cache`, which can break builds in flight.
+
+## Jobs QA remediation, batch 2 — 2026-09-27
+
+- A lane that ends its turn to wait on a background run is often not woken when the run finishes. Across six lanes this cost 15 to 30 minutes per round until a watcher that reports every lane idle for 15 minutes did the waking. Watch lanes; do not wait for them to report.
+- Verify a severity downgrade instead of arguing it. Three races were graded P2 only on condition that each one failed closed; proving that with tests turned up a real, pre-existing fail-open (an older Job whose account was deleted ran as the host).
+- When a client-side repair keeps drawing review findings of one kind, replace the design. Repairing three pages in place after a stream reset drew a finding in each of three rounds; reloading the Job pages and stopping the drawer ended them.
+- A security fix needs a scope rule before its review loop, or each round lists the next surface. Redaction of plugin secrets went 8 findings, then 3, once the rule was fixed: the Job plane and the host's own error logs, not a plugin's deliberate output to its caller.
+- A test fixture that re-executes the test binary runs `TestMain` again. Under the `postgres` tag each command child started its own container, and the tests timed out only when other lanes kept Docker busy, which looked like a leak between tests.
+- Changing a shared rule breaks other lanes' tests at integration, not in the lane that changed it. A `/jobs` redirect, "another boot is Unknown" and `BEGIN IMMEDIATE` each broke tests written against the old behaviour; grep the other lanes for the old assumption before merging.
