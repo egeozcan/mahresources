@@ -648,6 +648,114 @@ describe('job list stream', () => {
     });
 });
 
+describe('job list live progress', () => {
+    // A running card as the server renders it (templates/partials/job.tpl).
+    function runningCard(id: string, { version = 3, updatedAt = '2026-09-28T10:00:00Z' } = {}) {
+        return `<article data-job-id="${id}"><div data-entity='${JSON.stringify({ id, state: 'running', title: `${id}.bin`, version })}'>
+            <div data-job-progress data-progress-updated-at="${updatedAt}">
+                <span data-job-progress-text>91756 / 2097152 bytes</span><span data-job-progress-value>4%</span>
+                <div role="progressbar" data-job-progress-bar aria-valuenow="4" aria-valuetext="91756 / 2097152 bytes" aria-label="${id}.bin progress: 91756 / 2097152 bytes">
+                    <div class="h-2 rounded bg-amber-800" data-job-progress-fill style="width:4%"></div>
+                </div>
+                <p data-job-stats>63.8 KB/s · about 31 s left</p>
+            </div>
+        </div></article>`;
+    }
+
+    function frame(id: string, completed: number, extra: object = {}) {
+        return {
+            jobId: id, version: 3, state: 'running',
+            progress: {
+                completed, total: 2097152, unit: 'bytes', rate: 65536, updatedAt: '2026-09-28T10:00:10Z',
+                eta: '2026-09-28T10:00:40Z', etaEstimated: true, ...extra,
+            },
+        };
+    }
+
+    function listOn(html: string) {
+        document.body.innerHTML = `<main><section class="list-container">${html}</section></main>`;
+        const list = jobList();
+        (list as any).$root = document.body;
+        return list;
+    }
+
+    const progressOf = (id: string) => {
+        const card = document.querySelector(`[data-job-id="${id}"]`)!;
+        return {
+            text: card.querySelector('[data-job-progress-text]')!.textContent,
+            value: card.querySelector('[data-job-progress-value]')!.textContent,
+            now: card.querySelector('[data-job-progress-bar]')!.getAttribute('aria-valuenow'),
+            width: (card.querySelector('[data-job-progress-fill]') as HTMLElement).style.width,
+            stats: card.querySelector('[data-job-stats]')!.textContent,
+        };
+    };
+
+    test('a progress frame moves a running card\'s bar, amount, speed and time left', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a') + runningCard('b'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a')).toEqual({ text: '1048576 / 2097152 bytes', value: '50%', now: '50', width: '50%', stats: '64.0 KB/s · about 30 s left' });
+        // A card no frame named is left as the server drew it.
+        expect(progressOf('b').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('time left counts down between frames, and a stalled speed goes away', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        vi.advanceTimersByTime(5000);
+        expect(progressOf('a').stats).toBe('64.0 KB/s · about 25 s left');
+        vi.advanceTimersByTime(6000);
+        expect(progressOf('a').stats).toBe('');
+        list.destroy();
+    });
+
+    test('a frame for a card that is not on the page, or older than the card, changes nothing', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a', { version: 5 }));
+        list.handleProgressFrame({ data: JSON.stringify(frame('z', 1048576)) });
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('a refresh that drew older progress than the page holds is brought forward again', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        // The refresh read the Job before that frame was reported.
+        document.querySelector('section')!.innerHTML = runningCard('a', { updatedAt: '2026-09-28T10:00:05Z' });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('50%');
+        // One that read it after draws what it read, and the page lets it.
+        document.querySelector('section')!.innerHTML = runningCard('a', { updatedAt: '2026-09-28T10:00:11Z' });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('the stream delivers progress frames to the page', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const list = listOn(runningCard('a'));
+        list._refresher = { request: vi.fn(), destroy: vi.fn() } as any;
+        list.connect();
+        const stream = list.eventSource as unknown as FakeEventSource;
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('50%');
+        // Progress is not a lifecycle change: it refetches nothing.
+        expect(list._refresher.request).not.toHaveBeenCalled();
+        list.destroy();
+    });
+});
+
 // happy-dom's PageTransitionEvent does not carry persisted, so the page show a
 // browser dispatches is built by hand.
 function pageShow(persisted: boolean) {

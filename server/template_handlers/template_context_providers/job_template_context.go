@@ -98,7 +98,10 @@ type JobRow struct {
 	ScheduledFor JobRowTime
 	Version      uint64
 	Progress     *JobRowProgress
-	Result       jobview.ResultLink
+	// ProgressUpdatedAt is when the progress drawn was reported, for the page
+	// to tell whether a live progress frame it holds is newer than a refresh.
+	ProgressUpdatedAt string
+	Result            jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
@@ -703,6 +706,9 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
 	}
 	row.SummaryText, row.SummaryFields = jobSummaryPresentation(snapshot.Summary)
+	if snapshot.ProgressUpdatedAt != nil {
+		row.ProgressUpdatedAt = snapshot.ProgressUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
 	if jobIsPartial(snapshot) {
 		// The badge already says it; the raw phase beside it would say it twice.
 		row.Phase = ""

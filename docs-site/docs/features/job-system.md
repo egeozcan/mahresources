@@ -266,7 +266,9 @@ the live stream dropped are announced the same way. A Job counted this way can s
 announced by name if the drawer reads it later.
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
-shows the speed and time left under each running Job's bar.
+shows the speed and time left under each running Job's bar, and moves the bar,
+the amount and the time left as progress arrives, without reading the list
+again.
 
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row

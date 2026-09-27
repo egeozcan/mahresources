@@ -40,22 +40,20 @@
         {% endif %}
 
         {% if job.Progress %}
-        <div class="mt-3 max-w-xl">
+        {# The data-job-progress hooks are where a live progress frame lands (jobList.js #}
+        {# applyCardProgress); the stats line is always rendered so it has a place to.  #}
+        <div class="mt-3 max-w-xl" data-job-progress{% if job.ProgressUpdatedAt %} data-progress-updated-at="{{ job.ProgressUpdatedAt }}"{% endif %}>
             <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600">
-                <span>{{ job.Progress.Text }}</span>
-                <span>{% if job.Progress.Known %}{{ job.Progress.Percent }}%{% elif job.Progress.Indeterminate %}In progress{% endif %}</span>
+                <span data-job-progress-text>{{ job.Progress.Text }}</span>
+                <span data-job-progress-value>{% if job.Progress.Known %}{{ job.Progress.Percent }}%{% elif job.Progress.Indeterminate %}In progress{% endif %}</span>
             </div>
-            <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" data-job-progress-bar
                  {% if job.Progress.Known %}aria-valuenow="{{ job.Progress.Percent }}"{% endif %}
                  aria-valuetext="{{ job.Progress.AccessibleText }}"
                  aria-label="{{ job.Title }} progress: {{ job.Progress.AccessibleText }}">
-                {% if job.Progress.Known %}
-                <div class="h-2 rounded bg-amber-800" style="width:{{ job.Progress.Percent }}%"></div>
-                {% else %}
-                <div class="h-2 rounded bg-amber-800{% if job.Progress.Indeterminate %} w-full motion-safe:animate-pulse{% endif %}"></div>
-                {% endif %}
+                <div class="h-2 rounded bg-amber-800{% if not job.Progress.Known and job.Progress.Indeterminate %} w-full motion-safe:animate-pulse{% endif %}" data-job-progress-fill{% if job.Progress.Known %} style="width:{{ job.Progress.Percent }}%"{% endif %}></div>
             </div>
-            {% if job.Progress.Stats %}<p class="mt-1 text-xs tabular-nums text-stone-600" data-testid="job-stats">{{ job.Progress.Stats }}</p>{% endif %}
+            <p class="mt-1 text-xs tabular-nums text-stone-600" data-testid="job-stats" data-job-stats{% if not job.Progress.Stats %} hidden{% endif %}>{{ job.Progress.Stats }}</p>
         </div>
         {% endif %}
 

@@ -4,8 +4,11 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import {
     EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel, nextStreamRetryDelay,
+    progressAccessibleText, progressIndeterminate, progressText, progressValue,
     reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
 } from './jobCenter.js';
+import { applyProgressFrame, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
+import { terminalStates } from './jobStates.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
@@ -63,6 +66,8 @@ export function createJobListRefresher({
     currentURL = () => window.location.href,
     morph = (from, to) => morphAndReinitChangedComponents(from, to, keepDetailsOpen()),
     onRowChanges = () => {},
+    // Told after each refresh has morphed the list in.
+    onRefreshed = () => {},
     onUnavailable = () => {},
     // Told when a refresh fails, and when one succeeds again, so the page can
     // say that what it shows may be out of date.
@@ -106,6 +111,7 @@ export function createJobListRefresher({
                 localizeJobTimes(list);
                 const changes = stateChanges(before, rowStates(list));
                 if (changes.length) onRowChanges(changes);
+                onRefreshed();
             }
             morphRegion(root, refreshed, QUICK_FILTERS_SELECTOR, morph, null);
             morphRegion(root, refreshed, PAGINATION_SELECTOR, morph, 'footer');
@@ -182,6 +188,81 @@ export function stateChangeAnnouncement(changes) {
     return changes.map(job => `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}.`).join(' ');
 }
 
+const TERMINAL_STATES = new Set(terminalStates());
+
+/**
+ * What a /jobs card's progress block shows for a Job, worked out as the server
+ * draws the card (jobRowProgressBar and jobRowStats in job_template_context.go)
+ * with the helpers the drawer and a Job's page use: the line above the bar, its
+ * value, whether it pulses, what it says to a screen reader, and the speed line
+ * (the live speed and time left while running, the average once finished).
+ */
+export function cardProgressView(job, now = Date.now()) {
+    const progress = job?.progress || {};
+    let stats = '';
+    if (job?.state === 'running') {
+        stats = [liveRateText(progress, now), liveEtaText(progress, now)].filter(Boolean).join(' · ');
+    } else if (TERMINAL_STATES.has(job?.state)) {
+        const average = formatRate(progress.averageRate, progress.unit);
+        stats = average ? `average ${average}` : '';
+    }
+    return {
+        text: progressText(job),
+        value: progressValue(job),
+        indeterminate: progressIndeterminate(job),
+        accessible: progressAccessibleText(job),
+        stats,
+    };
+}
+
+/**
+ * Draw a progress view into a card's progress block, in place of what the
+ * server drew there. A card with no block (work that reported nothing yet) is
+ * left for the refresh its next lifecycle change brings.
+ */
+export function applyCardProgress(card, view, title) {
+    const block = card?.querySelector('[data-job-progress]');
+    if (!block) return false;
+    const text = block.querySelector('[data-job-progress-text]');
+    const value = block.querySelector('[data-job-progress-value]');
+    const bar = block.querySelector('[data-job-progress-bar]');
+    const fill = block.querySelector('[data-job-progress-fill]');
+    const stats = block.querySelector('[data-job-stats]');
+    if (text) text.textContent = view.text;
+    if (value) value.textContent = view.value !== null ? `${view.value}%` : view.indeterminate ? 'In progress' : '';
+    if (bar) {
+        if (view.value !== null) bar.setAttribute('aria-valuenow', String(view.value));
+        else bar.removeAttribute('aria-valuenow');
+        bar.setAttribute('aria-valuetext', view.accessible);
+        bar.setAttribute('aria-label', `${title} progress: ${view.accessible}`);
+    }
+    if (fill) {
+        fill.classList.toggle('w-full', view.value === null && view.indeterminate);
+        fill.classList.toggle('motion-safe:animate-pulse', view.value === null && view.indeterminate);
+        fill.style.width = view.value !== null ? `${view.value}%` : '';
+    }
+    if (stats) {
+        stats.textContent = view.stats;
+        stats.hidden = !view.stats;
+    }
+    return true;
+}
+
+function cardFor(root, jobId) {
+    for (const card of root?.querySelectorAll?.('[data-job-id]') || []) {
+        if (card.getAttribute('data-job-id') === jobId) return card;
+    }
+    return null;
+}
+
+function cardEntity(card) {
+    try {
+        return JSON.parse(card?.querySelector('[data-entity]')?.dataset.entity || 'null');
+    } catch {
+        return null;
+    }
+}
+
 /**
  * The /jobs page component: one SSE connection that refreshes the server-rendered
  * list when Jobs change. History replayed before the stream catches up refreshes
@@ -208,6 +289,10 @@ export function jobList() {
         _preferences: null,
         _onRefreshRequest: null,
         _onNotice: null,
+        // The newest live progress each card was drawn from, by Job id, and
+        // the clock that counts their time left down between frames.
+        _progress: new Map(),
+        _progressClock: null,
         // Set once the stream has given a cursor, which a reopened stream then
         // resumes from, even v2:0.
         _holdsCursor: false,
@@ -224,6 +309,7 @@ export function jobList() {
                     this.eventSource = null;
                     source?.close();
                 },
+                onRefreshed: () => this.reapplyProgress(),
                 onFailed: () => { this.refreshFailed = true; },
                 onRecovered: () => { this.refreshFailed = false; },
             });
@@ -238,6 +324,8 @@ export function jobList() {
 
         destroy() {
             clearTimeout(this._streamRetryTimer);
+            clearInterval(this._progressClock);
+            this._progressClock = null;
             const source = this.eventSource;
             this.eventSource = null;
             source?.close();
@@ -298,6 +386,76 @@ export function jobList() {
             for (const name of ['message', 'job']) {
                 source.addEventListener(name, current((event) => this.handleStreamMessage(event)));
             }
+            source.addEventListener('job-progress', current((event) => this.handleProgressFrame(event)));
+        },
+
+        // A live progress frame redraws the progress of the card it names, as
+        // the drawer's rows are: in place, never announced, and never a reason
+        // to refetch the page, which a lifecycle change is. A frame older than
+        // the card, or for a Job not on this page, changes nothing.
+        handleProgressFrame(event) {
+            let frame;
+            try { frame = JSON.parse(event.data); } catch { return; }
+            if (!frame?.jobId) return;
+            const card = cardFor(this.$root, frame.jobId);
+            const entity = cardEntity(card);
+            if (!entity?.id) return;
+            const held = this._progress.get(frame.jobId);
+            const base = held && Number(held.version || 0) >= Number(entity.version || 0)
+                ? { ...held, state: entity.state }
+                : { ...entity, progress: {} };
+            const next = applyProgressFrame(base, frame);
+            if (next === base) return;
+            this._progress.set(frame.jobId, next);
+            applyCardProgress(card, cardProgressView(next, Date.now()), next.title || entity.title || 'Job');
+            this.keepProgressClock();
+        },
+
+        // After a refresh, a card the server drew from older progress than a
+        // frame the page holds is drawn from the frame again, so the refresh
+        // does not move a bar back. A card whose Job left running, or whose
+        // drawing is as new as the frame, is the server's.
+        reapplyProgress() {
+            for (const [jobId, held] of this._progress) {
+                const card = cardFor(this.$root, jobId);
+                const entity = cardEntity(card);
+                const drawnAt = Date.parse(card?.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '');
+                const heldAt = Date.parse(held.progress?.updatedAt || '');
+                if (!entity || entity.state !== 'running' || !(heldAt > drawnAt || Number.isNaN(drawnAt))) {
+                    this._progress.delete(jobId);
+                    continue;
+                }
+                const job = { ...held, state: entity.state, version: Math.max(Number(held.version || 0), Number(entity.version || 0)) };
+                this._progress.set(jobId, job);
+                applyCardProgress(card, cardProgressView(job, Date.now()), job.title || entity.title || 'Job');
+            }
+            this.keepProgressClock();
+        },
+
+        // "about 31 s left" counts down between frames, and a speed nothing has
+        // reported for a while goes, as in the drawer: once a second while a
+        // running card is drawn from a frame.
+        keepProgressClock() {
+            const running = [...this._progress.values()].some(job => job.state === 'running');
+            if (running && !this._progressClock) {
+                this._progressClock = setInterval(() => this.tickProgress(), 1000);
+            } else if (!running && this._progressClock) {
+                clearInterval(this._progressClock);
+                this._progressClock = null;
+            }
+        },
+
+        tickProgress() {
+            const now = Date.now();
+            for (const [jobId, job] of this._progress) {
+                const card = cardFor(this.$root, jobId);
+                if (!card) {
+                    this._progress.delete(jobId);
+                    continue;
+                }
+                applyCardProgress(card, cardProgressView(job, now), job.title || 'Job');
+            }
+            this.keepProgressClock();
         },
 
         handleStreamMessage(event) {
