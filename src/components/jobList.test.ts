@@ -620,6 +620,14 @@ describe('job list stream', () => {
     });
 });
 
+// happy-dom's PageTransitionEvent does not carry persisted, so the page show a
+// browser dispatches is built by hand.
+function pageShow(persisted: boolean) {
+    const event = new Event('pageshow');
+    Object.defineProperty(event, 'persisted', { value: persisted });
+    return event;
+}
+
 describe('job filter times', () => {
     test('an end bound shows the minute it closes and converts back to that minute\'s last instant', () => {
         const end = instantFromDatetimeInput('2026-09-01T15:00', true);
@@ -657,5 +665,48 @@ describe('job filter times', () => {
         const submitted = Object.fromEntries(new FormData(form).entries());
         expect(submitted.acceptedBefore).toBe('2026-09-01T13:00:00Z');
         expect(submitted.acceptedAfter).toBe(new Date('2026-09-01T09:15').toISOString());
+    });
+    test('a page brought back from the back-forward cache shows the filters it was rendered with', () => {
+        document.body.innerHTML = `<form>
+            <input type="checkbox" name="kind" value="plugin-action">
+            <input type="checkbox" name="state" value="succeeded" checked>
+            <select name="pinned"><option value="">Any</option><option value="false">Not pinned</option></select>
+            <input type="datetime-local" name="acceptedAfter" data-bound="start" data-instant="2026-09-01T10:00:00Z">
+        </form>`;
+        const form = document.querySelector('form')!;
+        const times = Object.assign(jobFilterTimes(), { $root: form });
+        times.init();
+        const shown = form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value;
+        // The reader changes the form and applies it, and the browser keeps this
+        // page as it was left: the new choices, and the instants submit() swapped in.
+        form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked = true;
+        form.querySelector<HTMLSelectElement>('select')!.value = 'false';
+        form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value = '2026-09-03T08:00';
+        times.submit();
+
+        window.dispatchEvent(pageShow(true));
+
+        const entries = [...new FormData(form).entries()];
+        expect(entries).toEqual([
+            ['state', 'succeeded'],
+            ['pinned', ''],
+            ['acceptedAfter', shown],
+        ]);
+        // A second apply sends the time the reader then chooses, not the old one.
+        form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value = '2026-09-04T08:00';
+        times.submit();
+        expect(new FormData(form).getAll('acceptedAfter')).toEqual([new Date('2026-09-04T08:00').toISOString()]);
+        times.destroy();
+    });
+
+    test('an ordinary page show leaves the form alone', () => {
+        document.body.innerHTML = `<form><input type="checkbox" name="kind" value="plugin-action"></form>`;
+        const form = document.querySelector('form')!;
+        const times = Object.assign(jobFilterTimes(), { $root: form });
+        times.init();
+        form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked = true;
+        window.dispatchEvent(pageShow(false));
+        expect(form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked).toBe(true);
+        times.destroy();
     });
 });

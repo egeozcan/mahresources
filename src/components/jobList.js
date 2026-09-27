@@ -583,6 +583,20 @@ export function instantFromDatetimeInput(value, end = false) {
 export function jobFilterTimes() {
     return {
         init() {
+            this.showInstants();
+            // A page the back-forward cache brings back is the one the reader
+            // left, form and all: the choices made for the page they went on
+            // to, and the instants submit() swapped in. Its address is this
+            // page's, so the form goes back to what was rendered for it.
+            this._onPageShow = event => { if (event.persisted) this.restore(); };
+            window.addEventListener('pageshow', this._onPageShow);
+        },
+
+        destroy() {
+            window.removeEventListener('pageshow', this._onPageShow);
+        },
+
+        showInstants() {
             for (const input of this.timeInputs()) {
                 const instant = input.dataset.instant;
                 if (!instant) continue;
@@ -590,6 +604,15 @@ export function jobFilterTimes() {
                 if (input.value.length > 16) input.step = '1';
                 input.dataset.shown = input.value;
             }
+        },
+
+        restore() {
+            for (const hidden of this.$root.querySelectorAll('input[type="hidden"][data-bound-instant]')) hidden.remove();
+            for (const input of this.timeInputs()) {
+                if (input.dataset.name) input.name = input.dataset.name;
+            }
+            this.$root.reset();
+            this.showInstants();
         },
 
         timeInputs() {
@@ -608,6 +631,8 @@ export function jobFilterTimes() {
                 hidden.type = 'hidden';
                 hidden.name = input.name;
                 hidden.value = instant;
+                hidden.dataset.boundInstant = '';
+                input.dataset.name = input.name;
                 input.removeAttribute('name');
                 input.after(hidden);
             }

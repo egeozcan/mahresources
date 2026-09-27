@@ -43,7 +43,9 @@
         </ul>
     </div>
     {% endif %}
-    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter jobs" action="/jobs" method="get"
+    {# autocomplete="off": a page reloaded by Back must show the filters its address #}
+    {# names, not the choices the browser remembers from before it was left.       #}
+    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter jobs" action="/jobs" method="get" autocomplete="off"
           x-data="jobFilterTimes()" @submit="submit()">
         <div class="filter-controls-scroll">
         <div class="sidebar-group">

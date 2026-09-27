@@ -119,6 +119,23 @@ test.describe('Job Center', () => {
     await expect(page.getByRole('alert')).toHaveCount(0);
   });
 
+  test('after Back the filter form shows the filters of the page it returns to', async ({ page }) => {
+    await page.goto('/jobs?state=succeeded&dismissed=false');
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
+
+    await form.getByRole('checkbox', { name: 'plugin-action', exact: true }).check();
+    await form.getByRole('combobox', { name: 'Pinned' }).selectOption('false');
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/pinned=false/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/jobs\?state=succeeded&dismissed=false$/);
+    await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'plugin-action', exact: true })).not.toBeChecked();
+    await expect(form.getByRole('combobox', { name: 'Pinned' })).toHaveValue('');
+  });
+
   test('the State filter selects partially completed jobs, which the card names', async ({ page, request, apiClient }) => {
     await apiClient.enablePlugin('test-actions');
     const run = async (action: string) => {
