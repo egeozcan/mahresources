@@ -270,8 +270,8 @@ test.describe('Jobs drawer live updates and reads', () => {
       }
 
       const row = drawerOf(page).locator(`article[data-job-id="${ids[0]}"]`);
+      // A dismissal can be undone, so it asks nothing first.
       await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
-      await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss', exact: true }).click();
       await expect(row).toHaveCount(0);
 
       await expect(drawerOf(other).locator(`article[data-job-id="${ids[0]}"]`)).toHaveCount(0, { timeout: 5_000 });
