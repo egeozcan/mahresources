@@ -132,6 +132,9 @@ function erroring_work(ctx)
     if ctx.params.secret == "nil-field" then
         return broken.field
     end
+    if ctx.params.secret == "multi-line" then
+        error("the first line\nthe second line")
+    end
     error("the handler broke on " .. ctx.params.secret)
 end
 
@@ -1409,6 +1412,7 @@ func TestALuaErrorIsTheFailureReasonWithoutItsTraceback(t *testing.T) {
 	}{
 		{secret, "the handler broke on [redacted]"},
 		{"nil-field", "attempt to index a non-table object(nil) with key 'field'"},
+		{"multi-line", "the first line"},
 	}
 	for _, tc := range cases {
 		_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "erroring-work", 9,

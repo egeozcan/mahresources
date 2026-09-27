@@ -298,10 +298,11 @@ func (pm *PluginManager) handlerFailure(pluginName string, workErr error, timedO
 	return HostFailure{Cause: FailureError, Message: pm.handlerErrorText(pluginName, workErr)}
 }
 
-// handlerErrorText is a handler's error as a reader of its Job sees it: a Lua
-// error's own message without the stack traceback gopher-lua appends to it, and
-// with the plugin's directory taken off the file it names, so it reads
-// "plugin.lua:20: ..." rather than naming where the server keeps its plugins.
+// handlerErrorText is a handler's error as a reader of its Job sees it: the first
+// line of a Lua error's own message, without the stack traceback gopher-lua
+// appends to it or any further lines the message carried, and with the plugin's
+// directory taken off the file it names, so it reads "plugin.lua:20: ..." rather
+// than naming where the server keeps its plugins.
 func (pm *PluginManager) handlerErrorText(pluginName string, err error) string {
 	if err == nil {
 		return ""
@@ -310,6 +311,9 @@ func (pm *PluginManager) handlerErrorText(pluginName string, err error) string {
 	var apiErr *lua.ApiError
 	if errors.As(err, &apiErr) && apiErr.Object != nil {
 		text = apiErr.Object.String()
+	}
+	if line, _, found := strings.Cut(text, "\n"); found {
+		text = strings.TrimSuffix(line, "\r")
 	}
 	if plugin := pm.GetDiscoveredPlugin(pluginName); plugin != nil && plugin.Dir != "" {
 		text = strings.ReplaceAll(text, plugin.Dir+string(os.PathSeparator), "")

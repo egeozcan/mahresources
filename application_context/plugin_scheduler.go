@@ -325,7 +325,7 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 // a sink that records nothing else (scheduleEntrySink).
 func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool, decided func(started bool, refusal string)) pluginActionRun {
 	if s.ctx != nil && s.ctx.JobService() != nil {
-		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, decided)
+		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait, holdClaim, decided)
 		if err != nil {
 			// The Job could not be materialized at all. The row is given back
 			// rather than reported as a failed run: nothing was executed, and the
@@ -528,28 +528,36 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 	}
 	pm := s.ctx.PluginManager()
 	if pm == nil {
-		decide(false, "")
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
 	reg, found := s.scheduleRegistration(row)
 	if !found {
 		// Disabled between RunNow's check and here.
-		decide(false, "")
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
 
-	run := s.runOccurrence(row, reg, scheduleActor(row), true, decide)
+	// Entry is told at once; a run that did not start is told only once the row
+	// says so and its claim is released, so an operator who asks again at once is
+	// not refused as busy by the attempt that already gave up.
+	entered := func(started bool, _ string) {
+		if started {
+			decide(true, "")
+		}
+	}
+	run := s.runOccurrence(row, reg, scheduleActor(row), true, entered)
 	if run.Refused != "" {
 		// Recorded on the row as a ticked refusal is, but a manual run never
 		// moves next_due_at.
-		decide(false, run.Refused)
 		if err := s.ctx.RefusePluginScheduleRun(row.ID, token, scheduleRefusalMessage(run.Refused), time.Now(), false); err != nil {
 			log.Printf("warning: plugin scheduler could not record the refused manual run of %s/%s: %v",
 				row.PluginName, row.ScheduleID, err)
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		}
+		decide(false, run.Refused)
 		return
 	}
 	if !run.Started {
@@ -558,8 +566,8 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 		// Recording a failure here would blame the plugin for a run it did not
 		// have, which is what errJobDidNotStart exists to prevent. The operator
 		// is told it did not start, which is the answer RunNow is waiting for.
-		decide(false, "")
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
+		decide(false, "")
 		return
 	}
 	decide(true, "")

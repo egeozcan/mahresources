@@ -500,9 +500,9 @@ func TestAClaimWhoseInputCannotBeReadRunsWithTheQueuedInput(t *testing.T) {
 }
 
 // TestAnOccurrenceWhoseClaimIsStillComingBackIsWithdrawnWhenItLands pins the
-// scheduler's side of a claim given back. The occurrence's dispatch budget runs
-// out while the claim is still on its way back to the queue; the occurrence did
-// not start, and once the claim lands it is withdrawn, not left waiting for a
+// scheduler's side of a claim given back. A fresh occurrence's dispatch budget
+// runs out while the claim is still on its way back to the queue; the occurrence
+// did not start, and once the claim lands it is withdrawn, not left waiting for a
 // scheduler that has moved on.
 func TestAnOccurrenceWhoseClaimIsStillComingBackIsWithdrawnWhenItLands(t *testing.T) {
 	setAdmissionBound(t, 200*time.Millisecond)
@@ -516,20 +516,6 @@ func TestAnOccurrenceWhoseClaimIsStillComingBackIsWithdrawnWhenItLands(t *testin
 	if !found {
 		t.Fatal("the fixture's tick schedule is not registered")
 	}
-	input := &pluginActionJobInput{
-		Subtype: pluginActionSubtypeScheduled, Plugin: pluginActionTestPlugin, ScheduleID: "tick",
-		Overlap: plugin_system.ScheduleOverlapSkip, Runtime: plugin_system.CurrentRuntimeIdentity().String(),
-	}
-	raw, err := json.Marshal(input)
-	if err != nil {
-		t.Fatalf("encode the input: %v", err)
-	}
-	owner := operator.ID
-	occurrence := acceptJobFor(t, ctx, jobs.Acceptance{
-		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion, State: jobs.StateQueued,
-		Origin: "schedule", Title: "tick", OwnerUserID: &owner, ActorUserID: &owner,
-		Replay: jobs.ReplayInput{Input: raw},
-	})
 
 	var releaseFailures atomic.Int64
 	releaseFailures.Store(2)
@@ -545,13 +531,22 @@ func TestAnOccurrenceWhoseClaimIsStillComingBackIsWithdrawnWhenItLands(t *testin
 		t.Fatalf("register the failing release: %v", err)
 	}
 	stall := installReadStall(t, ctx.db)
-	stall.arm(readsTable("users"), false)
+	// The checks before the occurrence is accepted read the account once and
+	// answer; the same read under the claim stalls.
+	var accountReads atomic.Int64
+	stall.arm(func(db *gorm.DB) bool {
+		return db.Statement.Table == "users" && accountReads.Add(1) > 1
+	}, false)
 
-	run, err := ctx.runQueuedScheduledOccurrence(pm, occurrence.ID, reg, operator.ID, input, 400*time.Millisecond)
+	run, err := ctx.runScheduledOccurrenceJob(reg, operator.ID, plugin_system.ScheduleOverlapSkip, 400*time.Millisecond, true, nil)
 	stall.disarm()
 	if err != nil {
 		t.Fatalf("run the occurrence: %v", err)
 	}
+	if run.JobID == "" {
+		t.Fatal("the occurrence was never accepted: the test did not reach its claim")
+	}
+	occurrence := jobs.Snapshot{ID: run.JobID}
 	if run.Started {
 		t.Fatal("an occurrence whose re-check never finished was reported as started")
 	}
@@ -1079,6 +1074,43 @@ func TestACancelWhileTheChecksCannotAnswerEndsTheJob(t *testing.T) {
 		}
 		if got := pluginKVForTest(t, ctx, "long"); got != "" {
 			t.Fatalf("the handler of a cancelled Job ran (long = %q)", got)
+		}
+	})
+
+	t.Run("recorded during a re-check that refuses", func(t *testing.T) {
+		setAdmissionBound(t, 3*time.Second)
+		ctx := newJobHarnessContext(t, false)
+		enableActionPluginForTest(t, ctx)
+		actor := models.User{Username: "cancel-then-refused", Role: models.RoleUser, PasswordHash: "x"}
+		if err := ctx.db.Create(&actor).Error; err != nil {
+			t.Fatalf("seed the actor: %v", err)
+		}
+		stall := installReadStall(t, ctx.db)
+		accepted, input := acceptCancellableActionForTest(t, ctx, actor.ID)
+		admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+
+		// The re-check's account read waits, and then reads the account as it is
+		// by then: disabled.
+		stall.armSlow(readsTable("users"), time.Second)
+		answered := make(chan plugin_system.AdmitResult, 1)
+		go func() { answered <- admission.Admit(time.Time{}) }()
+		waitFor(t, "the re-check to wait under the claim", func() bool { return stall.hits.Load() > 0 })
+		if err := ctx.db.Model(&models.User{}).Where("id = ?", actor.ID).Update("disabled", true).Error; err != nil {
+			t.Fatalf("disable the actor: %v", err)
+		}
+		if err := cancelJobForTest(t, ctx, accepted.ID, "cancel-then-refused"); err != nil {
+			t.Fatalf("cancel the running Job: %v", err)
+		}
+		if got := <-answered; got != plugin_system.AdmitWithdrawn {
+			t.Fatalf("an admission whose re-check refused said %v, want withdrawn", got)
+		}
+		stall.disarm()
+		waitFor(t, "the refused Job to end", func() bool {
+			state := jobStateForTest(t, ctx, accepted.ID)
+			return state.Terminal() || state == jobs.StateBlocked
+		})
+		if got := jobStateForTest(t, ctx, accepted.ID); got != jobs.StateCancelled {
+			t.Fatalf("a Job cancelled while its re-check refused it is %s, want cancelled", got)
 		}
 	})
 

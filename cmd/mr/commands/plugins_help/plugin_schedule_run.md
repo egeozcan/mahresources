@@ -39,6 +39,10 @@ kept, so running the command again later is safe. Or the account the
 schedule runs as may no longer run it, because it is disabled, lost the
 role to write or may no longer use the plugin: the message says which,
 the row records `refused` without counting a run, and no job is kept.
+If the server cannot tell within 5 seconds past the dispatch wait
+whether the run started, for example because its database is slow to
+answer, the message says it had not started by then. It may still
+start, so check the jobs panel before running the command again.
 
 # Example
 

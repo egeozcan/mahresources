@@ -111,6 +111,15 @@ func (a *pluginActionAdmission) refusedBeforeAcceptance() string {
 	return a.refused
 }
 
+// waitsForAnyProcess reports whether this execution's Job is a scheduled run's
+// Retry successor: it existed before this execution and holds no schedule row's
+// claim, so it waits in the queue for whichever process can run it, as a queued
+// action does, and is never withdrawn for not starting here. A fresh occurrence is
+// accepted at its admission and is the tick of the row its scheduler claimed.
+func (a *pluginActionAdmission) waitsForAnyProcess() bool {
+	return a.subtype == pluginActionSubtypeScheduled && a.accept == nil
+}
+
 // JobID implements plugin_system.HostJobNamer: the durable Job, once there is one.
 func (a *pluginActionAdmission) JobID() string {
 	a.mu.Lock()
@@ -291,9 +300,11 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 			return plugin_system.AdmitWithdrawn
 		}
 	}
+	sink := newPluginActionSink(a.ctx, execution, input)
+	sink.waitsForAnyProcess = a.waitsForAnyProcess()
 	a.mu.Lock()
 	a.execution = execution
-	a.sink = newPluginActionSink(a.ctx, execution, input)
+	a.sink = sink
 	a.mu.Unlock()
 	return plugin_system.Admitted
 }
@@ -639,7 +650,7 @@ func (a *pluginActionAdmission) CallbackLost(reason string) {
 		sink.CallbackLost(reason)
 		return
 	}
-	if a.subtype == pluginActionSubtypeRegistered {
+	if a.subtype == pluginActionSubtypeRegistered || a.waitsForAnyProcess() {
 		return
 	}
 	jobID := a.JobID()
@@ -957,7 +968,7 @@ func (ctx *MahresourcesContext) adoptWaitingPluginAction(pm *plugin_system.Plugi
 			actor = *job.ActorUserID
 		}
 		go func() {
-			if _, err := ctx.runQueuedScheduledOccurrence(pm, job.ID, reg, actor, input, ScheduleDispatchWait); err != nil {
+			if _, err := ctx.runQueuedScheduledOccurrence(pm, job.ID, reg, actor, input); err != nil {
 				log.Printf("warning: adopted plugin job %s: %v", job.ID, err)
 			}
 		}()

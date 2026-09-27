@@ -496,7 +496,9 @@ outcome could not be recorded in that time is resolved by the next server
 process, as after a crash. Work still waiting for its
 turn never started: a queued action stays `queued` and the next server process
 runs it, a queued `mah.start_job` job is cancelled as not started, and a schedule
-run that had not started records nothing and runs at a tick after the restart.
+run that had not started records nothing and runs at a tick after the restart. A
+Retry of a schedule run waits like a queued action: it stays `queued` until a
+server process can run it.
 
 After a crash, the next server process on the same machine, in the same boot
 session, interrupts the jobs the crashed process was running on its next pass,

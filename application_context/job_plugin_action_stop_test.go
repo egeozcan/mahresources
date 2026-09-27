@@ -69,6 +69,13 @@ func TestDisablingAPluginInterruptsItsRunningActionWithAReason(t *testing.T) {
 func TestAShutdownInterruptsTheRunningActionAndLeavesQueuedWorkForTheNextProcess(t *testing.T) {
 	defer plugin_system.SetShutdownBoundsForTest(200*time.Millisecond, 2*time.Second, 2*time.Second)()
 	ctx := newPluginActionJobContext(t)
+	// The deployment has the plugin enabled, as it does when an operator enabled
+	// it: that record is what tells the harness's adoption pass, once this
+	// process has closed, that another process may still run the queued action.
+	if recorded := ctx.db.Model(&models.PluginState{}).Where("plugin_name = ?", pluginActionTestPlugin).
+		Update("enabled", true); recorded.Error != nil || recorded.RowsAffected != 1 {
+		t.Fatalf("record the plugin as enabled: %v (%d rows)", recorded.Error, recorded.RowsAffected)
+	}
 	_, running, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "long-work", 1, nil, "")
 	if err != nil {
 		t.Fatalf("run the long action: %v", err)
@@ -96,6 +103,9 @@ func TestAShutdownInterruptsTheRunningActionAndLeavesQueuedWorkForTheNextProcess
 	if stopped.Failure.Message != "The server shut down while this was running." {
 		t.Fatalf("the interruption says %q", stopped.Failure.Message)
 	}
+	// The adoption pass the dispatch loop runs on its cadence, taken now rather
+	// than whenever the loop's timer happens to fire.
+	(&pluginActionAdapter{ctx: ctx}).AdoptWaiting(context.Background())
 	if got := jobStateForTest(t, ctx, waiting); got != jobs.StateQueued {
 		t.Fatalf("the action that never started is %s, want queued for the next process", got)
 	}

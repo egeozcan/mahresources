@@ -1414,9 +1414,10 @@ Two consequences worth knowing before relying on a schedule:
   and `mah.start_job` jobs, and waits for the one that is running. Under `"skip"`,
   a run that cannot start within 10 seconds (the plugin is busy, or the job budget
   is full) is not started and records no job, and the schedule stays due for the
-  next tick. Under `"allow"` a run waits for the plugin for as long as it takes,
-  and is dropped only if no job slot or budget room frees within 10 seconds after
-  that.
+  next tick. Under `"allow"` a ticked run waits for the plugin for as long as it
+  takes, and is dropped only if no job slot or budget room frees within 10 seconds
+  after that. A run started with Run now waits at most 10 seconds under either
+  policy, and a Retry of a run waits as long as it takes, as a queued action does.
 - **In a multi-process deployment each schedule still runs once.** Processes
   compete for each due run and exactly one wins.
 
