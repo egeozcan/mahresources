@@ -435,7 +435,8 @@ const jobDownloadWaitingForURLReason = "waiting-for-url"
 // It is the answer for work that has not failed and will run again: a transfer the
 // deployment's shutdown stopped, and one waiting for its URL. The transition takes
 // the claim and the capacity with it. A cancellation already recorded against the
-// Job owns the outcome instead, and ends it cancelled. A write the fence refuses
+// Job owns the outcome instead, and ends it cancelled; a pause a person asked for
+// holds it, paused, rather than letting it start again over the request. A write the fence refuses
 // is not this execution's to make and is dropped; any other failure is returned
 // as errQueuePublicationUnfinished, which leaves the Job running under its lease
 // for the reconciliation an expired claim gets, rather than ending it.
@@ -461,6 +462,27 @@ func (ctx *MahresourcesContext) requeueDownloadExecution(execution jobs.Executio
 		}
 		if current.ControlIntent == jobs.ControlIntentCancel {
 			return settleRequeue(ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil))
+		}
+		if current.ControlIntent == jobs.ControlIntentPause {
+			// A person asked for this Job to be held and it is not running any
+			// more: back in the queue it would start again over the pause.
+			progress := pausedDownloadProgress(current.Progress)
+			_, err := service.Transition(deps, jobs.Transition{
+				JobID:           execution.JobID,
+				ExpectedVersion: current.Version,
+				ExecutionToken:  execution.ExecutionToken,
+				To:              jobs.StatePaused,
+				Event:           jobs.EventInput{Type: jobs.EventPaused, Detail: jobDownloadPausedDetail},
+				Progress:        &progress,
+			})
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, jobs.ErrVersionConflict) {
+				return settleRequeue(err)
+			}
+			lastErr = err
+			continue
 		}
 		if _, err := service.UpdateProgress(deps, ref, jobs.Progress{Phase: phase, Message: message}); err != nil {
 			if mirrorRefusalIsSilent(err) && !errors.Is(err, jobs.ErrVersionConflict) {
@@ -933,6 +955,17 @@ func (a *downloadJobAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 			}
 			return jobs.ReconcileSucceed, nil
 		}
+		if request.Snapshot.ControlIntent == jobs.ControlIntentPause {
+			// A person asked for this download to be held and the process that
+			// would have held it is gone, with the transfer. Queuing it would start
+			// it over the pause; it is held here instead, where its sealed input is
+			// the point Resume starts from, as it is for any held download.
+			progress := pausedDownloadProgress(request.Snapshot.Progress)
+			if _, err := request.Execution.Progress(progress); err != nil {
+				return "", err
+			}
+			return jobs.ReconcilePause, nil
+		}
 		return jobs.ReconcileQueue, nil
 	}
 	if downloadTerminal(entry.GetStatus()) {
@@ -1116,6 +1149,15 @@ const jobDownloadPausedMessage = "Paused. Resume starts the download again from 
 // ReclassifyDownloadHolds recognizes one.
 var jobDownloadPausedDetail = json.RawMessage(`{"reason":"paused","resume":"restarts-from-the-beginning"}`)
 
+// pausedDownloadProgress is the row a paused download shows: what it reported, no
+// time left and no phase, and a message that says what Resume does.
+func pausedDownloadProgress(progress jobs.Progress) jobs.Progress {
+	progress.Phase = ""
+	progress.Message = jobDownloadPausedMessage
+	progress.ETA = nil
+	return progress
+}
+
 // recordDownloadPause records that the executor holds this execution's transfer:
 // the Job is paused, under the execution's token, with a row that says what Resume
 // does. Leaving running hands the claim and its capacity back, so a paused
@@ -1128,10 +1170,7 @@ func (ctx *MahresourcesContext) recordDownloadPause(jobID, executionToken string
 	if service == nil || snap == nil {
 		return nil
 	}
-	progress := downloadJobProgress(snap)
-	progress.Phase = ""
-	progress.Message = jobDownloadPausedMessage
-	progress.ETA = nil
+	progress := pausedDownloadProgress(downloadJobProgress(snap))
 	var lastErr error
 	for attempt := 0; attempt < queuePublicationWriteAttempts; attempt++ {
 		current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)

@@ -1270,10 +1270,11 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			continue
 		}
 
-		if !definition.Restorable && (decision == ReconcileResume || decision == ReconcileQueue) {
+		if !definition.Restorable && (decision == ReconcileResume || decision == ReconcileQueue || decision == ReconcilePause) {
 			// Closure-backed work: its in-memory state died with the process
 			// that claimed it, so a lease expiry alone may never send it back
-			// to the queue or to a fresh execution.
+			// to the queue or to a fresh execution, nor hold it for a Resume
+			// that could only do the same.
 			snap, err := s.quarantineClaim(deps, job, claim, quarantineReasonNonRestorable, now)
 			if err != nil {
 				return report, err
@@ -1603,9 +1604,9 @@ func (s *Service) ReconcileQuarantined(ctx context.Context, deps Deps, claimant 
 			report.Deferred++
 			continue
 		}
-		if !definition.Restorable && (decision == ReconcileResume || decision == ReconcileQueue) {
+		if !definition.Restorable && (decision == ReconcileResume || decision == ReconcileQueue || decision == ReconcilePause) {
 			// Closure-backed work is never redispatched after runtime loss, however
-			// it is asked, and "queue" is a redispatch.
+			// it is asked, and "queue" is a redispatch (as a Resume of a pause is).
 			if err := deferClaimReconcile(deps, claim, now); err != nil {
 				return report, err
 			}
@@ -1645,7 +1646,9 @@ func (s *Service) ReconcileQuarantined(ctx context.Context, deps Deps, claimant 
 // are the answers that mean "still nothing proved": a resume or a remain-running
 // would keep ownership where it is (and the first would hand a blocked Job to a fresh
 // execution), an unproven answer is the same silence in a different word, and a block
-// is the state the Job is already in.
+// is the state the Job is already in. A pause is not an answer for a quarantine
+// either: the quarantined Job is blocked, and no pause request outlives the Job
+// leaving running.
 func resolvesQuarantine(decision ReconcileDecision) bool {
 	switch decision {
 	case ReconcileQueue, ReconcileSucceed, ReconcileFail, ReconcileInterrupt:
@@ -1807,6 +1810,11 @@ func (s *Service) applyReconcileDecision(deps Deps, job models.Job, claim models
 		snap, err = s.Transition(deps, Transition{
 			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: claim.ExecutionToken,
 			To: StateBlocked, Event: EventInput{Type: EventBlocked, Detail: detail},
+		})
+	case ReconcilePause:
+		snap, err = s.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: claim.ExecutionToken,
+			To: StatePaused, Event: EventInput{Type: EventPaused, Detail: detail},
 		})
 	case ReconcileInterrupt:
 		// The adapter has proved the execution's runtime gone, so the reader is told

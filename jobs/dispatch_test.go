@@ -1206,6 +1206,11 @@ func TestReconcileAsksTheAdapterAndAppliesOnlyWhatItAnswers(t *testing.T) {
 			wantCapacity: 0, wantTokenKept: false, wantEvent: EventBlocked,
 		},
 		{
+			name: "pause", decision: ReconcilePause,
+			wantState: StatePaused, wantClaim: models.JobClaimStateReleased,
+			wantCapacity: 0, wantTokenKept: false, wantEvent: EventPaused,
+		},
+		{
 			name: "interrupt", decision: ReconcileInterrupt,
 			wantState: StateInterrupted, wantClaim: models.JobClaimStateReleased,
 			wantCapacity: 0, wantTokenKept: false, wantEvent: EventInterrupted,
@@ -1457,13 +1462,22 @@ func TestReconcileBlocksAJobWhoseAdapterIsGone(t *testing.T) {
 // closure-backed rule at the control plane: even an adapter that asks for a
 // rerun cannot get one for work whose in-memory state died with its process.
 func TestReconcileNeverRerunsNonRestorableWorkOnExpiryAlone(t *testing.T) {
+	// A pause would be the same rerun one Resume later.
+	for _, decision := range []ReconcileDecision{ReconcileQueue, ReconcilePause} {
+		t.Run(string(decision), func(t *testing.T) {
+			reconcileNonRestorableWorkAnswering(t, decision)
+		})
+	}
+}
+
+func reconcileNonRestorableWorkAnswering(t *testing.T, decision ReconcileDecision) {
 	_, deps := newDispatchDatabase(t, "reconcile-non-restorable.db")
 	svc := NewService()
 	definition := testDefinition()
 	definition.Restorable = false
 	adapter := registerTestAdapter(t, svc, definition)
 	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
-		return ReconcileQueue, nil
+		return decision, nil
 	}
 	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
