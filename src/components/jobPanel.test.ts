@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jobPanel, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelLifecycleEvents, panelStateTone } from './jobPanel.js';
 
@@ -2646,11 +2647,43 @@ describe('Job Center lifecycle event types', () => {
         }
     });
 
-    test('every literal event type a transition or finish carries is known to the panel', () => {
-        const { execSync } = require('node:child_process');
-        const hits = execSync(`grep -rhoE 'EventInput\\{Type: *"[^"]+"' --include='*.go' --exclude='*_test.go' ${repo('application_context')} ${repo('jobs')} ${repo('download_queue')} ${repo('plugin_system')} || true`, { encoding: 'utf8' });
-        const literals = [...hits.matchAll(/"([^"]+)"/g)].map(match => match[1]);
-        expect(literals).toContain('not-started');
-        for (const type of literals) expect(panelLifecycleEvents.has(type), type).toBe(true);
+    // The non-test Go sources of one package directory and its subpackages, each
+    // package's files joined so its own constants can be resolved.
+    const goPackages = (dir: string): string[] => {
+        const own = readdirSync(dir, { withFileTypes: true });
+        const files = own.filter(entry => entry.isFile() && entry.name.endsWith('.go') && !entry.name.endsWith('_test.go'));
+        const nested = own.filter(entry => entry.isDirectory()).flatMap(entry => goPackages(join(dir, entry.name)));
+        return [files.map(file => readFileSync(join(dir, file.name), 'utf8')).join('\n'), ...nested];
+    };
+
+    // Every type an EventInput is built with, whether a transition, a finish or
+    // an appended event: a string literal, or a constant of the package that
+    // builds it, read to its value. The jobs package's Event constants are the
+    // test above's; an operand of any other shape fails, so a new way of naming
+    // an event cannot slip past this unread.
+    const eventInputTypes = (): Set<string> => {
+        const types = new Set<string>();
+        for (const dir of ['application_context', 'jobs', 'download_queue', 'plugin_system', 'plugin_commands']) {
+            for (const source of goPackages(repo(dir))) {
+                const constants = new Map([...source.matchAll(/^\s*(\w+)\s*(?:string\s*)?=\s*"([^"]*)"/gm)].map(match => [match[1], match[2]]));
+                for (const [, raw] of source.matchAll(/EventInput\{\s*Type:\s*([^,}]+)/g)) {
+                    const operand = raw.trim();
+                    const literal = operand.match(/^"([^"]+)"$/);
+                    if (literal) types.add(literal[1]);
+                    else if (/^(jobs\.)?Event[A-Z]\w*$/.test(operand)) continue;
+                    else if (constants.has(operand)) types.add(constants.get(operand)!);
+                    else throw new Error(`${dir}: EventInput type ${operand} is neither a literal nor a constant of its package`);
+                }
+            }
+        }
+        return types;
+    };
+
+    test('every event type a transition or finish carries is known to the panel', () => {
+        const types = eventInputTypes();
+        expect([...types]).toContain('not-started');
+        for (const type of types) {
+            if (!NOT_TRANSITIONS.has(type)) expect(panelLifecycleEvents.has(type), type).toBe(true);
+        }
     });
 });
