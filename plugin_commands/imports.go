@@ -257,6 +257,12 @@ func (d *Dispatcher) finishImportAdmissionFailure(importID, runID, name string, 
 // durable transition exists. Transient store failures retain the worker, its
 // lease and its source descriptor, so a later submission can never observe a
 // pending/running row whose replay state was already discarded.
+//
+// It stops only when the write can no longer be made from this process: the
+// runtime's database fence is lost, or the dispatcher has stopped, after which
+// no submission reaches it. The row then stays nonterminal, and the runtime that
+// owns the fence interrupts it at recovery. Retrying past either point held the
+// worker, or on the submission path the plugin's VM, until shutdown wedged.
 func (d *Dispatcher) persistImportTerminal(importID, runID, name string, finish ImportFinish) (ImportFinish, error) {
 	for {
 		won, err := d.deps.Store.FinishImport(importID, finish)
@@ -281,8 +287,17 @@ func (d *Dispatcher) persistImportTerminal(importID, runID, name string, finish 
 		if err == nil {
 			err = errors.New("plugin command import terminal transition was refused")
 		}
+		if errors.Is(err, ErrRuntimeFenceLost) {
+			return ImportFinish{}, err
+		}
 		d.deps.Logf("persist plugin command import %s terminal state: %v", importID, err)
-		time.Sleep(dispatchFailureRetryDelay)
+		timer := time.NewTimer(dispatchFailureRetryDelay)
+		select {
+		case <-d.done:
+			timer.Stop()
+			return ImportFinish{}, fmt.Errorf("plugin command dispatcher stopped: %w", err)
+		case <-timer.C:
+		}
 	}
 }
 
@@ -301,9 +316,11 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 			SourceDeletePending: sourceDeletePending, FinishedAt: time.Now().UTC(),
 		})
 		if err != nil {
-			// persistImportTerminal currently retries until it has an authoritative
-			// result; keep the branch explicit if that contract ever changes.
-			return Outcome{Status: ImportStatusRunning, Error: err.Error()}
+			// The row stays nonterminal for the fence owner's recovery. The
+			// callback, which nothing else can deliver, is told the outcome was
+			// not recorded rather than that the import failed.
+			result.Error = "the import's outcome was not recorded: " + err.Error()
+			return Outcome{Status: ImportStatusRunning, Error: result.Error}
 		}
 		result.OK = persisted.Status == ImportStatusSucceeded
 		result.Error = persisted.Error

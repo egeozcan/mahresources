@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"mahresources/models"
+	"mahresources/plugin_commands"
 )
 
 const pluginCommandRuntimeFenceKey = "plugin-command"
@@ -44,7 +45,7 @@ func (ctx *MahresourcesContext) requirePluginCommandFenceTx(tx *gorm.DB) error {
 		return nil // Lease-less active runtimes are installed only by legacy unit fixtures.
 	}
 	if token == "" || lease == nil {
-		return fmt.Errorf("plugin command runtime fence is not owned")
+		return plugin_commands.ErrRuntimeFenceLost
 	}
 	result := tx.Model(&models.JobRuntimeFence{}).
 		Where("key = ? AND token = ?", pluginCommandRuntimeFenceKey, token).
@@ -53,7 +54,7 @@ func (ctx *MahresourcesContext) requirePluginCommandFenceTx(tx *gorm.DB) error {
 		return fmt.Errorf("lock plugin command runtime fence: %w", result.Error)
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("plugin command runtime fence token is stale")
+		return fmt.Errorf("%w: its token is stale", plugin_commands.ErrRuntimeFenceLost)
 	}
 	return nil
 }

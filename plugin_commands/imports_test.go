@@ -3,6 +3,7 @@ package plugin_commands
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -36,10 +37,12 @@ type importLifecycleStore struct {
 	maps           map[string]ImportMapEntry
 	claims         map[string]ImportRecord
 	finishFailures int
-	finishAttempt  chan struct{}
-	markEntered    chan struct{}
-	allowMark      chan struct{}
-	markOnce       sync.Once
+	// finishErr, when set, refuses every terminal write with it.
+	finishErr     error
+	finishAttempt chan struct{}
+	markEntered   chan struct{}
+	allowMark     chan struct{}
+	markOnce      sync.Once
 }
 
 func newImportLifecycleStore() *importLifecycleStore {
@@ -126,6 +129,9 @@ func (s *importLifecycleStore) CancelPendingImport(id, reason string, finished t
 func (s *importLifecycleStore) FinishImport(id string, finish ImportFinish) (bool, error) {
 	s.claimMu.Lock()
 	defer s.claimMu.Unlock()
+	if s.finishErr != nil {
+		return false, s.finishErr
+	}
 	if s.finishFailures > 0 {
 		s.finishFailures--
 		if s.finishAttempt != nil {
@@ -488,6 +494,86 @@ func TestImportCompletionWaitsForDurableTerminalWrite(t *testing.T) {
 	mapped, _, _ = store.ImportMap(sub.RunID, sub.Name)
 	if mapped.Status != ImportStatusSucceeded {
 		t.Fatalf("map after retry = %+v", mapped)
+	}
+}
+
+// TestImportTerminalWriteStopsOnceTheRuntimeFenceIsLost pins that a terminal
+// write this process can never make is not retried forever. Once the command
+// runtime's database fence is released or taken, every write is refused; the
+// runtime that owns the fence interrupts the row at its recovery. Retrying held
+// the worker, and on the submission path the plugin's VM, until shutdown
+// wedged waiting for it.
+func TestImportTerminalWriteStopsOnceTheRuntimeFenceIsLost(t *testing.T) {
+	d, store, jobs, _, _, sub := importHarness(t)
+	completed := make(chan ImportResult, 1)
+	sub.Completion = func(result ImportResult) { completed <- result }
+	_, err := d.SubmitImport(sub)
+	requireNoError(t, err)
+	registered := waitForImportJobs(t, jobs, 1)
+	store.claimMu.Lock()
+	store.finishErr = fmt.Errorf("finish import: %w", ErrRuntimeFenceLost)
+	store.claimMu.Unlock()
+
+	outcomes := make(chan Outcome, 1)
+	go func() { outcomes <- registered[0].run(context.Background(), nopProgress{}) }()
+	select {
+	case outcome := <-outcomes:
+		if ImportStatusTerminal(outcome.Status) {
+			t.Fatalf("an unrecorded outcome was reported as terminal: %+v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the import kept retrying a terminal write the lost fence refuses")
+	}
+	select {
+	case result := <-completed:
+		if result.OK || !strings.Contains(result.Error, "not recorded") {
+			t.Fatalf("completion for an unrecorded outcome = %+v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the completion was not told the outcome went unrecorded")
+	}
+	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
+	if ImportStatusTerminal(mapped.Status) {
+		t.Fatalf("map = %+v, want the nonterminal row the fence owner recovers", mapped)
+	}
+}
+
+// TestImportAdmissionFailureDoesNotOutliveTheDispatcher covers the submission
+// path, which runs inside a plugin's Lua callback: an import submitted after
+// the dispatcher stopped is refused, and a store that keeps failing the
+// refusal's terminal write must not hold that callback, and the VM with it,
+// once there is no dispatcher left to retry for.
+func TestImportAdmissionFailureDoesNotOutliveTheDispatcher(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"fence lost", fmt.Errorf("finish import: %w", ErrRuntimeFenceLost)},
+		{"store unavailable after stop", errors.New("finish unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, store, _, _, _, sub := importHarness(t)
+			stopCtx, stop := context.WithTimeout(context.Background(), time.Second)
+			requireNoError(t, d.Stop(stopCtx))
+			stop()
+			store.claimMu.Lock()
+			store.finishErr = tc.err
+			store.claimMu.Unlock()
+
+			submitted := make(chan error, 1)
+			go func() {
+				_, err := d.SubmitImport(sub)
+				submitted <- err
+			}()
+			select {
+			case err := <-submitted:
+				if err == nil {
+					t.Fatal("an import submitted to a stopped dispatcher was accepted")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the submission kept retrying a terminal write after the dispatcher stopped")
+			}
+		})
 	}
 }
 

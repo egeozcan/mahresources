@@ -458,3 +458,18 @@ func TestPluginCommandHeartbeatKeepsLongRunningCanonicalClaimAlive(t *testing.T)
 	require.Error(t, ctx.heartbeatPluginCommandJob(execution))
 	require.NotEmpty(t, oldToken)
 }
+
+// TestPluginCommandStoreNamesAReleasedFenceAsLost pins the error the store's
+// fenced writes give once this process no longer holds the fence: the import
+// terminal writer stops retrying on exactly this, so it must survive wrapping.
+func TestPluginCommandStoreNamesAReleasedFenceAsLost(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}))
+	require.NoError(t, ctx.StopPluginCommands())
+	_, err := ctx.FinishImport("released-fence-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusFailed, FinishedAt: time.Now().UTC(),
+	})
+	require.ErrorIs(t, err, plugin_commands.ErrRuntimeFenceLost)
+}

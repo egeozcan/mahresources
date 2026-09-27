@@ -320,7 +320,7 @@ func (a *pluginCommandJobAdapter) ApplyHostTransition(_ context.Context, deps jo
 		return nil
 	}
 	if !a.ctx.pluginCommandFenceOwned() {
-		return fmt.Errorf("plugin command runtime fence is not owned")
+		return plugin_commands.ErrRuntimeFenceLost
 	}
 	if err := a.ctx.requirePluginCommandFenceTx(deps.DB); err != nil {
 		return err
@@ -492,7 +492,7 @@ func (ctx *MahresourcesContext) claimPluginCommandJob(jobID, kind, sourceID stri
 		return jobs.Execution{}, false, fmt.Errorf("plugin command Job %s has no durable source id", jobID)
 	}
 	if !ctx.pluginCommandFenceOwned() {
-		return jobs.Execution{}, false, fmt.Errorf("plugin command runtime fence is not owned")
+		return jobs.Execution{}, false, plugin_commands.ErrRuntimeFenceLost
 	}
 	controller := ctx.pluginCommandController
 	controller.mu.Lock()
