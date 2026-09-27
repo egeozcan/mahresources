@@ -252,7 +252,10 @@ the same way; the Job Center says when its list could not be refreshed, and a
 Job's page whose read failed offers **Try again** and a link to All jobs.
 
 Progress updates arrive over the live stream. They are not announced to screen readers; state changes are,
-once each, with the reason when a Job fails. That includes a Job accepted and
+once each, with the reason when a Job fails. The drawer announces the Jobs it
+follows, on every page; the Job Center and a Job's page announce only a Job the
+drawer does not follow, such as another account's Job while an administrator's
+drawer shows **My jobs**. That includes a Job accepted and
 finished within a moment of each other, such as a download refused with a 404:
 its outcome is announced even though the drawer never showed it running. A Job
 whose outcome the live stream had already published when the page connected,
