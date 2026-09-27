@@ -888,3 +888,28 @@ func TestRuntimeIdentityFitsTheClaimantBound(t *testing.T) {
 		t.Fatalf("recorded identity %q is %d bytes, over the %d-byte claimant bound", recorded, len(recorded), jobs.MaxClaimantBytes)
 	}
 }
+
+// TestAnUnreadableOrOlderRuntimeIdentityIsNeverProvedGone pins how every
+// consumer reads identities an earlier release recorded in claims, summaries
+// and the command fence: an older form still parses, and a form that does not
+// parse proves nothing. Neither may read as Gone (which would expire a live
+// claim or take over a live fence) or fail hard (which would block for good).
+func TestAnUnreadableOrOlderRuntimeIdentityIsNeverProvedGone(t *testing.T) {
+	current := plugin_system.CurrentRuntimeIdentity()
+	olderRelease := fmt.Sprintf("%s/%s/%d", current.Host, current.BootSession, current.PID)
+	if parsed, ok := plugin_system.ParseRuntimeIdentity(olderRelease); !ok || parsed.Nonce != "" {
+		t.Fatalf("the earlier release's form %q: parsed %+v ok=%v", olderRelease, parsed, ok)
+	}
+	for _, claimant := range []string{
+		"", "garbage", "unknown-host:4242", "host/boot", "host/boot/notapid",
+		olderRelease, // this process's pid, written without a nonce
+		fmt.Sprintf("%s/%s/%d/7c2456c1", current.Host, "00000000-0000-4000-8000-000000000000", current.PID),
+	} {
+		if runtimeClaimantIsProvedGone(claimant) {
+			t.Errorf("claimant %q was proved gone", claimant)
+		}
+		if pluginCommandFenceOwnerStopped(models.JobRuntimeFence{Token: "held", Owner: claimant}) {
+			t.Errorf("a fence held by %q was read as released", claimant)
+		}
+	}
+}
