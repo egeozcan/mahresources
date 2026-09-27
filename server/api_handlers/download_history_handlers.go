@@ -183,7 +183,7 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 				results = append(results, res)
 				continue
 			}
-			if first, repeated := batchURLs[creator.URL]; repeated && creator.URL != "" {
+			if first, repeated := batchURLs[download_queue.TransferKey(creator.URL)]; repeated && creator.URL != "" {
 				res.Reason = fmt.Sprintf("the same download is already being retried as row %d in this request", first)
 				results = append(results, res)
 				continue
@@ -209,7 +209,7 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 			res.OK, res.JobID, res.CanonicalJobID = true, jobID, successorID
 			accepted++
 			if creator.URL != "" {
-				batchURLs[creator.URL] = entry.ID
+				batchURLs[download_queue.TransferKey(creator.URL)] = entry.ID
 			}
 
 			if err := ctx.MarkDownloadHistoryRetried(entry.ID, jobID, time.Now()); err != nil {

@@ -18,8 +18,12 @@ import (
 // classifying text is guessing. What a code *means* to the Job (its class, and
 // whether a Retry could answer differently) is the Kind adapter's decision.
 const (
-	// FailureRemoteClientError is a 4xx the remote answers the same request with
-	// every time: 400, 404, 405, 410 and the rest outside the codes below.
+	// FailureInvalidURL is a stored address that is not an absolute http or https
+	// URL with a host. Submission refuses one; a Job accepted before it did can
+	// still hold one, and nothing that happens later can make it fetchable.
+	FailureInvalidURL = "invalid-url"
+	// FailureRemoteClientError is a 4xx other than the codes below: 400, 404,
+	// 405, 410 and the rest.
 	FailureRemoteClientError = "remote-client-error"
 	// FailureRemoteForbidden is a 403. It depends on who the request says it
 	// is, and the User-Agent the deployment sends can be changed.

@@ -19,8 +19,9 @@ import (
 )
 
 // A failed download's Job is classed by what went wrong, so the failure
-// breakdown can tell a remote refusal from a timeout from a policy block, and
-// Retry is offered only where asking again could answer differently.
+// breakdown can tell a remote refusal from a timeout from a policy block. Retry is
+// offered for every one of them: each depends on the remote, the library or the
+// deployment's policy, and any of those can change.
 func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +50,8 @@ func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 		class string
 		retry bool
 	}{
-		{server.URL + "/missing", download_queue.FailureRemoteClientError, jobs.FailureClassDependency, false},
+		// A 404 can become a 200 once the remote publishes.
+		{server.URL + "/missing", download_queue.FailureRemoteClientError, jobs.FailureClassDependency, true},
 		{server.URL + "/busy", download_queue.FailureRemoteServerError, jobs.FailureClassDependency, true},
 		{server.URL + "/forbidden", download_queue.FailureRemoteForbidden, jobs.FailureClassDependency, true},
 		{closed, download_queue.FailureRemoteConnection, jobs.FailureClassDependency, true},
@@ -57,7 +59,8 @@ func TestADownloadFailureIsClassedByItsCause(t *testing.T) {
 		// the same download may succeed once the address is allowed.
 		{"http://10.255.255.1:9/private.bin", download_queue.FailureAddressRefused, jobs.FailureClassPolicy, true},
 		{server.URL + "/first.bin", "", "", false},
-		{server.URL + "/second.bin", download_queue.FailureResourceExists, jobs.FailureClassConflict, false},
+		// The resource holding the bytes can be deleted.
+		{server.URL + "/second.bin", download_queue.FailureResourceExists, jobs.FailureClassConflict, true},
 	}
 	for _, tc := range cases {
 		submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: tc.url}, nil, "", "api")
@@ -101,6 +104,7 @@ func TestTheRetrySelectorAgreesWithDeterministicFailures(t *testing.T) {
 		{download_queue.FailureRemoteServerError, jobs.FailureClassDependency},
 		{download_queue.FailureOverallTimeout, jobs.FailureClassTimeout},
 		{download_queue.FailureDownloadFailed, jobs.FailureClassInternal},
+		{download_queue.FailureInvalidURL, jobs.FailureClassValidation},
 	} {
 		snap := acceptJobFor(t, ctx, jobs.Acceptance{
 			Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion, State: jobs.StateQueued,
@@ -115,15 +119,17 @@ func TestTheRetrySelectorAgreesWithDeterministicFailures(t *testing.T) {
 	assertAdapterSelectorMatchesCommands(t, ctx, jobs.Access{Administrator: true}, jobs.CommandRetry)
 }
 
-// An archive that cannot be read is the uploader's problem, not the server's,
-// and parsing the same bytes again reads them the same way. The reason says what
-// is wrong with the archive, and no Retry is offered.
-func TestAnUnreadableImportArchiveSaysWhyAndOffersNoRetry(t *testing.T) {
+// An archive the reader refuses is the uploader's problem, not the server's, and
+// the reason says what is wrong with it. Bytes that are not an archive never will
+// be, so that one offers no Retry; a schema version this release does not read may
+// be one a later release does, so that one keeps it.
+func TestARefusedImportArchiveSaysWhy(t *testing.T) {
 	cases := []struct {
 		name    string
 		archive func(t *testing.T, ctx *MahresourcesContext, handle string) string
 		code    string
 		reason  string
+		retry   bool
 	}{
 		{"not an archive", func(t *testing.T, ctx *MahresourcesContext, handle string) string {
 			staging := writeImportArchiveForTest(t, ctx, handle)
@@ -131,10 +137,10 @@ func TestAnUnreadableImportArchiveSaysWhyAndOffersNoRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			return staging
-		}, "import-archive-invalid", "not a mahresources export archive"},
+		}, "import-archive-invalid", "not a mahresources export archive", false},
 		{"an unsupported schema version", func(t *testing.T, ctx *MahresourcesContext, handle string) string {
 			return writeImportArchiveWithManifestForTest(t, ctx, handle, map[string]any{"schema_version": 99})
-		}, "import-archive-unsupported", "schema_version 99"},
+		}, "import-archive-unsupported", "schema_version 99", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,8 +161,8 @@ func TestAnUnreadableImportArchiveSaysWhyAndOffersNoRetry(t *testing.T) {
 			if !strings.Contains(snap.Failure.Message, tc.reason) {
 				t.Errorf("the reason %q does not say %q", snap.Failure.Message, tc.reason)
 			}
-			if offersCommand(advertisedForTest(t, ctx, snap.ID), jobs.CommandRetry) {
-				t.Errorf("an archive that cannot be read offers a Retry that would read it the same way")
+			if got := offersCommand(advertisedForTest(t, ctx, snap.ID), jobs.CommandRetry); got != tc.retry {
+				t.Errorf("the refused archive offers Retry = %v, want %v", got, tc.retry)
 			}
 		})
 	}
@@ -192,4 +198,71 @@ func singleEntryTar(t *testing.T, name string, body []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+// A stored address that is not an http or https URL can never be fetched, so the
+// Job it belongs to fails as invalid input and offers no Retry, which would replay
+// the same address. Submission refuses one now; a Job accepted before it did can
+// still hold one.
+func TestAStoredAddressThatIsNotADownloadFailsWithoutRetry(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	input, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: "ftp://example.test/secret-path/file.bin?token=abc"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "stored before submission refused it", Replay: jobs.ReplayInput{Input: input},
+	})
+	snap := waitForSnapshot(t, ctx, accepted.ID, "the download to end",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if snap.State != jobs.StateFailed || snap.Failure == nil {
+		t.Fatalf("the Job ended %s (%+v)", snap.State, snap.Failure)
+	}
+	if snap.Failure.Code != download_queue.FailureInvalidURL || snap.Failure.Class != jobs.FailureClassValidation {
+		t.Errorf("the Job is classed %s/%s, want %s/%s", snap.Failure.Code, snap.Failure.Class,
+			download_queue.FailureInvalidURL, jobs.FailureClassValidation)
+	}
+	if strings.Contains(snap.Failure.Message, "secret-path") || strings.Contains(snap.Failure.Message, "token") {
+		t.Errorf("the failure message carries the stored address: %q", snap.Failure.Message)
+	}
+	if offersCommand(advertisedForTest(t, ctx, snap.ID), jobs.CommandRetry) {
+		t.Errorf("a Job whose stored address can never be fetched offers a Retry that would replay it")
+	}
+}
+
+// The import-parse Retry filter selects exactly the parses whose advertisement
+// offers Retry, archive refusals included.
+func TestTheImportRetrySelectorAgreesWithArchiveRefusals(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.GetDefaultFs().MkdirAll("_imports", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, failure := range []struct{ code, class string }{
+		{importArchiveInvalidCode, jobs.FailureClassValidation},
+		{importArchiveUnsupportedCode, jobs.FailureClassValidation},
+		{"import-parse-failed", jobs.FailureClassInternal},
+	} {
+		handle := "selector-" + failure.code
+		input, err := json.Marshal(importParseJobInput{Handle: handle, Archive: importArchivePathFor(handle)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap := acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindGroupImportParse, KindVersion: jobImportKindVersion, State: jobs.StateQueued,
+			Origin: "api", Title: failure.code, Replay: jobs.ReplayInput{Input: input},
+		})
+		if err := ctx.db.Model(&models.Job{}).Where("id = ?", snap.ID).Updates(map[string]any{
+			"state": jobs.StateFailed, "failure_code": failure.code, "failure_class": failure.class,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := afero.WriteFile(ctx.GetDefaultFs(), importArchivePathFor(handle), []byte("archive"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := setImportCommandAvailability(ctx.db, handle, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertAdapterSelectorMatchesCommands(t, ctx, jobs.Access{Administrator: true}, jobs.CommandRetry)
 }

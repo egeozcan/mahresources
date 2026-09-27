@@ -96,7 +96,7 @@ func (a *importParseAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	}
 	if request.Key == jobs.CommandRetry {
 		query = query.Where(importFactPredicate(request.Deps.DB, "handle", "archive_available"), true)
-		query = query.Where("COALESCE(jobs.failure_code, '') NOT IN ?", []string{importArchiveInvalidCode, importArchiveUnsupportedCode})
+		query = query.Where("COALESCE(jobs.failure_code, '') NOT IN ?", importParseFailureCodesThatRepeat())
 	}
 	return query.Select("jobs.id"), true, nil
 }

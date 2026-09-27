@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"mahresources/models/query_models"
@@ -44,6 +45,40 @@ func TestAnExclusiveSubmissionWaitsForTheURLToBeFree(t *testing.T) {
 		SubmissionOptions{Canonical: &CanonicalRef{JobID: "job-waiting", ExecutionToken: "t2"}, ExclusiveURL: true}); err != nil {
 		t.Fatalf("an exclusive submission of a free URL was refused: %v", err)
 	}
+}
+
+// Arbitration compares the request a fetch sends, not the URL's spelling: a
+// second spelling of a URL in flight waits for it on every path that asks.
+func TestAnotherSpellingOfAURLInFlightIsTheSameTransfer(t *testing.T) {
+	dm := createTestManager()
+	dm.resourceCtx = &capturingResourceCreator{}
+	server := stallingServer(t)
+	url := server.URL + "/spelled.bin#first"
+	respelled := strings.Replace(server.URL, "http://", "HTTP://", 1) + "/spelled.bin#second"
+
+	running, err := dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: url}, nil, "",
+		SubmissionOptions{Canonical: &CanonicalRef{JobID: "job-running", ExecutionToken: "t1"}})
+	if err != nil {
+		t.Fatalf("submit the running transfer: %v", err)
+	}
+	waitForCanonical(t, "the transfer to start", func() bool { return running.GetStatus() == JobStatusDownloading })
+
+	_, err = dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: respelled}, nil, "",
+		SubmissionOptions{Canonical: &CanonicalRef{JobID: "job-respelled", ExecutionToken: "t2"}, ExclusiveURL: true})
+	var busy *URLActiveError
+	if !errors.As(err, &busy) || busy.JobID != running.ID {
+		t.Fatalf("another spelling of a URL in flight answered %v, want the running entry %s", err, running.ID)
+	}
+	if got := dm.OtherActiveTransfer(respelled, "job-respelled"); got != running.ID {
+		t.Fatalf("OtherActiveTransfer(%q) = %q, want %s", respelled, got, running.ID)
+	}
+	if got, active := ActiveDownloadForURL(dm, respelled); !active || got != running.ID {
+		t.Fatalf("ActiveDownloadForURL(%q) = %q, %v, want %s", respelled, got, active, running.ID)
+	}
+	if err := dm.Cancel(running.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	waitForCanonical(t, "the transfer to end", func() bool { return downloadQueueStatusTerminal(running.GetStatus()) })
 }
 
 // A held download fetches nothing, and may wait for a person indefinitely, so it

@@ -684,16 +684,18 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 	return job, nil
 }
 
-// activeEntryForURLLocked answers the id of another entry fetching url, or "". An
+// activeEntryForURLLocked answers the id of another entry fetching url, or "",
+// comparing the requests the two send (TransferKey) rather than their spelling. An
 // entry publishing into the same durable Job the submission names is not
 // another one: it is this Job's own earlier attempt. A held (paused) entry is not
 // fetching anything and may wait for a person indefinitely, so it holds no URL;
 // resuming it is what is arbitrated (ResumeExclusive). Must be called with dm.mu
 // held.
 func (dm *DownloadManager) activeEntryForURLLocked(url string, opts SubmissionOptions) string {
+	key := TransferKey(url)
 	for _, id := range dm.jobOrder {
 		job := dm.jobs[id]
-		if job == nil || job.Source != JobSourceDownload || job.runFn != nil || job.URL != url {
+		if job == nil || job.Source != JobSourceDownload || job.runFn != nil || TransferKey(job.URL) != key {
 			continue
 		}
 		if opts.Canonical != nil && job.CanonicalJobID == opts.Canonical.JobID {

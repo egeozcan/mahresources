@@ -41,3 +41,35 @@ func TestTheQueueRefusesANonHTTPURL(t *testing.T) {
 		t.Fatalf("the refused URL left a queue entry")
 	}
 }
+
+// Two spellings a fetch sends as the same request are one transfer: the fragment
+// never leaves the client, and the scheme and host are case-insensitive, as is a
+// port that is the scheme's default. What the request line does carry keeps two
+// URLs apart.
+func TestTransferKeyNamesTheRequestNotItsSpelling(t *testing.T) {
+	same := [][]string{
+		{"https://example.com/file", "https://example.com/file#one", "https://example.com/file#two", "HTTPS://Example.COM/file", "https://example.com:443/file"},
+		{"http://example.com/", "http://example.com", "http://example.com:80/", "http://EXAMPLE.com#top"},
+		{"http://[::1]:8080/x?y=1", "HTTP://[::1]:8080/x?y=1#z"},
+	}
+	for _, group := range same {
+		for _, other := range group[1:] {
+			if TransferKey(group[0]) != TransferKey(other) {
+				t.Errorf("%q and %q are one request but have keys %q and %q", group[0], other, TransferKey(group[0]), TransferKey(other))
+			}
+		}
+	}
+	apart := [][2]string{
+		{"https://example.com/file", "https://example.com/File"},
+		{"https://example.com/file?a=1", "https://example.com/file?a=2"},
+		{"https://example.com/file", "http://example.com/file"},
+		{"https://example.com/file", "https://example.com:8443/file"},
+		{"https://example.com/file", "https://user@example.com/file"},
+		{"https://example.com/a%2Fb", "https://example.com/a/b"},
+	}
+	for _, pair := range apart {
+		if TransferKey(pair[0]) == TransferKey(pair[1]) {
+			t.Errorf("%q and %q are different requests but share the key %q", pair[0], pair[1], TransferKey(pair[0]))
+		}
+	}
+}

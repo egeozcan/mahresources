@@ -44,6 +44,7 @@ func TestAFailureIsCodedByWhatWentWrong(t *testing.T) {
 		err  error
 		want string
 	}{
+		{"an address that is not a download", ValidateDownloadURL("ftp://example.com/a.bin"), FailureInvalidURL},
 		{"not found", newHTTPStatusError(404, "404 Not Found", "", time.Now()), FailureRemoteClientError},
 		{"gone", newHTTPStatusError(410, "410 Gone", "", time.Now()), FailureRemoteClientError},
 		{"bad request", newHTTPStatusError(400, "400 Bad Request", "", time.Now()), FailureRemoteClientError},

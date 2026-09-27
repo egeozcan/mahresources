@@ -268,6 +268,13 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		if errors.As(err, &busy) {
 			return a.waitForTheURL(execution, decoded.Creator.URL)
 		}
+		if reason := download_queue.InvalidDownloadURLReason(err); reason != "" {
+			// Accepted before submission refused such an address, and no later
+			// attempt can fetch it: the Job fails as invalid input, which offers no
+			// Retry, rather than as an executor error that would.
+			return a.finishFailed(execution, download_queue.FailureInvalidURL,
+				"the stored address is not a download: "+reason)
+		}
 		if err != nil {
 			return err
 		}
@@ -787,14 +794,13 @@ func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason
 // same input could answer differently.
 type downloadFailureKind struct {
 	class string
-	// alike is true when the same input can never succeed, so a Retry, which
-	// replays it, would be refused the same way: a duplicate of what the library
-	// holds, a remote 4xx other than the ones that mean "ask later", and a stream
-	// this server does not assemble at all. It is the rule the bulk upload widget
-	// applies to its own failures. A refusal by this deployment's own policy or
-	// limits is not one of them: an operator can allow the address or raise the
-	// limit, and the Retry that follows is how the same download is asked for
-	// again.
+	// alike is true when the stored input can never be fetched by itself, so a
+	// Retry, which replays it, would be refused the same way: an address that is
+	// not an http or https URL. Nothing else qualifies. A remote's answer can
+	// change (a 404 becomes a 200 once something is published, a live stream
+	// ends), the library can change (the resource already holding the bytes can
+	// be deleted), and so can this deployment's policy and limits; the Retry that
+	// follows any of those is how the same download is asked for again.
 	alike bool
 }
 
@@ -802,7 +808,8 @@ type downloadFailureKind struct {
 // is classed internal and keeps Retry, which is the answer for a failure nobody
 // has explained yet.
 var downloadFailureKinds = map[string]downloadFailureKind{
-	download_queue.FailureRemoteClientError: {class: jobs.FailureClassDependency, alike: true},
+	download_queue.FailureInvalidURL:        {class: jobs.FailureClassValidation, alike: true},
+	download_queue.FailureRemoteClientError: {class: jobs.FailureClassDependency},
 	download_queue.FailureRemoteForbidden:   {class: jobs.FailureClassDependency},
 	download_queue.FailureRemoteBusy:        {class: jobs.FailureClassDependency},
 	download_queue.FailureRemoteServerError: {class: jobs.FailureClassDependency},
@@ -813,10 +820,10 @@ var downloadFailureKinds = map[string]downloadFailureKind{
 	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy},
 	download_queue.FailurePluginUnavailable: {class: jobs.FailureClassPolicy},
 	download_queue.FailureSubmitterRefused:  {class: jobs.FailureClassPolicy},
-	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation, alike: true},
+	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation},
 	download_queue.FailureStreamOverLimit:   {class: jobs.FailureClassPolicy},
 	download_queue.FailureFfmpegUnavailable: {class: jobs.FailureClassDependency},
-	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict, alike: true},
+	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict},
 	download_queue.FailureDownloadFailed:    {class: jobs.FailureClassInternal},
 }
 
@@ -939,8 +946,7 @@ func (a *downloadJobAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // all is its own policy — and the host then narrows both: a Retry only on the
 // unsuccessful leaf of a lineage, a cancel never on finished work. The Kind's own
 // policy leaves Retry out for a failure a Retry would repeat
-// (downloadRetryWouldFailAlike): a duplicate, for one, would transfer every byte
-// again only to be refused at the end. Pause is
+// (downloadRetryWouldFailAlike): a stored address that is not a download. Pause is
 // deliberately absent (see the file comment); resume is offered for held work,
 // which is the state a pause leaves this Kind in.
 func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {

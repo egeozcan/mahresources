@@ -53,7 +53,13 @@ func NewReaderWithManifestLimit(src io.Reader, maxBytes int64) (*Reader, error) 
 
 func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
 	pr := &peekedReader{r: src}
-	header, _ := pr.Peek(2)
+	header, err := pr.Peek(2)
+	if err != nil && !isFormatFailure(err) {
+		// A read that failed says nothing about what the file holds. Carrying on
+		// would hand the tar reader whatever the source says next, and a source
+		// that ends after its error would be read as an archive that is not one.
+		return nil, fmt.Errorf("archive: read the first bytes: %w", err)
+	}
 	r := &Reader{maxManifestBytes: maxManifestBytes}
 	if len(header) >= 2 && header[0] == 0x1f && header[1] == 0x8b {
 		gz, err := gzip.NewReader(pr)

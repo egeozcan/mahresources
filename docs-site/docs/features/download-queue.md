@@ -214,17 +214,18 @@ when opened, like every entity output.
 ### Failure reasons and Retry
 
 Every failed download records a code and a class, which the Job Center's
-failure breakdown and the summary export group on. Retry is offered unless the
-same input can never succeed: a duplicate of content the library holds, a stream
-this server does not assemble at all, and a remote 4xx other than 403, 408, 423,
-425 and 429 offer none. That is the rule the bulk upload widget applies to its
-own failures. A refusal by this deployment's own policy or limits keeps Retry,
-because an operator can allow the address or raise the limit, and a 403 keeps
-it because the User-Agent the deployment sends can be changed.
+failure breakdown and the summary export group on. Retry is offered for every
+failure except one whose stored address can never be fetched by itself: an
+address that is not an absolute `http` or `https` URL. Everything else depends
+on something that can change. A remote's answer can (a 404 becomes a 200 once
+something is published there, a live stream ends), the library can (the
+resource already holding the bytes can be deleted), and so can this
+deployment's policy and limits.
 
 | Code | Class | Retry | Cause |
 |------|-------|-------|-------|
-| `remote-client-error` | `dependency` | no | The remote answered with a 4xx not listed below |
+| `invalid-url` | `validation` | no | The stored address is not an absolute `http` or `https` URL with a host. Submission refuses such an address; a Job accepted before it did can still hold one |
+| `remote-client-error` | `dependency` | yes | The remote answered with a 4xx not listed below |
 | `remote-forbidden` | `dependency` | yes | The remote answered 403 |
 | `remote-busy` | `dependency` | yes | The remote answered 423, 425 or 429 |
 | `remote-server-error` | `dependency` | yes | The remote answered 5xx or another unexpected status |
@@ -235,10 +236,10 @@ it because the User-Agent the deployment sends can be changed.
 | `address-refused` | `policy` | yes | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
 | `plugin-unavailable` | `policy` | yes | A plugin's download whose plugin, and so its network policy, is no longer enabled |
 | `submitter-refused` | `policy` | yes | The submitter may no longer create content |
-| `unsupported-stream` | `validation` | no | An HLS stream this server refuses (live, DRM, a non-HTTP URL, a kind it does not handle) |
+| `unsupported-stream` | `validation` | yes | An HLS stream this server refuses (live, DRM, a non-HTTP URL, a kind it does not handle) |
 | `stream-over-limit` | `policy` | yes | An HLS stream over `-hls-max-segments` or `-hls-max-bytes` |
 | `ffmpeg-unavailable` | `dependency` | yes | An HLS stream and no ffmpeg to assemble it |
-| `resource-exists` | `conflict` | no | The library already holds the bytes |
+| `resource-exists` | `conflict` | yes | The library already holds the bytes |
 | `download-failed` | `internal` | yes | Anything else |
 
 ## Job Operations
@@ -250,7 +251,7 @@ it because the User-Agent the deployment sends can be changed.
 - **Retry** -- Creates a linked Job and preserves the earlier Job's terminal
   state. A failed legacy download handle resolves to the current Retry leaf for
   at least one documented release and six months after canonical cutover. It is
-  offered only for a failure a Retry could change (see
+  offered for every failure except a stored address that is not a download (see
   [Failure reasons and Retry](#failure-reasons-and-retry)).
 - **One transfer per URL** -- A Job about to start while another transfer in
   this process is fetching the same URL goes back to the queue to wait for it,

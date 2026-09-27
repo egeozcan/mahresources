@@ -9,9 +9,8 @@ relatedCmds: job submit, jobs list, job cancel
 Re-queue a failed or cancelled download job for another attempt.
 Retry only works against jobs in the `failed` or `cancelled` state;
 the server rejects retry on jobs that are still active, paused, or
-already completed. It also refuses a failure a retry would repeat: a
-duplicate of content the library holds, a stream the server will not
-assemble, or a remote 4xx other than 403, 408, 423, 425 and 429.
+already completed. It also refuses a download whose stored address is
+not an absolute http or https URL, which no retry can fetch.
 
 One URL is transferred once at a time. While the server's queue still
 holds the failed attempt and another download of the same URL is

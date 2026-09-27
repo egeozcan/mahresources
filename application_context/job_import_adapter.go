@@ -510,7 +510,7 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
 	default:
-		if importParseFailureRepeats(snap.FailureCode) {
+		if importArchiveRefused(snap.FailureCode) {
 			// The reader's own sentence, which names what is wrong with the archive
 			// and nothing about where this server keeps it.
 			return a.ctx.finishQueueJob(execution, jobs.StateFailed,
@@ -535,8 +535,10 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 	}
 }
 
-// Failure codes of an archive the reader refused on its content. Parsing the same
-// staged bytes again reads them the same way, so neither offers a Retry.
+// Failure codes of an archive the reader refused on its content. Bytes that are
+// not an archive never will be, so the first offers no Retry; a schema version
+// this release does not read may be one a later release does, so the second keeps
+// it.
 const (
 	importArchiveInvalidCode     = "import-archive-invalid"
 	importArchiveUnsupportedCode = "import-archive-unsupported"
@@ -558,10 +560,22 @@ func (f importArchiveFailure) FailureCode() string {
 	return importArchiveInvalidCode
 }
 
-// importParseFailureRepeats reports whether a parse failure is the archive's own,
-// which a Retry would read the same way.
-func importParseFailureRepeats(code string) bool {
+// importArchiveRefused reports whether a parse failure is the reader refusing the
+// archive on its content, rather than this server failing to read it.
+func importArchiveRefused(code string) bool {
 	return code == importArchiveInvalidCode || code == importArchiveUnsupportedCode
+}
+
+// importParseFailureRepeats reports whether a Retry of a failed parse would read
+// the staged bytes the same way whatever changes around them.
+func importParseFailureRepeats(code string) bool {
+	return code == importArchiveInvalidCode
+}
+
+// importParseFailureCodesThatRepeat lists every code importParseFailureRepeats
+// answers true for, for the command selector's predicate.
+func importParseFailureCodesThatRepeat() []string {
+	return []string{importArchiveInvalidCode}
 }
 
 // Reconcile answers what should happen to one parse whose claim expired.

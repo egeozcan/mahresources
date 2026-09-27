@@ -27,6 +27,24 @@ func (f *failingReader) Read(p []byte) (int, error) {
 	return k, nil
 }
 
+// failingOnceReader fails its first read past n bytes and then reports the end
+// of the stream, as a storage read that errors and closes does.
+type failingOnceReader struct {
+	failingReader
+	failed bool
+}
+
+func (f *failingOnceReader) Read(p []byte) (int, error) {
+	if f.n <= 0 {
+		if f.failed {
+			return 0, io.EOF
+		}
+		f.failed = true
+		return 0, f.err
+	}
+	return f.failingReader.Read(p)
+}
+
 func readWhole(src io.Reader) error {
 	r, err := NewReader(src)
 	if err != nil {
@@ -56,11 +74,16 @@ func TestAFormatErrorIsTheArchivesOwnAndAReadFailureIsNot(t *testing.T) {
 		}
 	}
 
-	for name, at := range map[string]int{"before the first entry": 0, "in the manifest": 600, "mid-walk": len(whole) - 600} {
-		err := readWhole(&failingReader{data: whole, n: at, err: io.ErrClosedPipe})
-		var format *FormatError
-		if errors.As(err, &format) || !errors.Is(err, io.ErrClosedPipe) {
-			t.Errorf("a read failing %s answered %v, want the read's own cause and no FormatError", name, err)
+	for name, at := range map[string]int{"before the first entry": 0, "inside the first bytes": 1, "in the manifest": 600, "mid-walk": len(whole) - 600} {
+		for kind, src := range map[string]io.Reader{
+			"and keeps failing":  &failingReader{data: whole, n: at, err: io.ErrClosedPipe},
+			"once and then ends": &failingOnceReader{failingReader: failingReader{data: whole, n: at, err: io.ErrClosedPipe}},
+		} {
+			err := readWhole(src)
+			var format *FormatError
+			if errors.As(err, &format) || !errors.Is(err, io.ErrClosedPipe) {
+				t.Errorf("a read failing %s %s answered %v, want the read's own cause and no FormatError", name, kind, err)
+			}
 		}
 	}
 }

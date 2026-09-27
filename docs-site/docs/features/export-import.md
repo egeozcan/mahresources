@@ -247,9 +247,11 @@ A parse that fails because the archive itself cannot be read says why: the
 reader's own message, such as that the file is not a mahresources export
 archive or names an unsupported `schema_version`. Its Job fails with the class
 `validation` and the code `import-archive-invalid`, or
-`import-archive-unsupported` for a schema version this server does not read,
-and it offers no Retry, because parsing the same staged bytes again reads them
-the same way. Upload a corrected archive instead. A parse that fails for any
+`import-archive-unsupported` for a schema version this server does not read.
+`import-archive-invalid` offers no Retry, because bytes that are not an archive
+never will be: upload a corrected archive instead. `import-archive-unsupported`
+offers Retry while the staged archive remains, because a later release may read
+that schema version. A parse that fails for any
 other reason keeps the code `import-parse-failed`, the class `internal` and the
 message "the archive could not be read", writes the underlying error to the
 server log, and offers Retry while the staged archive remains.
