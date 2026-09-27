@@ -3027,6 +3027,20 @@ describe('Job Center drawer connection and list reads', () => {
         expect(panel.jobs[0].pinned).toBe(true);
     });
 
+    test('a list read older than the row does not count its pin as a change made elsewhere', async () => {
+        const { panel } = listingPanel([{ id: 'o', state: 'failed', version: 1, acceptedAt: '2026-09-27T10:00:00Z', pinned: false }]);
+        panel.jobs = [{ id: 'o', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:00:00Z', pinned: true }];
+        await panel.refresh();
+        expect(panel.preferenceEpoch('o')).toBe(0);
+        expect(panel.jobs[0].pinned).toBe(true);
+
+        // The same version with another pin was changed elsewhere.
+        const { panel: other } = listingPanel([{ id: 'o', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:00:00Z', pinned: false }]);
+        other.jobs = [{ id: 'o', state: 'failed', version: 2, acceptedAt: '2026-09-27T10:00:00Z', pinned: true }];
+        await other.refresh();
+        expect(other.preferenceEpoch('o')).toBe(1);
+    });
+
     test('Dismiss finished dismisses what the drawer lists, in its owner scope', async () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;

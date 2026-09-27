@@ -713,10 +713,15 @@ export function jobPanel() {
             // applied is older than the row it would replace; the newer row
             // stays, rather than the row rolling back.
             const shown = new Map(this.jobs.map(job => [job.id, job]));
-            // A pin this read shows differently from the row was changed
-            // somewhere the drawer did not hear (another browser).
+            // A pin this read shows differently from a row no newer than it was
+            // changed somewhere the drawer did not hear (another browser). A
+            // row newer than the read keeps its own pin.
             this.movePreferenceEpochs([...byId.values()]
-                .filter(job => shown.has(job.id) && Object.hasOwn(job, 'pinned') && !!shown.get(job.id).pinned !== !!job.pinned)
+                .filter(job => {
+                    const held = shown.get(job.id);
+                    return held && Object.hasOwn(job, 'pinned') && !!held.pinned !== !!job.pinned &&
+                        Number(held.version || 0) <= Number(job.version || 0);
+                })
                 .map(job => job.id));
             const listed = [...byId.values()].map(job => {
                 const held = shown.get(job.id);
