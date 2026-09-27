@@ -1,4 +1,4 @@
-import { announcePreferenceCommand } from '../utils/jobPreferenceChannel.js';
+import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import {
     applyProgressFrame,
@@ -489,6 +489,13 @@ export function jobCenter(options = {}) {
         _streamRetryDelay: 0,
         _reconcileOnCatchUp: true,
         _reconcileAfterLoad: false,
+        _reconcileTimer: null,
+        _reconcileDelay: 0,
+        // Moves when this Job's viewer preferences change (a pin here or on
+        // another page): a read begun before is older than what the page
+        // holds, since a pin moves no version.
+        _preferenceEpoch: 0,
+        _preferences: null,
         // Set once the stream has given a cursor (a catch-up), which a reopened
         // stream then resumes from, even v2:0.
         _holdsCursor: false,
@@ -501,6 +508,7 @@ export function jobCenter(options = {}) {
                 this.detailId = new URLSearchParams(globalThis.location?.search || '').get('id') || '';
             }
             this._liveRegion = createLiveRegion();
+            this._preferences = openJobPreferenceChannel(message => this.hearPreferenceChange(message));
             // Keeps "about 14 s left" counting down between progress frames.
             this._clockTimer = setInterval(() => { this.now = Date.now(); }, 1000);
             this.connect();
@@ -510,6 +518,9 @@ export function jobCenter(options = {}) {
         destroy() {
             if (this._clockTimer) clearInterval(this._clockTimer);
             clearTimeout(this._streamRetryTimer);
+            clearTimeout(this._reconcileTimer);
+            this._preferences?.close();
+            this._preferences = null;
             const source = this.eventSource;
             this.eventSource = null;
             source?.close();
@@ -528,7 +539,12 @@ export function jobCenter(options = {}) {
                 error.payload = payload;
                 throw error;
             }
-            announcePreferenceCommand(url, init, payload);
+            const changed = preferenceCommand(url, init, payload);
+            if (changed?.jobIds.includes(this.detailId)) this._preferenceEpoch += 1;
+            // Sent on the channel this page listens on, which does not hear
+            // its own messages; every other page, this tab's drawer included,
+            // does.
+            announcePreferenceCommand(url, init, payload, this._preferences);
             return payload;
         },
 
@@ -541,7 +557,8 @@ export function jobCenter(options = {}) {
                 this.error = error.message || 'Could not load this job.';
             } finally {
                 this.loading = false;
-                if (this._reconcileAfterLoad) {
+                // A failed read keeps the obligation for the read that succeeds.
+                if (this._reconcileAfterLoad && this.detail) {
                     this._reconcileAfterLoad = false;
                     this.reconcileDetail();
                 }
@@ -570,10 +587,21 @@ export function jobCenter(options = {}) {
         },
 
         async refreshJobPreference(id) {
+            const epoch = this._preferenceEpoch;
             const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id) this.updateJob(freshJob);
+            // A pin changed elsewhere while this was read: read it again.
+            if (epoch !== this._preferenceEpoch) this.reconcileDetail();
+            else if (freshJob?.id) this.updateJob(freshJob);
             return freshJob;
+        },
+
+        // Another page (or this page's drawer) changed this Job's viewer
+        // preferences: no Job event says so, so the page reads it again.
+        hearPreferenceChange(message) {
+            if (!Array.isArray(message?.jobIds) || !message.jobIds.map(String).includes(String(this.detailId))) return;
+            this._preferenceEpoch += 1;
+            if (this.detail) this.reconcileDetail();
         },
 
         detailURL(job) {
@@ -685,19 +713,34 @@ export function jobCenter(options = {}) {
             // again once, now, or once the page's own read has finished.
             if (this._reconcileOnCatchUp) {
                 this._reconcileOnCatchUp = false;
-                if (this.loading) this._reconcileAfterLoad = true;
+                if (this.loading || !this.detail) this._reconcileAfterLoad = true;
                 else this.reconcileDetail();
             }
         },
 
+        // Reads this page's Job again and applies it through the snapshot
+        // guard. The obligation outlives a failed read: it is tried again after
+        // a delay that doubles up to a minute, and a read begun before a
+        // preference change is read again rather than applied.
         reconcileDetail() {
             if (!this.detailId) return;
+            clearTimeout(this._reconcileTimer);
+            this._reconcileTimer = null;
+            const epoch = this._preferenceEpoch;
             this.fetchJSON(`/v1/jobs/${encodeURIComponent(this.detailId)}`)
                 .then(payload => {
+                    this._reconcileDelay = 0;
+                    if (epoch !== this._preferenceEpoch) {
+                        this.reconcileDetail();
+                        return;
+                    }
                     const snapshot = payload.job || payload;
                     if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, false);
                 })
-                .catch(() => {});
+                .catch(() => {
+                    this._reconcileDelay = Math.min(Math.max(this._reconcileDelay * 2, 2000), 60000);
+                    this._reconcileTimer = setTimeout(() => this.reconcileDetail(), this._reconcileDelay);
+                });
         },
 
         handleStreamMessage(event) {
@@ -713,7 +756,12 @@ export function jobCenter(options = {}) {
                 return;
             }
             if (result.needsSnapshot) {
-                if (!this.jobs.some(job => job.id === result.jobId)) return;
+                if (!this.jobs.some(job => job.id === result.jobId)) {
+                    // This page's Job, while its own read has not landed: that
+                    // read may predate the change, so it is read again after.
+                    if (String(result.jobId) === String(this.detailId)) this._reconcileAfterLoad = true;
+                    return;
+                }
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
                         const snapshot = payload.job || payload;

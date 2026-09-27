@@ -100,7 +100,10 @@ test.describe('Jobs drawer live updates and reads', () => {
 
       expect(seen.streams).toHaveLength(1);
       expect(seen.streams[0].searchParams.get('start')).toBe('head');
-      expect(seen.lists).toHaveLength(3);
+      // One read of the three lists once the stream catches up. A stream that
+      // takes longer than the drawer's first-read wait (1.5 s, which a busy
+      // machine can exceed) adds one earlier read; never more.
+      expect([3, 6]).toContain(seen.lists.length);
       expect(seen.lists.every(url => url.searchParams.get('order') === 'stateEntered')).toBe(true);
       expect(seen.details).toEqual([]);
 

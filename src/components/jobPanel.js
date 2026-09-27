@@ -321,6 +321,9 @@ export function jobPanel() {
         // that shows a different pin), and a read begun at an older epoch is
         // older than what the drawer holds.
         _preferenceEpochs: new Map(),
+        // The epoch each held detail was read at: a detail read before the
+        // latest preference change is stale however its version compares.
+        _detailEpochs: new Map(),
         _broadcast: null,
         // Set once the stream has given a cursor (a catch-up), which a reopened
         // stream then resumes from, even v2:0.
@@ -618,7 +621,14 @@ export function jobPanel() {
                 error.payload = payload;
                 throw error;
             }
-            this.movePreferenceEpochs(preferenceCommand(url, init, payload)?.jobIds);
+            const changed = preferenceCommand(url, init, payload)?.jobIds;
+            if (changed?.length) {
+                // This tab changed them: what it holds about them is older now,
+                // and the open drawer reads it again (Forget takes Retry away,
+                // with no version to say so).
+                this.movePreferenceEpochs(changed);
+                this.loadStaleDetails();
+            }
             announcePreferenceCommand(url, init, payload, this._broadcast);
             return payload;
         },
@@ -790,12 +800,18 @@ export function jobPanel() {
         detailStale(job) {
             const detail = this.details[job?.id];
             return !detail || Number(detail.version || 0) < Number(job.version || 0) ||
-                (Object.hasOwn(job, 'pinned') && !!detail.pinned !== !!job.pinned);
+                (Object.hasOwn(job, 'pinned') && !!detail.pinned !== !!job.pinned) ||
+                (this._detailEpochs.get(String(job.id)) || 0) !== this.preferenceEpoch(job.id);
         },
 
         forgetDetailsOfGoneRows() {
             const shown = new Set(this.jobs.map(job => job.id));
-            for (const id of Object.keys(this.details)) if (!shown.has(id)) delete this.details[id];
+            for (const id of Object.keys(this.details)) {
+                if (!shown.has(id)) {
+                    delete this.details[id];
+                    this._detailEpochs.delete(String(id));
+                }
+            }
         },
 
         // Queues the rows whose detail is stale and starts readers for them, at
@@ -809,7 +825,10 @@ export function jobPanel() {
                 if (advertisedCommands(job).length) {
                     // A row that carries its commands (a stream snapshot or a
                     // command's answer) is its own detail.
-                    if (this.detailStale(job)) this.details[job.id] = job;
+                    if (this.detailStale(job)) {
+                        this.details[job.id] = job;
+                        this._detailEpochs.set(String(job.id), this.preferenceEpoch(job.id));
+                    }
                     continue;
                 }
                 if (this.detailStale(job) && !this._detailReads.has(job.id) && !this._detailQueue.includes(job.id)) {
@@ -877,9 +896,15 @@ export function jobPanel() {
             }
             if (this.preferenceEpoch(job.id) !== epoch) return 'moved';
             this.details[job.id] = detail;
+            this._detailEpochs.set(String(job.id), epoch);
             const spoken = [];
             this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
-            this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? { ...row, ...detail } : row));
+            // The row takes the detail's state, not its commands, outputs or
+            // lineage: those live in `details`, fenced by version and epoch. A
+            // row carrying commands counts as its own detail (loadStaleDetails),
+            // which a copied list would make true long after it went stale.
+            const { commands: _commands, outputs: _outputs, lineage: _lineage, ...state } = detail;
+            this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? { ...row, ...state } : row));
             this.announceNews(spoken);
             return 'read';
         },
@@ -1491,6 +1516,7 @@ export function jobPanel() {
             }
             if (freshJob?.id) {
                 this.details[id] = freshJob;
+                this._detailEpochs.set(String(id), epoch);
                 // A read: any change of state in it is someone else's.
                 this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
             }

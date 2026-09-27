@@ -562,6 +562,83 @@ describe('Job detail stream connection', () => {
         await vi.waitFor(() => expect(center.detail.state).toBe('failed'));
     });
 
+    test('a pin read begun before another page unpinned the Job is read again, not applied', async () => {
+        const center = jobCenter({ detailId: 'job-8' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.jobs = [{ id: 'job-8', state: 'failed', version: 2, pinned: true }];
+        center.detail = center.jobs[0];
+        center.loading = false;
+        let pinned = true;
+        let releaseFirst = () => {};
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let reads = 0;
+        center.fetchJSON = vi.fn(async () => {
+            reads += 1;
+            const answer = { id: 'job-8', state: 'failed', version: 2, pinned };
+            if (reads === 1) await firstHeld;
+            return answer;
+        });
+        const reading = center.refreshJobPreference('job-8');
+        // Another page unpins it while this page's read is on its way.
+        pinned = false;
+        center.hearPreferenceChange({ command: 'unpin', jobIds: ['job-8'] });
+        releaseFirst();
+        await reading;
+        await vi.waitFor(() => expect(center.detail.pinned).toBe(false));
+    });
+
+    test('a reconciling read that fails is tried again', async () => {
+        vi.useFakeTimers();
+        const center = jobCenter({ detailId: 'job-9' });
+        center.jobs = [{ id: 'job-9', state: 'running', version: 2 }];
+        center.detail = center.jobs[0];
+        let attempts = 0;
+        center.fetchJSON = vi.fn(async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error('Request failed (503)');
+            return { id: 'job-9', state: 'succeeded', version: 3 };
+        });
+        center.reconcileDetail();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(center.detail.state).toBe('running');
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(attempts).toBe(2);
+        expect(center.detail.state).toBe('succeeded');
+        center.destroy();
+        vi.useRealTimers();
+    });
+
+    test('after a failed first read, the read that succeeds is reconciled with what the stream reported meanwhile', async () => {
+        ClosingEventSource.made = [];
+        vi.stubGlobal('EventSource', ClosingEventSource);
+        const center = jobCenter({ detailId: 'job-10' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        let state = 'running';
+        let version = 2;
+        let failing = true;
+        center.fetchJSON = vi.fn(async (url: string) => {
+            if (url.includes('/events')) return { events: [] };
+            if (failing) throw new Error('job request failed');
+            return { id: 'job-10', state, version };
+        });
+        center.connect();
+        await center.load();
+        expect(center.error).toBe('job request failed');
+        // Caught up while the page has no Job to reconcile.
+        ClosingEventSource.made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:12' }) });
+        failing = false;
+        const retrying = center.load();
+        // The Job changes while Try again is reading it; the stream names it.
+        state = 'failed';
+        version = 3;
+        ClosingEventSource.made[0].listeners.get('job')?.({
+            data: JSON.stringify({ id: 'e-10', jobId: 'job-10', jobVersion: 3, type: 'failed', deliverySequence: 13 }),
+            lastEventId: 'v2:13',
+        });
+        await retrying;
+        await vi.waitFor(() => expect(center.detail.state).toBe('failed'));
+    });
+
     test('a stream that caught up at v2:0 is reopened from v2:0', () => {
         vi.useFakeTimers();
         ClosingEventSource.made = [];

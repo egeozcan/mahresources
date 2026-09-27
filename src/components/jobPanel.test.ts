@@ -2968,6 +2968,32 @@ describe('Job Center drawer connection and list reads', () => {
         expect(panel.jobs[0].pinned).toBe(false);
     });
 
+    test('Forget in this tab reads the row\'s detail again, so Retry and Forget leave with the replay input', async () => {
+        const rows = [{ id: 'f', state: 'failed', version: 4, acceptedAt: '2026-09-27T10:00:00Z' }];
+        let forgotten = false;
+        const panel = jobPanel();
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
+        panel.isOpen = true;
+        vi.stubGlobal('fetch', vi.fn(async (raw: string, init: any = {}) => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (init.method === 'POST') {
+                forgotten = true;
+                return { ok: true, json: async () => ({ result: { status: 'succeeded', job: { ...rows[0] } } }) };
+            }
+            if (url.pathname === '/v1/jobs') {
+                return { ok: true, json: async () => ({ jobs: url.searchParams.getAll('state').includes('failed') ? rows : [] }) };
+            }
+            // Forget moves no version; only the offered commands change.
+            const commands = forgotten ? [{ key: 'dismiss', jobVersion: 4 }] : [{ key: 'retry', jobVersion: 4 }, { key: 'forget', jobVersion: 4 }];
+            return { ok: true, json: async () => ({ ...rows[0], commands }) };
+        }));
+        await panel.refresh();
+        await vi.waitFor(() => expect(panel.commandsFor(panel.jobs[0]).map((command: any) => command.key)).toEqual(['retry', 'forget']));
+
+        await panel.requestJSON('/v1/jobs/f/commands/forget', { method: 'POST', body: '{}' });
+        await vi.waitFor(() => expect(panel.commandsFor(panel.jobs[0]).map((command: any) => command.key)).toEqual(['dismiss']));
+    });
+
     test('Dismiss finished dismisses what the drawer lists, in its owner scope', async () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn(), cancel: vi.fn() } as any;
