@@ -116,10 +116,14 @@ func (ctx *MahresourcesContext) pluginCommandActive() (*pluginCommandActiveRunti
 	}
 	controller.mu.Lock()
 	retryAt := controller.retryAt
+	recovering := controller.state == pluginCommandRuntimeAcquiring || controller.state == pluginCommandRuntimeQuarantined
 	controller.mu.Unlock()
-	retryAfter := time.Until(retryAt)
-	if retryAt.IsZero() || retryAfter < 0 {
-		retryAfter = 0
+	// A caller is told when to come back only while the host will try again. A
+	// retry that is due or already running is still one, so it is named as a
+	// second rather than as nothing; a stopping or failed runtime names none.
+	var retryAfter time.Duration
+	if recovering {
+		retryAfter = max(time.Until(retryAt), time.Second)
 	}
 	return nil, &plugin_commands.RuntimeQuarantinedError{Reason: pluginCommandCallerQuarantineReason, RetryAfterDuration: retryAfter}
 }

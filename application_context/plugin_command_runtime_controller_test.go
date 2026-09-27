@@ -229,11 +229,15 @@ func newControllerHealingPluginContext(t *testing.T) *MahresourcesContext {
 }
 function init()
   mah.inject("page_bottom", function()
-    local id, command_err, command_retry = mah.commands.run("probe", {value="healed"})
-    local runs, fs_err, fs_retry = mah.fs.runs()
+    local id, command_err, command_info = mah.commands.run("probe", {value="healed"})
+    local runs, fs_err, fs_info = mah.fs.runs()
     if command_err ~= nil or fs_err ~= nil then
+      local function describe(info)
+        if info == nil then return "none" end
+        return tostring(info.unavailable) .. "/" .. tostring(info.retry_after)
+      end
       return "command=" .. tostring(command_err) .. "|fs=" .. tostring(fs_err) ..
-        "|command_retry=" .. tostring(command_retry) .. "|fs_retry=" .. tostring(fs_retry)
+        "|command_info=" .. describe(command_info) .. "|fs_info=" .. describe(fs_info)
     end
     return "ok:" .. tostring(id) .. ":" .. tostring(#runs)
   end)
@@ -273,9 +277,9 @@ func requireControllerHealingPluginQuarantined(t *testing.T, ctx *MahresourcesCo
 	require.Contains(t, output, "command=plugin command runtime is unavailable")
 	require.Contains(t, output, "fs=plugin command runtime is unavailable")
 	if recovering {
-		require.Regexp(t, `command_retry=[1-9][0-9]*\|fs_retry=[1-9][0-9]*$`, output)
+		require.Regexp(t, `command_info=true/[1-9][0-9]*\|fs_info=true/[1-9][0-9]*$`, output)
 	} else {
-		require.Contains(t, output, "command_retry=nil|fs_retry=nil")
+		require.Contains(t, output, "command_info=true/nil|fs_info=true/nil")
 	}
 }
 
@@ -322,6 +326,15 @@ func TestAPluginRouteAnswersTryLaterWhileCommandsRecover(t *testing.T) {
 		retryAfter, ok := body["retry_after"].(float64)
 		require.True(t, ok && retryAfter >= 1, "route %s retry_after = %#v", route, body["retry_after"])
 	}
+
+	// A stopping runtime schedules no retry and is still unavailable, not a
+	// bad request. The stop keeps the fences while recovery is blocked.
+	_ = ctx.StopPluginCommands()
+	for _, route := range []string{"run", "read-input"} {
+		response := ctx.PluginManager().HandleAPI(context.Background(), "test-commands", "POST", route,
+			plugin_system.PageContext{Body: `{"mode":"wait"}`})
+		require.Equal(t, 503, response.StatusCode, "route %s after stop: %+v", route, response)
+	}
 }
 
 // TestPluginCommandRecoveryQuarantineEndsOnceTheBlockingGroupExits pins that a
@@ -356,6 +369,39 @@ func TestPluginCommandRecoveryQuarantineEndsOnceTheBlockingGroupExits(t *testing
 	run, _, err := ctx.Run("orphan-after-crash")
 	require.NoError(t, err)
 	require.Equal(t, plugin_commands.RunStatusInterrupted, run.Status)
+}
+
+// TestARecoveringRuntimeAlwaysNamesATimeToRetry covers the moment a scheduled
+// retry is due or running: the time to it has passed, but the host is still
+// recovering, so callers are told to try again shortly rather than nothing. A
+// stopping runtime schedules no retry and names none.
+func TestARecoveringRuntimeAlwaysNamesATimeToRetry(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	createControllerRecoveryRun(t, ctx, "overdue-retry", 4641)
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	cfg.recoveryInterval = time.Hour
+	cfg.blockerPollInterval = time.Hour
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	controller := ctx.pluginCommandController
+	controller.mu.Lock()
+	controller.retryAt = time.Now().Add(-time.Second)
+	controller.mu.Unlock()
+	_, err := ctx.pluginCommandActive()
+	var quarantined *plugin_commands.RuntimeQuarantinedError
+	require.ErrorAs(t, err, &quarantined)
+	require.GreaterOrEqual(t, quarantined.RetryAfter(), time.Second)
+
+	// A stop while recovery is blocked keeps the fences, and says so.
+	_ = ctx.StopPluginCommands()
+	_, err = ctx.pluginCommandActive()
+	require.ErrorAs(t, err, &quarantined)
+	require.Zero(t, quarantined.RetryAfter(), "a stopping runtime schedules no retry")
 }
 
 // TestPluginCommandRecoveryBlockerNoExitCanSettleKeepsTheSlowCadence covers the

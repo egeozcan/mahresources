@@ -237,45 +237,65 @@ func TestCommandHostUnavailableExplainsAutomaticRecoveryAndActivatesWithoutReloa
 	}
 }
 
-// TestAQuarantinedRuntimeTellsThePluginWhenToTryAgain pins what a plugin sees
-// while the host recovers its command runtime: the one documented unavailable
-// message, whatever wording the refusal carried, and the whole seconds until
-// the host tries again, so a route can answer 503 rather than 400. No third
-// value is returned when no retry is scheduled, or for any other refusal.
-func TestAQuarantinedRuntimeTellsThePluginWhenToTryAgain(t *testing.T) {
+// TestAnUnavailableRuntimeIsReportedApartFromTheRequest pins what a plugin sees
+// while the host command runtime is unavailable: the one documented message,
+// whatever wording the refusal carried, and a third value marking the refusal
+// as unavailability ({unavailable = true}) so a route can answer 503 rather
+// than 400. It carries retry_after, the whole seconds until the host next tries
+// to recover, when a retry is scheduled. Any other refusal has no third value.
+func TestAnUnavailableRuntimeIsReportedApartFromTheRequest(t *testing.T) {
 	host := &commandLuaHost{}
-	_, L := enableCommandPlugin(t, `"commands"`, host)
+	pm, L := enableCommandPlugin(t, `"commands"`, nil)
 	run := func() (lua.LValue, string, lua.LValue) {
 		t.Helper()
-		if err := L.DoString(`__id, __err, __retry = mah.commands.run("download", {url="literal"})`); err != nil {
+		if err := L.DoString(`__id, __err, __info = mah.commands.run("download", {url="literal"})`); err != nil {
 			t.Fatal(err)
 		}
-		return L.GetGlobal("__id"), L.GetGlobal("__err").String(), L.GetGlobal("__retry")
+		return L.GetGlobal("__id"), L.GetGlobal("__err").String(), L.GetGlobal("__info")
+	}
+	unavailable := func(t *testing.T, info lua.LValue) (bool, lua.LValue) {
+		t.Helper()
+		table, ok := info.(*lua.LTable)
+		if !ok {
+			t.Fatalf("third value = %v, want a table", info)
+		}
+		return table.RawGetString("unavailable") == lua.LTrue, table.RawGetString("retry_after")
 	}
 
+	// No command host at all: unavailable, with no retry scheduled.
+	id, message, info := run()
+	if id != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
+		t.Fatalf("hostless run = %v, %q", id, message)
+	}
+	if isUnavailable, retry := unavailable(t, info); !isUnavailable || retry != lua.LNil {
+		t.Fatalf("hostless info: unavailable=%v retry_after=%v", isUnavailable, retry)
+	}
+
+	pm.SetCommandSubmitter(host)
 	host.mu.Lock()
 	host.submitErr = &plugin_commands.RuntimeQuarantinedError{Reason: "commands are quarantined", RetryAfterDuration: 1500 * time.Millisecond}
 	host.mu.Unlock()
-	id, message, retry := run()
+	id, message, info = run()
 	if id != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
 		t.Fatalf("quarantined run = %v, %q", id, message)
 	}
-	if retry != lua.LNumber(2) {
-		t.Fatalf("retry after = %v, want 2 whole seconds", retry)
+	if isUnavailable, retry := unavailable(t, info); !isUnavailable || retry != lua.LNumber(2) {
+		t.Fatalf("quarantined info: unavailable=%v retry_after=%v, want true and 2 whole seconds", isUnavailable, retry)
 	}
 
 	host.mu.Lock()
 	host.submitErr = &plugin_commands.RuntimeQuarantinedError{Reason: "commands are quarantined"}
 	host.mu.Unlock()
-	if _, message, retry = run(); retry != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
-		t.Fatalf("unscheduled retry = %q, %v, want the message and no third value", message, retry)
+	_, message, info = run()
+	if isUnavailable, retry := unavailable(t, info); !isUnavailable || retry != lua.LNil || !strings.Contains(message, "plugin command runtime is unavailable") {
+		t.Fatalf("unscheduled retry = %q, unavailable=%v retry_after=%v", message, isUnavailable, retry)
 	}
 
 	host.mu.Lock()
 	host.submitErr = errors.New("per-plugin queue is full")
 	host.mu.Unlock()
-	if _, message, retry = run(); retry != lua.LNil || message != "per-plugin queue is full" {
-		t.Fatalf("ordinary refusal = %q, %v", message, retry)
+	if _, message, info = run(); info != lua.LNil || message != "per-plugin queue is full" {
+		t.Fatalf("ordinary refusal = %q, %v", message, info)
 	}
 }
 

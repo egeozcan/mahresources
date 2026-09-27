@@ -29,18 +29,20 @@ refused inside `mah.db.transaction`.
 
 The modules stay installed while the host command runtime is quarantined by a
 busy staging lease or a recovery blocker. Calls then return `nil`, an error
-containing `plugin command runtime is unavailable`, and a third value: the
-whole seconds until the host next tries to recover the runtime. The third value
-is absent when no retry is scheduled (the server is stopping). Quarantined
-recovery retries automatically, and `/logs` records the reason and healing. Once
-it succeeds, calls begin working without a plugin reload. Do not retry in a tight
-Lua loop; a route should tell its caller to try later instead:
+containing `plugin command runtime is unavailable`, and a third value,
+`{unavailable = true, retry_after = <seconds>}`. `retry_after` is the whole
+seconds until the host next tries to recover the runtime; it is absent when no
+retry is scheduled, as while the server stops. Any other refusal returns only
+`nil` and the error. Quarantined recovery retries automatically, and `/logs`
+records the reason and healing. Once it succeeds, calls begin working without a
+plugin reload. Do not retry in a tight Lua loop; a route should tell its caller
+to try later instead:
 
 ```lua
-local run_id, err, retry_after = mah.commands.run("download", params)
-if retry_after then
+local run_id, err, info = mah.commands.run("download", params)
+if info and info.unavailable then
     ctx.status(503) -- temporarily unavailable, not a bad request
-    ctx.json({ error = err, retry_after = retry_after })
+    ctx.json({ error = err, retry_after = info.retry_after })
     return
 elseif err then
     ctx.status(400)

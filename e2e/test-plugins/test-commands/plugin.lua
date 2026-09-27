@@ -19,13 +19,13 @@ plugin = {
     description = "Deterministic E2E fixture for plugin command lifecycle tests",
 }
 
--- refuse answers a refused command. A runtime the host is still recovering
--- comes with the seconds until it tries again: that is "try later" (503), not
--- a bad request.
-local function refuse(ctx, err, retry_after, status)
-    if retry_after then
+-- refuse answers a refused command. An unavailable command runtime is "try
+-- later" (503), with the seconds until the host tries again when it has a
+-- retry scheduled; any other refusal is the request's.
+local function refuse(ctx, err, info, status)
+    if info and info.unavailable then
         ctx.status(503)
-        ctx.json({ error = err, retry_after = retry_after })
+        ctx.json({ error = err, retry_after = info.retry_after })
         return
     end
     ctx.status(status)
@@ -35,9 +35,9 @@ end
 function init()
     mah.api("POST", "run", function(ctx)
         local body = mah.json.decode(ctx.body)
-        local run_id, err, retry_after = mah.commands.run("fixture", { mode = body.mode })
+        local run_id, err, info = mah.commands.run("fixture", { mode = body.mode })
         if err then
-            refuse(ctx, err, retry_after, 500)
+            refuse(ctx, err, info, 500)
             return
         end
         ctx.status(202)
@@ -56,9 +56,9 @@ function init()
             end
             options = { inputs = inputs }
         end
-        local run_id, err, retry_after = mah.commands.run("read_input", {}, nil, options)
+        local run_id, err, info = mah.commands.run("read_input", {}, nil, options)
         if err then
-            refuse(ctx, err, retry_after, 400)
+            refuse(ctx, err, info, 400)
             return
         end
         ctx.status(202)
