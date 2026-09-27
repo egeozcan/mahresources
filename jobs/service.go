@@ -1553,11 +1553,14 @@ func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 // give a later fact the earlier time. Timestamps only interleave the facts of
 // different Jobs.
 //
-// So the batch is chosen by time, then every earlier unpublished fact of a Job in
-// it joins the batch, and each fact is delivered no earlier than the facts before
-// it on its own Job: its time is raised to the latest time among them. A Job's
-// earlier fact can never be left for a later batch while its successor is
-// published, which is also why the batch may exceed the limit by those facts.
+// So the batch is chosen by time, and each fact is taken together with every
+// earlier unpublished fact of its own Job: a Job's earlier fact is never left for
+// a later batch while its successor is published. Those prefixes are taken in
+// the order their facts came up until the batch reaches its limit, so one
+// transaction never holds the allocator for more than its limit; a prefix that
+// does not fit is cut to its earliest facts, which is still a prefix, so a batch
+// always makes progress. Each fact is then delivered no earlier than the facts
+// before it on its own Job: its time is raised to the latest time among them.
 func unsequencedEventsInDeliveryOrder(tx *gorm.DB, limit int) ([]models.JobEvent, error) {
 	var window []models.JobEvent
 	if err := tx.Where("delivery_sequence IS NULL").
@@ -1585,11 +1588,30 @@ func unsequencedEventsInDeliveryOrder(tx *gorm.DB, limit int) ([]models.JobEvent
 		Find(&candidates).Error; err != nil {
 		return nil, fmt.Errorf("jobs: read earlier unsequenced events: %w", err)
 	}
-	batch := candidates[:0]
+	pendingByJob := make(map[string][]models.JobEvent, len(latest))
 	for _, event := range candidates {
 		if event.Sequence <= latest[event.JobID] {
-			batch = append(batch, event)
+			pendingByJob[event.JobID] = append(pendingByJob[event.JobID], event)
 		}
+	}
+	for _, pending := range pendingByJob {
+		sort.Slice(pending, func(i, j int) bool { return pending[i].Sequence < pending[j].Sequence })
+	}
+
+	var batch []models.JobEvent
+	taken := make(map[string]int, len(latest))
+	for _, event := range window {
+		if len(batch) >= limit {
+			break
+		}
+		pending, from := pendingByJob[event.JobID], taken[event.JobID]
+		end := from
+		for end < len(pending) && pending[end].Sequence <= event.Sequence {
+			end++
+		}
+		end = min(end, from+limit-len(batch))
+		batch = append(batch, pending[from:end]...)
+		taken[event.JobID] = end
 	}
 
 	sort.Slice(batch, func(i, j int) bool {

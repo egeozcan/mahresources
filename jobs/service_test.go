@@ -3,6 +3,7 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1420,5 +1421,62 @@ func TestAnAcceptanceRollsBackWhenAParentItNamesIsGone(t *testing.T) {
 	}
 	if len(links) != 1 {
 		t.Fatalf("the acceptance committed %d parent links, want the one it named", len(links))
+	}
+}
+
+// TestJobPublishStaysWithinItsBatchWhenPredecessorsAreBroughtForward pins the
+// publisher's budget. Bringing a Job's earlier facts into a batch must not let
+// one transaction grow past its limit: a backlog of Jobs whose later facts carry
+// earlier timestamps would otherwise hold the allocator lock for every one of
+// their predecessors at once. Each batch takes whole per-Job prefixes up to the
+// limit, and the backlog drains in order across batches.
+func TestJobPublishStaysWithinItsBatchWhenPredecessorsAreBroughtForward(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	var jobIDs []string
+	for i := 0; i < 3; i++ {
+		clock = time.Date(2031, 6, 7, 8, 9, 30, 0, time.UTC)
+		job := seededExecution(t, deps, StateRunning, fmt.Sprintf("claim-backlog-%d", i))
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: fmt.Sprintf("claim-backlog-%d", i)}
+		if err := svc.AppendEvent(deps, ref, EventInput{Type: "first-fact"}); err != nil {
+			t.Fatalf("append first: %v", err)
+		}
+		// Every later fact of the Job carries an earlier time than its first.
+		clock = time.Date(2031, 6, 7, 8, 9, 10+i, 0, time.UTC)
+		for fact := 0; fact < 4; fact++ {
+			if err := svc.AppendEvent(deps, ref, EventInput{Type: "later-fact"}); err != nil {
+				t.Fatalf("append later: %v", err)
+			}
+		}
+		jobIDs = append(jobIDs, job.ID)
+	}
+
+	const limit = 4
+	for round := 0; round < 10; round++ {
+		published, err := svc.PublishPendingEvents(deps, limit)
+		if err != nil {
+			t.Fatalf("publish round %d: %v", round, err)
+		}
+		if published > limit {
+			t.Fatalf("round %d published %d events past its limit of %d", round, published, limit)
+		}
+		if published == 0 {
+			break
+		}
+	}
+	for _, jobID := range jobIDs {
+		var previous uint64
+		for _, event := range jobEvents(t, deps, jobID) {
+			if event.DeliverySequence == nil {
+				t.Fatalf("event %d of job %s was never published", event.Sequence, jobID)
+			}
+			if *event.DeliverySequence <= previous {
+				t.Fatalf("job %s: event %d delivered as %d, after its predecessor's %d", jobID, event.Sequence, *event.DeliverySequence, previous)
+			}
+			previous = *event.DeliverySequence
+		}
 	}
 }
