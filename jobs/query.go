@@ -254,11 +254,18 @@ func orderedBranches(filter Filter, order ListOrder) []Filter {
 	}
 	split := make([]Filter, 0, len(AllStates)+1)
 	for _, branch := range branches {
-		if len(branch.States) == 1 || slices.Contains(branch.States, FilterStatePartial) {
-			split = append(split, branch)
+		states := branch.States
+		// Beside succeeded the partial token adds nothing: succeeded holds
+		// every partial Job, and applyStateFilter reads it that way.
+		if slices.Contains(states, FilterStatePartial) && slices.Contains(states, string(StateSucceeded)) {
+			states = slices.DeleteFunc(slices.Clone(states), func(state string) bool { return state == FilterStatePartial })
+		}
+		if len(states) == 1 || slices.Contains(states, FilterStatePartial) {
+			one := branch
+			one.States = states
+			split = append(split, one)
 			continue
 		}
-		states := branch.States
 		if len(states) == 0 {
 			for _, state := range AllStates {
 				states = append(states, string(state))

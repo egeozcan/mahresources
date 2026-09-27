@@ -128,6 +128,14 @@ func TestStateEnteredOrderSeeksEachState(t *testing.T) {
 		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 3 || strings.Contains(plan, "SCAN jobs") {
 			t.Errorf("the %s's state-entered page beside partial does not seek %s once per state:\n%s", tc.name, tc.index, plan)
 		}
+		// Beside succeeded the partial token is redundant, and the states are
+		// split as if it were not there.
+		redundant := Filter{States: []string{FilterStatePartial, string(StateSucceeded), string(StateFailed)}, Dismissed: &dismissed}
+		sql, vars = listRowsStatement(t, svc, deps, tc.access, redundant, true, Cursor{Order: OrderStateEntered})
+		plan = explainSQLite(t, deps, sql, vars)
+		if strings.Count(plan, "USING INDEX "+tc.index+" (") != 2 || strings.Contains(plan, "SCAN jobs") {
+			t.Errorf("the %s's state-entered page with a redundant partial does not seek %s once per state:\n%s", tc.name, tc.index, plan)
+		}
 		// No state filter is every state, one seek each, rather than a sort of
 		// the whole table.
 		sql, vars = listRowsStatement(t, svc, deps, tc.access, Filter{}, true, Cursor{Order: OrderStateEntered})
