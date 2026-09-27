@@ -38,6 +38,10 @@ describe('Job Center panel', () => {
         expect(listURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
         expect(listURLs.every(url => !url.searchParams.has('acceptedAfter'))).toBe(true);
         expect(requests).not.toContain('/v1/jobs/summary');
+        // A failure somebody retried leaves Needs attention; nothing else is narrowed.
+        const byGroup = new Map(listURLs.map(url => [url.searchParams.getAll('state').join(','), url.searchParams.get('noInboundRelationship')]));
+        expect(byGroup.get('blocked,failed,interrupted')).toBe('retry-of');
+        expect([...byGroup.values()].filter(Boolean)).toEqual(['retry-of']);
     });
 
     test('asks first only for a command that stops work or cannot be undone', () => {

@@ -618,3 +618,43 @@ test.describe('Jobs drawer opened for a job just started', () => {
     });
   }
 });
+
+test.describe('Needs attention', () => {
+  test('a failure somebody retried leaves Needs attention; its retry is what the drawer lists', async ({ page, request }) => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.end('gone');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const name = `retried-attention-${Date.now()}.bin`;
+      const submitted = await request.post('/v1/download/submit', { data: { URL: `${base}/${name}`, Name: name, FileName: name } });
+      expect(submitted.status()).toBe(202);
+      const sourceId = (await submitted.json()).jobs[0].canonicalJobId as string;
+      const readJob = async (id: string) => (await request.get(`/v1/jobs/${id}`)).json();
+      await expect.poll(async () => (await readJob(sourceId)).state, { timeout: 20_000 }).toBe('failed');
+
+      await page.goto('/dashboard');
+      const drawer = await openDrawer(page);
+      const attention = drawer.locator('[data-job-panel-group="attention"]');
+      await expect(attention.locator(`article[data-job-id="${sourceId}"]`)).toHaveCount(1);
+
+      const source = await readJob(sourceId);
+      const retry = source.commands.find((command: any) => command.key === 'retry');
+      const answer = await request.post(`/v1/jobs/${sourceId}/commands/retry`, {
+        data: { expectedVersion: retry.jobVersion, idempotencyKey: `retry-${sourceId}` },
+        headers: { 'Idempotency-Key': `retry-${sourceId}` },
+      });
+      expect(answer.ok(), await answer.text()).toBe(true);
+      const successorId = (await answer.json()).successorId as string;
+      await expect.poll(async () => (await readJob(successorId)).state, { timeout: 20_000 }).toBe('failed');
+
+      await refreshDrawer(page);
+      await expect(attention.locator(`article[data-job-id="${successorId}"]`)).toHaveCount(1);
+      await expect(drawer.locator(`article[data-job-id="${sourceId}"]`)).toHaveCount(0);
+    } finally {
+      server.close();
+    }
+  });
+});

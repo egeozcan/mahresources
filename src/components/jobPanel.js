@@ -62,9 +62,11 @@ const FINISHED_PAGE_LIMIT = 200;
 const FINISHED_STATES = ['succeeded', 'cancelled'];
 // Each group is its own bounded page. Only open work asks for the progress
 // series: it is up to 120 points per Job, and a finished row shows no graph.
+// A failure somebody has retried (or continued) no longer needs attention: its
+// retry is the Job to watch, and it is listed in its own right.
 function panelGroups(finishedLimit) {
     return [
-        { key: 'attention', states: ['blocked', 'failed', 'interrupted'], limit: OPEN_WORK_LIMIT, series: false },
+        { key: 'attention', states: ['blocked', 'failed', 'interrupted'], limit: OPEN_WORK_LIMIT, series: false, notRetried: true },
         { key: 'active', states: ['scheduled', 'queued', 'running', 'paused'], limit: OPEN_WORK_LIMIT, series: true },
         { key: 'finished', states: FINISHED_STATES, limit: finishedLimit, series: false },
     ];
@@ -1655,6 +1657,7 @@ function buildPanelListURL(group) {
     const params = new URLSearchParams();
     group.states.forEach(state => params.append('state', state));
     params.set('dismissed', 'false');
+    if (group.notRetried) params.set('noInboundRelationship', 'retry-of');
     params.set('limit', String(group.limit));
     if (group.series) params.set('include', 'progressSeries');
     return `/v1/jobs?${params}`;
