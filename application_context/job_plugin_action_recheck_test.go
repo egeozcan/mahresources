@@ -449,8 +449,8 @@ func TestADeferredAdmissionClaimsNothingUntilItsClaimIsBack(t *testing.T) {
 	if !admission.stillReturning() {
 		t.Fatal("the claim came back although its first release failed: the test did not reach the retry")
 	}
-	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitLater {
-		t.Fatalf("asking while the claim was still coming back answered %v, want later", got)
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
+		t.Fatalf("asking while the claim was still coming back answered %v, want deferred", got)
 	}
 	if started := countTimelineEvents(t, ctx, accepted.ID, jobs.EventStarted); started != 1 {
 		t.Fatalf("the Job was claimed %d times while its claim was coming back", started)
@@ -897,5 +897,114 @@ func TestAPanicWhileLoadingTheClaimEndsTheJob(t *testing.T) {
 	})
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the ended Job still holds %d slots", held)
+	}
+}
+
+// TestAnActionWhoseClaimIsStillComingBackStaysOutOfTheLane pins where an action
+// waits while the claim it gave back is still being released. It comes back to
+// its lane after its deferral; if the release has not landed by then, it leaves
+// again rather than holding the lane, so the plugin's other work that arrived
+// meanwhile runs.
+func TestAnActionWhoseClaimIsStillComingBackStaysOutOfTheLane(t *testing.T) {
+	setAdmissionBound(t, 300*time.Millisecond)
+	ctx := newJobHarnessContext(t, false)
+	pm := enableActionPluginForTest(t, ctx)
+	stuckActor := models.User{Username: "releasing-actor", Role: models.RoleUser, PasswordHash: "x"}
+	otherActor := models.User{Username: "arriving-actor", Role: models.RoleUser, PasswordHash: "x"}
+	for _, user := range []*models.User{&stuckActor, &otherActor} {
+		if err := ctx.db.Create(user).Error; err != nil {
+			t.Fatalf("seed the actor: %v", err)
+		}
+	}
+	// The stuck action's re-check fails once, and its release then fails for
+	// several seconds.
+	stall := installReadStall(t, ctx.db)
+	stall.arm(readsTable("users"), true)
+	releaseFailures := failFirst(t, func(name string, hook func(*gorm.DB)) error {
+		return ctx.db.Callback().Update().Before("gorm:update").Register(name, hook)
+	}, 10, updatesState(jobs.StateQueued))
+
+	stuck, stuckInput := acceptRegisteredActionForTest(t, ctx, stuckActor.ID, 13)
+	stuckOwner := stuckActor.ID
+	if err := ctx.queueRegisteredPluginAction(pm, stuck.ID, "releasing-handle", &stuckOwner, stuckInput); err != nil {
+		t.Fatalf("queue the stuck action: %v", err)
+	}
+	waitFor(t, "the stuck action's re-check to fail", func() bool { return stall.hits.Load() > 0 })
+	stall.disarm()
+	// Past its first deferral: the stuck action is back in its lane, or about to
+	// be, while its release keeps failing.
+	time.Sleep(1500 * time.Millisecond)
+
+	other, otherInput := acceptRegisteredActionForTest(t, ctx, otherActor.ID, 14)
+	otherOwner := otherActor.ID
+	if err := ctx.queueRegisteredPluginAction(pm, other.ID, "arriving-handle", &otherOwner, otherInput); err != nil {
+		t.Fatalf("queue the arriving action: %v", err)
+	}
+	waitForJobState(t, ctx, other.ID, "the arriving action to run", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateSucceeded
+	})
+	if releaseFailures.Load() < 0 {
+		t.Fatal("the release landed before the arriving action ran: the test did not keep the claim coming back")
+	}
+	waitForJobState(t, ctx, stuck.ID, "the stuck action to run once its claim is back", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateSucceeded
+	})
+}
+
+// TestAStalledWaitingNoticeDoesNotHoldTheClaim pins the order inside a give-back.
+// The notice that the Job waits for its checks is written under the claim, before
+// the release; it is best-effort and bounded, so a write that stalls is skipped
+// and the release still frees the Job's slot of the budget.
+func TestAStalledWaitingNoticeDoesNotHoldTheClaim(t *testing.T) {
+	setAdmissionBound(t, 300*time.Millisecond)
+	saved := pluginActionWaitingNoticeBound
+	pluginActionWaitingNoticeBound = 200 * time.Millisecond
+	defer func() { pluginActionWaitingNoticeBound = saved }()
+
+	ctx := newJobHarnessContext(t, false)
+	enableActionPluginForTest(t, ctx)
+	actor := models.User{Username: "notice-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 15)
+	admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+	var stalled atomic.Bool
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("stall-the-notice", func(db *gorm.DB) {
+		updates, ok := db.Statement.Dest.(map[string]any)
+		if !ok || db.Statement.Table != "jobs" {
+			return
+		}
+		if _, notice := updates["progress_message"]; !notice {
+			return
+		}
+		stalled.Store(true)
+		select {
+		case <-db.Statement.Context.Done():
+		case <-time.After(5 * time.Second):
+		}
+	}); err != nil {
+		t.Fatalf("register the stalled notice: %v", err)
+	}
+	stall := installReadStall(t, ctx.db)
+	stall.arm(readsTable("users"), true)
+
+	began := time.Now()
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitDeferred {
+		t.Fatalf("an admission whose re-check failed answered %v, want deferred", got)
+	}
+	stall.disarm()
+	waitFor(t, "the claim to be given back", func() bool { return !admission.stillReturning() })
+	if took := time.Since(began); took > 3*time.Second {
+		t.Fatalf("the claim came back %v after the give-back: the stalled notice held it", took)
+	}
+	if !stalled.Load() {
+		t.Fatal("the notice was never written: the test did not reach it")
+	}
+	if state := jobStateForTest(t, ctx, accepted.ID); state != jobs.StateQueued {
+		t.Fatalf("a Job whose claim was given back is %s, want queued", state)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("a Job given back to the queue still holds %d slots", held)
 	}
 }

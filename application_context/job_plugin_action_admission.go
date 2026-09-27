@@ -103,8 +103,10 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 	}
 	if a.stillReturning() {
 		// The Job is running under the token given back until the release lands,
-		// and a claim asked for meanwhile would read it as another runtime's.
-		return plugin_system.AdmitLater
+		// and a claim asked for meanwhile would read it as another runtime's. The
+		// execution stays out of its lane until then, rather than holding the lane
+		// from the plugin's other work while it waits.
+		return plugin_system.AdmitDeferred
 	}
 	if attempt := time.Now().Add(a.attemptBound()); deadline.IsZero() || attempt.Before(deadline) {
 		deadline = attempt
@@ -250,10 +252,9 @@ func (a *pluginActionAdmission) giveBack(execution jobs.Execution, stopHeartbeat
 		defer stopHeartbeat()
 		// Said on the Job while it still holds the claim, so the queued row says
 		// why it is waiting. A progress snapshot is not an event, and the start
-		// that ends the wait replaces it.
-		if _, err := execution.Progress(jobs.Progress{Message: pluginActionWaitingForChecks}); err != nil {
-			log.Printf("warning: could not say why plugin job %s is waiting: %v", execution.JobID, err)
-		}
+		// that ends the wait replaces it. It is best-effort and bounded: the
+		// release after it is what frees the Job's slot of the budget.
+		a.ctx.noteWaitingForChecks(ref)
 		if err := release(); err != nil {
 			log.Printf("warning: could not give back the claim on plugin job %s; retrying: %v", execution.JobID, err)
 			a.ctx.retryPluginActionSettlement(execution.JobID, jobs.StateRunning, release)
@@ -481,6 +482,25 @@ var pluginActionAdmissionAttemptCap = time.Minute
 // pluginActionWaitingForChecks is what a Job whose claim was given back says
 // while it waits to be asked again.
 const pluginActionWaitingForChecks = "Waiting for the account and scope checks"
+
+// pluginActionWaitingNoticeBound bounds the write of that message, which comes
+// before the release of the claim it is written under.
+var pluginActionWaitingNoticeBound = time.Second
+
+// noteWaitingForChecks writes pluginActionWaitingForChecks as the progress of a
+// Job whose claim is about to be given back, under that claim's token, within
+// pluginActionWaitingNoticeBound. A write that does not land in time is skipped.
+func (ctx *MahresourcesContext) noteWaitingForChecks(ref jobs.ExecutionRef) {
+	deps := ctx.jobDeps()
+	if deps.DB != nil {
+		bounded, cancel := context.WithTimeout(context.Background(), pluginActionWaitingNoticeBound)
+		defer cancel()
+		deps.DB = deps.DB.WithContext(bounded)
+	}
+	if _, err := ctx.JobService().UpdateProgress(deps, ref, jobs.Progress{Message: pluginActionWaitingForChecks}); err != nil {
+		log.Printf("warning: could not say why plugin job %s is waiting: %v", ref.JobID, err)
+	}
+}
 
 // claimPluginActionJobNamed claims one waiting plugin-action Job for this process
 // against the deployment's budget, and keeps the claim alive until the returned
