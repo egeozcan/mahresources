@@ -461,7 +461,10 @@ export function jobCenter(options = {}) {
 
         // Each load supersedes the ones before it: a read that answers after a
         // newer one began, such as one begun before a stream reset, is dropped
-        // rather than put back on the page.
+        // rather than put back on the page. The rule holds for every read that
+        // applies a Job to the page (this load, a stream event's snapshot read,
+        // a command's answer and a preference refresh): each notes
+        // _loadGeneration before it waits and applies nothing if it moved.
         async load() {
             const generation = ++this._loadGeneration;
             this.loading = true;
@@ -527,6 +530,7 @@ export function jobCenter(options = {}) {
                 if (!accepted) return null;
             }
             const key = idempotencyKey();
+            const generation = this._loadGeneration;
             this.notice = '';
             try {
                 const payload = await this.fetchJSON(commandEndpoint(job, command), {
@@ -536,7 +540,7 @@ export function jobCenter(options = {}) {
                 });
                 const outcome = payload.result || payload;
                 const freshJob = outcome.job || payload.job;
-                if (freshJob?.id) this.updateJob(freshJob);
+                if (freshJob?.id && generation === this._loadGeneration) this.updateJob(freshJob);
                 let preferenceRefreshFailed = false;
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try {
@@ -555,7 +559,7 @@ export function jobCenter(options = {}) {
             } catch (error) {
                 if (error.status === 409) {
                     const fresh = error.payload?.job || error.payload?.snapshot;
-                    if (fresh?.id) this.updateJob(fresh);
+                    if (fresh?.id && generation === this._loadGeneration) this.updateJob(fresh);
                     this.notice = error.message || 'This job changed. The latest details are shown.';
                 } else this.notice = error.message || 'The command could not be completed.';
                 this._liveRegion?.announce(this.notice);

@@ -461,6 +461,28 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
     });
 
+    test('a command answered after a reset does not replace the reloaded Job', async () => {
+        const center = jobCenter({ detailId: 'live-job' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const held = { id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 10 };
+        center.jobs = [held];
+        center.detail = held;
+        let answerCommand: (value: unknown) => void = () => {};
+        const commandAnswer = new Promise(resolve => { answerCommand = resolve; });
+        const restored = { id: 'live-job', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 2 };
+        center.fetchJSON = vi.fn()
+            .mockImplementationOnce(() => commandAnswer)
+            .mockImplementation(async (url: string) => (url.includes('/events') ? { events: [] } : restored));
+
+        const running = center.runCommand(held, { key: 'retry', label: 'Retry', endpoint: '/v1/jobs/live-job/commands/retry', jobVersion: 10 });
+        center.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:3', reset: true }) });
+        await vi.waitFor(() => expect(center.detail).toMatchObject({ version: 2 }));
+        answerCommand({ result: { job: { ...held, version: 11 } } });
+        await running;
+
+        expect(center.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
+    });
+
     test('an ordinary boundary never moves the cursor back', () => {
         const center = jobCenter();
         center.load = vi.fn();

@@ -217,6 +217,8 @@ export function jobPanel() {
         _panelRefreshPromise: null,
         _refreshGeneration: 0,
         _streamGeneration: 0,
+        // Bumped when a stream reset drops everything the panel held.
+        _resetGeneration: 0,
         // What the reader has been told about each job: its state and version,
         // and the stream generation that was current when it was recorded. See
         // hearJob.
@@ -902,7 +904,13 @@ export function jobPanel() {
         // database a reset stream no longer speaks for. A restored Job at an
         // older version would otherwise stay hidden behind the newer row held
         // for it, and one the database no longer has would stay on screen.
+        //
+        // A read or command answer begun before the reset is dropped when it
+        // lands: loadAdvertisedCommands by the refresh generation, and the
+        // command and preference answers by _resetGeneration, which is noted
+        // before each waits.
         forgetHeldState() {
+            this._resetGeneration += 1;
             this._refreshGeneration += 1;
             this.jobs = [];
             this.details = {};
@@ -1020,9 +1028,10 @@ export function jobPanel() {
         stateTone(job) { return panelStateTone(job); },
 
         async refreshJobPreference(id, spoken = null) {
+            const resetGeneration = this._resetGeneration;
             const payload = await this.requestJSON(`/v1/jobs/${encodeURIComponent(id)}`);
             const freshJob = payload.job || payload;
-            if (freshJob?.id) {
+            if (freshJob?.id && resetGeneration === this._resetGeneration) {
                 this.details[id] = freshJob;
                 // A read: any change of state in it is someone else's.
                 this.applyStreamSnapshot(freshJob, false, false, spoken, { asRead: true });
@@ -1118,6 +1127,7 @@ export function jobPanel() {
                 if (!accepted) return null;
             }
             const key = commandKey();
+            const resetGeneration = this._resetGeneration;
             // Changes a live event proved, said with the command's notice.
             const proved = [];
             // The notice is said with the proved changes, less any a newer
@@ -1135,7 +1145,9 @@ export function jobPanel() {
                 // state, so a change of state in its answer is someone else's and
                 // is heard as a read; a lifecycle command's answer is the reader's.
                 const keepsRecord = RECORD_COMMANDS.has(command?.key) || command?.key === 'dismiss';
-                if (freshJob?.id) this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
+                if (freshJob?.id && resetGeneration === this._resetGeneration) {
+                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: keepsRecord });
+                }
                 let preferenceRefreshFailed = false;
                 if (command?.key === 'pin' || command?.key === 'unpin') {
                     try { await this.refreshJobPreference(job.id, proved); }
@@ -1160,7 +1172,9 @@ export function jobPanel() {
             } catch (error) {
                 const freshJob = error.payload?.job;
                 if (error.status === 409 && freshJob?.id) {
-                    this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
+                    if (resetGeneration === this._resetGeneration) {
+                        this.applyStreamSnapshot(freshJob, false, false, proved, { asRead: true });
+                    }
                     this.notice = 'This job changed. The latest details are shown.';
                     sayNotice();
                     return null;

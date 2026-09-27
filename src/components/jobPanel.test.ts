@@ -671,6 +671,32 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('a command answered after a reset does not replace the row the new database gave', async () => {
+        vi.useFakeTimers();
+        const restored = { id: 'dl-8', title: 'restored.bin', kind: 'remote-download', state: 'queued', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([restored]);
+        const held = { ...restored, state: 'failed', version: 10 };
+        panel.jobs = [held];
+        panel.streamCaughtUp = true;
+        let answerCommand: (value: unknown) => void = () => {};
+        const listRead = panel.requestJSON;
+        panel.requestJSON = vi.fn(async (raw: string, init?: any) => {
+            if (init?.method === 'POST') return new Promise(resolve => { answerCommand = resolve; });
+            return listRead(raw);
+        });
+
+        const running = panel.runCommandUnfocused(held, { key: 'retry', label: 'Retry', endpoint: '/v1/jobs/dl-8/commands/retry', jobVersion: 10 });
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:3', reset: true }) });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(panel.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
+        answerCommand({ result: { job: { ...held, version: 11 } } });
+        await running;
+
+        expect(panel.jobs[0]).toMatchObject({ state: 'queued', version: 2 });
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('a reset boundary drops a cursor this database never issued and reads the panel again', () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
