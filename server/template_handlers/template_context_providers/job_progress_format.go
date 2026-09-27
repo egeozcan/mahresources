@@ -96,3 +96,48 @@ func formatJobDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d d", days)
 }
+
+// jobMetricSummary is one metric as a line of text, its label and its value, as
+// the Jobs drawer and the detail page list it (metricSummary in jobProgress.js).
+func jobMetricSummary(metric jobs.Metric) string {
+	label := metric.Label
+	if label == "" {
+		label = metric.Key
+	}
+	return label + ": " + formatJobMetric(metric)
+}
+
+// formatJobMetric is formatMetric in jobProgress.js: the value in its unit, and
+// its total when it has one.
+func formatJobMetric(metric jobs.Metric) string {
+	value := formatJobQuantity(metric.Value, metric.Unit)
+	if metric.Total == nil {
+		return value
+	}
+	if metric.Unit == "bytes" {
+		return value + " of " + formatJobBytes(*metric.Total)
+	}
+	suffix := ""
+	if metric.Unit != "" && metric.Unit != "items" {
+		suffix = " " + metric.Unit
+	}
+	return formatJobNumber(metric.Value) + " of " + formatJobNumber(*metric.Total) + suffix
+}
+
+// formatJobQuantity is formatQuantity in jobProgress.js.
+func formatJobQuantity(value float64, unit string) string {
+	switch unit {
+	case "bytes":
+		return formatJobBytes(value)
+	case "percent":
+		return formatJobNumber(value) + "%"
+	case "seconds":
+		return formatJobDuration(time.Duration(value * float64(time.Second)))
+	case "ms":
+		return formatJobNumber(value) + " ms"
+	case "", "items":
+		return formatJobNumber(value)
+	default:
+		return formatJobNumber(value) + " " + unit
+	}
+}

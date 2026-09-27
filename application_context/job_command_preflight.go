@@ -80,17 +80,25 @@ func (a *downloadJobAdapter) PreflightCommand(_ context.Context, command jobs.Co
 // preflight reports the error instead of refusing a command the account did not
 // earn a refusal for.
 func (ctx *MahresourcesContext) downloadPrincipalRefusal(principalID uint, creator *query_models.ResourceFromRemoteCreator) (jobs.CommandRefusal, error) {
-	roleRefused := jobs.CommandRefusal{Reason: "role-refused",
-		Message: "The account this download would run as can no longer create resources."}
-	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, roleRefused,
+	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, downloadRoleRefused,
 		jobs.CommandRefusal{Reason: "scope-refused", Message: "Download target group is outside your permitted scope."})
 	if scoped == nil || refusal.Reason != "" || err != nil {
 		return refusal, err
 	}
-	if err := scoped.requireWriteRole("run a download"); err != nil {
-		return roleRefused, nil
+	return scoped.downloadRefusalAsBound(creator)
+}
+
+var downloadRoleRefused = jobs.CommandRefusal{Reason: "role-refused",
+	Message: "The account this download would run as can no longer create resources."}
+
+// downloadRefusalAsBound is downloadPrincipalRefusal's check made against the
+// principal this context is already bound to, which is how a dispatch asks it
+// (dispatchBinding bound it, and told a deleted account apart first).
+func (ctx *MahresourcesContext) downloadRefusalAsBound(creator *query_models.ResourceFromRemoteCreator) (jobs.CommandRefusal, error) {
+	if err := ctx.requireWriteRole("run a download"); err != nil {
+		return downloadRoleRefused, nil
 	}
-	outOfScope, err := scoped.downloadTargetsScopeRefusal(creator)
+	outOfScope, err := ctx.downloadTargetsScopeRefusal(creator)
 	if outOfScope != nil {
 		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(outOfScope.Error())}, err
 	}
@@ -166,24 +174,34 @@ func (a *groupExportAdapter) PreflightCommand(_ context.Context, command jobs.Co
 // command preflight both ask it; a read that failed comes back as it does from
 // downloadPrincipalRefusal.
 func (ctx *MahresourcesContext) exportPrincipalRefusal(principalID uint, rootGroupIDs []uint) (jobs.CommandRefusal, error) {
-	roleRefused := jobs.CommandRefusal{Reason: "role-refused",
-		Message: "The account this export would run as can no longer export groups."}
-	outOfScope := jobs.CommandRefusal{Reason: "group-out-of-scope",
-		Message: "A group this export includes is outside your permitted scope."}
-	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, roleRefused, outOfScope)
+	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, exportRoleRefused, exportGroupOutOfScope)
 	if scoped == nil || refusal.Reason != "" || err != nil {
 		return refusal, err
 	}
-	if err := scoped.requireWriteRole("run an export"); err != nil {
-		return roleRefused, nil
+	return scoped.exportRefusalAsBound(rootGroupIDs)
+}
+
+var (
+	exportRoleRefused = jobs.CommandRefusal{Reason: "role-refused",
+		Message: "The account this export would run as can no longer export groups."}
+	exportGroupOutOfScope = jobs.CommandRefusal{Reason: "group-out-of-scope",
+		Message: "A group this export includes is outside your permitted scope."}
+)
+
+// exportRefusalAsBound is exportPrincipalRefusal's check made against the
+// principal this context is already bound to, which is how a dispatch asks it: the
+// binding it checks is the one the export then runs under.
+func (ctx *MahresourcesContext) exportRefusalAsBound(rootGroupIDs []uint) (jobs.CommandRefusal, error) {
+	if err := ctx.requireWriteRole("run an export"); err != nil {
+		return exportRoleRefused, nil
 	}
-	if !scoped.isScopedPrincipal() {
+	if !ctx.isScopedPrincipal() {
 		return jobs.CommandRefusal{}, nil
 	}
 	for _, id := range rootGroupIDs {
-		inScope, err := scoped.entityVisibleChecked(&models.Group{}, id)
+		inScope, err := ctx.entityVisibleChecked(&models.Group{}, id)
 		if err != nil || !inScope {
-			return outOfScope, err
+			return exportGroupOutOfScope, err
 		}
 	}
 	return jobs.CommandRefusal{}, nil

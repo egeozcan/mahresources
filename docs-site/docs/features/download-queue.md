@@ -34,7 +34,7 @@ The same rule names a resource created from the remote-resource form,
 `POST /v1/resource/remote` and `mah.db.create_resource_from_url`. An assembled
 HLS stream takes the playlist's name with an `.mp4` extension.
 
-The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created, and the Job fails with the code `submitter-refused` and a message saying so.
+The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created, and the Job fails with the code `submitter-refused` and a message saying so. If the account cannot be read at that moment, no Resource is created either, and the Job fails with the code `account-check-unavailable`; Retry downloads it again.
 
 ## Queue Limits
 
@@ -236,6 +236,7 @@ deployment's policy and limits.
 | `address-refused` | `policy` | yes | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
 | `plugin-unavailable` | `policy` | yes | A plugin's download whose plugin, and so its network policy, is no longer enabled |
 | `submitter-refused` | `policy` | yes | The submitter may no longer create content |
+| `account-check-unavailable` | `dependency` | yes | The submitter's account could not be read once the bytes were in |
 | `unsupported-stream` | `validation` | yes | An HLS stream this server refuses (live, DRM, a non-HTTP URL, a kind it does not handle) |
 | `stream-over-limit` | `policy` | yes | An HLS stream over `-hls-max-segments` or `-hls-max-bytes` |
 | `ffmpeg-unavailable` | `dependency` | yes | An HLS stream and no ffmpeg to assemble it |
@@ -248,6 +249,30 @@ deployment's policy and limits.
   available while clients migrate. The canonical interface renders only the
   commands the current Job detail advertises and rechecks role, scope, and Job
   version when the command runs.
+- **Pause** -- A running download offers **Pause** in the Jobs panel, on its Job
+  page and as the `pause` command. The server process fetching the file stops
+  the transfer, and once the transfer has stopped writing, the Job becomes
+  `paused`, whether the pause came from the Job Center, from another server
+  process or from the compatibility endpoints. A pause that lands after the file
+  was saved is too late: the download completes with its resource. The
+  compatibility pause endpoints answer once the Job records the pause, and
+  answer `409` when it has not after five seconds, typically because the
+  transfer is still saving its file. Asking again is safe: a download already
+  paused answers `paused` once the Job records it. A cancellation that reaches
+  the Job first wins: the download ends cancelled, and the pause is answered
+  `409` naming it as cancelled.
+  The queue keeps no partial bytes, so **Resume** starts the download again
+  from the beginning. Pause asks for confirmation and says so before it acts,
+  and the paused row says it again. When the request reaches a server process
+  that is not running the transfer, the command is recorded as requested and
+  the process running it pauses it when it next reads the Job, once a second;
+  until then the Job reads **Pausing**. A pause that is still on its way when
+  that process stops is kept: the Job ends paused rather than going back to
+  the queue. A paused Job holds no slot of
+  the concurrency budget. It is listed under active work, not under **Needs
+  attention**, and the `paused` state filter finds it. A download an earlier
+  release paused was stored as `blocked`; the server records it as `paused`
+  when it starts.
 - **Retry** -- Creates a linked Job and preserves the earlier Job's terminal
   state. A failed legacy download handle resolves to the current Retry leaf for
   at least one documented release and six months after canonical cutover. It is

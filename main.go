@@ -728,6 +728,7 @@ func main() {
 			fail("%v", err)
 			return
 		}
+		warnJobPrincipalReviewCandidates(readiness.ReviewCandidates)
 	}
 	// Deferred download rows still open behind a Job that already ended: one an
 	// earlier release cancelled before it ran, or one retention has deleted. A
@@ -736,6 +737,14 @@ func main() {
 		log.Printf("[jobs] WARNING: deferred download rows could not be reconciled with their Jobs: %v", err)
 	} else if reconciled > 0 {
 		log.Printf("[jobs] reconciled %d deferred download row(s) with the Jobs they name", reconciled)
+	}
+	// Downloads an earlier release held as blocked are the paused downloads they
+	// are. A failure leaves them blocked, where Resume and Cancel still work, and
+	// is not a reason to refuse traffic.
+	if reclassified, err := context.ReclassifyDownloadHolds(); err != nil {
+		log.Printf("[jobs] WARNING: paused downloads recorded as blocked could not be reclassified: %v", err)
+	} else if reclassified > 0 {
+		log.Printf("[jobs] %d download(s) an earlier release held as blocked are now paused", reclassified)
 	}
 	// Plugin-action summaries an earlier release wrote with the server's runtime
 	// identity in them, which every owner is shown and the search box matches.

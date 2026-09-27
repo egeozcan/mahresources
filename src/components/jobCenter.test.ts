@@ -7,6 +7,7 @@ import {
     classifyJobState,
     commandConfirmation,
     commandConfirmOptions,
+    commandDismissLabel,
     commandEndpoint,
     commandLocation,
     commandRefusalText,
@@ -30,6 +31,7 @@ import {
     resultURL,
     selectedBulkCommands,
     phaseText,
+    showsProgress,
     stateLabel,
     warningEvents,
 } from './jobCenter.js';
@@ -157,6 +159,59 @@ describe('Job Center API declarations', () => {
         expect(classifyJobState(unfamiliarJob)).toBe('active');
         expect(classifyJobState({ ...unfamiliarJob, state: 'blocked' })).toBe('attention');
         expect(classifyJobState({ ...unfamiliarJob, state: 'succeeded' })).toBe('finished');
+    });
+});
+
+describe('command confirmations', () => {
+    test('a pause dismisses with Go back, since the download also offers Cancel', () => {
+        expect(commandDismissLabel({ key: 'pause' })).toBe('Go back');
+        expect(commandDismissLabel({ key: 'retry' })).toBeUndefined();
+    });
+});
+
+describe('progress on work nobody is doing', () => {
+    test('a failed job that recorded nothing shows no progress and is never called working', () => {
+        // A download that fails before its first byte keeps only a timestamp.
+        const failed = { state: 'failed', progress: { updatedAt: '2026-09-26T12:00:00Z' } };
+        expect(showsProgress(failed)).toBe(false);
+        expect(progressText(failed)).not.toBe('Working');
+        expect(progressAccessibleText(failed)).not.toContain('Working');
+        expect(progressIndeterminate(failed)).toBe(false);
+    });
+
+    test('waiting, paused and stopped work shows only what it reported', () => {
+        for (const state of ['scheduled', 'queued', 'paused', 'blocked', 'failed', 'cancelled', 'interrupted']) {
+            expect(showsProgress({ state, progress: {} })).toBe(false);
+            expect(showsProgress({ state, progress: { phase: 'queued' } })).toBe(false);
+            expect(showsProgress({ state, progress: { total: 100 } })).toBe(false);
+            expect(progressIndeterminate({ state, progress: {} })).toBe(false);
+        }
+        const failedPart = { state: 'failed', progress: { completed: 102400, unit: 'bytes' } };
+        expect(showsProgress(failedPart)).toBe(true);
+        expect(progressText(failedPart)).toBe('102400');
+        expect(progressAccessibleText(failedPart)).toBe('102400 bytes processed; total unknown');
+        const paused = { state: 'paused', progress: { message: 'Paused. Resume starts the download again from the beginning.' } };
+        expect(showsProgress(paused)).toBe(true);
+        expect(progressText(paused)).toBe(paused.progress.message);
+    });
+
+    test('stopped work that reported only metrics shows them and names the first', () => {
+        const failed = {
+            state: 'failed',
+            progress: { metrics: [{ key: 'downloaded', label: 'Downloaded', value: 12 * 1024 * 1024, unit: 'bytes' }] },
+        };
+        expect(showsProgress(failed)).toBe(true);
+        expect(progressText(failed)).toBe('Downloaded: 12.0 MB');
+        expect(progressIndeterminate(failed)).toBe(false);
+        expect(progressText({ ...failed, state: 'running' })).toBe('Working');
+    });
+
+    test('running work with nothing to report is the one bar that says working', () => {
+        const running = { state: 'running', progress: {} };
+        expect(showsProgress(running)).toBe(true);
+        expect(progressText(running)).toBe('Working');
+        expect(progressIndeterminate(running)).toBe(true);
+        expect(showsProgress({ state: 'succeeded', progress: {} })).toBe(true);
     });
 });
 

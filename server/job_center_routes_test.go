@@ -108,3 +108,38 @@ func TestAnEmptiedJobPageDoesNotClaimThereAreNoJobs(t *testing.T) {
 		t.Fatal("an emptied later page did not point back to the earlier ones")
 	}
 }
+
+// TestAScheduledJobCardSaysWhenItStarts renders the card a scheduled Job gets: its
+// start time, in a <time> the page shows in the reader's zone, no progress bar,
+// and a badge whose colour is its state's tone.
+func TestAScheduledJobCardSaysWhenItStarts(t *testing.T) {
+	set := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("../templates", nil))
+	page, err := set.FromFile("listJobs.tpl")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	context := template_context_providers.JobCenterListContextProvider(nil)(httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil))
+	context["jobs"] = []template_context_providers.JobRow{{
+		ID: "scheduled-card", Title: "Download later", Kind: "deferred-download", State: "scheduled",
+		StateLabel: "Scheduled", BadgeClass: "card-badge--live", DetailURL: "/job?id=scheduled-card", Entity: "{}",
+		ScheduledFor: template_context_providers.JobRowTime{ISO: "2026-09-28T14:17:00+02:00", Display: "2026-09-28 14:17:00", Minute: "2026-09-28 14:17"},
+	}}
+	rendered, err := page.Execute(context)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(rendered, `Starts <time data-local-time datetime="2026-09-28T14:17:00+02:00">2026-09-28 14:17</time>`) {
+		t.Fatal("the scheduled card does not say when it starts")
+	}
+	if !strings.Contains(rendered, `class="card-badge card-badge--live" data-testid="job-state">Scheduled</span>`) {
+		t.Fatal("the scheduled card's badge does not follow its tone")
+	}
+	start := strings.Index(rendered, `data-job-id="scheduled-card"`)
+	end := strings.Index(rendered[start:], "</article>")
+	if start < 0 || end < 0 {
+		t.Fatal("the scheduled card was not rendered")
+	}
+	if card := rendered[start : start+end]; strings.Contains(card, `role="progressbar"`) || strings.Contains(card, "In progress") {
+		t.Fatal("the scheduled card draws a progress bar for work nobody is doing")
+	}
+}

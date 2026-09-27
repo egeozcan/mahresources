@@ -32,13 +32,14 @@ import (
 // the controls the queue already has (cancel, resume) are reached through the
 // canonical command surface the Job advertises.
 //
-// Two things are deliberately *not* here:
+// A person's pause is `paused`: the queue confirms it has stopped the transfer, and
+// the checkpoint it keeps is the sealed input, since it keeps no partial bytes. So
+// Resume starts the transfer again from the beginning, and the paused Job's row says
+// so (jobDownloadPausedMessage). A hold is not `blocked`: nothing is wrong with it,
+// and nobody but the person who paused it has anything to decide.
 //
-//   - A pause command. §1 defines `paused` as a checkpoint the executor confirmed,
-//     and this queue's resume restarts a transfer from zero — it has none. A held
-//     download is therefore reported as `blocked` (a person is holding it), and the
-//     Job advertises `resume` rather than `pause` until the queue can honestly
-//     checkpoint.
+// One thing is deliberately *not* here:
+//
 //   - A Repeat command. Re-fetching a URL that already produced a Resource would
 //     create a second copy of content the library already holds, and the content
 //     hash would refuse it at the end of the transfer. Retry is for unsuccessful
@@ -252,7 +253,12 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		return err
 	}
 
-	if reason := a.refusalReason(execution, &decoded); reason != "" {
+	reason, err := a.refusalReason(execution, &decoded)
+	if err != nil {
+		return a.ctx.answerDispatchCheck(execution, err)
+	}
+	a.ctx.dispatchChecksAnswered(execution.JobID)
+	if reason != "" {
 		return a.block(execution, reason)
 	}
 
@@ -291,29 +297,46 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	// durable rather than a call into this process: a resume queues the Job, so a
 	// paused entry reached by a *dispatch* is one whose hold the person released —
 	// whereas a Job that is still running under a paused entry is a hold nobody
-	// released, and restarting it would undo what its owner deliberately stopped.
-	if entry.GetStatus() == download_queue.JobStatusPaused {
-		if !a.queuedForDispatch(execution) {
-			return a.block(execution, "paused")
-		}
+	// released, and restarting it would undo what its owner deliberately stopped:
+	// the wait below records it once the attempt the pause stopped has unwound.
+	if entry.GetStatus() == download_queue.JobStatusPaused && a.queuedForDispatch(execution) {
 		if err := a.ctx.downloadManager.ResumeExclusive(entry.ID); err != nil {
 			var busy *download_queue.URLActiveError
 			if errors.As(err, &busy) {
 				return a.waitForTheURL(execution, entry.GetURL())
 			}
 			var conflict *download_queue.StateConflictError
-			if errors.As(err, &conflict) {
-				// The entry moved while this dispatch held its claim: whatever it moved
-				// to is the executor's answer, and the wait below publishes it.
-				return a.block(execution, "paused")
+			if !errors.As(err, &conflict) {
+				return err
 			}
-			return err
+			// The entry moved while this dispatch held its claim: whatever it moved
+			// to is the executor's answer, and the wait below publishes it.
 		}
 	}
 
 	snap, err := a.waitForTerminal(ctx, execution, entry)
 	if err != nil {
 		return err
+	}
+	if snap.Status == download_queue.JobStatusPaused {
+		// The executor holds the transfer and the attempt it stopped has exited. The
+		// queue's own mirror records that as the attempt exits; this is the same
+		// record, for a mirror whose write did not land, so the Job does not stay
+		// running over a transfer nobody is fetching. One that still cannot be
+		// written is an unfinished publication, never the dispatch's failure: the
+		// Job keeps its claim, and reconciliation brings it back here.
+		record, err := a.ctx.recordDownloadPause(execution.JobID, execution.ExecutionToken, snap)
+		if err != nil {
+			if mirrorRefusalIsSilent(err) {
+				return nil
+			}
+			log.Printf("warning: the pause of download Job %s could not be recorded (%v); its lease settles it", execution.JobID, err)
+			return errQueuePublicationUnfinished
+		}
+		// The entry learns the Job's answer from whichever of the two writes made
+		// it, or a pause waiting on the entry (the legacy route) would not hear it.
+		a.ctx.downloadManager.ApplyHoldRecord(entry, execution.ExecutionToken, record)
+		return nil
 	}
 	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
 		return a.publishOutcome(execution, finished)
@@ -424,7 +447,8 @@ const jobDownloadWaitingForURLReason = "waiting-for-url"
 // It is the answer for work that has not failed and will run again: a transfer the
 // deployment's shutdown stopped, and one waiting for its URL. The transition takes
 // the claim and the capacity with it. A cancellation already recorded against the
-// Job owns the outcome instead, and ends it cancelled. A write the fence refuses
+// Job owns the outcome instead, and ends it cancelled; a pause a person asked for
+// holds it, paused, rather than letting it start again over the request. A write the fence refuses
 // is not this execution's to make and is dropped; any other failure is returned
 // as errQueuePublicationUnfinished, which leaves the Job running under its lease
 // for the reconciliation an expired claim gets, rather than ending it.
@@ -450,6 +474,27 @@ func (ctx *MahresourcesContext) requeueDownloadExecution(execution jobs.Executio
 		}
 		if current.ControlIntent == jobs.ControlIntentCancel {
 			return settleRequeue(ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil))
+		}
+		if current.ControlIntent == jobs.ControlIntentPause {
+			// A person asked for this Job to be held and it is not running any
+			// more: back in the queue it would start again over the pause.
+			progress := pausedDownloadProgress(current.Progress)
+			_, err := service.Transition(deps, jobs.Transition{
+				JobID:           execution.JobID,
+				ExpectedVersion: current.Version,
+				ExecutionToken:  execution.ExecutionToken,
+				To:              jobs.StatePaused,
+				Event:           jobs.EventInput{Type: jobs.EventPaused, Detail: jobDownloadPausedDetail},
+				Progress:        &progress,
+			})
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, jobs.ErrVersionConflict) {
+				return settleRequeue(err)
+			}
+			lastErr = err
+			continue
 		}
 		if _, err := service.UpdateProgress(deps, ref, jobs.Progress{Phase: phase, Message: message}); err != nil {
 			if mirrorRefusalIsSilent(err) && !errors.Is(err, jobs.ErrVersionConflict) {
@@ -533,19 +578,30 @@ func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobI
 // Everything rechecked here was checked when the submission arrived. None of it is
 // a standing permission: the plugin may have been disabled, the principal's role or
 // scope may have narrowed, and a retry or a dispatch after a restart runs on a
-// worker with no request behind it at all.
-func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *downloadJobInput) string {
-	if input.Plugin != "" && !a.ctx.scheduledDownloadPluginAvailable(input.Plugin, nil) {
-		return "plugin-unavailable"
-	}
+// worker with no request behind it at all. A read that failed is not an answer: it
+// comes back as the error, and dispatch neither runs the work nor blocks it.
+//
+// The account is asked first: one deleted since the claim can never run the work,
+// whatever else would stop it now (answerDispatchCheck).
+func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *downloadJobInput) (string, error) {
+	var bound *MahresourcesContext
 	if execution.Access.UserID != 0 {
-		// A read that failed keeps the refusal it implies: dispatch blocks rather
-		// than run work whose account it could not check.
-		if refusal, _ := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator); refusal.Reason != "" {
-			return refusal.Reason
+		var err error
+		if bound, err = a.ctx.dispatchBinding(execution.Access.UserID); err != nil {
+			return "", err
 		}
 	}
-	return ""
+	if input.Plugin != "" && !a.ctx.scheduledDownloadPluginAvailable(input.Plugin, nil) {
+		return "plugin-unavailable", nil
+	}
+	if bound != nil {
+		refusal, err := bound.downloadRefusalAsBound(input.Creator)
+		if err != nil {
+			return "", err
+		}
+		return refusal.Reason, nil
+	}
+	return "", nil
 }
 
 // block records that this Job cannot proceed and who has to decide. It is the
@@ -577,8 +633,10 @@ func (a *downloadJobAdapter) block(execution jobs.Execution, reason string) erro
 	return err
 }
 
-// waitForTerminal blocks until the queue entry reaches a terminal status, the
-// context is cancelled, or the entry disappears from this process's queue.
+// waitForTerminal blocks until the queue entry reaches a terminal status or is
+// held with the attempt the pause stopped gone, the context is cancelled, or the
+// entry disappears from this process's queue. A pause answered while its attempt
+// is still saving a file is not yet a hold: that attempt may still complete it.
 func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, execution jobs.Execution, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, error) {
 	// One read before the loop: a transfer that finished while the Job was being
 	// claimed needs no wait at all.
@@ -594,13 +652,13 @@ func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, execution jobs
 			return nil, ctx.Err()
 		case <-ticker.C:
 			snap := entry.Snapshot()
-			if downloadTerminal(snap.Status) {
+			if downloadTerminal(snap.Status) || (snap.Status == download_queue.JobStatusPaused && entry.HoldSettled()) {
 				return snap, nil
 			}
-			// A cancellation recorded against this Job by anybody — another runtime's
-			// command endpoint, another process's compatibility route — is delivered
-			// here, because this is the execution that owns the transfer.
-			a.ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
+			// A cancellation or a pause recorded against this Job by anybody — another
+			// runtime's command endpoint, another process's compatibility route — is
+			// delivered here, because this is the execution that owns the transfer.
+			a.ctx.deliverControlIntent(execution, entry, &nextIntentCheck)
 		}
 	}
 }
@@ -818,11 +876,13 @@ var downloadFailureKinds = map[string]downloadFailureKind{
 	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy},
 	download_queue.FailurePluginUnavailable: {class: jobs.FailureClassPolicy},
 	download_queue.FailureSubmitterRefused:  {class: jobs.FailureClassPolicy},
-	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation},
-	download_queue.FailureStreamOverLimit:   {class: jobs.FailureClassPolicy},
-	download_queue.FailureFfmpegUnavailable: {class: jobs.FailureClassDependency},
-	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict},
-	download_queue.FailureDownloadFailed:    {class: jobs.FailureClassInternal},
+	// A read that failed is the database's failure, and a Retry can succeed.
+	download_queue.FailureAccountCheckUnavailable: {class: jobs.FailureClassDependency},
+	download_queue.FailureUnsupportedStream:       {class: jobs.FailureClassValidation},
+	download_queue.FailureStreamOverLimit:         {class: jobs.FailureClassPolicy},
+	download_queue.FailureFfmpegUnavailable:       {class: jobs.FailureClassDependency},
+	download_queue.FailureResourceExists:          {class: jobs.FailureClassConflict},
+	download_queue.FailureDownloadFailed:          {class: jobs.FailureClassInternal},
 }
 
 func downloadFailureKindOf(code string) downloadFailureKind {
@@ -920,6 +980,17 @@ func (a *downloadJobAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 			}
 			return jobs.ReconcileSucceed, nil
 		}
+		if request.Snapshot.ControlIntent == jobs.ControlIntentPause {
+			// A person asked for this download to be held and the process that
+			// would have held it is gone, with the transfer. Queuing it would start
+			// it over the pause; it is held here instead, where its sealed input is
+			// the point Resume starts from, as it is for any held download.
+			progress := pausedDownloadProgress(request.Snapshot.Progress)
+			if _, err := request.Execution.Progress(progress); err != nil {
+				return "", err
+			}
+			return jobs.ReconcilePause, nil
+		}
 		return jobs.ReconcileQueue, nil
 	}
 	if downloadTerminal(entry.GetStatus()) {
@@ -945,8 +1016,8 @@ func (a *downloadJobAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // unsuccessful leaf of a lineage, a cancel never on finished work. The Kind's own
 // policy leaves Retry out for a failure a Retry would repeat
 // (downloadRetryWouldFailAlike): a stored address that is not a download. Pause is
-// deliberately absent (see the file comment); resume is offered for held work,
-// which is the state a pause leaves this Kind in.
+// offered while the transfer runs, and resume for held work: a pause, or a block
+// that a Resume would lift.
 func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	// §8: ownership grants visibility, not permanent control. A principal demoted below
 	// "may write", or one whose access to the plugin this download belongs to has been
@@ -964,6 +1035,15 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Destructive:  true,
 		Confirmation: "Stop this download? A file already saved stays in the library.",
 	})
+	if state == jobs.StateRunning {
+		// Said before the pause, where the choice is made: the queue keeps no
+		// partial bytes, so a pause costs everything received so far.
+		commands = append(commands, jobs.Command{
+			Key:          jobs.CommandPause,
+			Label:        "Pause",
+			Confirmation: jobDownloadPauseConfirmation,
+		})
+	}
 	if state == jobs.StateBlocked || state == jobs.StatePaused {
 		commands = append(commands, jobs.Command{
 			Key:   jobs.CommandResume,
@@ -995,8 +1075,7 @@ func downloadRetryCommand(snapshot jobs.Snapshot) jobs.Command {
 
 // ExecuteCommand runs one control the host decided this Kind owns.
 //
-// Only cancel and resume reach here: retry is the control plane's own lineage work,
-// and pause is never advertised.
+// Cancel, pause and resume reach here; retry is the control plane's own lineage work.
 func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return jobs.CommandOutcome{}, errors.New("the download queue is not available")
@@ -1019,6 +1098,34 @@ func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.Co
 			return jobs.CommandOutcome{}, err
 		}
 		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "cancelling"}, nil
+
+	case jobs.CommandPause:
+		// The host recorded the request before asking. The transfer in this process
+		// is held now, and the queue's mirror records the Job paused; a transfer
+		// another process is fetching is held there, where the request is delivered
+		// (deliverControlIntent).
+		if !found {
+			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
+		}
+		if err := a.ctx.downloadManager.Pause(entry.ID); err != nil {
+			var conflict *download_queue.StateConflictError
+			if errors.As(err, &conflict) {
+				// Saving or already ended: the request stands until the Job leaves
+				// running, which it is about to.
+				return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded,
+					Message: "Pause requested, but the download is already finishing."}, nil
+			}
+			return jobs.CommandOutcome{}, err
+		}
+		// The Job is paused once the attempt this stopped has exited, which is
+		// normally at once; a file being saved when the pause landed can take
+		// longer, or complete the download instead. Only a Job that reached paused
+		// within jobDownloadPauseAnswerWait is reported paused, and the request
+		// stands otherwise.
+		if a.awaitDownloadPaused(execution.JobID) {
+			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPausedMessage}, nil
+		}
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
 
 	case jobs.CommandResume:
 		// A hold is released by queueing the Job, never by starting a worker from
@@ -1056,31 +1163,121 @@ func (s *jobDownloadSink) DownloadProgress(ref download_queue.CanonicalRef, snap
 	return nil
 }
 
-func (s *jobDownloadSink) DownloadHeld(ref download_queue.CanonicalRef, snap *download_queue.DownloadJob) error {
-	service := s.service()
+// DownloadHeld records a hold and answers what the Job made of it. A refusal or a
+// failed write is logged as every mirror's is, and answers HoldNotRecorded: the
+// queue must not confirm a pause the Job did not take.
+func (s *jobDownloadSink) DownloadHeld(ref download_queue.CanonicalRef, snap *download_queue.DownloadJob) download_queue.HoldRecord {
+	record, err := s.ctx.recordDownloadPause(ref.JobID, ref.ExecutionToken, snap)
+	if err != nil {
+		_ = s.mirrorRefusal(err)
+		return download_queue.HoldNotRecorded
+	}
+	return record
+}
+
+// jobDownloadPauseConfirmation is what Pause asks before it holds a download.
+const jobDownloadPauseConfirmation = "Pause this download? The bytes received so far are discarded, and Resume starts it again from the beginning."
+
+// jobDownloadPauseAnswerWait bounds how long a Pause answered in the process
+// running the transfer waits to say "Paused" rather than "Pause requested".
+const jobDownloadPauseAnswerWait = 2 * time.Second
+
+// awaitDownloadPaused reports whether a Job reaches paused within
+// jobDownloadPauseAnswerWait. A read that fails is not an answer, and reads as not
+// paused yet.
+func (a *downloadJobAdapter) awaitDownloadPaused(jobID string) bool {
+	deadline := time.Now().Add(jobDownloadPauseAnswerWait)
+	for {
+		current, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err == nil && current.State == jobs.StatePaused {
+			return true
+		}
+		if err == nil && current.State != jobs.StateRunning {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// jobDownloadPauseRequestedMessage answers a pause the transfer has not
+// confirmed yet: the process fetching the file holds it when it next reads the Job.
+const jobDownloadPauseRequestedMessage = "Pause requested. The download is held when the server running it next checks, about once a second."
+
+// jobDownloadPausedMessage is what a paused download's row says. The queue keeps no
+// partial bytes, so Resume starts the transfer again, and the person deciding
+// whether to resume or cancel needs to know that before they choose.
+const jobDownloadPausedMessage = "Paused. Resume starts the download again from the beginning."
+
+// jobDownloadPausedDetail is the paused event's detail. A Job an earlier release
+// held recorded the same reason on a blocked event, which is how
+// ReclassifyDownloadHolds recognizes one.
+var jobDownloadPausedDetail = json.RawMessage(`{"reason":"paused","resume":"restarts-from-the-beginning"}`)
+
+// pausedDownloadProgress is the row a paused download shows: what it reported, no
+// time left and no phase, and a message that says what Resume does.
+func pausedDownloadProgress(progress jobs.Progress) jobs.Progress {
+	progress.Phase = ""
+	progress.Message = jobDownloadPausedMessage
+	progress.ETA = nil
+	return progress
+}
+
+// recordDownloadPause records that the executor holds this execution's transfer:
+// the Job is paused, under the execution's token, with a row that says what Resume
+// does. Leaving running hands the claim and its capacity back, so a paused
+// download holds no slot while it waits. A cancellation already recorded against
+// the Job owns its outcome, so it ends cancelled instead of waiting paused for a
+// Resume its cancellation refuses.
+//
+// It answers HoldRecorded only when this write paused the Job. A Job that already
+// left running, or one whose token moved on, is not this execution's to record,
+// and answers HoldNotRecorded: when the other writer of the same hold (the
+// queue's publication and the dispatch's wait both write it) made the Job paused,
+// that writer's answer is the one the entry hears. A Job that ended cancelled
+// answers HoldCancelled whoever ended it, since no execution runs a cancelled Job.
+func (ctx *MahresourcesContext) recordDownloadPause(jobID, executionToken string, snap *download_queue.DownloadJob) (download_queue.HoldRecord, error) {
+	service := ctx.JobService()
 	if service == nil || snap == nil {
-		return nil
+		return download_queue.HoldNotRecorded, nil
 	}
-	current, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, ref.JobID)
-	if err != nil {
-		return s.mirrorRefusal(err)
+	progress := pausedDownloadProgress(downloadJobProgress(snap))
+	var lastErr error
+	for attempt := 0; attempt < queuePublicationWriteAttempts; attempt++ {
+		current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err != nil {
+			return download_queue.HoldNotRecorded, err
+		}
+		switch {
+		case current.State == jobs.StateCancelled:
+			return download_queue.HoldCancelled, nil
+		case current.State != jobs.StateRunning:
+			return download_queue.HoldNotRecorded, nil
+		case current.ControlIntent == jobs.ControlIntentCancel:
+			if err := ctx.finishQueueJob(jobs.Execution{JobID: jobID, ExecutionToken: executionToken}, jobs.StateCancelled, nil, nil); err != nil {
+				return download_queue.HoldNotRecorded, err
+			}
+			return download_queue.HoldCancelled, nil
+		}
+		_, err = service.Transition(ctx.jobDeps(), jobs.Transition{
+			JobID:           jobID,
+			ExpectedVersion: current.Version,
+			ExecutionToken:  executionToken,
+			To:              jobs.StatePaused,
+			Event:           jobs.EventInput{Type: jobs.EventPaused, Detail: jobDownloadPausedDetail},
+			Progress:        &progress,
+		})
+		if err == nil {
+			return download_queue.HoldRecorded, nil
+		}
+		if !errors.Is(err, jobs.ErrVersionConflict) {
+			return download_queue.HoldNotRecorded, err
+		}
+		lastErr = err
 	}
-	if current.State.Terminal() || current.State == jobs.StateBlocked {
-		return nil
-	}
-	detail, err := json.Marshal(map[string]string{"reason": "paused", "resume": "restarts-from-the-beginning"})
-	if err != nil {
-		return err
-	}
-	_, err = service.Transition(s.ctx.jobDeps(), jobs.Transition{
-		JobID:           ref.JobID,
-		ExpectedVersion: current.Version,
-		ExecutionToken:  ref.ExecutionToken,
-		To:              jobs.StateBlocked,
-		Phase:           "paused",
-		Event:           jobs.EventInput{Type: jobs.EventBlocked, Detail: detail},
-	})
-	return s.mirrorRefusal(err)
+	return download_queue.HoldNotRecorded, lastErr
 }
 
 func (s *jobDownloadSink) DownloadFinished(ref download_queue.CanonicalRef, snap *download_queue.DownloadJob) error {

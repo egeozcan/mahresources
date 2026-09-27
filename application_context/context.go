@@ -595,6 +595,10 @@ type MahresourcesContext struct {
 	// way — see job_faults.go. Nil is every production context, and every use is a
 	// nil check.
 	jobFaults *jobDurabilityFaults
+	// dispatchChecks records the Jobs whose dispatch could not read the account
+	// they act as, and how long this process passes over them
+	// (job_dispatch_checks.go). Shared by every clone of the context.
+	dispatchChecks *dispatchCheckDeferrals
 	// jobTerminalSink observes Jobs reaching an end state, whoever ran them. It
 	// is the same observer the download queue publishes through, installed here
 	// as well because plugin background work is a Job now and its completion is
@@ -971,6 +975,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		rootAdmin:                 newRootAdminCache(),
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
 		shareServerListening:      &atomic.Bool{},
+		dispatchChecks:            newDispatchCheckDeferrals(),
 	}
 
 	ctx.pluginCommandController = newPluginCommandRuntimeController(ctx)
@@ -1394,19 +1399,25 @@ func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.Reso
 // writes: a guest keeps a subtree it can read, and scope alone would let the
 // create land there.
 func (ctx *MahresourcesContext) boundToSubmitter(userID uint) *MahresourcesContext {
-	bound, _ := ctx.bindSubmitter(userID)
-	return bound
-}
-
-// bindSubmitter is boundToSubmitter that also says whether the account may still
-// add content, so a create that would be refused can say why instead of failing
-// on the scope filter's own error.
-func (ctx *MahresourcesContext) bindSubmitter(userID uint) (*MahresourcesContext, bool) {
 	principal := ctx.principalForPluginActor(userID)
 	if !principal.CanWrite() {
-		return ctx.WithPrincipal(deniedPluginPrincipal(userID)), false
+		return ctx.WithPrincipal(deniedPluginPrincipal(userID))
 	}
-	return ctx.WithPrincipal(principal), true
+	return ctx.WithPrincipal(principal)
+}
+
+// bindSubmitter binds the submitter again once the bytes are in, and says
+// whether the account may still add content, so a create that would be refused
+// can say why instead of failing on the scope filter's own error. A read of the
+// account that did not answer is an error, never a refusal: it binds deny-all as
+// every unread account does, and the create fails as unanswered, since the
+// account itself refused nothing.
+func (ctx *MahresourcesContext) bindSubmitter(userID uint) (*MahresourcesContext, bool, error) {
+	principal, _, err := accountLookup(ctx.unscopedDB(), userID)
+	if err != nil || !principal.CanWrite() {
+		return ctx.WithPrincipal(deniedPluginPrincipal(userID)), false, err
+	}
+	return ctx.WithPrincipal(principal), true, nil
 }
 
 // SetHashQueue sets the channel for queueing resources for hash processing.

@@ -80,6 +80,19 @@ phase such as parsing, downloading, or assembling without changing the Job
 state. The old queue endpoints may continue to use their established status
 names during compatibility.
 
+`paused` is a hold a person asked for and the Job's executor confirmed. A
+download is the Kind that can be paused: while it runs it offers Pause, and
+its Resume starts the transfer again from the beginning, because the download
+queue keeps no partial bytes; the paused row says so. A paused Job counts as
+Active. `blocked` is work that cannot go on until a person or a policy change
+lets it, such as a refusal of the account it runs as or a claim nobody could
+prove stopped, and it Needs attention. Every surface names a state the same
+way: the Jobs panel, the Job Center card and the Job page read one table of
+labels, groups and colours, and only running work shows a moving progress bar.
+A running Job with a pause or a cancellation requested and not yet confirmed
+by the process running it reads **Pausing** or **Cancelling** (the API's
+`controlIntent`).
+
 One phase has a host-wide meaning. A succeeded Job with phase `partial` stopped
 short of finished: its Kind recorded that the run did its share and left the
 rest. A plugin action records it when its handler returns `continue = true`.
@@ -129,8 +142,11 @@ in the API), and `ownerDeleted=true`, **A deleted account** in the Job Center's
 Owner filter, lists them. Work that was still waiting to act as the deleted account never
 runs as anyone else: when its turn comes it ends failed with the code
 `principal-missing`, and a Job that an earlier release blocked for the same
-reason is not offered Resume. A Job claimed or accepted in the same moment as
-the deletion can instead end up blocked as `role-refused`; it still never runs.
+reason is not offered Resume. A download, export, import, Job summary export,
+clustering run or similarity recompute whose account is deleted after its turn
+came, before it checks the account, ends failed the same way. A Job of another
+Kind claimed or accepted in the same moment as the deletion can instead end up
+blocked as `role-refused`; it still never runs.
 Work already running when the account was deleted may still finish. The delete confirmation on `/admin/users` says how
 many of the account's jobs have not finished.
 
@@ -520,9 +536,12 @@ front: the Job is accepted, and then blocked with `scope-refused` or
 `group-out-of-scope` before anything runs. When the account or group read
 behind the check fails, the command answers `500` instead of refusing, and
 asking again once the database answers is safe. The same read failing as a
-download or an export is about to start currently blocks the Job with the
-reason the check would have given (`role-refused`, `scope-refused` or
-`group-out-of-scope`) instead of leaving it queued; Resume starts it again.
+Job is about to start (a download, an export, an import, a Job summary export,
+a clustering run or a similarity recompute) neither runs the Job nor blocks it:
+the Job goes back to `queued` with the event reason `checks-unanswered` and the
+message "Waiting for the account and scope checks", and the server process
+that tried waits 1 second before asking again, doubling after each failure in
+a row up to 30 seconds. Another server process may ask sooner.
 Bulk requests accept at most 200 Job IDs; each result commits independently, so
 a response can contain both successes and refusals.
 

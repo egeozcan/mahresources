@@ -67,6 +67,10 @@ type JobRuntimeConfig struct {
 	// QuiesceTimeout bounds how long Stop waits for running executions to
 	// acknowledge cancellation.
 	QuiesceTimeout time.Duration
+	// HoldReclassifyInterval is how often the runtime moves download holds an
+	// older release recorded as blocked into paused, one batch at a time. 0
+	// selects defaultHoldReclassifyInterval.
+	HoldReclassifyInterval time.Duration
 	// ExecutionLease overrides the lease a dispatched execution's claim is
 	// heartbeated at. 0 selects the Kind's own declared lease, which is what a
 	// deployment gets; a test sets it so that a lease can elapse — and several
@@ -93,6 +97,13 @@ type JobRuntime struct {
 
 	lifeCtx    context.Context
 	cancelLife context.CancelFunc
+
+	// The reclassification of download holds an older release recorded:
+	// its interval, when the next batch is due and where it continues.
+	holdInterval time.Duration
+	holdMu       sync.Mutex
+	holdDue      time.Time
+	holdCursor   string
 
 	stop      chan struct{}
 	stopOnce  sync.Once
@@ -122,8 +133,13 @@ func NewJobRuntime(ctx *MahresourcesContext, service *jobs.Service, config JobRu
 	if config.QuiesceTimeout <= 0 {
 		config.QuiesceTimeout = defaultJobRuntimeQuiesceTimeout
 	}
+	if config.HoldReclassifyInterval <= 0 {
+		config.HoldReclassifyInterval = defaultHoldReclassifyInterval
+	}
 	lifeCtx, cancelLife := context.WithCancel(context.Background())
 	return &JobRuntime{
+		holdInterval:   config.HoldReclassifyInterval,
+		holdDue:        time.Now().Add(config.HoldReclassifyInterval),
 		ctx:            ctx,
 		service:        service,
 		claimant:       config.Claimant,
@@ -268,6 +284,8 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		log.Printf("job runtime: reconciling quarantined work failed: %v", err)
 	}
 
+	r.reclassifyHoldsOnCadence(time.Now())
+
 	// A Kind this process cannot run at all leaves its pending work in a state
 	// nobody is asked about, so this pass blocks it: nonterminal, visible, and
 	// owned by the person who has to decide what happens to it.
@@ -286,11 +304,11 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		}
 		// A Kind can name waiting Jobs that cannot start yet, so they stay waiting
 		// and hold nothing instead of being claimed only to be handed back.
-		var passOver []string
-		if excluder, ok := registration.Adapter.(interface{ ClaimExclusions() []string }); ok {
-			passOver = excluder.ClaimExclusions()
-		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
+			// Asked before every claim rather than once per pass: an execution this
+			// pass started can hand its Job back and name it here before the next
+			// claim, and a list read once would claim it again at once.
+			passOver := r.claimPassOver(registration)
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:          registration.Definition.Kind,
 				KindVersion:   registration.Definition.KindVersion,
@@ -311,6 +329,52 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			r.startExecution(registration.Adapter, execution, r.executionLeaseFor(registration.Adapter))
 		}
 	}
+}
+
+// defaultHoldReclassifyInterval is how often the runtime looks for download holds
+// an older release recorded as blocked. Startup has already moved every one it
+// found, so this only catches what an older process of a rolling upgrade records
+// later, and it can be slow.
+const defaultHoldReclassifyInterval = 5 * time.Minute
+
+// reclassifyHoldsOnCadence moves one batch of download holds an older release
+// recorded as blocked into paused, once per holdInterval, continuing from where the
+// previous batch stopped and starting again from the first once it reaches the
+// last. The pass is version-guarded and idempotent, so every process may run it.
+func (r *JobRuntime) reclassifyHoldsOnCadence(now time.Time) {
+	if r.ctx == nil {
+		return
+	}
+	r.holdMu.Lock()
+	defer r.holdMu.Unlock()
+	if now.Before(r.holdDue) {
+		return
+	}
+	r.holdDue = now.Add(r.holdInterval)
+	moved, next, err := r.ctx.ReclassifyDownloadHoldsBatch(r.holdCursor, jobDownloadHoldBatch)
+	if err != nil {
+		log.Printf("job runtime: recording paused downloads an older release held as blocked failed: %v", err)
+		return
+	}
+	r.holdCursor = next
+	if moved > 0 {
+		log.Printf("job runtime: %d download(s) an older release held as blocked are now paused", moved)
+	}
+}
+
+// claimPassOver names the waiting Jobs of one Kind that cannot start yet, which the
+// claim passes over so they wait holding nothing: the Kind's own (ClaimExclusions),
+// and every Kind's whose last dispatch could not check the account it acts as,
+// until its deferral runs out.
+func (r *JobRuntime) claimPassOver(registration jobs.AdapterRegistration) []string {
+	var passOver []string
+	if excluder, ok := registration.Adapter.(interface{ ClaimExclusions() []string }); ok {
+		passOver = excluder.ClaimExclusions()
+	}
+	if r.ctx != nil {
+		passOver = append(passOver, r.ctx.dispatchChecks.passOver(registration.Definition.Kind, time.Now())...)
+	}
+	return passOver
 }
 
 // executionLeaseFor is the lease this runtime heartbeats one execution at: the

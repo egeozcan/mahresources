@@ -355,6 +355,111 @@ func TestJobRowProgressNamesEveryBar(t *testing.T) {
 	}
 }
 
+// TestOnlyRunningWorkReadsAsWorking pins what a card says about work nobody is
+// doing: a scheduled or queued Job with nothing to report draws no bar at all, a
+// paused one keeps what it reports without pulsing, and a failed Job's last
+// report is never called "Working". Running work with nothing to report is the
+// one bar that is indeterminate.
+func TestOnlyRunningWorkReadsAsWorking(t *testing.T) {
+	i64 := func(v int64) *int64 { return &v }
+	for _, state := range []jobs.State{jobs.StateScheduled, jobs.StateQueued, jobs.StatePaused, jobs.StateBlocked, jobs.StateFailed, jobs.StateInterrupted, jobs.StateCancelled} {
+		if bar := jobRowProgress(jobs.Snapshot{State: state}); bar != nil {
+			t.Fatalf("a %s Job with nothing to report drew %+v", state, bar)
+		}
+		if bar := jobRowProgress(jobs.Snapshot{State: state, Phase: "queued", Progress: jobs.Progress{Phase: "queued"}}); bar != nil {
+			t.Fatalf("a %s Job whose only report is its phase drew %+v", state, bar)
+		}
+		if bar := jobRowProgress(jobs.Snapshot{State: state, Progress: jobs.Progress{Total: i64(100)}}); bar != nil {
+			t.Fatalf("a %s Job whose only report is a total drew %+v", state, bar)
+		}
+	}
+	running := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning})
+	if running == nil || running.Text != "Working" || !running.Indeterminate {
+		t.Fatalf("running work with nothing to report = %+v", running)
+	}
+	waiting := jobRowProgress(jobs.Snapshot{State: jobs.StateQueued, Progress: jobs.Progress{Message: "Waiting for another download of this URL to finish"}})
+	if waiting == nil || waiting.Indeterminate || waiting.Text != "Waiting for another download of this URL to finish" {
+		t.Fatalf("queued work that says why it waits = %+v", waiting)
+	}
+	paused := jobRowProgress(jobs.Snapshot{State: jobs.StatePaused, Progress: jobs.Progress{Completed: i64(7), Unit: "bytes", Message: "Paused"}})
+	if paused == nil || paused.Indeterminate || paused.Text != "Paused" {
+		t.Fatalf("paused work with an unknown total = %+v", paused)
+	}
+	failed := jobRowProgress(jobs.Snapshot{State: jobs.StateFailed, Progress: jobs.Progress{Completed: i64(7), Unit: "bytes"}})
+	if failed == nil || failed.Indeterminate || failed.Text == "Working" {
+		t.Fatalf("failed work's last report = %+v", failed)
+	}
+}
+
+// TestAStoppedJobThatReportedOnlyMetricsShowsThem: a metric is a report, on the
+// card as on the Job Center, and the card's text names the first one rather than
+// calling stopped work "Working".
+func TestAStoppedJobThatReportedOnlyMetricsShowsThem(t *testing.T) {
+	total := float64(40)
+	metrics := []jobs.Metric{
+		{Key: "downloaded", Label: "Downloaded", Value: 12 * 1024 * 1024, Unit: "bytes"},
+		{Key: "segments", Label: "Segments", Value: 4, Total: &total},
+	}
+	failed := jobRowProgress(jobs.Snapshot{State: jobs.StateFailed, Progress: jobs.Progress{Metrics: metrics}})
+	if failed == nil || failed.Indeterminate || failed.Text != "Downloaded: 12.0 MB" {
+		t.Fatalf("a failed Job that reported only metrics = %+v", failed)
+	}
+	if got := jobMetricSummary(metrics[1]); got != "Segments: 4 of 40" {
+		t.Fatalf("a metric with a total reads %q", got)
+	}
+	running := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Metrics: metrics}})
+	if running == nil || running.Text != "Working" || !running.Indeterminate {
+		t.Fatalf("running work that reported only metrics = %+v", running)
+	}
+}
+
+// TestJobRowSaysWhenScheduledWorkStarts: the time is what tells one scheduled
+// Job from another, and the card shows it, in the same zone as its other times.
+func TestJobRowSaysWhenScheduledWorkStarts(t *testing.T) {
+	due := time.Date(2026, 9, 28, 12, 17, 0, 0, time.UTC)
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "s", Kind: "deferred-download", State: jobs.StateScheduled, ScheduledFor: &due})
+	if row.ScheduledFor.ISO == "" || row.ScheduledFor.ISO != due.In(time.Local).Format(time.RFC3339) {
+		t.Fatalf("the scheduled row names its start as %+v", row.ScheduledFor)
+	}
+	if row.Progress != nil {
+		t.Fatalf("scheduled work drew a progress bar: %+v", row.Progress)
+	}
+	started := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "r", Kind: "deferred-download", State: jobs.StateRunning, ScheduledFor: &due})
+	if started.ScheduledFor.ISO != "" {
+		t.Fatalf("a download that already started still says when it will start: %+v", started.ScheduledFor)
+	}
+}
+
+// TestJobRowBadgeFollowsTheStateTable: a card's badge colour is its state's tone,
+// so a paused Job is not drawn as a failure and a blocked one reads as needing
+// attention rather than as failed.
+func TestJobRowBadgeFollowsTheStateTable(t *testing.T) {
+	cases := map[jobs.State]string{
+		jobs.StateRunning:     "card-badge--live",
+		jobs.StateQueued:      "card-badge--live",
+		jobs.StatePaused:      "card-badge--live",
+		jobs.StateBlocked:     "card-badge--warning",
+		jobs.StateSucceeded:   "card-badge--success",
+		jobs.StateFailed:      "card-badge--danger",
+		jobs.StateInterrupted: "card-badge--danger",
+		jobs.StateCancelled:   "card-badge--muted",
+	}
+	for state, want := range cases {
+		if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "x", State: state}).BadgeClass; got != want {
+			t.Fatalf("a %s card's badge is %q, want %q", state, got, want)
+		}
+	}
+	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "card-badge--warning" {
+		t.Fatalf("a partial success's badge is %q", got)
+	}
+	// A pause asked for and not yet confirmed: the card says it is pausing, not
+	// that it is paused, and its work still reads as work in progress.
+	pausing := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "q", State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause})
+	if pausing.StateLabel != "Pausing" || pausing.Progress == nil || !pausing.Progress.Indeterminate {
+		t.Fatalf("a running Job with a pause requested is %q with progress %+v", pausing.StateLabel, pausing.Progress)
+	}
+}
+
 // TestJobFilterFormKeepsWhatTheURLAsked covers the form's round trip: every origin
 // the URL named stays in the field, and an instant from a bookmark or the legacy
 // /downloads translator keeps its time of day rather than widening to a date.

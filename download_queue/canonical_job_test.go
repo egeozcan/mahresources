@@ -30,6 +30,8 @@ type recordingCanonicalSink struct {
 	held        []recordedMirror
 	finished    []recordedMirror
 	interrupted []recordedMirror
+	// heldAnswer is what the durable Job makes of a hold; nil records it.
+	heldAnswer func(ref CanonicalRef) HoldRecord
 }
 
 func (s *recordingCanonicalSink) DownloadProgress(ref CanonicalRef, snap *DownloadJob) error {
@@ -39,11 +41,15 @@ func (s *recordingCanonicalSink) DownloadProgress(ref CanonicalRef, snap *Downlo
 	return nil
 }
 
-func (s *recordingCanonicalSink) DownloadHeld(ref CanonicalRef, snap *DownloadJob) error {
+func (s *recordingCanonicalSink) DownloadHeld(ref CanonicalRef, snap *DownloadJob) HoldRecord {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.held = append(s.held, recordedMirror{ref: ref, snap: snap})
-	return nil
+	answer := s.heldAnswer
+	s.mu.Unlock()
+	if answer == nil {
+		return HoldRecorded
+	}
+	return answer(ref)
 }
 
 func (s *recordingCanonicalSink) DownloadFinished(ref CanonicalRef, snap *DownloadJob) error {

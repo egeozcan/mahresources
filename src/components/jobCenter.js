@@ -9,18 +9,15 @@ import {
     liveRateText,
     formatMetric,
     formatRate,
+    metricSummary,
     graphLatest,
     graphSeries,
     graphSummary,
     sparklinePath,
 } from './jobProgress.js';
+import { isWorking, presentState, scheduledStartText } from './jobStates.js';
 
-export const JOB_STATES = Object.freeze([
-    'scheduled', 'queued', 'running', 'paused', 'blocked',
-    'succeeded', 'failed', 'cancelled', 'interrupted',
-]);
-const ACTIVE_STATES = ['scheduled', 'queued', 'running', 'paused'];
-const ATTENTION_STATES = ['blocked', 'failed', 'interrupted'];
+export { JOB_STATES } from './jobStates.js';
 
 export function advertisedCommands(job) {
     return Array.isArray(job?.commands) ? job.commands : [];
@@ -205,11 +202,14 @@ export function isPartialSuccess(job) {
     return stateOf(job) === 'succeeded' && job?.phase === 'partial';
 }
 
+// The label every Job surface shows for a state (server/jobview/job_states.json).
 export function stateLabel(job) {
-    const state = stateOf(job);
-    if (!state) return 'Unknown';
-    if (isPartialSuccess(job)) return 'Partially completed';
-    return state.charAt(0).toUpperCase() + state.slice(1).replaceAll('-', ' ');
+    return presentState(job).label;
+}
+
+// When scheduled work starts, for a Job still waiting for its time.
+export function scheduledText(job, now = Date.now()) {
+    return scheduledStartText(job, now);
 }
 
 // Why a Job failed, in the words its Kind recorded: the message, or the code when
@@ -238,12 +238,10 @@ export function phaseText(job) {
     return isPartialSuccess(job) ? '' : String(job?.phase || '');
 }
 
+// The drawer group a state belongs to: attention, active, finished (the finished
+// Jobs that need no attention) or other.
 export function classifyJobState(jobOrState) {
-    const state = typeof jobOrState === 'string' ? jobOrState.toLowerCase() : stateOf(jobOrState);
-    if (ATTENTION_STATES.includes(state)) return 'attention';
-    if (ACTIVE_STATES.includes(state)) return 'active';
-    if (JOB_STATES.includes(state)) return 'finished';
-    return 'other';
+    return presentState(jobOrState).group;
 }
 
 export function selectedBulkCommands(jobs, selectedIds) {
@@ -445,7 +443,24 @@ export function progressText(job) {
     if (completed !== null && completed !== undefined && total > 0) {
         return `${completed} / ${total}${progress.unit ? ` ${progress.unit}` : ''}`;
     }
-    return progress.phase || (completed !== null && completed !== undefined ? String(completed) : 'Working');
+    if (progress.phase) return progress.phase;
+    if (completed !== null && completed !== undefined) return String(completed);
+    if (isWorking(job)) return 'Working';
+    // Work nobody is doing that reported only metrics names the first of them,
+    // as the /jobs card does.
+    return Array.isArray(progress.metrics) ? metricSummary(progress.metrics[0]) : '';
+}
+
+// Whether a Job has progress to show: something it reported, a success (which
+// reads as complete), or work an executor is doing now. A Job that is waiting,
+// paused or stopped with nothing reported shows none; its phase alone is shown
+// beside its state.
+export function showsProgress(job) {
+    if (stateOf(job) === 'succeeded' || isWorking(job)) return true;
+    const progress = job?.progress || {};
+    // A total alone reports no work done.
+    return Number.isFinite(progress.completed) || !!progress.message ||
+        (Array.isArray(progress.metrics) && progress.metrics.length > 0);
 }
 
 export function progressValue(job) {
@@ -456,10 +471,10 @@ export function progressValue(job) {
 }
 
 // Whether the progress bar may animate and read "In progress". An unknown total
-// on a job that has stopped — failed, cancelled, interrupted, blocked — stays
-// unknown, but nothing is working on it any more.
+// on work nobody is doing — waiting, paused or stopped — stays unknown, but
+// nothing is working on it.
 export function progressIndeterminate(job) {
-    return progressValue(job) === null && classifyJobState(job) === 'active';
+    return progressValue(job) === null && isWorking(job);
 }
 
 export function progressAccessibleText(job) {
@@ -905,6 +920,8 @@ export function jobCenter(options = {}) {
         progressAccessibleText(job) { return progressAccessibleText(job); },
         progressIndeterminate(job) { return progressIndeterminate(job); },
         stateLabel(job) { return stateLabel(job); },
+        scheduledText(job) { return scheduledText(job, this.now); },
+        showsProgress(job) { return showsProgress(job); },
         phaseText(job) { return phaseText(job); },
         accountText(job, role) { return jobAccountText(job, role); },
         stateClass(job) { return classifyJobState(job); },

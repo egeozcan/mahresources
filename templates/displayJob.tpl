@@ -25,6 +25,7 @@
                         <span x-show="phaseText(detail)" x-text="phaseText(detail)"></span>
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
+                    <p x-show="scheduledText(detail)" x-cloak class="mt-2 text-sm text-stone-800" data-job-scheduled-for x-text="scheduledText(detail)"></p>
                 </div>
                 <div class="flex flex-wrap gap-2" role="group" aria-label="Advertised job commands">
                     {# aria-disabled, not disabled, while a command runs: a disabled button drops the focus it holds. #}
@@ -52,12 +53,16 @@
                         <dt class="text-xs text-stone-500">Origin</dt>
                         <dd class="break-words text-stone-800" x-text="detail.origin"></dd>
                     </div>
+                    <div x-show="detail.scheduledFor" x-cloak>
+                        <dt class="text-xs text-stone-500">Scheduled for</dt>
+                        <dd class="text-stone-800"><time :datetime="detail.scheduledFor" x-text="detail.scheduledFor ? new Date(detail.scheduledFor).toLocaleString() : ''"></time></dd>
+                    </div>
                 </dl>
             </section>
 
             <p x-show="noticeText" x-cloak data-job-notice class="rounded border border-stone-200 bg-white p-3 text-sm text-stone-800" x-text="noticeText"></p>
 
-            <template x-if="detail.progress">
+            <template x-if="showsProgress(detail)">
                 <section aria-labelledby="job-progress-heading" class="rounded border border-stone-200 bg-white p-4">
                     <h2 id="job-progress-heading" class="font-mono text-sm font-semibold text-stone-800">Progress</h2>
                     <p class="mt-2 text-sm text-stone-700" x-text="progressText(detail)"></p>

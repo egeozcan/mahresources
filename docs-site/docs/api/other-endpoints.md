@@ -35,11 +35,15 @@ independently of the canonical Job Center release gate.
 
 | Method | Endpoint | Behavior |
 |--------|----------|----------|
-| `GET` | `/v1/admin/jobs/migration-readiness` | Return whether the migration barrier is ready, the minimum writer epoch, current phase, source counts, and blockers; requires an administrator |
+| `GET` | `/v1/admin/jobs/migration-readiness` | Return whether the migration barrier is ready, the minimum writer epoch, current phase, source counts, blockers, and the unfinished Jobs to review; requires an administrator |
 
 The JSON response contains `ready` (boolean), `writerEpoch` (integer), `phase`
-(string), `sourceCounts` (source name to count), and `blockers` (array of
-strings). The route does not change migration state. Recheck it after restoring
+(string), `sourceCounts` (source kind to mapping status to count), `blockers`
+(blocker code to count), and `reviewCandidates`: `count`, and `jobs`, the
+oldest 100 as `id`, `kind`, `state` and `acceptedAt`. A review candidate is an
+unfinished Job that may belong to an account deleted before this release (see
+[Advanced Configuration](../configuration/advanced.md#unfinished-jobs-of-accounts-deleted-before-this-release));
+candidates do not make `ready` false. The route does not change migration state. Recheck it after restoring
 a pre-retirement backup; a completion marker from the original database does
 not establish readiness for the restored copy. A `403` means the caller is not
 an administrator.
@@ -72,6 +76,11 @@ List, summary, and export share these optional filters: `state`/`states`,
 deleted) and `owner=me` (the asking account's own Jobs, without naming its id);
 an export refuses those four, and `state=partial`, with a `400`.
 Repeating a token parameter or comma-separating its values is supported.
+`command` lists the Jobs that currently offer that command to the asker. `pin`
+and `unpin` are advertised on every Job, so a bulk selection of pinned and
+unpinned Jobs can do either; the filter lists the Jobs a single Job's controls
+offer them on, `pin` the ones the asker has not pinned and `unpin` the ones
+they have.
 A Job's `pinned` and `dismissed` fields are the asking viewer's own
 preferences; the `dismiss` and `undismiss` commands set and clear the second.
 As filters, `pinned` and `dismissed` take `true`, `false` or `any`; `any` applies no
@@ -886,7 +895,7 @@ keeps no plaintext URL, so that row's `url` is the scheme and host only
 | Endpoint | Description |
 |----------|-------------|
 | `POST /v1/jobs/cancel?id={job_id}` | Cancel a job that has not finished -- pending, downloading, processing or paused. A finished job answers `409 Conflict`; an unknown id answers `404`. |
-| `POST /v1/jobs/pause?id={job_id}` | Pause a download job. A job in a state that cannot be paused answers `409 Conflict`. |
+| `POST /v1/jobs/pause?id={job_id}` | Pause a download job. Answers once the Job records the pause; a pause not recorded within five seconds, or a job in a state that cannot be paused, answers `409 Conflict`. Pausing a download already paused answers `paused`. |
 | `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
 | `GET /v1/jobs/get?id={job_id}` | Return one job snapshot by id. Answers `404` for an unknown id or a job the caller may not see. No legacy alias. |

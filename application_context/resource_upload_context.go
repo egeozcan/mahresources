@@ -1090,6 +1090,22 @@ func (submitterRefusedError) Error() string {
 
 func (submitterRefusedError) FailureCode() string { return download_queue.FailureSubmitterRefused }
 
+// accountCheckUnavailableError is a background download whose submitter's
+// account could not be read once its bytes were in. Nothing is saved, as for a
+// refusal, but the account refused nothing: the failure is the read's, and a
+// Retry can succeed once the database answers.
+type accountCheckUnavailableError struct{ cause error }
+
+func (accountCheckUnavailableError) Error() string {
+	return "the account that submitted this download could not be checked once its bytes were in, so nothing was saved; Retry downloads it again"
+}
+
+func (e accountCheckUnavailableError) Unwrap() error { return e.cause }
+
+func (accountCheckUnavailableError) FailureCode() string {
+	return download_queue.FailureAccountCheckUnavailable
+}
+
 // submitterResourceCreator is the ResourceCreator WithActorUserID returns: every
 // create goes through addResourceWithOptions with the submitter to rebind after
 // the body has been copied.
@@ -1302,7 +1318,12 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	// what follows (deduplication, the insert, the after-create hooks) answers to
 	// the account as it stands now.
 	if opts.RebindSubmitter != 0 {
-		bound, permitted := ctx.bindSubmitter(opts.RebindSubmitter)
+		bound, permitted, err := ctx.bindSubmitter(opts.RebindSubmitter)
+		if err != nil {
+			ctx.Logger().Warning(models.LogActionSystem, "user", nil, actorUnresolvedLogName,
+				fmt.Sprintf("could not read user %d once a download's bytes were in; nothing was saved: %v", opts.RebindSubmitter, err), nil)
+			return nil, accountCheckUnavailableError{cause: err}
+		}
 		if !permitted {
 			return nil, errSubmitterRefused
 		}

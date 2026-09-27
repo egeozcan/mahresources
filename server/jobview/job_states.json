@@ -1,0 +1,19 @@
+{
+  "states": {
+    "scheduled": { "label": "Scheduled", "group": "active", "tone": "waiting", "working": false, "terminal": false },
+    "queued": { "label": "Queued", "group": "active", "tone": "waiting", "working": false, "terminal": false },
+    "running": { "label": "Running", "group": "active", "tone": "working", "working": true, "terminal": false },
+    "paused": { "label": "Paused", "group": "active", "tone": "paused", "working": false, "terminal": false },
+    "blocked": { "label": "Blocked", "group": "attention", "tone": "warning", "working": false, "terminal": false },
+    "succeeded": { "label": "Succeeded", "group": "finished", "tone": "done", "working": false, "terminal": true },
+    "failed": { "label": "Failed", "group": "attention", "tone": "failed", "working": false, "terminal": true },
+    "cancelled": { "label": "Cancelled", "group": "finished", "tone": "neutral", "working": false, "terminal": true },
+    "interrupted": { "label": "Interrupted", "group": "attention", "tone": "failed", "working": false, "terminal": true }
+  },
+  "partial": { "label": "Partially completed", "tone": "warning" },
+  "runningIntents": {
+    "pause": { "label": "Pausing", "tone": "paused" },
+    "cancel": { "label": "Cancelling", "tone": "working" }
+  },
+  "unknown": { "label": "Unknown", "group": "other", "tone": "neutral", "working": false, "terminal": false }
+}

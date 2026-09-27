@@ -293,7 +293,8 @@ During rollout, an administrator can inspect the current barrier through
 `GET /v1/admin/jobs/migration-readiness`. The response's `ready` field is true
 only when the migration barrier is satisfied; `writerEpoch` reports the
 database minimum, `phase` reports the current migration phase, `sourceCounts`
-reports per-source counts, and `blockers` lists remaining conditions. The
+reports per-source counts, `blockers` lists remaining conditions, and
+`reviewCandidates` lists unfinished Jobs to review (see the next section). The
 endpoint is read-only and requires an administrator role. Check readiness
 before admitting traffic after an epoch advance, and investigate every blocker
 before proceeding.
@@ -301,6 +302,15 @@ before proceeding.
 Rollback after epoch advancement uses a compatible release that understands
 the canonical schema. Do not roll back to a plaintext writer. Keep the release
 that advanced the epoch available until the rollback window closes.
+
+Two behaviours of paused downloads matter while processes of this release and
+an earlier one run against one database. An earlier release recorded a
+person's pause of a download as `blocked`. Each start of this release records
+those Jobs as `paused`, and every process of this release looks for more every
+five minutes, so ones an older process records later are moved too. And a download paused through the Job Center while an earlier-release
+process is running its transfer is not paused there: that process does not
+act on pause requests, so the Job reads **Pausing** until the transfer ends.
+Cancel still stops it.
 
 Legacy download and Job compatibility routes remain supported for at least one
 documented release and six months after canonical cutover.
@@ -323,6 +333,13 @@ WHERE state IN ('scheduled', 'queued', 'running', 'paused', 'blocked')
   AND owner_user_id IS NULL AND actor_user_id IS NULL
   AND owner_deleted = false AND actor_deleted = false;
 ```
+
+The server finds the same rows itself. The readiness check reports them as
+`reviewCandidates` (their count, and the oldest 100 by id, Kind, state and
+acceptance time), and each start logs a warning naming them while any remain.
+They do not make `ready` false and do not stop the server from starting,
+because the row cannot tell them apart from legitimate work, and cancelling one
+needs a running server.
 
 A row here either belongs to an account deleted before this release or was
 started with no account at all, such as plugin work that no request started;

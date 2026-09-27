@@ -78,8 +78,10 @@ const queueJobPollInterval = 100 * time.Millisecond
 // tick and this is a second query.
 const queueJobIntentPollInterval = time.Second
 
-// deliverCancelIntent reads one owned execution's durable control intent and, when a
+// deliverControlIntent reads one owned execution's durable control intent and, when a
 // cancellation is waiting, stops the queue entry carrying the work in this process.
+// A waiting pause is held here too, for work that can be paused; a queue entry that
+// cannot refuses it, and the request stands until the Job leaves running.
 //
 // next is the waiting loop's own clock for this check, so the several loops that need it
 // do not each grow a ticker: the zero value asks immediately, which is what a Job
@@ -89,7 +91,7 @@ const queueJobIntentPollInterval = time.Second
 // already being cancelled, or gone from this process's registry is exactly what a
 // delivered cancellation looks like, and the terminal publish that follows is what
 // records the outcome.
-func (ctx *MahresourcesContext) deliverCancelIntent(execution jobs.Execution, entry *download_queue.DownloadJob, next *time.Time) {
+func (ctx *MahresourcesContext) deliverControlIntent(execution jobs.Execution, entry *download_queue.DownloadJob, next *time.Time) {
 	now := time.Now()
 	if next != nil {
 		if now.Before(*next) {
@@ -103,6 +105,15 @@ func (ctx *MahresourcesContext) deliverCancelIntent(execution jobs.Execution, en
 	}
 	snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
 	if err != nil || snap.State.Terminal() {
+		return
+	}
+	if snap.ControlIntent == jobs.ControlIntentPause {
+		if err := ctx.downloadManager.Pause(entry.ID); err != nil {
+			var conflict *download_queue.StateConflictError
+			if !errors.As(err, &conflict) {
+				log.Printf("warning: job %s was paused and its executor's entry could not be held: %v", execution.JobID, err)
+			}
+		}
 		return
 	}
 	if snap.ControlIntent != jobs.ControlIntentCancel {
@@ -569,7 +580,7 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 				published = progress
 			}
 		}
-		ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
+		ctx.deliverControlIntent(execution, entry, &nextIntentCheck)
 		<-ticker.C
 	}
 }
@@ -936,7 +947,7 @@ func (ctx *MahresourcesContext) waitForQueueExecution(
 					published = progress
 				}
 			}
-			ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
+			ctx.deliverControlIntent(execution, entry, &nextIntentCheck)
 			if queueJobTerminal(snap.Status) {
 				return snap, nil
 			}

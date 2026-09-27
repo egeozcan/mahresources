@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"mahresources/application_context"
 	"mahresources/jobs"
@@ -37,4 +39,27 @@ func validateJobCenterCutover(service *jobs.Service, readiness application_conte
 		return fmt.Errorf("Job Center cutover blocked: %w", err)
 	}
 	return nil
+}
+
+// warnJobPrincipalReviewCandidates says, at every start while any remain, which
+// unfinished Jobs may be a deleted account's work that would now run as the host
+// (application_context.jobPrincipalReviewCandidates). It is a warning rather than
+// a refusal to start: the rows cannot be told apart from legitimate actorless work.
+func warnJobPrincipalReviewCandidates(review application_context.JobReviewCandidates) {
+	if review.Count == 0 {
+		return
+	}
+	ids := make([]string, 0, len(review.Jobs))
+	for _, job := range review.Jobs {
+		ids = append(ids, job.ID+" ("+job.Kind+", "+job.State+")")
+	}
+	more := ""
+	if review.Count > int64(len(review.Jobs)) {
+		more = fmt.Sprintf(" and %d more", review.Count-int64(len(review.Jobs)))
+	}
+	log.Printf("[jobs] WARNING: %d unfinished Job(s) record no owner, no actor and no deleted account, and run as the server itself. "+
+		"An earlier release may have cleared the account that submitted them. Review them before admitting traffic "+
+		"(\"Unfinished Jobs of accounts deleted before this release\" in the advanced configuration docs, "+
+		"or reviewCandidates in GET /v1/admin/jobs/migration-readiness): %s%s",
+		review.Count, strings.Join(ids, ", "), more)
 }

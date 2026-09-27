@@ -43,6 +43,8 @@ func downloadCommandStates(key string) ([]jobs.State, bool) {
 	switch key {
 	case jobs.CommandCancel:
 		return nil, true
+	case jobs.CommandPause:
+		return []jobs.State{jobs.StateRunning}, true
 	case jobs.CommandResume:
 		return []jobs.State{jobs.StateBlocked, jobs.StatePaused}, true
 	case jobs.CommandRetry:

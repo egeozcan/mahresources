@@ -854,10 +854,14 @@ func (s *Service) applyHostOnlyCommandFilter(base *gorm.DB, deps Deps, access Ac
 		}
 		return base.Where("jobs.state IN ?", terminalJobStates()), true, nil
 	case CommandPin, CommandUnpin:
+		// Both are advertised on every Job, so a bulk selection that mixes pinned
+		// and unpinned Jobs can do either. One Job is offered only the one that
+		// changes its viewer's pin, and the filter lists the Jobs that offer it:
+		// Pin the ones this viewer has not pinned, Unpin the ones they have.
 		if access.UserID == 0 {
 			return base.Where("1 = 0"), true, nil
 		}
-		return base, true, nil
+		return base.Where(preferencePredicate("pinned_at", key == CommandUnpin), access.UserID), true, nil
 	case CommandPinLineage:
 		if access.UserID == 0 {
 			return base.Where("1 = 0"), true, nil

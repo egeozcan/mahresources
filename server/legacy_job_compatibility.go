@@ -3,9 +3,12 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"mahresources/application_context"
+	"mahresources/download_queue"
 	"mahresources/server/template_handlers/template_context_providers"
 )
 
@@ -35,24 +38,26 @@ func legacyJobHandler(handler http.HandlerFunc) http.HandlerFunc {
 // legacyDownloadsLocation carries filters the Job Center can represent to its
 // canonical query vocabulary. Filters with no equivalent are intentionally
 // omitted rather than rewritten into a query with different meaning.
+//
+// Both download Kinds are listed: a download scheduled for later was a download on
+// the page this address used to show, and a legacy status names every canonical
+// state the legacy projection reads as that status, taken from the projection
+// itself (application_context.LegacyDownloadStatusStates): so "pending" includes
+// scheduled work, "paused" includes blocked work, which a Resume lifts as it
+// lifts a pause, and "failed" includes interrupted work.
 func legacyDownloadsLocation(values url.Values) string {
 	query := make(url.Values)
-	query.Set("kind", "remote-download")
+	query.Add("kind", "remote-download")
+	query.Add("kind", "deferred-download")
 	// The Job Center's default, written out so the translated address is one the
 	// page shows a list under rather than one it redirects again.
 	query.Set("dismissed", "false")
 	for _, value := range values["Status"] {
-		state := map[string]string{
-			"pending":     "queued",
-			"downloading": "running",
-			"processing":  "running",
-			"paused":      "paused",
-			"completed":   "succeeded",
-			"failed":      "failed",
-			"cancelled":   "cancelled",
-		}[strings.ToLower(strings.TrimSpace(value))]
-		if state != "" {
-			query.Add("state", state)
+		status := download_queue.JobStatus(strings.ToLower(strings.TrimSpace(value)))
+		for _, state := range application_context.LegacyDownloadStatusStates(status) {
+			if !slices.Contains(query["state"], string(state)) {
+				query.Add("state", string(state))
+			}
 		}
 	}
 	if value := strings.TrimSpace(values.Get("URL")); value != "" {

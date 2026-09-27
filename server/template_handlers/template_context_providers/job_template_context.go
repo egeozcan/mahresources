@@ -41,11 +41,13 @@ const (
 )
 
 // Quick-filter groupings. Their names are the glossary's (CONTEXT.md): Active
-// and Finished Jobs, and the Jobs that Need Attention.
+// and Finished Jobs, and the Jobs that Need Attention. They come from the state
+// table every Job surface reads (jobview.PresentState), and Finished is every
+// terminal state, so a failed Job is both Finished and Needs attention here.
 var (
-	jobStatesNeedingAttention = []string{string(jobs.StateBlocked), string(jobs.StateFailed), string(jobs.StateInterrupted)}
-	jobStatesActive           = []string{string(jobs.StateScheduled), string(jobs.StateQueued), string(jobs.StateRunning), string(jobs.StatePaused)}
-	jobStatesFinished         = []string{string(jobs.StateSucceeded), string(jobs.StateFailed), string(jobs.StateCancelled), string(jobs.StateInterrupted)}
+	jobStatesNeedingAttention = jobview.StatesInGroup("attention")
+	jobStatesActive           = jobview.StatesInGroup("active")
+	jobStatesFinished         = jobview.TerminalStates()
 )
 
 // JobListReader is what the /jobs page reads, as the viewer.
@@ -71,11 +73,13 @@ var _ JobAccountReader = (*application_context.MahresourcesContext)(nil)
 
 // JobRow is one Job as the list card draws it.
 type JobRow struct {
-	ID             string
-	Title          string
-	Kind           string
-	State          string
-	StateLabel     string
+	ID         string
+	Title      string
+	Kind       string
+	State      string
+	StateLabel string
+	// BadgeClass is the badge colour the state's tone takes (jobRowBadgeClasses).
+	BadgeClass     string
 	Phase          string
 	Pinned         bool
 	SummaryText    string
@@ -85,9 +89,12 @@ type JobRow struct {
 	// in a pongo2 `if`: the empty string is what the template tests.
 	Started  JobRowTime
 	Finished JobRowTime
-	Version  uint64
-	Progress *JobRowProgress
-	Result   jobview.ResultLink
+	// ScheduledFor is when scheduled work starts, set only while it is waiting
+	// for that time.
+	ScheduledFor JobRowTime
+	Version      uint64
+	Progress     *JobRowProgress
+	Result       jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
@@ -664,9 +671,11 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	if title == "" {
 		title = snapshot.ID
 	}
+	presentation := jobview.PresentJob(snapshot)
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
-		StateLabel: jobStateLabel(snapshot), Phase: snapshot.Phase, Pinned: snapshot.Pinned,
+		StateLabel: presentation.Label, BadgeClass: jobRowBadgeClasses[presentation.Tone],
+		Phase: snapshot.Phase, Pinned: snapshot.Pinned,
 		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
 		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
 		Progress:  jobRowProgress(snapshot),
@@ -675,6 +684,9 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	if jobIsPartial(snapshot) {
 		// The badge already says it; the raw phase beside it would say it twice.
 		row.Phase = ""
+	}
+	if snapshot.State == jobs.StateScheduled {
+		row.ScheduledFor = jobRowTime(snapshot.ScheduledFor)
 	}
 	if snapshot.Failure != nil {
 		// The code when the Kind gave no message, as the Jobs drawer does, so a
@@ -707,14 +719,20 @@ func jobIsPartial(snapshot jobs.Snapshot) bool {
 }
 
 func jobStateLabel(snapshot jobs.Snapshot) string {
-	if jobIsPartial(snapshot) {
-		return "Partially completed"
-	}
-	text := strings.ReplaceAll(string(snapshot.State), "-", " ")
-	if text == "" {
-		return "Unknown"
-	}
-	return strings.ToUpper(text[:1]) + text[1:]
+	return jobview.PresentJob(snapshot).Label
+}
+
+// jobRowBadgeClasses is the card badge each state tone takes. A paused Job is
+// work still expected to go on, not an outcome; a blocked one needs attention
+// without having failed.
+var jobRowBadgeClasses = map[string]string{
+	"working": "card-badge--live",
+	"waiting": "card-badge--live",
+	"paused":  "card-badge--live",
+	"warning": "card-badge--warning",
+	"done":    "card-badge--success",
+	"failed":  "card-badge--danger",
+	"neutral": "card-badge--muted",
 }
 
 // jobSummaryText shows a Job's structured summary: a JSON string as its text,
@@ -735,15 +753,13 @@ func jobSummaryText(raw json.RawMessage) string {
 	return compact.String()
 }
 
-func jobIsActive(state jobs.State) bool {
-	return slices.Contains(jobStatesActive, string(state))
-}
-
 // jobRowProgress mirrors the progress rules the detail page and the panel use.
 // A succeeded Job reads as complete whatever its last progress row said: nothing
 // rewrites progress on the way out, so a download whose size was never known
-// would otherwise keep an unknown total forever. Stopped work with no progress
-// data draws no bar at all.
+// would otherwise keep an unknown total forever. Work nobody is doing — waiting,
+// paused or stopped — with nothing to report draws no bar at all, and only work
+// being done (the state table's Working) may pulse or read "Working". A phase
+// alone is not something to report: the card shows it beside the kind.
 func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 	out := jobRowProgressBar(snapshot)
 	if out != nil {
@@ -754,9 +770,12 @@ func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 
 func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	progress := snapshot.Progress
-	hasData := progress.Completed != nil || progress.Total != nil || progress.Message != "" || progress.Phase != ""
+	working := jobview.PresentJob(snapshot).Working
+	// A total alone reports no work done, so it is not something to show. A
+	// metric is a figure reported, and every surface shows it as one.
+	hasData := progress.Completed != nil || progress.Message != "" || len(progress.Metrics) > 0
 	succeeded := snapshot.State == jobs.StateSucceeded
-	if !hasData && !succeeded && !jobIsActive(snapshot.State) {
+	if !hasData && !succeeded && !working {
 		return nil
 	}
 
@@ -788,6 +807,10 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 		out.Text = progress.Phase
 	case progress.Completed != nil:
 		out.Text = fmt.Sprintf("%d", *progress.Completed)
+	case !working && len(progress.Metrics) > 0:
+		// Work nobody is doing that reported only metrics names the first of
+		// them rather than claiming to be working.
+		out.Text = jobMetricSummary(progress.Metrics[0])
 	default:
 		out.Text = "Working"
 	}
@@ -798,7 +821,7 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 		out.AccessibleText = out.Text
 		return out
 	}
-	out.Indeterminate = jobIsActive(snapshot.State)
+	out.Indeterminate = working
 	if progress.Completed != nil {
 		amount := fmt.Sprintf("%d", *progress.Completed)
 		if progress.Unit != "" {

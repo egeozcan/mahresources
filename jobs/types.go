@@ -1174,6 +1174,11 @@ type Transition struct {
 	Phase          string
 	Event          EventInput
 	Failure        *Failure
+	// Progress, when set, replaces the progress snapshot in the same write as the
+	// state change. A state that stops the work is where its row says what happens
+	// next, and a separate progress write under the execution's token could not
+	// follow it: leaving running clears the token.
+	Progress *Progress
 }
 
 // EventInput is a significant event to record alongside a transition (or on its
@@ -1732,6 +1737,12 @@ const (
 	// extends the lease: the adapter proved the owning runtime is still working,
 	// so nobody else may take the Job over.
 	ReconcileRemainRunning ReconcileDecision = "remain-running"
+	// ReconcilePause ends the running Job paused and frees its claim and
+	// capacity: a person asked for it to be held, and the adapter proved the
+	// execution that would have confirmed the hold stopped with the work at a
+	// point it can start again from. Without it the work would go back to the
+	// queue and start over the person's pause.
+	ReconcilePause ReconcileDecision = "pause"
 	// ReconcileExternalWorkUnproven is the answer for an adapter that cannot
 	// prove the external work the expired claim started has stopped. The Job
 	// becomes blocked but keeps its claim, its lease and its capacity, and it
@@ -1746,7 +1757,7 @@ const (
 var ReconcileDecisions = []ReconcileDecision{
 	ReconcileResume, ReconcileQueue, ReconcileSucceed, ReconcileFail,
 	ReconcileBlock, ReconcileInterrupt, ReconcileRemainRunning,
-	ReconcileExternalWorkUnproven,
+	ReconcilePause, ReconcileExternalWorkUnproven,
 }
 
 // ReconcileRequest is what an adapter is told about a claim whose lease expired:

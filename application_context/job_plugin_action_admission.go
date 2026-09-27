@@ -463,6 +463,14 @@ func (a *pluginActionAdmission) Deferral() time.Duration {
 	a.mu.Lock()
 	givenBack := a.givenBack
 	a.mu.Unlock()
+	return giveBackDeferral(givenBack)
+}
+
+// giveBackDeferral is how long work whose checks could not answer stays out of
+// its claim loop after the givenBack-th such attempt in a row: one second,
+// doubling, up to pluginActionGiveBackCap. Plugin-action admission and the
+// queue Kinds' dispatch (dispatchCheckDeferrals) wait alike.
+func giveBackDeferral(givenBack int) time.Duration {
 	if givenBack < 1 {
 		givenBack = 1
 	}

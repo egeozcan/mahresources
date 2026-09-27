@@ -11,10 +11,17 @@ id `jobs list` prints, or the legacy handle `job submit` returns as
 `id`. Pause only works while the download is queued or running in the
 server process that holds its transfer; the server answers HTTP 409
 Conflict for a Job no transfer in that process belongs to, such as one
-running in another server process, and rejects pause requests against
-finished, cancelled, or already-paused jobs. The
-transfer is cancelled, discarding the bytes received so far, and the
-Job waits until you call `job resume`.
+running in another server process, and for finished or cancelled jobs.
+The transfer is cancelled, discarding the bytes received so far, and the
+Job's state becomes `paused` until you call `job resume`, which starts
+the download again from the beginning. The command answers once the
+Job records the pause. A pause the Job has not recorded after five
+seconds, typically because the transfer is still saving its file, is
+answered 409 Conflict. Asking again is safe: a download already paused
+answers `paused` once the Job records it. A cancellation that reaches
+the Job first wins, and the pause is answered 409 naming the job as
+cancelled. To pause a download whichever server process is running it,
+use the canonical command: `mr job command <id> pause`.
 
 Generic jobs (group exports, imports) cannot be paused -- their runners
 are not re-entrant. Pause is intended for long URL fetches.
