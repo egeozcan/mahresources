@@ -391,7 +391,7 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('kind')).toBe('remote-download');
     expect(url.searchParams.get('state')).toBe('failed');
     expect(url.searchParams.get('search')).toBe('legacy-search');
-    expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00Z');
+    expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01');
     await expect(page.getByTestId('job-center')).toBeVisible();
     const form = page.getByRole('form', { name: 'Filter jobs' });
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();

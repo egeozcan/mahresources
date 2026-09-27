@@ -76,9 +76,12 @@ func legacyDownloadsLocation(values url.Values) string {
 	return "/jobs?" + query.Encode()
 }
 
+// canonicalJobTimeBound carries one legacy date bound. A bare date stays a date:
+// the Job Center reads it as the whole local day at either end, so an old link's
+// "from that day to that day" still lists that day rather than an empty instant.
 func canonicalJobTimeBound(value string) string {
-	if parsed, err := time.Parse("2006-01-02", value); err == nil {
-		return parsed.UTC().Format(time.RFC3339)
+	if _, err := time.Parse("2006-01-02", value); err == nil {
+		return value
 	}
 	if _, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return value

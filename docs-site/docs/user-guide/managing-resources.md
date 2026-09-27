@@ -428,7 +428,9 @@ Old `/downloads` links redirect to `/jobs` with recognized filters translated,
 listing downloads scheduled for later as well as immediate ones. A status
 filter lists every state the old page showed under that status: `pending`
 includes scheduled work, `paused` includes blocked work, and `failed` includes
-interrupted work.
+interrupted work. A bare date in `CreatedAfter` or `CreatedBefore` names the whole
+day in the server's time zone, as a date does on the Job Center, so a range from
+one day to the same day lists that day's downloads.
 Legacy `/v1/downloads` API routes remain available during the compatibility
 window. Download history retention remains configurable on `/admin/settings`;
 see [Job System](../features/job-system.md#retention) for canonical Job and
