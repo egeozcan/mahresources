@@ -270,8 +270,10 @@ includes them.
 
 A succeeded download publishes the Resource it created as its `resource` entity
 output. Plugin actions that return a local Resource, Note, or Group redirect
-publish an entity output too. Opening an entity output rechecks access before
-navigating to the entity. The Jobs panel, the Job Center list, and the Job
+publish an entity output too. An entity output is offered, and opened, only
+while the viewer can see the entity it names: once the entity is deleted or
+leaves the viewer's scope, the Job no longer lists it and its link disappears
+from every surface. The Jobs panel, the Job Center list, and the Job
 detail page link a succeeded Job's available entity output. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail

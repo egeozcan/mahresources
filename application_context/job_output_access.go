@@ -15,6 +15,7 @@ import (
 	"mahresources/auth"
 	"mahresources/contracts"
 	"mahresources/jobs"
+	"mahresources/models"
 )
 
 var (
@@ -56,6 +57,11 @@ type JobOutputAuthorizer interface {
 // GetOpenableJobOutputs returns only outputs the current principal may open.
 // Availability remains in the response so the UI can show expired outputs, but
 // hidden Kind-specific outputs are indistinguishable from absent outputs.
+//
+// An entity output is asked the question opening it asks: whether the entity it
+// names still exists where this principal can see it. One that was deleted, or
+// that the principal has lost the scope of, is hidden like any other output it
+// may not open, and the two cases are not told apart.
 func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Output, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
@@ -79,9 +85,38 @@ func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Outp
 			}
 			return nil, err
 		}
+		reachable, err := ctx.jobEntityOutputReachable(service, snapshot, output)
+		if err != nil {
+			return nil, err
+		}
+		if !reachable {
+			continue
+		}
 		openable = append(openable, output)
 	}
 	return openable, nil
+}
+
+// jobEntityOutputReachable reports whether an available entity output the
+// standard opener would open still names an entity this context's principal can
+// see, through the resolver opening it uses. Every other output, and one a Kind
+// opens itself, is left to the checks above.
+func (ctx *MahresourcesContext) jobEntityOutputReachable(service *jobs.Service, snapshot jobs.Snapshot, output jobs.Output) (bool, error) {
+	if output.Type != jobs.OutputTypeEntity || output.Availability != jobs.OutputAvailable {
+		return true, nil
+	}
+	if adapter, ok := service.AdapterFor(snapshot.Kind, snapshot.KindVersion); ok {
+		if _, opens := adapter.(JobOutputOpener); opens {
+			return true, nil
+		}
+	}
+	if _, err := ctx.resolveJobEntityOutput(output.Reference); err != nil {
+		if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, ErrJobOutputInvalid) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // OpenJobOutput reauthorizes the canonical Job and its output on every open.
@@ -183,6 +218,10 @@ func (ctx *MahresourcesContext) openStandardJobOutput(output jobs.Output) (contr
 	}
 }
 
+// resolveJobEntityOutput resolves an entity output's reference to the page it
+// opens, through this context's principal-bound handle. An entity that was
+// deleted or that the principal cannot see answers jobs.ErrNotFound; a read that
+// failed answers its own error, because it proves neither.
 func (ctx *MahresourcesContext) resolveJobEntityOutput(reference json.RawMessage) (string, error) {
 	var ref struct {
 		ResourceID  uint `json:"resourceId"`
@@ -195,29 +234,37 @@ func (ctx *MahresourcesContext) resolveJobEntityOutput(reference json.RawMessage
 	}
 	switch {
 	case ref.ResourceID > 0 && ref.GroupID == 0 && ref.NoteID == 0 && ref.ReductionID == 0:
-		if _, err := ctx.GetResourceByID(ref.ResourceID); err != nil {
-			return "", jobs.ErrNotFound
-		}
-		return fmt.Sprintf("/resource?id=%d", ref.ResourceID), nil
+		return ctx.jobEntityLocation(&models.Resource{}, ref.ResourceID, "/resource?id=%d")
 	case ref.GroupID > 0 && ref.ResourceID == 0 && ref.NoteID == 0 && ref.ReductionID == 0:
-		if _, err := ctx.GetGroup(ref.GroupID); err != nil {
-			return "", jobs.ErrNotFound
-		}
-		return fmt.Sprintf("/group?id=%d", ref.GroupID), nil
+		return ctx.jobEntityLocation(&models.Group{}, ref.GroupID, "/group?id=%d")
 	case ref.NoteID > 0 && ref.ResourceID == 0 && ref.GroupID == 0 && ref.ReductionID == 0:
-		if _, err := ctx.GetNote(ref.NoteID); err != nil {
-			return "", jobs.ErrNotFound
-		}
-		return fmt.Sprintf("/note?id=%d", ref.NoteID), nil
+		return ctx.jobEntityLocation(&models.Note{}, ref.NoteID, "/note?id=%d")
 	case ref.ReductionID > 0 && ref.ResourceID == 0 && ref.GroupID == 0 && ref.NoteID == 0:
 		ownerID, restricted := reductionOwnerFilter(ctx.Principal())
 		if _, err := ctx.GetResourceReduction(ref.ReductionID, ownerID, restricted); err != nil {
-			return "", jobs.ErrNotFound
+			if errors.Is(err, ErrReductionNotFound) {
+				return "", jobs.ErrNotFound
+			}
+			return "", fmt.Errorf("read job output reduction: %w", err)
 		}
 		return fmt.Sprintf("/reduction?id=%d", ref.ReductionID), nil
 	default:
 		return "", ErrJobOutputInvalid
 	}
+}
+
+// jobEntityLocation answers the page of one entity when this context's principal
+// can see it. The count runs the query callbacks, so the subtree predicate of a
+// group-limited principal applies exactly as it does to the entity's own page.
+func (ctx *MahresourcesContext) jobEntityLocation(model any, id uint, format string) (string, error) {
+	var count int64
+	if err := ctx.db.Model(model).Where("id = ?", id).Count(&count).Error; err != nil {
+		return "", fmt.Errorf("read job output entity: %w", err)
+	}
+	if count == 0 {
+		return "", jobs.ErrNotFound
+	}
+	return fmt.Sprintf(format, id), nil
 }
 
 func safeJobExternalLink(reference json.RawMessage) (string, error) {
