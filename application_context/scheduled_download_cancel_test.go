@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -224,6 +225,15 @@ func TestRetryingACancelledDeferredDownloadDownloadsNow(t *testing.T) {
 	finished := waitForSnapshot(t, ctx, deferredDownloadJob(t, ctx, ran.ID).ID, "the deferred download to run and end",
 		func(snap jobs.Snapshot) bool { return snap.StartedAt != nil && snap.State.Terminal() })
 	if finished.State != jobs.StateSucceeded {
+		// Every address this context can reach is refused by the fetch policy, which
+		// is a failure no Retry offers to repeat. What is at issue here is the
+		// label of a Retry that is offered, so the failure is recorded as one a
+		// Retry could answer differently.
+		if err := ctx.db.Model(&models.Job{}).Where("id = ?", finished.ID).Updates(map[string]any{
+			"failure_code": download_queue.FailureRemoteConnection, "failure_class": jobs.FailureClassDependency,
+		}).Error; err != nil {
+			t.Fatalf("record a retryable failure: %v", err)
+		}
 		if command, offered := advertisedCommand(t, ctx, finished.ID, jobs.CommandRetry); !offered || command.Label != "Retry" || command.Confirmation != "" {
 			t.Fatalf("a deferred download that ran offers retry=%v labelled %q confirming %q, want a plain Retry", offered, command.Label, command.Confirmation)
 		}

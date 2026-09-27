@@ -1582,10 +1582,10 @@ func TestTheLegacyQueueListingFollowsTheHandleAcrossARetry(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	ctx.Config.MaxJobConcurrency = 1
 
-	// A URL nothing serves: the transfer fails, which is the unsuccessful work a Retry
-	// is for.
+	// A server that is not answering: the transfer fails, which is the unsuccessful
+	// work a Retry is for.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not here", http.StatusNotFound)
+		http.Error(w, "not now", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
 

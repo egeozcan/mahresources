@@ -48,6 +48,10 @@ const (
 	FailureUnsupportedStream = "unsupported-stream"
 	// FailureFfmpegUnavailable is an HLS stream with no ffmpeg to assemble it.
 	FailureFfmpegUnavailable = "ffmpeg-unavailable"
+	// FailureSubmitterRefused is a download whose submitter may no longer add
+	// content by the time its bytes are in: the account was deleted or disabled,
+	// or its role no longer writes. The resource writer names it.
+	FailureSubmitterRefused = "submitter-refused"
 	// FailureResourceExists is bytes the library already holds.
 	FailureResourceExists = "resource-exists"
 	// FailureDownloadFailed is every failure none of the above describes.
@@ -61,6 +65,18 @@ const (
 type CodedFailure interface {
 	error
 	FailureCode() string
+}
+
+// codedAttemptFailure is what a generic job's failure tells its durable Job: the
+// code and the reason the error that names its own code carries, and nothing for
+// any other error. A generic job's error text is its executor's to render; only an
+// executor that says what its failure means is quoted.
+func codedAttemptFailure(err error) attemptFailure {
+	var coded CodedFailure
+	if !errors.As(err, &coded) || coded.FailureCode() == "" {
+		return attemptFailure{}
+	}
+	return attemptFailure{code: coded.FailureCode(), reason: coded.Error()}
 }
 
 // failureCode names the cause of one failed attempt. The order matters where one

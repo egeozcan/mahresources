@@ -1391,11 +1391,19 @@ func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.Reso
 // writes: a guest keeps a subtree it can read, and scope alone would let the
 // create land there.
 func (ctx *MahresourcesContext) boundToSubmitter(userID uint) *MahresourcesContext {
+	bound, _ := ctx.bindSubmitter(userID)
+	return bound
+}
+
+// bindSubmitter is boundToSubmitter that also says whether the account may still
+// add content, so a create that would be refused can say why instead of failing
+// on the scope filter's own error.
+func (ctx *MahresourcesContext) bindSubmitter(userID uint) (*MahresourcesContext, bool) {
 	principal := ctx.principalForPluginActor(userID)
 	if !principal.CanWrite() {
-		principal = deniedPluginPrincipal(userID)
+		return ctx.WithPrincipal(deniedPluginPrincipal(userID)), false
 	}
-	return ctx.WithPrincipal(principal)
+	return ctx.WithPrincipal(principal), true
 }
 
 // SetHashQueue sets the channel for queueing resources for hash processing.

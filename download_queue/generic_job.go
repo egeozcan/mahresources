@@ -359,16 +359,16 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	// had finished when it had been abandoned, with a partial tar or none at all.
 	// Unlike a download, an abandoned generic job has no created resource to orphan by
 	// calling it what it is.
-	status, errMsg := JobStatusCompleted, ""
+	status, errMsg, failure := JobStatusCompleted, "", attemptFailure{}
 	switch {
 	case ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Cancelled"
 	case err != nil:
-		status, errMsg = JobStatusFailed, err.Error()
+		status, errMsg, failure = JobStatusFailed, err.Error(), codedAttemptFailure(err)
 	}
 
 	// One atomic terminal write, as in processJob.
-	if !j.finish(runID, status, errMsg, 0, time.Now()) {
+	if _, stamped := j.finishSnapshotWithReason(runID, status, errMsg, failure, 0, time.Now()); !stamped {
 		return
 	}
 	m.notifyJob("updated", j)

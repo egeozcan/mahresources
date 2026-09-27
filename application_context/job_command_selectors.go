@@ -29,6 +29,9 @@ func (a *downloadJobAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	if states != nil {
 		query = query.Where("jobs.state IN ?", states)
 	}
+	if request.Key == jobs.CommandRetry {
+		query = query.Where("COALESCE(jobs.failure_code, '') NOT IN ?", downloadFailureCodesThatRepeat())
+	}
 	if scoped {
 		plugin := jobSummaryTextExpr(request.Deps.DB, "plugin")
 		query = query.Where("(COALESCE("+plugin+", '') = '' OR "+pluginScopedAccessPredicate(plugin)+")", true, true)
@@ -93,6 +96,7 @@ func (a *importParseAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	}
 	if request.Key == jobs.CommandRetry {
 		query = query.Where(importFactPredicate(request.Deps.DB, "handle", "archive_available"), true)
+		query = query.Where("COALESCE(jobs.failure_code, '') NOT IN ?", []string{importArchiveInvalidCode, importArchiveUnsupportedCode})
 	}
 	return query.Select("jobs.id"), true, nil
 }

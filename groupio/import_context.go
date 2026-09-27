@@ -18,6 +18,25 @@ import (
 	"mahresources/models"
 )
 
+// ArchiveError is an import archive the reader refused on its content: not a
+// tar, a manifest it cannot read or whose schema version it does not support, an
+// entry that is truncated or malformed. Reading the same bytes again reads them
+// the same way, which is what sets it apart from a failure of the server. Its text
+// is the reader's own, which is already a sentence the uploader can act on.
+type ArchiveError struct {
+	Err error
+}
+
+func (e *ArchiveError) Error() string { return e.Err.Error() }
+func (e *ArchiveError) Unwrap() error { return e.Err }
+
+// Unsupported reports whether the archive is well formed but declares a manifest
+// schema this server does not read.
+func (e *ArchiveError) Unsupported() bool {
+	var version *archive.ErrUnsupportedSchemaVersion
+	return errors.As(e.Err, &version)
+}
+
 // ParseImport reads the tar at tarPath, walks its entries to collect groups,
 // notes, resources, series, and schema defs, then resolves name-based mappings
 // against the local database. The resulting ImportPlan is persisted as JSON to
@@ -33,13 +52,13 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 	if err != nil {
 		// Finding 106: archive.NewReader/ReadManifest already return a sentence a
 		// reader can act on. Re-wrapping turned it back into a call chain.
-		return nil, err
+		return nil, &ArchiveError{Err: err}
 	}
 	defer r.Close()
 
 	manifest, err := r.ReadManifest()
 	if err != nil {
-		return nil, err
+		return nil, &ArchiveError{Err: err}
 	}
 
 	collector := &importDataCollector{
@@ -53,7 +72,7 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 		return nil, err
 	}
 	if err := r.Walk(collector); err != nil {
-		return nil, fmt.Errorf("walk archive: %w", err)
+		return nil, &ArchiveError{Err: fmt.Errorf("walk archive: %w", err)}
 	}
 
 	if err := cancelCtx.Err(); err != nil {

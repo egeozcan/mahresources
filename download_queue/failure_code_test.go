@@ -36,7 +36,7 @@ func (existingFixture) ExistingResourceID() uint { return 9 }
 type codedFixture struct{}
 
 func (codedFixture) Error() string       { return "the account can no longer add content" }
-func (codedFixture) FailureCode() string { return "submitter-not-permitted" }
+func (codedFixture) FailureCode() string { return FailureSubmitterRefused }
 
 func TestAFailureIsCodedByWhatWentWrong(t *testing.T) {
 	cases := []struct {
@@ -67,7 +67,7 @@ func TestAFailureIsCodedByWhatWentWrong(t *testing.T) {
 		{"a live stream", &hls.ErrNotSupported{Reason: "this is a live stream"}, FailureUnsupportedStream},
 		{"no ffmpeg", hls.ErrFfmpegUnavailable, FailureFfmpegUnavailable},
 		{"duplicate", existingFixture{}, FailureResourceExists},
-		{"a code the writer named", fmt.Errorf("add resource: %w", codedFixture{}), "submitter-not-permitted"},
+		{"a code the writer named", fmt.Errorf("add resource: %w", codedFixture{}), FailureSubmitterRefused},
 		{"anything else", errors.New("disk full"), FailureDownloadFailed},
 	}
 	for _, tc := range cases {

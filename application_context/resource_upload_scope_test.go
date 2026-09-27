@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/afero"
 	"mahresources/auth"
+	"mahresources/download_queue"
 	"mahresources/hls"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -366,6 +367,10 @@ func TestADownloadWhoseSubmitterLostWriteAccessMidTransferCreatesNothing(t *test
 				func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
 			if finished.State == jobs.StateSucceeded {
 				t.Fatalf("a download completed for an account that lost write access before its resource was created")
+			}
+			if finished.Failure == nil || finished.Failure.Code != download_queue.FailureSubmitterRefused ||
+				finished.Failure.Class != jobs.FailureClassPolicy || !strings.Contains(finished.Failure.Message, "can no longer add") {
+				t.Fatalf("the refusal is reported as %+v, want a policy refusal that says the account can no longer add content", finished.Failure)
 			}
 			var count int64
 			if err := ctx.db.Model(&models.Resource{}).Where("created_by_user_id = ?", user.ID).Count(&count).Error; err != nil {

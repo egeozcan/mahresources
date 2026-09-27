@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -488,7 +489,11 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 		if snap.ExistingResourceID != nil && *snap.ExistingResourceID != 0 {
 			return a.finishExisting(execution, *snap.ExistingResourceID, snap.FailureReason)
 		}
-		return a.finishFailed(execution, "download-failed", snap.FailureReason)
+		code := snap.FailureCode
+		if code == "" {
+			code = download_queue.FailureDownloadFailed
+		}
+		return a.finishFailed(execution, code, snap.FailureReason)
 	}
 }
 
@@ -542,7 +547,7 @@ const jobDownloadResourceOutput = "resource"
 const JobDownloadExistingResourceOutput = "existing-resource"
 
 // JobDownloadResourceExistsCode is the failure code of that collision.
-const JobDownloadResourceExistsCode = "resource-exists"
+const JobDownloadResourceExistsCode = download_queue.FailureResourceExists
 
 // AuthorizeJobOutput hides the collision link from a Job that no longer reports
 // the collision. Listing and opening both ask this, so a reconciled replay that
@@ -576,14 +581,77 @@ func (a *downloadJobAdapter) finish(execution jobs.Execution, outcome jobs.State
 // own text, which can name the URL the transfer failed on, query and all, and a
 // Job's failure message is stored in the clear and searched. FailureReason is the
 // same reason with every URL cut to its origin, rendered by the queue while it
-// still held the error value.
+// still held the error value. The code is the queue's too, and the class follows
+// from it (downloadFailureKinds).
 func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason string) error {
 	failure := &jobs.Failure{
 		Code:    code,
-		Class:   jobs.FailureClassInternal,
+		Class:   downloadFailureKindOf(code).class,
 		Message: downloadFailureMessage(reason),
 	}
 	return a.ctx.finishQueueJob(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput})
+}
+
+// downloadFailureKind is what one failure code means to a download's Job: the
+// class the failure breakdown groups it under, and whether asking again with the
+// same input could answer differently.
+type downloadFailureKind struct {
+	class string
+	// alike is true when a Retry replays a request that is refused the same way
+	// every time. A remote's answer mostly describes the remote at that moment and
+	// keeps Retry; these do not change until somebody changes what the library
+	// holds or what this deployment allows, which a Retry does not do. It is the
+	// rule the bulk upload widget applies to its own failures: a duplicate, a 4xx
+	// other than the ones that mean "ask later", and input the server refuses on
+	// its merits are left out of "Retry failed".
+	alike bool
+}
+
+// downloadFailureKinds classes every code the queue records. A code missing here
+// is classed internal and keeps Retry, which is the answer for a failure nobody
+// has explained yet.
+var downloadFailureKinds = map[string]downloadFailureKind{
+	download_queue.FailureRemoteClientError: {class: jobs.FailureClassDependency, alike: true},
+	download_queue.FailureRemoteForbidden:   {class: jobs.FailureClassDependency},
+	download_queue.FailureRemoteBusy:        {class: jobs.FailureClassDependency},
+	download_queue.FailureRemoteServerError: {class: jobs.FailureClassDependency},
+	download_queue.FailureRemoteConnection:  {class: jobs.FailureClassDependency},
+	download_queue.FailureRemoteTimeout:     {class: jobs.FailureClassTimeout},
+	download_queue.FailureIdleTimeout:       {class: jobs.FailureClassTimeout},
+	download_queue.FailureOverallTimeout:    {class: jobs.FailureClassTimeout},
+	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy, alike: true},
+	download_queue.FailurePluginUnavailable: {class: jobs.FailureClassPolicy},
+	download_queue.FailureSubmitterRefused:  {class: jobs.FailureClassPolicy},
+	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation, alike: true},
+	download_queue.FailureFfmpegUnavailable: {class: jobs.FailureClassDependency},
+	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict, alike: true},
+	download_queue.FailureDownloadFailed:    {class: jobs.FailureClassInternal},
+}
+
+func downloadFailureKindOf(code string) downloadFailureKind {
+	if kind, ok := downloadFailureKinds[code]; ok {
+		return kind
+	}
+	return downloadFailureKind{class: jobs.FailureClassInternal}
+}
+
+// downloadRetryWouldFailAlike reports whether a failed download's Retry would be
+// refused the same way (downloadFailureKind.alike).
+func downloadRetryWouldFailAlike(failure *jobs.Failure) bool {
+	return failure != nil && downloadFailureKindOf(failure.Code).alike
+}
+
+// downloadFailureCodesThatRepeat lists every code whose Retry would fail alike, in
+// a stable order, for the command selector's predicate.
+func downloadFailureCodesThatRepeat() []string {
+	codes := make([]string, 0, len(downloadFailureKinds))
+	for code, kind := range downloadFailureKinds {
+		if kind.alike {
+			codes = append(codes, code)
+		}
+	}
+	sort.Strings(codes)
+	return codes
 }
 
 // downloadFailureFallback is the message of a failure the queue gave no reason for.
@@ -677,7 +745,10 @@ func (a *downloadJobAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 //
 // Retry and cancel are advertised from the Kind — whether its work may be re-run at
 // all is its own policy — and the host then narrows both: a Retry only on the
-// unsuccessful leaf of a lineage, a cancel never on finished work. Pause is
+// unsuccessful leaf of a lineage, a cancel never on finished work. The Kind's own
+// policy leaves Retry out for a failure a Retry would repeat
+// (downloadRetryWouldFailAlike): a duplicate, for one, would transfer every byte
+// again only to be refused at the end. Pause is
 // deliberately absent (see the file comment); resume is offered for held work,
 // which is the state a pause leaves this Kind in.
 func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
@@ -703,7 +774,8 @@ func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.Com
 			Label: "Resume",
 		})
 	}
-	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
+	if (state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted) &&
+		!downloadRetryWouldFailAlike(commandContext.Snapshot.Failure) {
 		commands = append(commands, downloadRetryCommand(commandContext.Snapshot))
 	}
 	return commands, nil

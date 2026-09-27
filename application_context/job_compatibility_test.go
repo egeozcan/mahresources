@@ -585,7 +585,7 @@ func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.
 	// A transfer that fails, submitted by an ordinary user, so the handle names a Job that
 	// user owns and this process holds an entry for.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not here", http.StatusNotFound)
+		http.Error(w, "not now", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
 

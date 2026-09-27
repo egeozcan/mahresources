@@ -328,8 +328,8 @@ func TestAnImportParseRetryIsAdvertisedOnlyWhileTheArchiveRemains(t *testing.T) 
 	handle := "imp-retry-1"
 	staging := writeImportArchiveForTest(t, ctx, handle)
 
-	// A staged file that is not an archive at all: the parse fails deterministically,
-	// which is the outcome whose Retry is at issue.
+	// A staged file that is not an archive at all: the parse fails, and a Retry
+	// would read the same bytes the same way, so none is offered.
 	if err := afero.WriteFile(ctx.GetDefaultFs(), staging, []byte("not a tar"), 0644); err != nil {
 		t.Fatalf("write a corrupt archive: %v", err)
 	}
@@ -342,6 +342,17 @@ func TestAnImportParseRetryIsAdvertisedOnlyWhileTheArchiveRemains(t *testing.T) 
 	})
 	if snap.State != jobs.StateFailed {
 		t.Fatalf("a corrupt archive ended %s, want failed", snap.State)
+	}
+	if offersCommand(advertisedForTest(t, ctx, snap.ID), jobs.CommandRetry) {
+		t.Fatalf("a parse of an archive that cannot be read offered a Retry")
+	}
+
+	// A failure of the server rather than of the archive is worth retrying, for as
+	// long as the archive is there to read.
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", snap.ID).Updates(map[string]any{
+		"failure_code": "import-parse-failed", "failure_class": jobs.FailureClassInternal,
+	}).Error; err != nil {
+		t.Fatalf("record a server-side parse failure: %v", err)
 	}
 	if !offersCommand(advertisedForTest(t, ctx, snap.ID), jobs.CommandRetry) {
 		t.Fatalf("a failed parse with its archive still staged offered no Retry")
