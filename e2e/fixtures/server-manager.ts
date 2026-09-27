@@ -13,6 +13,7 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
 import * as net from 'net';
 import * as path from 'path';
+import * as fs from 'fs';
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVER_BINARY = path.join(PROJECT_ROOT, 'mahresources');
@@ -291,12 +292,28 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
   // and the spawnSync that's waiting on it.
   //
   // Piping to /dev/null via 'ignore' sidesteps the pump entirely.
+  //
+  // E2E_SERVER_LOG_DIR opts into keeping each server's output, one file per
+  // port, with SQL slower than 500ms logged too: a request that stalls for
+  // seconds in one run out of several leaves no trace otherwise. A file is not a
+  // pipe, so nothing has to drain it. The slow-query log also writes a warning
+  // to the application log, so a gate run leaves the variable unset.
+  const logDir = process.env.E2E_SERVER_LOG_DIR;
+  let out: 'ignore' | number = 'ignore';
+  if (logDir) {
+    args.push('-db-slow-query-threshold=500ms');
+    out = fs.openSync(path.join(logDir, `server-${port}.log`), 'a');
+  }
   const proc = spawn(SERVER_BINARY, args, {
     cwd: PROJECT_ROOT,
-    stdio: ['ignore', 'ignore', 'ignore'],
+    stdio: ['ignore', out, out],
     detached: false,
     env: childEnv,
   });
+  if (typeof out === 'number') {
+    // The child holds its own copy of the descriptor.
+    fs.closeSync(out);
+  }
   proc.on('error', (err) => {
     console.error(`[worker server :${port}] spawn error:`, err.message);
   });

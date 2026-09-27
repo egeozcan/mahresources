@@ -207,6 +207,7 @@ behind a number. Specs in a subdirectory import fixtures with `../../`, not `../
 |----------|---------|-------------|
 | `BASE_URL` | `http://localhost:8181` | App URL for tests |
 | `CI` | - | Set in CI environments for stricter behavior |
+| `E2E_SERVER_LOG_DIR` | - | Directory to keep each worker server's output in (`server-<port>.log`), with SQL slower than 500ms logged. Slow queries also reach the application log, so leave it unset for a gate run |
 
 ### Playwright Config
 
