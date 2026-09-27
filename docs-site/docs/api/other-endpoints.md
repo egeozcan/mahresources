@@ -67,9 +67,18 @@ Until then, use the compatibility routes listed under
 List, summary, and export share these optional filters: `state`/`states`,
 `kind`/`kinds`, `origin`/`origins`, `ownerId`, `actorId`, `acceptedAfter`,
 `acceptedBefore`, `relationship`, `search`, `command`, `pinned`, and
-`dismissed`. Repeating a token parameter or comma-separating its values is
-supported. Visibility is applied before filters and aggregation; an owner or
-actor filter never grants access to hidden Jobs.
+`dismissed`. List and summary also accept `inboundRelationship`,
+`noInboundRelationship` and `ownerDeleted=true` (Jobs whose owner's account was
+deleted); an export refuses those three, and `state=partial`, with a `400`.
+Repeating a token parameter or comma-separating its values is supported.
+Visibility is applied before filters and aggregation; an owner or actor filter
+never grants access to hidden Jobs.
+
+The canonical stream's cursor, each event's SSE `id` (`v2:<n>`) and its
+`deliverySequence`, is one counter for the whole deployment. A viewer receives
+only the events of Jobs they can see, so the gap between two consecutive
+sequences they receive is the number of Job events other accounts' work
+produced in between. It names no Job and no account.
 
 Single-command JSON bodies contain `expectedVersion`, `idempotencyKey`, and
 `origin`. The bulk body contains `jobIds`, `idempotencyKey`, and `origin`; each

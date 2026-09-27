@@ -326,6 +326,13 @@ than appends a point whose `t` equals its last point's. Progress timestamps are
 written by whichever process runs the Job, and the 30-second window is what
 absorbs clock skew between those processes.
 
+The stream's cursor, the SSE `id` (`v2:<n>`) and the `deliverySequence` of
+every event, including those `GET /v1/jobs/{id}/events` returns, is one counter
+for the whole deployment, which is what lets a reconnect resume exactly where
+it stopped. A viewer receives only the events of Jobs they can see, so the gap
+between two sequences they receive counts the Job events other accounts' work
+produced in between. The gap names no Job and no account.
+
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale
 version. A Retry, Continue, Repeat or Resume whose work the Job's Kind would
