@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -208,6 +209,9 @@ func truncateDownloadJobTitle(title string) string {
 type downloadJobAdapter struct {
 	ctx  *MahresourcesContext
 	kind string
+	// waits is set on the registered adapter, the one the dispatch loop runs; an
+	// adapter built to publish one outcome dispatches nothing and needs none.
+	waits *downloadURLWaits
 }
 
 // Definition declares what the control plane must know before it claims any of
@@ -254,18 +258,17 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 
 	entry, found := a.ctx.downloadManager.GetJobByCanonicalJobID(execution.JobID)
 	if !found {
-		ended, err := a.whenTheURLIsFree(ctx, execution, func() error {
-			// Asked of the queue's memory first, so a waiting Job reads nothing from
-			// the database until the URL is free; the start itself decides again,
-			// under the queue's lock.
-			if live := a.ctx.downloadManager.OtherActiveTransfer(decoded.Creator.URL, execution.JobID); live != "" {
-				return &download_queue.URLActiveError{JobID: live}
-			}
-			started, err := a.start(execution, &decoded)
-			entry = started
-			return err
-		})
-		if err != nil || ended {
+		// Asked of the queue's memory first, and decided again under the queue's
+		// lock by the start itself.
+		if live := a.ctx.downloadManager.OtherActiveTransfer(decoded.Creator.URL, execution.JobID); live != "" {
+			return a.waitForTheURL(execution, decoded.Creator.URL)
+		}
+		entry, err = a.start(execution, &decoded)
+		var busy *download_queue.URLActiveError
+		if errors.As(err, &busy) {
+			return a.waitForTheURL(execution, decoded.Creator.URL)
+		}
+		if err != nil {
 			return err
 		}
 	} else if ref, ok := entry.CanonicalExecution(); !ok || ref.ExecutionToken != execution.ExecutionToken {
@@ -286,16 +289,10 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		if !a.queuedForDispatch(execution) {
 			return a.block(execution, "paused")
 		}
-		ended, err := a.whenTheURLIsFree(ctx, execution, func() error {
-			if live := a.ctx.downloadManager.OtherActiveTransfer(entry.GetURL(), execution.JobID); live != "" {
-				return &download_queue.URLActiveError{JobID: live}
-			}
-			return a.ctx.downloadManager.Resume(entry.ID)
-		})
-		if ended {
-			return err
+		if a.ctx.downloadManager.OtherActiveTransfer(entry.GetURL(), execution.JobID) != "" {
+			return a.waitForTheURL(execution, entry.GetURL())
 		}
-		if err != nil {
+		if err := a.ctx.downloadManager.Resume(entry.ID); err != nil {
 			var conflict *download_queue.StateConflictError
 			if errors.As(err, &conflict) {
 				// The entry moved while this dispatch held its claim: whatever it moved
@@ -319,63 +316,162 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 // another transfer of its URL.
 const downloadWaitingPhase = "waiting"
 
-// whenTheURLIsFree runs attempt, which starts or resumes this execution's
-// transfer, once no other transfer in this process is fetching the same URL:
-// attempt answers a *download_queue.URLActiveError while one is, and is asked
-// again until it answers anything else.
+// downloadURLWaits remembers, in this process, the Jobs that went back to the
+// queue to wait for another transfer of their URL, so the dispatch loop passes
+// over them until that transfer ends (ClaimExclusions).
 //
-// One URL is fetched once at a time here, and a Job that finds its URL already
-// downloading waits for that transfer rather than being blocked: nothing would
-// release a block when the other transfer ended, and the person who pressed Retry
-// would be left holding a Job that needed them for no reason. It waits holding its
-// claim, so a restart reconciles it like any running Job, and the slot it holds is
-// the one the duplicate transfer would have held. A cancellation recorded while it
-// waits ends it at once (ended is true), and the transfer it waited on is left
-// alone.
-func (a *downloadJobAdapter) whenTheURLIsFree(ctx context.Context, execution jobs.Execution, attempt func() error) (bool, error) {
-	var ticker *time.Ticker
-	var nextIntentCheck time.Time
-	for {
-		err := attempt()
-		var busy *download_queue.URLActiveError
-		if !errors.As(err, &busy) {
-			return false, err
-		}
-		if ticker == nil {
-			ticker = time.NewTicker(jobDownloadPollInterval)
-			defer ticker.Stop()
-			if _, err := execution.Progress(jobs.Progress{
-				Phase:   downloadWaitingPhase,
-				Message: "Waiting for another download of this URL to finish",
-			}); err != nil && !mirrorRefusalIsSilent(err) {
-				log.Printf("warning: recording that download job %s is waiting failed: %v", execution.JobID, err)
-			}
-		}
-		if now := time.Now(); !now.Before(nextIntentCheck) {
-			nextIntentCheck = now.Add(queueJobIntentPollInterval)
-			if a.cancelWon(execution) {
-				return true, a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-ticker.C:
-		}
-	}
+// It is memory and meant to be: the transfer a Job waits for is this process's
+// queue entry, which a restart takes away too, and a Job the next process claims
+// finds out for itself whether its URL is busy there.
+type downloadURLWaits struct {
+	mu    sync.Mutex
+	byJob map[string]string
 }
 
-// cancelWon reports whether a cancellation has been recorded against this
-// execution's Job.
-func (a *downloadJobAdapter) cancelWon(execution jobs.Execution) bool {
-	snap, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
-	return err == nil && !snap.State.Terminal() && snap.ControlIntent == jobs.ControlIntentCancel
+func newDownloadURLWaits() *downloadURLWaits {
+	return &downloadURLWaits{byJob: make(map[string]string)}
+}
+
+func (w *downloadURLWaits) add(jobID, url string) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.byJob[jobID] = url
+}
+
+// stillWaiting forgets every Job whose URL is free and lists the rest, at most
+// jobs.MaxClaimExclusions of them, oldest id first.
+func (w *downloadURLWaits) stillWaiting(busy func(jobID, url string) bool) []string {
+	if w == nil {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	waiting := make([]string, 0, len(w.byJob))
+	for jobID, url := range w.byJob {
+		if busy(jobID, url) {
+			waiting = append(waiting, jobID)
+			continue
+		}
+		delete(w.byJob, jobID)
+	}
+	sort.Strings(waiting)
+	if len(waiting) > jobs.MaxClaimExclusions {
+		waiting = waiting[:jobs.MaxClaimExclusions]
+	}
+	return waiting
+}
+
+// ClaimExclusions names the waiting Jobs of this Kind whose URL another transfer
+// in this process is still fetching. The dispatch loop passes over them, so they
+// wait in the queue holding no claim and no capacity, and are claimed on the first
+// pass after the URL frees.
+func (a *downloadJobAdapter) ClaimExclusions() []string {
+	if a == nil || a.ctx == nil || a.ctx.downloadManager == nil {
+		return nil
+	}
+	return a.waits.stillWaiting(func(jobID, url string) bool {
+		return a.ctx.downloadManager.OtherActiveTransfer(url, jobID) != ""
+	})
+}
+
+// waitForTheURL hands this execution's Job back to the queue to wait for the
+// transfer already fetching its URL.
+//
+// One URL is fetched once at a time here, and a Job that finds its URL downloading
+// waits for that transfer rather than being blocked: nothing would release a block
+// when the other transfer ended, and the person who pressed Retry would be left
+// holding a Job that needed them for no reason. It waits in the queue rather than
+// in this dispatch, because a claim held while waiting holds a slot of the
+// deployment's budget, and a few duplicate retries would starve every other Kind.
+// Its row says what it is waiting for, a cancel reaches it as queued work, and the
+// dispatch loop passes over it until the URL frees (ClaimExclusions).
+func (a *downloadJobAdapter) waitForTheURL(execution jobs.Execution, url string) error {
+	a.waits.add(execution.JobID, url)
+	return a.ctx.requeueDownloadExecution(execution, jobDownloadWaitingForURLReason,
+		downloadWaitingPhase, "Waiting for another download of this URL to finish")
+}
+
+// jobDownloadWaitingForURLReason is the reason a download's Job records when it
+// goes back to the queue to wait for another transfer of its URL.
+const jobDownloadWaitingForURLReason = "waiting-for-url"
+
+// requeueDownloadExecution hands a running download's Job back to the queue under
+// its execution's token, saying why: in its progress, which every Jobs surface
+// shows on the row, and in the queued event's reason.
+//
+// It is the answer for work that has not failed and will run again: a transfer the
+// deployment's shutdown stopped, and one waiting for its URL. The transition takes
+// the claim and the capacity with it. A cancellation already recorded against the
+// Job owns the outcome instead, and ends it cancelled. A write the fence refuses
+// is not this execution's to make and is dropped; any other failure is returned
+// as errQueuePublicationUnfinished, which leaves the Job running under its lease
+// for the reconciliation an expired claim gets, rather than ending it.
+func (ctx *MahresourcesContext) requeueDownloadExecution(execution jobs.Execution, reason, phase, message string) error {
+	service := ctx.JobService()
+	if service == nil || execution.ExecutionToken == "" {
+		return nil
+	}
+	deps := ctx.jobDeps()
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	detail, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for attempt := 0; attempt < queuePublicationWriteAttempts; attempt++ {
+		current, err := service.Get(deps, jobs.Access{Administrator: true}, execution.JobID)
+		if err != nil {
+			return settleRequeue(err)
+		}
+		if current.State != jobs.StateRunning {
+			return nil
+		}
+		if current.ControlIntent == jobs.ControlIntentCancel {
+			return settleRequeue(ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil))
+		}
+		if _, err := service.UpdateProgress(deps, ref, jobs.Progress{Phase: phase, Message: message}); err != nil {
+			if mirrorRefusalIsSilent(err) && !errors.Is(err, jobs.ErrVersionConflict) {
+				return nil
+			}
+			lastErr = err
+			continue
+		}
+		_, err = service.Transition(deps, jobs.Transition{
+			JobID:           execution.JobID,
+			ExpectedVersion: current.Version,
+			ExecutionToken:  execution.ExecutionToken,
+			To:              jobs.StateQueued,
+			Phase:           phase,
+			Event:           jobs.EventInput{Type: jobs.EventQueued, Detail: detail},
+		})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, jobs.ErrVersionConflict) {
+			return settleRequeue(err)
+		}
+		lastErr = err
+	}
+	return settleRequeue(lastErr)
+}
+
+// settleRequeue sorts what a requeue's write answered: nothing, or the fence doing
+// its job, is done; anything else leaves the Job to its lease.
+func settleRequeue(err error) error {
+	if err == nil || (mirrorRefusalIsSilent(err) && !errors.Is(err, jobs.ErrVersionConflict)) {
+		return nil
+	}
+	log.Printf("warning: a download Job could not be returned to the queue (%v); its lease settles it", err)
+	return errQueuePublicationUnfinished
 }
 
 // start submits the transfer this execution needs, taking the id from the Job's own
 // download handle when it has one so the panel and the Job Center name one row.
 // It is refused with a *download_queue.URLActiveError while another transfer is
-// fetching the same URL (see whenTheURLIsFree).
+// fetching the same URL (see waitForTheURL).
 func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobInput) (*download_queue.DownloadJob, error) {
 	if input.Creator == nil {
 		return nil, errors.New("the download Job names no submission")
@@ -993,37 +1089,24 @@ func (s *jobDownloadSink) DownloadFinished(ref download_queue.CanonicalRef, snap
 // the queue its Job came from.
 //
 // A graceful stop is not an outcome of the work, so the Job is neither cancelled
-// nor failed. It leaves running for queued in one transition under the execution's
-// own token, which also hands back the claim and the capacity it held, and the
-// event says why. The next process claims it and starts the transfer again from
-// the sealed input, which is also where a crash ends up once the claim's lease
-// expires; this only saves the wait. A write that is refused here leaves the Job
-// running with its lease, and that reconciliation is what settles it instead.
+// nor failed. It goes back to the queue under the execution's own token, which also
+// hands back the claim and the capacity it held, and its row and its event say why
+// (requeueDownloadExecution). Another process's runtime claims it at once; with none
+// running, the next one to start does, and starts the transfer again from the
+// sealed input. That is also where a crash ends up once the claim's lease expires;
+// this only saves the wait. A write that is refused here leaves the Job running
+// with its lease, and that reconciliation is what settles it instead.
 func (s *jobDownloadSink) DownloadInterrupted(ref download_queue.CanonicalRef, snap *download_queue.DownloadJob) error {
-	service := s.service()
-	if service == nil || ref.ExecutionToken == "" {
+	if s.service() == nil {
 		return nil
 	}
-	current, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, ref.JobID)
-	if err != nil {
-		return s.mirrorRefusal(err)
-	}
-	if current.State != jobs.StateRunning {
-		return nil
-	}
-	detail, err := json.Marshal(map[string]string{"reason": JobDownloadServerShutdownReason})
-	if err != nil {
-		return err
-	}
-	_, err = service.Transition(s.ctx.jobDeps(), jobs.Transition{
-		JobID:           ref.JobID,
-		ExpectedVersion: current.Version,
-		ExecutionToken:  ref.ExecutionToken,
-		To:              jobs.StateQueued,
-		Event:           jobs.EventInput{Type: jobs.EventQueued, Detail: detail},
-	})
-	return s.mirrorRefusal(err)
+	return s.ctx.requeueDownloadExecution(jobs.Execution{JobID: ref.JobID, ExecutionToken: ref.ExecutionToken},
+		JobDownloadServerShutdownReason, downloadPhaseQueued,
+		"Stopped by a server shutdown; it starts again from the beginning")
 }
+
+// downloadPhaseQueued is the phase of a download's Job waiting for a runtime.
+const downloadPhaseQueued = "queued"
 
 // JobDownloadServerShutdownReason is the reason a download's Job records when the
 // deployment's shutdown returned it to the queue.
@@ -1141,7 +1224,7 @@ func (ctx *MahresourcesContext) registerDownloadJobKinds(service *jobs.Service) 
 		if _, registered := service.AdapterFor(kind, jobDownloadKindVersion); registered {
 			continue
 		}
-		if err := service.RegisterAdapter(&downloadJobAdapter{ctx: ctx, kind: kind}); err != nil {
+		if err := service.RegisterAdapter(&downloadJobAdapter{ctx: ctx, kind: kind, waits: newDownloadURLWaits()}); err != nil {
 			return err
 		}
 	}

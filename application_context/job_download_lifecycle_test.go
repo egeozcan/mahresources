@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +62,9 @@ func TestAGracefulShutdownReturnsARunningDownloadToTheQueue(t *testing.T) {
 	}
 	if snap.State != jobs.StateQueued || snap.Failure != nil {
 		t.Fatalf("after the shutdown the job is %s (%+v), want queued with no failure", snap.State, snap.Failure)
+	}
+	if !strings.Contains(snap.Progress.Message, "server shutdown") || snap.Progress.Completed != nil {
+		t.Fatalf("the queued row says %+v, want the shutdown named and no stale progress", snap.Progress)
 	}
 	timeline, err := ctx.GetJobTimeline(jobID, 0, 0)
 	if err != nil {

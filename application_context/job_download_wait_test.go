@@ -94,14 +94,14 @@ func retryWhileTheURLDownloads(t *testing.T, ctx *MahresourcesContext, url strin
 	running, _ = submitRunning(t, ctx, url)
 	retried := retryJob(t, ctx, cancelled)
 	waitForSnapshot(t, ctx, retried.ID, "the Retry to wait for the running transfer", func(snap jobs.Snapshot) bool {
-		return snap.State == jobs.StateRunning && snap.Progress.Phase == "waiting"
+		return snap.State == jobs.StateQueued && snap.Phase == "waiting" && snap.StartedAt != nil
 	})
 	return running, retried.ID
 }
 
 // A Retry of a download whose URL another transfer is fetching right now waits for
-// that transfer, says so, and then starts on its own. It is never left blocked
-// with nothing to release it.
+// that transfer in the queue, says so on its row, and then starts on its own. It
+// is never left blocked with nothing to release it.
 func TestARetryOfAURLThatIsDownloadingWaitsForItAndThenRuns(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	server, release := gatedDownloadServer(t)
@@ -188,5 +188,77 @@ func TestADueDeferredRowIsHandedToItsJobWhateverTheSweepSees(t *testing.T) {
 				t.Fatalf("the Job is %s, want queued for its own dispatch to decide", snap.State)
 			}
 		})
+	}
+}
+
+// Jobs waiting for a URL hold no claim and no slot of the deployment's budget: with
+// a budget of two, one transfer running and three duplicates of its URL waiting,
+// a download of another URL still runs.
+func TestJobsWaitingForAURLHoldNoCapacity(t *testing.T) {
+	ctx := newDownloadJobContextWithBudget(t, 2)
+	server, release := gatedDownloadServer(t)
+	busyURL := server.URL + "/popular.bin"
+
+	running, _ := submitRunning(t, ctx, busyURL)
+	input, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: busyURL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var waiting []string
+	for i := 0; i < 3; i++ {
+		accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion, State: jobs.StateQueued,
+			Origin: "api", Title: "duplicate", Replay: jobs.ReplayInput{Input: input},
+		})
+		waiting = append(waiting, accepted.ID)
+	}
+	for _, id := range waiting {
+		waitForSnapshot(t, ctx, id, "the duplicate to wait for the URL", func(snap jobs.Snapshot) bool {
+			return snap.State == jobs.StateQueued && snap.Phase == "waiting"
+		})
+	}
+
+	other := plainContentServer(t, "a different download")
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: other.URL + "/other.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil {
+		t.Fatalf("submit the other download: %+v", submissions)
+	}
+	waitForSnapshot(t, ctx, submissions[0].CanonicalJobID, "the other download to run while the duplicates wait",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateSucceeded })
+
+	var leases int64
+	if err := ctx.db.Model(&models.JobCapacityLease{}).Count(&leases).Error; err != nil {
+		t.Fatal(err)
+	}
+	if leases > 1 {
+		t.Fatalf("%d capacity leases are held while one transfer runs and the rest wait", leases)
+	}
+	for _, id := range waiting {
+		if snap, _ := ctx.GetJob(id); snap.State != jobs.StateQueued {
+			t.Fatalf("a duplicate left the queue while its URL was busy: %s", snap.State)
+		}
+		// Claimed once, found its URL busy, and passed over since: not claimed and
+		// handed back on every pass of the dispatch loop.
+		timeline, err := ctx.GetJobTimeline(id, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := 0
+		for _, event := range timeline {
+			if event.Type == jobs.EventStarted {
+				started++
+			}
+		}
+		if started != 1 {
+			t.Fatalf("a waiting duplicate was started %d times while its URL stayed busy", started)
+		}
+	}
+
+	close(release)
+	waitForSnapshot(t, ctx, running, "the first transfer to finish",
+		func(snap jobs.Snapshot) bool { return snap.State == jobs.StateSucceeded })
+	for _, id := range waiting {
+		waitForSnapshot(t, ctx, id, "each duplicate to run once the URL is free",
+			func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
 	}
 }

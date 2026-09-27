@@ -116,7 +116,7 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	}
 
 	now := deps.now()
-	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, now)
+	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, request.ExcludeJobIDs, now)
 	if err != nil {
 		return Execution{}, err
 	}
@@ -253,6 +253,9 @@ func validateClaimRequest(request *ClaimRequest, definition Definition) error {
 	if request.Lease < 0 {
 		return invalid("lease is negative")
 	}
+	if len(request.ExcludeJobIDs) > MaxClaimExclusions {
+		return invalid("a claim may pass over at most %d Jobs, not %d", MaxClaimExclusions, len(request.ExcludeJobIDs))
+	}
 
 	kindBudget := CapacityRef{Group: definition.capacityGroup(), Limit: definition.MaxConcurrent}
 	budgets := []CapacityRef{kindBudget}
@@ -298,13 +301,15 @@ func strictestCapacityLimit(a, b int) int {
 // already knows which Job it is running — a host-side executor that materialized
 // it a moment ago — takes it under a claim rather than taking whatever happens to
 // be oldest.
-func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, now time.Time) (models.Job, bool, error) {
+func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, exclude []string, now time.Time) (models.Job, bool, error) {
 	query := waitingJobs(db, kind, version, now)
 	if jobID != "" {
 		// Predicated on the Kind as well the id: a claim that named a Job of
 		// another Kind would hand it to an adapter that does not own its input
 		// shape, and the caller here is the one place a job id arrives untyped.
 		query = query.Where("jobs.id = ?", jobID)
+	} else if len(exclude) > 0 {
+		query = query.Where("jobs.id NOT IN ?", exclude)
 	}
 	var job models.Job
 	err := query.Order("accepted_at, jobs.id").First(&job).Error

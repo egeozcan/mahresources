@@ -277,12 +277,19 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			}
 			continue
 		}
+		// A Kind can name waiting Jobs that cannot start yet, so they stay waiting
+		// and hold nothing instead of being claimed only to be handed back.
+		var passOver []string
+		if excluder, ok := registration.Adapter.(interface{ ClaimExclusions() []string }); ok {
+			passOver = excluder.ClaimExclusions()
+		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
-				Kind:        registration.Definition.Kind,
-				KindVersion: registration.Definition.KindVersion,
-				Claimant:    r.claimant,
-				Capacity:    r.capacityBudget(),
+				Kind:          registration.Definition.Kind,
+				KindVersion:   registration.Definition.KindVersion,
+				Claimant:      r.claimant,
+				Capacity:      r.capacityBudget(),
+				ExcludeJobIDs: passOver,
 			})
 			if err != nil {
 				log.Printf("job runtime: claiming %s v%d work failed: %v",

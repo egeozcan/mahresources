@@ -60,7 +60,7 @@ plugin actions also publish through the durable Job Service.
 - Every non-admin principal sees only the rows it submitted.
 - **Retry** through the legacy handle creates a new canonical Job and moves the handle to that Retry leaf. The source Job keeps its original outcome. Current authorization and download scope are checked again, and a duplicate active transfer is refused.
 - **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
-- A restart is not a cancellation, and nothing records it as one. When the server stops gracefully, a download that was running goes back to the queue under the same Job and handle, with the event reason `server-shutdown`, and starts again from the beginning when the server is back. A paused download stays held until someone resumes or cancels it. Neither writes a history row until it finishes. After a crash the Job reaches the same state once its claim expires and the process that held it is known to be gone. A download the queue runs without a durable Job is recorded as failed with the reason "The server shut down before the download finished".
+- A restart is not a cancellation, and nothing records it as one. When the server stops gracefully, a download that was running goes back to the queue under the same Job and handle, with the event reason `server-shutdown` and the message "Stopped by a server shutdown; it starts again from the beginning" on its row, and starts again from the beginning when a server claims it: at once in a deployment with another process running, otherwise when the server is back. A paused download stays held until someone resumes or cancels it. Neither writes a history row until it finishes. After a crash the Job reaches the same state once its claim expires and the process that held it is known to be gone. A download the queue runs without a durable Job is recorded as failed with the reason "The server shut down before the download finished".
 
 See [Job System](./job-system.md) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
@@ -251,10 +251,12 @@ Retry because the User-Agent the deployment sends can be changed.
   offered only for a failure a Retry could change (see
   [Failure reasons and Retry](#failure-reasons-and-retry)).
 - **One transfer per URL** -- A Job about to start while another transfer in
-  this process is fetching the same URL waits for that transfer, in the phase
-  `waiting` with the message "Waiting for another download of this URL to
-  finish", and starts once it ends. That covers a Retry, a deferred download
-  coming due and queued work. A cancel ends the waiting Job at once and leaves
+  this process is fetching the same URL goes back to the queue to wait for it,
+  with the phase `waiting` and the message "Waiting for another download of this
+  URL to finish" on its row. It holds no slot of the concurrency budget while it
+  waits, the dispatch loop passes over it, and it starts on the first pass after
+  the other transfer ends. That covers a Retry, a deferred download coming due
+  and queued work. A cancel ends the waiting Job like any queued Job and leaves
   the other transfer alone. `POST /v1/download/retry` and `POST /v1/jobs/retry`
   refuse such a retry with 409 instead, while the queue still holds the failed
   attempt.
