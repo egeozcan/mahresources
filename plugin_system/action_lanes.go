@@ -296,14 +296,16 @@ type asyncBounds struct {
 	// lane bounds the wait for the plugin's lane.
 	lane time.Time
 	// slotWait bounds the wait for a job slot and for the host's admission,
-	// measured from the moment the lane is held. Zero or less waits forever.
+	// measured from the moment the plugin's VM is first held: a wait for the VM
+	// that is meant to be unbounded must not spend it. Zero or less waits
+	// forever.
 	slotWait time.Duration
 	// slot is an absolute bound on the same waits; it wins when it is earlier.
 	slot time.Time
 }
 
-// slotDeadline is the bound on the job-slot and admission waits, fixed once the
-// lane is held.
+// slotDeadline is the bound on the job-slot and admission waits, fixed the first
+// time the plugin's VM is held.
 func (b asyncBounds) slotDeadline(now time.Time) time.Time {
 	deadline := b.slot
 	if b.slotWait > 0 {

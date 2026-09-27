@@ -530,7 +530,17 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 		stopWaiting()
 	}()
 
-	slotDeadline := bounds.slotDeadline(time.Now())
+	// The job-slot and admission bound is fixed the first time the VM is held,
+	// so an unbounded wait for the VM ("allow") does not spend it.
+	var slotDeadline time.Time
+	slotBoundFixed := false
+	fixSlotBound := func() time.Time {
+		if !slotBoundFixed {
+			slotDeadline = bounds.slotDeadline(time.Now())
+			slotBoundFixed = true
+		}
+		return slotDeadline
+	}
 	// What this execution holds is given back on every way out, a panic in the
 	// host's admission included. The VM is handed to the work, which releases it
 	// itself, so it is dropped from here once handed over.
@@ -545,7 +555,7 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 		}
 	}()
 	for {
-		held, got := pm.acquireSlotAndVM(waitCtx, work, slotDeadline, bounds.revoked)
+		held, got := pm.acquireSlotAndVM(waitCtx, work, fixSlotBound, bounds.revoked)
 		if got != asyncRan {
 			return got
 		}
@@ -616,8 +626,9 @@ func (pm *PluginManager) runAsyncJob(job *ActionJob, logLabel string, bounds asy
 // the VM held while waiting for a slot holds the plugin's hooks and pages behind
 // other plugins' work. It waits for the VM, takes a slot if one is free, and
 // otherwise gives the VM back, waits for a slot, and takes the VM only if it is
-// free, until both come together.
-func (pm *PluginManager) acquireSlotAndVM(ctx context.Context, work asyncWork, deadline time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
+// free, until both come together. deadline is asked each time the VM is held,
+// and bounds the wait for a slot.
+func (pm *PluginManager) acquireSlotAndVM(ctx context.Context, work asyncWork, deadline func() time.Time, revoked <-chan struct{}) (*vmMutex, asyncOutcome) {
 	outcomeOf := func(err error) asyncOutcome {
 		if errors.Is(err, errJobDidNotStart) {
 			return asyncGaveUp
@@ -629,13 +640,14 @@ func (pm *PluginManager) acquireSlotAndVM(ctx context.Context, work asyncWork, d
 		if err != nil {
 			return nil, outcomeOf(err)
 		}
+		slotDeadline := deadline()
 		select {
 		case pm.actionSemaphore <- struct{}{}:
 			return mu, asyncRan
 		default:
 		}
 		mu.Unlock()
-		if got := pm.acquireJobSlotUntil(deadline, revoked); got != asyncRan {
+		if got := pm.acquireJobSlotUntil(slotDeadline, revoked); got != asyncRan {
 			return nil, got
 		}
 		mu, err = work.lock(ctx, false)
