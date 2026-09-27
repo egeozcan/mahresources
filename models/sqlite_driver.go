@@ -112,18 +112,26 @@ func (c *sqliteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 }
 
 func (c *sqliteConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	c.noteStatement(query)
-	return c.SQLiteConn.ExecContext(ctx, query, args)
+	result, err := c.SQLiteConn.ExecContext(ctx, query, args)
+	if err == nil {
+		c.noteStatement(query)
+	}
+	return result, err
 }
 
 func (c *sqliteConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.noteStatement(query)
-	return c.SQLiteConn.QueryContext(ctx, query, args)
+	rows, err := c.SQLiteConn.QueryContext(ctx, query, args)
+	if err == nil {
+		c.noteStatement(query)
+	}
+	return rows, err
 }
 
-// noteStatement records that the open write transaction has written. It reads
-// only the statement's leading keyword, so a write through a prepared statement or
-// a CTE it misjudges can at worst produce a spurious warning.
+// noteStatement records that the open write transaction has written, once a
+// statement that writes returned without an error (for a query, that is before its
+// rows are read). It reads only the statement's leading keyword, so a write it
+// misjudges, or one through a prepared statement, changes only whether a warning
+// is logged.
 func (c *sqliteConn) noteStatement(query string) {
 	if c.writeTx == nil || c.writeTx.wrote {
 		return

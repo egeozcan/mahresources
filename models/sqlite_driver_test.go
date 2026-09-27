@@ -162,6 +162,18 @@ func TestSQLiteWarnsAboutAWriteTransactionThatHeldTheLockWithoutWriting(t *testi
 		"the warning does not name the code that opened the transaction")
 }
 
+func TestSQLiteWarnsWhenTheOnlyWriteFailed(t *testing.T) {
+	db, _ := openProductionSQLite(t)
+	warnings := captureIdleWriterLockWarnings(t)
+
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		require.Error(t, tx.Exec("INSERT INTO no_such_table (v) VALUES ('x')").Error)
+		time.Sleep(80 * time.Millisecond)
+		return nil
+	}))
+	require.Len(t, *warnings, 1, "a write that failed changed nothing, so the lock was held for nothing")
+}
+
 func TestSQLiteDoesNotWarnAboutTransactionsThatWroteOrWereReadOnly(t *testing.T) {
 	db, _ := openProductionSQLite(t)
 	warnings := captureIdleWriterLockWarnings(t)
