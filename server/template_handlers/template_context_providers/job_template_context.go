@@ -78,7 +78,7 @@ type JobRow struct {
 	Kind       string
 	State      string
 	StateLabel string
-	// BadgeClass is the badge colour the state's tone takes (jobRowBadgeClasses).
+	// BadgeClass is the colour the state's tone takes (jobToneClass).
 	BadgeClass     string
 	Phase          string
 	Pinned         bool
@@ -674,7 +674,7 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	presentation := jobview.PresentJob(snapshot)
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
-		StateLabel: presentation.Label, BadgeClass: jobRowBadgeClasses[presentation.Tone],
+		StateLabel: presentation.Label, BadgeClass: jobToneClass(presentation.Tone),
 		Phase: jobview.PhaseText(snapshot), Pinned: snapshot.Pinned,
 		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
 		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
@@ -718,17 +718,10 @@ func jobStateLabel(snapshot jobs.Snapshot) string {
 	return jobview.PresentJob(snapshot).Label
 }
 
-// jobRowBadgeClasses is the card badge each state tone takes. A paused Job is
-// work still expected to go on, not an outcome; a blocked one needs attention
-// without having failed.
-var jobRowBadgeClasses = map[string]string{
-	"working": "card-badge--live",
-	"waiting": "card-badge--live",
-	"paused":  "card-badge--live",
-	"warning": "card-badge--warning",
-	"done":    "card-badge--success",
-	"failed":  "card-badge--danger",
-	"neutral": "card-badge--muted",
+// jobToneClass is the class a state's tone takes on every Job surface
+// (public/index.css): the card badge here, the drawer's pill and the Job page's.
+func jobToneClass(tone string) string {
+	return "job-tone--" + tone
 }
 
 // jobSummaryText shows a Job's structured summary: a JSON string as its text,

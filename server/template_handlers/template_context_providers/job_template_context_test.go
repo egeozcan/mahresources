@@ -456,21 +456,21 @@ func TestJobRowSaysWhenScheduledWorkStarts(t *testing.T) {
 // attention rather than as failed.
 func TestJobRowBadgeFollowsTheStateTable(t *testing.T) {
 	cases := map[jobs.State]string{
-		jobs.StateRunning:     "card-badge--live",
-		jobs.StateQueued:      "card-badge--live",
-		jobs.StatePaused:      "card-badge--live",
-		jobs.StateBlocked:     "card-badge--warning",
-		jobs.StateSucceeded:   "card-badge--success",
-		jobs.StateFailed:      "card-badge--danger",
-		jobs.StateInterrupted: "card-badge--danger",
-		jobs.StateCancelled:   "card-badge--muted",
+		jobs.StateRunning:     "job-tone--working",
+		jobs.StateQueued:      "job-tone--waiting",
+		jobs.StatePaused:      "job-tone--paused",
+		jobs.StateBlocked:     "job-tone--warning",
+		jobs.StateSucceeded:   "job-tone--done",
+		jobs.StateFailed:      "job-tone--failed",
+		jobs.StateInterrupted: "job-tone--failed",
+		jobs.StateCancelled:   "job-tone--neutral",
 	}
 	for state, want := range cases {
 		if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "x", State: state}).BadgeClass; got != want {
 			t.Fatalf("a %s card's badge is %q, want %q", state, got, want)
 		}
 	}
-	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "card-badge--warning" {
+	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "job-tone--warning" {
 		t.Fatalf("a partial success's badge is %q", got)
 	}
 	// A pause asked for and not yet confirmed: the card says it is pausing, not

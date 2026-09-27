@@ -105,14 +105,9 @@
                                 <li class="px-4 py-3 hover:bg-stone-50">
                                 <article data-job-panel-row :data-job-id="job.id" :aria-labelledby="'job-panel-title-' + job.id" class="flex items-start gap-3">
                                     {# The icon repeats the pill beside the title, so it is hidden from assistive technology. #}
+                                    {# The tone's colour is the one every Job surface gives it (job-tone--* in public/index.css). #}
                                     <span aria-hidden="true" class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                                          :class="{
-                                              'bg-amber-100 text-amber-800': stateTone(job) === 'working',
-                                              'bg-stone-100 text-stone-600': stateTone(job) === 'waiting' || stateTone(job) === 'neutral',
-                                              'bg-yellow-100 text-yellow-800': stateTone(job) === 'paused' || stateTone(job) === 'warning',
-                                              'bg-green-100 text-green-800': stateTone(job) === 'done',
-                                              'bg-red-100 text-red-700': stateTone(job) === 'failed'
-                                          }">
+                                          :class="'job-tone--' + stateTone(job)">
                                         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
                                             <path x-show="stateTone(job) === 'working'" d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14" />
                                             <path x-show="stateTone(job) === 'waiting'" d="M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -129,14 +124,8 @@
                                             <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || kindText(job) || job.id"
                                                class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
                                                x-text="job.title || kindText(job) || job.id"></a>
-                                            <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-                                                  :class="{
-                                                      'bg-amber-100 text-amber-900': stateTone(job) === 'working',
-                                                      'bg-stone-100 text-stone-700': stateTone(job) === 'waiting' || stateTone(job) === 'neutral',
-                                                      'bg-yellow-100 text-yellow-900': stateTone(job) === 'paused' || stateTone(job) === 'warning',
-                                                      'bg-green-100 text-green-800': stateTone(job) === 'done',
-                                                      'bg-red-100 text-red-800': stateTone(job) === 'failed'
-                                                  }"
+                                            <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium" data-job-panel-state
+                                                  :class="'job-tone--' + stateTone(job)"
                                                   x-text="stateLabel(job)"></span>
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">

@@ -1,7 +1,9 @@
 package jobview
 
 import (
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"mahresources/jobs"
@@ -98,6 +100,28 @@ func TestPresentJobSaysWhatARequestedControlIsDoing(t *testing.T) {
 		}
 		if got.Working != (tc.snapshot.State == jobs.StateRunning) {
 			t.Fatalf("%s with intent %q is working=%v", tc.snapshot.State, tc.snapshot.ControlIntent, got.Working)
+		}
+	}
+}
+
+// TestEveryToneHasItsColour: a surface draws a state's tone with the class the
+// tone names (job-tone--<tone> in public/index.css), so a tone the table uses
+// with no rule there would draw a pill with no colour at all.
+func TestEveryToneHasItsColour(t *testing.T) {
+	css, err := os.ReadFile("../../public/index.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tones := []string{statePresentations.Partial.Tone, statePresentations.Unknown.Tone}
+	for _, entry := range statePresentations.States {
+		tones = append(tones, entry.Tone)
+	}
+	for _, entry := range statePresentations.RunningIntents {
+		tones = append(tones, entry.Tone)
+	}
+	for _, tone := range tones {
+		if !strings.Contains(string(css), ".job-tone--"+tone+" ") && !strings.Contains(string(css), ".job-tone--"+tone+",") {
+			t.Errorf("public/index.css has no rule for the %q tone", tone)
 		}
 	}
 }
