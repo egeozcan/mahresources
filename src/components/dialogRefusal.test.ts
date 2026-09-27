@@ -41,6 +41,25 @@ describe('a shortcut refused over another dialog', () => {
         expect(dialog.querySelectorAll('[data-modal-refusal]').length).toBe(1);
     });
 
+    test('leaves once it has been read, so a dialog that is hidden and shown again does not show it', async () => {
+        vi.useFakeTimers();
+        try {
+            const dialog = openDialog('Picker');
+            refuseOverModal(dialog, 'Close this dialog first to open Jobs.');
+            vi.advanceTimersByTime(50);
+            expect(dialog.querySelector('[data-modal-refusal]')?.textContent).toBe('Close this dialog first to open Jobs.');
+            vi.advanceTimersByTime(9_000);
+            // Asked again while shown, it stays for the full time from then.
+            refuseOverModal(dialog, 'Close this dialog first to open Jobs.');
+            vi.advanceTimersByTime(50 + 9_000);
+            expect(dialog.querySelector('[data-modal-refusal]')).not.toBeNull();
+            vi.advanceTimersByTime(1_000);
+            expect(dialog.querySelector('[data-modal-refusal]')).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('the Jobs shortcut inside search says why inside search', async () => {
         const dialog = openDialog('Search');
         const panel = jobPanel() as any;

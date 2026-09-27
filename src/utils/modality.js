@@ -65,10 +65,13 @@ export function blockingModal(ignoreWithin = null) {
  * A live region outside an `aria-modal` dialog may go unheard while the dialog is
  * open, and a refusal that is only spoken leaves a sighted keyboard user with a
  * shortcut that simply did nothing. The notice is a status region at the end of
- * the dialog; it goes with the dialog when the dialog closes. It is emptied and
- * written a moment later, so the region exists before its words change and the
- * same refusal twice is heard twice.
+ * the dialog. It is emptied and written a moment later, so the region exists
+ * before its words change and the same refusal twice is heard twice. It is
+ * removed once it has been read (REFUSAL_SHOWN_MS), because a dialog that is
+ * hidden rather than removed would otherwise show it again when it next opens.
  */
+const REFUSAL_SHOWN_MS = 10000;
+
 export function refuseOverModal(modal, message) {
     if (typeof modal?.querySelector !== 'function' || typeof document?.createElement !== 'function') return;
     let notice = modal.querySelector(':scope > [data-modal-refusal]');
@@ -79,8 +82,11 @@ export function refuseOverModal(modal, message) {
         notice.className = 'modal-refusal';
         modal.append(notice);
     }
+    clearTimeout(notice._refusalTimer);
     notice.textContent = '';
-    setTimeout(() => {
-        if (notice.isConnected) notice.textContent = message;
+    notice._refusalTimer = setTimeout(() => {
+        if (!notice.isConnected) return;
+        notice.textContent = message;
+        notice._refusalTimer = setTimeout(() => notice.remove(), REFUSAL_SHOWN_MS);
     }, 50);
 }
