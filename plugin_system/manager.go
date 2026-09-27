@@ -247,7 +247,7 @@ type PluginManager struct {
 	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
 	// hostHeld names the durable Jobs this process already has an execution
 	// for, under actionJobsMu (see holdHostJobLocked).
-	hostHeld map[string]struct{}
+	hostHeld map[string]string
 
 	// lanes serialize each plugin's async executions (see action_lanes.go).
 	lanes   map[string]*pluginLane
@@ -302,7 +302,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionSemaphore:        make(chan struct{}, maxConcurrentActions),
 		actionSubs:             make(map[chan ActionJobEvent]struct{}),
 		actionInFlight:         make(map[string]*sync.WaitGroup),
-		hostHeld:               make(map[string]struct{}),
+		hostHeld:               make(map[string]string),
 		lanes:                  make(map[string]*pluginLane),
 		loading:                make(map[string]chan struct{}),
 		fallbackConsent:        newMemoryConsentStore(),

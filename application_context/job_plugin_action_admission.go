@@ -129,7 +129,11 @@ func (a *pluginActionAdmission) Admit(deadline time.Time) (result plugin_system.
 			result = plugin_system.AdmitWithdrawn
 		}
 	}()
-	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, a.jobID)
+	// The claim is known the moment it commits, so a panic in what follows it
+	// is settled by the recovery above rather than leaving the Job running.
+	execution, stopHeartbeat, err := a.ctx.claimPluginActionJobNamed(bounded, a.jobID, func(ref jobs.ExecutionRef) {
+		claimed = &jobs.Execution{JobID: ref.JobID, ExecutionToken: ref.ExecutionToken}
+	})
 	var unrunnable *jobs.UnrunnableClaimError
 	switch {
 	case err == nil:
@@ -484,7 +488,7 @@ const pluginActionWaitingForChecks = "Waiting for the account and scope checks"
 // work and what ClaimJob does before handing the execution over. An error that
 // comes with a claimed execution (ErrExecutionNotLoaded, an UnrunnableClaimError)
 // comes with its heartbeat too: the claim is the caller's to settle.
-func (ctx *MahresourcesContext) claimPluginActionJobNamed(bounded context.Context, jobID string) (jobs.Execution, func(), error) {
+func (ctx *MahresourcesContext) claimPluginActionJobNamed(bounded context.Context, jobID string, claimed func(jobs.ExecutionRef)) (jobs.Execution, func(), error) {
 	service := ctx.JobService()
 	if service == nil {
 		return jobs.Execution{}, func() {}, errors.New("this context has no job control plane installed")
@@ -505,6 +509,7 @@ func (ctx *MahresourcesContext) claimPluginActionJobNamed(bounded context.Contex
 		// it: a plugin execution is one of the executions `max-job-concurrency`
 		// counts.
 		Capacity: ctx.hostClaimCapacityBudget(),
+		Claimed:  claimed,
 	})
 	if err != nil && execution.ExecutionToken == "" {
 		return jobs.Execution{}, func() {}, err

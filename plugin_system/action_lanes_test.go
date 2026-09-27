@@ -879,3 +879,56 @@ func TestADeferredHeadStepsOutOfItsLane(t *testing.T) {
 		return len(waitingSink.lost) == 1
 	})
 }
+
+// TestAHandOffOfAHeldJobAnswersTheExecutionAlreadyHeld pins the id a second
+// hand-off of one durable Job answers: the one the panel lists, not a fresh id
+// nothing was ever registered under.
+func TestAHandOffOfAHeldJobAnswersTheExecutionAlreadyHeld(t *testing.T) {
+	pm := newLanePluginManager(t)
+	gate := installLaneGate(t, pm, "busy", "work")
+	defer gate.open.Store(true)
+	if _, err := pm.RunActionAsyncForOwner(nil, "busy", "work", 1, nil, ""); err != nil {
+		t.Fatalf("submit the running work: %v", err)
+	}
+	waitUntil(t, "the running work to start", 5*time.Second, func() bool { return len(gate.order()) == 1 })
+
+	ref := &HostJobRef{JobID: "held-job", Sink: &recordingSink{}, Admission: &laterAdmission{}}
+	first, err := pm.RunActionAsyncForHost(ref, nil, "busy", "work", 2, nil, "")
+	if err != nil {
+		t.Fatalf("first hand-off: %v", err)
+	}
+	second, err := pm.RunActionAsyncForHost(ref, nil, "busy", "work", 2, nil, "")
+	if err != nil {
+		t.Fatalf("second hand-off: %v", err)
+	}
+	if second != first || pm.GetActionJob(second) == nil {
+		t.Fatalf("the second hand-off answered %q, want the held execution %q", second, first)
+	}
+}
+
+// TestDroppingAnEntryThatWasReplacedAnnouncesNothing pins the removal event to
+// the entry it names. A Retry's successor can take over its predecessor's id;
+// dropping the predecessor must leave the successor listed and say nothing.
+func TestDroppingAnEntryThatWasReplacedAnnouncesNothing(t *testing.T) {
+	pm := newLanePluginManager(t)
+	old := &ActionJob{ID: "shared-handle", PluginName: "idle", Status: "pending"}
+	successor := &ActionJob{ID: "shared-handle", PluginName: "idle", Status: "pending"}
+	pm.actionJobsMu.Lock()
+	pm.actionJobs[successor.ID] = successor
+	pm.actionJobsMu.Unlock()
+	events := pm.SubscribeActionJobs()
+	defer pm.UnsubscribeActionJobs(events)
+
+	pm.dropUnstartedJob(old)
+	select {
+	case event := <-events:
+		t.Fatalf("dropping a replaced entry announced %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+	pm.actionJobsMu.RLock()
+	listed := pm.actionJobs["shared-handle"]
+	pm.actionJobsMu.RUnlock()
+	if listed != successor {
+		t.Fatal("dropping a replaced entry removed its successor")
+	}
+}

@@ -337,9 +337,9 @@ func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *ui
 	}
 
 	pm.actionJobsMu.Lock()
-	if !pm.holdHostJobLocked(host) {
+	if held, ok := pm.holdHostJobLocked(host, jobID); !ok {
 		pm.actionJobsMu.Unlock()
-		return jobID, nil
+		return held, nil
 	}
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()

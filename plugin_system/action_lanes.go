@@ -470,21 +470,22 @@ func (pm *PluginManager) pauseBeforeAdmission(deadline time.Time, revoked <-chan
 }
 
 // holdHostJob records that this process has an execution for one durable Job,
-// refusing a second. It is what makes handing a waiting Job to this process
-// idempotent: the request that accepted it and a later pass that finds it
-// waiting can both ask, and exactly one execution results.
-func (pm *PluginManager) holdHostJobLocked(host *HostJobRef) bool {
+// under its in-memory id, refusing a second. It is what makes handing a waiting
+// Job to this process idempotent: the request that accepted it and a later pass
+// that finds it waiting can both ask, and exactly one execution results. A
+// refusal answers the id of the execution already held.
+func (pm *PluginManager) holdHostJobLocked(host *HostJobRef, localID string) (string, bool) {
 	if host == nil || host.JobID == "" {
-		return true
+		return localID, true
 	}
-	if _, held := pm.hostHeld[host.JobID]; held {
-		return false
+	if held, ok := pm.hostHeld[host.JobID]; ok {
+		return held, false
 	}
 	if pm.hostHeld == nil {
-		pm.hostHeld = make(map[string]struct{})
+		pm.hostHeld = make(map[string]string)
 	}
-	pm.hostHeld[host.JobID] = struct{}{}
-	return true
+	pm.hostHeld[host.JobID] = localID
+	return localID, true
 }
 
 // releaseHostJob forgets that this process has an execution for a Job.
@@ -507,12 +508,18 @@ func (pm *PluginManager) HostJobHeld(jobID string) bool {
 }
 
 // dropUnstartedJob removes the in-memory entry of an execution that will never
-// start, so the panel is not left listing work nobody will run.
+// start, so the panel is not left listing work nobody will run. An entry that
+// has since been replaced under the same id (a Retry's successor sharing the
+// handle) is not this one, so it is neither removed nor announced as removed.
 func (pm *PluginManager) dropUnstartedJob(job *ActionJob) {
 	pm.actionJobsMu.Lock()
-	if current, ok := pm.actionJobs[job.ID]; ok && current == job {
+	current, ok := pm.actionJobs[job.ID]
+	removed := ok && current == job
+	if removed {
 		delete(pm.actionJobs, job.ID)
 	}
 	pm.actionJobsMu.Unlock()
-	pm.notifyActionJobSubscribers("removed", job)
+	if removed {
+		pm.notifyActionJobSubscribers("removed", job)
+	}
 }

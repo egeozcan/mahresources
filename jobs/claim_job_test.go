@@ -375,3 +375,47 @@ func TestAClaimJobHandsBackAClaimWhosePrincipalIsGone(t *testing.T) {
 		t.Fatalf("an execution whose principal is gone carries access %+v, want none", execution.Access)
 	}
 }
+
+// TestAClaimIsNamedBeforeAnythingFollowsItsCommit pins where a caller learns its
+// token. Everything ClaimJob does after the commit (reading the input, blocking a
+// Job that cannot run) can fail without returning, and a caller that learns the
+// token only from the return value then cannot settle a Job that is running under
+// it. The token is handed over first.
+func TestAClaimIsNamedBeforeAnythingFollowsItsCommit(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-named-first.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	registerTestCodec(t, svc)
+	sealing := Deps{DB: deps.DB, Now: deps.Now, Replay: &ReplayConfig{Keys: replayKeyringFromSeeds(t, "the-key")}}
+	accepted, err := svc.Accept(sealing, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: json.RawMessage(`{"secret":"sealed"}`)},
+	})
+	if err != nil {
+		t.Fatalf("accept with replay input: %v", err)
+	}
+	if err := deps.DB.Callback().Query().Before("gorm:query").Register("panic-on-the-load", func(db *gorm.DB) {
+		if db.Statement.Table == "job_replay_envelopes" {
+			panic("the load failed without returning")
+		}
+	}); err != nil {
+		t.Fatalf("register the panicking read: %v", err)
+	}
+
+	var named ExecutionRef
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the load did not panic: the test did not reach it")
+			}
+		}()
+		_, _ = svc.ClaimJob(context.Background(), sealing, ClaimRequest{
+			Kind: testKind, KindVersion: 1, JobID: accepted.ID, Claimant: "panicking-runtime",
+			Claimed: func(ref ExecutionRef) { named = ref },
+		})
+	}()
+	row := jobRow(t, deps, accepted.ID)
+	if named.ExecutionToken == "" || row.ExecutionToken != named.ExecutionToken || State(row.State) != StateRunning {
+		t.Fatalf("the caller was told %+v, and the Job is %s under %q", named, row.State, row.ExecutionToken)
+	}
+}

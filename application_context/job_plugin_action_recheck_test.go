@@ -863,3 +863,39 @@ func TestASlowReCheckRunsOnALaterAttempt(t *testing.T) {
 		t.Fatalf("after many give-backs an attempt may hold the VM for %v, want the cap %v", got, pluginActionAdmissionAttemptCap)
 	}
 }
+
+// TestAPanicWhileLoadingTheClaimEndsTheJob pins the claim across a panic in what
+// ClaimJob does after its commit. The admission is told the claim as it commits,
+// so its own recovery ends the Job rather than leaving it running under a token
+// nobody holds.
+func TestAPanicWhileLoadingTheClaimEndsTheJob(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	enableActionPluginForTest(t, ctx)
+	actor := models.User{Username: "panicking-actor", Role: models.RoleUser, PasswordHash: "x"}
+	if err := ctx.db.Create(&actor).Error; err != nil {
+		t.Fatalf("seed the actor: %v", err)
+	}
+	accepted, input := acceptRegisteredActionForTest(t, ctx, actor.ID, 12)
+	var panicked atomic.Bool
+	if err := ctx.db.Callback().Query().Before("gorm:query").Register("panic-on-the-load", func(db *gorm.DB) {
+		if db.Statement.Table == "job_replay_envelopes" && panicked.CompareAndSwap(false, true) {
+			panic("the load failed without returning")
+		}
+	}); err != nil {
+		t.Fatalf("register the panicking read: %v", err)
+	}
+
+	admission := ctx.newPluginActionAdmission(accepted.ID, input, ctx.registeredActionRefusal)
+	if got := admission.Admit(time.Time{}); got != plugin_system.AdmitWithdrawn {
+		t.Fatalf("an admission whose claim panicked while loading answered %v, want withdrawn", got)
+	}
+	if !panicked.Load() {
+		t.Fatal("the load never panicked: the test did not reach it")
+	}
+	waitFor(t, "the claimed Job to end", func() bool {
+		return jobStateForTest(t, ctx, accepted.ID) == jobs.StateFailed
+	})
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the ended Job still holds %d slots", held)
+	}
+}

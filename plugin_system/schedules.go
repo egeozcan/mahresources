@@ -325,7 +325,7 @@ func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserI
 	}
 
 	pm.actionJobsMu.Lock()
-	if !pm.holdHostJobLocked(host) {
+	if _, ok := pm.holdHostJobLocked(host, jobID); !ok {
 		pm.actionJobsMu.Unlock()
 		return "", false, errHostJobHeld
 	}

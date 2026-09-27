@@ -1499,6 +1499,11 @@ type ClaimRequest struct {
 	Capacity []CapacityRef
 	// Lease overrides the Kind's declared lease for this claim.
 	Lease time.Duration
+	// Claimed, when set, is told the claim's reference as soon as it has
+	// committed, before anything else is read or written for it. A caller
+	// whose own recovery has to settle the claim then holds its token even
+	// when what follows the commit panics instead of returning.
+	Claimed func(ExecutionRef)
 }
 
 // Execution is everything a Kind adapter is given to run one claimed Job: its

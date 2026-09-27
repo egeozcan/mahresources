@@ -285,6 +285,11 @@ type dispatcherState struct {
 	// again. Until then nothing is started: every run and import draws on the
 	// same deployment budget, so one refusal answers for all of them.
 	capacityRetryAt time.Time
+	// importsFirst says which kind of work is offered room first. Runs and
+	// imports take turns: the kind that was just started goes second next time,
+	// and a kind refused by a full budget keeps its turn, so neither can take
+	// every slot that frees while the other waits.
+	importsFirst bool
 }
 
 func NewDispatcher(deps Dependencies) *Dispatcher {
@@ -1197,26 +1202,55 @@ func (d *Dispatcher) schedule(state *dispatcherState) {
 	if d.now().Before(state.capacityRetryAt) {
 		return
 	}
-	for len(state.activeCommands) < maxActiveCommands {
-		run, ok := state.nextCommand()
-		if !ok {
-			break
+	for {
+		started := false
+		for _, imports := range [2]bool{state.importsFirst, !state.importsFirst} {
+			took, refused := d.startNext(state, imports)
+			if refused {
+				state.importsFirst = imports
+				state.capacityRetryAt = d.now().Add(jobCapacityRetryDelay)
+				return
+			}
+			if took {
+				state.importsFirst = !imports
+				started = true
+				break
+			}
 		}
-		if !d.startCommand(state, run) {
-			state.capacityRetryAt = d.now().Add(jobCapacityRetryDelay)
+		if !started {
 			return
 		}
 	}
-	for len(state.activeImports) < maxActiveImports {
+}
+
+// startNext offers room to the next queued run, or the next queued import. took
+// reports that one was taken off its queue; refused that the job budget had no
+// room for it, and it is back at the head of its queue.
+func (d *Dispatcher) startNext(state *dispatcherState, imports bool) (took, refused bool) {
+	if imports {
+		if len(state.activeImports) >= maxActiveImports {
+			return false, false
+		}
 		item, ok := state.nextImport()
 		if !ok {
-			break
+			return false, false
 		}
 		if !d.startImport(state, item) {
-			state.capacityRetryAt = d.now().Add(jobCapacityRetryDelay)
-			return
+			return false, true
 		}
+		return true, false
 	}
+	if len(state.activeCommands) >= maxActiveCommands {
+		return false, false
+	}
+	run, ok := state.nextCommand()
+	if !ok {
+		return false, false
+	}
+	if !d.startCommand(state, run) {
+		return false, true
+	}
+	return true, false
 }
 
 // requeueCommand puts a run the job budget refused back at the head of its

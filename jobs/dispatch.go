@@ -210,6 +210,9 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	if err != nil {
 		return Execution{}, err
 	}
+	if request.Claimed != nil {
+		request.Claimed(ExecutionRef{JobID: claimed.ID, ExecutionToken: claim.ExecutionToken})
+	}
 	// The execution publishes through ctx, never through whatever bound the
 	// claim's own queries: a deadline there would cut short every write the work
 	// makes after its caller stopped waiting to start it. What happens before it

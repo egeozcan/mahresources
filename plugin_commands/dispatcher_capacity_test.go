@@ -83,3 +83,40 @@ func TestAnImportRefusedByAFullJobBudgetWaitsInItsQueue(t *testing.T) {
 		t.Fatalf("the live lane was handed %q, want the waiting import", got)
 	}
 }
+
+// TestRunsAndImportsTakeTurnsForTheJobBudget pins fairness between the two kinds
+// of work one budget admits. With one slot freeing at a time and runs queued
+// ahead of an import, the slot after a run goes to the import: runs that keep
+// arriving cannot take every slot while the import waits.
+func TestRunsAndImportsTakeTurnsForTheJobBudget(t *testing.T) {
+	d, _, jobs := startTestDispatcher(t, 10)
+	none := 0
+	jobs.mu.Lock()
+	jobs.slots = &none
+	jobs.mu.Unlock()
+	free := func() {
+		jobs.mu.Lock()
+		*jobs.slots = 1
+		jobs.mu.Unlock()
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := d.Submit(commandRequest(fmt.Sprintf("runs-%d", i), nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.submitImport(ImportJobSpec{ImportID: "import-turn", RunID: "run-import-turn", PluginName: "imports"},
+		func(context.Context, Progress) Outcome { return Outcome{Status: ImportStatusSucceeded} }); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * jobCapacityRetryDelay)
+
+	free()
+	waitFor(t, func() bool { return jobs.commandCount()+jobs.importCount() == 1 })
+	free()
+	waitFor(t, func() bool { return jobs.commandCount()+jobs.importCount() == 2 })
+	if jobs.importCount() != 1 {
+		t.Fatalf("with runs still queued the second slot went to a run (%d runs, %d imports started), want the waiting import",
+			jobs.commandCount(), jobs.importCount())
+	}
+}
