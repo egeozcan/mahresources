@@ -34,7 +34,7 @@ The same rule names a resource created from the remote-resource form,
 `POST /v1/resource/remote` and `mah.db.create_resource_from_url`. An assembled
 HLS stream takes the playlist's name with an `.mp4` extension.
 
-The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created, and the Job fails with the code `submitter-refused` and a message saying so.
+The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created, and the Job fails with the code `submitter-refused` and a message saying so. If the account cannot be read at that moment, no Resource is created either, and the Job fails with the code `account-check-unavailable`; Retry downloads it again.
 
 ## Queue Limits
 
@@ -236,6 +236,7 @@ deployment's policy and limits.
 | `address-refused` | `policy` | yes | The fetch policy refused an address or host (see [Where downloads may point](#where-downloads-may-point)) |
 | `plugin-unavailable` | `policy` | yes | A plugin's download whose plugin, and so its network policy, is no longer enabled |
 | `submitter-refused` | `policy` | yes | The submitter may no longer create content |
+| `account-check-unavailable` | `dependency` | yes | The submitter's account could not be read once the bytes were in |
 | `unsupported-stream` | `validation` | yes | An HLS stream this server refuses (live, DRM, a non-HTTP URL, a kind it does not handle) |
 | `stream-over-limit` | `policy` | yes | An HLS stream over `-hls-max-segments` or `-hls-max-bytes` |
 | `ffmpeg-unavailable` | `dependency` | yes | An HLS stream and no ffmpeg to assemble it |

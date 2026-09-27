@@ -876,11 +876,13 @@ var downloadFailureKinds = map[string]downloadFailureKind{
 	download_queue.FailureAddressRefused:    {class: jobs.FailureClassPolicy},
 	download_queue.FailurePluginUnavailable: {class: jobs.FailureClassPolicy},
 	download_queue.FailureSubmitterRefused:  {class: jobs.FailureClassPolicy},
-	download_queue.FailureUnsupportedStream: {class: jobs.FailureClassValidation},
-	download_queue.FailureStreamOverLimit:   {class: jobs.FailureClassPolicy},
-	download_queue.FailureFfmpegUnavailable: {class: jobs.FailureClassDependency},
-	download_queue.FailureResourceExists:    {class: jobs.FailureClassConflict},
-	download_queue.FailureDownloadFailed:    {class: jobs.FailureClassInternal},
+	// A read that failed is the database's failure, and a Retry can succeed.
+	download_queue.FailureAccountCheckUnavailable: {class: jobs.FailureClassDependency},
+	download_queue.FailureUnsupportedStream:       {class: jobs.FailureClassValidation},
+	download_queue.FailureStreamOverLimit:         {class: jobs.FailureClassPolicy},
+	download_queue.FailureFfmpegUnavailable:       {class: jobs.FailureClassDependency},
+	download_queue.FailureResourceExists:          {class: jobs.FailureClassConflict},
+	download_queue.FailureDownloadFailed:          {class: jobs.FailureClassInternal},
 }
 
 func downloadFailureKindOf(code string) downloadFailureKind {

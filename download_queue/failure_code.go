@@ -65,6 +65,10 @@ const (
 	// content by the time its bytes are in: the account was deleted or disabled,
 	// or its role no longer writes. The resource writer names it.
 	FailureSubmitterRefused = "submitter-refused"
+	// FailureAccountCheckUnavailable is a download whose submitter's account could
+	// not be read once its bytes were in, so the resource writer saved nothing.
+	// The account refused nothing; the read failed.
+	FailureAccountCheckUnavailable = "account-check-unavailable"
 	// FailureResourceExists is bytes the library already holds.
 	FailureResourceExists = "resource-exists"
 	// FailureDownloadFailed is every failure none of the above describes.

@@ -354,6 +354,25 @@ func downloadRowFromJob(projected jobs.Snapshot, handle, source string) *downloa
 	return row
 }
 
+// LegacyDownloadStatusStates answers the canonical states a legacy download
+// status names: every state the legacy projection reads as that status
+// (downloadStatusFromState), so a filter translated from the legacy vocabulary
+// lists what a legacy client saw under it. A transfer saving its file reports
+// processing from its queue entry and downloading from its Job, so processing
+// names the states downloading does. An unknown status names none.
+func LegacyDownloadStatusStates(status download_queue.JobStatus) []jobs.State {
+	if status == download_queue.JobStatusProcessing {
+		status = download_queue.JobStatusDownloading
+	}
+	var states []jobs.State
+	for _, state := range jobs.AllStates {
+		if downloadStatusFromState(state) == status {
+			states = append(states, state)
+		}
+	}
+	return states
+}
+
 // downloadStatusFromState maps a normalized Job state onto the queue's own status
 // vocabulary, which is what every legacy consumer switches on.
 func downloadStatusFromState(state jobs.State) download_queue.JobStatus {

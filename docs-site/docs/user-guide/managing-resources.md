@@ -420,7 +420,10 @@ Administrators can see Jobs across accounts; other accounts see only work
 allowed by current scope.
 
 Old `/downloads` links redirect to `/jobs` with recognized filters translated,
-listing downloads scheduled for later as well as immediate ones.
+listing downloads scheduled for later as well as immediate ones. A status
+filter lists every state the old page showed under that status: `pending`
+includes scheduled work, `paused` includes blocked work, and `failed` includes
+interrupted work.
 Legacy `/v1/downloads` API routes remain available during the compatibility
 window. Download history retention remains configurable on `/admin/settings`;
 see [Job System](../features/job-system.md#retention) for canonical Job and
