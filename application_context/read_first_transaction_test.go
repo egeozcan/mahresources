@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -53,9 +54,10 @@ func commitAfterEveryFirstRead(t *testing.T, ctx *MahresourcesContext) *atomic.I
 	return &attempts
 }
 
-// Each of these writers reads inside its transaction before it writes. None of them
-// orders its statements for SQLite, and none needs to: the driver makes the whole
-// transaction one writer from its BEGIN.
+// Each of these writers reads inside its transaction before it writes. None needs to
+// order its statements for SQLite: the driver makes the whole transaction one writer
+// from its BEGIN. (Merging resources and recording a dual-published source still
+// open with a no-op write, which predates the driver and is redundant under it.)
 func TestTransactionsThatReadBeforeTheyWriteSurviveACommitAfterTheirRead(t *testing.T) {
 	// Each case seeds what its writer needs and returns the write.
 	cases := []struct {
@@ -104,6 +106,26 @@ func TestTransactionsThatReadBeforeTheyWriteSurviveACommitAfterTheirRead(t *test
 			return func() error {
 				_, err := ctx.UpdateSeries(&query_models.SeriesEditor{ID: series.ID, Name: "renamed"})
 				return err
+			}
+		}},
+		{"merging resources", func(t *testing.T, ctx *MahresourcesContext) func() error {
+			winner := &models.Resource{Name: "winner", Hash: "hash-winner", Location: "loc-winner"}
+			loser := &models.Resource{Name: "loser", Hash: "hash-loser", Location: "loc-loser"}
+			require.NoError(t, ctx.db.Create(winner).Error)
+			require.NoError(t, ctx.db.Create(loser).Error)
+			return func() error { return ctx.MergeResources(winner.ID, []uint{loser.ID}, false) }
+		}},
+		{"recording a new dual-published source", func(t *testing.T, ctx *MahresourcesContext) func() error {
+			require.NoError(t, ctx.db.AutoMigrate(&models.JobSourceMapping{}))
+			return func() error {
+				return ctx.recordDualPublishedSource(jobMigrationReduction, "new", "job-1", "hash-1", false, time.Now())
+			}
+		}},
+		{"refreshing a dual-published source", func(t *testing.T, ctx *MahresourcesContext) func() error {
+			require.NoError(t, ctx.db.AutoMigrate(&models.JobSourceMapping{}))
+			require.NoError(t, ctx.recordDualPublishedSource(jobMigrationReduction, "existing", "job-0", "hash-0", false, time.Now()))
+			return func() error {
+				return ctx.recordDualPublishedSource(jobMigrationReduction, "existing", "job-1", "hash-1", false, time.Now())
 			}
 		}},
 		{"editing a resource", func(t *testing.T, ctx *MahresourcesContext) func() error {
