@@ -35,6 +35,8 @@ When the owner Group is deleted, the Note's `ownerId` is set to NULL (ON DELETE 
 
 Notes have optional `startDate` and `endDate` fields for temporal filtering and chronological organization. Both fields are independent -- set one, both, or neither.
 
+Both are wall-clock values without a time zone, entered as `YYYY-MM-DDTHH:MM`. They are stored and read back as entered, whatever zone the server runs in, and the API returns them in UTC notation (`2026-09-27T12:00:00Z` for `2026-09-27T12:00`).
+
 ## Note Types
 
 Note Types classify Notes and apply consistent styling. Each Note Type carries a set of custom HTML slots, processed server-side for shortcodes, with Alpine.js directives available against an `entity` variable in the detail-page and card slots. See [Custom Templates](../features/custom-templates.md).

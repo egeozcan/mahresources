@@ -45,6 +45,8 @@ Three granularity levels control how time is divided into buckets:
 
 Monthly is the default. Switching granularity resets the anchor to today.
 
+Buckets are calendar periods in UTC: a week starts on Monday at 00:00 UTC, and "today" is the current UTC date. An entity is counted in the bucket that holds the moment of its timestamp, whatever time zone the server stamped it in.
+
 ## Navigation
 
 - **Left arrow** (`<`) -- shifts the time window backward. The first bucket's start date becomes the new anchor, so you see the preceding period.
