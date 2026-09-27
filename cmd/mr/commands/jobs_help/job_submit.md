@@ -46,7 +46,7 @@ progress with `jobs list` or the `/v1/jobs/events?version=2` stream.
   JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events?version=2&a=1,b.txt" --json | jq -er 'select(.jobs | length == 1) | .jobs[0].canonicalJobId')
   mr job cancel $JID --json >/dev/null
 
-  # mr-doctest: submit, capture the ID, confirm the job appears in the queue listing
+  # mr-doctest: submit and confirm the job appears in the queue listing; the cancel is cleanup, since with -auth the fetch is refused at once
   JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].canonicalJobId')
   mr jobs list --json | jq -e --arg j "$JID" '.jobs | map(.id) | index($j) != null'
-  mr job cancel $JID --json >/dev/null
+  mr job cancel $JID --json >/dev/null || true
