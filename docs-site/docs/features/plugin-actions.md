@@ -54,6 +54,8 @@ end
 | `async` | boolean | No | `false` | Run asynchronously via the job system |
 | `confirm` | string | No | `""` | Confirmation message shown before execution |
 | `bulk_max` | number | No | `0` | Maximum entities for bulk execution (0 = no limit of the action's own) |
+| `retry` | boolean | No | `false` | The async handler is safe to run again with the same entity and parameters. Offers **Retry** on an unsuccessful job and **Continue** on a partial one. |
+| `cancel` | boolean | No | `false` | The async handler may be stopped partway. Offers **Cancel** on a running job; see [Cancelling a job](#cancelling-a-job). |
 
 Registering a duplicate `id` within the same plugin raises a Lua error.
 
@@ -288,7 +290,8 @@ end
 
 Async actions (`async = true`) run in a background goroutine via the job system. The API returns immediately with a `job_id`.
 
-**Timeout**: 5 minutes.
+**Timeout**: 5 minutes. A handler that runs longer is stopped at its next step,
+and its job fails with the class `timeout`.
 
 A plugin runs one piece of background work at a time in each server process. Its
 async actions and its `mah.start_job` jobs wait in one queue per plugin and start
@@ -310,10 +313,15 @@ plugin's other work go first. It tries again after a wait that starts at one
 second and doubles each time, up to 30 seconds, and each attempt is allowed twice
 as long as the one before, up to one minute, so checks that are slow but finish
 still let it start. It never starts on a check that did not finish, and a check
-that could not finish is never recorded as a refusal. Each attempt adds a start
-and a return to `queued` to the job's history. Work still queued when its plugin is disabled does not
+that could not finish is never recorded as a refusal. The first attempt that
+cannot finish adds a start and a return to `queued` to the job's history; the
+attempts after it run the checks before claiming the job, and add nothing to its
+history while the checks still cannot finish. Work still queued when its plugin is disabled does not
 start: a queued action is blocked for a person to decide about, or runs if the
 plugin is enabled again first, and a queued `mah.start_job` job is cancelled.
+A handler that is running when its plugin is disabled is stopped at its next step,
+and its job ends `interrupted` with the reason "The plugin was disabled while this
+was running."
 
 ```lua
 mah.action({
@@ -429,6 +437,64 @@ A job already marked failed or cancelled keeps that outcome. A handler that
 calls `mah.job_fail` and then returns a diagnostic table is not overruled by
 that table: it is ignored, and the failure stands.
 
+### Cancelling a job
+
+A job whose handler has not started offers **Cancel** in the Jobs panel and the
+Job Center, whatever the action declares: it is `queued`, or `blocked` with
+nothing running, and none of it has run. It ends `cancelled` at once and its
+handler never runs. A bulk run's queued jobs can be selected and cancelled
+together in the Job Center.
+
+A running handler offers **Cancel** only when the action declares `cancel = true`.
+Cancelling it stops the handler at its next step: between two Lua instructions,
+or when a `mah.sleep` or `mah.http` call it is waiting in returns early. What the
+handler did before that stays done, so declare `cancel = true` only for a handler
+that leaves consistent data wherever it stops, for example one that writes each
+item in its own `mah.db.transaction`. The job ends `cancelled`, also when the
+handler had already called `mah.job_complete` or finished before the stop reached
+it: once a person asks for a cancellation, the job does not end as succeeded.
+With several server processes, the process running the handler stops it within
+about a second of the request.
+
+A running `mah.start_job` job has no registration to declare `cancel = true`, so
+it can be cancelled only before it starts.
+
+### Why a job failed
+
+A failed job shows a reason in the Jobs panel, on the Job Center list and on the
+job's page:
+
+| Cause | Failure code | Class | Reason shown |
+|-------|--------------|-------|--------------|
+| `mah.job_fail(job_id, message)` or `mah.abort(reason)` | `plugin-action-failed` | `dependency` | The message the plugin gave |
+| A Lua error the handler did not catch | `plugin-handler-error` | `internal` | The error's own first line, such as `plugin.lua:20: attempt to index a non-table object(nil) with key 'time'` |
+| The handler ran for longer than 5 minutes | `plugin-handler-timeout` | `timeout` | `the handler ran for longer than 5 minutes and was stopped` |
+
+Every value of the job's own parameters in the reason is replaced with
+`[redacted]` before it is stored, as in progress and completion messages, and the
+reason is cut at 1000 bytes. A Lua error names the plugin's file relative to the
+plugin's directory, and its stack traceback goes to the server log only. An empty
+message reads "the plugin's handler failed".
+
+### When the server stops
+
+A graceful shutdown gives a running handler 5 seconds to finish by itself. Then it
+is stopped at its next step and has 5 more seconds to unwind, and its job ends
+`interrupted` with the reason "The server shut down while this was running." A
+handler waiting inside a call that does not end when it is stopped is left behind
+when the server exits, and its job ends the same way. Work still waiting for its
+turn never started: a queued action stays `queued` and the next server process
+runs it, a queued `mah.start_job` job is cancelled as not started, and a schedule
+run that had not started records nothing and runs at a tick after the restart.
+
+After a crash, the next server process on the same host interrupts the jobs the
+crashed process was running on its first pass, with the reason "The server
+process running this stopped before it finished." A job whose process ran on
+another host cannot be proved stopped; once its 2-minute lease runs out it is
+blocked for a person to resolve. A queued `mah.start_job` job that a crashed
+process on another host accepted stays `queued` until someone cancels it, because
+only that process could ever run its callback.
+
 ### Leaving work to continue: `continue = true`
 
 A handler that cannot finish in one run can say so with the reserved key
@@ -477,7 +543,7 @@ handler = function(ctx)
 end
 ```
 
-On the synchronous path this returns `{ success = false, message = reason }`. On the asynchronous path there is no `success` field: the job is marked failed with its message set to the reason.
+On the synchronous path this returns `{ success = false, message = reason }`. On the asynchronous path there is no `success` field: the job is marked failed with its message set to the reason (see [Why a job failed](#why-a-job-failed)).
 
 ## API Endpoints
 

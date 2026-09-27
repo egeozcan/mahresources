@@ -168,7 +168,7 @@ before authoring one.
 2. **State check** -- The database is queried for previously enabled plugins. Those plugins are enabled automatically.
 3. **Enable** -- A full Lua VM is created with safe libraries. `plugin.lua` is executed, then `init()` is called (if defined). Hooks, actions, injections, pages, menus, and API endpoints registered during `init()` become active.
 4. **Run** -- The plugin responds to hooks, serves pages, and executes actions.
-5. **Disable** -- All hooks, injections, block types, pages, menus, actions, and API endpoints are removed. In-flight async work is waited for, bounded at 5 seconds, after which the VM is closed once that work stops. Disabling is refused while another enabled plugin depends on this one.
+5. **Disable** -- All hooks, injections, block types, pages, menus, actions, and API endpoints are removed. A running async handler is stopped at its next step and its job ends `interrupted` with the reason that the plugin was disabled. In-flight async work is waited for, bounded at 5 seconds, after which the VM is closed once that work stops. Disabling is refused while another enabled plugin depends on this one.
 
 ## Plugin Settings
 
@@ -241,7 +241,7 @@ Navigate to the plugin management page to see all discovered plugins with their 
 | `POST` | `/v1/plugin/purge-data` | Purge all KV store data for a disabled plugin (form: `name`) |
 | `POST` | `/v1/plugin/scopedAccess` | Allow or refuse group-limited accounts per plugin (form: `name`, `allowed`). See [Plugin Permissions](./plugin-permissions.md) |
 | `GET` | `/v1/plugin/schedules` | List recorded plugin schedules. See [`mah.schedule`](./plugin-lua-api.md#mahschedule----recurring-work) |
-| `POST` | `/v1/plugin/schedule/run` | Run one schedule now |
+| `POST` | `/v1/plugin/schedule/run` | Run one schedule now; answers once the run has started, or 409 when it could not start within 10 seconds |
 | `GET` | `/v1/plugin/scheduled-downloads` | List one-shot deferred downloads for a plugin |
 | `POST` | `/v1/plugin/scheduled-downloads/cancel` | Cancel a pending deferred download |
 

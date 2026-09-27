@@ -29,6 +29,10 @@ import { focusedElement, restoreFocus } from '../utils/focus.js';
 const DEFAULT_TITLE = 'Confirm';
 const DEFAULT_CONFIRM_LABEL = 'Confirm';
 const DEFAULT_CANCEL_LABEL = 'Cancel';
+// The dismiss label when the confirm button already reads "Cancel", as a Job's
+// Cancel command does: two buttons with one name cannot be told apart by ear, by
+// voice control, or at a glance.
+const DISTINCT_CANCEL_LABEL = 'Go back';
 
 export function registerConfirmDialogStore(Alpine) {
     Alpine.store('confirmDialog', {
@@ -60,6 +64,9 @@ export function registerConfirmDialogStore(Alpine) {
             this.title = title || DEFAULT_TITLE;
             this.confirmLabel = confirmLabel || DEFAULT_CONFIRM_LABEL;
             this.cancelLabel = cancelLabel || DEFAULT_CANCEL_LABEL;
+            if (this.cancelLabel.trim().toLowerCase() === this.confirmLabel.trim().toLowerCase()) {
+                this.cancelLabel = DISTINCT_CANCEL_LABEL;
+            }
             // No trigger event to capture: `ask` is reached from a submit handler,
             // not from a click, so `captureTrigger` has no `currentTarget` to read.
             // After a click on a submit button that button is the active element,

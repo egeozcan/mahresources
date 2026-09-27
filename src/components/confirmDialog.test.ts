@@ -82,6 +82,26 @@ describe('the answer that reaches the caller', () => {
     });
 });
 
+describe('the two buttons never read the same', () => {
+    test('a confirm labelled like the dismiss button gets a dismiss label of its own', () => {
+        stubDocument();
+        store = registerStore();
+        store.ask('Stop this plugin action?', { title: 'Cancel', confirmLabel: 'Cancel' });
+        expect(store.confirmLabel).toBe('Cancel');
+        expect(store.cancelLabel).not.toBe('Cancel');
+        expect(store.cancelLabel).toBe('Go back');
+        store.cancel();
+    });
+
+    test('a distinct confirm keeps the default dismiss label', () => {
+        stubDocument();
+        store = registerStore();
+        store.ask('Delete this block?', { confirmLabel: 'Delete' });
+        expect(store.cancelLabel).toBe('Cancel');
+        store.cancel();
+    });
+});
+
 describe('askToConfirm fails closed', () => {
     test('resolves false when the store is not registered', async () => {
         vi.stubGlobal('Alpine', { store: () => undefined });

@@ -46,7 +46,7 @@ available commands. Current adapters include:
 | `group-import-apply@1` | Apply a reviewed plan | Replayable only when import evidence proves it safe; owner-visible |
 | `resource-reduction-compute@1` | Compute clusters for a Resource Reduction | Replayable; owner-visible |
 | `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |
-| `plugin-action@1` | Run an asynchronous plugin action, a scheduled occurrence, or a `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart; an unsuccessful declared action offers Retry, and a successful one whose handler reported `continue = true` offers Continue |
+| `plugin-action@1` | Run an asynchronous plugin action, a scheduled occurrence, or a `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart; a Job that has not started offers Cancel, and a running one when its registration declares `cancel = true`; an unsuccessful declared action offers Retry, and a successful one whose handler reported `continue = true` offers Continue |
 | `job-summary-export@1` | Export a filtered Job summary as CSV or JSON | Replayable; owner-visible; artifact expires by export retention |
 | `plugin-command@1` | Run a plugin command | Non-restorable; administrator-visible; protected by the command runtime fence |
 | `plugin-command-import@1` | Import an admitted plugin command output | Non-restorable; administrator-visible; retry requires current importer and file proof |
@@ -56,7 +56,7 @@ Plugin command runs and imports use their separate fenced command runtime.
 Every Kind's running Jobs count against one deployment budget,
 `-max-job-concurrency`. A Job whose turn comes while the budget is full waits
 `queued` for a slot rather than failing. The exception is a scheduled
-occurrence, which gives up after 10 seconds without a slot and is withdrawn; see
+occurrence, which gives up after 10 seconds without a slot and records no Job; see
 [Timing you should not rely on](./plugin-lua-api.md#timing-you-should-not-rely-on).
 Plugin work also waits
 for its plugin: in each server process a plugin runs one of its async actions,
@@ -78,6 +78,19 @@ The Job Center labels such a Job **Partially completed**, and the state filter
 accepts `partial` as one more alternative (`state=failed,partial` lists failed
 Jobs and partial ones). `partial` is a subset of `succeeded`: a filter for
 `succeeded` still includes these Jobs, because that is their stored state.
+
+A failed Job records why, as a failure code, a class and a message. An
+`interrupted` Job may record one too, and the Jobs panel and the Job Center show
+it the same way: a plugin action stopped by a shutdown or by its plugin being
+disabled says so, and a Job whose server process stopped says "The server process
+running this stopped before it finished." (code `runtime-lost`). The class counts
+toward the summary's failures by class for both states.
+
+A Job's claim is kept alive by the process running it. When that process stops
+without a graceful shutdown, the next process on the same host proves it gone
+from its recorded host, boot session and process id, and reconciles its Jobs on
+its first pass rather than once their 2-minute lease runs out. A process on
+another host cannot be proved gone, so its Jobs wait for their lease.
 
 When a plugin action succeeds, its final progress is stored with the completed
 Job. The Job Center also shows older successful plugin actions as complete when
