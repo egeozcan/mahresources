@@ -7,7 +7,6 @@ import {
     commandEndpoint,
     commandLocation,
     eventJob,
-    isPartialSuccess,
     lifecycleAnnouncement,
     commandLabel,
     failureText,
@@ -25,7 +24,9 @@ import {
     progressText,
     progressValue,
     phaseText,
+    scheduledText,
 } from './jobCenter.js';
+import { isWorking, presentState, statesInGroup } from './jobStates.js';
 import {
     applyProgressFrame,
     formatAmount,
@@ -53,13 +54,14 @@ const MAX_FINISHED_LIMIT = 200;
 const PANEL_REFRESH_MAX_WAIT_MS = 500;
 // One list page is one bulk dismiss: the server's MaxPageSize and MaxBulkCommandJobs are both 200.
 const FINISHED_PAGE_LIMIT = 200;
-const FINISHED_STATES = ['succeeded', 'cancelled'];
+// The groups are the shared state table's (server/jobview/job_states.json).
+const FINISHED_STATES = statesInGroup('finished');
 // Each group is its own bounded page. Only open work asks for the progress
 // series: it is up to 120 points per Job, and a finished row shows no graph.
 function panelGroups(finishedLimit) {
     return [
-        { key: 'attention', states: ['blocked', 'failed', 'interrupted'], limit: OPEN_WORK_LIMIT, series: false },
-        { key: 'active', states: ['scheduled', 'queued', 'running', 'paused'], limit: OPEN_WORK_LIMIT, series: true },
+        { key: 'attention', states: statesInGroup('attention'), limit: OPEN_WORK_LIMIT, series: false },
+        { key: 'active', states: statesInGroup('active'), limit: OPEN_WORK_LIMIT, series: true },
         { key: 'finished', states: FINISHED_STATES, limit: finishedLimit, series: false },
     ];
 }
@@ -121,20 +123,11 @@ export function panelCommandSplit(commands) {
     return { primary, more };
 }
 
-// One word per state for the row's icon and pill colour. The pill's text is
-// the state label, so the colour never carries the meaning alone.
+// One word per state for the row's icon and pill colour, from the shared state
+// table. The pill's text is the state label, so the colour never carries the
+// meaning alone.
 export function panelStateTone(job) {
-    switch (job?.state) {
-    case 'running': return 'working';
-    case 'queued':
-    case 'scheduled': return 'waiting';
-    case 'paused': return 'paused';
-    case 'succeeded': return isPartialSuccess(job) ? 'warning' : 'done';
-    case 'blocked': return 'warning';
-    case 'failed':
-    case 'interrupted': return 'failed';
-    default: return 'neutral';
-    }
+    return presentState(job).tone;
 }
 
 // The trigger's accessible description: its badges are hidden from assistive
@@ -335,11 +328,20 @@ export function jobPanel() {
         // The drawer's sections, in the order a person acts on them. An empty
         // section is left out rather than drawn with nothing under it.
         get groups() {
+            // The Job Center's Finished includes failed and interrupted jobs, which
+            // the drawer lists under Needs attention instead; its last group says
+            // it holds only the rest.
             return [
                 { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs },
                 { key: 'active', title: 'Active and scheduled', jobs: this.activeJobs },
-                { key: 'finished', title: 'Finished', jobs: this.finishedJobs },
+                { key: 'finished', title: 'Finished, no attention needed', jobs: this.finishedJobs },
             ].filter(group => group.jobs.length > 0);
+        },
+        // The finished group is capped at the newest few, and says so when older
+        // ones are left for All jobs; the others list every row up to their limit.
+        groupCountText(group) {
+            const count = group?.jobs?.length || 0;
+            return group?.key === 'finished' && this.finishedHasMore ? `(newest ${count})` : `(${count})`;
         },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
@@ -1352,6 +1354,7 @@ export function jobPanel() {
         },
 
         stateLabel(job) { return stateLabel(job); },
+        scheduledText(job) { return scheduledText(job, this.now); },
         failureText(job) { return failureText(job); },
         commandLabel(command) { return commandLabel(command); },
         phaseText(job) { return phaseText(job); },
@@ -1359,12 +1362,12 @@ export function jobPanel() {
         progressValue(job) { return progressValue(job); },
         // Only running work pulses: a paused or queued Job with no total is
         // waiting, not working.
-        progressIndeterminate(job) { return progressIndeterminate(job) && job?.state === 'running'; },
+        progressIndeterminate(job) { return progressIndeterminate(job); },
         progressAccessibleText(job) { return progressAccessibleText(job); },
         showsProgress(job) {
             const progress = job?.progress || {};
             return classifyJobState(job) === 'active' && (
-                Number.isFinite(progress.completed) || !!progress.message || job.state === 'running');
+                Number.isFinite(progress.completed) || !!progress.message || isWorking(job));
         },
         // The line above the bar: what the executor says it is doing, else its
         // phase. The counts are in statsText, formatted, rather than here raw.

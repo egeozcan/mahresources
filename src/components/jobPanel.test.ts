@@ -616,6 +616,33 @@ describe('Job Center drawer live progress', () => {
             ['attention', ['f']], ['active', ['r']],
         ]);
     });
+
+    test('the finished group says it holds only finished jobs that need nothing, and when it is capped', () => {
+        const panel = jobPanel();
+        panel.jobs = [{ id: 's', state: 'succeeded', acceptedAt: '2026-09-25T10:00:03Z' }];
+        const finished = panel.groups.find(group => group.key === 'finished');
+        // The Job Center's Finished includes failed jobs; this group does not, so it
+        // is not called that alone.
+        expect(finished.title).toBe('Finished, no attention needed');
+        expect(panel.groupCountText(finished)).toBe('(1)');
+        panel.finishedHasMore = true;
+        expect(panel.groupCountText(finished)).toBe('(newest 1)');
+        const active = { key: 'active', jobs: [{ id: 'r' }] };
+        expect(panel.groupCountText(active)).toBe('(1)');
+    });
+
+    test('a scheduled row says when it starts; a paused row shows what it reported without pulsing', () => {
+        const panel = jobPanel();
+        panel.now = Date.parse('2026-09-27T12:00:00Z');
+        expect(panel.scheduledText({ state: 'scheduled', scheduledFor: '2026-09-27T12:45:00Z' })).toMatch(/^Starts .+ \(in 45 min\)$/);
+        expect(panel.scheduledText({ state: 'queued', scheduledFor: '2026-09-27T12:45:00Z' })).toBe('');
+        const paused = { state: 'paused', progress: { completed: 1024, unit: 'bytes', message: 'Paused. Resume starts the download again from the beginning.' } };
+        expect(panel.showsProgress(paused)).toBe(true);
+        expect(panel.progressIndeterminate(paused)).toBe(false);
+        expect(panel.progressLabel(paused)).toBe(paused.progress.message);
+        expect(panel.showsProgress({ state: 'scheduled', progress: {} })).toBe(false);
+        expect(panel.showsProgress({ state: 'queued', progress: {} })).toBe(false);
+    });
 });
 
 describe('Job Center panel accessibility hooks', () => {

@@ -25,15 +25,8 @@
         </header>
 
         <div class="card-badges">
-            {% if job.State == "succeeded" %}
-            <span class="card-badge card-badge--success" data-testid="job-state">{{ job.StateLabel }}</span>
-            {% elif job.State == "failed" || job.State == "blocked" || job.State == "interrupted" %}
-            <span class="card-badge card-badge--danger" data-testid="job-state">{{ job.StateLabel }}</span>
-            {% elif job.State == "cancelled" %}
-            <span class="card-badge card-badge--muted" data-testid="job-state">{{ job.StateLabel }}</span>
-            {% else %}
-            <span class="card-badge card-badge--live" data-testid="job-state">{{ job.StateLabel }}</span>
-            {% endif %}
+            {# The colour is the state's tone from the shared state table (server/jobview/job_states.json); the label says it in words. #}
+            <span class="card-badge {{ job.BadgeClass }}" data-testid="job-state">{{ job.StateLabel }}</span>
             {% if job.Pinned %}<span class="card-badge">Pinned by you</span>{% endif %}
             {% if job.Result.URL %}
             <a href="{{ job.Result.URL }}" aria-label="{{ job.Result.AccessibleLabel }}" class="card-badge card-badge--category" data-testid="job-result-link">{{ job.Result.Label }}</a>
@@ -41,6 +34,10 @@
         </div>
 
         {% if job.SummaryText %}<p class="mt-2 break-words text-sm text-stone-700">{{ job.SummaryText }}</p>{% endif %}
+
+        {% if job.ScheduledFor.ISO %}
+        <p class="mt-2 text-sm text-stone-700" data-testid="job-scheduled-for">Starts <time data-local-time datetime="{{ job.ScheduledFor.ISO }}">{{ job.ScheduledFor.Minute }}</time></p>
+        {% endif %}
 
         {% if job.Progress %}
         <div class="mt-3 max-w-xl">
@@ -68,6 +65,7 @@
             <summary class="cursor-pointer font-medium text-amber-900">Details</summary>
             <dl class="mt-2 grid gap-1 border-l-2 border-stone-300 pl-3 sm:grid-cols-2">
                 <div><dt class="inline">Accepted</dt> <dd class="inline"><time data-local-time="seconds" datetime="{{ job.Accepted.ISO }}">{{ job.Accepted.Display }}</time></dd></div>
+                {% if job.ScheduledFor.ISO %}<div><dt class="inline">Scheduled for</dt> <dd class="inline"><time data-local-time="seconds" datetime="{{ job.ScheduledFor.ISO }}">{{ job.ScheduledFor.Display }}</time></dd></div>{% endif %}
                 <div><dt class="inline">Started</dt> <dd class="inline">{% if job.Started.ISO %}<time data-local-time="seconds" datetime="{{ job.Started.ISO }}">{{ job.Started.Display }}</time>{% else %}Not started{% endif %}</dd></div>
                 {% if job.Finished.ISO %}<div><dt class="inline">Finished</dt> <dd class="inline"><time data-local-time="seconds" datetime="{{ job.Finished.ISO }}">{{ job.Finished.Display }}</time></dd></div>{% endif %}
                 <div><dt class="inline">Version</dt> <dd class="inline font-mono">{{ job.Version }}</dd></div>

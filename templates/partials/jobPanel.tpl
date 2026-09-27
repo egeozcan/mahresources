@@ -61,7 +61,7 @@
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
                             <h3 :id="'job-panel-group-' + group.key" class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
                                 <span x-text="group.title"></span>
-                                <span class="font-normal text-stone-500" x-text="'(' + group.jobs.length + ')'"></span>
+                                <span class="font-normal text-stone-500" x-text="groupCountText(group)"></span>
                             </h3>
                             {# role="list": Safari drops list semantics from a list styled without markers. #}
                             <ul role="list" class="divide-y divide-stone-100 border-b border-stone-200">
@@ -108,6 +108,9 @@
                                             <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>
+
+                                        {# The only thing that tells one scheduled job from another is when it starts. #}
+                                        <p x-show="scheduledText(job)" x-cloak class="mt-1 text-xs text-stone-700" data-job-panel-scheduled x-text="scheduledText(job)"></p>
 
                                         {# The reason a job failed, as its Kind recorded it; the /jobs detail page shows the same text. #}
                                         <p x-show="failureText(job)" x-cloak class="mt-1 break-words text-xs text-red-800" data-job-panel-failure><span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span></p>

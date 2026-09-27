@@ -942,6 +942,17 @@ html {
     background: #d6d3d1;
 }
 
+/* Needs a person's attention without having failed. */
+.card-badge--warning {
+    background: #fef3c7;
+    color: #78350f;
+    border: 1px solid #fde68a;
+}
+
+.card-badge--warning:hover {
+    background: #fde68a;
+}
+
 /* Work still in progress, rather than an outcome. */
 .card-badge--live {
     background: #e0f2fe;
