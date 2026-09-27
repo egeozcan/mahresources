@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -421,5 +422,200 @@ func TestLegacyJobSubmitAndJobsQueueRemainAvailable(t *testing.T) {
 	}
 	if strings.Join(paths, ",") != "/v1/jobs/download/submit,/v1/jobs/queue" {
 		t.Fatalf("legacy paths = %v", paths)
+	}
+}
+
+// droppingCommandServer answers Job detail and then drops every command POST
+// after reading it, which is a network failure the server may already have acted
+// on: the one case the generated idempotency key exists for.
+func droppingCommandServer(t *testing.T, detail string, postedKeys *[]string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJobJSON(w, detail)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode command request: %v", err)
+		}
+		key, _ := body["idempotencyKey"].(string)
+		*postedKeys = append(*postedKeys, key)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestJobCommandNamesTheGeneratedIdempotencyKeyWhenTheRequestFails(t *testing.T) {
+	const detail = `{"id":"job-123","version":41,"commands":[{"key":"pin","endpoint":"/v1/jobs/job-123/commands/pin","jobVersion":41,"bulk":true}]}`
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{"single", []string{"command", "job-123", "pin"}},
+		{"bulk", []string{"bulk-command", "pin", "job-123"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var postedKeys []string
+			server := droppingCommandServer(t, detail, &postedKeys)
+			err := runJobCLI(t, server.URL, true, tt.args...)
+			if err == nil {
+				t.Fatal("a dropped command request reported success")
+			}
+			if len(postedKeys) != 1 || postedKeys[0] == "" {
+				t.Fatalf("posted idempotency keys = %v, want one generated key", postedKeys)
+			}
+			if !strings.Contains(err.Error(), "--idempotency-key "+postedKeys[0]) {
+				t.Fatalf("the failure does not name the key it sent (%s): %v", postedKeys[0], err)
+			}
+		})
+	}
+}
+
+// TestJobSubmitSplitsOnlyAtSeparatorsAndNeverInsideAURL pins the separator
+// contract of `job submit`. Commas are legal in URL paths and queries, and CDN and
+// image-resize URLs use them, so splitting --urls at every comma submitted the
+// halves of one URL as two downloads.
+func TestJobSubmitSplitsOnlyAtSeparatorsAndNeverInsideAURL(t *testing.T) {
+	var submitted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode submit: %v", err)
+		}
+		urls, _ := body["URL"].(string)
+		submitted = append(submitted, urls)
+		writeJobJSON(w, `{"queued":true,"jobs":[]}`)
+	}))
+	defer server.Close()
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a comma inside a query", []string{"--urls", "https://cdn.example/file?kb=1&cd=a,b.txt"},
+			"https://cdn.example/file?kb=1&cd=a,b.txt"},
+		{"a comma inside a path", []string{"--urls", "https://img.example/w_96,h_64/photo.jpg"},
+			"https://img.example/w_96,h_64/photo.jpg"},
+		{"a comma list of URLs", []string{"--urls", "https://a.example/a.jpg, https://b.example/b.jpg,HTTP://c.example/c"},
+			"https://a.example/a.jpg\nhttps://b.example/b.jpg\nHTTP://c.example/c"},
+		{"a newline list of URLs", []string{"--urls", "https://a.example/x,y\nhttps://b.example/b"},
+			"https://a.example/x,y\nhttps://b.example/b"},
+		{"repeated --urls", []string{"--urls", "https://a.example/a", "--urls", "https://b.example/b"},
+			"https://a.example/a\nhttps://b.example/b"},
+		{"--url is taken as written", []string{"--url", "https://proxy.example/?src=https://a.example/a,https://b.example/b", "--url", "https://c.example/c"},
+			"https://proxy.example/?src=https://a.example/a,https://b.example/b\nhttps://c.example/c"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			submitted = nil
+			if err := runJobCLI(t, server.URL, true, append([]string{"submit"}, tt.args...)...); err != nil {
+				t.Fatalf("job submit: %v", err)
+			}
+			if len(submitted) != 1 || submitted[0] != tt.want {
+				t.Fatalf("submitted URL field = %q, want %q", submitted, tt.want)
+			}
+		})
+	}
+
+	submitted = nil
+	if err := runJobCLI(t, server.URL, true, "submit"); err == nil || len(submitted) != 0 {
+		t.Fatalf("a submit with no URL = %v after %d requests, want a refusal before any request", err, len(submitted))
+	}
+}
+
+// TestJobSubmitFailsWhenTheServerRefusesAURL covers a batch the server answered
+// in part. The accepted URLs are queued and the refused ones named, so the
+// command still prints the answer, and exits non-zero with every refusal in the
+// error rather than reporting the batch as submitted.
+func TestJobSubmitFailsWhenTheServerRefusesAURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"queued":true,"jobs":[{"id":"a1"}],"refused":[{"url":"b.txt","reason":"not an absolute http or https URL"}]}`)
+	}))
+	defer server.Close()
+
+	for _, jsonOut := range []bool{true, false} {
+		root := NewJobCmd(client.New(server.URL), &output.Options{JSON: jsonOut})
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs([]string{"submit", "--url", "https://a.example/a", "--url", "b.txt"})
+		err := root.Execute()
+		if err == nil {
+			t.Fatalf("json=%v: a batch with a refused URL reported success", jsonOut)
+		}
+		for _, want := range []string{"1 of 2", "b.txt", "not an absolute http or https URL"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("json=%v: the refusal error %q does not name %q", jsonOut, err, want)
+			}
+		}
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected, because the output package
+// writes there directly.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- string(data)
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	return <-done
+}
+
+// TestJobsListQuietPrintsOnlyIDsAndRefusesPageNumbers pins `--quiet` as "only
+// IDs" on stdout, so `mr jobs list --quiet | xargs ...` passes on nothing but ids,
+// and refuses the global `--page`, which a keyset-paged list cannot honour.
+func TestJobsListQuietPrintsOnlyIDsAndRefusesPageNumbers(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeJobJSON(w, `{"jobs":[{"id":"job-1","state":"failed"},{"id":"job-2","state":"running"}],"nextCursor":"list-v1.next"}`)
+	}))
+	defer server.Close()
+
+	run := func(args ...string) (string, error) {
+		root := &cobra.Command{Use: "mr"}
+		root.PersistentFlags().Int("page", 1, "Page number for list commands")
+		root.AddCommand(NewJobsCmd(client.New(server.URL), &output.Options{Quiet: true}))
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs(args)
+		var err error
+		stdout := captureStdout(t, func() { err = root.Execute() })
+		return stdout, err
+	}
+
+	stdout, err := run("jobs", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("jobs list --quiet: %v", err)
+	}
+	if stdout != "job-1\njob-2\n" {
+		t.Fatalf("quiet stdout = %q, want only the two ids", stdout)
+	}
+
+	requests = 0
+	if _, err := run("jobs", "list", "--page", "2"); err == nil || !strings.Contains(err.Error(), "--cursor") {
+		t.Fatalf("jobs list --page = %v, want a refusal that names --cursor", err)
+	}
+	if requests != 0 {
+		t.Fatalf("a refused --page still sent %d request(s)", requests)
 	}
 }

@@ -10,7 +10,10 @@ Run a command key that the Job currently advertises in `jobs get`. The CLI
 re-reads detail immediately before submission, uses the advertised endpoint
 and version, and sends an idempotency key. Supply `--idempotency-key` to replay
 the same logical request after a network failure; otherwise the CLI generates
-and prints a key for this request. Commands marked destructive or requiring
+a key for this request. The key is printed with the result, and when the
+request fails the error names it, because a request whose answer was lost may
+already have been applied: rerun with `--idempotency-key <key>` to retry it
+without applying it twice. Commands marked destructive or requiring
 confirmation need `--confirm`.
 
 ## Usage

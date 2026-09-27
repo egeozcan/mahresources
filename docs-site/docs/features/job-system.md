@@ -216,11 +216,14 @@ commands with an advertised confirmation require `--confirm`. `mr job
 bulk-command` checks that every selected Job advertises the same bulk-capable
 key at its current version, then reports the server's per-Job results. Pass
 `--idempotency-key` to retry the same request after a network failure; the CLI
-generates and prints a key if none is supplied.
+generates a key if none is supplied and prints it with the result, or in the
+error when the request fails.
 
 The singular `mr job submit`, `cancel`, `pause`, `resume`, and `retry` commands
-remain compatibility aliases for existing download scripts. `mr jobs queue`
-returns the legacy queue response explicitly.
+remain compatibility aliases for existing download scripts. `cancel`, `pause`,
+`resume`, and `retry` accept the Job id `mr jobs list` prints as well as the
+legacy handle `mr job submit` returns. `mr jobs queue` returns the legacy queue
+response explicitly.
 
 ## Summary analytics and exports
 

@@ -8,7 +8,9 @@ relatedCmds: jobs get, jobs timeline, jobs summary, job submit
 
 List the durable Jobs visible to the current account. The server orders results
 newest first and returns an opaque `nextCursor` when another page is available.
-Pass that value to `--cursor` to continue. Use the repeatable state, kind, and
+Pass that value to `--cursor` to continue; the table output prints it on
+stderr, so `--quiet` writes nothing but Job ids to stdout. The list pages only
+by cursor, so the global `--page` flag is refused. Use the repeatable state, kind, and
 origin filters, or narrow by owner, actor, accepted time, relationship, text,
 advertised command, or your pin and dismissal preferences. Besides the
 lifecycle states, `--state` accepts `partial`: succeeded Jobs whose Kind
@@ -36,5 +38,14 @@ the legacy response explicitly.
   # Continue from an opaque cursor on the next page
   mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
 
+  # Read the details of every Job on the first page
+  mr jobs list --quiet | xargs -n 1 mr jobs get --json
+
   # mr-doctest: list returns a jobs array on the canonical route or compatibility fallback
   mr jobs list --json | jq -e 'has("jobs") and (.jobs | type == "array")'
+
+  # mr-doctest: quiet output is one Job id per line and nothing else
+  mr job submit --url "http://127.0.0.1:9/quiet-a.bin" --url "http://127.0.0.1:9/quiet-b.bin" --json >/dev/null
+  OUT=$(mr jobs list --limit 1 --quiet 2>/dev/null)
+  printf '%s\n' "$OUT" | grep -Eqx '[0-9a-f-]{36}'
+  test "$(printf '%s\n' "$OUT" | wc -l)" -eq 1

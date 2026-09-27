@@ -46,7 +46,8 @@ func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(jobsHelpFS, "jobs_help/job_submit.md")
-	var urlsStr, tagsStr, groupsStr, name string
+	var urlLists, singleURLs []string
+	var tagsStr, groupsStr, name string
 	var ownerID uint
 
 	cmd := &cobra.Command{
@@ -58,13 +59,9 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Server expects ResourceFromRemoteCreator with a single URL field.
 			// Multiple URLs are separated by newlines; the server splits them.
-			urlParts := strings.Split(urlsStr, ",")
-			var urls []string
-			for _, u := range urlParts {
-				u = strings.TrimSpace(u)
-				if u != "" {
-					urls = append(urls, u)
-				}
+			urls := submitURLs(urlLists, singleURLs)
+			if len(urls) == 0 {
+				return errors.New("no URL given: pass --url or --urls")
 			}
 
 			body := map[string]any{
@@ -97,23 +94,81 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 
+			// A batch is answered per URL: the server queues what it accepts and
+			// names what it refuses, so a refusal is this command's failure even
+			// though the request succeeded.
+			var answer struct {
+				Jobs    []json.RawMessage `json:"jobs"`
+				Refused []struct {
+					URL    string `json:"url"`
+					Reason string `json:"reason"`
+				} `json:"refused"`
+			}
+			_ = json.Unmarshal(raw, &answer)
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
-			} else {
+			} else if len(answer.Refused) == 0 {
 				output.PrintMessage("Download job submitted successfully.")
+			} else if len(answer.Jobs) > 0 {
+				output.PrintMessage(fmt.Sprintf("Queued %d download job(s).", len(answer.Jobs)))
+			}
+			if len(answer.Refused) > 0 {
+				lines := make([]string, 0, len(answer.Refused))
+				for _, refused := range answer.Refused {
+					lines = append(lines, fmt.Sprintf("  %s: %s", refused.URL, refused.Reason))
+				}
+				return fmt.Errorf("%d of %d URLs were refused:\n%s",
+					len(answer.Refused), len(answer.Refused)+len(answer.Jobs), strings.Join(lines, "\n"))
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&urlsStr, "urls", "", "Comma-separated URLs to download (required)")
-	cmd.MarkFlagRequired("urls")
+	cmd.Flags().StringArrayVar(&urlLists, "urls", nil, "URLs to download, separated by newlines or by a comma that starts another http(s) URL (repeatable)")
+	cmd.Flags().StringArrayVar(&singleURLs, "url", nil, "One URL to download, taken as written, commas included (repeatable)")
+	cmd.MarkFlagsOneRequired("urls", "url")
 	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs")
 	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs")
 	cmd.Flags().StringVar(&name, "name", "", "Job name")
 	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Owner group ID")
 
 	return cmd
+}
+
+// submitURLs reads the URLs one submission names. A --url value is one URL, taken
+// as written. A --urls value is a list, split at newlines (the server's own
+// separator) and at a comma that begins another http:// or https:// URL. Commas
+// are legal in URL paths and queries, so a comma anywhere else belongs to the URL.
+func submitURLs(lists, singles []string) []string {
+	var urls []string
+	add := func(raw string) {
+		if raw = strings.TrimSpace(raw); raw != "" {
+			urls = append(urls, raw)
+		}
+	}
+	for _, list := range lists {
+		for line := range strings.SplitSeq(list, "\n") {
+			start := 0
+			for i := 0; i < len(line); i++ {
+				if line[i] == ',' && startsHTTPURL(line[i+1:]) {
+					add(line[start:i])
+					start = i + 1
+				}
+			}
+			add(line[start:])
+		}
+	}
+	for _, single := range singles {
+		add(single)
+	}
+	return urls
+}
+
+// startsHTTPURL reports whether text, after leading blanks, begins an http or
+// https URL.
+func startsHTTPURL(text string) bool {
+	text = strings.ToLower(strings.TrimLeft(text, " \t"))
+	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
 }
 
 func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
@@ -259,6 +314,11 @@ func newJobsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Example:     help.Example,
 		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The global --page numbers offset pages, and this list is keyset-paged:
+			// a page number it silently ignored would repeat the first page.
+			if cmd.Flags().Changed("page") {
+				return errors.New("jobs list pages with --cursor, not --page: pass the nextCursor the previous page printed")
+			}
 			query, err := filters.query(cmd)
 			if err != nil {
 				return err
@@ -291,8 +351,10 @@ func newJobsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				rows = append(rows, []string{job.ID, string(job.State), job.Kind, job.Phase, job.Title, job.AcceptedAt.Format(time.RFC3339)})
 			}
 			output.Print(*opts, []string{"ID", "STATE", "KIND", "PHASE", "TITLE", "ACCEPTED"}, rows, raw)
+			// The continuation is a note for the reader, not a row: stdout carries
+			// only rows, so `--quiet` output can be piped as ids.
 			if !opts.JSON && page.NextCursor != "" {
-				output.PrintMessage("More Jobs are available; continue with --cursor " + page.NextCursor)
+				fmt.Fprintln(cmd.ErrOrStderr(), "More Jobs are available; continue with --cursor "+page.NextCursor)
 			}
 			return nil
 		},
@@ -472,7 +534,7 @@ func newJobsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().Uint64Var(&after, "after-sequence", 0, "Return events after this per-Job sequence")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Events per page (server maximum: 500)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Events per page (default 200, server maximum: 1000)")
 	return cmd
 }
 
@@ -583,7 +645,7 @@ func newJobCommandCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			var raw json.RawMessage
 			body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
 			if err := c.Post(endpoint, nil, body, &raw); err != nil {
-				return err
+				return commandRequestFailed(err, key)
 			}
 			printCLIJobCommandResult(opts, key, raw)
 			return nil
@@ -644,7 +706,7 @@ func newJobBulkCommandCmd(c *client.Client, opts *output.Options) *cobra.Command
 			var raw json.RawMessage
 			body := map[string]any{"jobIds": jobIDs, "idempotencyKey": key, "origin": "cli"}
 			if err := c.Post(endpoint, nil, body, &raw); err != nil {
-				return err
+				return commandRequestFailed(err, key)
 			}
 			printCLIJobCommandResult(opts, key, raw)
 			return nil
@@ -703,6 +765,14 @@ func commandIdempotencyKey(provided string) (string, error) {
 		return "", fmt.Errorf("generate command idempotency key: %w", err)
 	}
 	return hex.EncodeToString(random[:]), nil
+}
+
+// commandRequestFailed names the idempotency key a failed command request was
+// sent with. A request whose answer was lost may already have been applied, and
+// sending the same key again is how a retry avoids applying it twice, so a key the
+// CLI generated is printed when the request fails as well as when it succeeds.
+func commandRequestFailed(err error, key string) error {
+	return fmt.Errorf("%w\nThe request was sent with idempotency key %s. To retry it without applying it twice, rerun with --idempotency-key %s", err, key, key)
 }
 
 func printCLIJobCommandResult(opts *output.Options, key string, raw json.RawMessage) {

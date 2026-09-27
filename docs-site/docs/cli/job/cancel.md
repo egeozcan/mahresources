@@ -6,15 +6,15 @@ sidebar_label: cancel
 
 # mr job cancel
 
-Stop a job that has not finished. Cancel works while the job is pending,
-downloading, processing, or **paused**; the server rejects cancellation of
-jobs that have already completed, failed, or been cancelled, answering
-HTTP 409 Conflict. On success the server marks the job `cancelled` and
-leaves it in the queue for inspection.
+Stop a job that has not finished. `<id>` is the Job id `jobs list`
+prints, or the legacy handle `job submit` returns as `id`. Cancel works
+while the Job is queued, running, or paused; the server rejects
+cancellation of a Job that has already succeeded, failed, or been
+cancelled, answering HTTP 409 Conflict. On success the Job is recorded
+as `cancelled` and stays readable through `jobs get` for inspection.
 
-Use `jobs list` to see which jobs are eligible -- any job with a status
-other than pending, downloading, processing, or paused cannot be
-cancelled.
+Use `jobs list --command cancel` to see which Jobs currently offer
+cancellation.
 
 ## Usage
 
@@ -29,16 +29,16 @@ Positional arguments:
 
 ## Examples
 
-**Cancel a specific job**
+**Cancel a specific Job**
 
 ```bash
-mr job cancel a1b2c3d4
+mr job cancel 018f4db1-9b40-7f54-8f16-37a449bcf01d
 ```
 
-**Pipe through jq to cancel every active job**
+**Cancel every visible Job that currently offers cancellation**
 
 ```bash
-mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .id' | xargs -I {} mr job cancel {}
+mr jobs list --command cancel --json | jq -r '.jobs[].id' | xargs -I {} mr job cancel {}
 ```
 
 
@@ -56,7 +56,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with status set to "cancelled"
+Object with status set to "cancelled" and canonicalJobId naming the cancelled Job
 
 ## Exit Codes
 

@@ -8,7 +8,9 @@ sidebar_label: list
 
 List the durable Jobs visible to the current account. The server orders results
 newest first and returns an opaque `nextCursor` when another page is available.
-Pass that value to `--cursor` to continue. Use the repeatable state, kind, and
+Pass that value to `--cursor` to continue; the table output prints it on
+stderr, so `--quiet` writes nothing but Job ids to stdout. The list pages only
+by cursor, so the global `--page` flag is refused. Use the repeatable state, kind, and
 origin filters, or narrow by owner, actor, accepted time, relationship, text,
 advertised command, or your pin and dismissal preferences. Besides the
 lifecycle states, `--state` accepts `partial`: succeeded Jobs whose Kind
@@ -52,6 +54,12 @@ mr jobs list --state failed --no-inbound-relationship retry-of
 
 ```bash
 mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
+```
+
+**Read the details of every Job on the first page**
+
+```bash
+mr jobs list --quiet | xargs -n 1 mr jobs get --json
 ```
 
 

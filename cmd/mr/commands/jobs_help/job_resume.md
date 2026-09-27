@@ -1,32 +1,32 @@
 ---
-outputShape: Object with status set to "resumed"
+outputShape: Object with status set to "resumed" and canonicalJobId naming the resumed Job
 exitCodes: 0 on success; 1 on any error
 relatedCmds: job pause, job cancel, jobs list
 ---
 
 # Long
 
-Restart a previously paused download job. Resume only works against
-jobs currently in the `paused` state -- jobs that are pending, running,
-finished, or cancelled return an error. The server opens a fresh HTTP
-request, resets the progress counters, and marks the job `pending`; the
-worker starts immediately, queueing behind the concurrency limit if the
-queue is busy.
+Restart a previously paused download job. `<id>` is the Job id `jobs
+list` prints, or the legacy handle `job submit` returns as `id`. Resume
+only works against a paused download; a Job that is queued, running,
+finished, or cancelled returns an error. The server opens a fresh HTTP
+request and queues the Job again; the transfer starts when the
+deployment's job budget has room.
 
 Because the server does not keep partial bytes across pauses, resume
 effectively restarts the download from the beginning.
 
 # Example
 
-  # Resume a specific paused job
-  mr job resume a1b2c3d4
+  # Resume a specific paused download
+  mr job resume 018f4db1-9b40-7f54-8f16-37a449bcf01d
 
-  # Resume every paused job in one pass
-  mr jobs list --json | jq -r '.jobs[] | select(.status == "paused") | .id' | xargs -I {} mr job resume {}
+  # Resume every visible Job that currently offers resume
+  mr jobs list --command resume --json | jq -r '.jobs[].id' | xargs -I {} mr job resume {}
 
-  # mr-doctest: submit, pause, resume, verify each transition succeeds, skip-on=auth
-  JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].id')
+  # mr-doctest: submit, pause, resume by the id jobs list prints, verify each transition succeeds, skip-on=auth
+  JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].canonicalJobId')
   sleep 0.3
   mr job pause $JID --json | jq -e '.status == "paused"'
   mr job resume $JID --json | jq -e '.status == "resumed"'
-  mr job cancel $JID --json >/dev/null || true
+  mr job cancel $JID --json >/dev/null
