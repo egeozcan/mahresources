@@ -492,6 +492,24 @@ describe('job bulk commands', () => {
         expect(component.error).toBe('');
     });
 
+    test('a bulk Cancel asks in the Kind\'s own words when every selected job shares them, and plainly when they differ', async () => {
+        const ask = vi.fn(async () => false);
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const cancel = (confirmation: string) => ({ key: 'cancel', label: 'Cancel', bulk: true, destructive: true, confirmation });
+        const component = Object.assign(jobBulkCommands({ fetchImpl: vi.fn() }), { $selection: selection(['a', 'b']) });
+        component.details = {
+            a: { id: 'a', version: 1, commands: [cancel('Stop this download?')] },
+            b: { id: 'b', version: 1, commands: [cancel('Stop this download?')] },
+        };
+        await component.run(cancel('Stop this download?'));
+        expect(ask.mock.calls[0][0]).toBe('Stop this download? This applies to 2 selected jobs.');
+
+        component.details.b = { id: 'b', version: 1, commands: [cancel('Stop this export?')] };
+        await component.run(cancel('Stop this download?'));
+        expect(ask.mock.calls[1][0]).toBe('Cancel the selected jobs? This applies to 2 selected jobs.');
+        expect(ask.mock.calls[1][1]).toMatchObject({ destructive: true, confirmLabel: 'Cancel' });
+    });
+
     test('asks before running a command that needs confirmation', async () => {
         const ask = vi.fn(async () => false);
         vi.stubGlobal('Alpine', { store: () => ({ ask }) });

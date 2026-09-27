@@ -552,6 +552,19 @@ export function bulkCommandReport(command, ids, results, titles = {}) {
     };
 }
 
+/**
+ * What a bulk command asks before it runs: the Kind's own words when every
+ * selected Job's command says the same thing, and a plain question when they
+ * differ, since one Kind's warning ("Stop this download?") is wrong about another.
+ */
+export function bulkCommandConfirmation(command, jobs) {
+    const asked = new Set((jobs || []).map(job => commandConfirmation(
+        (job?.commands || []).find(offered => offered.key === command?.key) || command,
+    )));
+    if (asked.size <= 1) return asked.size ? [...asked][0] : commandConfirmation(command);
+    return `${commandLabel(command)} the selected jobs?`;
+}
+
 function idempotencyKey() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
     return `job-command-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -691,7 +704,7 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         async run(command) {
             const ids = this.selectedIds();
             if (!ids.length || this.busy || this.loading) return;
-            const confirmation = commandConfirmation(command);
+            const confirmation = bulkCommandConfirmation(command, ids.map(id => this.details[id]));
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,

@@ -409,6 +409,29 @@ test.describe('Job Center', () => {
     await expect(outcomes.getByRole('link', { name: `${name}-e.bin`, exact: true })).toHaveAttribute('href', `/job?id=${fifth.canonicalId}`);
   });
 
+  test('several failed downloads are retried from the bulk bar at once', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-bulk-retry-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const first = await submitFailingDownload(request, groupId, `${name}-a.bin`);
+    const second = await submitFailingDownload(request, groupId, `${name}-b.bin`);
+    await waitForJobState(request, first.canonicalId, 'failed');
+    await waitForJobState(request, second.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&state=failed&noInboundRelationship=retry-of&dismissed=false`);
+    await page.locator(`[data-job-id="${first.canonicalId}"]`).getByRole('checkbox').check();
+    await page.locator(`[data-job-id="${second.canonicalId}"]`).getByRole('checkbox').check();
+    const retry = page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Retried 2 of 2 selected jobs.');
+    // Retried, both leave a list of failures nobody has retried.
+    await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
+    for (const job of [first, second]) {
+      await expect.poll(async () => (await readJob(request, job.canonicalId) as any)?.lineage?.successors?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
   test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {
     const stamp = Date.now();
     // A fresh owner per run: a hash collision under another owner still succeeds

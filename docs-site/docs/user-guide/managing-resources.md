@@ -407,7 +407,11 @@ the controls displayed on that Job; available commands are checked again when
 submitted. Selecting several Jobs offers only commands they all advertise for
 bulk use, with a separate result for each Job, named by its title and linked to
 its page. A summary such as "Pinned 3 of 3 selected jobs." is shown on the page
-and announced, and names the Jobs the command was not done for.
+and announced, and names the Jobs the command was not done for. Cancel and
+Retry work on several Jobs at once: Cancel asks first and says how many Jobs it
+stops, in the Kind's own words when every selected Job is of one Kind, and each
+Job of a bulk Retry is checked as a Retry of that Job alone would be. A deferred
+download's **Download now** is offered for one Job at a time.
 
 A succeeded Job always shows complete progress, including a download whose
 size the remote server never reported. When a Job created a Resource, Note, or
