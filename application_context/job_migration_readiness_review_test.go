@@ -18,7 +18,13 @@ import (
 // lists them for an operator and stays ready: legitimately actorless work matches
 // too, and readiness gates startup.
 func TestReadinessListsUnfinishedJobsThatMayBelongToADeletedAccount(t *testing.T) {
-	ctx := newJobHarnessContext(t, false)
+	assertReadinessListsReviewCandidates(t, newJobHarnessContext(t, false))
+}
+
+// assertReadinessListsReviewCandidates is the review list's contract, on
+// whichever database ctx runs on.
+func assertReadinessListsReviewCandidates(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
 	if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
 		t.Fatalf("empty migration = %+v, %v", result, err)
 	}

@@ -37,7 +37,13 @@ func blockDownloadForTest(t *testing.T, ctx *MahresourcesContext, phase, detail 
 // as the paused Job it is. A block for any other reason stays blocked, and so does
 // a Job whose latest block is a refusal even though it was held before.
 func TestAHoldAnEarlierReleaseRecordedAsBlockedIsPaused(t *testing.T) {
-	ctx := newJobHarnessContext(t, false)
+	assertHoldsAreReclassified(t, newJobHarnessContext(t, false))
+}
+
+// assertHoldsAreReclassified is the reclassification's contract, on whichever
+// database ctx runs on.
+func assertHoldsAreReclassified(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
 	if result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true}); err != nil || !result.Complete {
 		t.Fatalf("empty migration = %+v, %v", result, err)
 	}
