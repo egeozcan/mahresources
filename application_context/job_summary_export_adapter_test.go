@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,18 +196,91 @@ func TestSummaryExportAdminOwnerFilterRetainsAdminQueryAndOutputAccess(t *testin
 }
 
 func TestSummaryExportCSVIsStableAndComplete(t *testing.T) {
+	failedOnly := false
 	data, err := encodeJobSummaryExport(jobs.Summary{
+		From: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		Total: 3, ByState: map[string]int64{"queued": 2, "failed": 1},
 		ByKind:    map[string]int64{"group-export": 1, "remote-download": 2},
 		Succeeded: 0, Failed: 1, Terminal: 1, SuccessRate: 0,
 		Failures: []jobs.FailureClassCount{{Class: "internal", Count: 1}},
-	}, "csv")
+	}, jobs.Filter{States: []string{"failed"}, Kinds: []string{"remote-download"}, Search: "heartbeat", Pinned: &failedOnly}, "csv")
 	if err != nil {
 		t.Fatalf("encode CSV: %v", err)
 	}
-	want := "metric,dimension,value\njobs_by_state,failed,1\njobs_by_state,queued,2\njobs_by_kind,group-export,1\njobs_by_kind,remote-download,2\ntotal,,3\nsucceeded,,0\nfailed,,1\nterminal,,1\nsuccess_rate,,0\nqueue_median,,0s\nqueue_p95,,0s\nrun_median,,0s\nrun_p95,,0s\nfailures_by_class,internal,1\n"
+	want := "metric,dimension,value\n" +
+		"range,from,2025-01-01T00:00:00Z\nrange,to,2026-01-01T00:00:00Z\n" +
+		"filter,state,failed\nfilter,kind,remote-download\nfilter,search,heartbeat\nfilter,pinned,false\n" +
+		"jobs_by_state,failed,1\njobs_by_state,queued,2\njobs_by_kind,group-export,1\njobs_by_kind,remote-download,2\ntotal,,3\nsucceeded,,0\nfailed,,1\nterminal,,1\nsuccess_rate,,0\nqueue_median,,0s\nqueue_p95,,0s\nrun_median,,0s\nrun_p95,,0s\nfailures_by_class,internal,1\n"
 	if string(data) != want {
 		t.Fatalf("CSV =\n%s\nwant\n%s", data, want)
+	}
+}
+
+// TestSummaryExportJSONRecordsItsFilter pins that a downloaded JSON export says
+// what it summarizes: its range, and the filter in the list's own parameter
+// names, so two exports of differently filtered Jobs can be told apart.
+func TestSummaryExportJSONRecordsItsFilter(t *testing.T) {
+	owner := uint(7)
+	data, err := encodeJobSummaryExport(jobs.Summary{
+		From: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Total: 1,
+	}, jobs.Filter{Kinds: []string{"remote-download"}, States: []string{"failed", "interrupted"}, OwnerID: &owner}, "json")
+	if err != nil {
+		t.Fatalf("encode JSON: %v", err)
+	}
+	var decoded struct {
+		From   time.Time           `json:"from"`
+		To     time.Time           `json:"to"`
+		Total  int64               `json:"total"`
+		Filter map[string][]string `json:"filter"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode: %v (%s)", err, data)
+	}
+	want := map[string][]string{"kind": {"remote-download"}, "state": {"failed", "interrupted"}, "ownerId": {"7"}}
+	if decoded.Total != 1 || !decoded.From.Equal(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)) || !reflect.DeepEqual(decoded.Filter, want) {
+		t.Fatalf("JSON export = %+v, want its range and filter %v", decoded, want)
+	}
+
+	unfiltered, err := encodeJobSummaryExport(jobs.Summary{}, jobs.Filter{}, "json")
+	if err != nil {
+		t.Fatalf("encode unfiltered JSON: %v", err)
+	}
+	if !strings.Contains(string(unfiltered), `"filter": {}`) {
+		t.Fatalf("an unfiltered export must say it has no filter: %s", unfiltered)
+	}
+}
+
+// TestSummaryExportJobSaysWhatItSummarizes pins the export's own Job: its title
+// names the range and its summary the filter, so a list of exports reads as a
+// list of different questions.
+func TestSummaryExportJobSaysWhatItSummarizes(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	owner, err := ctx.CreateUser(&UserInput{Username: "summary-describer", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	ownerCtx := ctx.WithPrincipal(auth.FromUser(owner))
+	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	accepted, err := ownerCtx.SubmitJobSummaryExport(
+		jobs.Filter{Kinds: []string{JobKindRemoteDownload}, States: []string{"failed"}, Search: "heartbeat"}, from, to, "csv", "api",
+	)
+	if err != nil {
+		t.Fatalf("submit summary export: %v", err)
+	}
+	if want := "Job summary, 2025-01-01 to 2026-01-01"; accepted.Title != want {
+		t.Fatalf("title = %q, want %q", accepted.Title, want)
+	}
+	var description struct {
+		Format string              `json:"format"`
+		Filter map[string][]string `json:"filter"`
+	}
+	if err := json.Unmarshal(accepted.Summary, &description); err != nil {
+		t.Fatalf("decode summary: %v (%s)", err, accepted.Summary)
+	}
+	want := map[string][]string{"kind": {JobKindRemoteDownload}, "state": {"failed"}, "search": {"heartbeat"}}
+	if description.Format != "csv" || !reflect.DeepEqual(description.Filter, want) {
+		t.Fatalf("summary = %s, want the filter %v", accepted.Summary, want)
 	}
 }
 

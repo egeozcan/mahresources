@@ -393,6 +393,13 @@ mr jobs summary export \
   --format csv
 ```
 
+The export's Job is titled with its range by day ("Job summary, 2025-01-01 to
+2026-01-01") and its summary lists its filter in the list API's parameter names,
+so exports of different filters can be told apart. The file records both before
+its figures: the CSV starts with `range` rows (`from`, `to`) and one `filter`
+row per filter value, and the JSON carries `from`, `to` and a `filter` object,
+empty when nothing was filtered.
+
 A summary's failures by class count every Job that recorded a failure: each
 failed Job, and each interrupted Job that recorded why it was interrupted. An
 interrupted Job that recorded no reason is not in that figure.
