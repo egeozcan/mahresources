@@ -25,7 +25,7 @@ Three startup failures abort the process before it binds a port.
 
 ### "Database is locked" (SQLite)
 
-This error occurs when multiple processes or connections attempt to write to the SQLite database simultaneously.
+A write waited longer than the 10-second busy timeout for SQLite's single writer lock. Within one server every transaction that writes takes that lock when it begins, so concurrent requests wait their turn rather than fail; the error means the lock was held for longer than that, by another process writing the same file, a hung process, or one very long write such as a large mass edit.
 
 **Fix:**
 - Set `-max-db-connections=2` to limit concurrent writes

@@ -167,7 +167,7 @@ func TestUnlimitedApiTokenCreationSerializesPasswordReset(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = contexts[0].db.Callback().Create().Remove("test:pause_unlimited_token_insert") })
 
-	resetAttempted := observeMutationLockAttempt(t, contexts[1], "test:observe_unlimited_reset_lock")
+	resetAttempted := observeMutationLockAttempt(t, contexts[1])
 
 	type tokenResult struct {
 		raw string

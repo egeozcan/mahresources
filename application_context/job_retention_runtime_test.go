@@ -219,7 +219,9 @@ func TestJobRetentionRuntimeShutdownCancelsBlockedLeaseRenewal(t *testing.T) {
 
 	renewalEntered := make(chan struct{})
 	var fenceUpdates atomic.Int32
-	if err := ctx.db.Callback().Update().Before("gorm:update").Register("test:block-retention-lease-renewal", func(tx *gorm.DB) {
+	// Before the renewal's transaction begins: the sweep holds the writer lock across
+	// the artifact cleanup, so a renewal that had begun would be waiting for it instead.
+	if err := ctx.db.Callback().Update().Before("gorm:begin_transaction").Register("test:block-retention-lease-renewal", func(tx *gorm.DB) {
 		if tx.Statement.Table != "job_runtime_fences" || fenceUpdates.Add(1) != 2 {
 			return
 		}

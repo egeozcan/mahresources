@@ -168,11 +168,12 @@ func (ctx *MahresourcesContext) resourcesOwnedWithin(ownerID uint, includeDescen
 }
 
 // withReadSnapshot runs reads that must agree with one another against one
-// snapshot, in a transaction that never writes. SQLite's deferred transaction gives
-// that on its own (a WAL reader keeps its snapshot until it ends); Postgres needs
-// REPEATABLE READ, because its default gives every statement a fresh snapshot.
+// snapshot, in a transaction that never writes. On SQLite a read-only transaction
+// gives that on its own (a WAL reader keeps its snapshot until it ends, and it takes
+// no writer lock); Postgres needs REPEATABLE READ, because its default gives every
+// statement a fresh snapshot.
 func (ctx *MahresourcesContext) withReadSnapshot(read func(snapCtx *MahresourcesContext) error) error {
-	var options []*sql.TxOptions
+	options := models.ReadOnlyTxOptions(ctx.db)
 	if ctx.db.Dialector.Name() == "postgres" {
 		options = append(options, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	}

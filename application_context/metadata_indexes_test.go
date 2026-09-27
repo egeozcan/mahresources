@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 	"mahresources/mrql"
@@ -201,5 +202,26 @@ func TestMetadataIndexerSharesCategoryDeclarations(t *testing.T) {
 	indexes, _ = listManagedMetadataIndexes(db)
 	if len(indexes) != 0 {
 		t.Fatal("retained an index after its last declaration was removed")
+	}
+}
+
+func TestMetadataIndexerWithNothingToChangeDoesNotWaitForTheWriterLock(t *testing.T) {
+	db, path := openProductionSQLiteFile(t)
+	settings, manager := metadataIndexFixture(t, db)
+	numeric := mrql.MetadataIndex{Entity: "resource", Key: "score", Kind: "numeric"}
+	setMetadataIndexes(t, settings, numeric)
+	if err := manager.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A long write elsewhere: an import batch, a mass edit.
+	holdWriterLock(t, path)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := manager.Reconcile(ctx); err != nil {
+		t.Fatalf("a pass with nothing to change waited on another writer: %v", err)
+	}
+	if manager.Status().State != "ready" || len(manager.ReadyIndexes()) != 1 {
+		t.Fatalf("status=%+v ready=%v", manager.Status(), manager.ReadyIndexes())
 	}
 }

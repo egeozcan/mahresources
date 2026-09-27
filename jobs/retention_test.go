@@ -1802,15 +1802,22 @@ func seedExpiredEndpoint(t *testing.T, deps Deps, clock time.Time) models.Job {
 // deps is the handle the relation is recorded on and other is where the sweep
 // runs: a second connection on SQLite, the engine's own pool on PostgreSQL.
 //
-// The deletion lands in the window the existence check opened: after the relation
-// was written or its endpoints were read, and before the transaction that stores it
-// commits.
+// The deletion is attempted in the window the existence check opened: after the
+// relation's transaction began and before it stores the relation. On PostgreSQL it
+// lands there. On SQLite it cannot: the server's driver begins every write
+// transaction by taking the writer lock, so the attempt, made on a connection that
+// does not wait, must be refused, and the sweep runs once the relation is stored.
 func runLinkEndpointDeletion(t *testing.T, svc *Service, deps Deps, other Deps, policy RetentionPolicy) {
 	t.Helper()
 
 	clock := time.Date(2032, 5, 6, 7, 8, 9, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
 	other.Now = deps.Now
+	serialized := deps.DB.Dialector.Name() == "sqlite"
+	attempt := other
+	if serialized {
+		attempt.DB = noWaitHandle(t, other.DB)
+	}
 
 	keeper := acceptFor(t, svc, deps, Acceptance{
 		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
@@ -1826,7 +1833,14 @@ func runLinkEndpointDeletion(t *testing.T, svc *Service, deps Deps, other Deps, 
 			return
 		}
 		swept.Do(func() {
-			if _, err := svc.Sweep(other, policy, SweepCursor{}, 100); err != nil {
+			_, err := svc.Sweep(attempt, policy, SweepCursor{}, 100)
+			if serialized {
+				if err == nil || !strings.Contains(err.Error(), "database is locked") {
+					t.Errorf("a sweep inside the transaction recording the relation was not refused: %v", err)
+				}
+				return
+			}
+			if err != nil {
 				t.Errorf("sweep the endpoint while the relation was being recorded: %v", err)
 			}
 		})
@@ -1836,12 +1850,22 @@ func runLinkEndpointDeletion(t *testing.T, svc *Service, deps Deps, other Deps, 
 	t.Cleanup(func() { _ = deps.DB.Callback().Create().Remove(hook) })
 
 	err := svc.Link(deps, LinkRequest{Type: LinkRetryOf, FromJobID: keeper.ID, ToJobID: expired.ID})
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Link = %v, want the relation stored or refused because an endpoint is gone", err)
-	}
-
-	if jobExists(t, deps, expired.ID) {
-		t.Fatal("the sweep never deleted the endpoint the relation named: nothing was interleaved")
+	if serialized {
+		// Nothing was deleted under the relation, so it is stored against both
+		// endpoints; the sweep that could not run inside its transaction runs now.
+		if err != nil {
+			t.Fatalf("Link = %v, want the relation stored", err)
+		}
+		if _, err := svc.Sweep(other, policy, SweepCursor{}, 100); err != nil {
+			t.Fatalf("sweep after the relation was stored: %v", err)
+		}
+	} else {
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Link = %v, want the relation stored or refused because an endpoint is gone", err)
+		}
+		if jobExists(t, deps, expired.ID) {
+			t.Fatal("the sweep never deleted the endpoint the relation named: nothing was interleaved")
+		}
 	}
 	if !jobExists(t, deps, keeper.ID) {
 		t.Fatal("the sweep pruned the endpoint that was not due")
@@ -1856,12 +1880,10 @@ func runLinkEndpointDeletion(t *testing.T, svc *Service, deps Deps, other Deps, 
 // endpoints are two writers on the same rows, and the relation must not outlive
 // the endpoint it names.
 //
-// The existence check and the insert are one decision, and a sweep deleting an
-// endpoint between them used to leave a relation that no reader can resolve.
-// SQLite's own answer to the read-then-write transaction is worse than the dangling
-// row: a snapshot promoted to a write after another connection committed is refused
-// outright (SQLITE_BUSY_SNAPSHOT, which SQLite does not put through the busy
-// handler), so the caller saw a storage failure instead of the verdict.
+// The existence check and the insert are one decision: a sweep deleting an endpoint
+// between them would leave a relation that no reader can resolve. On SQLite the
+// relation's transaction holds the writer lock from its BEGIN, so the sweep runs
+// before it or after it and never between.
 func TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpoint(t *testing.T) {
 	deps, dsn := newFileDeps(t)
 	svc := NewService()

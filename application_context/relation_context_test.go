@@ -128,6 +128,9 @@ func TestAddingARelationIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
 // category check holds for the rows the insert commits with, not only for the rows read
 // before the transaction: a group moved to another category between those reads and the
 // insert must refuse the relation rather than store an edge its type does not allow.
+//
+// The change commits right after the last of those reads. It cannot land any later:
+// the insert's transaction holds the writer lock from its BEGIN.
 func TestARelationIsNotCreatedOverACategoryChangeThatLandsBeforeItsInsert(t *testing.T) {
 	ctx := newWALTestContext(t, 0)
 	from, to, elsewhere := &models.Category{Name: "From"}, &models.Category{Name: "To"}, &models.Category{Name: "Elsewhere"}
@@ -145,8 +148,9 @@ func TestARelationIsNotCreatedOverACategoryChangeThatLandsBeforeItsInsert(t *tes
 	require.NoError(t, err)
 	var once sync.Once
 	const name = "test:recategorize_before_relation_insert"
-	require.NoError(t, ctx.db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table != "group_relations" {
+	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
+		// The relation type is the last row the check before the transaction reads.
+		if _, inTransaction := tx.Statement.ConnPool.(gorm.TxCommitter); inTransaction || tx.Statement.Table != "group_relation_types" {
 			return
 		}
 		once.Do(func() {
@@ -155,7 +159,7 @@ func TestARelationIsNotCreatedOverACategoryChangeThatLandsBeforeItsInsert(t *tes
 			}
 		})
 	}))
-	t.Cleanup(func() { _ = ctx.db.Callback().Create().Remove(name) })
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
 
 	_, err = ctx.AddRelation(fromGroup.ID, toGroup.ID, relationType.ID, "linked", "")
 	require.Error(t, err)

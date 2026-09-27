@@ -20,13 +20,14 @@ import (
 
 var registerOnce sync.Once
 
-// registerSQLiteDriver registers a custom SQLite driver that applies PRAGMAs
-// (journal_mode, synchronous, foreign_keys, busy_timeout) on every new connection via ConnectHook.
-// This ensures ALL connections in Go's connection pool have the correct settings,
-// not just the first one.
+// registerSQLiteDriver registers SQLiteDriverName: go-sqlite3 applying PRAGMAs
+// (journal_mode, synchronous, foreign_keys, busy_timeout) on every new connection
+// via ConnectHook, so ALL connections in Go's connection pool have the correct
+// settings, not just the first one, and beginning transactions as sqliteDriver
+// describes.
 func registerSQLiteDriver() {
 	registerOnce.Do(func() {
-		sql.Register("sqlite3_pragmas", &sqlite3.SQLiteDriver{
+		sql.Register(SQLiteDriverName, &sqliteDriver{sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 				// WAL mode allows concurrent readers while writing, preventing
 				// the locking contention that occurs with the default DELETE journal mode.
@@ -45,7 +46,7 @@ func registerSQLiteDriver() {
 				}
 				return nil
 			},
-		})
+		}})
 	})
 }
 
@@ -131,7 +132,7 @@ func CreateDatabaseConnection(dbType, dsn, logType string, slowThreshold time.Du
 		registerSQLiteDriver()
 
 		if sqliteDb, err := gorm.Open(&sqlite.Dialector{
-			DriverName: "sqlite3_pragmas",
+			DriverName: SQLiteDriverName,
 			DSN:        dsn,
 		}, &gorm.Config{
 			Logger: dbLogger,
@@ -151,7 +152,7 @@ func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
 	if dbType == strings.ToLower(constants.DbTypeSqlite) {
 		// Use the custom driver that sets busy_timeout on every connection
 		registerSQLiteDriver()
-		dbType = "sqlite3_pragmas"
+		dbType = SQLiteDriverName
 	}
 
 	return sqlx.Open(dbType, dsn)

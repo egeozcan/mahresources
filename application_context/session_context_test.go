@@ -68,20 +68,32 @@ func pauseAfterCredentialRead(t *testing.T, ctx *MahresourcesContext, name strin
 	return reached, release
 }
 
-// observeMutationLockAttempt signals when an operation reaches the SQLite
-// user-management serialization write.
-func observeMutationLockAttempt(t *testing.T, ctx *MahresourcesContext, name string) chan struct{} {
+// observeMutationLockAttempt signals when an operation on ctx reaches the SQLite
+// user-management lock. That lock is the writer lock, which the server's driver takes
+// when the operation's transaction begins, so a transaction waiting for it has issued
+// no statement a callback could see; what shows it is the transaction holding a
+// connection. ctx's pool must therefore have no other user while this is armed.
+func observeMutationLockAttempt(t *testing.T, ctx *MahresourcesContext) chan struct{} {
 	t.Helper()
-	attempted := make(chan struct{})
-	var once sync.Once
-	if err := ctx.db.Callback().Raw().Before("gorm:raw").Register(name, func(tx *gorm.DB) {
-		if strings.Contains(tx.Statement.SQL.String(), sqliteUserManagementLockStatement) {
-			once.Do(func() { close(attempted) })
-		}
-	}); err != nil {
-		t.Fatalf("register mutation-lock barrier: %v", err)
+	sqlDB, err := ctx.db.DB()
+	if err != nil {
+		t.Fatalf("reach the pool: %v", err)
 	}
-	t.Cleanup(func() { _ = ctx.db.Callback().Raw().Remove(name) })
+	attempted := make(chan struct{})
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		tick := time.NewTicker(time.Millisecond)
+		defer tick.Stop()
+		for sqlDB.Stats().InUse == 0 {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+			}
+		}
+		close(attempted)
+	}()
 	return attempted
 }
 
@@ -201,7 +213,7 @@ func TestAuthenticateAndCreateSessionSerializesPasswordReset(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = contexts[0].db.Callback().Create().Remove("test:pause_login_session_insert") })
 
-	resetAttempted := observeMutationLockAttempt(t, contexts[1], "test:observe_reset_mutation_lock")
+	resetAttempted := observeMutationLockAttempt(t, contexts[1])
 
 	loginDone := make(chan loginResult, 1)
 	go func() {
