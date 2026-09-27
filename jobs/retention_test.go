@@ -234,6 +234,40 @@ func TestRetentionSweepStartsAtFinishedAtAndLeavesNonterminalWorkAlone(t *testin
 	}
 }
 
+// TestRetentionNeverPrunesANonterminalJobWhateverItsDeadline pins what the
+// migration readiness gate relies on: retention is the only thing that deletes a
+// Job, and it deletes only ended ones, so a source mapping whose Job is gone names
+// work that is over. A nonterminal Job carrying an expired deadline, which no
+// transition writes but a restore or a bug could, still stays.
+func TestRetentionNeverPrunesANonterminalJobWhateverItsDeadline(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 7, 1, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	policy := expiredHistory(time.Minute)
+	expired := clock.Add(-time.Hour)
+
+	byState := make(map[State]Snapshot, len(AllStates))
+	for _, state := range AllStates {
+		job := acceptFor(t, svc, deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: string(state),
+			Replay: ReplayInput{NonReplayable: true},
+		})
+		if err := deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).
+			Updates(map[string]any{"state": string(state), "finished_at": expired, "expires_at": expired}).Error; err != nil {
+			t.Fatalf("age a %s Job: %v", state, err)
+		}
+		byState[state] = job
+	}
+
+	sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+	for state, job := range byState {
+		if kept, want := jobExists(t, deps, job.ID), !state.Terminal(); kept != want {
+			t.Errorf("a %s Job past its deadline: kept=%v, want %v", state, kept, want)
+		}
+	}
+}
+
 // TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim covers §9's protection
 // for recovery records: a claim nobody could resolve — a quarantined one, whose
 // process group may still be alive — keeps its Job, its lease and its capacity,
