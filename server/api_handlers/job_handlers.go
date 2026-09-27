@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -173,6 +174,10 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 			writeJobServiceError(w, err)
 			return
 		}
+		if err := explainBlockedJobs(ctx, []jobs.Snapshot{snap}, labelled); err != nil {
+			writeJobServiceError(w, err)
+			return
+		}
 		response.JobSnapshotResponse = labelled[0]
 		for _, command := range commands {
 			response.Commands = append(response.Commands, JobCommandResponse{
@@ -260,6 +265,10 @@ func GetJobListHandler(ctx JobListContext) func(http.ResponseWriter, *http.Reque
 			response.Jobs = append(response.Jobs, jobSnapshotResponseAt(snap, now, withSeries))
 		}
 		if err := labelJobAccounts(ctx, response.Jobs); err != nil {
+			writeJobServiceError(w, err)
+			return
+		}
+		if err := explainBlockedJobs(ctx, page.Jobs, response.Jobs); err != nil {
 			writeJobServiceError(w, err)
 			return
 		}
@@ -468,6 +477,9 @@ type JobSnapshotResponse struct {
 	BlockedDuration    time.Duration           `json:"blockedDuration"`
 	QueueDuration      time.Duration           `json:"queueDuration"`
 	ExpiresAt          *time.Time              `json:"expiresAt,omitempty"`
+	// BlockedReason is why a blocked Job is blocked: the reason code its latest
+	// blocked event recorded. Empty for any other state.
+	BlockedReason string `json:"blockedReason,omitempty"`
 }
 
 type JobFailureResponse struct {
@@ -599,6 +611,30 @@ func jobSnapshotResponseAt(snap jobs.Snapshot, now time.Time, withSeries bool) J
 // the ids alone.
 type JobAccountLabeler interface {
 	JobAccountLabels(ids []uint) (map[uint]string, error)
+}
+
+// JobBlockedReasonReader answers why each blocked Job among some snapshots is
+// blocked.
+type JobBlockedReasonReader interface {
+	JobBlockedReasons(snapshots []jobs.Snapshot) (map[string]string, error)
+}
+
+// explainBlockedJobs fills the reason of every blocked Job in a response, with
+// one read however many of them are blocked. The responses are in the order of
+// the snapshots they were built from.
+func explainBlockedJobs(ctx any, snapshots []jobs.Snapshot, responses []JobSnapshotResponse) error {
+	reader, ok := ctx.(JobBlockedReasonReader)
+	if !ok || !slices.ContainsFunc(snapshots, func(snap jobs.Snapshot) bool { return snap.State == jobs.StateBlocked }) {
+		return nil
+	}
+	reasons, err := reader.JobBlockedReasons(snapshots)
+	if err != nil {
+		return err
+	}
+	for i := range responses {
+		responses[i].BlockedReason = reasons[responses[i].ID]
+	}
+	return nil
 }
 
 // labelJobAccounts fills the owner and actor names of every response in one read,

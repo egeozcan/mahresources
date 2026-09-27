@@ -22,6 +22,7 @@ import {
     outputJSONLinkURL,
     outputLinkURL,
     progressAccessibleText,
+    jobStatsText,
     progressIndeterminate,
     progressText,
     progressValue,
@@ -71,6 +72,10 @@ describe('stateLabel', () => {
         expect(phaseText({ state: 'succeeded', phase: 'partial' })).toBe('');
         expect(phaseText({ state: 'running', phase: 'partial' })).toBe('partial');
         expect(phaseText({ state: 'running', phase: 'downloading' })).toBe('downloading');
+        // A phase that only repeats the state says nothing.
+        expect(phaseText({ state: 'running', phase: 'running' })).toBe('');
+        expect(phaseText({ state: 'paused', phase: 'paused' })).toBe('');
+        expect(phaseText({ state: 'blocked', phase: 'paused' })).toBe('paused');
     });
 });
 
@@ -169,6 +174,32 @@ describe('command confirmations', () => {
     });
 });
 
+describe('the stats line under a bar', () => {
+    const now = Date.parse('2026-09-28T10:00:00Z');
+
+    test('a finished rebuild reads as completed, not as the phase it was in', () => {
+        const job = { state: 'succeeded', progress: { completed: 11, total: 11, unit: 'items', message: 'recomputing' } };
+        expect(progressText(job)).toBe('Completed');
+        expect(jobStatsText(job, now)).toBe('11 items');
+    });
+
+    test('an ended Job reports its average, a waiting or paused one none', () => {
+        const progress = { completed: 5, total: 10, unit: 'chunks', averageRate: 0.4 };
+        expect(jobStatsText({ state: 'failed', progress }, now)).toBe('5 of 10 chunks · average 0.4 chunks/s');
+        expect(jobStatsText({ state: 'succeeded', progress: { ...progress, completed: 10 } }, now)).toBe('10 chunks · average 0.4 chunks/s');
+        expect(jobStatsText({ state: 'paused', progress }, now)).toBe('5 of 10 chunks');
+        expect(jobStatsText({ state: 'blocked', progress }, now)).toBe('5 of 10 chunks');
+    });
+
+    test('a running Job reports its live speed and time left', () => {
+        const job = {
+            state: 'running',
+            progress: { completed: 600, total: 1000, unit: 'bytes', rate: 500, eta: '2026-09-28T10:00:00.500Z', etaEstimated: true, updatedAt: '2026-09-28T09:59:59Z' },
+        };
+        expect(jobStatsText(job, now)).toBe('600 B of 1000 B · 500 B/s · almost done');
+    });
+});
+
 describe('progress on work nobody is doing', () => {
     test('a failed job that recorded nothing shows no progress and is never called working', () => {
         // A download that fails before its first byte keeps only a timestamp.
@@ -188,8 +219,10 @@ describe('progress on work nobody is doing', () => {
         }
         const failedPart = { state: 'failed', progress: { completed: 102400, unit: 'bytes' } };
         expect(showsProgress(failedPart)).toBe(true);
-        expect(progressText(failedPart)).toBe('102400');
-        expect(progressAccessibleText(failedPart)).toBe('102400 bytes processed; total unknown');
+        // The amount is not the bar's label: it leads the stats line, formatted.
+        expect(progressText(failedPart)).toBe('');
+        expect(progressAccessibleText(failedPart)).toBe('100 KB processed; total unknown');
+        expect(jobStatsText(failedPart)).toBe('100 KB');
         const paused = { state: 'paused', progress: { message: 'Paused. Resume starts the download again from the beginning.' } };
         expect(showsProgress(paused)).toBe(true);
         expect(progressText(paused)).toBe(paused.progress.message);
@@ -332,7 +365,9 @@ describe('Job detail commands', () => {
 
         await center.runCommand(center.detail, running.commands[0]);
         expect(center.noticeText).toBe('Cancel requested for big.iso.');
-        expect(center.phaseText(center.detail)).toBe('cancelling');
+        expect(center.detail.phase).toBe('cancelling');
+        // The state reads Cancelling, so the phase beside it is not repeated.
+        expect(center.phaseText(center.detail)).toBe('');
 
         // The terminal snapshot leaves out the phase it no longer has.
         const { phase: _phase, controlIntent: _intent, ...cancelled } = { ...running, state: 'cancelled', version: 7 };
@@ -541,7 +576,8 @@ describe('canonical event reducer', () => {
             expect(progressIndeterminate(stopped)).toBe(false);
         }
         expect(progressValue({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe(100);
-        expect(progressText({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe('136 / 136 bytes');
+        expect(progressText({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe('Completed');
+        expect(jobStatsText({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe('136 B');
     });
 
     test('a succeeded job links to the entity it created, whatever its kind', () => {
@@ -1078,7 +1114,7 @@ describe('Job detail live progress', () => {
 
         expect(center.detail.progress.completed).toBe(3);
         expect(center.jobs[0].progress.completed).toBe(3);
-        expect(center.statsText(center.detail)).toBe('3 of 4 items · 2/s');
+        expect(center.statsText(center.detail)).toBe('3 of 4 items · 2 items/s');
         expect(center.graphsFor(center.detail).map((series: any) => series.key)).toEqual([':speed']);
         expect(center.sparkline(center.graphsFor(center.detail)[0])).toMatch(/^M/);
         expect(center._liveRegion.announce).not.toHaveBeenCalled();

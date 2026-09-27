@@ -1,0 +1,53 @@
+{
+  "kinds": {
+    "remote-download": "Download",
+    "deferred-download": "Scheduled download",
+    "plugin-action": "Plugin action",
+    "plugin-command": "Plugin command",
+    "plugin-command-import": "Command output import",
+    "group-export": "Group export",
+    "group-import-parse": "Import review",
+    "group-import-apply": "Import",
+    "similarity-recompute": "Similarity rebuild",
+    "resource-reduction-compute": "Resource Reduction",
+    "job-summary-export": "Job summary export"
+  },
+  "origins": {
+    "api": "Web page or API",
+    "plugin": "Plugin",
+    "admin": "Admin page",
+    "schedule": "Schedule"
+  },
+  "failureClasses": {
+    "policy": "Refused by policy",
+    "validation": "Invalid input",
+    "dependency": "Something it depends on failed",
+    "timeout": "Timed out",
+    "capacity": "Out of capacity",
+    "conflict": "Conflict",
+    "cancellation": "Cancelled",
+    "internal": "Internal error"
+  },
+  "blockedReasons": {
+    "role-refused": "The account that asked for it may no longer run it.",
+    "scope-refused": "The account that asked for it may no longer reach what it works on.",
+    "target-out-of-scope": "What it works on is outside the account's group.",
+    "group-out-of-scope": "Its group is outside the account's group.",
+    "principal-missing": "The account that asked for it is gone.",
+    "plugin-unavailable": "Its plugin is disabled or not loaded.",
+    "plugins-unavailable": "Plugins are not available on this server.",
+    "plugin-action-unavailable": "Its plugin no longer offers this action.",
+    "action-unavailable": "Its plugin no longer offers this action.",
+    "registration-changed": "Its plugin changed what this action allows since it was asked for.",
+    "closure-callback-gone": "The plugin code it was to run is gone.",
+    "plugin-refused": "Its plugin refused it.",
+    "input-unavailable": "Its saved input can no longer be read.",
+    "adapter-missing": "This server cannot run this kind of job.",
+    "reconciliation-refused": "Its outcome after a restart could not be settled.",
+    "reduction-busy": "Another Resource Reduction is running.",
+    "reduction-missing": "Its Resource Reduction is gone.",
+    "staged-archive-missing": "Its uploaded archive is gone.",
+    "parse-missing": "Its import review is gone.",
+    "apply-plan-missing": "Its import plan is gone."
+  }
+}

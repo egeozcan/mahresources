@@ -66,8 +66,9 @@
                 <section aria-labelledby="job-progress-heading" class="rounded border border-stone-200 bg-white p-4">
                     <h2 id="job-progress-heading" class="font-mono text-sm font-semibold text-stone-800">Progress</h2>
                     <p class="mt-2 text-sm text-stone-700" x-text="progressText(detail)"></p>
-                    <div class="mt-2 h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(detail)" :aria-valuetext="progressAccessibleText(detail)" :aria-label="(detail.title || detail.kind || 'Job') + ' progress: ' + progressAccessibleText(detail)">
-                        <div class="h-2 rounded bg-amber-800" :class="progressIndeterminate(detail) ? 'w-full motion-safe:animate-pulse' : ''" :style="progressIndeterminate(detail) ? '' : `width:${progressValue(detail) ?? 0}%`"></div>
+                    {# Forced colours drop backgrounds, so the track keeps a border and the fill a system colour. #}
+                    <div class="mt-2 h-2 overflow-hidden rounded bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(detail)" :aria-valuetext="progressAccessibleText(detail)" :aria-label="(detail.title || detail.kind || 'Job') + ' progress: ' + progressAccessibleText(detail)">
+                        <div class="h-full rounded bg-amber-800 forced-color-adjust-none forced-colors:bg-[Highlight]" :class="progressIndeterminate(detail) ? 'w-full motion-safe:animate-pulse' : ''" :style="progressIndeterminate(detail) ? '' : `width:${progressValue(detail) ?? 0}%`"></div>
                     </div>
                     <p x-show="statsText(detail)" class="mt-2 text-sm tabular-nums text-stone-700" data-job-stats x-text="statsText(detail)"></p>
                     <template x-if="metricsFor(detail).length > 0">

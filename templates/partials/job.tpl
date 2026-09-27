@@ -45,14 +45,16 @@
                 <span>{{ job.Progress.Text }}</span>
                 <span>{% if job.Progress.Known %}{{ job.Progress.Percent }}%{% elif job.Progress.Indeterminate %}In progress{% endif %}</span>
             </div>
-            <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            {# Stopped work with no known total draws an empty track: a fill would read as done. #}
+            {# Forced colours drop backgrounds, so the track keeps a border and the fill a system colour. #}
+            <div class="h-2 overflow-hidden rounded bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100"
                  {% if job.Progress.Known %}aria-valuenow="{{ job.Progress.Percent }}"{% endif %}
                  aria-valuetext="{{ job.Progress.AccessibleText }}"
                  aria-label="{{ job.Title }} progress: {{ job.Progress.AccessibleText }}">
                 {% if job.Progress.Known %}
-                <div class="h-2 rounded bg-amber-800" style="width:{{ job.Progress.Percent }}%"></div>
-                {% else %}
-                <div class="h-2 rounded bg-amber-800{% if job.Progress.Indeterminate %} w-full animate-pulse{% endif %}"></div>
+                <div class="h-full rounded bg-amber-800 forced-color-adjust-none forced-colors:bg-[Highlight]" style="width:{{ job.Progress.Percent }}%"></div>
+                {% elif job.Progress.Indeterminate %}
+                <div class="h-full w-full rounded bg-amber-800 motion-safe:animate-pulse forced-color-adjust-none forced-colors:bg-[Highlight]"></div>
                 {% endif %}
             </div>
             {% if job.Progress.Stats %}<p class="mt-1 text-xs tabular-nums text-stone-600" data-testid="job-stats">{{ job.Progress.Stats }}</p>{% endif %}

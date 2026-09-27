@@ -457,7 +457,7 @@ test.describe('Job Center', () => {
     await expect(page.locator(`[data-job-id="${retried.canonicalId}"]`)).toBeVisible();
     await expect(page.locator(`[data-job-id="${untouched.canonicalId}"]`)).toBeVisible();
     // The command select shows words, and still sends the key.
-    await expect(form.getByRole('combobox', { name: 'Available command' }).locator('option', { hasText: 'Forget replay input' })).toHaveAttribute('value', 'forget');
+    await expect(form.getByRole('combobox', { name: 'Available command' }).locator('option', { hasText: 'Forget retry data' })).toHaveAttribute('value', 'forget');
 
     await form.getByRole('combobox', { name: 'Has not been' }).selectOption({ label: 'retried or continued' });
     await form.getByRole('button', { name: 'Apply Filters' }).click();

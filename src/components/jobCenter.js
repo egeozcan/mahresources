@@ -16,6 +16,7 @@ import {
     sparklinePath,
 } from './jobProgress.js';
 import { isWorking, presentState, scheduledStartText } from './jobStates.js';
+import { kindLabel } from './jobVocabulary.js';
 
 export { JOB_STATES } from './jobStates.js';
 
@@ -187,8 +188,14 @@ export function resultAccessibleLabel(job) {
     const output = resultOutput(job);
     if (!output) return '';
     const label = outputLinkAccessibleLabel(output, advertisedOutputs(job));
-    const context = String(job?.title || job?.kind || job?.id || '').trim();
+    const context = jobName(job, job?.id || '');
     return context ? `${label} for ${context}` : label;
+}
+
+// What a Job is called where its title is missing: its Kind in words, then the
+// caller's fallback.
+export function jobName(job, fallback = '') {
+    return String(job?.title || kindLabel(job?.kind) || fallback).trim();
 }
 
 export function stateOf(job) {
@@ -221,8 +228,6 @@ export function failureText(job) {
     return String(failure.message ?? '').trim() || String(failure.code ?? '').trim();
 }
 
-// The phase shown beside the state, or nothing when the state label already
-// says it: a partial success's label is its phase.
 // A Job's owner or actor as the server named it, "Deleted account" when that
 // account has been deleted, and the bare user number only when the server named
 // nobody: a viewer is told another account's name only if they administer it.
@@ -234,8 +239,14 @@ export function jobAccountText(job, role) {
     return id === null || id === undefined ? '' : `Account ${id}`;
 }
 
+// The phase shown beside the state, or nothing when the state already says it:
+// a partial success's label is its phase, and "running" under Running, or
+// "paused" under Paused, only repeats it.
 export function phaseText(job) {
-    return isPartialSuccess(job) ? '' : String(job?.phase || '');
+    if (isPartialSuccess(job)) return '';
+    const phase = String(job?.phase || '').trim();
+    const state = stateOf(job);
+    return phase.toLowerCase() === state || phase.toLowerCase() === stateLabel(job).toLowerCase() ? '' : phase;
 }
 
 // The drawer group a state belongs to: attention, active, finished (the finished
@@ -274,7 +285,7 @@ function announcementFor(job, previous, replay) {
 // What is said when a Job reaches its current state.
 export function lifecycleAnnouncement(job) {
     const reason = failureText(job);
-    return `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}${reason ? `: ${reason}` : ''}.`;
+    return `${jobName(job, 'Job')} ${stateLabel(job).toLowerCase()}${reason ? `: ${reason}` : ''}.`;
 }
 
 // The Job a stream message carries, if it carries one.
@@ -428,6 +439,10 @@ function progressSupersededBySuccess(job) {
     return !(Number.isFinite(completed) && Number.isFinite(total) && total > 0 && completed >= total);
 }
 
+// The line above the bar: what the Job says it is doing. The amount it counted
+// is not repeated here; it leads the stats line under the bar, formatted
+// (jobStatsText). A succeeded Job reads as complete, whatever phase or message
+// its last report left.
 export function progressText(job) {
     if (isPartialSuccess(job)) {
         // The bar says what the badge says, keeping the run's last message:
@@ -435,20 +450,15 @@ export function progressText(job) {
         const message = job?.progress?.message;
         return message ? `Partially completed: ${message}` : 'Partially completed';
     }
-    if (progressSupersededBySuccess(job)) return 'Completed';
+    if (stateOf(job) === 'succeeded') return 'Completed';
     const progress = job?.progress || {};
     if (progress.message) return progress.message;
-    const completed = progress.completed;
-    const total = progress.total;
-    if (completed !== null && completed !== undefined && total > 0) {
-        return `${completed} / ${total}${progress.unit ? ` ${progress.unit}` : ''}`;
-    }
     if (progress.phase) return progress.phase;
-    if (completed !== null && completed !== undefined) return String(completed);
     if (isWorking(job)) return 'Working';
     // Work nobody is doing that reported only metrics names the first of them,
     // as the /jobs card does.
-    return Array.isArray(progress.metrics) ? metricSummary(progress.metrics[0]) : '';
+    const counted = Number.isFinite(progress.completed);
+    return !counted && Array.isArray(progress.metrics) ? metricSummary(progress.metrics[0]) : '';
 }
 
 // Whether a Job has progress to show: something it reported, a success (which
@@ -477,16 +487,41 @@ export function progressIndeterminate(job) {
     return progressValue(job) === null && isWorking(job);
 }
 
+// Everything the bar shows, in words: its label and the amount counted, and
+// that the total is unknown when it is. A success is complete, which its label
+// already says.
 export function progressAccessibleText(job) {
     const label = progressText(job);
-    if (progressValue(job) !== null) return label;
+    if (stateOf(job) === 'succeeded') return label;
+    const amount = jobAmountText(job);
+    if (progressValue(job) !== null) return [label, amount].filter(Boolean).join('; ');
+    return [label, amount ? `${amount} processed` : '', 'total unknown'].filter(Boolean).join('; ');
+}
+
+// The amount a Job counted, formatted in its unit: "6.5 MB of 20.0 MB", "3 of
+// 12 items". A finished Job whose count reached its total says the amount once.
+export function jobAmountText(job) {
+    return formatAmount(job?.progress, { finished: presentState(job).terminal === true });
+}
+
+// The speed beside the amount: the live rate while the Job runs, its average
+// once it has ended, and none while it waits, is paused or blocked.
+export function jobRateText(job, now = Date.now()) {
     const progress = job?.progress || {};
-    const completed = progress.completed;
-    if (completed !== null && completed !== undefined) {
-        const amount = `${completed}${progress.unit ? ` ${progress.unit}` : ''} processed`;
-        return `${progress.message || progress.phase ? `${label}; ` : ''}${amount}; total unknown`;
-    }
-    return `${label}; total unknown`;
+    if (stateOf(job) === 'running') return liveRateText(progress, now);
+    if (presentState(job).terminal !== true) return '';
+    const average = formatRate(progress.averageRate, progress.unit);
+    return average ? `average ${average}` : '';
+}
+
+export function jobEtaText(job, now = Date.now()) {
+    return stateOf(job) === 'running' ? liveEtaText(job?.progress, now) : '';
+}
+
+// The stats line every Job surface shows under a bar (the /jobs card's is
+// jobRowStats in job_progress_format.go): amount · speed · time left.
+export function jobStatsText(job, now = Date.now()) {
+    return [jobAmountText(job), jobRateText(job, now), jobEtaText(job, now)].filter(Boolean).join(' · ');
 }
 
 function safeJSON(response) {
@@ -899,17 +934,7 @@ export function jobCenter(options = {}) {
         },
 
         progressText(job) { return progressText(job); },
-        amountText(job) { return formatAmount(job?.progress); },
-        rateText(job) {
-            const progress = job?.progress || {};
-            if (job?.state === 'running') return liveRateText(progress, this.now);
-            const average = formatRate(progress.averageRate, progress.unit);
-            return average ? `average ${average}` : '';
-        },
-        etaText(job) { return job?.state === 'running' ? liveEtaText(job?.progress, this.now) : ''; },
-        statsText(job) {
-            return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
-        },
+        statsText(job) { return jobStatsText(job, this.now); },
         metricsFor(job) { return job?.progress?.metrics || []; },
         metricText(metric) { return formatMetric(metric); },
         graphsFor(job) { return graphSeries(job); },
@@ -947,7 +972,7 @@ export function commandDismissLabel(command) {
     return command?.key === 'pause' ? 'Go back' : undefined;
 }
 
-const FORGET_CONFIRMATION = 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
+const FORGET_CONFIRMATION = 'Forget the data this job saved for Retry, Continue and Repeat? They will no longer be possible. Its history remains, and its outputs and artifacts are not affected. This cannot be undone.';
 
 // A command asks first only when it stops work or cannot be taken back: a
 // Kind's own confirmation, a destructive command, and Forget. Dismiss, Pin and
@@ -992,17 +1017,13 @@ export function commandConfirmation(command) {
 // its confirming button is styled as destructive only for a command that is.
 export function commandConfirmOptions(job, command) {
     const label = commandLabel(command);
-    const title = String(job?.title || job?.kind || '').trim();
+    const title = jobName(job);
     return {
         title: title ? `${label}: ${title}` : label,
         confirmLabel: label,
         cancelLabel: commandDismissLabel(command),
         destructive: command?.destructive === true,
     };
-}
-
-function jobName(job) {
-    return String(job?.title || job?.kind || 'This job').trim();
 }
 
 // What a refused command says. A Kind's refusal is its own reason; the other
@@ -1012,7 +1033,7 @@ export function commandRefusalText(job, command, error, now = null) {
     const payload = error?.payload || {};
     const result = payload.result || {};
     const label = commandLabel(command);
-    const name = jobName(job);
+    const name = jobName(job, 'This job');
     switch (result.code) {
     case 'refused':
         return withReason(`${label} refused for ${name}`, result.message || payload.error);
@@ -1044,7 +1065,7 @@ function withReason(what, reason) {
 // one says what the service did.
 export function commandNoticeText(job, command, outcome) {
     const label = commandLabel(command);
-    const name = jobName(job);
+    const name = jobName(job, 'This job');
     if (outcome?.code === 'requested') return `${label} requested for ${name}.`;
     const message = String(outcome?.message || '').trim();
     return message ? `${name}: ${message}.`.replace(/\.\.$/, '.') : `${label} completed for ${name}.`;

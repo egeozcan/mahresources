@@ -313,14 +313,35 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 func TestJobRowProgressNamesEveryBar(t *testing.T) {
 	i64 := func(v int64) *int64 { return &v }
 
+	// The amount is not the bar's label: it leads the stats line, formatted.
 	paused := jobRowProgress(jobs.Snapshot{State: jobs.StatePaused, Progress: jobs.Progress{Completed: i64(20), Total: i64(50), Unit: "MB"}})
-	if paused == nil || !paused.Known || paused.Percent != 40 || paused.Text != "20 / 50 MB" || paused.Indeterminate {
+	if paused == nil || !paused.Known || paused.Percent != 40 || paused.Text != "" || paused.Indeterminate ||
+		paused.AccessibleText != "20 of 50 MB" || paused.Stats != "20 of 50 MB" {
 		t.Fatalf("paused = %+v", paused)
 	}
+	sized := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{
+		Completed: i64(8051532), Total: i64(20971520), Unit: "bytes", Message: "downloading"}})
+	if sized.Text != "downloading" || sized.AccessibleText != "downloading; 7.6 MB of 20.0 MB" || sized.Stats != "7.6 MB of 20.0 MB" {
+		t.Fatalf("sized download = %+v", sized)
+	}
 
-	unknown := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Completed: i64(7), Unit: "bytes"}})
-	if unknown == nil || unknown.Known || !unknown.Indeterminate || unknown.AccessibleText != "7 bytes processed; total unknown" {
+	unknown := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Completed: i64(240350), Unit: "bytes"}})
+	if unknown == nil || unknown.Known || !unknown.Indeterminate || unknown.AccessibleText != "Working; 235 KB processed; total unknown" || unknown.Stats != "235 KB" {
 		t.Fatalf("unknown total = %+v", unknown)
+	}
+
+	// A rebuild's phase is not what a finished card says, nor its count twice.
+	rebuilt := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded, Progress: jobs.Progress{
+		Completed: i64(11), Total: i64(11), Unit: "items", Message: "recomputing"}})
+	if rebuilt.Text != "Completed" || rebuilt.Percent != 100 || rebuilt.Stats != "11 items" {
+		t.Fatalf("finished rebuild = %+v", rebuilt)
+	}
+
+	// Stopped work whose total was never known keeps its amount, with its unit,
+	// and draws no fill: neither Known nor Indeterminate.
+	cancelled := jobRowProgress(jobs.Snapshot{State: jobs.StateCancelled, Progress: jobs.Progress{Completed: i64(240350), Unit: "bytes"}})
+	if cancelled == nil || cancelled.Known || cancelled.Indeterminate || cancelled.Stats != "235 KB" {
+		t.Fatalf("cancelled download of unknown size = %+v", cancelled)
 	}
 
 	finished := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded})
@@ -498,7 +519,7 @@ func TestJobCommandOptionsKeepEveryFilterableKey(t *testing.T) {
 	// The select shows words, not keys: what a Job card's button says.
 	for key, label := range map[string]string{
 		"retry": "Retry", "continue": "Continue", "inspect": "Inspect command history",
-		"retry-import": "Retry import", "pin-lineage": "Pin visible lineage", "forget": "Forget replay input",
+		"retry-import": "Retry import", "pin-lineage": "Pin with related jobs", "forget": "Forget retry data",
 	} {
 		if labels[key] != label {
 			t.Errorf("the command filter offers %q as %q, want %q", key, labels[key], label)

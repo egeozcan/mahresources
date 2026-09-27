@@ -675,15 +675,11 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobRowBadgeClasses[presentation.Tone],
-		Phase: snapshot.Phase, Pinned: snapshot.Pinned,
+		Phase: jobview.PhaseText(snapshot), Pinned: snapshot.Pinned,
 		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
 		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
 		Progress:  jobRowProgress(snapshot),
 		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
-	}
-	if jobIsPartial(snapshot) {
-		// The badge already says it; the raw phase beside it would say it twice.
-		row.Phase = ""
 	}
 	if snapshot.State == jobs.StateScheduled {
 		row.ScheduledFor = jobRowTime(snapshot.ScheduledFor)
@@ -756,10 +752,14 @@ func jobSummaryText(raw json.RawMessage) string {
 // jobRowProgress mirrors the progress rules the detail page and the panel use.
 // A succeeded Job reads as complete whatever its last progress row said: nothing
 // rewrites progress on the way out, so a download whose size was never known
-// would otherwise keep an unknown total forever. Work nobody is doing — waiting,
-// paused or stopped — with nothing to report draws no bar at all, and only work
-// being done (the state table's Working) may pulse or read "Working". A phase
-// alone is not something to report: the card shows it beside the kind.
+// would otherwise keep an unknown total forever, and a rebuild would keep the
+// phase it was in. Work nobody is doing — waiting, paused or stopped — with
+// nothing to report draws no bar at all, and only work being done (the state
+// table's Working) may pulse or read "Working". A phase alone is not something
+// to report: the card shows it beside the kind.
+//
+// The bar's label says what the Job is doing; the amount it counted leads the
+// stats line under it, formatted as every Job surface formats it.
 func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
 	out := jobRowProgressBar(snapshot)
 	if out != nil {
@@ -779,7 +779,6 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 		return nil
 	}
 
-	knownTotal := progress.Completed != nil && progress.Total != nil && *progress.Total > 0
 	if jobIsPartial(snapshot) {
 		// The run is over and its share is done, but the work is not: the bar
 		// says what the badge says, keeping the run's last message, which is
@@ -790,7 +789,7 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 		}
 		return &JobRowProgress{Text: text, Percent: 100, Known: true, AccessibleText: text}
 	}
-	if succeeded && !(knownTotal && *progress.Completed >= *progress.Total) {
+	if succeeded {
 		return &JobRowProgress{Text: "Completed", Percent: 100, Known: true, AccessibleText: "Completed"}
 	}
 
@@ -798,44 +797,39 @@ func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {
 	switch {
 	case progress.Message != "":
 		out.Text = progress.Message
-	case knownTotal:
-		out.Text = fmt.Sprintf("%d / %d", *progress.Completed, *progress.Total)
-		if progress.Unit != "" {
-			out.Text += " " + progress.Unit
-		}
 	case progress.Phase != "":
 		out.Text = progress.Phase
-	case progress.Completed != nil:
-		out.Text = fmt.Sprintf("%d", *progress.Completed)
-	case !working && len(progress.Metrics) > 0:
+	case working:
+		out.Text = "Working"
+	case progress.Completed == nil && len(progress.Metrics) > 0:
 		// Work nobody is doing that reported only metrics names the first of
 		// them rather than claiming to be working.
 		out.Text = jobMetricSummary(progress.Metrics[0])
-	default:
-		out.Text = "Working"
 	}
-	if knownTotal {
+	amount := formatJobAmount(progress, snapshot.State.Terminal())
+	if progress.Completed != nil && progress.Total != nil && *progress.Total > 0 {
 		percent := math.Round(float64(*progress.Completed) / float64(*progress.Total) * 100)
 		out.Percent = int(math.Max(0, math.Min(100, percent)))
 		out.Known = true
-		out.AccessibleText = out.Text
+		out.AccessibleText = joinNonEmpty("; ", out.Text, amount)
 		return out
 	}
 	out.Indeterminate = working
-	if progress.Completed != nil {
-		amount := fmt.Sprintf("%d", *progress.Completed)
-		if progress.Unit != "" {
-			amount += " " + progress.Unit
-		}
-		prefix := ""
-		if progress.Message != "" || progress.Phase != "" {
-			prefix = out.Text + "; "
-		}
-		out.AccessibleText = prefix + amount + " processed; total unknown"
-	} else {
-		out.AccessibleText = out.Text + "; total unknown"
+	if amount != "" {
+		amount += " processed"
 	}
+	out.AccessibleText = joinNonEmpty("; ", out.Text, amount, "total unknown")
 	return out
+}
+
+func joinNonEmpty(separator string, parts ...string) string {
+	kept := parts[:0:0]
+	for _, part := range parts {
+		if part != "" {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, separator)
 }
 
 func JobDetailContextProvider(_ *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {

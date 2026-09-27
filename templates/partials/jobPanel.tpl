@@ -126,9 +126,9 @@
 
                                     <div class="min-w-0 flex-1">
                                         <div class="flex items-start justify-between gap-2">
-                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || job.kind || job.id"
+                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || kindText(job) || job.id"
                                                class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
-                                               x-text="job.title || job.kind || job.id"></a>
+                                               x-text="job.title || kindText(job) || job.id"></a>
                                             <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
                                                   :class="{
                                                       'bg-amber-100 text-amber-900': stateTone(job) === 'working',
@@ -140,7 +140,7 @@
                                                   x-text="stateLabel(job)"></span>
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">
-                                            <span class="truncate" x-text="job.kind"></span>
+                                            <span class="truncate" data-job-panel-kind x-text="kindText(job)"></span>
                                             <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>
@@ -150,6 +150,8 @@
 
                                         {# The reason a job failed, as its Kind recorded it; the /jobs detail page shows the same text. #}
                                         <p x-show="failureText(job)" x-cloak class="mt-1 break-words text-xs text-red-800" data-job-panel-failure><span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span></p>
+                                        {# Why a blocked job is blocked, as its blocked event recorded it; the Job page's timeline has the rest. #}
+                                        <p x-show="blockedText(job)" x-cloak class="mt-1 break-words text-xs text-amber-900" data-job-panel-blocked><span class="font-medium">Reason:</span> <span x-text="blockedText(job)"></span></p>
 
                                         <template x-if="showsProgress(job)">
                                             <div class="mt-2" data-job-panel-progress>
@@ -157,10 +159,11 @@
                                                     <span class="min-w-0 truncate" x-text="progressLabel(job)"></span>
                                                     <span class="shrink-0 font-medium tabular-nums text-amber-900" x-text="progressValue(job) === null ? (progressIndeterminate(job) ? 'In progress' : '') : progressValue(job) + '%'"></span>
                                                 </div>
-                                                <div class="h-2 overflow-hidden rounded-full bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                                                {# Forced colours drop backgrounds, so the track keeps a border and the fill a system colour. #}
+                                                <div class="h-2 overflow-hidden rounded-full bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100"
                                                      :aria-valuenow="progressValue(job)" :aria-valuetext="progressValueText(job)"
-                                                     :aria-label="(job.title || job.kind || 'Job') + ' progress'">
-                                                    <div class="h-2 rounded-full transition-[width] duration-300 motion-reduce:transition-none" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-700', progressIndeterminate(job) ? 'w-full motion-safe:animate-pulse' : '']"
+                                                     :aria-label="(job.title || kindText(job) || 'Job') + ' progress'">
+                                                    <div class="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none forced-color-adjust-none forced-colors:bg-[Highlight]" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-700', progressIndeterminate(job) ? 'w-full motion-safe:animate-pulse' : '']"
                                                          :style="{ width: progressIndeterminate(job) ? '100%' : (progressValue(job) ?? 0) + '%' }"></div>
                                                 </div>
                                             </div>

@@ -1,0 +1,36 @@
+{
+  "amounts": [
+    { "progress": { "completed": 8051532, "total": 20971520, "unit": "bytes" }, "text": "7.6 MB of 20.0 MB" },
+    { "progress": { "completed": 1027072, "total": 1048576, "unit": "bytes" }, "text": "0.97 MB of 1.0 MB" },
+    { "progress": { "completed": 1048000, "total": 1048576, "unit": "bytes" }, "text": "0.99 MB of 1.0 MB" },
+    { "progress": { "completed": 5120, "total": 20971520, "unit": "bytes" }, "text": "5.0 KB of 20.0 MB" },
+    { "progress": { "completed": 600, "total": 1000, "unit": "bytes" }, "text": "600 B of 1000 B" },
+    { "progress": { "completed": 394485, "total": 20971520000, "unit": "bytes" }, "text": "385 KB of 19.5 GB" },
+    { "progress": { "completed": 240350, "unit": "bytes" }, "text": "235 KB" },
+    { "progress": { "completed": 558, "total": 558, "unit": "bytes" }, "finished": true, "text": "558 B" },
+    { "progress": { "completed": 558, "total": 558, "unit": "bytes" }, "text": "558 B of 558 B" },
+    { "progress": { "completed": 11, "total": 11, "unit": "items" }, "finished": true, "text": "11 items" },
+    { "progress": { "completed": 12, "total": 40, "unit": "items" }, "text": "12 of 40 items" },
+    { "progress": { "completed": 7, "unit": "items" }, "text": "7 items" },
+    { "progress": { "completed": 1200, "total": 5000, "unit": "rows" }, "text": "1,200 of 5,000 rows" },
+    { "progress": { "completed": 5, "total": 10, "unit": "chunks" }, "finished": true, "text": "5 of 10 chunks" },
+    { "progress": { "completed": 3, "total": 4 }, "text": "3 of 4" },
+    { "progress": { "completed": 40, "total": 100, "unit": "percent" }, "text": "" }
+  ],
+  "rates": [
+    { "rate": 2202009.6, "unit": "bytes", "text": "2.1 MB/s" },
+    { "rate": 4.5, "unit": "items", "text": "4.5 items/s" },
+    { "rate": 4.5, "unit": "", "text": "4.5/s" },
+    { "rate": 0.33, "unit": "shares", "text": "0.3 shares/s" },
+    { "rate": 1234.4, "unit": "rows", "text": "1,234 rows/s" },
+    { "rate": 3, "unit": "percent", "text": "" }
+  ],
+  "etas": [
+    { "seconds": 14, "estimated": true, "text": "about 14 s left" },
+    { "seconds": 180, "estimated": false, "text": "3 min left" },
+    { "seconds": 0.4, "estimated": true, "text": "almost done" },
+    { "seconds": 0.4, "estimated": false, "text": "under 1 s left" },
+    { "seconds": -5, "estimated": true, "text": "almost done" },
+    { "seconds": -5, "estimated": false, "text": "" }
+  ]
+}
