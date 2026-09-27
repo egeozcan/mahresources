@@ -216,8 +216,8 @@ its heading reads "(50+)", and so does its badge on the **Jobs** button.
 
 The drawer reads its lists when its live stream has caught up, and again after
 each state change the stream reports. It reads a Job's commands and outputs
-only while it is open, and reads them again only when the Job's version or your
-pin on it has changed. Dismissing, pinning or forgetting a Job, from the drawer, a Job's page or the
+only while it is open, and reads them again only when the Job has changed or
+you (or another of your tabs) pinned, unpinned or forgot it. Dismissing, pinning or forgetting a Job, from the drawer, a Job's page or the
 All jobs page, reaches your other open tabs of the same browser, whose drawers
 and All jobs pages read their lists again; other browsers see it at their next
 change.

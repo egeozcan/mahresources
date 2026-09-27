@@ -672,6 +672,42 @@ describe('Job detail stream connection', () => {
         await vi.waitFor(() => expect(center.detail.pinned).toBe(true));
     });
 
+    test('a failed read an event started is tried again, still saying the change, and stops once the page is gone', async () => {
+        vi.useFakeTimers();
+        const center = jobCenter({ detailId: 'job-14' });
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        center.streamCaughtUp = true;
+        center.jobs = [{ id: 'job-14', title: 'Export', state: 'running', version: 2 }];
+        center.detail = center.jobs[0];
+        center.loading = false;
+        let attempts = 0;
+        center.fetchJSON = vi.fn(async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error('Request failed (503)');
+            return { id: 'job-14', title: 'Export', state: 'failed', version: 3 };
+        });
+        center.handleStreamMessage({
+            data: JSON.stringify({ id: 'e-14', jobId: 'job-14', jobVersion: 3, type: 'failed', deliverySequence: 40 }),
+            lastEventId: 'v2:40',
+        });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(center.detail.state).toBe('failed');
+        expect(center._liveRegion.announce).toHaveBeenCalledWith(expect.stringMatching(/Export failed/));
+
+        const gone = jobCenter({ detailId: 'job-15' });
+        gone.jobs = [{ id: 'job-15', state: 'running', version: 1 }];
+        gone.detail = gone.jobs[0];
+        let goneReads = 0;
+        let reject = () => {};
+        gone.fetchJSON = vi.fn(() => { goneReads += 1; return new Promise((_resolve, fail) => { reject = () => fail(new Error('gone')); }); });
+        gone.reconcileDetail();
+        gone.destroy();
+        reject();
+        await vi.advanceTimersByTimeAsync(120000);
+        expect(goneReads).toBe(1);
+        vi.useRealTimers();
+    });
+
     test('a reconciling read that fails is tried again', async () => {
         vi.useFakeTimers();
         const center = jobCenter({ detailId: 'job-9' });

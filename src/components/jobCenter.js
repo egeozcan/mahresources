@@ -496,6 +496,8 @@ export function jobCenter(options = {}) {
         // holds, since a pin moves no version.
         _preferenceEpoch: 0,
         _preferences: null,
+        // Set by destroy(): nothing is read or retried after it.
+        _destroyed: false,
         // Set once the stream has given a cursor (a catch-up), which a reopened
         // stream then resumes from, even v2:0.
         _holdsCursor: false,
@@ -516,6 +518,7 @@ export function jobCenter(options = {}) {
         },
 
         destroy() {
+            this._destroyed = true;
             if (this._clockTimer) clearInterval(this._clockTimer);
             clearTimeout(this._streamRetryTimer);
             clearTimeout(this._reconcileTimer);
@@ -732,12 +735,13 @@ export function jobCenter(options = {}) {
         // a delay that doubles up to a minute, and a read begun before a
         // preference change is read again rather than applied.
         reconcileDetail({ announce = false } = {}) {
-            if (!this.detailId) return;
+            if (!this.detailId || this._destroyed) return;
             clearTimeout(this._reconcileTimer);
             this._reconcileTimer = null;
             const epoch = this._preferenceEpoch;
             this.fetchJSON(`/v1/jobs/${encodeURIComponent(this.detailId)}`)
                 .then(payload => {
+                    if (this._destroyed) return;
                     this._reconcileDelay = 0;
                     if (epoch !== this._preferenceEpoch) {
                         this.reconcileDetail({ announce });
@@ -747,8 +751,9 @@ export function jobCenter(options = {}) {
                     if (snapshot?.id && this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announce);
                 })
                 .catch(() => {
+                    if (this._destroyed) return;
                     this._reconcileDelay = Math.min(Math.max(this._reconcileDelay * 2, 2000), 60000);
-                    this._reconcileTimer = setTimeout(() => this.reconcileDetail(), this._reconcileDelay);
+                    this._reconcileTimer = setTimeout(() => this.reconcileDetail({ announce }), this._reconcileDelay);
                 });
         },
 
@@ -787,8 +792,9 @@ export function jobCenter(options = {}) {
                         this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
                     // A read that failed repairs nothing: this page's Job is
-                    // read again until it answers.
-                    .catch(() => { if (String(result.jobId) === String(this.detailId)) this.reconcileDetail(); });
+                    // read again until it answers, and the change it carries
+                    // is still said.
+                    .catch(() => { if (String(result.jobId) === String(this.detailId)) this.reconcileDetail({ announce: announceSnapshot }); });
                 return;
             }
             this.jobs = result.jobs;
