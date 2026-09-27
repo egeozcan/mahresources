@@ -367,6 +367,11 @@ type actionContextWithoutPluginManager struct {
 
 func (actionContextWithoutPluginManager) PluginManager() *plugin_system.PluginManager { return nil }
 
+// CurrentJobEvents answers with the fixed principal the test bound.
+func (ctx actionContextWithoutPluginManager) CurrentJobEvents() (api_handlers.JobEventsContext, error) {
+	return ctx, nil
+}
+
 func TestLegacyActionJobGetUsesDurableHandleWithoutPluginManager(t *testing.T) {
 	tc, owner, _, _ := setupRetryableActionProjectionEnv(t)
 	handle, _ := runRetryableActionToFailure(t, tc, owner, "no plugin manager")
@@ -651,11 +656,22 @@ func TestLegacyActionEventsNotifyConnectedClientWhenRetryMovesHandle(t *testing.
 
 	handle, original := runRetryableActionToFailure(t, tc, owner, "live retry move")
 	// Drain any process-local events from the original execution before the
-	// retry. The stream remains open with the old handle in its initial snapshot.
-	time.Sleep(50 * time.Millisecond)
-	initialBody := writer.String()
-	if !strings.Contains(initialBody, `"canonicalJobId":"`+original.ID+`"`) {
-		t.Fatalf("initial live stream did not include failed action %q: %s", original.ID, initialBody)
+	// retry: the stream holds live events briefly for a credential check, so wait
+	// for the failed row itself rather than for a fixed time.
+	failedFrameSent := func() bool {
+		for _, frame := range strings.Split(writer.String(), "\n\n") {
+			if strings.Contains(frame, `"canonicalJobId":"`+original.ID+`"`) && strings.Contains(frame, `"status":"failed"`) {
+				return true
+			}
+		}
+		return false
+	}
+	drainDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(drainDeadline) && !failedFrameSent() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !failedFrameSent() {
+		t.Fatalf("initial live stream did not include failed action %q: %s", original.ID, writer.String())
 	}
 
 	release := tc.AppCtx.PluginManager().FillJobBudgetForTest()

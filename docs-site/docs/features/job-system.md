@@ -79,6 +79,16 @@ visibility, not permanent authority: each command and output access rechecks
 current role, scope, plugin permission, and Kind policy. A filter for another
 owner or actor never grants access to that person's Jobs.
 
+The Job event streams apply the same rule for as long as they stay open. The
+canonical stream checks the connection's session or API token again on every
+poll, about once a second. The legacy `/v1/jobs/events` and
+`/v1/download/events` streams check it after reading what each frame will say,
+the initial state included, and before sending it, and once a second while
+idle; events arriving within a quarter second of the last check wait for the
+next one and share it. When the credential no longer authenticates, after a logout,
+a disabled account or a revoked token, the stream closes. After a role or scope
+change it stays open and sends only what the account may see now.
+
 ## Progress, metrics and graphs
 
 A running Job reports a progress snapshot: a phase, a message, an amount
@@ -240,7 +250,10 @@ stored the same safe redirect before entity outputs were published. Job detail
 still offers “View JSON result” for the stored summary. A download that failed
 because the library already holds its bytes publishes the Resource holding them
 as its `existing-resource` entity output. The Job detail page links to it from
-the Failure section.
+the Failure section. Only a Resource the submitter can see counts as already
+holding the bytes; for a user limited to a group subtree, content held only
+outside it becomes a new Resource of their own (see
+[Duplicate Detection](../concepts/resources.md#duplicate-detection)).
 
 Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
 `averageRate`, `eta` with `etaEstimated`, and `updatedAt`. The progress series

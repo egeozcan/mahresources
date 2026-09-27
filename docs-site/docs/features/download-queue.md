@@ -24,6 +24,8 @@ When you submit a URL for download:
 3. Progress is tracked and broadcast via Server-Sent Events (SSE)
 4. On completion, a Resource is created from the downloaded file
 
+The Resource is created as the person who submitted the download, with their account as it stands when the transfer finishes. For a user limited to a group subtree it lands inside that subtree, and content the library holds only outside it becomes their own Resource rather than a link to one they cannot open (see [Duplicate Detection](../concepts/resources.md#duplicate-detection)). If the account has been disabled or deleted by then, or its role no longer allows creating content, no Resource is created.
+
 ## Queue Limits
 
 | Setting | Value |
@@ -375,3 +377,5 @@ Download progress updates are throttled to one event per 500ms per job.
 :::note
 The `/v1/download/events` and `/v1/jobs/events` endpoints serve identical streams. Both merge download job events and plugin action job events into a single SSE connection.
 :::
+
+Each frame is filtered for the account as it is when the frame is sent, not as it was when the connection opened. A stream whose session or token stops authenticating closes, and one whose account changes role or scope goes on with what the account may see now. See [Job System](./job-system.md#state-and-visibility).

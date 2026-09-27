@@ -92,11 +92,14 @@ func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
 // validateDownloadScope refuses a download whose targets fall outside a
 // group-limited principal's subtree.
 //
-// The download worker creates resources on the unscoped system context, so a
-// group-limited principal could otherwise plant data outside its subtree by
+// A group-limited principal could otherwise ask for data outside its subtree by
 // naming an out-of-scope owner/group (or creating a new top-level group via
-// GroupName). Fail-closed, and checked before enqueuing. GroupVisible is always
-// true for unscoped/admin/auth-off callers, so this is a no-op for them.
+// GroupName). Fail-closed, and checked before enqueuing, so the refusal comes
+// before the transfer is spent. The worker binds the submitter again when it
+// creates the resource, which is the check that sees scope as it is by then and
+// which existing resource holds the bytes; this one is the early answer.
+// GroupVisible is always true for unscoped/admin/auth-off callers, so this is a
+// no-op for them.
 //
 // Shared with the retry path in download_history_handlers.go, and that is the
 // reason it is a function: a stored payload is a record of what was once asked
@@ -493,8 +496,8 @@ func legacyIdempotencyKey(key, jobID, command string) string {
 // restartScopeDenied re-checks a job's stored payload against the principal
 // restarting it, and returns the refusal to answer with (nil when allowed).
 //
-// Retry and Resume both hand the original creator back to the *unscoped* worker,
-// which is the same replay the /downloads retry path re-validates: ownership is
+// Retry and Resume both hand the original creator back to the worker, which is
+// the same replay the /downloads retry path re-validates: ownership is
 // not scope, and a user whose confinement changed after submitting — or whose
 // scope group moved in the tree — must not be able to press a button and have the
 // old targets honoured. A job with no stored creator (every generic job: exports,
@@ -814,7 +817,62 @@ type JobEventsContext interface {
 	// that changed, and a Retry moves the handle onto its successor.
 	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
 	PluginManager() *plugin_system.PluginManager
+	// Principal is who the stream reads as. The handler's own visibility checks and
+	// the projections it reads through both answer for this one principal.
+	Principal() *auth.Principal
 }
+
+// JobEventsSource yields a legacy job event stream's context, bound to the
+// stream's credential as it stands at the moment of the call. An error means the
+// credential no longer authenticates, and the stream ends.
+//
+// A stream outlives the request middleware that authenticated it, so a context
+// bound once at connect would keep delivering at the access level the account had
+// then: after a logout, after the account was disabled, after an administrator was
+// demoted.
+type JobEventsSource interface {
+	CurrentJobEvents() (JobEventsContext, error)
+}
+
+// jobEventsRevalidateInterval is how often an idle legacy stream rechecks its
+// credential, so a revoked one is closed rather than held open with nothing sent.
+const jobEventsRevalidateInterval = time.Second
+
+// jobEventsCheckInterval bounds how long one credential check may decide
+// frames. Live events that arrive within it of the last check wait, at most
+// this long, and are projected and checked together, so a burst costs one
+// credential read per interval instead of one per event; and a check older than
+// this, aged by a stalled write, is taken again before the next frame.
+const jobEventsCheckInterval = 250 * time.Millisecond
+
+// maxHeldJobEvents bounds how many live events wait for that check; reaching it
+// runs the check at once.
+const maxHeldJobEvents = 256
+
+// legacyStreamItem is one piece of a legacy job stream's output: it makes the
+// database reads that decide what the piece says, for the context it is given,
+// and returns the frames to write. It runs again when the account changes
+// before its frames are written, so it changes no connection state; its frames
+// do that as they are written.
+type legacyStreamItem func(bound JobEventsContext) []legacyStreamFrame
+
+// legacyStreamFrame renders one frame just before it is written, from what the
+// connection holds, and reports false when there is nothing to send. It reads
+// no database (that is the item's projection, which the credential check has to
+// follow) and changes no connection state: sent does that, once the frame has
+// been written, so a frame rendered and then not written leaves no trace.
+type legacyStreamFrame func() (rendered renderedLegacyFrame, send bool)
+
+// renderedLegacyFrame is a frame ready to write, and what writing it changes.
+type renderedLegacyFrame struct {
+	event string
+	data  []byte
+	sent  func()
+}
+
+// legacyStreamFrameRendered is a test seam called after a frame is rendered and
+// before its freshness is tested. Production leaves it nil.
+var legacyStreamFrameRendered func()
 
 // pluginActionJobsProjector supplies the current visible rows for legacy action
 // handles. Like the single-row projection, it is optional so a context without
@@ -837,24 +895,50 @@ type durablePluginActionJobsClearer interface {
 
 // GetDownloadEventsHandler handles GET /v1/download/events and GET /v1/jobs/events
 // Server-Sent Events stream for real-time updates on both download and action jobs.
-func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWriter, request *http.Request) {
+//
+// Every frame, the initial state included, is written by emit: the reads that
+// decide the frame are made first, then the credential is checked, and the frame
+// is written on that check. When the check finds the account changed, the reads
+// are made again for the account as it is; when it no longer authenticates, the
+// stream ends. A demoted account therefore keeps its stream and sees only what
+// it may see now, and a logged-out or disabled one loses the stream.
+func GetDownloadEventsHandler(source JobEventsSource) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		// Set SSE headers
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writer.Header().Set("Cache-Control", "no-cache")
-		writer.Header().Set("Connection", "keep-alive")
-		writer.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
-
 		flusher, ok := writer.(http.Flusher)
 		if !ok {
 			http.Error(writer, "SSE not supported", http.StatusInternalServerError)
 			return
 		}
-
 		// Background jobs are per-user: a non-admin only receives the jobs it
 		// created, so it can't observe other users' download URLs, import/export
 		// progress, or action targets.
-		p := auth.PrincipalFromContext(request.Context())
+		// A check is as old as its credential read, so it is stamped with the
+		// moment it began: an answer that took longer than jobEventsCheckInterval to
+		// come back is already too old to write on.
+		lastCheck := time.Now()
+		ctx, err := source.CurrentJobEvents()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusUnauthorized)
+			return
+		}
+		// revalidate rebinds ctx to the credential as it stands now, and reports
+		// false once it no longer authenticates.
+		revalidate := func() bool {
+			began := time.Now()
+			current, err := source.CurrentJobEvents()
+			if err != nil {
+				return false
+			}
+			ctx = current
+			lastCheck = began
+			return true
+		}
+
+		// Set SSE headers
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.Header().Set("Cache-Control", "no-cache")
+		writer.Header().Set("Connection", "keep-alive")
+		writer.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
 
 		// Subscribe to download events
 		downloadEvents, unsubscribeDownload := ctx.DownloadManager().Subscribe()
@@ -868,65 +952,255 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			defer pm.UnsubscribeActionJobs(actionEvents)
 		}
 
-		// Send initial state with both download jobs and action jobs, filtered to
-		// what this principal may see. The download half is the same projection the
-		// queue listing answers with, so a client that reconnects sees exactly what a
-		// poll of that route would tell it — including work the deployment accepted
-		// and has not started.
-		visibleDownloads, err := ctx.ProjectDownloadQueue()
-		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+		// actionRows holds exactly what this connection was last sent for each
+		// legacy action handle, so a removal, including one for a row the viewer
+		// may no longer see after a demotion, repeats what the viewer already had
+		// and nothing newer.
+		actionRows := map[string]*plugin_system.ActionJob{}
+
+		// emit is the only place this stream writes a frame. It projects the
+		// items for the bound account, takes the credential check after that,
+		// then renders each frame and writes it on that check, or, when the check
+		// is older than jobEventsCheckInterval by the time the frame is rendered,
+		// on a new one taken then. A check that finds the account changed sends
+		// what is left back to be projected for the account as it is now. It
+		// reports false once the credential no longer authenticates.
+		emit := func(items ...legacyStreamItem) bool {
+			for len(items) > 0 {
+				bound := ctx
+				projected := make([][]legacyStreamFrame, len(items))
+				for i, item := range items {
+					projected[i] = item(bound)
+				}
+				if !revalidate() {
+					return false
+				}
+				if ctx != bound {
+					continue
+				}
+				redo := -1
+			frames:
+				for i, frames := range projected {
+					for _, frame := range frames {
+						rendered, send := frame()
+						if !send {
+							continue
+						}
+						if legacyStreamFrameRendered != nil {
+							legacyStreamFrameRendered()
+						}
+						if time.Since(lastCheck) >= jobEventsCheckInterval {
+							if !revalidate() {
+								return false
+							}
+							if ctx != bound {
+								redo = i
+								break frames
+							}
+						}
+						fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", rendered.event, rendered.data)
+						flusher.Flush()
+						if rendered.sent != nil {
+							rendered.sent()
+						}
+					}
+				}
+				if redo < 0 {
+					return true
+				}
+				items = items[redo:]
+			}
+			return true
+		}
+
+		// The initial state: the download half is the same projection the queue
+		// listing answers with, so a client that reconnects sees exactly what a
+		// poll of that route would tell it — including work the deployment
+		// accepted and has not started. The action half is the durable handle
+		// projection when there is one, and the plugin manager's rows otherwise.
+		var initErr error
+		initial := func(bound JobEventsContext) []legacyStreamFrame {
+			downloads, err := bound.ProjectDownloadQueue()
+			if err != nil {
+				initErr = err
+				return nil
+			}
+			if downloads == nil {
+				downloads = make([]*download_queue.DownloadJob, 0)
+			}
+			actions := make([]*plugin_system.ActionJob, 0)
+			if projector := durableActionJobsProjector(bound); projector != nil {
+				projectedActions, err := projector.ProjectActionJobs()
+				if err != nil {
+					initErr = err
+					return nil
+				}
+				if projectedActions != nil {
+					actions = projectedActions
+				}
+			} else if pm != nil {
+				for _, job := range pm.GetAllActionJobs() {
+					if jobVisibleToPrincipal(bound.Principal(), job.Owner()) {
+						actions = append(actions, job)
+					}
+				}
+			}
+			initErr = nil
+			return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
+				data, _ := json.Marshal(map[string]any{"jobs": downloads, "actionJobs": actions})
+				return renderedLegacyFrame{event: "init", data: data, sent: func() {
+					for _, job := range actions {
+						actionRows[job.ID] = job
+					}
+				}}, true
+			}}
+		}
+		if !emit(initial) {
 			return
 		}
-		if visibleDownloads == nil {
-			visibleDownloads = make([]*download_queue.DownloadJob, 0)
+		if initErr != nil {
+			http_utils.HandleError(initErr, writer, request, http.StatusInternalServerError)
+			return
 		}
-		initData := map[string]any{"jobs": visibleDownloads}
-		visibleActions := make([]*plugin_system.ActionJob, 0)
-		projectedActions := false
-		var durableActionProjector pluginActionJobsProjector
-		if projector, ok := ctx.(pluginActionJobsProjector); ok {
-			if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
-				projected, err := projector.ProjectActionJobs()
-				if err != nil {
-					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-					return
+
+		// A queue event is re-projected rather than forwarded: it names the entry
+		// that changed, and after a Retry that entry is the *ancestor* whose id now
+		// belongs to its successor — so forwarding it would publish a finished
+		// attempt under live work's name. The projection is what makes the stream
+		// say what the handle currently means.
+		downloadItem := func(event download_queue.JobEvent) legacyStreamItem {
+			return func(bound JobEventsContext) []legacyStreamFrame {
+				if !jobVisibleToPrincipal(bound.Principal(), event.Job.GetOwnerUserID()) {
+					return nil
 				}
-				visibleActions = projected
-				if visibleActions == nil {
-					visibleActions = make([]*plugin_system.ActionJob, 0)
+				row, err := bound.ProjectDownloadJob(event.Job.ID)
+				if err != nil || row.Row == nil {
+					// A handle that resolves to nothing visible is one this viewer may
+					// not see any more; the same answer a poll of that id gets.
+					return nil
 				}
-				projectedActions = true
-				durableActionProjector = projector
+				projected := download_queue.JobEvent{Type: event.Type, Job: row.Row}
+				return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
+					data, _ := json.Marshal(projected)
+					return renderedLegacyFrame{event: projected.Type, data: data}, true
+				}}
 			}
 		}
-		if pm != nil && !projectedActions {
-			allActions := pm.GetAllActionJobs()
-			for i := range allActions {
-				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
-					visibleActions = append(visibleActions, allActions[i])
+
+		actionItem := func(event plugin_system.ActionJobEvent) legacyStreamItem {
+			return func(bound JobEventsContext) []legacyStreamFrame {
+				job, eventType, found := projectActionEvent(bound, event)
+				if !found || !jobVisibleToPrincipal(bound.Principal(), job.Owner()) {
+					return nil
 				}
+				return []legacyStreamFrame{func() (renderedLegacyFrame, bool) {
+					eventType := eventType
+					if previous, exists := actionRows[job.ID]; exists {
+						if eventType != "removed" && sameLegacyActionProjection(previous, job) {
+							return renderedLegacyFrame{}, false
+						}
+						if eventType == "added" {
+							eventType = "updated"
+						}
+					} else if eventType == "updated" {
+						eventType = "added"
+					}
+					data, _ := json.Marshal(map[string]any{"job": job})
+					return renderedLegacyFrame{event: "action_" + eventType, data: data, sent: func() {
+						if eventType == "removed" {
+							delete(actionRows, job.ID)
+						} else {
+							actionRows[job.ID] = job
+						}
+					}}, true
+				}}
 			}
 		}
-		initData["actionJobs"] = visibleActions
-		// The plugin manager's channel is process-local. Seed a snapshot diff from
-		// init and poll the durable handle projection so a Retry accepted by a
-		// different process also updates this already-open legacy stream.
-		actionRows := make(map[string]*plugin_system.ActionJob, len(visibleActions))
-		for _, job := range visibleActions {
-			actionRows[job.ID] = job
+
+		// The durable poll diffs the visible durable rows against what this
+		// connection was sent, by the stable legacy handle, so a queued Retry is an
+		// update to that row while new, hidden, cleared, and expired rows are
+		// handled safely. It is what carries a handle movement committed by
+		// another process.
+		durablePoll := func(bound JobEventsContext) []legacyStreamFrame {
+			projector := durableActionJobsProjector(bound)
+			if projector == nil {
+				return nil
+			}
+			rows, err := projector.ProjectActionJobs()
+			if err != nil {
+				return nil
+			}
+			current := make(map[string]bool, len(rows))
+			frames := make([]legacyStreamFrame, 0, len(rows))
+			for _, job := range rows {
+				if !jobVisibleToPrincipal(bound.Principal(), job.Owner()) {
+					continue
+				}
+				current[job.ID] = true
+				frames = append(frames, func() (renderedLegacyFrame, bool) {
+					previous, exists := actionRows[job.ID]
+					if exists && sameLegacyActionProjection(previous, job) {
+						return renderedLegacyFrame{}, false
+					}
+					eventType := "added"
+					if exists {
+						eventType = "updated"
+					}
+					data, _ := json.Marshal(map[string]any{"job": job})
+					return renderedLegacyFrame{event: "action_" + eventType, data: data, sent: func() {
+						actionRows[job.ID] = job
+					}}, true
+				})
+			}
+			for id := range actionRows {
+				if current[id] {
+					continue
+				}
+				frames = append(frames, func() (renderedLegacyFrame, bool) {
+					previous, exists := actionRows[id]
+					if !exists {
+						return renderedLegacyFrame{}, false
+					}
+					data, _ := json.Marshal(map[string]any{"job": previous})
+					return renderedLegacyFrame{event: "action_removed", data: data, sent: func() {
+						delete(actionRows, id)
+					}}, true
+				})
+			}
+			return frames
 		}
-		initialData, _ := json.Marshal(initData)
-		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
-		flusher.Flush()
+
+		// Live events wait here for the next check and are emitted together, in
+		// arrival order.
+		var held []legacyStreamItem
+		var heldDeadline <-chan time.Time
+		deliver := func(also ...legacyStreamItem) bool {
+			items := append(held, also...)
+			held = nil
+			heldDeadline = nil
+			return emit(items...)
+		}
+		hold := func(item legacyStreamItem) bool {
+			held = append(held, item)
+			wait := jobEventsCheckInterval - time.Since(lastCheck)
+			if wait <= 0 || len(held) >= maxHeldJobEvents {
+				return deliver()
+			}
+			if heldDeadline == nil {
+				heldDeadline = time.After(wait)
+			}
+			return true
+		}
 
 		var actionProjectionPoll <-chan time.Time
-		var actionProjectionTicker *time.Ticker
-		if durableActionProjector != nil {
-			actionProjectionTicker = time.NewTicker(2 * time.Second)
+		if durableActionJobsProjector(ctx) != nil {
+			actionProjectionTicker := time.NewTicker(2 * time.Second)
 			actionProjectionPoll = actionProjectionTicker.C
 			defer actionProjectionTicker.Stop()
 		}
+		revalidateTicker := time.NewTicker(jobEventsRevalidateInterval)
+		defer revalidateTicker.Stop()
 
 		// Stream events from both sources, plus a bounded-frequency durable
 		// snapshot diff for handle movements committed by another process.
@@ -936,25 +1210,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					return
 				}
-				if !jobVisibleToPrincipal(p, event.Job.GetOwnerUserID()) {
-					continue
+				if !hold(downloadItem(event)) {
+					return
 				}
-				// Re-projected rather than forwarded: an event names the entry that
-				// changed, and after a Retry that entry is the *ancestor* whose id now
-				// belongs to its successor — so forwarding it would publish a finished
-				// attempt under live work's name. The projection is what makes the
-				// stream say what the handle currently means.
-				projected := event
-				if row, err := ctx.ProjectDownloadJob(event.Job.ID); err == nil && row.Row != nil {
-					projected = download_queue.JobEvent{Type: event.Type, Job: row.Row}
-				} else {
-					// A handle that resolves to nothing visible is one this viewer may
-					// not see any more; the same answer a poll of that id gets.
-					continue
-				}
-				data, _ := json.Marshal(projected)
-				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", projected.Type, data)
-				flusher.Flush()
 
 			// actionEvents is nil when the plugin system is unavailable.
 			// A nil channel is never selected in Go, so this case is simply skipped.
@@ -964,85 +1222,29 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 					actionEvents = nil
 					continue
 				}
-				job := event.Job
-				eventType := event.Type
-				if projector, ok := ctx.(pluginActionJobProjector); ok {
-					if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
-						projected, err := projector.ProjectActionJob(event.Job.ID)
-						if err != nil || projected == nil {
-							// A hidden or moved handle has no visible current target. The
-							// in-memory event may name its old ancestor, but that row no
-							// longer answers this id and must not be forwarded.
-							continue
-						}
-						job = projected
-						if event.Type == "removed" && projected.CanonicalJobID != event.Job.CanonicalJobID {
-							// Clear/retention removed the process-local ancestor, but the
-							// legacy handle already names a different durable execution.
-							// Send the current row as an update so old clients cannot erase
-							// a live retry successor from their panel.
-							eventType = "updated"
-						}
-					}
+				if !hold(actionItem(event)) {
+					return
 				}
-				if !jobVisibleToPrincipal(p, job.Owner()) {
-					continue
+
+			case <-heldDeadline:
+				if !deliver() {
+					return
 				}
-				if previous, exists := actionRows[job.ID]; exists {
-					if eventType != "removed" && sameLegacyActionProjection(previous, job) {
-						continue
-					}
-					if eventType == "added" {
-						eventType = "updated"
-					}
-				} else if eventType == "updated" {
-					eventType = "added"
-				}
-				if eventType == "removed" {
-					delete(actionRows, job.ID)
-				} else {
-					actionRows[job.ID] = job
-				}
-				data, _ := json.Marshal(map[string]any{"job": job})
-				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
-				flusher.Flush()
 
 			case <-actionProjectionPoll:
-				// A single visibility-filtered join yields current rows. Diff by the
-				// stable legacy handle so a queued Retry is an update to that row,
-				// while new, hidden, cleared, and expired rows are handled safely.
-				projected, err := durableActionProjector.ProjectActionJobs()
-				if err != nil {
-					continue
+				// Held live events go first, so the poll's diff follows them.
+				if !deliver(durablePoll) {
+					return
 				}
-				current := make(map[string]*plugin_system.ActionJob, len(projected))
-				for _, job := range projected {
-					if !jobVisibleToPrincipal(p, job.Owner()) {
-						continue
+
+			case <-revalidateTicker.C:
+				// With nothing to send, the check itself closes a revoked stream.
+				if len(held) > 0 {
+					if !deliver() {
+						return
 					}
-					current[job.ID] = job
-					previous, exists := actionRows[job.ID]
-					if exists && sameLegacyActionProjection(previous, job) {
-						actionRows[job.ID] = job
-						continue
-					}
-					eventType := "added"
-					if exists {
-						eventType = "updated"
-					}
-					data, _ := json.Marshal(map[string]any{"job": job})
-					fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
-					flusher.Flush()
-					actionRows[job.ID] = job
-				}
-				for id, previous := range actionRows {
-					if _, exists := current[id]; exists {
-						continue
-					}
-					data, _ := json.Marshal(map[string]any{"job": previous})
-					fmt.Fprintf(writer, "event: action_removed\ndata: %s\n\n", data)
-					flusher.Flush()
-					delete(actionRows, id)
+				} else if !revalidate() {
+					return
 				}
 
 			case <-request.Context().Done():
@@ -1050,6 +1252,48 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			}
 		}
 	}
+}
+
+// projectActionEvent resolves an in-memory action event to the row its handle
+// currently names, for the bound context, and reports false when nothing
+// visible answers it.
+func projectActionEvent(bound JobEventsContext, event plugin_system.ActionJobEvent) (*plugin_system.ActionJob, string, bool) {
+	job := event.Job
+	eventType := event.Type
+	if projector, ok := bound.(pluginActionJobProjector); ok {
+		if serviceProvider, ok := bound.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
+			projected, err := projector.ProjectActionJob(event.Job.ID)
+			if err != nil || projected == nil {
+				// A hidden or moved handle has no visible current target. The
+				// in-memory event may name its old ancestor, but that row no
+				// longer answers this id and must not be forwarded.
+				return nil, "", false
+			}
+			job = projected
+			if event.Type == "removed" && projected.CanonicalJobID != event.Job.CanonicalJobID {
+				// Clear/retention removed the process-local ancestor, but the
+				// legacy handle already names a different durable execution.
+				// Send the current row as an update so old clients cannot erase
+				// a live retry successor from their panel.
+				eventType = "updated"
+			}
+		}
+	}
+	return job, eventType, true
+}
+
+// durableActionJobsProjector returns the durable legacy action projection when
+// the context has a Job control plane, or nil for one that serves its plugin
+// manager's in-memory rows.
+func durableActionJobsProjector(ctx JobEventsContext) pluginActionJobsProjector {
+	projector, ok := ctx.(pluginActionJobsProjector)
+	if !ok {
+		return nil
+	}
+	if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); !ok || serviceProvider.JobService() == nil {
+		return nil
+	}
+	return projector
 }
 
 func sameLegacyActionProjection(left, right *plugin_system.ActionJob) bool {

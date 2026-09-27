@@ -46,7 +46,7 @@ func addResourceWithBody(t *testing.T, tc *TestContext, name, body string) *mode
 
 // TestMergeDoesNotBackUpAFileItIsNotRemoving pins the fix for the unconditional
 // backup copy. With keepAsVersion=true the Loser's bytes are retained because a
-// new ResourceVersion references its hash, so ShouldRemoveSource is false — and a
+// new ResourceVersion references its hash, so the file is not removed — and a
 // backup of a file that is staying put is pure waste written into a directory
 // with no readers and no retention sweep.
 func TestMergeDoesNotBackUpAFileItIsNotRemoving(t *testing.T) {

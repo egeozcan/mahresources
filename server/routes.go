@@ -862,10 +862,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Download Queue (background remote downloads)
 	// Submit runs on a request-scoped context so a group-limited principal can
-	// only target groups inside its subtree (the worker itself runs unscoped).
-	// Retry and resume run scoped for the same reason: both hand the original
-	// payload back to that unscoped worker, so both re-check it against the
-	// principal pressing the button rather than trusting what was allowed once.
+	// only target groups inside its subtree, refused before the transfer rather
+	// than when the worker creates the resource as the submitter. Retry and
+	// resume run scoped for the same reason: both hand the original payload back
+	// to the worker, so both re-check it against the principal pressing the
+	// button rather than trusting what was allowed once.
 	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler)))
 	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler)))
@@ -873,8 +874,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestContext := scopedCtx(appContext, r)
-		legacyJobHandler(api_handlers.GetDownloadEventsHandler(requestContext))(w, r)
+		current := newCurrentJobEventsContext(appContext, r)
+		legacyJobHandler(api_handlers.GetDownloadEventsHandler(current))(w, r)
 	})
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
@@ -885,15 +886,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestContext := scopedCtx(appContext, r)
+		// Both wire formats read through the request's credential as it stands at
+		// each read, not as it stood when the connection opened.
+		current := newCurrentJobEventsContext(appContext, r)
+		handler := api_handlers.GetJobsEventsHandler(current, current, canonicalJobAPICutoverComplete)
 		if r.URL.Query().Get("version") == "2" {
-			canonicalContext := currentCanonicalJobEventsContext{appCtx: appContext, request: r}
-			api_handlers.GetJobsEventsHandler(requestContext, canonicalContext, canonicalJobAPICutoverComplete)(w, r)
+			handler(w, r)
 			return
 		}
-		// Keep the legacy wire format, while binding its initial and live queue
-		// projections to the authenticated request principal.
-		legacyJobHandler(api_handlers.GetJobsEventsHandler(requestContext, requestContext, canonicalJobAPICutoverComplete))(w, r)
+		legacyJobHandler(handler)(w, r)
 	})
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadJobHandler)))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.

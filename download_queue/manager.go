@@ -235,10 +235,11 @@ type SubmissionOptions struct {
 }
 
 // actorResourceCreator is the optional capability (implemented by
-// *application_context.MahresourcesContext, not by test doubles) that binds a
-// download's submitter as the create actor, so CreatedByUserId is stamped on the
-// resource and its initial version. Reached via a type assertion in the worker,
-// so plain ResourceCreator mocks are unaffected.
+// *application_context.MahresourcesContext, not by test doubles) that binds the
+// create to a download's submitter: CreatedByUserId is stamped on the resource
+// and its initial version, and a group-limited submitter's resource is created
+// inside their subtree, deduplicated only against what they can see. Reached via
+// a type assertion in the worker, so plain ResourceCreator mocks are unaffected.
 type actorResourceCreator interface {
 	WithActorUserID(userID uint) ResourceCreator
 }
@@ -1278,13 +1279,13 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 		originalLocation = job.URL
 	}
 
-	// Attribute the created resource (and its initial version) to the submitting
-	// user. Background jobs run on the unscoped singleton context, which would
-	// otherwise stamp CreatedByUserId NULL under auth-on. The submit handlers
-	// already validate scope targets at enqueue time, so binding only the actor
-	// (not a scope filter) preserves the worker's intentional unscoped creation.
-	// Under no-auth ownerUserID is nil and the stamp callback's default actor
-	// (root) applies instead.
+	// Create the resource as the submitting user. Background jobs run on the
+	// unscoped singleton context, which would otherwise stamp CreatedByUserId NULL
+	// under auth-on, and would deduplicate the bytes against resources outside a
+	// group-limited submitter's subtree: the targets were validated at enqueue, but
+	// which existing resource holds these bytes is only known now. Under no-auth
+	// ownerUserID is nil and the stamp callback's default actor (root) applies
+	// instead.
 	creator := dm.resourceCtx
 	if oid := job.GetOwnerUserID(); oid != nil && *oid != 0 {
 		if binder, ok := dm.resourceCtx.(actorResourceCreator); ok {

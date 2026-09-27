@@ -1074,6 +1074,29 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 	return &refreshed, nil
 }
 
+// submitterResourceCreator is the ResourceCreator WithActorUserID returns: every
+// create goes through addResourceWithOptions with the submitter to rebind after
+// the body has been copied.
+type submitterResourceCreator struct {
+	bound     *MahresourcesContext
+	submitter uint
+}
+
+func (c *submitterResourceCreator) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	return c.bound.addResourceWithOptions(file, fileName, resourceQuery, addResourceOptions{RebindSubmitter: c.submitter})
+}
+
+func (c *submitterResourceCreator) AddResourceForJob(jobID string, actorUserID *uint, file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, fmt.Errorf("a canonical resource receipt needs a Job id")
+	}
+	return c.bound.addResourceWithOptions(file, fileName, resourceQuery, addResourceOptions{
+		CanonicalJobID:  jobID,
+		ActorUserID:     cloneUploadActorID(actorUserID),
+		RebindSubmitter: c.submitter,
+	})
+}
+
 // addResourceOptions carries optional overrides for the internal resource
 // upload path. The public AddResource passes a zero value; later callers
 // (e.g. managed command import) supply a ScratchDir so the temporary copy
@@ -1084,6 +1107,9 @@ type addResourceOptions struct {
 	CanonicalJobID string
 	ActorUserID    *uint
 	Hash           string
+	// RebindSubmitter is a background download's submitter, bound again once
+	// the body has been copied: see WithActorUserID.
+	RebindSubmitter uint
 }
 
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
@@ -1255,10 +1281,24 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 		return nil, err
 	}
 
+	// The body is in. For a background download that copy was most of the
+	// transfer, and the submitter's account may have changed while it ran, so
+	// what follows (deduplication, the insert, the after-create hooks) answers to
+	// the account as it stands now.
+	if opts.RebindSubmitter != 0 {
+		ctx = ctx.boundToSubmitter(opts.RebindSubmitter)
+	}
+
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
 	// with the same hash both pass the "existing resource" check before either commits.
+	//
+	// It is held up to the commit and no further. Deletes take it too, to count a
+	// file's references (removeIfUnreferenced), and the after-create hooks below
+	// run synchronously on this goroutine: a hook that deletes a resource over
+	// these bytes, or uploads them again, would wait on this lock forever.
 	ctx.locks.ResourceHashLock.Acquire(hash)
-	defer ctx.locks.ResourceHashLock.Release(hash)
+	releaseHashLock := sync.OnceFunc(func() { ctx.locks.ResourceHashLock.Release(hash) })
+	defer releaseHashLock()
 
 	if opts.CanonicalJobID != "" {
 		opts.Hash = hash
@@ -1492,6 +1532,7 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	}); insertErr != nil {
 		return nil, insertErr
 	}
+	releaseHashLock()
 
 	ctx.syncMentionsForResource(res)
 

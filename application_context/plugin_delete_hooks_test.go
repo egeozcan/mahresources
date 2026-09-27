@@ -686,11 +686,9 @@ end
 
 // An after-delete hook must run once the delete is *fully* done, files included.
 //
-// The ShouldRemoveSource decision is taken inside the transaction, from a hash
-// reference count. If the hook runs before the file phase and stores content,
-// the file it writes can be removed by that stale decision. Single-item
-// DeleteResource has always fired its hook after the file work; the bulk paths
-// are now consistent with it.
+// A hook that runs before the file phase observes a delete that is not done.
+// Single-item DeleteResource has always fired its hook after the file work; the
+// bulk paths are consistent with it.
 //
 // The probe is a filesystem timeline rather than anything in the database: by
 // the time any hook runs the row is already gone, so a database-shaped probe
@@ -770,8 +768,7 @@ end
 	}
 	if createAt < removeAt {
 		t.Errorf("the after-hook wrote at %d, before the file phase removed at %d (timeline: %v): "+
-			"a hook that stores content can have its own file removed by the stale "+
-			"ShouldRemoveSource decision", createAt, removeAt, events)
+			"the hook ran before the delete had finished", createAt, removeAt, events)
 	}
 }
 

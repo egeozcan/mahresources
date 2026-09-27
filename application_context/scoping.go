@@ -178,6 +178,17 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 	dst.db = base.db.WithContext(ctx)
 }
 
+// unscopedDB returns this context's handle without its subtree filter: the same
+// connection or transaction, the same deadline, the same acting user. It is for
+// storage questions whose answer has to count every row whoever is asking, never
+// for reading or writing an entity on the caller's behalf.
+func (ctx *MahresourcesContext) unscopedDB() *gorm.DB {
+	if ctx.db == nil || ctx.db.Statement == nil || scopeFromContext(ctx.db.Statement.Context) == nil {
+		return ctx.db
+	}
+	return ctx.db.WithContext(context.WithValue(ctx.db.Statement.Context, scopeCtxKey{}, (*scopeFilter)(nil)))
+}
+
 // subtreeScopeIDs resolves the set of group IDs a scoped principal may touch.
 // It exists for raw-SQL paths that bypass the GORM scope callbacks (e.g. the
 // multi-table meta-key query whose FROM clause the callback can't match):

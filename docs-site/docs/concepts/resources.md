@@ -133,9 +133,13 @@ Upload deduplication is hash-based (SHA1). If a file with the same hash already 
 - **Different owner, already related**: if the requested owner is already a related Group of the existing Resource, a `ResourceExistsError` is returned with no re-attach.
 - **Different owner, not yet related**: the requested owner is attached as a related Group on the existing Resource, and the existing Resource is returned (no error).
 
+A duplicate is answered with the Resource that holds the content at that moment. If that Resource is deleted afterwards, by a person or by a plugin hook reacting to its creation, the answer names a Resource that no longer exists, and the upload stored nothing of its own: upload the file again to keep it.
+
+Only Resources the uploader can see take part. For a user limited to a group subtree, content held only by Resources outside that subtree counts as new: the upload creates a Resource of its own inside the subtree, stored over the same file when both are on the same storage location, and the Resources outside are neither changed nor reported. This applies to file uploads, URL imports, background downloads and plugin uploads alike. A background download is checked against the submitter's account as it is when the download finishes.
+
 ## Deletion Behavior
 
-Deleted files are backed up before the database record is removed, to `/deleted/<storage-location>/{hash}__{id}__{ownerId}___{basename}`, which prevents collisions and preserves context. `<storage-location>` is the resource's alternative-filesystem key, or the literal `deleted` for the default filesystem, and `{ownerId}` is `nil` when the resource had no owner. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
+Deleted files are backed up before the database record is removed, to `/deleted/<storage-location>/{hash}__{id}__{ownerId}___{basename}`, which prevents collisions and preserves context. `<storage-location>` is the resource's alternative-filesystem key, or the literal `deleted` for the default filesystem, and `{ownerId}` is `nil` when the resource had no owner. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash on the same storage location. The count covers every Resource, including ones the deleting user cannot see, so deleting one of two Resources that share a file never removes the file from the other. The count is taken after the delete commits and in step with uploads of the same content in the same server process; two processes sharing one database and storage do not coordinate this, just as they do not coordinate [upload deduplication](../troubleshooting.md#can-i-run-multiple-instances).
 
 ## Relationships
 

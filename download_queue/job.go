@@ -800,8 +800,8 @@ func (j *DownloadJob) isDiscarded() bool {
 }
 
 // CreatorCopy is creatorCopy, exported for the queue's own control endpoints:
-// restarting a job replays this payload on the unscoped worker, so the handler
-// has to be able to re-check it against the principal pressing the button.
+// restarting a job replays this payload on the worker, so the handler has to be
+// able to re-check it against the principal pressing the button.
 func (j *DownloadJob) CreatorCopy() *query_models.ResourceFromRemoteCreator {
 	return j.creatorCopy()
 }

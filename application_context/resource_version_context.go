@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -39,7 +40,17 @@ import (
 // A nil storage location and a pointer to the empty string both mean the main
 // store; that is the same normalisation deleteResourceDBOnly applies when it picks
 // the backup folder.
+//
+// The count ignores the caller's subtree. A group-limited caller's upload of
+// content held only outside its subtree gets a resource of its own over the same
+// file, so the rows a caller cannot see are exactly the ones that may still need
+// the file. A count bound to the caller's scope saw none of them and removed a
+// file another subtree's resource still pointed at.
 func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation *string) (int64, error) {
+	return countHashReferences(ctx.unscopedDB(), hash, storageLocation)
+}
+
+func countHashReferences(db *gorm.DB, hash string, storageLocation *string) (int64, error) {
 	var versionCount int64
 	var resourceCount int64
 
@@ -50,17 +61,67 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation
 		return db.Where("storage_location = ?", *storageLocation)
 	}
 
-	if err := scopeToStore(ctx.db.Model(&models.ResourceVersion{}).Where("hash = ?", hash)).
+	if err := scopeToStore(db.Model(&models.ResourceVersion{}).Where("hash = ?", hash)).
 		Count(&versionCount).Error; err != nil {
 		return 0, err
 	}
 
-	if err := scopeToStore(ctx.db.Model(&models.Resource{}).Where("hash = ?", hash)).
+	if err := scopeToStore(db.Model(&models.Resource{}).Where("hash = ?", hash)).
 		Count(&resourceCount).Error; err != nil {
 		return 0, err
 	}
 
 	return versionCount + resourceCount, nil
+}
+
+// fileRemovalCountTimeout bounds the count that decides a removal, which runs
+// detached from the caller's cancellation.
+const fileRemovalCountTimeout = 30 * time.Second
+
+// resourceFileRemovalGap is a test seam for the gap between the commit that
+// deleted a file's last reference and the removal of the file. Production
+// leaves it nil.
+var resourceFileRemovalGap func()
+
+// removeIfUnreferenced runs remove, the removal of the file behind hash, only if
+// nothing on that storage location references hash any more. Every delete calls
+// it after its commit; the count is taken here, under the per-hash upload lock,
+// and never inside the delete's transaction.
+//
+// Both halves are needed. A count inside the transaction misses whatever commits
+// after it: on Postgres two transactions deleting the last two rows over one
+// file each still see the other's row, both keep the file, and nothing points at
+// it any more. And a count taken outside the lock misses an upload of the same
+// bytes that found no row, found the file still on disk and reused it; removing
+// then takes that resource's file. AddResource holds this lock from its
+// existence check to its commit, so a count taken under it sees either all of
+// such an upload or none of it, and an upload that starts after the removal
+// writes the file again.
+//
+// The count does not inherit the caller's cancellation. The delete has already
+// committed; a request that disconnects now would otherwise fail the count, keep
+// the file, and leave it with no row pointing at it and nothing to retry.
+func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, remove func()) {
+	if resourceFileRemovalGap != nil {
+		resourceFileRemovalGap()
+	}
+	ctx.locks.ResourceHashLock.Acquire(hash)
+	defer ctx.locks.ResourceHashLock.Release(hash)
+	db := ctx.unscopedDB()
+	parent := context.Background()
+	if db.Statement != nil && db.Statement.Context != nil {
+		parent = db.Statement.Context
+	}
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), fileRemovalCountTimeout)
+	defer cancel()
+	refCount, err := countHashReferences(db.WithContext(countCtx), hash, storageLocation)
+	if err != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to count hash references; keeping the file", err.Error(), nil)
+		return
+	}
+	if refCount == 0 {
+		remove()
+	}
 }
 
 // GetVersions returns all versions for a resource, ordered by version number descending
@@ -447,14 +508,8 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 		return fmt.Errorf("failed to delete version: %w", err)
 	}
 
-	refCount, err := ctx.CountHashReferences(hash, storageLocation)
-	if err != nil {
-		ctx.Logger().Warning(models.LogActionDelete, "resource_version", &versionID, "Failed to count hash references", err.Error(), nil)
-	} else if refCount == 0 {
-		fs, _ := ctx.GetFsForStorageLocation(storageLocation)
-		if fs != nil {
-			_ = fs.Remove(location)
-		}
+	if fs, _ := ctx.GetFsForStorageLocation(storageLocation); fs != nil {
+		ctx.removeIfUnreferenced(hash, storageLocation, func() { _ = fs.Remove(location) })
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource_version", &versionID, fmt.Sprintf("v%d of resource %d", version.VersionNumber, resourceID), "", nil)

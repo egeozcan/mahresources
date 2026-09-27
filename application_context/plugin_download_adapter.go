@@ -71,9 +71,9 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	// The targets are validated against the *acting* principal's scope, the way
 	// /v1/download/submit validates them. Without this a confined caller --
 	// a plugin's Lua running on a group-limited user's own write -- could
-	// submit a download owned by a group outside its subtree, and the worker
-	// would create it: the queue runs unscoped by design, binding only
-	// attribution, so nothing downstream would refuse it.
+	// submit a download owned by a group outside its subtree. The worker binds
+	// the submitter when it creates the resource and refuses it then, but only
+	// after the transfer; this refuses the submission.
 	// Resolved once, and both questions asked of that one answer. Reading the
 	// principal twice let an account changed in between satisfy each check as a
 	// different identity: a guest scoped to A passes the target check, becomes

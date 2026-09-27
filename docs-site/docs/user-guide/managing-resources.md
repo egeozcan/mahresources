@@ -81,7 +81,7 @@ Paste images or files from the clipboard to create resources:
 The paste upload modal supports:
 
 - **Batch uploads** -- paste multiple items and upload them together
-- **Duplicate detection** -- if a file with the same hash already exists, the modal shows the existing resource ID
+- **Duplicate detection** -- if a resource you can see already holds the same content, the modal shows its ID
 - **Context awareness** -- when pasting on a group or note detail page, or a list view filtered by a single owner, the uploaded resource is associated with that entity automatically
 - **Auto-close** -- the modal closes and the page refreshes after a successful upload
 
