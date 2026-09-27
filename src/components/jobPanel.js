@@ -454,7 +454,7 @@ export function jobPanel() {
                 // one, since what it heard is already recorded and nothing else
                 // would say it.
                 const spoken = [];
-                for (const job of listed) this.hearFromRead(job, streamGeneration, spoken);
+                for (const job of listed) this.hearFromRead(job, streamGeneration, spoken, { hold: true });
                 const nextJobs = this.bounded(listed);
                 nextJobs.forEach(job => this.trackResourceCompletion(job));
                 this.jobs = nextJobs;
@@ -518,7 +518,7 @@ export function jobPanel() {
         // `proofOnly` is for a command's answer: the reader asked for the change
         // and hears the command's notice, so it speaks only for a change a live
         // event already proved happened on its own.
-        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false } = {}) {
+        hearJob(job, { live = false, sameGenerationOnly = false, generation = this._streamGeneration, proofOnly = false, hold = false } = {}) {
             if (!job?.id || !job.state) return '';
             const version = Number(job.version || 0);
             const shown = this._heard.has(job.id) ? null : this.jobs.find(row => row.id === job.id);
@@ -527,11 +527,10 @@ export function jobPanel() {
             if (entry && version > 0 && version < entry.version) return '';
             const changed = !!entry && entry.state !== job.state;
             const firstSeenOutcome = !entry && ['attention', 'finished'].includes(classifyJobState(job));
-            const liveFrom = this._liveVersions.get(job.id)?.version;
+            // A held proof already stands for news on its way to be said.
+            const proof = this._liveVersions.get(job.id);
+            const liveFrom = proof && !proof.held ? proof.version : undefined;
             const provenLive = liveFrom !== undefined && version >= liveFrom;
-            // Only an observation that could speak uses the proof up; a stale
-            // read must leave it for the live one that follows.
-            if (provenLive && this.streamCaughtUp && (live || proofOnly)) this._liveVersions.delete(job.id);
             let said = this.streamCaughtUp && (changed || firstSeenOutcome) && (
                 proofOnly ? provenLive
                     : live && (!sameGenerationOnly || (changed && entry.generation === generation) || provenLive)
@@ -545,6 +544,16 @@ export function jobPanel() {
             if (!said && this.streamCaughtUp && withheldIn &&
                 ((live && !sameGenerationOnly && inRange(version)) || (inRange(liveFrom) && (live || proofOnly)))) {
                 said = withheldIn.withheld;
+            }
+            // Only an observation that could speak uses the proof up; a stale
+            // read must leave it for the live one that follows. An outcome a
+            // refresh holds until its detail reads finish (`hold`) is still owed
+            // to the reader until it is handed to say(): its proof stays, marked
+            // held, so a drop before then counts it (dropStream) instead of
+            // losing it, and announceHeld releases it once said.
+            if (provenLive && this.streamCaughtUp && (live || proofOnly)) {
+                if (hold && said && ['attention', 'finished'].includes(classifyJobState(job))) proof.held = true;
+                else this._liveVersions.delete(job.id);
             }
             // It stays while the job is still in that state, whatever versions a
             // same-state change (a control request) adds; saying it, or a change
@@ -593,8 +602,9 @@ export function jobPanel() {
         },
 
         // A proof leaves the store in three ways only: its job is heard (hearJob
-        // uses it up), the store is past HEARD_LIMIT, or the stream drops
-        // (dropStream). Nothing else drops one: not a list read that left the
+        // uses it up, or for news a refresh holds, announceHeld once it is
+        // said), the store is past HEARD_LIMIT, or the stream drops
+        // (dropStream), which counts every outcome still owed. Nothing else drops one: not a list read that left the
         // job out, which a later read after a dismissal may list, and not a
         // failed read. When the store is full, a proof that is not an outcome
         // goes first: without it
@@ -609,12 +619,16 @@ export function jobPanel() {
         // harm.
         boundLiveProofs() {
             while (this._liveVersions.size > HEARD_LIMIT) {
+                // A held proof is about to be said by its refresh; it goes last.
                 let dropped = null;
+                let oldestOutcome = null;
                 for (const [jobId, proof] of this._liveVersions) {
+                    if (proof.held) continue;
                     if (!proof.outcome) { dropped = jobId; break; }
+                    oldestOutcome ??= jobId;
                 }
                 if (dropped === null) {
-                    dropped = this._liveVersions.keys().next().value;
+                    dropped = oldestOutcome ?? this._liveVersions.keys().next().value;
                     this.countUnsaidOutcome();
                 }
                 this._liveVersions.delete(dropped);
@@ -637,9 +651,9 @@ export function jobPanel() {
 
         // A list or detail read, which may speak only if no reconnect happened
         // since the read began; what it says is held for the refresh to say.
-        hearFromRead(job, streamGeneration, spoken) {
+        hearFromRead(job, streamGeneration, spoken, { hold = false } = {}) {
             const said = this.hearJob(job, {
-                live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration,
+                live: streamGeneration === this._streamGeneration, sameGenerationOnly: true, generation: streamGeneration, hold,
             });
             if (said) spoken.push(this.newsEntry(job.id, said));
         },
@@ -652,6 +666,10 @@ export function jobPanel() {
         announceHeld(spoken, streamGeneration) {
             if (streamGeneration !== this._streamGeneration) return;
             this.announceNews(spoken);
+            // Handed to say(), or superseded by newer news: no longer owed.
+            for (const entry of spoken) {
+                if (this._liveVersions.get(entry.jobId)?.held) this._liveVersions.delete(entry.jobId);
+            }
         },
 
         // A piece of news about a job, as the ledger holds it now.
@@ -771,7 +789,7 @@ export function jobPanel() {
             const current = this.jobs.find(currentJob => currentJob.id === job.id);
             if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
-            if (spoken) this.hearFromRead({ ...current, ...detail }, heardAs ?? streamGeneration, spoken);
+            if (spoken) this.hearFromRead({ ...current, ...detail }, heardAs ?? streamGeneration, spoken, { hold: true });
             else this.hearJob({ ...current, ...detail });
             this.jobs = this.bounded(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
             return detail;
@@ -826,7 +844,7 @@ export function jobPanel() {
             this._refreshGeneration += 1;
             this._streamGeneration += 1;
             for (const proof of this._liveVersions.values()) {
-                if (proof.outcome) this.countUnsaidOutcome();
+                if (proof.outcome || proof.held) this.countUnsaidOutcome();
             }
             this._liveVersions.clear();
             // News said just before the drop must not be said again with the

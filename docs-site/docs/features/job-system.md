@@ -154,8 +154,8 @@ stream publishes about every two seconds, so an outcome from the moment before
 a page connected can still be announced. The drawer keeps track of at most
 1,000 Jobs whose outcome arrived before it could read them; past that, the rest
 are announced together as a count ("12 jobs finished or need attention;
-see the Jobs panel."). Outcomes that arrived but were not yet read when the live
-stream dropped are announced the same way. A Job counted this way can still be
+see the Jobs panel."). Outcomes that arrived but had not yet been announced when
+the live stream dropped are announced the same way. A Job counted this way can still be
 announced by name if the drawer reads it later.
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list

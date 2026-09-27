@@ -1691,6 +1691,58 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('a live outcome a refresh holds while its detail reads run is counted if the stream drops first', async () => {
+        vi.useFakeTimers();
+        const failed = { id: 'dl-59', title: 'held-out.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        const list = panel.requestJSON;
+        let releaseDetail = () => {};
+        const detailHeld = new Promise<void>(resolve => { releaseDetail = resolve; });
+        let detailAsked = () => {};
+        const detailStarted = new Promise<void>(resolve => { detailAsked = resolve; });
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (!String(raw).startsWith('/v1/jobs?')) {
+                detailAsked();
+                await detailHeld;
+            }
+            return list(raw);
+        });
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-59', fastLife, 11);
+        const refreshing = panel.refresh();
+        await detailStarted;
+        // The list has been read; the stream drops before the detail answers.
+        panel.dropStream();
+        releaseDetail();
+        await refreshing;
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:13' }) });
+        panel.requestJSON = list;
+        await panel.refresh();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const said = panel._liveRegion.announce.mock.calls.map((call: any[]) => call[0]);
+        expect(said).toEqual(['1 job finished or needs attention; see the Jobs panel.']);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('a refresh that says a held outcome releases its proof', async () => {
+        const failed = { id: 'dl-60', title: 'released.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-60', fastLife, 11);
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('released.bin failed.');
+        expect(panel._liveVersions.has('dl-60')).toBe(false);
+        panel.dropStream();
+        expect(panel._unsaidOutcomes).toBe(0);
+    });
+
     test('a job accepted live that failed while disconnected is history after the reconnect', async () => {
         const failed = { id: 'dl-55', title: 'meanwhile.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([failed]);
