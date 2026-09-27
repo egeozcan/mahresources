@@ -97,53 +97,60 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 		return nil, errors.New("cannot relate to self")
 	}
 
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&relationType, relationTypeId).Error; err != nil {
-			return err
+	// Every lookup happens before the transaction, and the transaction's first statement
+	// is the insert. On SQLite in WAL mode a transaction that reads first holds a
+	// snapshot, and a commit landing before its write makes promoting it fail at once
+	// with "database is locked" (SQLITE_BUSY_SNAPSHOT never reaches the busy handler).
+	// The category check is a create-time rule that never held a lock: on Postgres these
+	// reads ran under READ COMMITTED inside the transaction too. The reads still go
+	// through the scoped handle, so a group outside the caller's subtree is not found.
+	if err := ctx.db.First(&relationType, relationTypeId).Error; err != nil {
+		return nil, err
+	}
+	if err := ctx.db.First(&fromGroup, fromGroupId).Error; err != nil {
+		return nil, err
+	}
+	if err := ctx.db.First(&toGroup, toGroupId).Error; err != nil {
+		return nil, err
+	}
+
+	if fromGroup.CategoryId == nil || toGroup.CategoryId == nil ||
+		relationType.FromCategoryId == nil || relationType.ToCategoryId == nil {
+		return nil, errors.New("both groups and the relation type must have categories assigned")
+	}
+
+	// Findings 60 and 65 both ask for this message to say what is wrong.
+	// "category mismatch" names neither side, neither requirement, and not
+	// even which of the two groups is the problem — a reader who picked one
+	// wrong group out of two has to guess. Naming both sides is also what
+	// makes the message actionable without opening the relation type.
+	//
+	// docs/todo.md recorded this as fixed in Batch 12 and it was not: the
+	// line below was untouched since the auth merge, and a live POST still
+	// answered {"error":"category mismatch"}. Found by the Phase 3 coverage
+	// audit, which asks whether every finding marked FIXED is named by a test.
+	if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
+		var fromCategory, toCategory models.Category
+		fromName := ctx.categoryNameFor(ctx.db, relationType.FromCategoryId, &fromCategory)
+		toName := ctx.categoryNameFor(ctx.db, relationType.ToCategoryId, &toCategory)
+
+		var problems []string
+		if *fromGroup.CategoryId != *relationType.FromCategoryId {
+			problems = append(problems, fmt.Sprintf(
+				"%q is the From group and relation type %q requires its From group to be in category %s",
+				fromGroup.Name, relationType.Name, fromName))
 		}
-
-		if err := tx.First(&fromGroup, fromGroupId).Error; err != nil {
-			return err
+		if *toGroup.CategoryId != *relationType.ToCategoryId {
+			problems = append(problems, fmt.Sprintf(
+				"%q is the To group and relation type %q requires its To group to be in category %s",
+				toGroup.Name, relationType.Name, toName))
 		}
+		return nil, errors.New("category mismatch: " + strings.Join(problems, "; "))
+	}
 
-		if err := tx.First(&toGroup, toGroupId).Error; err != nil {
-			return err
-		}
-
-		if fromGroup.CategoryId == nil || toGroup.CategoryId == nil ||
-			relationType.FromCategoryId == nil || relationType.ToCategoryId == nil {
-			return errors.New("both groups and the relation type must have categories assigned")
-		}
-
-		// Findings 60 and 65 both ask for this message to say what is wrong.
-		// "category mismatch" names neither side, neither requirement, and not
-		// even which of the two groups is the problem — a reader who picked one
-		// wrong group out of two has to guess. Naming both sides is also what
-		// makes the message actionable without opening the relation type.
-		//
-		// docs/todo.md recorded this as fixed in Batch 12 and it was not: the
-		// line below was untouched since the auth merge, and a live POST still
-		// answered {"error":"category mismatch"}. Found by the Phase 3 coverage
-		// audit, which asks whether every finding marked FIXED is named by a test.
-		if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
-			var fromCategory, toCategory models.Category
-			fromName := ctx.categoryNameFor(tx, relationType.FromCategoryId, &fromCategory)
-			toName := ctx.categoryNameFor(tx, relationType.ToCategoryId, &toCategory)
-
-			var problems []string
-			if *fromGroup.CategoryId != *relationType.FromCategoryId {
-				problems = append(problems, fmt.Sprintf(
-					"%q is the From group and relation type %q requires its From group to be in category %s",
-					fromGroup.Name, relationType.Name, fromName))
-			}
-			if *toGroup.CategoryId != *relationType.ToCategoryId {
-				problems = append(problems, fmt.Sprintf(
-					"%q is the To group and relation type %q requires its To group to be in category %s",
-					toGroup.Name, relationType.Name, toName))
-			}
-			return errors.New("category mismatch: " + strings.Join(problems, "; "))
-		}
-
+	// Retried on the residue the write-first order does not remove; a failed attempt
+	// rolled back, so each one starts from fresh rows.
+	err := retryOnLockContention(relationWriteAttempts, func() error {
 		relation = models.GroupRelation{
 			FromGroupId:    &fromGroup.ID,
 			ToGroupId:      &toGroup.ID,
@@ -151,22 +158,20 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 			Name:           name,
 			Description:    description,
 		}
-
-		if err := tx.Save(&relation).Error; err != nil {
-			return err
-		}
-
-		if relationType.BackRelationId != nil {
-			backRelation := &models.GroupRelation{
-				FromGroupId:    &toGroup.ID,
-				ToGroupId:      &fromGroup.ID,
-				RelationTypeId: relationType.BackRelationId,
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(&relation).Error; err != nil {
+				return err
 			}
-
-			return tx.Save(backRelation).Error
-		}
-
-		return nil
+			if relationType.BackRelationId != nil {
+				backRelation := &models.GroupRelation{
+					FromGroupId:    &toGroup.ID,
+					ToGroupId:      &fromGroup.ID,
+					RelationTypeId: relationType.BackRelationId,
+				}
+				return tx.Save(backRelation).Error
+			}
+			return nil
+		})
 	})
 
 	if err == nil {

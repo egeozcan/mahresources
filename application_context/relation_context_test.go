@@ -3,6 +3,9 @@ package application_context
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -86,4 +89,35 @@ func TestEditRelationType_ChangeCategory_LeavesInconsistentRelations(t *testing.
 			"which no longer matches. EditRelationType should clean up inconsistent relations.",
 			relation.ID)
 	}
+}
+
+// TestAddingARelationIsNotRefusedByACommitBeforeItsWrite pins AddRelation's write
+// order: every lookup the insert depends on happens before its transaction, whose
+// first statement is the insert, so another connection committing in between cannot
+// fail it with "database is locked". See commitBeforeEveryWriteTo.
+func TestAddingARelationIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+	from, to := &models.Category{Name: "From"}, &models.Category{Name: "To"}
+	require.NoError(t, ctx.db.Create(from).Error)
+	require.NoError(t, ctx.db.Create(to).Error)
+	fromGroup := &models.Group{Name: "from", CategoryId: &from.ID}
+	toGroup := &models.Group{Name: "to", CategoryId: &to.ID}
+	require.NoError(t, ctx.db.Create(fromGroup).Error)
+	require.NoError(t, ctx.db.Create(toGroup).Error)
+	back := &models.GroupRelationType{Name: "is linked from", FromCategoryId: &to.ID, ToCategoryId: &from.ID}
+	require.NoError(t, ctx.db.Create(back).Error)
+	relationType := &models.GroupRelationType{Name: "links to", FromCategoryId: &from.ID, ToCategoryId: &to.ID, BackRelationId: &back.ID}
+	require.NoError(t, ctx.db.Create(relationType).Error)
+
+	fired := commitBeforeEveryWriteTo(t, ctx, "group_relations")
+	relation, err := ctx.AddRelation(fromGroup.ID, toGroup.ID, relationType.ID, "linked", "")
+	require.NoError(t, err)
+	require.NotZero(t, fired.Load(), "the relation wrote nothing, so the interleave never happened")
+	require.NotZero(t, relation.ID)
+
+	var edges []models.GroupRelation
+	require.NoError(t, ctx.db.Order("id").Find(&edges).Error)
+	require.Len(t, edges, 2, "the relation and its back relation, once each")
+	assert.Equal(t, relation.ID, edges[0].ID)
+	assert.Equal(t, back.ID, *edges[1].RelationTypeId)
 }

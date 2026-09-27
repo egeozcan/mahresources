@@ -46,6 +46,31 @@ func isLockContentionError(err error) bool {
 		strings.Contains(msg, "55P03")
 }
 
+// retryOnLockContention runs write again while it loses to lock contention, at
+// most attempts times in all, backing off between tries.
+//
+// For a write that starts its own transaction and whose failed attempt therefore
+// rolled back completely: that is what makes running it again safe. It is not a
+// substitute for ordering. A transaction that reads before it writes loses to
+// every commit landing in between on SQLite, and a retry that reads first again
+// meets the next one, so the transaction's first statement should be its write;
+// this covers the residue that order does not remove.
+func retryOnLockContention(attempts int, write func() error) error {
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			waitOutContention(attempt - 1)
+		}
+		if err = write(); err == nil || !isLockContentionError(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// relationWriteAttempts bounds retryOnLockContention for a relation insert.
+const relationWriteAttempts = 4
+
 // isDeadlockError reports a database that aborted this transaction to break a
 // deadlock, rather than one that failed on its own merits. Postgres reports
 // SQLSTATE 40P01; SQLite has a single writer and cannot deadlock between

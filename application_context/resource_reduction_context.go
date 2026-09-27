@@ -311,16 +311,10 @@ func (ctx *MahresourcesContext) casReductionAndReload(id, expectedVersion uint, 
 // reads. A rolled-back attempt left nothing behind, so starting over is safe.
 func retryReductionWrite(attempt func() (*models.ResourceReduction, error)) (*models.ResourceReduction, error) {
 	var reduction *models.ResourceReduction
-	var err error
-	for i := 0; i < reductionCASRetries; i++ {
-		if i > 0 {
-			waitOutContention(i - 1)
-		}
+	err := retryOnLockContention(reductionCASRetries, func() (err error) {
 		reduction, err = attempt()
-		if err == nil || !isLockContentionError(err) {
-			break
-		}
-	}
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
