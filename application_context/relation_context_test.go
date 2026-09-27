@@ -1,7 +1,12 @@
 package application_context
 
 import (
+	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -86,4 +91,77 @@ func TestEditRelationType_ChangeCategory_LeavesInconsistentRelations(t *testing.
 			"which no longer matches. EditRelationType should clean up inconsistent relations.",
 			relation.ID)
 	}
+}
+
+// TestAddingARelationIsNotRefusedByACommitBeforeItsWrite pins AddRelation's write
+// order: every lookup the insert depends on happens before its transaction, whose
+// first statement is the insert, so another connection committing in between cannot
+// fail it with "database is locked". See commitBeforeEveryWriteTo.
+func TestAddingARelationIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+	from, to := &models.Category{Name: "From"}, &models.Category{Name: "To"}
+	require.NoError(t, ctx.db.Create(from).Error)
+	require.NoError(t, ctx.db.Create(to).Error)
+	fromGroup := &models.Group{Name: "from", CategoryId: &from.ID}
+	toGroup := &models.Group{Name: "to", CategoryId: &to.ID}
+	require.NoError(t, ctx.db.Create(fromGroup).Error)
+	require.NoError(t, ctx.db.Create(toGroup).Error)
+	back := &models.GroupRelationType{Name: "is linked from", FromCategoryId: &to.ID, ToCategoryId: &from.ID}
+	require.NoError(t, ctx.db.Create(back).Error)
+	relationType := &models.GroupRelationType{Name: "links to", FromCategoryId: &from.ID, ToCategoryId: &to.ID, BackRelationId: &back.ID}
+	require.NoError(t, ctx.db.Create(relationType).Error)
+
+	fired := commitBeforeEveryWriteTo(t, ctx, "group_relations")
+	relation, err := ctx.AddRelation(fromGroup.ID, toGroup.ID, relationType.ID, "linked", "")
+	require.NoError(t, err)
+	require.NotZero(t, fired.Load(), "the relation wrote nothing, so the interleave never happened")
+	require.NotZero(t, relation.ID)
+
+	var edges []models.GroupRelation
+	require.NoError(t, ctx.db.Order("id").Find(&edges).Error)
+	require.Len(t, edges, 2, "the relation and its back relation, once each")
+	assert.Equal(t, relation.ID, edges[0].ID)
+	assert.Equal(t, back.ID, *edges[1].RelationTypeId)
+}
+
+// TestARelationIsNotCreatedOverACategoryChangeThatLandsBeforeItsInsert pins that the
+// category check holds for the rows the insert commits with, not only for the rows read
+// before the transaction: a group moved to another category between those reads and the
+// insert must refuse the relation rather than store an edge its type does not allow.
+func TestARelationIsNotCreatedOverACategoryChangeThatLandsBeforeItsInsert(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+	from, to, elsewhere := &models.Category{Name: "From"}, &models.Category{Name: "To"}, &models.Category{Name: "Elsewhere"}
+	for _, category := range []*models.Category{from, to, elsewhere} {
+		require.NoError(t, ctx.db.Create(category).Error)
+	}
+	fromGroup := &models.Group{Name: "from", CategoryId: &from.ID}
+	toGroup := &models.Group{Name: "to", CategoryId: &to.ID}
+	require.NoError(t, ctx.db.Create(fromGroup).Error)
+	require.NoError(t, ctx.db.Create(toGroup).Error)
+	relationType := &models.GroupRelationType{Name: "links to", FromCategoryId: &from.ID, ToCategoryId: &to.ID}
+	require.NoError(t, ctx.db.Create(relationType).Error)
+
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	var once sync.Once
+	const name = "test:recategorize_before_relation_insert"
+	require.NoError(t, ctx.db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "group_relations" {
+			return
+		}
+		once.Do(func() {
+			if _, err := sqlDB.Exec(`UPDATE groups SET category_id = ? WHERE id = ?`, elsewhere.ID, fromGroup.ID); err != nil {
+				t.Errorf("competing category change: %v", err)
+			}
+		})
+	}))
+	t.Cleanup(func() { _ = ctx.db.Callback().Create().Remove(name) })
+
+	_, err = ctx.AddRelation(fromGroup.ID, toGroup.ID, relationType.ID, "linked", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "category mismatch")
+
+	var edges int64
+	require.NoError(t, ctx.db.Model(&models.GroupRelation{}).Count(&edges).Error)
+	assert.Zero(t, edges, "no edge may survive the refused check")
 }

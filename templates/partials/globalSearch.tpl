@@ -113,7 +113,8 @@
                             <li
                                 :id="'search-result-' + index"
                                 @click="navigateTo(result.url)"
-                                @mouseenter="selectedIndex = index"
+                                {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                                @mousemove="selectedIndex = index"
                                 :data-selected="selectedIndex === index"
                                 role="option"
                                 :aria-selected="selectedIndex === index"

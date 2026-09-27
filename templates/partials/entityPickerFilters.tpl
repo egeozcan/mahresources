@@ -18,7 +18,8 @@
                             <template x-for="(result, index) in results" :key="result.ID">
                                 <div role="option" :id="$id('picker-options') + '-' + index" :aria-selected="selectedIndex === index"
                                      class="p-2 text-sm cursor-pointer" :class="selectedIndex === index && 'bg-amber-100'"
-                                     @mouseover="setActiveIndex(index)" @mousedown.prevent="startSelecting(); selectResult(result)" x-text="result.Name"></div>
+                                     {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                                     @mousemove="setActiveIndex(index)" @mousedown.prevent="startSelecting(); selectResult(result)" x-text="result.Name"></div>
                             </template>
                         </div>
                     </div>

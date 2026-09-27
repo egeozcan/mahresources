@@ -143,7 +143,10 @@ describe('selector rendering adapter and registry integration', () => {
             'utf8',
         );
 
-        expect(markup).toContain('@mouseover="setActiveIndex(index)"');
+        // Movement, not hover: a list opening under a resting pointer gets a hover update
+        // that must not take the active option from the keyboard.
+        expect(markup).toContain('@mousemove="setActiveIndex(index)"');
+        expect(markup).not.toMatch(/@mouse(over|enter)=/);
         // A result row commits the row it names, so the click survives a newer in-flight
         // search; the virtual create row stays on the index-based action.
         expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(index); selectResult(result)"');

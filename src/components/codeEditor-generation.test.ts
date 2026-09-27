@@ -66,6 +66,91 @@ describe('template cluster generation', () => {
     expect(editor.generationStatus).toBe('Generated content applied.');
   });
 
+  it('waits for editors that are still mounting instead of refusing the prompt', async () => {
+    const { editor, views } = fixture();
+    // The editors' lazy import has not landed: no view yet, only the promise of one.
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const generation = editor.generateFromPrompt();
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    // Waiting is said as waiting, and the control is not locked by it.
+    expect(editor.generationStatus).toBe('Waiting for the editor to load…');
+    expect(editor.generating).toBe(false);
+    mounted.forEach(mount => mount());
+    await generation;
+
+    expect(editor.generationError).toBe('');
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+    expect(editor.generationStatus).toBe('Generated content applied.');
+  });
+
+  it('lets a second prompt replace one still waiting for the editors', async () => {
+    const { editor, views } = fixture();
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const first = editor.generateFromPrompt();
+    editor.generationPrompt = 'Restyle this card in blue';
+    const second = editor.generateFromPrompt();
+    mounted.forEach(mount => mount());
+    await Promise.all([first, second]);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).prompt).toBe('Restyle this card in blue');
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+  });
+
+  it('drops a waiting prompt when a later submission is refused', async () => {
+    const { editor, views } = fixture();
+    const containers = Array.from(document.querySelectorAll('[x-ref="editorContainer"]')) as Array<HTMLElement & Record<string, unknown>>;
+    const mounted: Array<() => void> = [];
+    containers.forEach((container, i) => {
+      delete container._cmView;
+      container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    vi.stubGlobal('fetch', fetch);
+
+    const waiting = editor.generateFromPrompt();
+    editor.generationPrompt = '';
+    await editor.generateFromPrompt();
+    expect(editor.generationError).toBe('Describe what you want first.');
+    mounted.forEach(mount => mount());
+    await waiting;
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+    expect(editor.generating).toBe(false);
+    expect(editor.generationError).toBe('Describe what you want first.');
+  });
+
+  it('says so when an editor never mounts', async () => {
+    const { editor } = fixture();
+    const css = document.querySelectorAll('[x-ref="editorContainer"]')[1] as HTMLElement & Record<string, unknown>;
+    delete css._cmView;
+    css._cmReady = Promise.resolve(null);
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    await editor.generateFromPrompt();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(editor.generating).toBe(false);
+    expect(editor.generationError).toBe('The editor could not be loaded. Reload the page to try again.');
+  });
+
   it('does not apply an incomplete pair', async () => {
     const { editor, views } = fixture();
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: 'incomplete' } }) })));

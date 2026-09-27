@@ -1,5 +1,9 @@
 import { templateGeneration } from './templateGeneration.js';
 
+// The mounted editor's minimum height in pixels, and its maximum.
+const MIN_EDITOR_HEIGHT = 200;
+const MAX_EDITOR_HEIGHT = '60vh';
+
 export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortcodes = false, generate = false } = {}) {
   return {
     view: null,
@@ -19,7 +23,43 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
     generate,
     ...templateGeneration({ mode }),
 
-    async init() {
+    init() {
+      const container = this.$refs.editorContainer;
+
+      // The editor mounts only once mountEditor's imports land, which is after the page's
+      // load event, and until then its container is an empty two-pixel border. Every
+      // editor then grew to its full size at once: a category form has two dozen, and
+      // everything under them moved about 3,400px a few frames after load, under a
+      // click already aimed at it. A placeholder holds the size the editor is about to
+      // take, which mountEditor swaps for the editor in the same task: its minimum, or
+      // the initial text at the editor's metrics, up to the same maximum. The metrics are
+      // the .cm-editor font size in index.css, CodeMirror's 1.4 line height and the 4px
+      // of padding above and below its content; lines do not wrap.
+      const lines = (this.$refs.hiddenInput.value.match(/\n/g) || []).length + 1;
+      const placeholder = document.createElement('div');
+      placeholder.setAttribute('aria-hidden', 'true');
+      placeholder.dataset.editorPlaceholder = '';
+      Object.assign(placeholder.style, {
+        fontSize: '0.875rem',
+        height: `calc(${lines} * 1.4em + 8px)`,
+        minHeight: `${MIN_EDITOR_HEIGHT}px`,
+        maxHeight: MAX_EDITOR_HEIGHT,
+      });
+      container.appendChild(placeholder);
+
+      // What acts on the editor, generation above all, waits on this instead of finding
+      // no view while CodeMirror is still loading. It settles null if the editor could not
+      // be built, so a waiter is told rather than left waiting.
+      container._cmReady = this.mountEditor().then(
+        () => container._cmView || null,
+        (err) => {
+          console.error('code editor failed to load', err);
+          return null;
+        },
+      );
+    },
+
+    async mountEditor() {
       this.mode = mode;
       this.shortcodes = shortcodes;
       const hiddenInput = this.$refs.hiddenInput;
@@ -136,12 +176,13 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
           'data-language': mode,
         }),
         EditorView.theme({
-          '&': { minHeight: '200px', maxHeight: '60vh' },
-          '.cm-scroller': { overflow: 'auto', minHeight: '200px' },
-          '.cm-content': { minHeight: '200px' },
+          '&': { minHeight: `${MIN_EDITOR_HEIGHT}px`, maxHeight: MAX_EDITOR_HEIGHT },
+          '.cm-scroller': { overflow: 'auto', minHeight: `${MIN_EDITOR_HEIGHT}px` },
+          '.cm-content': { minHeight: `${MIN_EDITOR_HEIGHT}px` },
         }),
       ];
 
+      container.querySelector('[data-editor-placeholder]')?.remove();
       this.view = new EditorView({
         state: EditorState.create({ doc: initialValue, extensions }),
         parent: container,

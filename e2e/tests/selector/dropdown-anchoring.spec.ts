@@ -52,4 +52,37 @@ test.describe('Selector dropdown anchoring', () => {
     const dropdown = page.locator('[data-selector-field="editedId"] [popover]');
     await expectAnchoredUnderInput(input, dropdown);
   });
+
+  test('an open dropdown follows its combobox when the content above the field moves it', async ({
+    page,
+    apiClient,
+  }) => {
+    const tag = await apiClient.createTag(`anchor_shift_${runId}`, 'dropdown anchoring');
+
+    await page.goto('/group/new');
+
+    const input = page.getByRole('combobox', { name: 'Tags' });
+    await input.fill(tag.Name);
+    await expect(page.getByRole('option', { name: tag.Name, exact: true })).toBeVisible();
+
+    const dropdown = page.locator('[data-selector-field="tags"] [popover]');
+    await expectAnchoredUnderInput(input, dropdown);
+
+    // Content above the field grows while the dropdown is open, with no scroll and no
+    // resize: what a results list reloading above a filter field does to it.
+    await page.locator('[data-selector-field="tags"]').evaluate((field) => {
+      const spacer = document.createElement('div');
+      spacer.style.height = '120px';
+      field.before(spacer);
+    });
+
+    // Placed 4px from the combobox, below it or, without room below, above it.
+    await expect.poll(async () => {
+      const inputBox = (await input.boundingBox())!;
+      const dropdownBox = (await dropdown.boundingBox())!;
+      const below = dropdownBox.y - (inputBox.y + inputBox.height);
+      const above = inputBox.y - (dropdownBox.y + dropdownBox.height);
+      return Math.round(below >= 0 ? below : above);
+    }).toBe(4);
+  });
 });

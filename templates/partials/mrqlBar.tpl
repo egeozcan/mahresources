@@ -65,7 +65,8 @@
                         :aria-selected="i === selectedIndex ? 'true' : 'false'"
                         :data-selected="i === selectedIndex"
                         @mousedown.prevent="applySuggestion(i)"
-                        @mouseenter="selectedIndex = i"
+                        {# mousemove, not mouseover: a list opening under a resting pointer gets a hover update with no movement, which must not take the active option from the keyboard. #}
+                        @mousemove="selectedIndex = i"
                         class="px-3 py-1.5 cursor-pointer flex items-baseline gap-2"
                         :class="i === selectedIndex ? 'bg-blue-100' : ''"
                     >

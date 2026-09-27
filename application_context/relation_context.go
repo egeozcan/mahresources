@@ -84,11 +84,6 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 		return nil, err
 	}
 
-	var relationType models.GroupRelationType
-	var fromGroup models.Group
-	var toGroup models.Group
-	var relation models.GroupRelation
-
 	if fromGroupId == 0 || toGroupId == 0 {
 		return nil, errors.New("fromGroupId and toGroupId are required")
 	}
@@ -97,76 +92,50 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 		return nil, errors.New("cannot relate to self")
 	}
 
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&relationType, relationTypeId).Error; err != nil {
-			return err
-		}
+	// Checked once before the transaction, so a request that cannot succeed is refused
+	// with its reason and without taking the writer lock; the transaction checks again
+	// after its insert, which is the check that holds.
+	if _, err := relationEndpoints(ctx.db, fromGroupId, toGroupId, relationTypeId, false); err != nil {
+		return nil, err
+	}
 
-		if err := tx.First(&fromGroup, fromGroupId).Error; err != nil {
-			return err
-		}
-
-		if err := tx.First(&toGroup, toGroupId).Error; err != nil {
-			return err
-		}
-
-		if fromGroup.CategoryId == nil || toGroup.CategoryId == nil ||
-			relationType.FromCategoryId == nil || relationType.ToCategoryId == nil {
-			return errors.New("both groups and the relation type must have categories assigned")
-		}
-
-		// Findings 60 and 65 both ask for this message to say what is wrong.
-		// "category mismatch" names neither side, neither requirement, and not
-		// even which of the two groups is the problem — a reader who picked one
-		// wrong group out of two has to guess. Naming both sides is also what
-		// makes the message actionable without opening the relation type.
-		//
-		// docs/todo.md recorded this as fixed in Batch 12 and it was not: the
-		// line below was untouched since the auth merge, and a live POST still
-		// answered {"error":"category mismatch"}. Found by the Phase 3 coverage
-		// audit, which asks whether every finding marked FIXED is named by a test.
-		if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
-			var fromCategory, toCategory models.Category
-			fromName := ctx.categoryNameFor(tx, relationType.FromCategoryId, &fromCategory)
-			toName := ctx.categoryNameFor(tx, relationType.ToCategoryId, &toCategory)
-
-			var problems []string
-			if *fromGroup.CategoryId != *relationType.FromCategoryId {
-				problems = append(problems, fmt.Sprintf(
-					"%q is the From group and relation type %q requires its From group to be in category %s",
-					fromGroup.Name, relationType.Name, fromName))
-			}
-			if *toGroup.CategoryId != *relationType.ToCategoryId {
-				problems = append(problems, fmt.Sprintf(
-					"%q is the To group and relation type %q requires its To group to be in category %s",
-					toGroup.Name, relationType.Name, toName))
-			}
-			return errors.New("category mismatch: " + strings.Join(problems, "; "))
-		}
-
+	var relation models.GroupRelation
+	// Retried on the residue the write-first order does not remove; a failed attempt
+	// rolled back, so each one starts from fresh rows.
+	err := retryOnLockContention(relationWriteAttempts, func() error {
 		relation = models.GroupRelation{
-			FromGroupId:    &fromGroup.ID,
-			ToGroupId:      &toGroup.ID,
-			RelationTypeId: &relationType.ID,
+			FromGroupId:    &fromGroupId,
+			ToGroupId:      &toGroupId,
+			RelationTypeId: &relationTypeId,
 			Name:           name,
 			Description:    description,
 		}
-
-		if err := tx.Save(&relation).Error; err != nil {
-			return err
-		}
-
-		if relationType.BackRelationId != nil {
-			backRelation := &models.GroupRelation{
-				FromGroupId:    &toGroup.ID,
-				ToGroupId:      &fromGroup.ID,
-				RelationTypeId: relationType.BackRelationId,
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			// The insert is the transaction's first statement. On SQLite in WAL mode a
+			// transaction that reads first holds a snapshot, and a commit landing before
+			// its write makes promoting it fail at once with "database is locked"
+			// (SQLITE_BUSY_SNAPSHOT never reaches the busy handler).
+			if err := tx.Save(&relation).Error; err != nil {
+				return err
 			}
-
-			return tx.Save(backRelation).Error
-		}
-
-		return nil
+			// Then the endpoints are checked against what this transaction commits with:
+			// on SQLite the insert already holds the writer lock, and on Postgres the rows
+			// are locked here, so a group moved to another category in the meantime is
+			// seen, and refusing rolls the insert back.
+			relationType, err := relationEndpoints(tx, fromGroupId, toGroupId, relationTypeId, true)
+			if err != nil {
+				return err
+			}
+			if relationType.BackRelationId != nil {
+				backRelation := &models.GroupRelation{
+					FromGroupId:    &toGroupId,
+					ToGroupId:      &fromGroupId,
+					RelationTypeId: relationType.BackRelationId,
+				}
+				return tx.Save(backRelation).Error
+			}
+			return nil
+		})
 	})
 
 	if err == nil {
@@ -174,6 +143,73 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 	}
 
 	return &relation, err
+}
+
+// relationEndpoints reads a prospective relation's type and both groups and refuses
+// a pair its type does not allow. The reads go through the given handle, so under a
+// scoped principal a group outside the subtree is not found. With lock set, on
+// Postgres, the groups (in id order) and then the type are locked for the rest of
+// the transaction; SQLite serializes writers already and rejects the clause.
+func relationEndpoints(db *gorm.DB, fromGroupId, toGroupId, relationTypeId uint, lock bool) (*models.GroupRelationType, error) {
+	read := func() *gorm.DB {
+		if lock && db.Dialector.Name() == "postgres" {
+			return db.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		return db
+	}
+
+	var fromGroup, toGroup models.Group
+	first, second := &fromGroup, &toGroup
+	firstID, secondID := fromGroupId, toGroupId
+	if secondID < firstID {
+		first, second = second, first
+		firstID, secondID = secondID, firstID
+	}
+	if err := read().First(first, firstID).Error; err != nil {
+		return nil, err
+	}
+	if err := read().First(second, secondID).Error; err != nil {
+		return nil, err
+	}
+	var relationType models.GroupRelationType
+	if err := read().First(&relationType, relationTypeId).Error; err != nil {
+		return nil, err
+	}
+
+	if fromGroup.CategoryId == nil || toGroup.CategoryId == nil ||
+		relationType.FromCategoryId == nil || relationType.ToCategoryId == nil {
+		return nil, errors.New("both groups and the relation type must have categories assigned")
+	}
+
+	// Findings 60 and 65 both ask for this message to say what is wrong.
+	// "category mismatch" names neither side, neither requirement, and not
+	// even which of the two groups is the problem — a reader who picked one
+	// wrong group out of two has to guess. Naming both sides is also what
+	// makes the message actionable without opening the relation type.
+	//
+	// docs/todo.md recorded this as fixed in Batch 12 and it was not: the
+	// line below was untouched since the auth merge, and a live POST still
+	// answered {"error":"category mismatch"}. Found by the Phase 3 coverage
+	// audit, which asks whether every finding marked FIXED is named by a test.
+	if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
+		var fromCategory, toCategory models.Category
+		fromName := categoryNameFor(db, relationType.FromCategoryId, &fromCategory)
+		toName := categoryNameFor(db, relationType.ToCategoryId, &toCategory)
+
+		var problems []string
+		if *fromGroup.CategoryId != *relationType.FromCategoryId {
+			problems = append(problems, fmt.Sprintf(
+				"%q is the From group and relation type %q requires its From group to be in category %s",
+				fromGroup.Name, relationType.Name, fromName))
+		}
+		if *toGroup.CategoryId != *relationType.ToCategoryId {
+			problems = append(problems, fmt.Sprintf(
+				"%q is the To group and relation type %q requires its To group to be in category %s",
+				toGroup.Name, relationType.Name, toName))
+		}
+		return nil, errors.New("category mismatch: " + strings.Join(problems, "; "))
+	}
+	return &relationType, nil
 }
 
 func (ctx *MahresourcesContext) GetRelation(id uint) (*models.GroupRelation, error) {
@@ -554,7 +590,7 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 // categoryNameFor resolves a category id to a quoted name for an error message,
 // falling back to the id when the row cannot be read. An error message must not
 // be the thing that fails.
-func (ctx *MahresourcesContext) categoryNameFor(tx *gorm.DB, id *uint, into *models.Category) string {
+func categoryNameFor(tx *gorm.DB, id *uint, into *models.Category) string {
 	if id == nil {
 		return "(none)"
 	}

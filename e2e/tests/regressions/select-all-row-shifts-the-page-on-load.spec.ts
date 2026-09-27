@@ -26,9 +26,13 @@ import { test, expect } from '../../fixtures/base.fixture';
  * fold and came back null. This spec is here so the shift is caught by an
  * assertion about the shift, rather than by a hit test that is about z-index.
  *
- * The fix is `hasSelectableItems()`, which counts the rendered rows for that
- * first evaluation instead of the not-yet-filled registry. Selecting and
- * deselecting still animate the row: those move the predicate's other term.
+ * Two things keep it still. `hasSelectableItems()` counts the rendered rows for
+ * that first evaluation instead of the not-yet-filled registry, so a
+ * server-rendered list answers "rows" from the first frame. And the template
+ * puts that term and the selection term on two elements, with `x-collapse`
+ * only on the selection one: where rows arrive after the page, as the MRQL
+ * page's results do, the first term does flip, and it must show the row
+ * without animating it. Selecting and deselecting still animate the row.
  */
 test.describe('the Select All row must not animate itself open on load', () => {
   test('the row does not animate its own height on a populated list', async ({ page, apiClient }) => {
@@ -136,6 +140,42 @@ test.describe('the Select All row must not animate itself open on load', () => {
       await expect(page.locator('[data-bulk-select-all]').first()).toBeVisible();
     } finally {
       await apiClient.deleteTag(tag.ID).catch(() => {});
+    }
+  });
+
+  test('results arriving on the MRQL page show the row without animating it', async ({ page, apiClient }) => {
+    // The MRQL page renders its cards after its query answers, so the row's
+    // "there is something to select" term flips from false to true while the
+    // reader is watching. x-collapse animated that flip like a selection change:
+    // the row grew in over ~190ms and shoved the freshly drawn cards down under
+    // it, and an axe pass taken in that window reported the half-drawn button as
+    // too small a target. The row appears with the cards; only a change of
+    // selection animates it.
+    const note = await apiClient.createNote({ name: `noshift-mrql-${Date.now()}`, description: 'x' });
+    try {
+      await page.addInitScript(() => {
+        (window as any).__rowStyleWrites = [];
+        new MutationObserver((records) => {
+          for (const record of records) {
+            const el = record.target as HTMLElement;
+            if (el.nodeType !== 1 || !el.closest?.('[data-selection-scope]') || !el.querySelector?.('[data-bulk-select-all]')) continue;
+            (window as any).__rowStyleWrites.push(el.getAttribute('style') || '');
+          }
+        }).observe(document, { attributes: true, attributeFilter: ['style'], subtree: true });
+      });
+      await page.goto(`/mrql?q=${encodeURIComponent(`type = note AND id = ${note.ID}`)}`);
+      const results = page.getByRole('region', { name: 'note results' });
+      await expect(results.getByRole('link', { name: note.Name }).first()).toBeVisible({ timeout: 20000 });
+      await expect(results.locator('[data-bulk-select-all]').first()).toBeVisible();
+
+      const writes = await page.evaluate(async () => {
+        await new Promise(r => setTimeout(r, 800));
+        return (window as any).__rowStyleWrites as string[];
+      });
+      const animated = [...new Set(writes.filter(s => /transition-property:\s*height/.test(s)))];
+      expect(animated, 'the Select All row animated its height when the results arrived').toEqual([]);
+    } finally {
+      await apiClient.deleteNote(note.ID).catch(() => {});
     }
   });
 });

@@ -178,6 +178,7 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
   let secondGroupId: number;
   let noteId: number;
   let tagId: number;
+  const neighbourTagIds: number[] = [];
   let taggedResourceId: number;
   let untaggedResourceId: number;
 
@@ -206,6 +207,13 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     // Create a tag for filtering
     const tag = await apiClient.createTag('Filter Test Tag', 'Tag for filter tests');
     tagId = tag.ID;
+    // Other tags, as any real library has. Choosing a tag empties the input and the field
+    // goes on suggesting the rest, so its listbox stays open over the chips below it. Without
+    // them the suite depended on how many tags other tests in the same worker had left behind.
+    for (let i = 1; i <= 6; i++) {
+      const neighbour = await apiClient.createTag(`Picker Neighbour Tag ${i} ${testSuffix}`, 'Another tag to suggest');
+      neighbourTagIds.push(neighbour.ID);
+    }
 
     const note = await apiClient.createNote({
       name: `Tag Filter Test Note ${testSuffix}`,
@@ -297,6 +305,11 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     const tagChip = pickerModal.getByRole('button', { name: 'Remove Filter Test Tag', exact: true });
     await expect(tagChip).toBeVisible();
 
+    // The field is still focused and suggesting the other tags, and its listbox lies over the
+    // chips. Leave the field first, as a person would; Tab closes the suggestions.
+    await tagsFilter.press('Tab');
+    await expect(pickerModal.getByRole('listbox', { name: 'Tags suggestions' })).toBeHidden();
+
     // Remove the filter by clicking the x button
     await tagChip.click();
 
@@ -313,6 +326,9 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     try { if (taggedResourceId) await apiClient.deleteResource(taggedResourceId); } catch { /* ignore */ }
     try { if (untaggedResourceId) await apiClient.deleteResource(untaggedResourceId); } catch { /* ignore */ }
     try { if (tagId) await apiClient.deleteTag(tagId); } catch { /* ignore */ }
+    for (const id of neighbourTagIds) {
+      try { await apiClient.deleteTag(id); } catch { /* ignore */ }
+    }
     try { if (secondGroupId) await apiClient.deleteGroup(secondGroupId); } catch { /* ignore */ }
     try { if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId); } catch { /* ignore */ }
     try { if (categoryId) await apiClient.deleteCategory(categoryId); } catch { /* ignore */ }
