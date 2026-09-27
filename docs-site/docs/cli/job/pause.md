@@ -15,7 +15,9 @@ running in another server process, and rejects pause requests against
 finished, cancelled, or already-paused jobs. The
 transfer is cancelled, discarding the bytes received so far, and the
 Job's state becomes `paused` until you call `job resume`, which starts
-the download again from the beginning. To pause a download whichever
+the download again from the beginning. The command answers once the
+Job records the pause; a transfer still saving its file after five
+seconds is answered 409 Conflict, and asking again is safe. To pause a download whichever
 server process is running it, use the canonical command:
 `mr job command <id> pause`.
 

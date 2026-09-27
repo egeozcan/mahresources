@@ -306,8 +306,8 @@ that advanced the epoch available until the rollback window closes.
 Two behaviours of paused downloads matter while processes of this release and
 an earlier one run against one database. An earlier release recorded a
 person's pause of a download as `blocked`. Each start of this release records
-those Jobs as `paused`, so the last process to start moves the ones the others
-wrote. And a download paused through the Job Center while an earlier-release
+those Jobs as `paused`, and every process of this release looks for more every
+five minutes, so ones an older process records later are moved too. And a download paused through the Job Center while an earlier-release
 process is running its transfer is not paused there: that process does not
 act on pause requests, so the Job reads **Pausing** until the transfer ends.
 Cancel still stops it.

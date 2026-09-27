@@ -253,7 +253,10 @@ deployment's policy and limits.
   the transfer, and once the transfer has stopped writing, the Job becomes
   `paused`, whether the pause came from the Job Center, from another server
   process or from the compatibility endpoints. A pause that lands after the file
-  was saved is too late: the download completes with its resource.
+  was saved is too late: the download completes with its resource. The
+  compatibility pause endpoints answer once the Job records the pause, and
+  answer `409` when the transfer is still saving its file after five seconds;
+  asking again is safe.
   The queue keeps no partial bytes, so **Resume** starts the download again
   from the beginning. Pause asks for confirmation and says so before it acts,
   and the paused row says it again. When the request reaches a server process
