@@ -610,10 +610,16 @@ func (d Deps) now() time.Time {
 // offered to someone whose only outcome is that refusal is not a control. The
 // zero value is a principal that may write, which is what every internal caller
 // acting as the host means.
+//
+// Implicit marks the administrator a deployment without authentication runs
+// every request as. It has an account for its own preferences, but the work it
+// starts records no owner or actor, as the Jobs it submits directly do, so a
+// Retry does not gain an owner its source lacked.
 type Access struct {
 	UserID        uint
 	Administrator bool
 	ReadOnly      bool
+	Implicit      bool
 }
 
 // Filter selects the Jobs one visible listing, summary or event scan returns.

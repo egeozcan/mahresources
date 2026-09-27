@@ -1826,11 +1826,12 @@ func lockSuccessorReplayEnvelope(tx *gorm.DB, jobID string) error {
 }
 
 // ownerReference is the owner and actor one successor Job records: the principal
-// that asked for it. A host principal with no account of its own leaves the
+// that asked for it. A host principal with no account of its own, and the
+// implicit administrator of a deployment without authentication, leave the
 // successor ownerless, which the shared visibility predicate makes admin-only
 // rather than somebody else's.
 func ownerReference(access Access) *uint {
-	if access.UserID == 0 {
+	if access.UserID == 0 || access.Implicit {
 		return nil
 	}
 	owner := access.UserID

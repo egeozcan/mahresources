@@ -427,3 +427,19 @@ func TestRetentionSweepUsesTheFacadesConfiguredWindows(t *testing.T) {
 		t.Fatalf("the job inside its window was pruned: %v", err)
 	}
 }
+
+// TestTheImplicitAdministratorIsMarkedOnTheJobPlane pins what the Job plane is
+// told about a request made with authentication off: it is an administrator
+// with an account for its preferences, and it is the implicit one, whose work
+// records no owner (jobs.Access.Implicit). A stored administrator is not.
+func TestTheImplicitAdministratorIsMarkedOnTheJobPlane(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	implicit := ctx.WithPrincipal(&auth.Principal{UserID: 1, Role: models.RoleAdmin, SuperUser: true}).jobAccess()
+	if implicit != (jobs.Access{UserID: 1, Administrator: true, Implicit: true}) {
+		t.Fatalf("the implicit administrator reads as %+v", implicit)
+	}
+	stored := ctx.WithPrincipal(&auth.Principal{UserID: 1, Role: models.RoleAdmin}).jobAccess()
+	if stored != (jobs.Access{UserID: 1, Administrator: true}) {
+		t.Fatalf("a stored administrator reads as %+v", stored)
+	}
+}

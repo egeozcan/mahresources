@@ -11,7 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flosch/pongo2/v4"
+	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
 )
@@ -685,5 +689,37 @@ func TestJobSummaryReadsAsFieldsNotJSON(t *testing.T) {
 		if text != tc.text || !slices.Equal(fields, tc.want) {
 			t.Errorf("summary %s = %q %v, want %q %v", tc.raw, text, fields, tc.text, tc.want)
 		}
+	}
+}
+
+// fakeAccountedJobListReader is a list reader that can name accounts, as the
+// application context can.
+type fakeAccountedJobListReader struct{ fakeJobListReader }
+
+func (f *fakeAccountedJobListReader) JobAccountLabels(ids []uint) (map[uint]string, error) {
+	return map[uint]string{}, nil
+}
+
+func (f *fakeAccountedJobListReader) JobAccountOptions() ([]application_context.JobAccountOption, error) {
+	return []application_context.JobAccountOption{{ID: 2, Label: "someone"}}, nil
+}
+
+// TestTheAccountFiltersNeedAccountsToTellApart pins when the Owner and Actor
+// filters are offered: an administrator of a deployment with accounts picks one
+// by name, and with authentication off, where every request is the one implicit
+// administrator, there is nobody to tell apart and neither filter is offered.
+func TestTheAccountFiltersNeedAccountsToTellApart(t *testing.T) {
+	render := func(principal *auth.Principal) pongo2.Context {
+		request := httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
+		return jobListContextProvider(&fakeAccountedJobListReader{})(request)
+	}
+	admin := render(&auth.Principal{UserID: 1, Role: models.RoleAdmin})
+	if admin["jobAccountFilters"] != true || admin["jobOwnerOptions"] == nil {
+		t.Fatalf("an administrator with accounts is offered account filters %v, owner options %v", admin["jobAccountFilters"], admin["jobOwnerOptions"])
+	}
+	implicit := render(&auth.Principal{UserID: 1, Role: models.RoleAdmin, SuperUser: true})
+	if implicit["jobAccountFilters"] != false || implicit["jobOwnerOptions"] != nil {
+		t.Fatalf("with authentication off the account filters are offered: %v, %v", implicit["jobAccountFilters"], implicit["jobOwnerOptions"])
 	}
 }

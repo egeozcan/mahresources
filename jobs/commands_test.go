@@ -2338,3 +2338,26 @@ func TestAReadOnlyOwnerIsNotToldAnotherAccountRetriedTheirJob(t *testing.T) {
 		t.Fatalf("noInboundRelationship=retry-of lists %d jobs to a read-only owner, want their job", len(notRetried.Jobs))
 	}
 }
+
+// TestAnImplicitAdministratorsRetryRecordsNoOwner pins the successor of a Retry
+// made with authentication off: the implicit administrator every request runs
+// as has an account for its own preferences, but work it starts records no
+// owner or actor, as the Jobs it submits directly do. A Retry therefore gains
+// no owner its source lacked, and runs as the host, as its source did.
+func TestAnImplicitAdministratorsRetryRecordsNoOwner(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	root := Access{UserID: 1, Administrator: true, Implicit: true}
+
+	ancestor := h.acceptReplayable(nil)
+	h.fail(ancestor.ID)
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(ancestor.ID, CommandRetry, "idem-implicit-retry", root))
+	if err != nil {
+		t.Fatalf("retrying a failed job: %v", err)
+	}
+	requireResult(t, "a retry", result, CommandStatusSucceeded, CommandCodeApplied)
+	successor := jobRow(t, h.deps, result.SuccessorID)
+	if successor.OwnerUserID != nil || successor.ActorUserID != nil {
+		t.Fatalf("the successor's owner and actor = %v, %v; want none, as its source has", successor.OwnerUserID, successor.ActorUserID)
+	}
+}

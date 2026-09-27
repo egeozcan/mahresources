@@ -94,6 +94,7 @@
                 {% endfor %}
             </fieldset>
             {% endif %}
+            {% if jobAccountFilters %}
             {% if jobOwnerOptions %}
             {# An administrator sees every account's Jobs, so they pick a person rather than type a user number. #}
             <label for="job-filter-owner" class="block text-xs font-mono font-medium text-stone-600 mt-2">Owner</label>
@@ -115,6 +116,7 @@
             {% else %}
             {% include "/partials/form/textInput.tpl" with name='ownerId' label='Owner ID' value=jobFilter.OwnerID %}
             {% include "/partials/form/textInput.tpl" with name='actorId' label='Actor ID' value=jobFilter.ActorID %}
+            {% endif %}
             {% endif %}
             {# datetime-local, not the shared date input: a bookmark or a legacy link can #}
             {# name an instant, and a date would widen it to a whole day on the next submit. #}

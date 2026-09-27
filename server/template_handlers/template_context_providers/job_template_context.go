@@ -241,8 +241,13 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		for _, snapshot := range page.Jobs {
 			rows = append(rows, jobRow(reader, snapshot))
 		}
-		if accounts, ok := reader.(JobAccountReader); ok {
-			if viewer := auth.PrincipalFromContext(request.Context()); viewer.IsAdmin() {
+		// With authentication off every request is the one implicit
+		// administrator, so there is nobody to filter by: the Owner and Actor
+		// filters are not offered at all.
+		viewer := auth.PrincipalFromContext(request.Context())
+		base["jobAccountFilters"] = viewer == nil || !viewer.SuperUser
+		if accounts, ok := reader.(JobAccountReader); ok && base["jobAccountFilters"] == true {
+			if viewer.IsAdmin() {
 				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
 					return addJobListError(err, base)
 				}
