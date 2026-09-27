@@ -835,6 +835,46 @@ func (s *jobDownloadSink) DownloadFinished(ref download_queue.CanonicalRef, snap
 	return s.mirrorRefusal(adapter.publishOutcome(execution, snap))
 }
 
+// DownloadInterrupted hands a transfer the deployment's shutdown stopped back to
+// the queue its Job came from.
+//
+// A graceful stop is not an outcome of the work, so the Job is neither cancelled
+// nor failed. It leaves running for queued in one transition under the execution's
+// own token, which also hands back the claim and the capacity it held, and the
+// event says why. The next process claims it and starts the transfer again from
+// the sealed input, which is also where a crash ends up once the claim's lease
+// expires; this only saves the wait. A write that is refused here leaves the Job
+// running with its lease, and that reconciliation is what settles it instead.
+func (s *jobDownloadSink) DownloadInterrupted(ref download_queue.CanonicalRef, snap *download_queue.DownloadJob) error {
+	service := s.service()
+	if service == nil || ref.ExecutionToken == "" {
+		return nil
+	}
+	current, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, ref.JobID)
+	if err != nil {
+		return s.mirrorRefusal(err)
+	}
+	if current.State != jobs.StateRunning {
+		return nil
+	}
+	detail, err := json.Marshal(map[string]string{"reason": JobDownloadServerShutdownReason})
+	if err != nil {
+		return err
+	}
+	_, err = service.Transition(s.ctx.jobDeps(), jobs.Transition{
+		JobID:           ref.JobID,
+		ExpectedVersion: current.Version,
+		ExecutionToken:  ref.ExecutionToken,
+		To:              jobs.StateQueued,
+		Event:           jobs.EventInput{Type: jobs.EventQueued, Detail: detail},
+	})
+	return s.mirrorRefusal(err)
+}
+
+// JobDownloadServerShutdownReason is the reason a download's Job records when the
+// deployment's shutdown returned it to the queue.
+const JobDownloadServerShutdownReason = "server-shutdown"
+
 // executionRefOf is the one translation from the queue's own reference to the
 // control plane's: same two facts, and the queue does not import the Job module's
 // types for them.

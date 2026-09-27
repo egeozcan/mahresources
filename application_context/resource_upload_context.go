@@ -379,9 +379,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 				name = resourceQuery.FileName
 			}
 
-			// if the name is an empty string, try to get the name from the URL
+			// With no name given, the name the response carries: see
+			// hostfetch.FileName, which the background download uses too.
 			if name == "" {
-				name = path.Base(url)
+				name = hostfetch.FileName(resp, url)
 			}
 			name = TrimEntityName(name)
 

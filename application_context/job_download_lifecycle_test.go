@@ -1,0 +1,85 @@
+package application_context
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"mahresources/download_queue"
+	"mahresources/jobs"
+	"mahresources/models"
+	"mahresources/models/query_models"
+)
+
+// stallingDownloadServer sends headers and a few bytes, then nothing until the
+// test ends, so a download stays running for as long as a test needs it to.
+func stallingDownloadServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100000")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("the first bytes"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+	return server
+}
+
+// TestAGracefulShutdownReturnsARunningDownloadToTheQueue: nobody cancelled a
+// download the server's own shutdown stopped. Its Job goes back to the queue, says
+// why, and is started again by the next process; it is not recorded as cancelled,
+// and no history row says it ended.
+func TestAGracefulShutdownReturnsARunningDownloadToTheQueue(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	server := stallingDownloadServer(t)
+
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/long.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	waitForSnapshot(t, ctx, jobID, "the transfer to run", func(snap jobs.Snapshot) bool {
+		return snap.State == jobs.StateRunning && submissions[0].Job.GetStatus() == download_queue.JobStatusDownloading
+	})
+
+	ctx.downloadManager.Shutdown()
+
+	snap, err := ctx.GetJob(jobID)
+	if err != nil {
+		t.Fatalf("read the job: %v", err)
+	}
+	if snap.State != jobs.StateQueued || snap.Failure != nil {
+		t.Fatalf("after the shutdown the job is %s (%+v), want queued with no failure", snap.State, snap.Failure)
+	}
+	timeline, err := ctx.GetJobTimeline(jobID, 0, 0)
+	if err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	last := timeline[len(timeline)-1]
+	var detail map[string]string
+	_ = json.Unmarshal(last.Detail, &detail)
+	if last.Type != jobs.EventQueued || detail["reason"] != JobDownloadServerShutdownReason {
+		t.Fatalf("the last event is %s %s, want queued with reason %q", last.Type, last.Detail, JobDownloadServerShutdownReason)
+	}
+	for _, event := range timeline {
+		if event.Type == jobs.EventCancelled {
+			t.Fatalf("the timeline records a cancellation: %+v", timeline)
+		}
+	}
+	var rows int64
+	if err := ctx.db.Model(&models.DownloadHistoryEntry{}).Count(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("the shutdown wrote %d history rows for a download that goes on", rows)
+	}
+}

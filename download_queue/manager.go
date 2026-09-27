@@ -142,6 +142,11 @@ type CanonicalSink interface {
 	DownloadHeld(ref CanonicalRef, snap *DownloadJob) error
 	// DownloadFinished records one transfer's terminal outcome.
 	DownloadFinished(ref CanonicalRef, snap *DownloadJob) error
+	// DownloadInterrupted records that the deployment's shutdown stopped a
+	// transfer before it reached an outcome. The work is not over: the Job goes
+	// back to the queue, and the next process starts it again from its sealed
+	// input.
+	DownloadInterrupted(ref CanonicalRef, snap *DownloadJob) error
 }
 
 // RemoteDownloadSubmission is one submitted URL's outcome: the queue entry that
@@ -754,6 +759,9 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	}
 	status, errMsg, failure, resourceID := JobStatusCompleted, "", attemptFailure{}, uint(0)
 	switch {
+	case err != nil && ctx.Err() != nil && job.wasStoppedForShutdown():
+		dm.handOverStoppedForShutdown(job, runID)
+		return
 	case err != nil && ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Download cancelled"
 	case err != nil:
@@ -813,6 +821,10 @@ func (dm *DownloadManager) acquireDomainGate(ctx context.Context, job *DownloadJ
 }
 
 func (dm *DownloadManager) finishCancelledBeforeStarting(job *DownloadJob, runID uint64) {
+	if job.wasStoppedForShutdown() {
+		dm.handOverStoppedForShutdown(job, runID)
+		return
+	}
 	// finish is a no-op on a paused job: Pause cancels the context too, and a
 	// paused job waits for Resume rather than being retired here.
 	if snap, stamped := job.finishSnapshot(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()); stamped {
@@ -825,6 +837,34 @@ func (dm *DownloadManager) finishCancelledBeforeStarting(job *DownloadJob, runID
 		dm.recordTerminal(job, snap)
 		dm.emitJobEvent(job, snap)
 	}
+}
+
+// stoppedForShutdownMessage is what a download no durable Job owns records when
+// the deployment's shutdown stops it.
+const stoppedForShutdownMessage = "The server shut down before the download finished"
+
+// handOverStoppedForShutdown settles an attempt the deployment's shutdown ended.
+//
+// Nobody cancelled it, so nothing here may say so. A transfer a durable Job owns is
+// handed back to that Job, which returns to the queue and starts again from its
+// sealed input in the next process; its entry is left unstamped, and neither the
+// legacy history nor the terminal-event observers hear of an outcome, because the
+// work has none yet. A transfer no Job owns has nothing to go back to and dies with
+// the process, so it is recorded as stopped by the shutdown, which keeps it
+// retryable from its history row.
+func (dm *DownloadManager) handOverStoppedForShutdown(job *DownloadJob, runID uint64) {
+	if _, owned := job.CanonicalExecution(); owned {
+		dm.mirrorInterrupted(job)
+		return
+	}
+	snap, stamped := job.finishSnapshotWithReason(runID, JobStatusFailed, stoppedForShutdownMessage,
+		attemptFailure{reason: stoppedForShutdownMessage}, 0, time.Now())
+	if !stamped {
+		return
+	}
+	dm.notifyJob("updated", job)
+	dm.recordTerminal(job, snap)
+	dm.emitJobEvent(job, snap)
 }
 
 // createHTTPClient creates an HTTP client with context support.
@@ -845,17 +885,17 @@ func (dm *DownloadManager) createHTTPClientFor(s DownloadSettings, pluginName st
 	}
 	resolve := dm.currentPolicyResolver()
 	if resolve == nil {
-		return nil, nil, fmt.Errorf("refusing to fetch: this deployment cannot resolve plugin %q's network policy", pluginName)
+		return nil, nil, &pluginPolicyUnavailableError{msg: fmt.Sprintf("refusing to fetch: this deployment cannot resolve plugin %q's network policy", pluginName)}
 	}
 	policy, ok := resolve(pluginName)
 	if !ok || policy.Decorate == nil {
-		return nil, nil, fmt.Errorf("refusing to fetch: plugin %q's network policy is not available (is the plugin still enabled?)", pluginName)
+		return nil, nil, &pluginPolicyUnavailableError{msg: fmt.Sprintf("refusing to fetch: plugin %q's network policy is not available (is the plugin still enabled?)", pluginName)}
 	}
 	check := policy.CheckURL
 	if check == nil {
 		// A resolver that decorates but cannot check would let a plugin's
 		// playlist name any public host. Refused rather than assumed open.
-		return nil, nil, fmt.Errorf("refusing to fetch: plugin %q's network policy carries no host check", pluginName)
+		return nil, nil, &pluginPolicyUnavailableError{msg: fmt.Sprintf("refusing to fetch: plugin %q's network policy carries no host check", pluginName)}
 	}
 	client := dm.baseHTTPClient(s)
 	return policy.Decorate(client, s.ConnectTimeout()), check, nil
@@ -930,9 +970,13 @@ func (dm *DownloadManager) currentThrottleResolver() ThrottleResolver {
 // download rather than pooled: a policy replaces the dialler, so a client that
 // outlived one transfer could serve a connection opened under a policy that no
 // longer applies.
+//
+// It carries no Timeout of its own. The transfer's context holds the overall
+// deadline (see downloadWithProgress), and a second, per-request clock set to the
+// same limit raced it: whichever fired first decided the reason, and net/http's
+// "Client.Timeout or context cancellation" named neither cause.
 func (dm *DownloadManager) baseHTTPClient(s DownloadSettings) *http.Client {
 	return &http.Client{
-		Timeout: s.OverallTimeout(),
 		Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: s.ConnectTimeout()}).DialContext,
 			TLSHandshakeTimeout:   s.ConnectTimeout() / 2,
@@ -1068,7 +1112,7 @@ func (dm *DownloadManager) describeFetchError(url string, err error) error {
 		return err
 	}
 	if msg, ok := dm.refusalMessage(url, err); ok {
-		return errors.New(msg)
+		return &policyRefusalError{err: errors.New(msg)}
 	}
 	return err
 }
@@ -1129,7 +1173,7 @@ func (r *attemptReporter) onComplete() {
 // job is stamped with it, so a control that takes the job away mid-transfer — or a
 // Resume that starts a second attempt beside this one — is not overwritten by
 // callbacks still unwinding.
-func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint64, job *DownloadJob) (*models.Resource, error) {
+func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint64, job *DownloadJob) (resource *models.Resource, err error) {
 	// Snapshot settings once so all timeout values are consistent for this
 	// download and the read-lock is held only briefly.
 	s := dm.currentSettings()
@@ -1137,6 +1181,9 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	if err != nil {
 		return nil, err
 	}
+	// Every refusal the host check makes is a policy refusal, the submitted URL's
+	// and every URL a playlist names alike.
+	checkURL = refusingCheck(checkURL)
 
 	// One deadline for the whole transfer, taken before the request. An HLS
 	// assembly's own bound starts after this response has arrived, so without
@@ -1146,10 +1193,32 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	// Zero means "nobody configured one", which every embedder and every test
 	// that builds a bare settings provider has. Passing it through would mean
 	// "already expired" and refuse every download.
+	//
+	// The deadline carries its own cause. Whatever notices it first — the request,
+	// the body reader, the HLS assembler, the resource writer — reports it in its
+	// own words, and the attempt's context is still live because nobody cancelled
+	// it; so an error that arrives once the deadline has passed is the limit's, and
+	// is reported as the limit.
 	if overall := s.OverallTimeout(); overall > 0 {
+		attemptCtx := ctx
 		var cancelAll context.CancelFunc
-		ctx, cancelAll = context.WithTimeout(ctx, overall)
+		ctx, cancelAll = context.WithTimeoutCause(ctx, overall, &OverallTimeoutError{Limit: overall})
 		defer cancelAll()
+		defer func() {
+			if err == nil || attemptCtx.Err() != nil || ctx.Err() == nil {
+				return
+			}
+			// A verdict the resource writer reached is its own, whenever it lands.
+			var existing existingResourceError
+			var coded CodedFailure
+			if errors.As(err, &existing) || errors.As(err, &coded) {
+				return
+			}
+			var limit *OverallTimeoutError
+			if errors.As(context.Cause(ctx), &limit) {
+				err = limit
+			}
+		}()
 	}
 
 	// The submitted URL too, not only the ones a playlist goes on to name. A
@@ -1245,12 +1314,13 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 
 	// The stored file name and the resource's display name are different things,
 	// and conflating them lost the Name the user typed: the worker built one
-	// value from FileName -> path.Base(URL) and used it for both, never
-	// consulting creator.Name. AddRemoteResource (the foreground path) has
-	// always preferred creator.Name, so this mirrors it.
+	// value for both, never consulting creator.Name. AddRemoteResource (the
+	// foreground path) has always preferred creator.Name, so this mirrors it.
+	// With neither given, the name is the one the response carries (see
+	// hostfetch.FileName), which the foreground path uses too.
 	fileName := job.creator.FileName
 	if fileName == "" {
-		fileName = path.Base(job.URL)
+		fileName = hostfetch.FileName(resp, job.URL)
 	}
 	fileName = trimResourceName(fileName)
 
@@ -1633,6 +1703,14 @@ func (dm *DownloadManager) mirrorFinished(job *DownloadJob) {
 	})
 }
 
+// mirrorInterrupted hands a transfer the deployment's shutdown stopped back to its
+// Job (see CanonicalSink.DownloadInterrupted).
+func (dm *DownloadManager) mirrorInterrupted(job *DownloadJob) {
+	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadInterrupted(ref, snap)
+	})
+}
+
 // mirror is the one place a canonical ref is read, the sink is looked up, and the
 // snapshot is taken — so no mirror can publish under a job's live pointer or
 // forget to be a no-op for a job without an execution.
@@ -1807,23 +1885,23 @@ func (dm *DownloadManager) ShuttingDown() bool {
 	}
 }
 
-// Shutdown gracefully shuts down the download manager
+// Shutdown gracefully shuts down the download manager.
+//
+// Stopping the process is not a decision about any download, so nothing this does
+// is recorded as a cancellation. Every running attempt is stopped with that fact
+// recorded on its job (claimShutdownStop), and its worker hands the work back when
+// it unwinds (handOverStoppedForShutdown). A paused download has no worker left: one
+// a durable Job owns stays held with that Job, whose Resume starts it again after
+// the restart, and one no Job owns is recorded as stopped here, because the queue
+// is memory and its history row is the only record that outlives the process.
 func (dm *DownloadManager) Shutdown() {
 	close(dm.done)
 	dm.cleanupTicker.Stop()
 
-	// Cancel all active jobs, and collect the paused ones.
-	//
-	// A paused download has no worker left — Pause ended it — so nothing would ever
-	// stamp a terminal state for it, and it would leave with the process: the queue
-	// is memory, and the row that should have outlived it was never written. It is
-	// abandoned here exactly as Cancel abandons one, which is also what a restart
-	// does to it in fact.
 	var paused []*DownloadJob
 	dm.mu.Lock()
 	for _, job := range dm.jobs {
-		if job.IsActive() {
-			job.Cancel()
+		if job.claimShutdownStop() {
 			continue
 		}
 		if job.GetStatus() == JobStatusPaused {
@@ -1833,9 +1911,11 @@ func (dm *DownloadManager) Shutdown() {
 	dm.mu.Unlock()
 
 	for _, job := range paused {
-		if prev, snap, ok := job.claimCancel(time.Now()); ok && prev == JobStatusPaused {
+		if _, owned := job.CanonicalExecution(); owned {
+			continue
+		}
+		if snap, ok := job.claimHeldShutdown(stoppedForShutdownMessage, time.Now()); ok {
 			dm.notifyJob("updated", job)
-			dm.mirrorFinished(job)
 			dm.recordTerminal(job, snap)
 			dm.emitJobEvent(job, snap)
 		}
