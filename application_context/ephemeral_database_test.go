@@ -3,12 +3,16 @@
 package application_context
 
 import (
+	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // isolateTempDir points os.TempDir at a fresh directory for the test.
@@ -196,4 +200,67 @@ func TestSweepRemovesFilesThatCarryThisProcessesPidOnlyWhenAskedTo(t *testing.T)
 	if _, err := os.Stat(own); !os.IsNotExist(err) {
 		t.Fatalf("a file left under this pid by an earlier process survived (stat err %v)", err)
 	}
+}
+
+// A pid this process cannot see is not proof of an exit: a process in another PID
+// namespace sharing the directory is invisible to signal 0. A database that some
+// process still has open is kept whatever its name says.
+func TestSweepKeepsADatabaseAnotherProcessHasOpen(t *testing.T) {
+	dir := t.TempDir()
+	stem := filepath.Join(dir, fmt.Sprintf("mahresources_ephemeral_%d_1.db", exitedPID(t)))
+
+	holder := exec.Command(os.Args[0], "-test.run=^TestEphemeralSweepHelperHoldsADatabase$")
+	holder.Env = append(os.Environ(), "MAHRES_HOLD_EPHEMERAL_DB="+stem)
+	stdin, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = holder.Wait() })
+	ready := make([]byte, 64)
+	if n, err := stdout.Read(ready); err != nil || !strings.Contains(string(ready[:n]), "holding") {
+		t.Fatalf("the holder never opened the database: %q, %v", ready[:n], err)
+	}
+
+	sweepEphemeralDatabases([]string{dir}, false)
+	for _, suffix := range []string{"", "-shm"} {
+		if _, err := os.Stat(stem + suffix); err != nil {
+			t.Fatalf("swept %s while another process had the database open: %v", filepath.Base(stem+suffix), err)
+		}
+	}
+
+	_ = stdin.Close()
+	if err := holder.Wait(); err != nil {
+		t.Fatalf("holder: %v", err)
+	}
+	sweepEphemeralDatabases([]string{dir}, false)
+	if _, err := os.Stat(stem); !os.IsNotExist(err) {
+		t.Fatalf("the database survived the sweep after its holder closed it (stat err %v)", err)
+	}
+}
+
+// TestEphemeralSweepHelperHoldsADatabase is the other process for the test above:
+// it opens a WAL database, says so, and keeps it open until its stdin closes.
+func TestEphemeralSweepHelperHoldsADatabase(t *testing.T) {
+	path := os.Getenv("MAHRES_HOLD_EPHEMERAL_DB")
+	if path == "" {
+		t.Skip("runs only as the helper process of TestSweepKeepsADatabaseAnotherProcessHasOpen")
+	}
+	db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("CREATE TABLE held (id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("holding")
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }

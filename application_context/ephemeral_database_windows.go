@@ -7,3 +7,8 @@ package application_context
 func ephemeralOwnerExited(pid int) bool {
 	return false
 }
+
+// ephemeralDatabaseOpen answers yes on Windows, where the sweep deletes nothing.
+func ephemeralDatabaseOpen(path string) bool {
+	return true
+}

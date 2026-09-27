@@ -22,8 +22,8 @@ const ephemeralDatabasePrefix = "mahresources_ephemeral_"
 
 // ephemeralDatabaseName matches every file an ephemeral database leaves, current
 // or from a release that named it mahresources_ephemeral_<pid>.db, and captures
-// the owner's pid.
-var ephemeralDatabaseName = regexp.MustCompile(`^mahresources_ephemeral_([0-9]+)(?:_[0-9]+)?\.db(?:-wal|-shm|-journal)?$`)
+// the database's own file name and the owner's pid.
+var ephemeralDatabaseName = regexp.MustCompile(`^(mahresources_ephemeral_([0-9]+)(?:_[0-9]+)?\.db)(?:-wal|-shm|-journal)?$`)
 
 // ephemeralDatabaseSuffixes are the files SQLite keeps beside a database in WAL
 // or rollback-journal mode.
@@ -74,43 +74,54 @@ func createEphemeralDatabase() (string, error) {
 }
 
 // sweepEphemeralDatabases deletes the ephemeral database files in dirs whose
-// owning process has exited. includeOwnPID also deletes those that carry this
-// process's pid (see ownPIDSweep). Only regular files are touched, and a file
-// that cannot be removed (another user's, in a shared /tmp) is left alone.
+// owning process has exited and that no process still has open. includeOwnPID
+// also considers those that carry this process's pid (see ownPIDSweep). Only
+// regular files are touched, and a file that cannot be removed (another user's, in
+// a shared /tmp) is left alone.
 func sweepEphemeralDatabases(dirs []string, includeOwnPID bool) {
 	self := os.Getpid()
-	gone := map[int]bool{}
+	exited := map[int]bool{}
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
+		// A database and its -wal, -shm and -journal files go together, decided once.
+		abandoned := map[string]bool{}
 		for _, entry := range entries {
 			match := ephemeralDatabaseName.FindStringSubmatch(entry.Name())
 			if match == nil || !entry.Type().IsRegular() {
 				continue
 			}
-			pid, err := strconv.Atoi(match[1])
+			pid, err := strconv.Atoi(match[2])
 			if err != nil {
 				continue
 			}
-			if pid == self {
-				if !includeOwnPID {
-					continue
-				}
-			} else {
-				exited, known := gone[pid]
-				if !known {
-					exited = ephemeralOwnerExited(pid)
-					gone[pid] = exited
-				}
-				if !exited {
-					continue
-				}
+			database := filepath.Join(dir, match[1])
+			decided, seen := abandoned[database]
+			if !seen {
+				decided = ownerGone(pid, self, includeOwnPID, exited) && !ephemeralDatabaseOpen(database)
+				abandoned[database] = decided
 			}
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			if decided {
+				_ = os.Remove(filepath.Join(dir, entry.Name()))
+			}
 		}
 	}
+}
+
+// ownerGone reports whether the process named by pid can no longer be using its
+// database, remembering the answer for each pid in exited.
+func ownerGone(pid, self int, includeOwnPID bool, exited map[int]bool) bool {
+	if pid == self {
+		return includeOwnPID
+	}
+	gone, known := exited[pid]
+	if !known {
+		gone = ephemeralOwnerExited(pid)
+		exited[pid] = gone
+	}
+	return gone
 }
 
 func removeEphemeralDatabaseFiles(path string) error {
