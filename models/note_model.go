@@ -51,6 +51,24 @@ func (n *Note) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// AfterFind gives the start and end dates back as the wall clock they were
+// written as. The host parses them without a zone, as UTC. SQLite returns them
+// that way, but PostgreSQL returns a timestamptz in the server's zone, so a due
+// date written as 12:00 read back as 14:00+02:00: pages showed it, the edit form
+// offered it, and every save (a plugin's patch_note included) moved the date by
+// the server's offset again.
+func (n *Note) AfterFind(tx *gorm.DB) error {
+	if n.StartDate != nil {
+		start := n.StartDate.UTC()
+		n.StartDate = &start
+	}
+	if n.EndDate != nil {
+		end := n.EndDate.UTC()
+		n.EndDate = &end
+	}
+	return nil
+}
+
 func (a Note) GetId() uint {
 	return a.ID
 }
