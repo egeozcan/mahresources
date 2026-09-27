@@ -3,6 +3,9 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { jobPanel } from './jobPanel.js';
 
+// The keeper reads no settings; the store's own load would reach for a server.
+vi.mock('../userSettings.js', () => ({ get: () => undefined, saveNow: async () => false, whenLoaded: async () => {} }));
+
 afterEach(() => {
     document.body.innerHTML = '';
     vi.unstubAllGlobals();
