@@ -318,9 +318,6 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 	if err != nil {
 		return JobMigrationResult{}, err
 	}
-	if err := ctx.carryFiredDeferredDownloadHashes(now()); err != nil {
-		return JobMigrationResult{}, err
-	}
 	if reinstated > 0 && checkpoint.LastError != "" {
 		// The drain fence writes this again if any other quarantine remains.
 		checkpoint.LastError = ""
@@ -667,8 +664,8 @@ func (ctx *MahresourcesContext) rearmOneFixedQuarantine() (string, string, bool,
 // fence. The quarantine kept the scrub marker and post-scrub hash. A row that
 // still matches them (retiredScheduledDownloadMatches) carries no plaintext and is
 // the row that was scrubbed, so there is nothing left for anybody to decide, and
-// the marker is reinstated with a hash of the row as it now is. A row that does
-// not match stays quarantined: that is the barrier doing its job.
+// the marker is reinstated as it was. A row that does not match stays
+// quarantined: that is the barrier doing its job.
 func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time) (int, error) {
 	codes := []string{"restored-source-not-proven", "source-canonical-replay-mismatch"}
 	reinstated := 0
@@ -711,15 +708,10 @@ func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time
 					}
 					return errors.New("job migration scheduled download source could not be rechecked")
 				}
-				matches, err := retiredScheduledDownloadMatches(tx, row, mapping)
-				if err != nil {
-					return errors.New("job migration scheduled download lineage could not be read")
-				}
-				if !matches {
+				if !retiredScheduledDownloadMatches(row, mapping.PostScrubHash) {
 					return nil
 				}
-				mapping.Status, mapping.BlockerCode = models.JobSourceMappingScrubbed, ""
-				mapping.PostScrubHash, mapping.UpdatedAt = hashRetiredScheduledDownload(row), now
+				mapping.Status, mapping.BlockerCode, mapping.UpdatedAt = models.JobSourceMappingScrubbed, "", now
 				if err := tx.Save(&mapping).Error; err != nil {
 					return errors.New("job migration scheduled download scrub marker could not be reinstated")
 				}
@@ -737,64 +729,6 @@ func (ctx *MahresourcesContext) reinstateScrubbedDeferredDownloads(now time.Time
 			return reinstated, nil
 		}
 		cursor = candidates[len(candidates)-1].SourceID
-	}
-}
-
-// carryFiredDeferredDownloadHashes moves the post-scrub hash of a row an earlier
-// release fired, which still describes the row before it fired, to the row as it
-// now is, once retiredScheduledDownloadMatches has accepted the change. From then
-// on the row matches its marker exactly, and a later move or prune of its handle
-// cannot turn it into a mismatch.
-func (ctx *MahresourcesContext) carryFiredDeferredDownloadHashes(now time.Time) error {
-	var cursor string
-	for {
-		var mappings []models.JobSourceMapping
-		query := ctx.db.Where("source_kind = ? AND status = ? AND post_scrub_hash <> ''",
-			jobMigrationScheduledDownload, models.JobSourceMappingScrubbed).
-			Order("source_id ASC").Limit(jobMigrationReadinessBatchSize)
-		if cursor != "" {
-			query = query.Where("source_id > ?", cursor)
-		}
-		if err := query.Find(&mappings).Error; err != nil {
-			return errors.New("job migration could not read its scheduled download markers")
-		}
-		for _, mapping := range mappings {
-			id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
-			if err != nil {
-				continue
-			}
-			var row models.ScheduledDownload
-			if err := ctx.db.First(&row, uint(id)).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					continue
-				}
-				return errors.New("job migration could not read a scheduled download source")
-			}
-			current := hashRetiredScheduledDownload(row)
-			if current == mapping.PostScrubHash {
-				continue
-			}
-			matches, err := retiredScheduledDownloadMatches(ctx.db, row, mapping)
-			if err != nil {
-				return errors.New("job migration scheduled download lineage could not be read")
-			}
-			if !matches {
-				continue
-			}
-			// Conditional on the marker and the row both being what was checked, so
-			// a concurrent fire or scrub is not overwritten.
-			if err := ctx.db.Model(&models.JobSourceMapping{}).
-				Where("source_kind = ? AND source_id = ? AND status = ? AND post_scrub_hash = ?",
-					mapping.SourceKind, mapping.SourceID, models.JobSourceMappingScrubbed, mapping.PostScrubHash).
-				Where("EXISTS (SELECT 1 FROM scheduled_downloads WHERE scheduled_downloads.id = ? AND COALESCE(scheduled_downloads.job_id, '') = ?)", row.ID, row.JobID).
-				Updates(map[string]any{"post_scrub_hash": current, "updated_at": now}).Error; err != nil {
-				return errors.New("job migration could not carry a scheduled download marker")
-			}
-		}
-		if len(mappings) < jobMigrationReadinessBatchSize {
-			return nil
-		}
-		cursor = mappings[len(mappings)-1].SourceID
 	}
 }
 
@@ -1210,55 +1144,19 @@ func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
 // JobID is the one projected field a live row changes after it was scrubbed: a
 // deferred download is scrubbed at creation once the sources are retired, or by
 // the migration while it is still pending, and its JobID is written when it
-// fires. This release moves the marker in that same write
-// (refreshRetiredScheduledDownloadHashTx); a row an earlier release fired still
-// carries a marker taken with no JobID. That marker describes the row when the
-// JobID is one such a fire wrote: the Job the row's handle named then, which is
-// the Job the row was mapped to or, once an earlier release's Retry had moved the
-// handle, a Retry successor of it. The Job the handle names now, or the retry
-// chain back to the mapped Job, shows which. Everything the barrier exists for —
-// the empty payload, the URL reduced to its origin, the row's identity and
-// plugin — must still be exactly what was hashed.
-func retiredScheduledDownloadMatches(db *gorm.DB, row models.ScheduledDownload, mapping models.JobSourceMapping) (bool, error) {
-	if hashRetiredScheduledDownload(row) == mapping.PostScrubHash {
-		return true, nil
+// fires, after the marker was taken. A marker taken with no JobID is therefore
+// accepted when the JobID is all that differs. Which Job a fired row names cannot
+// always be re-established (a Retry moves the row's handle, and retention prunes
+// Retry history), and it need not be: the JobID carries no replay material, so
+// one the check cannot place leaves nothing unscrubbed. Everything the barrier exists for — the empty payload, the URL reduced to its
+// origin, the row's identity and plugin — must still be exactly what was hashed.
+func retiredScheduledDownloadMatches(row models.ScheduledDownload, postScrubHash string) bool {
+	if hashRetiredScheduledDownload(row) == postScrubHash {
+		return true
 	}
 	beforeItFired := row
 	beforeItFired.JobID = ""
-	if row.JobID == "" || hashRetiredScheduledDownload(beforeItFired) != mapping.PostScrubHash {
-		return false, nil
-	}
-	if row.JobID == mapping.JobID {
-		return true, nil
-	}
-	var handle models.JobLegacyHandle
-	err := db.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, strconv.FormatUint(uint64(row.ID), 10)).
-		First(&handle).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, err
-	}
-	if err == nil && handle.JobID == row.JobID {
-		return true, nil
-	}
-	// Up the retry chain from the recorded Job; the seen set ends a cycle, which a
-	// Retry never makes.
-	seen := map[string]bool{}
-	for current := row.JobID; current != "" && !seen[current]; {
-		seen[current] = true
-		var ancestors []string
-		if err := db.Model(&models.JobLink{}).Where("type = ? AND from_job_id = ?", string(jobs.LinkRetryOf), current).
-			Pluck("to_job_id", &ancestors).Error; err != nil {
-			return false, err
-		}
-		if len(ancestors) == 0 {
-			return false, nil
-		}
-		if ancestors[0] == mapping.JobID {
-			return true, nil
-		}
-		current = ancestors[0]
-	}
-	return false, nil
+	return row.JobID != "" && hashRetiredScheduledDownload(beforeItFired) == postScrubHash
 }
 
 func hashJobMigrationProjection(value any) string {

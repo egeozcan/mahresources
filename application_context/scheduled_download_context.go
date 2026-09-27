@@ -399,66 +399,24 @@ func (ctx *MahresourcesContext) ReserveScheduledDownloadSubmit(id uint, claimTok
 
 // MarkScheduledDownloadSubmitted records the queue job a fire produced and
 // releases the claim in the same update.
-//
-// A reserved row names no Job yet, and a scrubbed row's post-scrub hash is moved
-// to the Job it now names in the same transaction (refreshRetiredScheduledDownloadHashTx).
 func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimToken, jobID string, at time.Time) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		res := tx.Model(&models.ScheduledDownload{}).
-			Where("id = ? AND claim_token = ?", id, claimToken).
-			Where("status = ?", models.ScheduledDownloadStatusSubmitted).
-			Updates(map[string]any{
-				"claim_token": "",
-				"claimed_at":  nil,
-				"job_id":      jobID,
-				"last_error":  "",
-				"updated_at":  at,
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
-		}
-		return refreshRetiredScheduledDownloadHashTx(tx, id, at)
-	})
-}
-
-// refreshRetiredScheduledDownloadHashTx keeps a scrubbed row's post-scrub hash in
-// step when the fire records the Job it queued, inside the same transaction. The
-// fire is the only write that changes a row's JobID after the row was scrubbed.
-// The marker is moved only when it described the row a moment ago, naming no Job,
-// so a row that changed any other way keeps its mismatch; and the retirement
-// check never has to rediscover, from Job state retention may prune, which Job a
-// fired row could legitimately name.
-func refreshRetiredScheduledDownloadHashTx(tx *gorm.DB, rowID uint, at time.Time) error {
-	if !tx.Migrator().HasTable(&models.JobSourceMapping{}) {
+	res := ctx.db.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusSubmitted).
+		Updates(map[string]any{
+			"claim_token": "",
+			"claimed_at":  nil,
+			"job_id":      jobID,
+			"last_error":  "",
+			"updated_at":  at,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 1 {
 		return nil
 	}
-	var mapping models.JobSourceMapping
-	err := tx.Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, strconv.FormatUint(uint64(rowID), 10)).
-		First(&mapping).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if mapping.Status != models.JobSourceMappingScrubbed || mapping.PostScrubHash == "" {
-		return nil
-	}
-	var row models.ScheduledDownload
-	if err := tx.First(&row, rowID).Error; err != nil {
-		return err
-	}
-	before := row
-	before.JobID = ""
-	if hashRetiredScheduledDownload(before) != mapping.PostScrubHash {
-		return nil
-	}
-	return tx.Model(&models.JobSourceMapping{}).
-		Where("source_kind = ? AND source_id = ? AND post_scrub_hash = ?", mapping.SourceKind, mapping.SourceID, mapping.PostScrubHash).
-		Updates(map[string]any{"post_scrub_hash": hashRetiredScheduledDownload(row), "updated_at": at}).Error
+	return fmt.Errorf("scheduled download %d: %w", id, errScheduledDownloadClaimLost)
 }
 
 // errScheduledDownloadClaimLost reports a claimed or reserved row something else

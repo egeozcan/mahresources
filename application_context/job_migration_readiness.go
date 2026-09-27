@@ -342,11 +342,7 @@ func retiredSourceMatchesScrub(db *gorm.DB, mapping models.JobSourceMapping) (bo
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, false, nil
 		}
-		if err != nil {
-			return false, false, err
-		}
-		matches, err := retiredScheduledDownloadMatches(db, row, mapping)
-		return true, matches, err
+		return err == nil, retiredScheduledDownloadMatches(row, postScrubHash), err
 	case jobMigrationPluginCommandRun:
 		var row models.PluginCommandRun
 		err := db.Where("id = ?", sourceID).First(&row).Error
