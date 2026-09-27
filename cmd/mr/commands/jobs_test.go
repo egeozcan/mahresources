@@ -732,3 +732,39 @@ func TestJobControlVerbsKeepALegacyNotFound(t *testing.T) {
 		t.Fatalf("a Job without cancel = %v, want a refusal naming the command", err)
 	}
 }
+
+// TestJobControlFallbackNamesACommandThatCanReplayItsKey covers a lost answer on
+// the advertised-command path of a control verb. The verbs take no
+// --idempotency-key, so the recovery the error names is the one command that
+// can send the same key again.
+func TestJobControlFallbackNamesACommandThatCanReplayItsKey(t *testing.T) {
+	const jobID = "01a0e1d9-d508-7c6d-a6f8-abaff30a92a9"
+	var postedKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/jobs/retry":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"job not found"}`)
+		case r.Method == http.MethodGet:
+			writeJobJSON(w, `{"id":"`+jobID+`","version":3,"commands":[{"key":"retry","endpoint":"/v1/jobs/`+jobID+`/commands/retry","jobVersion":3}]}`)
+		default:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			key, _ := body["idempotencyKey"].(string)
+			postedKeys = append(postedKeys, key)
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+		}
+	}))
+	defer server.Close()
+
+	err := runJobCLI(t, server.URL, true, "retry", jobID)
+	if err == nil || len(postedKeys) != 1 {
+		t.Fatalf("retry = %v after %d posts, want a failure after one", err, len(postedKeys))
+	}
+	want := "mr job command " + jobID + " retry --idempotency-key " + postedKeys[0]
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("the failure %q does not name %q", err, want)
+	}
+}
