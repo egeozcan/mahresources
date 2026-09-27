@@ -5,6 +5,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"log"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+	"unicode"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/gorm"
@@ -57,6 +64,15 @@ func (d *sqliteDriver) Open(dsn string) (driver.Conn, error) {
 	return &sqliteConn{SQLiteConn: conn.(*sqlite3.SQLiteConn)}, nil
 }
 
+// idleWriterLockWarnAfter is how long a write transaction may hold the writer
+// lock without writing before its end is reported: every other writer in the
+// process waited that long for nothing, and the fix is almost always to declare
+// the transaction read-only.
+var idleWriterLockWarnAfter = time.Second
+
+// warnIdleWriterLock reports such a transaction.
+var warnIdleWriterLock = log.Printf
+
 // sqliteConn is a go-sqlite3 connection whose transactions begin as described on
 // sqliteDriver. Every other method is go-sqlite3's own.
 type sqliteConn struct {
@@ -64,6 +80,9 @@ type sqliteConn struct {
 	// broken marks a connection that may still be query_only because clearing it
 	// failed; database/sql discards it instead of handing it to the next caller.
 	broken bool
+	// writeTx is the write transaction open on this connection, if any, watched
+	// until its first write.
+	writeTx *sqliteTx
 }
 
 func (c *sqliteConn) Begin() (driver.Tx, error) {
@@ -72,19 +91,61 @@ func (c *sqliteConn) Begin() (driver.Tx, error) {
 
 func (c *sqliteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	if !opts.ReadOnly {
-		if _, err := c.ExecContext(ctx, "BEGIN IMMEDIATE", nil); err != nil {
+		if _, err := c.SQLiteConn.ExecContext(ctx, "BEGIN IMMEDIATE", nil); err != nil {
 			return nil, err
 		}
-		return &sqliteTx{conn: c}, nil
+		tx := &sqliteTx{conn: c, locked: time.Now()}
+		c.writeTx = tx
+		return tx, nil
 	}
-	if _, err := c.ExecContext(ctx, "BEGIN", nil); err != nil {
+	if _, err := c.SQLiteConn.ExecContext(ctx, "BEGIN", nil); err != nil {
 		return nil, err
 	}
 	tx := &sqliteTx{conn: c, readOnly: true}
-	if _, err := c.ExecContext(ctx, "PRAGMA query_only = 1", nil); err != nil {
+	if _, err := c.SQLiteConn.ExecContext(ctx, "PRAGMA query_only = 1", nil); err != nil {
 		return nil, errors.Join(err, tx.Rollback())
 	}
 	return tx, nil
+}
+
+func (c *sqliteConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.noteStatement(query)
+	return c.SQLiteConn.ExecContext(ctx, query, args)
+}
+
+func (c *sqliteConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.noteStatement(query)
+	return c.SQLiteConn.QueryContext(ctx, query, args)
+}
+
+// noteStatement records that the open write transaction has written. It reads
+// only the statement's leading keyword, so a write through a prepared statement or
+// a CTE it misjudges can at worst produce a spurious warning.
+func (c *sqliteConn) noteStatement(query string) {
+	if c.writeTx == nil || c.writeTx.wrote {
+		return
+	}
+	c.writeTx.wrote = statementWrites(query)
+}
+
+// statementWrites reports whether query changes the database, judged by its
+// first keyword.
+func statementWrites(query string) bool {
+	query = strings.TrimLeft(query, " \t\r\n(")
+	end := strings.IndexFunc(query, func(r rune) bool { return !unicode.IsLetter(r) })
+	if end < 0 {
+		end = len(query)
+	}
+	switch strings.ToUpper(query[:end]) {
+	case "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "REINDEX", "ANALYZE":
+		return true
+	case "WITH":
+		upper := strings.ToUpper(query)
+		return strings.Contains(upper, "INSERT ") || strings.Contains(upper, "UPDATE ") ||
+			strings.Contains(upper, "DELETE ") || strings.Contains(upper, "REPLACE ")
+	default:
+		return false
+	}
 }
 
 // IsValid implements driver.Validator.
@@ -95,31 +156,60 @@ func (c *sqliteConn) IsValid() bool {
 type sqliteTx struct {
 	conn     *sqliteConn
 	readOnly bool
+	// locked is when a write transaction took the writer lock, and wrote whether
+	// it has written since.
+	locked time.Time
+	wrote  bool
 }
 
 // Commit follows go-sqlite3's own: a COMMIT that fails may leave the transaction
 // open, and database/sql considers it finished either way, so it is rolled back.
 func (tx *sqliteTx) Commit() error {
-	_, err := tx.conn.ExecContext(context.Background(), "COMMIT", nil)
+	_, err := tx.conn.SQLiteConn.ExecContext(context.Background(), "COMMIT", nil)
 	if err != nil {
-		_, _ = tx.conn.ExecContext(context.Background(), "ROLLBACK", nil)
+		_, _ = tx.conn.SQLiteConn.ExecContext(context.Background(), "ROLLBACK", nil)
 	}
 	return errors.Join(err, tx.finish())
 }
 
 func (tx *sqliteTx) Rollback() error {
-	_, err := tx.conn.ExecContext(context.Background(), "ROLLBACK", nil)
+	_, err := tx.conn.SQLiteConn.ExecContext(context.Background(), "ROLLBACK", nil)
 	return errors.Join(err, tx.finish())
 }
 
-// finish returns a read-only transaction's connection to read-write use.
+// finish returns the connection to use outside a transaction: a read-only one's
+// query_only is cleared, and a write transaction that held the lock long without
+// writing is reported.
 func (tx *sqliteTx) finish() error {
 	if !tx.readOnly {
+		tx.conn.writeTx = nil
+		if held := time.Since(tx.locked); !tx.wrote && held >= idleWriterLockWarnAfter {
+			warnIdleWriterLock("sqlite: a transaction held the writer lock for %s without writing; "+
+				"if it only reads, pass models.ReadOnlyTxOptions to Transaction (from %s)",
+				held.Round(time.Millisecond), transactionOpener())
+		}
 		return nil
 	}
-	if _, err := tx.conn.ExecContext(context.Background(), "PRAGMA query_only = 0", nil); err != nil {
+	if _, err := tx.conn.SQLiteConn.ExecContext(context.Background(), "PRAGMA query_only = 0", nil); err != nil {
 		tx.conn.broken = true
 		return err
 	}
 	return nil
+}
+
+// transactionOpener names the first caller outside database/sql, GORM and this
+// file: the code whose transaction is ending.
+func transactionOpener() string {
+	pcs := make([]uintptr, 32)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
+	for {
+		frame, more := frames.Next()
+		if !strings.Contains(frame.File, "/database/sql/") && !strings.Contains(frame.File, "gorm.io/") &&
+			!strings.HasSuffix(frame.File, "models/sqlite_driver.go") {
+			return fmt.Sprintf("%s (%s:%d)", frame.Function, filepath.Base(frame.File), frame.Line)
+		}
+		if !more {
+			return "unknown"
+		}
+	}
 }

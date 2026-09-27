@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -131,4 +132,53 @@ func TestSQLiteBeginCancelledWhileWaitingLeavesNoTransactionOpen(t *testing.T) {
 	_, err = other.Exec("INSERT INTO t (v) VALUES ('after the cancelled BEGIN')")
 	require.NoError(t, err, "the cancelled BEGIN left a transaction holding the writer lock")
 	require.NoError(t, db.Exec("INSERT INTO t (v) VALUES ('on the pooled connection')").Error)
+}
+
+// captureIdleWriterLockWarnings shortens the threshold for the warning about a
+// transaction that holds the writer lock without writing, and collects what it
+// reports instead of logging it.
+func captureIdleWriterLockWarnings(t *testing.T) *[]string {
+	t.Helper()
+	var warnings []string
+	previousAfter, previousWarn := idleWriterLockWarnAfter, warnIdleWriterLock
+	idleWriterLockWarnAfter = 50 * time.Millisecond
+	warnIdleWriterLock = func(format string, args ...any) { warnings = append(warnings, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { idleWriterLockWarnAfter, warnIdleWriterLock = previousAfter, previousWarn })
+	return &warnings
+}
+
+func TestSQLiteWarnsAboutAWriteTransactionThatHeldTheLockWithoutWriting(t *testing.T) {
+	db, _ := openProductionSQLite(t)
+	warnings := captureIdleWriterLockWarnings(t)
+
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		countRows(t, tx)
+		time.Sleep(80 * time.Millisecond)
+		return nil
+	}))
+	require.Len(t, *warnings, 1)
+	require.Contains(t, (*warnings)[0], "without writing")
+	require.Contains(t, (*warnings)[0], "TestSQLiteWarnsAboutAWriteTransactionThatHeldTheLockWithoutWriting",
+		"the warning does not name the code that opened the transaction")
+}
+
+func TestSQLiteDoesNotWarnAboutTransactionsThatWroteOrWereReadOnly(t *testing.T) {
+	db, _ := openProductionSQLite(t)
+	warnings := captureIdleWriterLockWarnings(t)
+
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		countRows(t, tx)
+		time.Sleep(80 * time.Millisecond)
+		return tx.Exec("INSERT INTO t (v) VALUES ('wrote')").Error
+	}))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		countRows(t, tx)
+		time.Sleep(80 * time.Millisecond)
+		return nil
+	}, &sql.TxOptions{ReadOnly: true}))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		countRows(t, tx)
+		return nil
+	}))
+	require.Empty(t, *warnings)
 }
