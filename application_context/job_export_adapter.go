@@ -620,7 +620,10 @@ func (a *groupExportAdapter) refusalReason(execution jobs.Execution, request *Ex
 	if execution.Access.UserID == 0 {
 		return ""
 	}
-	return a.ctx.exportPrincipalRefusal(execution.Access.UserID, request.RootGroupIDs).Reason
+	// A read that failed keeps the refusal it implies: dispatch blocks rather than
+	// run work whose account it could not check.
+	refusal, _ := a.ctx.exportPrincipalRefusal(execution.Access.UserID, request.RootGroupIDs)
+	return refusal.Reason
 }
 
 // start submits the export this execution needs, taking the id from the Job's own

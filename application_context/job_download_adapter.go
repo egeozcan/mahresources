@@ -334,7 +334,9 @@ func (a *downloadJobAdapter) refusalReason(execution jobs.Execution, input *down
 		return "plugin-unavailable"
 	}
 	if execution.Access.UserID != 0 {
-		if refusal := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator); refusal.Reason != "" {
+		// A read that failed keeps the refusal it implies: dispatch blocks rather
+		// than run work whose account it could not check.
+		if refusal, _ := a.ctx.downloadPrincipalRefusal(execution.Access.UserID, input.Creator); refusal.Reason != "" {
 			return refusal.Reason
 		}
 	}

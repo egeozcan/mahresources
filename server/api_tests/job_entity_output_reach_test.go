@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,15 @@ func TestEveryOutputNamingAnEntityIsOfferedOnlyWhileItCanBeOpened(t *testing.T) 
 	if got := outputs(action); got["result"] != fmt.Sprintf("/resource?id=%d", resource.ID) {
 		t.Fatalf("the action's result links %q while its resource exists", got["result"])
 	}
+	opened := func(jobID, key string) (int, string) {
+		t.Helper()
+		response := doReq(tc, http.MethodGet, "/v1/jobs/"+jobID+"/outputs?key="+key,
+			map[string]string{"Authorization": adminBearer, "Accept": "application/json"}, nil, nil)
+		return response.Code, response.Body.String()
+	}
+	if code, body := opened(action, "result"); code != http.StatusOK || !strings.Contains(body, "redirect") {
+		t.Fatalf("opening the action's result while its resource exists = %d %s", code, body)
+	}
 
 	if err := tc.AppCtx.DeleteResource(resource.ID); err != nil {
 		t.Fatalf("delete the resource: %v", err)
@@ -185,5 +195,16 @@ func TestEveryOutputNamingAnEntityIsOfferedOnlyWhileItCanBeOpened(t *testing.T) 
 	got := outputs(action)
 	if destination, listed := got["result"]; !listed || destination != "" {
 		t.Fatalf("the action's result = listed %v with link %q; want the result kept without the link", listed, destination)
+	}
+	// Opened directly, the result is the same projection the listing showed.
+	code, body := opened(action, "result")
+	if code != http.StatusOK || strings.Contains(body, "redirect") || strings.Contains(body, fmt.Sprintf("resource?id=%d", resource.ID)) {
+		t.Fatalf("opening the action's result after its resource was deleted = %d %s; want the result without its redirect", code, body)
+	}
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("opening the result lost the rest of it: %s", body)
+	}
+	if code, _ := opened(imported, "resource"); code != http.StatusNotFound {
+		t.Fatalf("opening the import's deleted resource answered %d, want 404", code)
 	}
 }

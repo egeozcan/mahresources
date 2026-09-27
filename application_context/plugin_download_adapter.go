@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
@@ -175,19 +176,31 @@ func (ctx *MahresourcesContext) scheduledDownloadActorID(actorUserID uint) (uint
 // deployment sees no change. A call with no actor at all -- auth off, or a path
 // carrying no identity -- never reaches here.
 func (ctx *MahresourcesContext) validateDownloadTargetsInScope(creator *query_models.ResourceFromRemoteCreator) error {
+	refusal, _ := ctx.downloadTargetsScopeRefusal(creator)
+	return refusal
+}
+
+// downloadTargetsScopeRefusal is validateDownloadTargetsInScope that also
+// reports a read that failed while asking. Such a read answers the refusal the
+// fail-closed check gives for that target, together with the read's error, so a
+// caller that can ask again can tell a question that was not answered from a
+// target that is out of scope.
+func (ctx *MahresourcesContext) downloadTargetsScopeRefusal(creator *query_models.ResourceFromRemoteCreator) (error, error) {
 	scoped := ctx
 	if !scoped.isScopedPrincipal() {
-		return nil
+		return nil, nil
 	}
 	if creator.GroupName != "" {
-		return errors.New("group-limited accounts cannot create a group via download; target an existing group in your scope")
+		return errors.New("group-limited accounts cannot create a group via download; target an existing group in your scope"), nil
 	}
-	if creator.OwnerId == 0 || !scoped.GroupVisible(creator.OwnerId) {
-		return errors.New("download target group is outside your permitted scope")
+	outOfScopeGroup := errors.New("download target group is outside your permitted scope")
+	if creator.OwnerId == 0 {
+		return outOfScopeGroup, nil
 	}
-	for _, g := range creator.Groups {
-		if !scoped.GroupVisible(g) {
-			return errors.New("download target group is outside your permitted scope")
+	for _, g := range append([]uint{creator.OwnerId}, creator.Groups...) {
+		visible, err := scoped.entityVisibleChecked(&models.Group{}, g)
+		if err != nil || !visible {
+			return outOfScopeGroup, err
 		}
 	}
 	// Notes are subtree-scoped on owner_id and the worker associates them
@@ -196,11 +209,12 @@ func (ctx *MahresourcesContext) validateDownloadTargetsInScope(creator *query_mo
 	// change to one function rather than a widening nobody notices, which is
 	// the shape this whole check exists to prevent.
 	for _, n := range creator.Notes {
-		if !scoped.NoteVisible(n) {
-			return errors.New("download target note is outside your permitted scope")
+		visible, err := scoped.entityVisibleChecked(&models.Note{}, n)
+		if err != nil || !visible {
+			return errors.New("download target note is outside your permitted scope"), err
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // Compile-time proof that the context still satisfies the seam. The interface

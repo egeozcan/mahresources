@@ -127,6 +127,19 @@ func (ctx *MahresourcesContext) openJobOutput(requestCtx context.Context, jobID,
 	if output.Availability != jobs.OutputAvailable || (output.ExpiresAt != nil && !output.ExpiresAt.After(time.Now().UTC())) {
 		return contracts.JobOutputContent{}, ErrJobOutputUnavailable
 	}
+	// The same projection the listing applies, so opening an output by its URL
+	// shows nothing the listing withheld: an entity output whose entity this
+	// principal cannot open is not found, and a result's redirect to such an
+	// entity is not in what is returned.
+	offered, reachable, err := ctx.openableJobOutput(snapshot.Kind, output)
+	if err != nil {
+		return contracts.JobOutputContent{}, err
+	}
+	if !reachable {
+		return contracts.JobOutputContent{}, jobs.ErrNotFound
+	}
+	output = offered
+	request.Output = offered
 
 	if adapter, ok := service.AdapterFor(snapshot.Kind, snapshot.KindVersion); ok {
 		if opener, ok := adapter.(JobOutputOpener); ok {

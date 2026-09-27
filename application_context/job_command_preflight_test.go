@@ -3,8 +3,11 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"mahresources/jobs"
 	"mahresources/models"
@@ -62,5 +65,61 @@ func TestAResumeIsRefusedWhenTheJobsOwnPrincipalLostItsTarget(t *testing.T) {
 		jobs.CommandContext{Snapshot: exported, Access: admin}, jobs.CommandRepeat)
 	if err != nil || refusal.Reason != "" {
 		t.Fatalf("an administrator's Repeat = %+v, %v; want allowed", refusal, err)
+	}
+}
+
+// A read that failed answers nothing about the account or its scope, so the
+// preflight reports it as an error, which the command surface answers as one,
+// never as a refusal the account did not earn.
+func TestAPreflightWhoseReadFailedIsAnErrorNotARefusal(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	inside := createGroupNamed(t, ctx, "preflight-read-inside", nil)
+	user, err := ctx.CreateUser(&UserInput{Username: "preflight-read-user", Password: "password1", Role: models.RoleUser, ScopeGroupId: &inside.ID})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	download := &downloadJobAdapter{ctx: ctx, kind: JobKindRemoteDownload}
+	export := &groupExportAdapter{ctx: ctx}
+	failed := jobs.Snapshot{
+		Kind: JobKindRemoteDownload, KindVersion: 1, State: jobs.StateFailed,
+		Summary: json.RawMessage(fmt.Sprintf(`{"host":"example.com","targets":["owner:%d"]}`, inside.ID)),
+	}
+	exported := jobs.Snapshot{
+		Kind: JobKindGroupExport, KindVersion: 1, State: jobs.StateSucceeded,
+		Summary: json.RawMessage(fmt.Sprintf(`{"rootGroups":[%d],"subtree":true}`, inside.ID)),
+	}
+	asker := jobs.Access{UserID: user.ID}
+
+	for _, table := range []string{"users", "groups"} {
+		t.Run(table, func(t *testing.T) {
+			const name = "test:fail-one-read"
+			failing := true
+			if err := ctx.db.Callback().Query().Before("gorm:query").Register(name, func(db *gorm.DB) {
+				if failing && db.Statement.Table == table {
+					_ = db.AddError(errors.New("injected read failure"))
+				}
+			}); err != nil {
+				t.Fatalf("register the failing read: %v", err)
+			}
+			defer func() { _ = ctx.db.Callback().Query().Remove(name) }()
+
+			refusal, err := download.PreflightCommand(context.Background(),
+				jobs.CommandContext{Snapshot: failed, Access: asker}, jobs.CommandRetry)
+			if err == nil || refusal.Reason != "" {
+				t.Fatalf("a download Retry whose %s read failed = %+v, %v; want an error and no refusal", table, refusal, err)
+			}
+			refusal, err = export.PreflightCommand(context.Background(),
+				jobs.CommandContext{Snapshot: exported, Access: asker}, jobs.CommandRepeat)
+			if err == nil || refusal.Reason != "" {
+				t.Fatalf("an export Repeat whose %s read failed = %+v, %v; want an error and no refusal", table, refusal, err)
+			}
+
+			failing = false
+			refusal, err = download.PreflightCommand(context.Background(),
+				jobs.CommandContext{Snapshot: failed, Access: asker}, jobs.CommandRetry)
+			if err != nil || refusal.Reason != "" {
+				t.Fatalf("the same Retry once the read works = %+v, %v; want allowed", refusal, err)
+			}
+		})
 	}
 }

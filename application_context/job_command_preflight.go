@@ -3,10 +3,12 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/models/query_models"
 )
 
@@ -61,23 +63,59 @@ func (a *downloadJobAdapter) PreflightCommand(_ context.Context, command jobs.Co
 		// still decides from the sealed input.
 		return jobs.CommandRefusal{}, nil
 	}
-	return a.ctx.downloadPrincipalRefusal(principal, downloadTargetsCreator(summary.Targets)), nil
+	refusal, err := a.ctx.downloadPrincipalRefusal(principal, downloadTargetsCreator(summary.Targets))
+	if err != nil {
+		return jobs.CommandRefusal{}, fmt.Errorf("check the account a download would run as: %w", err)
+	}
+	return refusal, nil
 }
 
 // downloadPrincipalRefusal is the part of a download's dispatch check that turns
 // on the account it runs as: that account may still write, and every target the
 // submission names is inside its scope as it stands now. Dispatch (refusalReason)
 // and the command preflight both ask it, so the two cannot disagree about a rule.
-func (ctx *MahresourcesContext) downloadPrincipalRefusal(principalID uint, creator *query_models.ResourceFromRemoteCreator) jobs.CommandRefusal {
-	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(principalID))
+//
+// A read that failed is not an answer: it comes back as the error beside the
+// refusal the fail-closed check would give. Dispatch keeps that refusal; the
+// preflight reports the error instead of refusing a command the account did not
+// earn a refusal for.
+func (ctx *MahresourcesContext) downloadPrincipalRefusal(principalID uint, creator *query_models.ResourceFromRemoteCreator) (jobs.CommandRefusal, error) {
+	roleRefused := jobs.CommandRefusal{Reason: "role-refused",
+		Message: "The account this download would run as can no longer create resources."}
+	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, roleRefused,
+		jobs.CommandRefusal{Reason: "scope-refused", Message: "Download target group is outside your permitted scope."})
+	if scoped == nil || refusal.Reason != "" || err != nil {
+		return refusal, err
+	}
 	if err := scoped.requireWriteRole("run a download"); err != nil {
-		return jobs.CommandRefusal{Reason: "role-refused",
-			Message: "The account this download would run as can no longer create resources."}
+		return roleRefused, nil
 	}
-	if err := scoped.validateDownloadTargetsInScope(creator); err != nil {
-		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(err.Error())}
+	outOfScope, err := scoped.downloadTargetsScopeRefusal(creator)
+	if outOfScope != nil {
+		return jobs.CommandRefusal{Reason: "scope-refused", Message: sentence(outOfScope.Error())}, err
 	}
-	return jobs.CommandRefusal{}
+	return jobs.CommandRefusal{}, nil
+}
+
+// boundForCommandRefusal resolves the account a command's work would run as and
+// binds its scope, reporting a read that failed rather than denying on it. It
+// answers a nil context for the host acting as itself, which no principal check
+// applies to; an account that does not exist or is disabled binds deny-all with
+// no error, because that is an answer. A read that failed answers the refusal
+// the fail-closed binding implies, together with the error.
+func (ctx *MahresourcesContext) boundForCommandRefusal(principalID uint, roleRefused, scopeRefused jobs.CommandRefusal) (*MahresourcesContext, jobs.CommandRefusal, error) {
+	principal, err := commandActorLookup(ctx.db, principalID)
+	if err != nil {
+		return nil, roleRefused, err
+	}
+	if principal == nil {
+		return nil, jobs.CommandRefusal{}, nil
+	}
+	scoped, err := ctx.withPrincipalWithin(context.Background(), principal)
+	if err != nil {
+		return nil, scopeRefused, err
+	}
+	return scoped, jobs.CommandRefusal{}, nil
 }
 
 // downloadTargetsCreator rebuilds the part of a submission that scope is checked
@@ -115,26 +153,40 @@ func (a *groupExportAdapter) PreflightCommand(_ context.Context, command jobs.Co
 	if err := json.Unmarshal(command.Snapshot.Summary, &summary); err != nil {
 		return jobs.CommandRefusal{}, nil
 	}
-	return a.ctx.exportPrincipalRefusal(principal, summary.RootGroups), nil
+	refusal, err := a.ctx.exportPrincipalRefusal(principal, summary.RootGroups)
+	if err != nil {
+		return jobs.CommandRefusal{}, fmt.Errorf("check the account an export would run as: %w", err)
+	}
+	return refusal, nil
 }
 
 // exportPrincipalRefusal is the part of an export's dispatch check that turns on
 // the account it runs as: that account may still write, and every group it
 // exports is inside its scope as it stands now. Dispatch (refusalReason) and the
-// command preflight both ask it.
-func (ctx *MahresourcesContext) exportPrincipalRefusal(principalID uint, rootGroupIDs []uint) jobs.CommandRefusal {
-	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(principalID))
+// command preflight both ask it; a read that failed comes back as it does from
+// downloadPrincipalRefusal.
+func (ctx *MahresourcesContext) exportPrincipalRefusal(principalID uint, rootGroupIDs []uint) (jobs.CommandRefusal, error) {
+	roleRefused := jobs.CommandRefusal{Reason: "role-refused",
+		Message: "The account this export would run as can no longer export groups."}
+	outOfScope := jobs.CommandRefusal{Reason: "group-out-of-scope",
+		Message: "A group this export includes is outside your permitted scope."}
+	scoped, refusal, err := ctx.boundForCommandRefusal(principalID, roleRefused, outOfScope)
+	if scoped == nil || refusal.Reason != "" || err != nil {
+		return refusal, err
+	}
 	if err := scoped.requireWriteRole("run an export"); err != nil {
-		return jobs.CommandRefusal{Reason: "role-refused",
-			Message: "The account this export would run as can no longer export groups."}
+		return roleRefused, nil
+	}
+	if !scoped.isScopedPrincipal() {
+		return jobs.CommandRefusal{}, nil
 	}
 	for _, id := range rootGroupIDs {
-		if !scoped.GroupVisible(id) {
-			return jobs.CommandRefusal{Reason: "group-out-of-scope",
-				Message: "A group this export includes is outside your permitted scope."}
+		visible, err := scoped.entityVisibleChecked(&models.Group{}, id)
+		if err != nil || !visible {
+			return outOfScope, err
 		}
 	}
-	return jobs.CommandRefusal{}
+	return jobs.CommandRefusal{}, nil
 }
 
 // sentence makes an error's text read as a sentence: capitalized, with a full stop.
