@@ -93,6 +93,26 @@ async function recordAnnouncements(page: import('@playwright/test').Page) {
   });
 }
 
+// The state each job was in when the drawer's ledger first heard of it. The
+// tests below are about jobs whose first sight is already their outcome; this
+// is how they know that is what they exercised.
+async function recordFirstSights(page: import('@playwright/test').Page) {
+  await page.evaluate(() => {
+    const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
+    const firstSights: Record<string, string> = {};
+    (window as any).__firstSights = firstSights;
+    const hearJob = panel.hearJob;
+    panel.hearJob = function (job: any, options: any) {
+      if (job?.id && job.state && !(job.id in firstSights)) firstSights[job.id] = job.state;
+      return hearJob.call(this, job, options);
+    };
+  });
+}
+
+function firstSight(page: import('@playwright/test').Page, id: string): Promise<string | undefined> {
+  return page.evaluate(jobId => (window as any).__firstSights[jobId], id);
+}
+
 function announcements(page: import('@playwright/test').Page): Promise<Announcement[]> {
   return page.evaluate(() => (window as any).__announced.slice());
 }
@@ -518,13 +538,14 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
           await expect(page.getByRole('dialog', { name: 'Jobs' })).toBeVisible();
         }
         await waitUntilLive(page);
+        await recordFirstSights(page);
 
         // One from another client, one from this tab; one failure, one success,
         // swapped between the two runs.
         const failedName = `instant-failed-${stamp}.bin`;
         const succeededName = `instant-succeeded-${stamp}.bin`;
-        await submitDownload(drawerOpen ? page : request, `${base}/missing/${failedName}`, failedName);
-        await submitDownload(drawerOpen ? request : page, `${base}/ok/${succeededName}`, succeededName);
+        const failedId = await submitDownload(drawerOpen ? page : request, `${base}/missing/${failedName}`, failedName);
+        const succeededId = await submitDownload(drawerOpen ? request : page, `${base}/ok/${succeededName}`, succeededName);
 
         await expect.poll(async () => mentions(await announcements(page), failedName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
           .toContain(`${failedName} failed: HTTP 404 Not Found.`);
@@ -537,6 +558,8 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
         await submitDownload(request, `${base}/missing/${laterName}`, laterName);
         await expect.poll(async () => mentions(await announcements(page), laterName).length, { timeout: 20_000 }).toBe(1);
 
+        expect(await firstSight(page, failedId), 'the drawer must first see the job at its outcome').toBe('failed');
+        expect(await firstSight(page, succeededId), 'the drawer must first see the job at its outcome').toBe('succeeded');
         const said = await announcements(page);
         expect(mentions(said, failedName)).toHaveLength(1);
         expect(mentions(said, succeededName)).toHaveLength(1);
@@ -560,8 +583,11 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
 
       // Chromium's offline emulation leaves a stream that is already open
       // alone, so the drop is made the way the browser reports one: the stream
-      // closes and fires error. The panel's own connect() then reconnects, and
-      // everything published meanwhile arrives as replay before its catch-up.
+      // closes and fires error. The panel's own connect() then opens a new
+      // stream, and everything published meanwhile arrives as replay before its
+      // catch-up. That is the boundary under test; the browser's own automatic
+      // reconnect, resuming from Last-Event-ID, is not exercised here: it
+      // replays less, but everything it replays also comes before catch-up.
       await page.evaluate(() => {
         const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
         panel.eventSource.close();
@@ -577,6 +603,7 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
         panel.connect();
       });
       await waitUntilLive(page);
+      await recordFirstSights(page);
       // The catch-up refresh has read the missed job before the next one is submitted.
       await expect.poll(() => page.evaluate(id => {
         const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
@@ -584,9 +611,10 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
       }, missedId), { timeout: 15_000 }).toBe(true);
 
       const afterName = `instant-after-${stamp}.bin`;
-      await submitDownload(request, `${base}/missing/${afterName}`, afterName);
+      const afterId = await submitDownload(request, `${base}/missing/${afterName}`, afterName);
       await expect.poll(async () => mentions(await announcements(page), afterName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
         .toContain(`${afterName} failed: HTTP 404 Not Found.`);
+      expect(await firstSight(page, afterId), 'the drawer must first see the job at its outcome').toBe('failed');
 
       const said = await announcements(page);
       expect(mentions(said, afterName)).toHaveLength(1);

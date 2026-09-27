@@ -1465,6 +1465,62 @@ describe('Job Center panel accessibility hooks', () => {
         panel.destroy();
     });
 
+    // More live lifecycle events than the ledger remembers can arrive between a
+    // job's own events and the read that first sees it, from other jobs.
+    const otherJobsBurst = async (panel: any, count: number, firstSequence: number) => {
+        for (let index = 0; index < count; index++) {
+            await deliverLive(panel, `other-${firstSequence + index}`, [['queued', 1]], firstSequence + index);
+        }
+    };
+
+    test('a first-seen outcome is still said after a burst of other jobs\' events larger than the ledger', async () => {
+        const failed = { id: 'dl-49', title: 'buried.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z', failure: { message: 'HTTP 404 Not Found' } };
+        const panel = refreshingPanel([failed]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-49', fastLife, 11);
+        await otherJobsBurst(panel, 1500, 20);
+        await panel.refresh();
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('buried.bin failed: HTTP 404 Not Found.');
+    });
+
+    test('a burst that arrives while the refresh reading a first-seen outcome is in flight does not lose it', async () => {
+        const failed = { id: 'dl-50', title: 'inflight.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
+        const panel = refreshingPanel([failed]);
+        const list = panel.requestJSON;
+        let releaseLists = () => {};
+        const listsHeld = new Promise<void>(resolve => { releaseLists = resolve; });
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            if (String(raw).startsWith('/v1/jobs?')) await listsHeld;
+            return list(raw);
+        });
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await deliverLive(panel, 'dl-50', fastLife, 11);
+        const refreshing = panel.refresh();
+        await otherJobsBurst(panel, 1500, 20);
+        releaseLists();
+        await refreshing;
+
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('inflight.bin failed.');
+    });
+
+    test('proofs no read took are dropped to the ledger\'s size once a refresh has had its chance at them', async () => {
+        const panel = refreshingPanel([]);
+        panel.lastSequence = 10;
+        showHeard(panel, []);
+
+        await otherJobsBurst(panel, 1500, 20);
+        await panel.refresh();
+        await otherJobsBurst(panel, 1, 2000);
+
+        expect(panel._liveVersions.size).toBeLessThanOrEqual(1000);
+    });
+
     test('a read that began before catch-up withholds a first-seen outcome for its live event', async () => {
         const failed = { id: 'dl-46', title: 'straddle.bin', kind: 'remote-download', state: 'failed', version: 3, acceptedAt: '2026-09-26T10:00:00Z' };
         const panel = refreshingPanel([]);

@@ -209,8 +209,11 @@ export function jobPanel() {
         // and the stream generation that was current when it was recorded. See
         // hearJob.
         _heard: new Map(),
-        // Versions a live lifecycle event proved news before any read saw them.
+        // Versions a live lifecycle event proved news before any read saw them,
+        // with the order each proof was recorded in (see trimLiveProofs).
         _liveVersions: new Map(),
+        _proofSeq: 0,
+        _proofsSettled: 0,
         // What was said within the last NEWS_COALESCE_MS, which may not have
         // landed: news, and at most one notice (the newest notice wins).
         _recentNews: [],
@@ -405,6 +408,7 @@ export function jobPanel() {
             this.error = '';
             const streamGeneration = this._streamGeneration;
             const touchedFrom = this._streamTouchSeq;
+            const proofsFrom = this._proofSeq;
             try {
                 const groups = panelGroups(this.finishedLimit);
                 const pages = await Promise.all(groups.map(group => this.requestJSON(buildPanelListURL(group))));
@@ -445,8 +449,13 @@ export function jobPanel() {
                 } finally {
                     this.announceHeld(spoken, streamGeneration);
                 }
+                // A superseded refresh leaves its proofs to the newer one.
+                if (generation === this._refreshGeneration) this.settleProofs(proofsFrom);
             } catch (error) {
-                if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
+                if (generation === this._refreshGeneration) {
+                    this.error = error.message || 'Could not load jobs.';
+                    this.settleProofs(proofsFrom);
+                }
             }
         },
 
@@ -509,7 +518,7 @@ export function jobPanel() {
             if (entry && version > 0 && version < entry.version) return '';
             const changed = !!entry && entry.state !== job.state;
             const firstSeenOutcome = !entry && ['attention', 'finished'].includes(classifyJobState(job));
-            const liveFrom = this._liveVersions.get(job.id);
+            const liveFrom = this._liveVersions.get(job.id)?.version;
             const provenLive = liveFrom !== undefined && version >= liveFrom;
             // Only an observation that could speak uses the proof up; a stale
             // read must leave it for the live one that follows.
@@ -564,10 +573,31 @@ export function jobPanel() {
             }
             if (entry && version < entry.version) return '';
             if (entry && entry.version === version) return '';
+            const previous = this._liveVersions.get(jobId);
             this._liveVersions.delete(jobId);
-            this._liveVersions.set(jobId, Math.max(version, this._liveVersions.get(jobId) || 0));
-            if (this._liveVersions.size > HEARD_LIMIT) this._liveVersions.delete(this._liveVersions.keys().next().value);
+            this._liveVersions.set(jobId, { version: Math.max(version, previous?.version || 0), seq: ++this._proofSeq });
+            this.trimLiveProofs();
             return '';
+        },
+
+        // Past HEARD_LIMIT the oldest proof goes, but only once a refresh that
+        // began after it has finished (settleProofs). Until then that refresh
+        // may be the very read the proof is for, and a job whose first read is
+        // its outcome has nothing else to say it, however many other jobs'
+        // events arrive meanwhile. So the map holds at most the ledger's size
+        // plus the events of one refresh cycle. A refresh that failed has had
+        // its chance too: its proofs stay unless the map overflows.
+        trimLiveProofs() {
+            while (this._liveVersions.size > HEARD_LIMIT) {
+                const [jobId, proof] = this._liveVersions.entries().next().value;
+                if (proof.seq > this._proofsSettled) return;
+                this._liveVersions.delete(jobId);
+            }
+        },
+
+        settleProofs(through) {
+            this._proofsSettled = Math.max(this._proofsSettled, through);
+            this.trimLiveProofs();
         },
 
         // A list or detail read, which may speak only if no reconnect happened
@@ -604,7 +634,7 @@ export function jobPanel() {
             const byJob = new Map();
             for (const entry of entries) {
                 const heard = this._heard.get(entry.jobId);
-                const newer = this._liveVersions.get(entry.jobId);
+                const newer = this._liveVersions.get(entry.jobId)?.version;
                 if (heard?.state !== entry.state || !(heard.stateSince <= entry.version)) continue;
                 if (newer !== undefined && newer > entry.version) continue;
                 byJob.delete(entry.jobId);
