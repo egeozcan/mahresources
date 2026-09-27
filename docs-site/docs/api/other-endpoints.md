@@ -858,6 +858,11 @@ Legacy alias: `GET /v1/download/queue`
 
 `progress` is the number of bytes downloaded and `progressPercent` is `progress / totalSize * 100`, or `-1` when the total size is unknown.
 
+A row whose transfer this server process no longer holds in its queue, after a
+restart or once the entry was cleared, is projected from the durable Job. A Job
+keeps no plaintext URL, so that row's `url` is the scheme and host only
+(`https://example.com`) and it has no `name`.
+
 ### Job Operations
 
 | Endpoint | Description |
@@ -867,7 +872,7 @@ Legacy alias: `GET /v1/download/queue`
 | `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
 | `GET /v1/jobs/get?id={job_id}` | Return one job snapshot by id. Answers `404` for an unknown id or a job the caller may not see. No legacy alias. |
-| `POST /v1/jobs/clearCompleted` | Dismiss every finished job the caller can see; active and paused jobs are kept. Answers `{"cleared": N, "ids": ["<job id>", ...]}`, naming the jobs that were removed -- which rows are finished is decided when the request is handled, so a caller cannot work it out from its own earlier view of the queue. |
+| `POST /v1/jobs/clearCompleted` | Clear every finished job the caller can see from the legacy queue and the plugin action list; active and paused jobs are kept. It does not dismiss canonical Jobs: the Jobs panel and `/jobs` keep listing them until they are dismissed there or through the `dismiss` command. Answers `{"cleared": N, "ids": ["<job id>", ...]}`, naming the jobs that were removed -- which rows are finished is decided when the request is handled, so a caller cannot work it out from its own earlier view of the queue. |
 
 Downloads can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
 
@@ -978,6 +983,8 @@ curl -X POST http://localhost:8181/v1/downloads/retry \
   -H "Accept: application/json" \
   -d '{"ids": [12, 13]}'
 ```
+
+Once legacy plaintext inputs are retired (see [Job System](../features/job-system.md#release-status-and-compatibility)), a history row keeps only the scheme and host of its URL and no stored payload, so `url` shows `https://example.com` and the `URL` filter matches that and the resource name.
 
 A retry re-runs the row in place when its job is still in the queue and otherwise resubmits it from the stored payload, which is re-validated against the retrying principal's own scope. It is refused for a completed row, for a row whose retry is already claiming or running, and while any queued or running job is already fetching the same URL. Delete removes the queue entry along with the row. When no id could be acted on, the response is `409` with the per-id outcomes still attached.
 

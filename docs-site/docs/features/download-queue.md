@@ -349,6 +349,11 @@ to an ancestor's id acts on the ancestor, and a Retry of an ancestor that
 already has a successor is refused. Either id resolves only to a Job the caller
 can see, and answers 404 otherwise.
 
+A row for a transfer this process's queue no longer holds is projected from the
+durable Job, which keeps no plaintext URL: its `url` is the scheme and host only
+and it has no `name`. The same holds for download history rows once legacy
+plaintext inputs are retired.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
@@ -358,7 +363,7 @@ can see, and answers 404 otherwise.
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
 | `GET` | `/v1/jobs/get` | Return one job snapshot by id |
-| `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
+| `POST` | `/v1/jobs/clearCompleted` | Clear every finished job (completed, failed, cancelled) from the legacy queue; canonical Jobs are not dismissed |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
 
 Canonical list, detail, command, timeline, output, summary, and export routes
