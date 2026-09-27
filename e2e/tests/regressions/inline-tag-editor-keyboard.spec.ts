@@ -10,6 +10,10 @@ import path from 'path';
  *    submission / navigation), and the inline editor form never navigates.
  * 3. Focus returns to the combobox after removing the last selected tag.
  */
+// A distinct file per upload: the server deduplicates content across the whole worker, and a
+// fixed path or body collides with another copy of this file running at the same time.
+const unique = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 test.describe('Inline tag editor keyboard accessibility', () => {
   let categoryId: number;
   let ownerGroupId: number;
@@ -53,8 +57,8 @@ test.describe('Inline tag editor keyboard accessibility', () => {
 
     const fs = await import('fs');
     const os = await import('os');
-    const tmpFile = path.join(os.tmpdir(), 'inline-tag-kb-test.txt');
-    fs.writeFileSync(tmpFile, 'keyboard tag test content');
+    const tmpFile = path.join(os.tmpdir(), `inline-tag-kb-test-${unique()}.txt`);
+    fs.writeFileSync(tmpFile, `keyboard tag test content ${unique()}`);
 
     const resource = await apiClient.createResource({
       filePath: tmpFile,
@@ -183,8 +187,8 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     // Create a dedicated resource so we start with a clean tag state
     const fs = await import('fs');
     const os = await import('os');
-    const tmpFile = path.join(os.tmpdir(), 'focus-test-resource.txt');
-    fs.writeFileSync(tmpFile, 'focus test');
+    const tmpFile = path.join(os.tmpdir(), `focus-test-resource-${unique()}.txt`);
+    fs.writeFileSync(tmpFile, `focus test ${unique()}`);
     const res = await apiClient.createResource({
       filePath: tmpFile,
       name: 'FocusTestResource',
@@ -244,8 +248,8 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     // and a selector correctly stops offering a tag the entity already has.
     const fs = await import('fs');
     const os = await import('os');
-    const tmpFile = path.join(os.tmpdir(), 'inline-tag-persist-resource.txt');
-    fs.writeFileSync(tmpFile, 'persistence test');
+    const tmpFile = path.join(os.tmpdir(), `inline-tag-persist-resource-${unique()}.txt`);
+    fs.writeFileSync(tmpFile, `persistence test ${unique()}`);
     const res = await apiClient.createResource({
       filePath: tmpFile,
       name: 'InlineTagPersist Resource',
