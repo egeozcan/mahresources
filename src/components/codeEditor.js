@@ -1,5 +1,8 @@
 import { templateGeneration } from './templateGeneration.js';
 
+// The mounted editor's minimum height, in pixels.
+const MIN_EDITOR_HEIGHT = 200;
+
 export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortcodes = false, generate = false } = {}) {
   return {
     view: null,
@@ -27,6 +30,14 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
       const initialValue = hiddenInput.value || '';
       const fieldName = hiddenInput.getAttribute('name') || '';
       const ariaLabel = label || fieldName;
+
+      // The editor mounts only once the imports below land, which is after the page's
+      // load event, and until then its container is an empty two-pixel border. Every
+      // editor then grows by its minimum at once: a category form has two dozen, and
+      // everything under them moved about 3,400px a few frames after load, under a
+      // click already aimed at it. Reserving the minimum now keeps that space from
+      // changing when the editor arrives; the 2px is the container's own border.
+      container.style.minHeight = `${MIN_EDITOR_HEIGHT + 2}px`;
 
       // Lazy-load CodeMirror core modules
       const [
@@ -136,9 +147,9 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
           'data-language': mode,
         }),
         EditorView.theme({
-          '&': { minHeight: '200px', maxHeight: '60vh' },
-          '.cm-scroller': { overflow: 'auto', minHeight: '200px' },
-          '.cm-content': { minHeight: '200px' },
+          '&': { minHeight: `${MIN_EDITOR_HEIGHT}px`, maxHeight: '60vh' },
+          '.cm-scroller': { overflow: 'auto', minHeight: `${MIN_EDITOR_HEIGHT}px` },
+          '.cm-content': { minHeight: `${MIN_EDITOR_HEIGHT}px` },
         }),
       ];
 
