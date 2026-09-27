@@ -289,8 +289,14 @@ export function jobPanel() {
                     });
                 } else {
                     this.stopClock();
-                    restoreFocus(this._lastTrigger, this._trigger);
+                    // After the trap has let go and the drawer is gone: focus
+                    // moved while the trap is armed is pulled back inside, and
+                    // then falls to <body> when the drawer is removed.
+                    const trigger = this._lastTrigger;
                     this._lastTrigger = null;
+                    setTimeout(() => {
+                        if (!this.isOpen) restoreFocus(trigger, this._trigger);
+                    }, 0);
                 }
             });
             // The expression is the Dismiss finished button's own x-show.
@@ -352,7 +358,9 @@ export function jobPanel() {
         handleShortcut(event) {
             if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || String(event.key).toLowerCase() !== 'd') return;
             event.preventDefault();
-            this.toggle(event);
+            // No event: a shortcut has no trigger, so focus goes back to
+            // wherever the reader pressed it (see focusedElement).
+            this.toggle();
         },
 
         blockingModal() {
@@ -381,10 +389,9 @@ export function jobPanel() {
             this.isOpen = !this.isOpen;
         },
 
+        // The isOpen watcher returns focus, once the drawer is gone.
         close() {
             this.isOpen = false;
-            restoreFocus(this._lastTrigger, this._trigger);
-            this._lastTrigger = null;
         },
 
         // The open drawer is aria-modal, and a screen reader may ignore a live

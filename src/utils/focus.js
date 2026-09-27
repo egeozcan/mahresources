@@ -95,9 +95,15 @@ export function parkFocus(element) {
  * the icon as `target`, and focusing an SVG span is not the same as returning
  * the reader to the control they pressed. `currentTarget` is only valid during
  * dispatch, which is why this is read at open time and stored.
+ *
+ * Only an element is a trigger. A shortcut handled by a listener on `document`
+ * or `window` reports that as its `currentTarget`, which cannot take focus
+ * back; answering null there lets the caller fall back to `focusedElement()`,
+ * the field the reader pressed the shortcut in.
  */
 export function captureTrigger(event) {
-  return event?.currentTarget ?? null;
+  const target = event?.currentTarget;
+  return target?.nodeType === 1 ? target : null;
 }
 
 /**

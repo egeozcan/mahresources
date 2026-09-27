@@ -1872,6 +1872,9 @@
   .resize-y {
     resize: vertical;
   }
+  .scroll-pt-9 {
+    scroll-padding-top: calc(var(--spacing) * 9);
+  }
   .list-inside {
     list-style-position: inside;
   }

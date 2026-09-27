@@ -56,7 +56,8 @@
                     <button type="button" @click="reloadPage()" class="mt-2 inline-flex min-h-6 items-center rounded border border-amber-700 bg-white px-2 py-0.5 font-medium text-amber-900 hover:bg-amber-100 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Reload page</button>
                 </div>
 
-                <div class="min-h-0 flex-1 overflow-y-auto" aria-label="Recent jobs">
+                {# scroll-pt clears the sticky group heading, so a control Shift+Tab reaches is scrolled below it rather than under it. #}
+                <div class="min-h-0 flex-1 overflow-y-auto scroll-pt-9" aria-label="Recent jobs">
                     <template x-for="group in groups" :key="group.key">
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
                             <h3 :id="'job-panel-group-' + group.key" class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
