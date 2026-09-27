@@ -405,7 +405,9 @@ and the fields of its summary, such as a download's host. Open a Job to see its
 progress, timeline, outputs, and related Jobs. Use only
 the controls displayed on that Job; available commands are checked again when
 submitted. Selecting several Jobs offers only commands they all advertise for
-bulk use, with a separate result for each Job.
+bulk use, with a separate result for each Job, named by its title and linked to
+its page. A summary such as "Pinned 3 of 3 selected jobs." is shown on the page
+and announced, and names the Jobs the command was not done for.
 
 A succeeded Job always shows complete progress, including a download whose
 size the remote server never reported. When a Job created a Resource, Note, or

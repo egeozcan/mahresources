@@ -46,6 +46,9 @@ export function createBulkSelection(scope = null) {
     activeEditor: null,
     lastSelected: null,
     lastSelectedElement: null,
+    // What one selected row is called, which the bulk bar sets from its list's
+    // entity so the announcement says what its visible count says.
+    noun: 'item',
 
     init() {
 
@@ -151,7 +154,7 @@ export function createBulkSelection(scope = null) {
 
       this.selectedIds.add(id);
       this.syncCheckboxes(id, true);
-      this.announce(`${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected`);
+      this.announce(this.selectedCountText());
     },
 
     deselect(id, el = null) {
@@ -165,7 +168,11 @@ export function createBulkSelection(scope = null) {
 
       this.selectedIds.delete(id);
       this.syncCheckboxes(id, false);
-      this.announce(this.selectedIds.size > 0 ? `${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected` : 'Selection cleared');
+      this.announce(this.selectedIds.size > 0 ? this.selectedCountText() : 'Selection cleared');
+    },
+
+    selectedCountText() {
+      return `${this.selectedIds.size} ${this.noun || 'item'}${this.selectedIds.size === 1 ? '' : 's'} selected`;
     },
 
     toggle(id, el = null) {

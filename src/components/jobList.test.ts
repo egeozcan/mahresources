@@ -6,6 +6,7 @@ import {
     datetimeInputFromInstant,
     instantFromDatetimeInput,
     jobBulkCommands,
+    bulkCommandReport,
     jobFilterTimes,
     jobList,
     localizeJobTimes,
@@ -237,7 +238,7 @@ describe('job bulk commands', () => {
     function selection(ids: string[], versions: Record<string, number> = {}) {
         return {
             selectedIds: new Set(ids),
-            options: Object.fromEntries(ids.map(id => [id, { entity: { id, version: versions[id] ?? 1 } }])),
+            options: Object.fromEntries(ids.map(id => [id, { entity: { id, title: `${id}.png`, version: versions[id] ?? 1 } }])),
             announce: vi.fn(),
         };
     }
@@ -289,12 +290,39 @@ describe('job bulk commands', () => {
         const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
         expect(body.jobIds).toEqual(['a', 'b']);
         expect(body.idempotencyKey).toEqual(expect.any(String));
-        expect(component.outcomes).toEqual(results);
-        expect(component.$selection.announce).toHaveBeenCalledWith('1 of 2 jobs: dismiss.');
-        expect(notices).toEqual(['1 of 2 jobs: dismiss.']);
+        // Each outcome names its Job as the list does, with a link, since the
+        // refresh may already have taken its card away.
+        expect(component.outcomes).toEqual([
+            { jobId: 'a', title: 'a.png', url: '/job?id=a', text: 'Done' },
+            { jobId: 'b', title: 'b.png', url: '/job?id=b', text: 'Changed' },
+        ]);
+        const said = 'Dismissed 1 of 2 selected jobs. Not done for b.png: Changed.';
+        expect(component.$selection.announce).toHaveBeenCalledWith(said);
+        expect(notices).toEqual([said]);
         expect(refresh).toHaveBeenCalledTimes(1);
         window.removeEventListener('job-list-refresh', refresh);
         window.removeEventListener('job-list-notice', onNotice);
+    });
+
+    test('a bulk result reads as what was done to how many of the selected jobs', () => {
+        const titles = { a: 'a.png', b: 'b.png', c: 'c.png', d: 'd.png', e: 'e.png' };
+        const applied = (jobId: string) => ({ jobId, status: 'succeeded', code: 'applied' });
+        const refused = (jobId: string, message = '') => ({ jobId, status: 'failed', code: 'not-advertised', message });
+        const say = (key: string, label: string, ids: string[], results: object[]) =>
+            bulkCommandReport({ key, label }, ids, results, titles).message;
+
+        expect(say('pin', 'Pin', ['a'], [applied('a')])).toBe('Pinned 1 of 1 selected job.');
+        expect(say('unpin', 'Unpin', ['a', 'b'], [applied('a'), applied('b')])).toBe('Unpinned 2 of 2 selected jobs.');
+        expect(say('undismiss', 'Undismiss', ['a'], [applied('a')])).toBe('Returned 1 of 1 selected job to the list.');
+        expect(say('retry', 'Retry', ['a', 'b'], [applied('a'), refused('b', 'the job does not offer that command')]))
+            .toBe('Retried 1 of 2 selected jobs. Not done for b.png: the job does not offer that command.');
+        expect(say('cancel', 'Cancel', ['a', 'b'], [applied('a'), { jobId: 'b', status: 'succeeded', code: 'requested' }]))
+            .toBe('Cancelled 1 of 2 selected jobs. Cancel requested for 1 of 2 selected jobs.');
+        expect(say('pin-lineage', 'Pin visible lineage', ['a'], [applied('a')])).toBe('Pin visible lineage done for 1 of 1 selected job.');
+        expect(say('dismiss', 'Dismiss', ['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'e'].map(id => refused(id))))
+            .toBe('Dismiss was not done for a.png, b.png, c.png and 2 more; each says why in the list of outcomes.');
+        expect(bulkCommandReport({ key: 'dismiss', label: 'Dismiss' }, ['a'], [refused('a')], titles).outcomes)
+            .toEqual([{ jobId: 'a', title: 'a.png', url: '/job?id=a', text: 'No longer offered' }]);
     });
 
     test('a pin changes no Job version, so the row pin state invalidates the cached offer', async () => {
@@ -378,7 +406,7 @@ describe('job bulk commands', () => {
         // The refresh removed the dismissed card and moved the other's version.
         component.$selection = selection(['b'], { b: 2 });
         await component.sync();
-        expect(component.outcomes).toEqual(results);
+        expect(component.outcomes).toEqual([{ jobId: 'b', title: 'b.png', url: '/job?id=b', text: 'Changed' }]);
     });
 
     test('a failed request shows its reason, not only announces it', async () => {

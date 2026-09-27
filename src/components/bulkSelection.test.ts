@@ -186,3 +186,28 @@ describe('selection across retained and repeated rows', () => {
         expect(disconnect).toHaveBeenCalledOnce();
     });
 });
+
+describe('selection announcements', () => {
+    test('name what the list selects, as the visible count does', () => {
+        const store = makeStore();
+        const announce = vi.spyOn(store, 'announce');
+        store.noun = 'job';
+        store.registerOption(card(1));
+        store.registerOption(card(2));
+        announce.mockClear();
+        store.select(1);
+        store.select(2);
+        store.deselect(1);
+        store.deselect(2);
+        expect(announce.mock.calls.map(call => call[0])).toEqual(['1 job selected', '2 jobs selected', '1 job selected', 'Selection cleared']);
+    });
+
+    test('say item on a page that has not named its rows', () => {
+        const store = makeStore();
+        const announce = vi.spyOn(store, 'announce');
+        store.registerOption(card(1));
+        announce.mockClear();
+        store.select(1);
+        expect(announce).toHaveBeenCalledWith('1 item selected');
+    });
+});

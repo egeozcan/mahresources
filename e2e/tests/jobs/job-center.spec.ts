@@ -357,7 +357,7 @@ test.describe('Job Center', () => {
     // The default list hides what the viewer dismissed; the live refresh removes both,
     // and with them the bar, so the summary stays visible on the page itself.
     await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.getByTestId('job-list-notice')).toHaveText('2 of 2 jobs: dismiss.');
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Dismissed 2 of 2 selected jobs.');
     await expect.poll(async () => {
       const response = await request.get(`/v1/jobs?search=${encodeURIComponent(name)}&dismissed=true`);
       return ((await response.json()).jobs as Job[]).length;
@@ -401,6 +401,12 @@ test.describe('Job Center', () => {
     await expect(page.locator('[data-job-id]')).toHaveCount(1, { timeout: 10_000 });
     await expect(page.getByTestId('bulk-selected-count')).toHaveText('1 job selected');
     await expect.poll(() => page.evaluate(() => [...(window as any).Alpine.store('bulkSelection').selectedIds])).toEqual([fifth.canonicalId]);
+
+    // Outcomes and the summary name the Job, not its id or the command's key.
+    await page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Pin', exact: true }).click();
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Pinned 1 of 1 selected job.');
+    const outcomes = page.getByRole('list', { name: 'Bulk command outcomes' });
+    await expect(outcomes.getByRole('link', { name: `${name}-e.bin`, exact: true })).toHaveAttribute('href', `/job?id=${fifth.canonicalId}`);
   });
 
   test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {

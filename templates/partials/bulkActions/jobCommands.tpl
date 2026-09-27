@@ -16,7 +16,7 @@
     </div>
     <ul x-show="outcomes.length" class="mt-2 space-y-1 text-xs" aria-label="Bulk command outcomes">
         <template x-for="outcome in outcomes" :key="outcome.jobId">
-            <li class="flex flex-wrap gap-x-2"><span class="font-mono" x-text="outcome.jobId"></span><span x-text="outcome.message || outcome.code || outcome.status"></span></li>
+            <li class="flex flex-wrap gap-x-2"><a :href="outcome.url" class="text-amber-900 underline" x-text="outcome.title"></a><span x-text="outcome.text"></span></li>
         </template>
     </ul>
 </div>

@@ -318,6 +318,82 @@ export function jobList() {
     };
 }
 
+// What a bulk command did, said in the past tense for the commands whose result
+// the rows show; any other command is said as done.
+const BULK_DONE = {
+    pin: count => `Pinned ${count}`,
+    unpin: count => `Unpinned ${count}`,
+    dismiss: count => `Dismissed ${count}`,
+    undismiss: count => `Returned ${count}`,
+    retry: count => `Retried ${count}`,
+    cancel: count => `Cancelled ${count}`,
+};
+
+// A refusal's code, for an outcome that carries no message of its own.
+const BULK_REFUSAL_TEXT = {
+    'not-advertised': 'No longer offered',
+    'not-found': 'Not found',
+    conflict: 'Changed meanwhile; try again',
+    'chain-conflict': 'Already retried',
+    'in-flight': 'Already running',
+    'key-reused': 'Sent twice; try again',
+};
+
+function selectedJobs(count, total) {
+    return `${count} of ${total} selected ${total === 1 ? 'job' : 'jobs'}`;
+}
+
+function namedList(names) {
+    if (names.length <= 3) return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+}
+
+/**
+ * A bulk command's results in words: one row per Job, named by its title and
+ * linked, because the refresh the command causes can take its card away; and
+ * one sentence for the notice and the live region, saying what was done to how
+ * many of the selected Jobs, and which were not, by name.
+ */
+export function bulkCommandReport(command, ids, results, titles = {}) {
+    const outcomes = (results || []).map(result => {
+        const done = result.status === 'succeeded' && result.code === 'applied';
+        const requested = result.code === 'requested';
+        return {
+            jobId: result.jobId,
+            title: titles[result.jobId] || 'Job',
+            url: `/job?id=${encodeURIComponent(result.jobId)}`,
+            text: done ? 'Done' : requested ? 'Requested'
+                : (result.message || BULK_REFUSAL_TEXT[result.code] || result.code || result.status || 'Not done'),
+            outcome: done ? 'done' : requested ? 'requested' : 'refused',
+        };
+    });
+    const total = ids.length;
+    const count = kind => outcomes.filter(outcome => outcome.outcome === kind).length;
+    const done = count('done');
+    const requested = count('requested');
+    const refused = outcomes.filter(outcome => outcome.outcome === 'refused');
+    const label = commandLabel(command);
+    const parts = [];
+    if (done > 0) {
+        const phrase = BULK_DONE[command?.key];
+        parts.push(phrase
+            ? `${phrase(selectedJobs(done, total))}${command.key === 'undismiss' ? ' to the list' : ''}.`
+            : `${label} done for ${selectedJobs(done, total)}.`);
+    }
+    if (requested > 0) parts.push(`${label} requested for ${selectedJobs(requested, total)}.`);
+    if (refused.length > 0) {
+        const lead = parts.length ? 'Not done for' : `${label} was not done for`;
+        const names = namedList(refused.map(outcome => outcome.title));
+        parts.push(refused.length === 1
+            ? `${lead} ${names}: ${refused[0].text}.`
+            : `${lead} ${names}; each says why in the list of outcomes.`);
+    }
+    return {
+        message: parts.join(' '),
+        outcomes: outcomes.map(({ outcome: _, ...row }) => row),
+    };
+}
+
 function idempotencyKey() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
     return `job-command-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -476,6 +552,9 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                     return;
                 }
             }
+            // The titles are read now: the refresh the command causes can take
+            // a card, and its title, away before the answer is shown.
+            const titles = Object.fromEntries(ids.map(id => [id, this.$selection.options[id]?.entity?.title || this.details[id]?.title || '']));
             const key = idempotencyKey();
             this.busy = true;
             this.outcomes = [];
@@ -492,10 +571,10 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                         method: 'POST', body: JSON.stringify({ jobIds: ids }),
                     }, payload);
                 }
-                this.outcomes = payload.results || payload.outcomes || [];
-                const applied = this.outcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;
+                const report = bulkCommandReport(command, ids, payload.results || payload.outcomes || [], titles);
+                this.outcomes = report.outcomes;
                 if (response.ok) {
-                    this.report(`${applied} of ${ids.length} ${ids.length === 1 ? 'job' : 'jobs'}: ${commandLabel(command).toLowerCase()}.`);
+                    this.report(report.message);
                 } else {
                     this.report(payload.error || `The bulk command could not be completed (${response.status}).`, true);
                 }

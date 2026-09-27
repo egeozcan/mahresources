@@ -1,5 +1,5 @@
 {% with actions=bulkActions(bulkEntity, pluginBulkActions) %}
-<div x-data>
+<div x-data x-init="$selection.noun = '{{ bulkEntity|escapejs }}'">
     <div class="pb-3" x-show="$selection.selectedIds.size === 0" x-collapse>
         {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
         {# MRQL can render resources, notes, and groups in separate result buckets, #}
