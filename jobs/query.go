@@ -1107,13 +1107,29 @@ func (s *Service) PublishedEvents(deps Deps, access Access, afterDelivery uint64
 	return eventsOf(rows), nil
 }
 
+// EventSequenceHead returns the last delivery sequence the allocator handed out,
+// or zero when it has handed out none: the highest cursor this database has ever
+// issued. Nothing lowers it. Retention deletes ended Jobs and their events, and a
+// viewer's visibility can narrow, but the allocator row keeps its value, so a
+// resume cursor above it was issued by a different database, one since restored
+// from an older backup or wiped, and never by this one.
+func (s *Service) EventSequenceHead(deps Deps) (uint64, error) {
+	var values []uint64
+	if err := deps.DB.Model(&models.JobEventSequence{}).
+		Where("id = ?", models.JobEventSequenceRowID).
+		Pluck("value", &values).Error; err != nil {
+		return 0, fmt.Errorf("jobs: read event sequence head: %w", err)
+	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+	return values[0], nil
+}
+
 // PublishedEventHead returns the delivery sequence of the last published event
-// the asker may see, or zero when there is none: the highest cursor this asker's
-// stream could have handed out. A resume cursor above it was issued by a database
-// this one is not, such as one since restored from an older backup or wiped, and
-// the stream answers it as a reset rather than waiting for the sequence to catch
-// up. It is the asker's own head rather than the allocator's, which would tell an
-// account how much work every other account has done.
+// the asker may see, or zero when there is none. A stream that resets a cursor
+// this database never issued resumes from here: nothing below it is news to a
+// client starting over, and nothing above it has been published for this asker.
 func (s *Service) PublishedEventHead(deps Deps, access Access) (uint64, error) {
 	var heads []uint64
 	err := deps.DB.Model(&models.JobEvent{}).

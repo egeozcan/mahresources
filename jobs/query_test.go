@@ -2526,3 +2526,41 @@ func TestPublishedEventHeadIsTheHighestCursorTheAskerCouldHold(t *testing.T) {
 		}
 	}
 }
+
+// TestEventSequenceHeadNeverFallsWhenEventsAreDeleted pins the value a stream
+// tells a cursor this database issued from one it never did: the allocator's.
+// Retention deletes ended Jobs and their events, and a viewer's visibility can
+// narrow, and neither may make a cursor this database handed out look foreign.
+func TestEventSequenceHeadNeverFallsWhenEventsAreDeleted(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 0 {
+		t.Fatalf("head before anything was published = %d, %v; want 0", head, err)
+	}
+	for i := 0; i < 2; i++ {
+		acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "download", Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	if _, err := svc.PublishPendingEvents(deps, 100); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 2 {
+		t.Fatalf("head after two published events = %d, %v; want 2", head, err)
+	}
+
+	if err := deps.DB.Where("1 = 1").Delete(&models.JobEvent{}).Error; err != nil {
+		t.Fatalf("delete events: %v", err)
+	}
+	if err := deps.DB.Where("1 = 1").Delete(&models.Job{}).Error; err != nil {
+		t.Fatalf("delete jobs: %v", err)
+	}
+	if head, err := svc.EventSequenceHead(deps); err != nil || head != 2 {
+		t.Fatalf("head after the events were deleted = %d, %v; want it to stay 2", head, err)
+	}
+	if visible, err := svc.PublishedEventHead(deps, Access{UserID: 1, Administrator: true}); err != nil || visible != 0 {
+		t.Fatalf("visible head after the events were deleted = %d, %v; want 0", visible, err)
+	}
+}

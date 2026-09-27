@@ -18,6 +18,7 @@ type JobTimelineContext interface {
 
 type CanonicalJobEventContext interface {
 	GetPublishedJobEvents(afterDelivery uint64, limit int) ([]jobs.Event, error)
+	GetJobEventSequenceHead() (uint64, error)
 	GetPublishedJobEventHead() (uint64, error)
 	GetLiveJobProgress(since time.Time, limit int) ([]jobs.Snapshot, error)
 }
@@ -174,20 +175,28 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 
-		// A resume cursor above the last event this viewer could have been handed
-		// was issued by a database this one is not: a tab that outlived a restore
-		// from an older backup, or an ephemeral restart. Waiting for the sequence to
-		// catch up would deliver nothing until it did, so the stream resumes at the
-		// real head and its caught-up marker says it reset, which tells the client
-		// to drop what it holds and read again. A failed read closes the stream, as
-		// a failed poll does, and the client reconnects.
+		// A resume cursor above the highest this database ever issued was issued
+		// by another database: a tab that outlived a restore from an older
+		// backup, or an ephemeral restart. Waiting for the sequence to catch up
+		// would deliver nothing until it did, so the stream resumes at the
+		// viewer's own head and its caught-up marker says it reset, which tells
+		// the client to drop what it holds and read again. The test is the
+		// allocator's head rather than the viewer's: retention deleting the
+		// viewer's newest events, or the viewer's visibility narrowing, leaves a
+		// cursor this database did issue above the viewer's head, and a reset
+		// there would reload pages for nothing. A failed read closes the stream,
+		// as a failed poll does, and the client reconnects.
 		reset := false
 		if cursor > 0 {
-			head, err := ctx.GetPublishedJobEventHead()
+			issued, err := ctx.GetJobEventSequenceHead()
 			if err != nil {
 				return
 			}
-			if cursor > head {
+			if cursor > issued {
+				head, err := ctx.GetPublishedJobEventHead()
+				if err != nil {
+					return
+				}
 				cursor, reset = head, true
 			}
 		}

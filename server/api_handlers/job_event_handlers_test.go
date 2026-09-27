@@ -33,16 +33,22 @@ type jobEventContextStub struct {
 	progressErr   error
 	progressSince []time.Time
 	progressMu    sync.Mutex
-	// head is the published head the stream checks a resume cursor against;
-	// nil means every cursor is within it.
-	head *uint64
+	// issued is the allocator's head, the highest cursor the database ever
+	// issued; nil means every cursor is within it. head is the viewer's own
+	// published head, which a reset resumes from.
+	issued *uint64
+	head   uint64
+}
+
+func (s *jobEventContextStub) GetJobEventSequenceHead() (uint64, error) {
+	if s.issued == nil {
+		return math.MaxUint64, nil
+	}
+	return *s.issued, nil
 }
 
 func (s *jobEventContextStub) GetPublishedJobEventHead() (uint64, error) {
-	if s.head == nil {
-		return math.MaxUint64, nil
-	}
-	return *s.head, nil
+	return s.head, nil
 }
 
 func (s *jobEventContextStub) GetLiveJobProgress(since time.Time, _ int) ([]jobs.Snapshot, error) {
@@ -548,28 +554,33 @@ func TestJobTimelineOffersANextPageOnlyWhenOneExists(t *testing.T) {
 	}
 }
 
-// TestCanonicalJobSSEResetsACursorBeyondTheHead covers a tab that outlived a
-// restore or a wipe: it reconnects with a cursor this database never issued.
-// Resuming from it delivers nothing until the new sequence passes the old one,
-// so the stream resumes at the viewer's real head and says it reset.
-func TestCanonicalJobSSEResetsACursorBeyondTheHead(t *testing.T) {
+// TestCanonicalJobSSEResetsOnlyACursorThisDatabaseNeverIssued covers a tab that
+// outlived a restore or a wipe: it reconnects with a cursor above the highest
+// this database ever issued. Resuming from it delivers nothing until the new
+// sequence passes the old one, so the stream resumes at the viewer's own head
+// and says it reset. A cursor this database did issue is never reset, however
+// far above the viewer's head it is now: retention deletes the newest events
+// and a viewer's visibility narrows, and neither is another database.
+func TestCanonicalJobSSEResetsOnlyACursorThisDatabaseNeverIssued(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		lastID     string
+		issued     uint64
 		head       uint64
 		wantAfter  uint64
 		wantMarker string
 	}{
 		// A reset marker carries the cursor as its SSE id too, so the browser
 		// resumes from the new head rather than the cursor it was reset from.
-		{"a cursor beyond the head", "v2:5000", 875, 875, "id: v2:875\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875","reset":true}`},
-		{"a cursor beyond an empty stream", "v2:12", 0, 0, "id: v2:0\nevent: job-caught-up\ndata: " + `{"cursor":"v2:0","reset":true}`},
-		{"a cursor at the head", "v2:875", 875, 875, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875"}`},
-		{"a cursor below the head", "v2:874", 875, 874, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:874"}`},
+		{"a cursor above the allocator", "v2:5000", 875, 800, 800, "id: v2:800\nevent: job-caught-up\ndata: " + `{"cursor":"v2:800","reset":true}`},
+		{"a cursor above an empty database", "v2:12", 0, 0, 0, "id: v2:0\nevent: job-caught-up\ndata: " + `{"cursor":"v2:0","reset":true}`},
+		{"a cursor above the viewer's head but issued here", "v2:850", 875, 800, 850, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:850"}`},
+		{"a cursor at the allocator", "v2:875", 875, 875, 875, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:875"}`},
+		{"a cursor below the head", "v2:874", 875, 875, 874, "\n\nevent: job-caught-up\ndata: " + `{"cursor":"v2:874"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			head := tt.head
-			ctx := &jobEventContextStub{head: &head}
+			issued := tt.issued
+			ctx := &jobEventContextStub{issued: &issued, head: tt.head}
 			response := newSSETestWriter()
 			requestCtx, cancel := context.WithCancel(context.Background())
 			request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2", nil).WithContext(requestCtx)
