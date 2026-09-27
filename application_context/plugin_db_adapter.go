@@ -75,6 +75,11 @@ func (a *pluginDBAdapter) boundContext(inv *plugin_system.Invocation) *Mahresour
 	return bound
 }
 
+// actorUnresolvedLogName labels the log entry an unreadable acting user leaves.
+// It names no caller: plugin calls, background downloads, deferred downloads and
+// every Job adapter resolve their actor here.
+const actorUnresolvedLogName = "Acting user unresolved"
+
 // principalForPluginActor resolves the identity a plugin call must run as, from
 // the only thing the plugin host is allowed to know about the caller: a user id.
 //
@@ -117,8 +122,8 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 		// stdout, so in a real outage it is the least likely write to land.
 		// Logging only the outage keeps the noise off the common path.
 		if !errors.Is(err, ErrUserNotFound) {
-			ctx.Logger().Warning(models.LogActionPlugin, "plugin", nil, "Plugin actor unresolved",
-				fmt.Sprintf("could not read user %d; denying this plugin call: %v", actorID, err), nil)
+			ctx.Logger().Warning(models.LogActionSystem, "user", nil, actorUnresolvedLogName,
+				fmt.Sprintf("could not read user %d; denying what that user's work would have done: %v", actorID, err), nil)
 		}
 		return deniedPluginPrincipal(actorID)
 	}

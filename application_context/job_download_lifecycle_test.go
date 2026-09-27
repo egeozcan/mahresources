@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
@@ -81,5 +83,51 @@ func TestAGracefulShutdownReturnsARunningDownloadToTheQueue(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("the shutdown wrote %d history rows for a download that goes on", rows)
+	}
+}
+
+// A deferred download that ran leaves a legacy history row like any other
+// download, and its queue entry's id resolves to its Job: the id is the one the
+// download surfaces show, so it is recorded as a handle of the Job when the
+// transfer starts.
+func TestAFiredDeferredDownloadLeavesAHistoryRow(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	enableDownloadTestPlugin(t, ctx)
+	actor, err := ctx.CreateUser(&UserInput{Username: "deferred-history", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := ctx.CreateScheduledDownload(downloadTestPlugin, actor.ID,
+		&query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/deferred-history.bin"}, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("create the deferred download: %v", err)
+	}
+	job := deferredDownloadJob(t, ctx, row.ID)
+	waitForSnapshot(t, ctx, job.ID, "the deferred download to run and end",
+		func(snap jobs.Snapshot) bool { return snap.StartedAt != nil && snap.State.Terminal() })
+
+	entry, found := ctx.downloadManager.GetJobByCanonicalJobID(job.ID)
+	if !found {
+		t.Fatal("the deferred download never reached the queue")
+	}
+	if resolved, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, entry.ID); err != nil || resolved != job.ID {
+		t.Fatalf("the queue entry's id resolves to %q (%v), want the deferred Job %s", resolved, err, job.ID)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var history models.DownloadHistoryEntry
+	for {
+		err := ctx.db.Where("job_id = ?", entry.ID).First(&history).Error
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the deferred download left no history row: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory,
+		strconv.FormatUint(uint64(history.ID), 10)).First(&mapping).Error; err != nil || mapping.JobID != job.ID {
+		t.Fatalf("the history row maps to %q (%v), want the deferred Job %s", mapping.JobID, err, job.ID)
 	}
 }

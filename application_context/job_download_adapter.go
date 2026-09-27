@@ -386,8 +386,18 @@ func (a *downloadJobAdapter) start(execution jobs.Execution, input *downloadJobI
 	// successor, and the finished entry it used to name is replaced rather than
 	// duplicated: one legacy id means one current execution, and the legacy history
 	// row for that id goes on describing the attempt that is running.
+	//
+	// A Job accepted without one (a deferred download is accepted under its row's
+	// id) is given one here, before the entry exists. The entry's id is what the
+	// download surfaces show and look it up by, and the legacy history row is
+	// written under it, so an id that named no Job was a row nobody could resolve
+	// and a history write that failed.
 	if legacyID == "" {
 		legacyID = download_queue.NewJobID()
+		if err := a.ctx.JobService().AddLegacyHandle(a.ctx.jobDeps(), execution.JobID,
+			jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: legacyID}); err != nil {
+			return nil, err
+		}
 	}
 	return a.ctx.downloadManager.SubmitForPluginWithOptions(input.Creator, job.OwnerUserID, input.Plugin,
 		download_queue.SubmissionOptions{

@@ -107,15 +107,47 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 		db = ctx.WithPrincipal(&auth.Principal{UserID: *rec.CreatedByUserId}).db
 	}
 
-	err := db.Transaction(func(tx *gorm.DB) error {
-		retired, err := legacyJobInputsRetiredOn(tx)
+	for attempt := 0; ; attempt++ {
+		// Read outside the transaction, so that the transaction's first statement
+		// is its upsert. On SQLite in WAL mode a transaction that reads first holds
+		// a snapshot it cannot promote once another connection commits, and that
+		// failure skips busy_timeout: under download traffic the history write
+		// failed with "database is locked" at once and the row was lost.
+		retired, err := ctx.legacyJobInputsRetired()
 		if err != nil {
 			return err
 		}
-		if retired {
-			entry.URL = downloadURLProjection(rec.URL)
-			entry.Payload = nil
+		err = ctx.recordTerminalDownloadOnce(db, rec, entry, retired)
+		if err == nil {
+			return nil
 		}
+		if attempt >= downloadHistoryWriteAttempts-1 {
+			return err
+		}
+		if !errors.Is(err, errWriterEpochMoved) && !isLockContentionError(err) && !isDeadlockError(err) {
+			return err
+		}
+		time.Sleep(downloadHistoryWriteBackoff * time.Duration(attempt+1))
+	}
+}
+
+// downloadHistoryWriteAttempts bounds RecordTerminalDownload's retry of its
+// transaction, and downloadHistoryWriteBackoff is multiplied by the attempt number
+// between tries. A failed attempt rolled back, so the next one writes the row
+// exactly once.
+const (
+	downloadHistoryWriteAttempts = 4
+	downloadHistoryWriteBackoff  = 25 * time.Millisecond
+)
+
+// recordTerminalDownloadOnce is one attempt of RecordTerminalDownload's
+// transaction, made under the writer epoch its caller read.
+func (ctx *MahresourcesContext) recordTerminalDownloadOnce(db *gorm.DB, rec download_queue.HistoryRecord, entry models.DownloadHistoryEntry, retired bool) error {
+	if retired {
+		entry.URL = downloadURLProjection(rec.URL)
+		entry.Payload = nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "job_id"}},
 			// An outcome never overwrites a newer one. The recording goroutine runs
@@ -154,6 +186,15 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 		}).Create(&entry).Error; err != nil {
 			return err
 		}
+		// Read again now that the upsert holds the writer lock: the row must have
+		// been written under the epoch that is current when it commits.
+		stillRetired, err := legacyJobInputsRetiredOn(tx)
+		if err != nil {
+			return err
+		}
+		if stillRetired != retired {
+			return errWriterEpochMoved
+		}
 		if ctx.JobService() != nil && tx.Migrator().HasTable(&models.JobSourceMapping{}) {
 			var stored models.DownloadHistoryEntry
 			if err := tx.Where("job_id = ?", rec.JobID).First(&stored).Error; err != nil {
@@ -165,7 +206,6 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 		}
 		return nil
 	})
-	return err
 }
 
 // GetDownloadHistory lists history rows for the given filters.
