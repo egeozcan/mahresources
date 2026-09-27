@@ -17,6 +17,7 @@ import (
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
+	"mahresources/plugin_system"
 )
 
 func TestPluginCommandControllerIsSharedByClones(t *testing.T) {
@@ -275,6 +276,51 @@ func requireControllerHealingPluginQuarantined(t *testing.T, ctx *MahresourcesCo
 		require.Regexp(t, `command_retry=[1-9][0-9]*\|fs_retry=[1-9][0-9]*$`, output)
 	} else {
 		require.Contains(t, output, "command_retry=nil|fs_retry=nil")
+	}
+}
+
+// TestAPluginRouteAnswersTryLaterWhileCommandsRecover drives the E2E command
+// fixture's own route while recovery holds commands back: the route is told
+// when the host tries again and answers 503 with it, rather than the 400 a
+// plugin gives a request it cannot serve.
+func TestAPluginRouteAnswersTryLaterWhileCommandsRecover(t *testing.T) {
+	source, err := os.ReadFile("../e2e/test-plugins/test-commands/plugin.lua")
+	require.NoError(t, err)
+	pluginDir := t.TempDir()
+	writeConsentTestPlugin(t, pluginDir, "test-commands", string(source))
+	ctx := createTestContextWithPlugins(t, pluginDir)
+	ctx.SetJobService(jobs.NewService())
+	replayKeyring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
+	require.NoError(t, err)
+	ctx.SetJobReplayKeyring(replayKeyring)
+	migratePluginCommandJobTestModels(t, ctx)
+	require.NoError(t, ctx.db.AutoMigrate(
+		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+	))
+	_, err = ctx.EnsurePluginStates()
+	require.NoError(t, err)
+	require.NoError(t, ctx.SetPluginEnabledWithOptions("test-commands", true, PluginEnableOptions{ConfirmCommands: true}))
+	t.Cleanup(ctx.PluginManager().Close)
+	createControllerRecoveryRun(t, ctx, "route-blocker", 4541)
+
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	for _, route := range []string{"run", "read-input"} {
+		response := ctx.PluginManager().HandleAPI(context.Background(), "test-commands", "POST", route,
+			plugin_system.PageContext{Body: `{"mode":"wait"}`})
+		require.Equal(t, 503, response.StatusCode, "route %s: %+v", route, response)
+		body, ok := response.Body.(map[string]any)
+		require.True(t, ok, "route %s body = %#v", route, response.Body)
+		require.Contains(t, body["error"], "plugin command runtime is unavailable")
+		retryAfter, ok := body["retry_after"].(float64)
+		require.True(t, ok && retryAfter >= 1, "route %s retry_after = %#v", route, body["retry_after"])
 	}
 }
 

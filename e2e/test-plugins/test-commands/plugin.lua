@@ -19,13 +19,25 @@ plugin = {
     description = "Deterministic E2E fixture for plugin command lifecycle tests",
 }
 
+-- refuse answers a refused command. A runtime the host is still recovering
+-- comes with the seconds until it tries again: that is "try later" (503), not
+-- a bad request.
+local function refuse(ctx, err, retry_after, status)
+    if retry_after then
+        ctx.status(503)
+        ctx.json({ error = err, retry_after = retry_after })
+        return
+    end
+    ctx.status(status)
+    ctx.json({ error = err })
+end
+
 function init()
     mah.api("POST", "run", function(ctx)
         local body = mah.json.decode(ctx.body)
-        local run_id, err = mah.commands.run("fixture", { mode = body.mode })
+        local run_id, err, retry_after = mah.commands.run("fixture", { mode = body.mode })
         if err then
-            ctx.status(500)
-            ctx.json({ error = err })
+            refuse(ctx, err, retry_after, 500)
             return
         end
         ctx.status(202)
@@ -44,10 +56,9 @@ function init()
             end
             options = { inputs = inputs }
         end
-        local run_id, err = mah.commands.run("read_input", {}, nil, options)
+        local run_id, err, retry_after = mah.commands.run("read_input", {}, nil, options)
         if err then
-            ctx.status(400)
-            ctx.json({ error = err })
+            refuse(ctx, err, retry_after, 400)
             return
         end
         ctx.status(202)
