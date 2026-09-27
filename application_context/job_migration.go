@@ -213,16 +213,24 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 			updated = current
 			return nil
 		}
-		var handle models.JobLegacyHandle
-		err = tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, current.SourceID).First(&handle).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) && row.JobID != "" {
-			err = tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error
+		// A mapping that names a Job keeps it: that is the Job the row was accepted
+		// with (deferredDownloadJobIDOn), and the row's legacy handle is not, since a
+		// Retry moves it to its successor. The handle only names a Job for a mapping
+		// that has none.
+		jobID := current.JobID
+		if jobID == "" {
+			var handle models.JobLegacyHandle
+			err = tx.Where("namespace = ? AND handle = ?", ScheduledDownloadHandleNamespace, current.SourceID).First(&handle).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) && row.JobID != "" {
+				err = tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error
+			}
+			if err != nil {
+				return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-handle-missing")
+			}
+			jobID = handle.JobID
+			current.JobID, current.Origin = jobID, models.JobSourceOriginDualPublished
 		}
-		if err != nil {
-			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-handle-missing")
-		}
-		current.JobID, current.Origin = handle.JobID, models.JobSourceOriginDualPublished
-		purged, reason, err := ctx.downloadReplayPurged(tx, handle.JobID, now)
+		purged, reason, err := ctx.downloadReplayPurged(tx, jobID, now)
 		if err != nil {
 			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "canonical-replay-unavailable")
 		}
@@ -230,7 +238,7 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 			at := now
 			current.Status, current.PurgedAt, current.PurgeReason = models.JobSourceMappingPurged, &at, reason
 			current.ScrubbedAt, current.PostScrubHash = nil, ""
-		} else if err := ctx.verifyScheduledDownloadReplay(tx, handle.JobID, row); err != nil {
+		} else if err := ctx.verifyScheduledDownloadReplay(tx, jobID, row); err != nil {
 			return migrationBlocker(jobMigrationScheduledDownload, current.SourceID, "source-canonical-replay-mismatch")
 		} else {
 			current.Status, current.PurgedAt, current.PurgeReason = models.JobSourceMappingCopied, nil, ""

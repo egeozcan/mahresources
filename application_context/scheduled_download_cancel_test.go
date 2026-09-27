@@ -761,6 +761,38 @@ func TestStartupClosesASubmittedRowNamingARetryOnceItsOwnJobIsGone(t *testing.T)
 }
 
 // A row an earlier release left pending behind a cancelled Job, then retried,
+// changes before the sources are retired, so the migration re-proves it. The
+// mapping keeps naming the Job the row was accepted with, not the Retry the row's
+// legacy handle has moved to, and a cancel of the row leaves that Retry alone.
+func TestAMigrationRefreshKeepsTheRowsOwnJobAcrossARetry(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	holdJobReplayKey(t, ctx, sharedReplayKey(t))
+	enableDownloadTestPlugin(t, ctx)
+	actor, err := ctx.CreateUser(&UserInput{Username: "deferred-owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the acting user: %v", err)
+	}
+	row, own, successor := legacyPendingRowRetried(t, ctx, actor.ID, "legacy-retried-refreshed")
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Update("due_at", row.DueAt.Add(time.Hour)).Error; err != nil {
+		t.Fatalf("change the pending row: %v", err)
+	}
+	if _, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20}); err != nil {
+		t.Fatalf("copy and verify the sources: %v", err)
+	}
+	if mapping := scheduledDownloadMapping(t, ctx, row.ID); mapping.JobID != own.ID {
+		t.Fatalf("the refreshed mapping names %s, want the row's own Job %s, not the Retry %s", mapping.JobID, own.ID, successor.ID)
+	}
+
+	if cancelled, err := ctx.CancelScheduledDownload(row.ID); err != nil || !cancelled {
+		t.Fatalf("cancel the row = %v, %v", cancelled, err)
+	}
+	if job, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, successor.ID); err != nil || job.State != successor.State {
+		t.Fatalf("the Retry is %s (%v), want it left %s", job.State, err, successor.State)
+	}
+}
+
+// A row an earlier release left pending behind a cancelled Job, then retried,
 // comes due without startup having reconciled it: the sweep records the end of
 // its own Job, not the Retry's download.
 func TestADueEarlierReleasePendingRowIgnoresItsRetry(t *testing.T) {
