@@ -696,7 +696,10 @@ test.describe('Lightbox Info Panel', () => {
     const editPanel = lightbox.locator('[data-edit-panel]');
     await expect(editPanel).toBeVisible();
 
-    // Blur focused input, then press 'e' to toggle edit panel closed (canNavigate() requires no input focused)
+    // Opening the panel moves focus into it once its details read answers, and E is
+    // not a shortcut while focus is inside the panel. Wait for that move before taking
+    // focus back out: a move landing after the blur would swallow the key press.
+    await expect(editPanel.getByRole('button', { name: 'Close info panel' })).toBeFocused();
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('e');
 
