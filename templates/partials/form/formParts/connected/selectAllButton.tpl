@@ -8,7 +8,14 @@
 {# registry made the first frame disagree with the settled one, so x-collapse   #}
 {# animated the row open on load and shoved the list and the footer's           #}
 {# pagination down 37px. See the method for the measurement.                    #}
-<div x-data x-show="$selection.hasSelectableItems() && ($selection.selectedIds.size === 0 || $selection.selectedIds.size !== Object.keys($selection.options).length)" x-collapse>
+{#                                                                              #}
+{# The two terms sit on two elements so that only the second one animates.     #}
+{# Where the rows arrive after the page does, as the MRQL page's results do,   #}
+{# the first term flips when they land, and animating that grew the row in     #}
+{# over the cards just drawn beneath it. The row now appears with its rows,    #}
+{# and only a change of selection collapses or expands it.                     #}
+<div x-data x-show="$selection.hasSelectableItems()">
+    <div x-show="$selection.selectedIds.size === 0 || $selection.selectedIds.size !== Object.keys($selection.options).length" x-collapse>
     <button type="button"
         data-bulk-select-all
         @click.prevent="$selection.selectAll()"
@@ -21,4 +28,5 @@
     >
         {% if text %}{{ text }}{% else %}Select All{% endif %}
     </button>
+    </div>
 </div>
