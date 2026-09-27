@@ -109,6 +109,39 @@ async function recordFirstSights(page: import('@playwright/test').Page) {
   });
 }
 
+// Holds the drawer's Job reads (its lists and its detail reads) while closed. The
+// stream still delivers; only what the drawer can read is held. close() lets
+// through the reads already on their way and returns once none is left in flight,
+// so nothing the page reads afterwards predates what the test does next.
+async function holdJobReads(page: import('@playwright/test').Page) {
+  let open = true;
+  let inFlight = 0;
+  const waiting: Array<() => void> = [];
+  const isRead = (url: URL) => url.pathname === '/v1/jobs' ||
+    (/^\/v1\/jobs\/[^/]+$/.test(url.pathname) && url.pathname !== '/v1/jobs/events');
+  await page.route(isRead, async route => {
+    while (!open) await new Promise<void>(resolve => waiting.push(resolve));
+    inFlight += 1;
+    try {
+      await route.fulfill({ response: await route.fetch() });
+    } catch {
+      // The page gave the read up (a newer refresh superseded it).
+    } finally {
+      inFlight -= 1;
+    }
+  });
+  return {
+    async close() {
+      open = false;
+      await expect.poll(() => inFlight).toBe(0);
+    },
+    open() {
+      open = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+  };
+}
+
 function firstSight(page: import('@playwright/test').Page, id: string): Promise<string | undefined> {
   return page.evaluate(jobId => (window as any).__firstSights[jobId], id);
 }
@@ -539,13 +572,21 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
         }
         await waitUntilLive(page);
         await recordFirstSights(page);
+        const reads = await holdJobReads(page);
 
         // One from another client, one from this tab; one failure, one success,
         // swapped between the two runs.
         const failedName = `instant-failed-${stamp}.bin`;
         const succeededName = `instant-succeeded-${stamp}.bin`;
+        // The failure is the case where the drawer's first read finds the outcome.
+        // Its whole life usually fits in one publish tick, but a tick can fall
+        // between its start and its failure, and a read that event prompts would
+        // find it running. The drawer reads nothing until it has failed.
+        await reads.close();
         const failedId = await submitDownload(drawerOpen ? page : request, `${base}/missing/${failedName}`, failedName);
         await submitDownload(drawerOpen ? request : page, `${base}/ok/${succeededName}`, succeededName);
+        await expect.poll(async () => (await readJob(request, failedId))?.state, { timeout: 20_000 }).toBe('failed');
+        reads.open();
 
         await expect.poll(async () => mentions(await announcements(page), failedName).map(entry => entry.text).join(' | '), { timeout: 20_000 })
           .toContain(`${failedName} failed: HTTP 404 Not Found.`);
@@ -558,11 +599,11 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
         await submitDownload(request, `${base}/missing/${laterName}`, laterName);
         await expect.poll(async () => mentions(await announcements(page), laterName).length, { timeout: 20_000 }).toBe(1);
 
-        // The 404 fails within milliseconds, so the drawer's first read of it
-        // is its outcome. A success writes a resource first, which under load
-        // can outlast a publish tick, and a refresh another job's event
-        // triggers may then see it running; it is still said exactly once.
-        // The unit tests pin that ordering for successes.
+        // The drawer first read the failure at its outcome, as arranged above. A
+        // success writes a resource first, which under load can outlast a publish
+        // tick, and a refresh another job's event triggers may then see it
+        // running; it is still said exactly once. The unit tests pin that
+        // ordering for successes.
         expect(await firstSight(page, failedId), 'the drawer must first see the job at its outcome').toBe('failed');
         const said = await announcements(page);
         expect(mentions(said, failedName)).toHaveLength(1);
@@ -572,6 +613,7 @@ test.describe('Jobs drawer announcements of jobs that finish at once', () => {
           expect(entry.inDrawer, entry.text).toBe(drawerOpen);
         }
       } finally {
+        await page.unrouteAll({ behavior: 'ignoreErrors' });
         server.close();
       }
     });
