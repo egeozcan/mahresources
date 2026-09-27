@@ -241,6 +241,13 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		log.Printf("job runtime: publishing pending Job events failed: %v", err)
 	}
 
+	// A claim held by a process that is proved gone — a crash on this host — is
+	// reconciled now rather than once its lease runs out, so its Job does not read
+	// as running for the length of a lease after the restart.
+	if _, err := r.service.ExpireAbandonedClaims(r.depsFor(ctx), runtimeClaimantGone, jobs.DefaultReconcileBatch); err != nil && ctx.Err() == nil {
+		log.Printf("job runtime: expiring claims of stopped processes failed: %v", err)
+	}
+
 	report, err := r.service.ReconcileExpired(ctx, r.depsFor(ctx), r.claimant, jobs.DefaultReconcileBatch)
 	if err != nil {
 		log.Printf("job runtime: reconciliation failed: %v", err)
@@ -448,6 +455,20 @@ func (r *JobRuntime) depsFor(ctx context.Context) jobs.Deps {
 		deps.DB = deps.DB.WithContext(ctx)
 	}
 	return deps
+}
+
+// runtimeClaimantGone reports whether a claimant is a runtime identity whose
+// process is proved gone, for expiring its claims before their lease runs out.
+//
+// It asks Liveness, which proves a process gone only for an identity recorded in
+// this process table (the same host, boot session and pid namespace): a hostname
+// is not unique across machines, and a different boot id may be another live
+// machine configured with the same name rather than this one having rebooted.
+// Anything else is Unknown, and such a claim waits for its lease, as one no proof
+// answers for does.
+func runtimeClaimantGone(claimant string) bool {
+	identity, ok := plugin_system.ParseRuntimeIdentity(claimant)
+	return ok && identity.Liveness() == plugin_system.RuntimeGone
 }
 
 // defaultJobRuntimeClaimant names this runtime: the host and process that holds
