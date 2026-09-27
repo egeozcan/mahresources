@@ -753,6 +753,14 @@ export function jobCenter(options = {}) {
     };
 }
 
+// The dismiss label of a command's confirmation. Pause is asked about a download
+// that also offers Cancel, so a "Cancel" button in its dialog reads as cancelling
+// the download: it dismisses with "Go back" instead. Every other command keeps the
+// dialog's own default.
+export function commandDismissLabel(command) {
+    return command?.key === 'pause' ? 'Go back' : undefined;
+}
+
 const FORGET_CONFIRMATION = 'Forget this job’s saved replay input. Retry, Continue and Repeat will no longer be possible. Its sanitized history remains, and its outputs and artifacts are not affected. This cannot be undone.';
 
 // A command asks first only when it stops work or cannot be taken back: a
@@ -791,7 +799,12 @@ export function commandConfirmation(command) {
 export function commandConfirmOptions(job, command) {
     const label = commandLabel(command);
     const title = String(job?.title || job?.kind || '').trim();
-    return { title: title ? `${label}: ${title}` : label, confirmLabel: label, destructive: command?.destructive === true };
+    return {
+        title: title ? `${label}: ${title}` : label,
+        confirmLabel: label,
+        cancelLabel: commandDismissLabel(command),
+        destructive: command?.destructive === true,
+    };
 }
 
 function jobName(job) {

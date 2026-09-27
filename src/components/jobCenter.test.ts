@@ -311,6 +311,8 @@ describe('command confirmation rule', () => {
         expect(commandConfirmOptions({ title: 'big.iso' }, { key: 'cancel', label: 'Cancel', destructive: true }))
             .toEqual({ title: 'Cancel: big.iso', confirmLabel: 'Cancel', destructive: true });
         expect(commandConfirmOptions({ title: 'later.bin' }, { key: 'retry', label: 'Download now', confirmation: 'x' }).destructive).toBe(false);
+        // Pause is asked about a download that also offers Cancel.
+        expect(commandConfirmOptions({ title: 'big.iso' }, { key: 'pause', label: 'Pause', confirmation: 'x' }).cancelLabel).toBe('Go back');
     });
 
     test('refusal words follow the code, and a Kind\'s own reason is said as it gave it', () => {

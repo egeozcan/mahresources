@@ -1,7 +1,7 @@
 import { findListContainer } from '../utils/listContainer.js';
 import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { commandConfirmation, commandFocusSuccessorKeys, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
+import { commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel, reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence } from './jobCenter.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
@@ -412,7 +412,7 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,
-                    { title: commandLabel(command), confirmLabel: commandLabel(command), destructive: command?.destructive === true },
+                    { title: commandLabel(command), confirmLabel: commandLabel(command), cancelLabel: commandDismissLabel(command), destructive: command?.destructive === true },
                 );
                 if (!accepted) return;
                 // The dialog blocks the reader, not the live refresh: a card can leave
