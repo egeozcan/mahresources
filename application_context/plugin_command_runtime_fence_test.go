@@ -42,9 +42,10 @@ func TestPluginCommandDatabaseFenceIsBoundToOneStagingRootAndToken(t *testing.T)
 // the database's retained outputs and import sources, so its binding outlives
 // every restart; a process-private root (the MemoryFS default) is deleted with
 // its process, so its binding ends once that process has released the fence or
-// is proved gone. Proof is what the recorded owner allows: a process on this
-// host that no longer exists, or one from an earlier boot. An owner still
-// running, or on a host this process cannot inspect, keeps the binding.
+// is proved gone. Proof is what the recorded owner allows: a process in this
+// process table that no longer exists. An owner still running, from another
+// boot (which may be another machine with this hostname), or on a host this
+// process cannot inspect keeps the binding.
 func TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	current := plugin_system.CurrentRuntimeIdentity()
@@ -74,10 +75,18 @@ func TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner(t *testing.T) {
 	require.NotEmpty(t, second)
 	require.Equal(t, "/private/b", boundRoot().StagingRoot)
 
-	setOwner(current.Host + "/boot-that-ended/4242/0badc0de")
+	gone := current
+	gone.PID = 1 << 30
+	setOwner(gone.String())
 	_, err = ctx.acquirePluginCommandDBFenceFor("/private/c", true)
-	require.NoError(t, err, "an owner from an earlier boot is gone, so its private root is too")
+	require.NoError(t, err, "an owner whose process no longer exists is gone, so its private root is too")
 	require.Equal(t, "/private/c", boundRoot().StagingRoot)
+
+	anotherBoot := current
+	anotherBoot.BootSession = "00000000-0000-4000-8000-000000000000"
+	setOwner(anotherBoot.String())
+	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
+	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "an owner from another boot may be another machine with this hostname")
 
 	setOwner(current.Host + "-elsewhere/" + current.BootSession + "/4242/0badc0de")
 	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
@@ -87,7 +96,7 @@ func TestPluginCommandFenceOnAPrivateRootEndsWithItsOwner(t *testing.T) {
 	_, err = ctx.acquirePluginCommandDBFenceFor("/private/d", true)
 	require.ErrorIs(t, err, errPluginCommandFenceBoundToOtherRoot, "an unrecorded owner cannot be proved gone")
 
-	setOwner(current.Host + "/boot-that-ended/4242/0badc0de")
+	setOwner(gone.String())
 	_, err = ctx.acquirePluginCommandDBFenceFor("/durable/e", false)
 	require.NoError(t, err, "a durable root may follow a private one on the same terms")
 	row := boundRoot()

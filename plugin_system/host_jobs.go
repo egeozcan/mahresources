@@ -189,12 +189,13 @@ func (pm *PluginManager) hostJobsInstalled() HostJobs {
 // lease expiring is not that answer — a runtime can be alive and unreachable, and
 // a fresh process can be running beside it.
 //
-// Host and boot session together are taken to name one pid namespace. That holds
-// for a machine and for a container with its own hostname (Docker's default is
-// the container id, which survives a restart), and it is why servers sharing one
-// database must not share a hostname on one kernel: two such processes would
-// read each other's pids as their own.
+// A pid means something only in one process table, and the fields together say
+// which: the boot session names one run of one kernel (a hostname does not name
+// a machine; clones and containers share them), and the pid namespace names one
+// table inside it (containers on one kernel each have their own).
 type RuntimeIdentity struct {
+	// Host is the hostname, cut to MaxRuntimeHostBytes. It is for a reader; the
+	// boot session and pid namespace are what place a pid.
 	Host        string
 	BootSession string
 	PID         int
@@ -204,11 +205,29 @@ type RuntimeIdentity struct {
 	// Empty in a record written before nonces were recorded, which proves
 	// nothing about a pid this process now holds.
 	Nonce string
+	// PIDNamespace is the pid namespace's inode on Linux, empty elsewhere. An
+	// inode is unique among live namespaces and reused only after its namespace
+	// has died, so an equal one is either this table or one whose processes are
+	// all gone; a different one is a table this process cannot read.
+	PIDNamespace string
+}
+
+// MaxRuntimeHostBytes bounds the recorded hostname so the whole identity fits a
+// Job claimant (jobs.MaxClaimantBytes, 120 bytes) with a 36-byte boot session,
+// a 10-digit pid namespace inode, a 7-digit pid and the nonce.
+const MaxRuntimeHostBytes = 48
+
+// runtimeHost cuts a hostname to the recorded bound. Two hosts that differ only
+// past it compare equal and are then told apart by their boot session.
+func runtimeHost(name string) string {
+	if len(name) > MaxRuntimeHostBytes {
+		return name[:MaxRuntimeHostBytes]
+	}
+	return name
 }
 
 // processNonce is this process's nonce: 32 random bits, enough to tell apart the
-// few processes that can hold one pid in one boot, and short enough that the
-// recorded form fits a claimant with a 64-byte hostname.
+// few processes that can hold one pid in one pid namespace of one boot.
 var processNonce = func() string {
 	var raw [4]byte
 	_, _ = rand.Read(raw[:])
@@ -234,11 +253,12 @@ func CurrentRuntimeIdentity() RuntimeIdentity {
 	if err != nil {
 		boot = ""
 	}
-	return RuntimeIdentity{Host: host, BootSession: boot, PID: os.Getpid(), Nonce: processNonce}
+	return RuntimeIdentity{Host: runtimeHost(host), BootSession: boot, PID: os.Getpid(),
+		Nonce: processNonce, PIDNamespace: currentPIDNamespace()}
 }
 
-// String is the recorded form: host, boot session, pid and nonce in one bounded
-// field.
+// String is the recorded form: host, boot session, pid, nonce and pid namespace
+// in one bounded field.
 //
 // It is stored in a Job's sanitized summary — a place a person reads — so it is
 // deliberately one compact string rather than nested JSON, and it carries nothing
@@ -247,16 +267,19 @@ func (r RuntimeIdentity) String() string {
 	if r.Nonce == "" {
 		return fmt.Sprintf("%s/%s/%d", r.Host, r.BootSession, r.PID)
 	}
-	return fmt.Sprintf("%s/%s/%d/%s", r.Host, r.BootSession, r.PID, r.Nonce)
+	if r.PIDNamespace == "" {
+		return fmt.Sprintf("%s/%s/%d/%s", r.Host, r.BootSession, r.PID, r.Nonce)
+	}
+	return fmt.Sprintf("%s/%s/%d/%s/%s", r.Host, r.BootSession, r.PID, r.Nonce, r.PIDNamespace)
 }
 
 // ParseRuntimeIdentity reads a recorded identity back, with or without the nonce
-// an earlier release did not record. An unreadable value yields ok=false rather
-// than a zero identity, so a caller cannot mistake "nothing was recorded" for
-// "recorded, and this process is it".
+// and pid namespace an earlier release did not record. An unreadable value
+// yields ok=false rather than a zero identity, so a caller cannot mistake
+// "nothing was recorded" for "recorded, and this process is it".
 func ParseRuntimeIdentity(recorded string) (RuntimeIdentity, bool) {
 	parts := strings.Split(recorded, "/")
-	if len(parts) != 3 && len(parts) != 4 {
+	if len(parts) < 3 || len(parts) > 5 {
 		return RuntimeIdentity{}, false
 	}
 	pid, err := strconv.Atoi(parts[2])
@@ -267,11 +290,15 @@ func ParseRuntimeIdentity(recorded string) (RuntimeIdentity, bool) {
 		return RuntimeIdentity{}, false
 	}
 	identity := RuntimeIdentity{Host: parts[0], BootSession: parts[1], PID: pid}
-	if len(parts) == 4 {
-		if parts[3] == "" {
+	for index, part := range parts[3:] {
+		if part == "" {
 			return RuntimeIdentity{}, false
 		}
-		identity.Nonce = parts[3]
+		if index == 0 {
+			identity.Nonce = part
+		} else {
+			identity.PIDNamespace = part
+		}
 	}
 	return identity, true
 }
@@ -280,54 +307,57 @@ func ParseRuntimeIdentity(recorded string) (RuntimeIdentity, bool) {
 type RuntimeLiveness int
 
 const (
-	// RuntimeUnknown means nothing could be proved: a different host, or a host
-	// whose process table cannot be inspected. Work whose runtime is unknown
-	// stays blocked; it is never interrupted and never redispatched.
+	// RuntimeUnknown means nothing could be proved: another machine, another
+	// boot, another pid namespace, or a process table that cannot be inspected.
+	// Work whose runtime is unknown stays blocked; it is never interrupted and
+	// never redispatched on this answer.
 	RuntimeUnknown RuntimeLiveness = iota
-	// RuntimeAlive means a process with that pid exists on this host in this boot
-	// session. It may be a reused pid, so this is not proof of ownership either —
-	// it is proof that the work is not provably finished.
+	// RuntimeAlive means a process with that pid exists in this pid namespace in
+	// this boot session. It may be a reused pid, so this is not proof of
+	// ownership either — it is proof that the work is not provably finished.
 	RuntimeAlive
-	// RuntimeGone means the runtime cannot still be there: this host has booted
-	// since, or the process does not exist.
+	// RuntimeGone means the runtime cannot still be there: its pid is free in
+	// the process table it was recorded in, or that pid is held by this process.
 	RuntimeGone
 )
 
 // Liveness answers what can be proved about the process a recorded identity names.
 //
-// The rules, and why each one is the conservative reading:
+// Only a record from this process table can prove anything, and only this
+// process table can be read. The rules, and why each one is the conservative
+// reading:
 //
-//   - another host: Unknown. Its process table is not ours to read, and a boot
-//     session id from another machine's clock is not comparable. This is the case
-//     §3 calls out — a cross-host mismatch alone never proves death. It stays
-//     Unknown however long the work waits: the only evidence that would settle it
-//     lives on the other host, so the work stays blocked for a person.
-//   - this host, a different boot session: Gone. The machine has rebooted since,
-//     so no process from that boot exists, whatever its pid does now.
-//   - this host, this boot, our own pid and our own nonce: Alive, and provably
-//     *this* runtime.
-//   - this host, this boot, our own pid and another nonce: Gone. One pid names
-//     one process at a time and this process holds it, so the process that
-//     recorded it has exited.
-//   - this host, this boot, our own pid and no nonce: Unknown. The record was
-//     written without one, by an earlier release or by a store that kept only
-//     some of the fields, so it can neither name this process nor prove its
-//     writer gone.
-//   - this host, this boot, another pid: Gone when the process does not exist,
-//     Alive when one does. A reused pid reads as Alive, which errs toward
-//     leaving a Job blocked rather than interrupting work that may still run.
 //   - no boot session recorded: Unknown. Without it a pid says nothing across a
 //     reboot, and this is the platform where the primitive is unavailable.
+//   - another hostname, another boot session, or another pid namespace:
+//     Unknown. A hostname is not unique across machines, so a boot session that
+//     differs may be a reboot here or a live process on another machine with
+//     this name; a pid namespace that differs is a container's table this
+//     process cannot read. This is the case §3 calls out: a mismatch alone
+//     never proves death. The work waits for a person, or for its lease.
+//   - this table, our own pid and our own nonce: Alive, and provably *this*
+//     runtime.
+//   - this table, our own pid and another nonce: Gone. One pid names one
+//     process at a time and this process holds it, so the process that
+//     recorded it has exited.
+//   - this table, our own pid and no nonce: Unknown. The record was written
+//     without one, by an earlier release or by a store that kept only some of
+//     the fields, so it can neither name this process nor prove its writer gone.
+//   - this table, another pid: Gone when the process does not exist, Alive when
+//     one does. A reused pid reads as Alive, which errs toward leaving a Job
+//     blocked rather than interrupting work that may still run.
+//
+// "This table" is equal hostname, boot session and pid namespace. A record from
+// before pid namespaces were recorded carries none, so on Linux, where this
+// process has one, it is never this table; on other systems neither side has
+// one and the boot session is the table.
 func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 	if r.Host == "" || r.BootSession == "" {
 		return RuntimeUnknown
 	}
 	current := CurrentRuntimeIdentity()
-	if r.Host != current.Host {
+	if r.Host != current.Host || r.BootSession != current.BootSession || r.PIDNamespace != current.PIDNamespace {
 		return RuntimeUnknown
-	}
-	if r.BootSession != current.BootSession {
-		return RuntimeGone
 	}
 	if r.PID == current.PID {
 		switch r.Nonce {
