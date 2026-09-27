@@ -1,6 +1,6 @@
 import path from 'path';
 import { test, expect } from '../fixtures/base.fixture';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 /**
  * Resource Reduction: the review surface for collapsing repeats.
@@ -101,6 +101,17 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
     const list = await (await request.get(`${baseURL}/v1/reductions`)).json();
     return list.reductions.find((r: { id: number }) => r.id === id)?.status;
   }, { timeout: 30_000 }).toBe('ready');
+}
+
+// Clicks the checkbox of a Cluster the click will remove from the filtered list.
+// The card is addressed by its Cluster id rather than by position, and clicked
+// once: uncheck() verifies the state after its click, and finding its element
+// detached by the refresh it re-resolves the locator, so a positional one lands
+// on the next Cluster's checkbox and unchecks that one too.
+async function clickLeavingCluster(page: Page, card: Locator) {
+  const clusterId = await card.getAttribute('data-cluster-id');
+  expect(clusterId).toBeTruthy();
+  await page.locator(`[data-cluster-id="${clusterId}"]`).getByTestId('cluster-checkbox').click();
 }
 
 test.describe('Resource Reduction', () => {
@@ -456,7 +467,7 @@ test.describe('Resource Reduction', () => {
 
     // Identical Clusters arrive checked, so the click is an uncheck — it makes
     // the Cluster Reviewed and the filter drops it.
-    await clusters.first().getByTestId('cluster-checkbox').uncheck();
+    await clickLeavingCluster(page, clusters.first());
 
     await expect(clusters).toHaveCount(1);
     // The survivor's own server-rendered state, not the clicked state of the
@@ -491,7 +502,7 @@ test.describe('Resource Reduction', () => {
     // An explicit action on the first cluster refreshes the page. The first
     // cluster leaves the open filter; the second one stays and must have been
     // repaired to its server-rendered state.
-    await clusters.nth(0).getByTestId('cluster-checkbox').uncheck();
+    await clickLeavingCluster(page, clusters.nth(0));
 
     await expect(clusters).toHaveCount(1);
     await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();
