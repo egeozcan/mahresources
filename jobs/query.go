@@ -444,6 +444,9 @@ func validateFilter(filter Filter) error {
 	if filter.OwnerDeleted && filter.OwnerID != nil {
 		return invalid("a job whose owner was deleted has no owner id; ask for one or the other")
 	}
+	if filter.OwnedByViewer && (filter.OwnerID != nil || filter.OwnerDeleted) {
+		return invalid("owner=me names the owner already; ask for one owner filter")
+	}
 	if filter.Command != "" {
 		if strings.TrimSpace(filter.Command) == "" {
 			return invalid("command key is empty")
@@ -500,6 +503,9 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 	}
 	if filter.OwnerDeleted {
 		db = db.Where("jobs.owner_deleted = ?", true)
+	}
+	if filter.OwnedByViewer {
+		db = db.Where("jobs.owner_user_id = ?", access.UserID)
 	}
 	if filter.AcceptedAfter != nil {
 		db = db.Where("jobs.accepted_at >= ?", filter.AcceptedAfter.UTC())

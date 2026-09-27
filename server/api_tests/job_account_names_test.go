@@ -94,3 +94,56 @@ func TestTheJobAPINamesOwnersAndDeletedAccounts(t *testing.T) {
 		t.Fatalf("alice lists %d jobs, want her own", len(asAlice))
 	}
 }
+
+// owner=me lets an administrator's drawer read and count their own Jobs without
+// knowing their user number, from the list and summary endpoints alike.
+func TestTheJobAPIReadsTheAskerAsOwner(t *testing.T) {
+	tc := setupAuthEnv(t)
+	adminBearer := roleBearer(t, tc, models.RoleAdmin)
+	var admin models.User
+	if err := tc.DB.Where("username = ?", "rb_admin").First(&admin).Error; err != nil {
+		t.Fatalf("read the administrator: %v", err)
+	}
+	other, err := tc.AppCtx.CreateUser(&application_context.UserInput{Username: "someone-else", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create another account: %v", err)
+	}
+	var own jobs.Snapshot
+	for _, owner := range []uint{admin.ID, other.ID} {
+		owner := owner
+		accepted, err := tc.AppCtx.JobService().Accept(jobs.Deps{DB: tc.DB}, jobs.Acceptance{
+			Kind: application_context.JobKindRemoteDownload, KindVersion: 1, State: jobs.StateQueued,
+			Origin: "api", OwnerUserID: &owner, ActorUserID: &owner, Replay: jobs.ReplayInput{NonReplayable: true},
+		})
+		if err != nil {
+			t.Fatalf("accept: %v", err)
+		}
+		if owner == admin.ID {
+			own = accepted
+		}
+	}
+	headers := map[string]string{"Accept": "application/json", "Authorization": adminBearer}
+
+	listed := doReq(tc, http.MethodGet, "/v1/jobs?owner=me", headers, nil, nil)
+	var page api_handlers.JobListResponse
+	if err := json.Unmarshal(listed.Body.Bytes(), &page); err != nil || listed.Code != http.StatusOK {
+		t.Fatalf("owner=me listing answered %d: %s", listed.Code, listed.Body.String())
+	}
+	if len(page.Jobs) != 1 || page.Jobs[0].ID != own.ID {
+		t.Fatalf("owner=me lists %d jobs to the administrator, want only their own", len(page.Jobs))
+	}
+
+	summary := doReq(tc, http.MethodGet, "/v1/jobs/summary?owner=me", headers, nil, nil)
+	var counts api_handlers.JobSummaryResponse
+	if err := json.Unmarshal(summary.Body.Bytes(), &counts); err != nil || summary.Code != http.StatusOK {
+		t.Fatalf("owner=me summary answered %d: %s", summary.Code, summary.Body.String())
+	}
+	if counts.Total != 1 {
+		t.Fatalf("owner=me summary counts %d jobs, want the administrator's one", counts.Total)
+	}
+
+	refused := doReq(tc, http.MethodGet, "/v1/jobs?owner=me&ownerId=1", headers, nil, nil)
+	if refused.Code != http.StatusBadRequest {
+		t.Fatalf("owner=me beside ownerId answered %d, want 400", refused.Code)
+	}
+}

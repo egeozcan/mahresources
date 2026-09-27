@@ -36,6 +36,13 @@ func ParseFilter(values url.Values) (jobs.Filter, error) {
 	if filter.ActorID, err = positiveUint(values, "actorId"); err != nil {
 		return jobs.Filter{}, err
 	}
+	switch values.Get("owner") {
+	case "":
+	case "me":
+		filter.OwnedByViewer = true
+	default:
+		return jobs.Filter{}, fmt.Errorf("owner accepts only me; use ownerId for another account")
+	}
 	switch values.Get("ownerDeleted") {
 	case "", "false":
 	case "true":

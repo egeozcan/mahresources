@@ -213,7 +213,9 @@ mr jobs summary --window 30d --json
 
 `jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
 state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
-advertised command, and the viewer's pin and dismissal preferences.
+advertised command, and the viewer's pin and dismissal preferences. On the API,
+`owner=me` lists the asking account's own Jobs without naming its id, and
+`ownerDeleted=true` lists Jobs whose owner's account was deleted.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent
@@ -259,8 +261,9 @@ mr jobs summary export \
 ```
 
 The export Job applies the same visibility predicate and filters as interactive
-summary, except `state=partial`, `inboundRelationship` and
-`noInboundRelationship`, which an export refuses with a 400. An export's filter
+summary, except `state=partial`, `inboundRelationship`,
+`noInboundRelationship`, `ownerDeleted` and `owner=me`, which an export refuses
+with a 400. An export's filter
 is stored and run later, possibly by a worker from an older release. Such a
 worker fails an export filtered by `state=partial`, which it reads as an unknown
 state, but it silently ignores the inbound relationship filters and exports a

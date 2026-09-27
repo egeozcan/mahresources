@@ -68,6 +68,16 @@ func TestParseFilterReadsADeletedOwner(t *testing.T) {
 	}
 }
 
+func TestParseFilterReadsTheViewerAsOwner(t *testing.T) {
+	filter, err := ParseFilter(url.Values{"owner": {"me"}})
+	if err != nil || !filter.OwnedByViewer {
+		t.Fatalf("ParseFilter(owner=me) = %+v, %v", filter, err)
+	}
+	if _, err := ParseFilter(url.Values{"owner": {"7"}}); err == nil {
+		t.Fatal("owner=7 was accepted; an id belongs in ownerId")
+	}
+}
+
 func TestCursorRoundTrips(t *testing.T) {
 	cursor := jobs.Cursor{AcceptedAt: time.Date(2026, 9, 1, 8, 0, 0, 5, time.UTC), ID: "abc"}
 	token, err := EncodeCursor(cursor)

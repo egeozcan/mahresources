@@ -68,8 +68,9 @@ List, summary, and export share these optional filters: `state`/`states`,
 `kind`/`kinds`, `origin`/`origins`, `ownerId`, `actorId`, `acceptedAfter`,
 `acceptedBefore`, `relationship`, `search`, `command`, `pinned`, and
 `dismissed`. List and summary also accept `inboundRelationship`,
-`noInboundRelationship` and `ownerDeleted=true` (Jobs whose owner's account was
-deleted); an export refuses those three, and `state=partial`, with a `400`.
+`noInboundRelationship`, `ownerDeleted=true` (Jobs whose owner's account was
+deleted) and `owner=me` (the asking account's own Jobs, without naming its id);
+an export refuses those four, and `state=partial`, with a `400`.
 Repeating a token parameter or comma-separating its values is supported.
 Visibility is applied before filters and aggregation; an owner or actor filter
 never grants access to hidden Jobs.

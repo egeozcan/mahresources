@@ -636,6 +636,10 @@ type Filter struct {
 	// deleted. Deletion nulls the owner reference, so OwnerID cannot find them
 	// again, and it is refused beside OwnerID for the same reason.
 	OwnerDeleted bool
+	// OwnedByViewer narrows to the asking account's own Jobs, without the asker
+	// naming their id: it is Access.UserID, read under the same visibility
+	// predicate as everything else. A principal with no account owns nothing.
+	OwnedByViewer bool
 
 	AcceptedAfter  *time.Time
 	AcceptedBefore *time.Time

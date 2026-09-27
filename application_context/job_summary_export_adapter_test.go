@@ -337,6 +337,7 @@ func TestSummaryExportRefusesFilterDimensionsAnOlderWorkerWouldDrop(t *testing.T
 		"inbound relationship":    {InboundRelationship: string(jobs.LinkRetryOf)},
 		"no inbound relationship": {NoInboundRelationship: string(jobs.LinkRetryOf)},
 		"deleted owner":           {OwnerDeleted: true},
+		"the asker as owner":      {OwnedByViewer: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ctx.SubmitJobSummaryExport(filter, from, to, "json", "api"); !errors.Is(err, jobs.ErrInvalidFilter) {

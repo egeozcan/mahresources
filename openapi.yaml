@@ -6062,6 +6062,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
                 - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
                   in: query
                   name: ownerDeleted
@@ -7766,6 +7771,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
                 - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
                   in: query
                   name: ownerDeleted
@@ -7896,6 +7906,11 @@ paths:
                   name: actorId
                   schema:
                     type: integer
+                - description: me filters to the asking account's own Jobs without naming its id; cannot be combined with ownerId or ownerDeleted. A summary export refuses it.
+                  in: query
+                  name: owner
+                  schema:
+                    type: string
                 - description: true filters to Jobs whose owner was an account that has since been deleted; cannot be combined with ownerId. A summary export refuses it.
                   in: query
                   name: ownerDeleted

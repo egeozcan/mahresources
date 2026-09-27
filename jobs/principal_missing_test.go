@@ -130,3 +130,47 @@ func TestOwnerDeletedListsTheJobsOfDeletedAccounts(t *testing.T) {
 		t.Fatalf("an owner id beside ownerDeleted = %v, want refused", err)
 	}
 }
+
+// owner=me narrows a listing to the asker's own Jobs without naming their id,
+// under the same visibility predicate as every other filter: it is how an
+// administrator's drawer counts the work that needs their own attention.
+func TestOwnedByViewerListsTheAskersOwnJobs(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	mine, theirs := uint(1), uint(2)
+	accept := func(owner *uint) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: owner, ActorUserID: owner, Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	own := accept(&mine)
+	accept(&theirs)
+	accept(nil)
+
+	admin := Access{UserID: mine, Administrator: true}
+	page, err := svc.List(deps, admin, Filter{OwnedByViewer: true}, Cursor{}, 0)
+	if err != nil {
+		t.Fatalf("list owner=me: %v", err)
+	}
+	if len(page.Jobs) != 1 || page.Jobs[0].ID != own.ID {
+		t.Fatalf("owner=me lists %d jobs to an administrator, want only their own", len(page.Jobs))
+	}
+	counts, err := svc.CountByState(deps, admin, Filter{OwnedByViewer: true})
+	if err != nil || counts[string(StateQueued)] != 1 {
+		t.Fatalf("owner=me counts %v, %v; want the one own job", counts, err)
+	}
+	host, err := svc.List(deps, Access{Administrator: true}, Filter{OwnedByViewer: true}, Cursor{}, 0)
+	if err != nil || len(host.Jobs) != 0 {
+		t.Fatalf("owner=me for a principal with no account lists %d jobs, %v; want none", len(host.Jobs), err)
+	}
+	other, err := svc.List(deps, Access{UserID: theirs}, Filter{OwnedByViewer: true}, Cursor{}, 0)
+	if err != nil || len(other.Jobs) != 1 || other.Jobs[0].OwnerUserID == nil || *other.Jobs[0].OwnerUserID != theirs {
+		t.Fatalf("owner=me for another account = %+v, %v", other.Jobs, err)
+	}
+	for _, filter := range []Filter{{OwnedByViewer: true, OwnerID: &theirs}, {OwnedByViewer: true, OwnerDeleted: true}} {
+		if _, err := svc.List(deps, admin, filter, Cursor{}, 0); !errors.Is(err, ErrInvalidFilter) {
+			t.Fatalf("owner=me beside another owner filter %+v = %v, want refused", filter, err)
+		}
+	}
+}
