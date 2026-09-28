@@ -2170,6 +2170,8 @@ where the review's own record lives.
 - Visible lineage proves which relatives a reader may see, not which Job produced the current report. Bind an import report to its producer before attaching an outcome; when that producer is missing or invisible, keep the outcome unknown.
 
 - A foreground command and its execution follower can deliver the same durable pause intent. Treat an already-paused queue entry as a request to read the held Job answer, using the same bounded confirmation as a newly applied pause; queue status alone is not durable confirmation.
+- Attribute progress freshness to the work being measured. HLS shares a byte budget across segment bodies, playlists, initialization maps and encryption keys; only segment-body reads keep a segment-count rate fresh. Carry their original read time through throttling, and never rebase a count anchor on an unchanged count after activity ends.
+- Callback settlement does not prove a claimed process group stopped. Preserve historical claim ownership after an expired drain, and leave its nonterminal row for recovery until group death is proved. Check deadline expiry even when the worker-complete channel is also ready. A caller ledger established the faulty finisher before a deterministic real-process regression forced the interleave; 300 unchanged timeout-test repetitions then verified the repair.
 
 ## Custom Thumbnail popup — 2026-09-28
 

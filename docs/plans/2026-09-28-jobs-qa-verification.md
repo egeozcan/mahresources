@@ -90,8 +90,15 @@ over 300 exact-test iterations then caught two failures: the dispatcher had alre
 finished the row as Interrupted with “server interrupted”, while the original
 parent and descendant were alive in the same verified owned process group. Recovery
 could no longer see that row in its nonterminal read. The finisher call is proved;
-the precise preceding interleave is being forced by a deterministic regression.
-These diagnostic overlays are not passing final gates.
+the deterministic real-process regression then forced a claimed callback to settle
+after the drain expired and before shutdown classified it. Commit `109c2a5f`
+preserves historical claim ownership and checks the expired context even if the
+worker-complete channel won the select. The regression failed on the old ownership
+rule and passed after the repair; focused repetitions, the race detector and the
+whole command package passed. The coordinator's unchanged original timeout test
+also passed 300/300. The production executor's normal return still requires the
+parent and owned group to be dead and its output pipes drained. Diagnostic overlays
+are evidence for the diagnosis, not substitutes for final broad gates.
 
 Earlier browser retries remain observations unless their causes were reproduced.
 The five lightbox/schema retries on the pre-pause Flakes head are not claimed fixed
