@@ -1010,6 +1010,11 @@ type Progress struct {
 	Unit      string
 	Message   string
 	ETA       *time.Time
+	// Activity is fresh evidence that the executor made progress on a coarse
+	// primary measure without changing its count. It refreshes rate freshness
+	// but never increases Completed; only adapters with real activity evidence
+	// should set it.
+	Activity bool
 	// Metrics are the figures reported beside the primary measure. Like the
 	// fields above, each tick replaces the whole set: a nil slice clears it.
 	Metrics []Metric

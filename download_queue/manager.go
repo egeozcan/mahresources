@@ -1119,6 +1119,8 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	var notifyMu sync.Mutex
 	var lastNotify time.Time
 	var lastPhase string
+	var lastMirroredReceived int64
+	var activitySinceMirror bool
 	// Serializes the durable progress mirror across segment workers. Each
 	// mirror takes its snapshot once it holds this, so two workers that both
 	// found a notification due cannot commit in the wrong order and leave the
@@ -1154,16 +1156,34 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			// events. A phase change is always sent, since those are rare and
 			// are the part a watcher is actually waiting for.
 			notifyMu.Lock()
-			due := phase != lastPhase || time.Since(lastNotify) >= progressNotifyInterval
+			phaseChanged := phase != lastPhase
+			if phaseChanged && phase == hls.PhaseSegments {
+				// The first segment-phase report includes playlist and key bytes
+				// already received. Establish the baseline here so only actual
+				// segment reads can refresh the HLS rate lease.
+				if received > lastMirroredReceived {
+					lastMirroredReceived = received
+				}
+				activitySinceMirror = false
+			} else if phase == hls.PhaseSegments && received > lastMirroredReceived {
+				activitySinceMirror = true
+			}
+			due := phaseChanged || time.Since(lastNotify) >= progressNotifyInterval
+			activity := false
 			if due {
 				lastNotify = time.Now()
 				lastPhase = phase
+				activity = phase == hls.PhaseSegments && !phaseChanged && activitySinceMirror
+				activitySinceMirror = false
+				if received > lastMirroredReceived {
+					lastMirroredReceived = received
+				}
 			}
 			notifyMu.Unlock()
 			if due {
 				dm.notifyJob("updated", job)
 				mirrorMu.Lock()
-				dm.mirrorProgressForRun(job, runID)
+				dm.mirrorHLSProgressForRun(job, runID, activity)
 				mirrorMu.Unlock()
 			}
 		})
@@ -1951,6 +1971,16 @@ func (dm *DownloadManager) currentCanonicalSink() CanonicalSink {
 // record that cannot be written must not change what the download does.
 func (dm *DownloadManager) mirrorProgressForRun(job *DownloadJob, runID uint64) {
 	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadProgress(ref, snap)
+	})
+}
+
+// mirrorHLSProgressForRun mirrors the throttled segment snapshot with the
+// activity pulse accumulated by assembleHLS. The hint is carried on the copy
+// handed to the durable sampler; it never becomes queue state or public JSON.
+func (dm *DownloadManager) mirrorHLSProgressForRun(job *DownloadJob, runID uint64, active bool) {
+	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		snap.ProgressActivity = active
 		return sink.DownloadProgress(ref, snap)
 	})
 }

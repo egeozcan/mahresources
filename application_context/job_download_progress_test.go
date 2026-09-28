@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"mahresources/download_queue"
+	"mahresources/hls"
 	"mahresources/jobs"
 )
 
@@ -68,6 +69,37 @@ func TestDownloadJobProgressChoosesAMeasureWithATotalWhenThereIsOne(t *testing.T
 	queued := downloadJobProgress(&download_queue.DownloadJob{Status: download_queue.JobStatusPending})
 	if queued.Completed != nil || queued.Total != nil || len(queued.Metrics) != 0 {
 		t.Fatalf("a queued transfer reported progress: %+v", queued)
+	}
+}
+
+func TestDownloadJobProgressCarriesOnlyActiveHLSByteHeartbeats(t *testing.T) {
+	snap := &download_queue.DownloadJob{
+		Status: download_queue.JobStatusDownloading,
+		Phase:  hls.PhaseSegments, PhaseCount: 2, PhaseTotal: 20,
+		Progress: 4096, ProgressActivity: true,
+	}
+	if progress := downloadJobProgress(snap); !progress.Activity {
+		t.Fatal("active segment-byte snapshot lost its sampler activity hint")
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(*download_queue.DownloadJob)
+	}{
+		{"assembly", func(s *download_queue.DownloadJob) { s.Phase = hls.PhaseMuxing }},
+		{"paused", func(s *download_queue.DownloadJob) { s.Status = download_queue.JobStatusPaused }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			copy := *snap
+			tc.edit(&copy)
+			progress := downloadJobProgress(&copy)
+			if progress.Activity {
+				t.Fatalf("%s snapshot retained active segment heartbeat", tc.name)
+			}
+			if paused := pausedDownloadProgress(progress); paused.Activity {
+				t.Fatalf("paused progress retained active heartbeat: %+v", paused)
+			}
+		})
 	}
 }
 

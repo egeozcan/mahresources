@@ -82,6 +82,179 @@ func TestAdvanceSeriesDoesNotChargeAPauseToTheRate(t *testing.T) {
 	}
 }
 
+func TestHLSActivityKeepsSegmentRateFreshBetweenBatches(t *testing.T) {
+	var series ProgressSeries
+	segmentProgress := func(completed int64, activity bool) Progress {
+		return Progress{Completed: int64Ptr(completed), Total: int64Ptr(24), Unit: "items", Activity: activity}
+	}
+	series, _ = advanceSeries(series, at(0), segmentProgress(0, false), false)
+	for second := 1; second < 15; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), segmentProgress(0, true), false)
+	}
+	series, _ = advanceSeries(series, at(15), segmentProgress(4, true), false)
+	for second := 16; second < 30; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), segmentProgress(4, true), false)
+	}
+	series, _ = advanceSeries(series, at(30), segmentProgress(8, true), false)
+
+	rate := series.CurrentRate(at(30))
+	if rate == nil || math.Abs(*rate-4.0/15.0) > 1e-9 {
+		t.Fatalf("rate after two slow segment batches = %v; want about 0.267 segments/s", rate)
+	}
+	if eta := EstimateETA(segmentProgress(8, true), rate, at(30)); eta == nil || !eta.After(at(30)) {
+		t.Fatalf("ETA after two active batches = %v; want a future finish estimate", eta)
+	}
+	for i, point := range series.Points {
+		if point.At >= at(15).UnixMilli() && (point.Rate == nil || *point.Rate <= 0) {
+			t.Fatalf("point %d lost the active segment rate: %+v", i, point)
+		}
+	}
+	if got := series.CurrentRate(at(40)); got == nil {
+		t.Fatal("activity at t=30 was stale exactly 10 seconds later")
+	}
+	if got := series.CurrentRate(at(40.001)); got != nil {
+		t.Fatalf("activity kept the rate fresh after its stale window: %v", *got)
+	}
+
+	// The next bytes arrive after an 11-second stall. They establish a new
+	// anchor and cannot bridge that idle interval into a plausible-looking rate.
+	series, _ = advanceSeries(series, at(41), segmentProgress(12, true), false)
+	if got := series.CurrentRate(at(41)); got != nil {
+		t.Fatalf("rate bridged an unobserved stall: %v", *got)
+	}
+}
+
+func TestHLSActivityHeartbeatsKeepServiceRateETAAndGraphAliveAcrossSlowBatches(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := at(0)
+	deps.Now = func() time.Time { return clock }
+	job := seededExecution(t, deps, StateRunning, "claim-hls-activity")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-hls-activity"}
+	total := int64(24)
+	var snap Snapshot
+	for second := int64(0); second <= 30; second++ {
+		clock = at(float64(second))
+		completed := int64(0)
+		if second >= 15 {
+			completed = 4
+		}
+		if second == 30 {
+			completed = 8
+		}
+		_, err := svc.UpdateProgress(deps, ref, Progress{
+			Phase: "downloading segments", Completed: &completed, Total: &total,
+			Unit: "items", Activity: second > 0,
+			Metrics: []Metric{{Key: "downloaded", Label: "Downloaded", Value: float64(second) * 1024, Unit: "bytes", Graph: true}},
+		})
+		if err != nil {
+			t.Fatalf("UpdateProgress at %ds: %v", second, err)
+		}
+		snap, err = svc.Get(deps, Access{Administrator: true}, job.ID)
+		if err != nil {
+			t.Fatalf("Get at %ds: %v", second, err)
+		}
+	}
+	if snap.Progress.Completed == nil || *snap.Progress.Completed != 8 {
+		t.Fatalf("service progress completed = %v; want 8 segments", snap.Progress.Completed)
+	}
+	if rate := snap.LiveRate(clock); rate == nil || *rate <= 0 {
+		t.Fatalf("service live rate after active 15-second batches = %v", rate)
+	}
+	if eta, estimated := snap.ExpectedFinish(clock); eta == nil || !estimated {
+		t.Fatalf("service ETA after active batches = %v estimated=%v; want an estimate", eta, estimated)
+	}
+	positive := false
+	for _, point := range snap.ProgressSeries.Points {
+		if point.At >= at(15).UnixMilli() && point.Rate != nil && *point.Rate > 0 {
+			positive = true
+		}
+	}
+	if !positive {
+		t.Fatalf("service graph has no positive rate after a segment batch: %+v", snap.ProgressSeries.Points)
+	}
+
+	if rate := snap.LiveRate(at(41)); rate != nil {
+		t.Fatalf("service live rate survived 11 seconds without HLS activity: %v", *rate)
+	}
+	clock = at(41)
+	completed := int64(12)
+	if _, err := svc.UpdateProgress(deps, ref, Progress{
+		Phase: "downloading segments", Completed: &completed, Total: &total,
+		Unit: "items", Activity: true,
+	}); err != nil {
+		t.Fatalf("UpdateProgress after the stall: %v", err)
+	}
+	stalled, err := svc.Get(deps, Access{Administrator: true}, job.ID)
+	if err != nil {
+		t.Fatalf("Get after the stall: %v", err)
+	}
+	if rate := stalled.LiveRate(clock); rate != nil {
+		t.Fatalf("first bytes after an 11-second stall bridged the old count window: %v", *rate)
+	}
+	last := stalled.ProgressSeries.Points[len(stalled.ProgressSeries.Points)-1]
+	if last.Rate != nil {
+		t.Fatalf("first post-stall graph point reused the old rate: %+v", last)
+	}
+}
+
+func TestHLSActivityClearsAtPauseRestartAndAssemblyBoundaries(t *testing.T) {
+	segmentProgress := func(completed int64, activity bool) Progress {
+		return Progress{Completed: int64Ptr(completed), Total: int64Ptr(8), Unit: "items", Activity: activity}
+	}
+	var series ProgressSeries
+	series, _ = advanceSeries(series, at(0), segmentProgress(0, false), false)
+	series, _ = advanceSeries(series, at(1), segmentProgress(1, true), false)
+	series, _ = advanceSeries(series, at(2), segmentProgress(1, true), false)
+	if got := series.CurrentRate(at(2)); got == nil || *got != 1 {
+		t.Fatalf("same-count byte activity lost the measured rate: %v", got)
+	}
+
+	// A paused snapshot ends the activity lease. StatePaused also suppresses a
+	// live rate even while the last measured count anchor is young.
+	series, _ = advanceSeries(series, at(3), segmentProgress(1, false), false)
+	if series.ActivityAt != nil {
+		t.Fatalf("pause kept HLS activity live at %d", *series.ActivityAt)
+	}
+	paused := Snapshot{State: StatePaused, ProgressSeries: series}
+	if got := paused.LiveRate(at(3)); got != nil {
+		t.Fatalf("paused snapshot exposed a live rate: %v", *got)
+	}
+
+	// Resume restarts the segment count. Its decrease resets the old rate, and
+	// assembly leaves no segment-byte activity timestamp behind.
+	series, _ = advanceSeries(series, at(4), segmentProgress(0, false), false)
+	if got := series.CurrentRate(at(4)); got != nil {
+		t.Fatalf("restarted segment count kept its earlier rate: %v", *got)
+	}
+	series, _ = advanceSeries(series, at(5), segmentProgress(1, false), false)
+	if series.ActivityAt != nil {
+		t.Fatalf("assembly kept an HLS byte activity timestamp: %d", *series.ActivityAt)
+	}
+
+	// A phase-only assembly report with an unchanged count must not refresh an
+	// old segment anchor or manufacture a zero-speed graph sample.
+	var phaseOnly ProgressSeries
+	phaseOnly, _ = advanceSeries(phaseOnly, at(0), segmentProgress(0, false), false)
+	phaseOnly, _ = advanceSeries(phaseOnly, at(1), segmentProgress(1, true), false)
+	for second := 2; second <= 11; second++ {
+		phaseOnly, _ = advanceSeries(phaseOnly, at(float64(second)), segmentProgress(1, true), false)
+	}
+	phaseOnly, _ = advanceSeries(phaseOnly, at(12), Progress{
+		Phase: "assembling video", Completed: int64Ptr(1), Total: int64Ptr(8), Unit: "items",
+	}, false)
+	if phaseOnly.ActivityAt != nil || phaseOnly.Anchor == nil || phaseOnly.Anchor.At != at(1).UnixMilli() {
+		t.Fatalf("phase-only report changed activity or count anchor: %+v", phaseOnly)
+	}
+	if got := phaseOnly.CurrentRate(at(12)); got != nil {
+		t.Fatalf("phase-only report refreshed stale segment rate: %v", *got)
+	}
+	last := phaseOnly.Points[len(phaseOnly.Points)-1]
+	if last.Rate != nil || last.Completed == nil || *last.Completed != 1 {
+		t.Fatalf("phase-only assembly point = %+v; want unchanged count without a sample", last)
+	}
+}
+
 func TestAdvanceSeriesRecordsNoRateWhenCompletedGoesBackwards(t *testing.T) {
 	var series ProgressSeries
 	series, _ = advanceSeries(series, at(0), bytesProgress(5000), false)

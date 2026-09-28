@@ -62,9 +62,13 @@ type DownloadJob struct {
 	// FailureReason it is for the durable Job, which links to it.
 	ExistingResourceID *uint `json:"-"`
 
-	Phase               string   `json:"phase,omitempty"`
-	PhaseCount          int64    `json:"phaseCount,omitempty"`
-	PhaseTotal          int64    `json:"phaseTotal,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	PhaseCount int64  `json:"phaseCount,omitempty"`
+	PhaseTotal int64  `json:"phaseTotal,omitempty"`
+	// ProgressActivity is set only on an HLS snapshot sent to the canonical
+	// progress mirror when bytes advanced since its previous heartbeat. It is a
+	// sampler hint, not part of the queue's public representation.
+	ProgressActivity    bool     `json:"-"`
 	ResultPath          string   `json:"resultPath,omitempty"`
 	Warnings            []string `json:"warnings,omitempty"`
 	AuthoritativeID     string   `json:"authoritativeId,omitempty"`

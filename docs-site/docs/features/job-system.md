@@ -178,15 +178,22 @@ reload, a restart and the Job finishing:
 
 - A point is recorded at most once per interval. The interval starts at one
   second.
-- Each point holds the completed amount, the rate since the previous point, and
-  the value of every graphed metric.
+- Each point holds the completed amount, a sampled rate, and the value of every
+  graphed metric. For HLS, fresh segment-byte activity carries the latest
+  measured segment rate across points whose completed segment count is unchanged.
 - When the series reaches 120 points, adjacent points are merged and the
   interval doubles. The first point is kept, so the series always starts where
   the Job did and covers its whole life.
-- A rate is only recorded between comparable points: the same unit, an amount
-  that did not go down, and a gap of at most 10 seconds or three intervals,
-  whichever is longer. A pause or a restart therefore shows as a gap, not as a
-  slow stretch.
+- A new rate is measured between comparable counts: the same unit and an
+  amount that did not go down. Ordinary reports must be within 10 seconds or
+  three intervals, whichever is longer; a coarse reporter may span longer only
+  while fresh activity evidence continues. A pause or restart shows as a gap,
+  not as a slow stretch.
+- An executor with a coarse primary count may mark a snapshot as active when it
+  has evidence that work continued without a count change. That refreshes the
+  10-second speed lease while preserving the last count-based rate; it does not
+  invent count movement. The lease ends when that activity stops or the phase
+  changes.
 - When a Job finishes, the points at the end of its series that counted
   nothing since the point before record no rate, so its speed graph ends at the
   last speed it measured rather than dropping to zero. A stall the Job moved on
@@ -214,9 +221,11 @@ Every surface writes these figures the same way, on one line under the bar:
 the amount, then the speed and the time left while the Job runs, or its average
 once it has ended ("6.5 MB of 20.0 MB · 1.2 MB/s · about 12 s left"). An amount
 at least a tenth of its total is written in the total's unit ("0.97 MB of 1.0
-MB") and rounded down, so it never reads as the total before it is. A finished
+MB") and rounded down, while the total is rounded to nearest. With coarse
+rounding, close figures can display the same ("1.0 MB of 1.0 MB"). A finished
 Job whose amount reached its total gives the amount once ("558 B"). A speed
-too slow to show per second is given per minute or per hour ("1 shares/min").
+too slow to show per second is given per minute or per hour ("1 shares/min");
+one too small for the hourly figure is bounded ("<0.1 items/h", "<1 B/h").
 An estimated time left under a second reads "almost done". The bar's own label
 says what the Job is doing, and a succeeded Job's bar reads **Completed**.
 
@@ -234,7 +243,9 @@ Who reports what:
 
 An HLS stream counts segments through the assembly too, where every segment is
 done, so its bar does not fall back to zero while the video is put together and
-its history keeps one unit to the end.
+its history keeps one unit to the end. Segment byte reads refresh speed while
+segments are still downloading, including between slow segment completions;
+the bar and ETA remain based on completed segments.
 
 Plugins report metrics with the table form of `mah.job_progress`; see
 [Counts, metrics and graphs](./plugin-actions.md#counts-metrics-and-graphs).
@@ -489,11 +500,13 @@ Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
 `blocked` event recorded, such as `role-refused`. The progress series
 is included as `progress.series` on `GET /v1/jobs/{id}`, and on `GET /v1/jobs`
 only with `include=progressSeries`. Series points use short names: `t` is Unix
-milliseconds, `c` the completed amount, `r` the rate per second since the
-previous point, and `v` the graphed metrics by key. `series.units` records the
-unit each graphed key was reported in; a key that comes back in another unit
-starts a fresh history. A tick that reports no measure at all, such as an HLS
-stream while it muxes, leaves the history as it was.
+milliseconds, `c` the completed amount, `r` the sampled rate per second, and `v`
+the graphed metrics by key. For HLS, `r` can carry the last measured segment
+rate during fresh byte activity between count changes. `series.activityAt` is
+the optional Unix-millisecond time of that activity evidence. `series.units`
+records each graphed key's unit; a key that comes back in another unit starts a
+fresh history. A tick without a measure, such as an HLS mux update, leaves the
+history as it was.
 
 Each durable event on the canonical stream carries an SSE `id` of the form
 `v2:<n>`, where `n` is its delivery sequence: the order events were published,

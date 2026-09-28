@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // buildStream produces a real three-segment HLS stream on disk with ffmpeg, so
@@ -163,11 +164,12 @@ type progressReport struct {
 }
 
 // checkProgressReports holds the promises Progress makes: once the playlist is
-// read the segment total never changes and the count starts from zero only
-// once (a separate audio rendition continues it), the bytes received only
-// grow, and the assembly reports every segment done rather than a count of
-// zero. Segment workers report as they finish, so two reports can arrive out
-// of order; the count is not checked for order.
+// read the segment total never changes, the count starts at zero (a separate
+// audio rendition continues it), and the bytes received only grow. Reports
+// may repeat the same done count while segment bytes arrive, and the assembly
+// reports every segment done rather than a count of zero. Segment workers
+// report as they finish, so two reports can arrive out of order; the count is
+// not checked for order.
 func checkProgressReports(t *testing.T, reports []progressReport) {
 	t.Helper()
 	var total, received int64
@@ -193,8 +195,8 @@ func checkProgressReports(t *testing.T, reports []progressReport) {
 			zeros++
 		}
 	}
-	if zeros != 1 {
-		t.Fatalf("the segment count started from zero %d times; want once", zeros)
+	if zeros == 0 {
+		t.Fatal("the segment count never reported its initial zero")
 	}
 	last := reports[len(reports)-1]
 	if last.phase != PhaseMuxing || last.done != last.total || last.total == 0 {
@@ -202,6 +204,73 @@ func checkProgressReports(t *testing.T, reports []progressReport) {
 	}
 	if last.received == 0 {
 		t.Fatalf("last report = %+v; want the bytes received", last)
+	}
+}
+
+func TestSegmentByteCallbackRunsBeforeTheSegmentCompletes(t *testing.T) {
+	segmentBytes := []byte(strings.Repeat("s", 8192))
+	segmentStarted := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(closeRelease)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(segmentBytes)))
+		_, _ = w.Write(segmentBytes[:len(segmentBytes)/2])
+		w.(http.Flusher).Flush()
+		close(segmentStarted)
+		select {
+		case <-release:
+			_, _ = w.Write(segmentBytes[len(segmentBytes)/2:])
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var spent atomic.Int64
+	reports := make(chan progressReport, 16)
+	tally := &segmentTally{
+		p: func(phase string, done, total, received int64) {
+			reports <- progressReport{phase: phase, done: done, total: total, received: received}
+		},
+		spent: &spent,
+		total: 1,
+	}
+	m := &media{
+		targetDuration: 1,
+		segments:       []segment{{target: fetchTarget{url: srv.URL + "/segment.ts"}, duration: 1}},
+	}
+	dir := t.TempDir()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := downloadParts(context.Background(), deps(), m, dir, Defaults(), tally)
+		finished <- err
+	}()
+
+	select {
+	case <-segmentStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the segment request did not begin")
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case report := <-reports:
+			if report.phase == PhaseSegments && report.done == 0 && report.received > 0 {
+				select {
+				case err := <-finished:
+					t.Fatalf("the segment finished before its byte heartbeat: %v", err)
+				default:
+				}
+				closeRelease()
+				if err := <-finished; err != nil {
+					t.Fatalf("downloadParts: %v", err)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no byte heartbeat arrived while the segment was incomplete")
+		}
 	}
 }
 

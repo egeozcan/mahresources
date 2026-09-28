@@ -67,6 +67,17 @@ func formatJobRate(rate *float64, unit string) string {
 			value, per = value*60, "h"
 		}
 	}
+	if per == "h" && value > 0 {
+		if unit == "bytes" && value < 1 {
+			return "<1 B/h"
+		}
+		if unit != "bytes" && value < 0.1 {
+			if unit == "" {
+				return "<0.1/h"
+			}
+			return "<0.1 " + unit + "/h"
+		}
+	}
 	switch unit {
 	case "bytes":
 		return formatJobBytes(value) + "/" + per
@@ -148,7 +159,8 @@ func formatJobBytes(value float64) string {
 
 // formatJobByteAmount is formatByteAmount in jobProgress.js: a completed amount
 // at least a tenth of its total is shown in the total's unit, and one short of
-// its total is rounded down, so it never reads as the total before it is.
+// its total is rounded down in that unit. Coarse rounding can still make a
+// nearly complete amount display the same as the rounded total.
 func formatJobByteAmount(completed, total float64) string {
 	unit := jobByteUnit(completed)
 	if completed >= total/10 && completed <= total {

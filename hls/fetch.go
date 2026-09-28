@@ -154,7 +154,9 @@ func (opt Options) withDefaults() Options {
 // until the playlist is read, and during PhaseMuxing every segment is done. The
 // mux's own length is not knowable in advance, so it has no count of its own.
 // received is every byte fetched so far, playlists and keys included: the
-// figure the download's byte budget is charged with.
+// figure the download's byte budget is charged with. While a segment is being
+// read, repeated reports may keep done unchanged while received grows; these
+// are activity heartbeats, not extra completed segments.
 //
 // **Called concurrently**, from each segment worker. A callback touching shared
 // state must guard it.
@@ -632,7 +634,13 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 		go func(i int, seg segment) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if _, err := fetchToFile(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total); err != nil {
+			// Segment count is the useful primary measure, but a large segment can
+			// take longer than the Jobs sampler's stale window to finish. Report
+			// byte activity through the same callback while that segment is still
+			// downloading; done remains unchanged until the file lands.
+			if _, err := fetchToFileWithProgress(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total, func() {
+				tally.report(PhaseSegments, tally.done.Load())
+			}); err != nil {
 				fail(fmt.Errorf("could not download segment %d of %d: %w", i+1, len(m.segments), err))
 				return
 			}
@@ -654,6 +662,10 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 // fetchToFile downloads one target to path, retrying transient failures, and
 // charges its bytes against the download's total budget.
 func fetchToFile(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
+	return fetchToFileWithProgress(ctx, d, t, path, opt, total, nil)
+}
+
+func fetchToFileWithProgress(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64, onRead func()) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= opt.SegmentRetries; attempt++ {
 		if attempt > 0 {
@@ -663,7 +675,7 @@ func fetchToFile(ctx context.Context, d Deps, t fetchTarget, path string, opt Op
 			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 			}
 		}
-		n, err := fetchToFileOnce(ctx, d, t, path, opt, total)
+		n, err := fetchToFileOnceWithProgress(ctx, d, t, path, opt, total, onRead)
 		if err == nil {
 			return n, nil
 		}
@@ -699,6 +711,10 @@ func isPermanent(err error) bool {
 }
 
 func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
+	return fetchToFileOnceWithProgress(ctx, d, t, path, opt, total, nil)
+}
+
+func fetchToFileOnceWithProgress(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64, onRead func()) (int64, error) {
 	rc, _, rangeIgnored, err := get(ctx, d, t)
 	if err != nil {
 		return 0, err
@@ -713,7 +729,7 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 
 	// The budget is charged as bytes land, not after: a single segment served
 	// as an endless stream would otherwise defeat the whole cap.
-	src := io.Reader(&budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes})
+	src := io.Reader(&budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes, onRead: onRead})
 
 	if rangeIgnored {
 		// Charged, not discarded: these bytes crossed the network too, and
@@ -756,9 +772,10 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 // budgetReader charges everything it reads against a shared byte budget and
 // fails the moment the budget is spent.
 type budgetReader struct {
-	r     io.Reader
-	total *atomic.Int64
-	limit int64
+	r      io.Reader
+	total  *atomic.Int64
+	limit  int64
+	onRead func()
 }
 
 func (b *budgetReader) Read(p []byte) (int, error) {
@@ -769,6 +786,9 @@ func (b *budgetReader) Read(p []byte) (int, error) {
 			Limit:  true,
 			cause:  errBudgetExceeded,
 		}
+	}
+	if n > 0 && b.onRead != nil {
+		b.onRead()
 	}
 	return n, err
 }

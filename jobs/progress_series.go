@@ -38,9 +38,10 @@ type Metric = jobmetrics.Metric
 // short because a full series is stored on the Job row and sent to the Jobs
 // drawer for every row it shows.
 //
-// At is Unix milliseconds. Rate is the change in Completed per second since the
-// previous point, recorded only when the two are comparable. Values holds the
-// graphed metrics.
+// At is Unix milliseconds. Rate is the sampled progress per second. Ordinary
+// progress uses comparable neighboring counts; an executor with a coarse
+// count may carry its last measured rate across fresh activity reports that do
+// not change that count. Values holds the graphed metrics.
 type SeriesPoint struct {
 	At        int64              `json:"t"`
 	Completed *float64           `json:"c,omitempty"`
@@ -57,17 +58,23 @@ type RateAnchor struct {
 // ProgressSeries is the bounded history of one Job's progress, kept on the Job
 // row so a graph survives a reload, another process and the Job finishing.
 //
-// It carries two different rates. Each point's Rate is the average over its
-// interval, which is what a graph of the Job's whole life wants. Rate on the
-// series is the current speed, measured once a second and smoothed, which is
-// what "2.1 MB/s" beside a running transfer wants: after compaction a point can
-// span minutes, and a speed that old would be wrong.
+// It carries two different rates. Each point's Rate is the sampled speed for
+// that part of the graph. For ordinary progress it is measured between
+// comparable counts; a coarse reporter can carry its last measured count rate
+// while fresh activity proves work is still arriving. Rate on the series is
+// the current speed, measured once a second and smoothed, which is what
+// "2.1 MB/s" beside a running transfer wants: after compaction a point can span
+// minutes, and a speed that old would be wrong.
 type ProgressSeries struct {
 	IntervalMs int64         `json:"intervalMs"`
 	Unit       string        `json:"unit,omitempty"`
 	Points     []SeriesPoint `json:"points"`
 	Rate       *float64      `json:"rate,omitempty"`
 	Anchor     *RateAnchor   `json:"anchor,omitempty"`
+	// ActivityAt is the last time an executor proved fresh work while its
+	// primary count stayed coarse. It keeps an existing count-based rate fresh
+	// without letting byte heartbeats become count samples.
+	ActivityAt *int64 `json:"activityAt,omitempty"`
 	// Units is each graphed metric's unit, so a key reused in another unit
 	// starts a fresh history instead of joining numbers that do not compare.
 	Units map[string]string `json:"units,omitempty"`
@@ -79,7 +86,12 @@ func (s ProgressSeries) CurrentRate(now time.Time) *float64 {
 	if s.Rate == nil || s.Anchor == nil {
 		return nil
 	}
-	if now.UnixMilli()-s.Anchor.At > rateStaleAfter.Milliseconds() {
+	lastActivity := s.Anchor.At
+	if s.ActivityAt != nil {
+		lastActivity = *s.ActivityAt
+	}
+	age := now.UnixMilli() - lastActivity
+	if age < 0 || age > rateStaleAfter.Milliseconds() {
 		return nil
 	}
 	rate := *s.Rate
@@ -165,28 +177,56 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 			}
 			series.Anchor, series.Rate = nil, nil
 		}
+		series.ActivityAt = nil
 		series.Unit = progress.Unit
 		changed = true
 	}
 
 	stale := rateStaleAfter.Milliseconds()
-	switch {
-	case final:
+	activityAt := series.ActivityAt
+	activityWasFresh := activityAt != nil && nowMs-*activityAt >= 0 && nowMs-*activityAt <= stale
+	activityCanBridge := activityWasFresh
+	if progress.Activity && !activityWasFresh && activityAt == nil && series.Anchor != nil {
+		anchorAge := nowMs - series.Anchor.At
+		activityCanBridge = anchorAge >= 0 && anchorAge <= stale
+	}
+	if progress.Activity && activityAt != nil && !activityWasFresh {
+		// A byte report after an unobserved gap starts a new measurement window;
+		// it cannot make the old count delta current again.
 		if series.Anchor != nil || series.Rate != nil {
 			series.Anchor, series.Rate = nil, nil
+			changed = true
+		}
+	}
+	if progress.Activity {
+		if series.ActivityAt == nil || *series.ActivityAt != nowMs {
+			series.ActivityAt = &nowMs
+			changed = true
+		}
+	}
+	switch {
+	case final:
+		if series.Anchor != nil || series.Rate != nil || series.ActivityAt != nil {
+			series.Anchor, series.Rate = nil, nil
+			series.ActivityAt = nil
 			changed = true
 		}
 	case completed == nil:
-		if series.Anchor != nil || series.Rate != nil {
+		if series.Anchor != nil || series.Rate != nil || series.ActivityAt != nil {
 			series.Anchor, series.Rate = nil, nil
+			series.ActivityAt = nil
 			changed = true
 		}
-	case series.Anchor == nil || *completed < series.Anchor.Completed || nowMs-series.Anchor.At > stale:
+	case series.Anchor == nil || *completed < series.Anchor.Completed || (nowMs-series.Anchor.At > stale && !activityCanBridge):
 		// A first count, a restart that went backwards, or a gap long enough to
 		// be a pause: measure afresh from here rather than across it.
 		series.Anchor = &RateAnchor{At: nowMs, Completed: *completed}
 		series.Rate = nil
 		changed = true
+	case (progress.Activity || activityWasFresh) && *completed == series.Anchor.Completed:
+		// Bytes prove that a coarse HLS measure is still moving, but they are not
+		// a segment count. Keep the segment anchor and its last measured rate;
+		// an unchanged count must not turn a healthy stream into zero speed.
 	case nowMs-series.Anchor.At >= rateAnchorIntervalMs:
 		elapsed := float64(nowMs-series.Anchor.At) / 1000
 		instant := (*completed - series.Anchor.Completed) / elapsed
@@ -195,6 +235,10 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		}
 		series.Rate = &instant
 		series.Anchor = &RateAnchor{At: nowMs, Completed: *completed}
+		changed = true
+	}
+	if !progress.Activity && series.ActivityAt != nil {
+		series.ActivityAt = nil
 		changed = true
 	}
 
@@ -211,6 +255,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	case nowMs-series.Points[count-1].At >= series.IntervalMs:
 		previous := series.Points[count-1]
 		point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
+		setActivityPointRate(&point, series, progress.Activity, !progress.Activity && activityWasFresh)
 		series.Points = append(series.Points, point)
 		changed = true
 	case final:
@@ -219,6 +264,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		if count > 1 {
 			point.Rate = pointRate(series.Points[count-2], point, max(stale, 3*series.IntervalMs))
 		}
+		setActivityPointRate(&point, series, progress.Activity, !progress.Activity && activityWasFresh)
 		series.Points[count-1] = point
 		changed = true
 	}
@@ -232,6 +278,16 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	}
 	pruneMetricUnits(&series)
 	return series, changed
+}
+
+func setActivityPointRate(point *SeriesPoint, series ProgressSeries, active, activityEnded bool) {
+	switch {
+	case activityEnded:
+		point.Rate = nil
+	case active && series.Rate != nil:
+		rate := *series.Rate
+		point.Rate = &rate
+	}
 }
 
 // reuniteMetricUnits drops a graphed key's history when the key comes back in a
@@ -388,6 +444,10 @@ func cloneSeries(series ProgressSeries) ProgressSeries {
 	if series.Anchor != nil {
 		anchor := *series.Anchor
 		out.Anchor = &anchor
+	}
+	if series.ActivityAt != nil {
+		activityAt := *series.ActivityAt
+		out.ActivityAt = &activityAt
 	}
 	if series.Rate != nil {
 		rate := *series.Rate

@@ -27,13 +27,12 @@ function byteUnit(bytes) {
 }
 
 // A byte count in the given unit: two decimals below 1 of it, one below 100,
-// none above. `floor` rounds down, for an amount that must not read as a total
-// it has not reached.
+// none above. Completed amounts floor-round; totals and rates round to nearest.
 function formatBytesIn(bytes, unit, floor = false) {
     const value = bytes / 1024 ** unit;
     const digits = unit === 0 || value >= 100 ? 0 : value < 1 ? 2 : 1;
     const scale = 10 ** digits;
-    const shown = floor ? Math.floor(value * scale) / scale : value;
+    const shown = floor ? Math.floor(value * scale) / scale : Math.round(value * scale) / scale;
     return `${shown.toFixed(digits)} ${BYTE_UNITS[unit]}`;
 }
 
@@ -112,6 +111,10 @@ export function formatRate(rate, unit = '') {
             per = 'h';
         }
     }
+    if (per === 'h' && value > 0) {
+        if (unit === 'bytes' && value < 1) return '<1 B/h';
+        if (unit !== 'bytes' && value < 0.1) return unit ? `<0.1 ${unit}/h` : '<0.1/h';
+    }
     if (unit === 'bytes') return `${formatBytes(value)}/${per}`;
     if (unit === '') return `${formatNumber(value)}/${per}`;
     return `${formatNumber(value)} ${unit}/${per}`;
@@ -155,10 +158,10 @@ export function formatEta(progress, now = Date.now()) {
 }
 
 /**
- * "12.3 MB of 40 MB", "3 of 12 items", or just the completed amount. Bytes short
- * of their total are rounded down, so they never read as the total before they
- * are. A `finished` Job's amount that reached its total is just the amount:
- * "558 B of 558 B" says it twice.
+ * "12.3 MB of 40 MB", "3 of 12 items", or just the completed amount. Byte
+ * amounts below their total are rounded down, though coarse rounding can make
+ * them display the same as the total. A `finished` Job's amount that reached
+ * its total is just the amount: "558 B of 558 B" says it twice.
  */
 export function formatAmount(progress, { finished = false } = {}) {
     const completed = progress?.completed;
