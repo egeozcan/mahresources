@@ -60,6 +60,20 @@ describe('a shortcut refused over another dialog', () => {
         }
     });
 
+    test('leaves when focus leaves its dialog, so a dialog that is hidden and shown again does not show it', async () => {
+        const dialog = openDialog('Picker');
+        document.body.insertAdjacentHTML('beforeend', '<button id="trigger">Open picker</button>');
+        refuseOverModal(dialog, 'Close this dialog first to open Jobs.');
+        await settle();
+        const input = dialog.querySelector('input') as HTMLInputElement;
+        // Focus moving inside the dialog keeps it.
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: dialog }));
+        expect(dialog.querySelector('[data-modal-refusal]')).not.toBeNull();
+        // The dialog closes and hands focus back to what opened it.
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.getElementById('trigger') }));
+        expect(dialog.querySelector('[data-modal-refusal]')).toBeNull();
+    });
+
     test('the Jobs shortcut inside search says why inside search', async () => {
         const dialog = openDialog('Search');
         const panel = jobPanel() as any;
