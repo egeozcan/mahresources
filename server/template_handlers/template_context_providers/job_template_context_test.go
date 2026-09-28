@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
 )
@@ -402,6 +405,46 @@ func TestJobListRefusalNamesOnlyTheFilterProblem(t *testing.T) {
 	failed := renderJobList(t, &fakeJobListReader{listErr: fmt.Errorf("database is locked")}, "/jobs?dismissed=false")
 	if failed["_statusCode"] != http.StatusInternalServerError || failed["_statusKeepsPage"] == true {
 		t.Fatalf("a failed read answered %v, keeps page = %v; want the 500 error page", failed["_statusCode"], failed["_statusKeepsPage"])
+	}
+}
+
+// fakeAdminJobListReader is a list reader that can also name accounts, as the
+// application context can for an administrator.
+type fakeAdminJobListReader struct {
+	fakeJobListReader
+}
+
+func (f *fakeAdminJobListReader) JobAccountLabels(ids []uint) (map[uint]string, error) {
+	return map[uint]string{}, nil
+}
+
+func (f *fakeAdminJobListReader) JobAccountOptions() ([]application_context.JobAccountOption, error) {
+	return []application_context.JobAccountOption{{ID: 7, Label: "Alice (alice)"}}, nil
+}
+
+// An administrator correcting a refused filter keeps every other choice the
+// address made: the Owner and Actor selects are drawn as on a listed page, so
+// submitting the corrected form does not quietly drop owner=me and list other
+// accounts' Jobs.
+func TestARefusedFilterKeepsAnAdministratorsOwnerChoice(t *testing.T) {
+	for _, c := range []struct{ target, owner string }{
+		{"/jobs?state=bogus&owner=me&dismissed=false", "me"},
+		{"/jobs?state=bogus&owner=deleted&dismissed=false", "deleted"},
+		{"/jobs?cursor=garbage&owner=7&actorId=7&dismissed=false", "7"},
+	} {
+		reader := &fakeAdminJobListReader{fakeJobListReader{listErr: fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus")}}
+		request := httptest.NewRequest(http.MethodGet, c.target, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), &auth.Principal{UserID: 1, Role: models.RoleAdmin}))
+		ctx := jobListContextProvider(reader)(request)
+		if ctx["_statusCode"] != http.StatusBadRequest {
+			t.Fatalf("%s answered %v, want 400", c.target, ctx["_statusCode"])
+		}
+		if ctx["jobOwnerOptions"] == nil || ctx["jobActorOptions"] == nil {
+			t.Fatalf("%s drew no Owner and Actor selects on the refused page", c.target)
+		}
+		if form := ctx["jobFilter"].(JobFilterForm); form.Owner != c.owner {
+			t.Fatalf("%s shows the Owner select as %q, want %q", c.target, form.Owner, c.owner)
+		}
 	}
 }
 

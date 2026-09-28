@@ -202,6 +202,19 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
+		// An administrator's Owner and Actor selects are drawn before the filter
+		// is read, so a page refusing its filter still offers them with the
+		// address's choices, and correcting the filter keeps them.
+		accounts, _ := reader.(JobAccountReader)
+		viewer := auth.PrincipalFromContext(request.Context())
+		if accounts != nil && viewer.IsAdmin() {
+			options, err := accounts.JobAccountOptions()
+			if err != nil {
+				return addJobListError(err, base)
+			}
+			base["jobOwnerOptions"] = jobAccountSelectOptions(options, jobOwnerChoice(query))
+			base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
+		}
 
 		filter, err := jobListFilter(query)
 		if err != nil {
@@ -234,17 +247,9 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		for _, snapshot := range page.Jobs {
 			rows = append(rows, jobRow(reader, snapshot))
 		}
-		if accounts, ok := reader.(JobAccountReader); ok {
-			if viewer := auth.PrincipalFromContext(request.Context()); viewer.IsAdmin() {
-				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
-					return addJobListError(err, base)
-				}
-				options, err := accounts.JobAccountOptions()
-				if err != nil {
-					return addJobListError(err, base)
-				}
-				base["jobOwnerOptions"] = jobAccountSelectOptions(options, jobOwnerChoice(query))
-				base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
+		if accounts != nil && viewer.IsAdmin() {
+			if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
+				return addJobListError(err, base)
 			}
 		}
 		base["jobs"] = rows
