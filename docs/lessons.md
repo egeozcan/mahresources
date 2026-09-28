@@ -2169,6 +2169,8 @@ where the review's own record lives.
 - Compare SQLite timestamp text as normalized UTC seconds and exact fractional digits. Offsets, separators and fractional widths vary across valid driver layouts, and a Julian-day comparison loses sub-millisecond changes. Test equivalent instants and ordering across the full layout matrix and actual Go bindings.
 - Visible lineage proves which relatives a reader may see, not which Job produced the current report. Bind an import report to its producer before attaching an outcome; when that producer is missing or invisible, keep the outcome unknown.
 
+- A foreground command and its execution follower can deliver the same durable pause intent. Treat an already-paused queue entry as a request to read the held Job answer, using the same bounded confirmation as a newly applied pause; queue status alone is not durable confirmation.
+
 ## Custom Thumbnail popup — 2026-09-28
 
 - `docs/todo.md` in this repo is the 2026-07-29 UI bug-hunt **ledger**, and

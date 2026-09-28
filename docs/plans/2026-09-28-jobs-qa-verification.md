@@ -58,6 +58,9 @@ These follow-ups were not assigned to a batch 4 lane and remain separate work.
 - Add Reduction Recompute lineage in its own change.
 - Wire PostgreSQL API fixtures' runtime settings explicitly, including the valid
   threshold-zero case rather than accidental fallback behavior.
+- Reproduce the calendar-event-modal, plugin-blocks and compare-page teardown or
+  reduced-motion flakes. Their causes were not established and this batch does not
+  claim they are fixed. Server logs can be retained with `E2E_SERVER_LOG_DIR`.
 
 Known limits retained from earlier batches include clock skew around page loads;
 a read-only viewer retaining an ancestor under Needs attention after an invisible
