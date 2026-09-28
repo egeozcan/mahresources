@@ -158,7 +158,11 @@ the initial state included, and before sending it, and once a second while
 idle; events arriving within a quarter second of the last check wait for the
 next one and share it. When the credential no longer authenticates, after a logout,
 a disabled account or a revoked token, the stream closes. After a role or scope
-change it stays open and sends only what the account may see now.
+change it stays open and sends only what the account may see now. A change that
+widens what the account sees applies to the events published from the
+canonical stream's last poll before it on: the stream has already read past the
+earlier events it could not send, and does not send them late as if they were
+new. The lists show those Jobs.
 
 ## Progress, metrics and graphs
 
