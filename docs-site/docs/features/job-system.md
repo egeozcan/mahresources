@@ -354,9 +354,10 @@ of"), continued ("Continuation of") or repeated ("Repeat of"); **Later runs**
 holds its own Retry, Continue or Repeat ("Retried as", "Continued as",
 "Repeated as"); **Part of** and **Stages** hold its parent and child stages.
 
-**Timeline** lists the Job's events oldest first and adds new ones as the live
-stream reports them. It reads up to 1,000 events at a time; a Job with more says
-so and offers **Show later events**.
+**Timeline** lists the Job's events oldest first, each named by its type in
+words ("Output published"), and adds new ones as the live stream reports them.
+It reads up to 1,000 events at a time; a Job with more says so and offers
+**Show later events**. A read that fails says so and offers **Try again**.
 
 Each output link says what it does: **View** an entity and **Download** a
 file, followed by the output's name, and **Open report**, **Open log** or

@@ -140,9 +140,9 @@ test.describe('The Job page', () => {
     try {
       await page.goto(`/job?id=${encodeURIComponent(id)}`);
       const timeline = page.getByTestId('job-timeline');
-      await expect(timeline).toContainText('accepted');
+      await expect(timeline).toContainText('Accepted');
       await expect(page.getByTestId('job-detail').locator('header')).toContainText('Succeeded', { timeout: 30_000 });
-      await expect(timeline).toContainText('succeeded');
+      await expect(timeline).toContainText('Succeeded');
       // Nothing that ended says what it was doing while it ran.
       const job = await readJob(request, id);
       expect(job?.phase ?? '').toBe('');
@@ -179,8 +179,25 @@ test.describe('The Job page', () => {
     await expect(more).toContainText('This job has more events than are shown.');
     await more.getByRole('button', { name: 'Show later events' }).click();
     await expect(timeline.getByRole('listitem')).toHaveCount(total);
-    await expect(timeline.getByRole('listitem').last()).toContainText('blocked');
+    await expect(timeline.getByRole('listitem').last()).toContainText('Blocked');
     await expect(more).toBeHidden();
+  });
+
+  test('lists a Job linked to it twice once per link', async ({ page }) => {
+    const id = 'detail-linked-twice';
+    const earlier = { id: 'detail-earlier-run', kind: 'remote-download', title: 'Same download', state: 'failed', version: 2, acceptedAt: '2026-09-26T10:00:00Z' };
+    await page.route(`**/v1/jobs/${id}/events?*`, route => route.fulfill({ json: { events: [] } }));
+    await page.route(`**/v1/jobs/${id}`, route => route.fulfill({ json: {
+      id, kind: 'remote-download', title: 'Same download', state: 'succeeded', version: 4, acceptedAt: '2026-09-26T10:05:00Z',
+      commands: [], outputs: [],
+      lineage: { ancestors: [{ ...earlier, relation: 'retry-of' }, { ...earlier, relation: 'repeat-of' }], successors: [], parents: [], children: [] },
+    } }));
+
+    await gotoMockedJobPage(page, id);
+    const entries = page.locator('[data-job-lineage="ancestors"]').getByRole('listitem');
+    await expect(entries).toHaveCount(2);
+    await expect(entries.nth(0)).toContainText('Retry of Same download');
+    await expect(entries.nth(1)).toContainText('Repeat of Same download');
   });
 
   test('offers a finished export for download under a name that opens, here and on its card', async ({ page, request, apiClient }) => {

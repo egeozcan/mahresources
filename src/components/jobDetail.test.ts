@@ -10,6 +10,7 @@ import {
     outputCountText,
     relativeTimeText,
     shortJobId,
+    timelineEventLabel,
 } from './jobCenter.js';
 import { formatLocalTime } from '../utils/localTime.js';
 
@@ -149,6 +150,14 @@ describe('the Job page lineage', () => {
         expect(groups[1].entries[0]).toMatchObject({ id: 'job-4', relation: 'Retried as', state: 'Succeeded' });
     });
 
+    test('lists a Job related twice once per relation', () => {
+        const twice = [{ ...retried, relation: 'retry-of' }, { ...retried, relation: 'repeat-of', state: 'failed' }];
+        const [group] = lineageGroups({ ...job, lineage: { ancestors: twice } });
+        expect(group.entries.map(entry => entry.relation)).toEqual(['Retry of', 'Repeat of']);
+        expect(new Set(group.entries.map(entry => entry.key)).size).toBe(2);
+        expect(detailTemplate).toContain(':key="related.key"');
+    });
+
     test('tells a Continue and a Repeat from a Retry', () => {
         const partial = { id: 'job-1', state: 'succeeded', phase: 'partial', title: 'Share', relation: 'retry-of' };
         const repeated = { id: 'job-0', state: 'succeeded', title: 'Share', relation: 'repeat-of' };
@@ -222,6 +231,67 @@ describe('the Job page timeline', () => {
         center.handleStreamMessage({ data: JSON.stringify({ id: 'x-1', jobId: 'other', jobVersion: 1, sequence: 1, type: 'accepted', deliverySequence: 32 }), lastEventId: 'v2:32' });
         await Promise.resolve();
         expect((center.fetchJSON as any).mock.calls.filter(([url]: [string]) => url.includes('/events')).length).toBe(reads);
+    });
+
+    test('reads the timeline again once the stream has caught up, for an event published between the two', async () => {
+        const made: any[] = [];
+        class Source {
+            listeners = new Map<string, Function>();
+            readyState = 1;
+            constructor(public url: string) { made.push(this); }
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() { this.readyState = 2; }
+        }
+        vi.stubGlobal('EventSource', Source);
+        try {
+            let published = 2;
+            const center = page('job-t5', url => {
+                if (!url.includes('/events')) return { id: 'job-t5', state: published > 2 ? 'succeeded' : 'running', version: published };
+                return { events: events(after(url) + 1, published) };
+            });
+            center.streamCaughtUp = false;
+            center.connect();
+            await center.load();
+            expect(center.timeline.map(event => event.sequence)).toEqual([1, 2]);
+            // The Job succeeds after the timeline was read, before the stream
+            // reached its head: the stream will never deliver that event.
+            published = 3;
+            made[0].listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:50' }) });
+            await vi.waitFor(() => expect(center.timeline.map(event => event.sequence)).toEqual([1, 2, 3]));
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    test('a timeline read that failed says so and reads again when asked', async () => {
+        let failing = true;
+        const center = page('job-t6', url => {
+            if (!url.includes('/events')) return { id: 'job-t6', state: 'succeeded', version: 3 };
+            if (failing) throw new Error('Request failed (502)');
+            return { events: events(after(url) + 1, 3) };
+        });
+        await center.load();
+        expect(center.timelineError).toBe('Request failed (502)');
+        failing = false;
+        await center.retryTimeline();
+        expect(center.timelineError).toBe('');
+        expect(center.timeline.map(event => event.sequence)).toEqual([1, 2, 3]);
+        expect(detailTemplate).toContain('@click="retryTimeline()"');
+
+        // A read the stream started that fails says so too, rather than
+        // leaving the timeline short without a word.
+        failing = true;
+        center.handleStreamMessage({ data: JSON.stringify({ id: 'e-4', jobId: 'job-t6', jobVersion: 4, sequence: 4, type: 'pinned', deliverySequence: 60 }), lastEventId: 'v2:60' });
+        await vi.waitFor(() => expect(center.timelineError).toBe('Request failed (502)'));
+    });
+
+    test('names every event type in words, one added later included', () => {
+        expect(timelineEventLabel({ type: 'output-published' })).toBe('Output published');
+        expect(timelineEventLabel({ type: 'retried' })).toBe('Retried');
+        expect(timelineEventLabel({ type: 'a_future_type' })).toBe('A future type');
+        expect(timelineEventLabel({ type: '' })).toBe('Event');
+        expect(timelineEventLabel(null)).toBe('Event');
+        expect(detailTemplate).toContain('x-text="timelineEventLabel(event)"');
     });
 
     test('drops the phase a finished Job no longer has', async () => {

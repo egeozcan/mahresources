@@ -167,7 +167,7 @@
                         <div :data-job-lineage="group.key">
                             <h3 class="text-xs font-semibold text-stone-600" x-text="group.heading"></h3>
                             <ul class="mt-1 space-y-2">
-                                <template x-for="related in group.entries" :key="related.id">
+                                <template x-for="related in group.entries" :key="related.key">
                                     <li class="text-sm text-stone-800">
                                         <span x-show="related.relation" x-text="related.relation + ' '"></span><a :href="detailURL(related)" class="break-words text-amber-900 underline decoration-amber-300 underline-offset-2"><span x-text="related.name"></span> <span class="font-mono text-xs" x-text="related.short"></span></a>
                                         <span class="block text-xs text-stone-600"><span x-text="related.state"></span><template x-if="related.accepted"><span> · accepted <time class="tabular-nums" :datetime="related.acceptedAt" x-text="related.accepted"></time></span></template></span>
@@ -183,7 +183,10 @@
 
             <section aria-labelledby="job-timeline-heading" class="rounded border border-stone-200 bg-white p-4">
                 <h2 id="job-timeline-heading" class="font-mono text-sm font-semibold text-stone-800">Timeline</h2>
-                <p x-show="timelineError" class="mt-2 text-sm text-stone-600" x-text="timelineError"></p>
+                <div x-show="timelineError" x-cloak class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-stone-700" data-job-timeline-error>
+                    <p x-text="'The timeline could not be read: ' + timelineError"></p>
+                    <button type="button" @click="retryTimeline()" class="inline-flex min-h-6 items-center rounded font-medium text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Try again</button>
+                </div>
                 <section x-show="warningEvents().length" x-cloak aria-labelledby="job-warnings-heading" class="mt-3 rounded border border-amber-300 bg-amber-50 p-3">
                     <h3 id="job-warnings-heading" class="font-mono text-sm font-semibold text-amber-950">Warnings</h3>
                     <ul class="mt-2 space-y-2">
@@ -200,7 +203,7 @@
                     <template x-for="event in timeline" :key="event.id || event.sequence">
                         <li class="relative">
                             <span aria-hidden="true" class="absolute -left-[1.33rem] top-1 h-2 w-2 rounded-full border border-stone-600 bg-white"></span>
-                            <p class="text-sm font-medium text-stone-800" x-text="event.type"></p>
+                            <p class="text-sm font-medium text-stone-800" x-text="timelineEventLabel(event)"></p>
                             <time class="text-xs tabular-nums text-stone-500" :datetime="event.createdAt" x-text="timeText(event.createdAt)"></time>
                             <pre x-show="event.detail" class="mt-1 whitespace-pre-wrap break-words text-xs text-stone-600" x-text="typeof event.detail === 'string' ? event.detail : JSON.stringify(event.detail)"></pre>
                         </li>

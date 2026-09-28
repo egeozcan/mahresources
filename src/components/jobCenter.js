@@ -315,6 +315,14 @@ export function jobDurationRows(job, now = Date.now()) {
     });
 }
 
+// An event type as the timeline names it: "output-published" is "Output
+// published". Every type reads this way, one added in a later release included,
+// so no entry is ever blank.
+export function timelineEventLabel(event) {
+    const words = String(event?.type || '').trim().replace(/[-_]+/g, ' ').trim();
+    return words ? words[0].toUpperCase() + words.slice(1) : 'Event';
+}
+
 export function outputCountText(count) {
     if (!count) return '';
     return count === 1 ? '1 output' : `${count} outputs`;
@@ -356,6 +364,9 @@ export function lineageGroups(job) {
     return LINEAGE_GROUPS.map(group => ({
         ...group,
         entries: (Array.isArray(job?.lineage?.[group.key]) ? job.lineage[group.key] : []).map(related => ({
+            // One pair of Jobs can be linked twice (a Retry and a Repeat), and
+            // each link is its own entry.
+            key: `${related?.id || ''}:${related?.relation || ''}`,
             id: related?.id || '',
             short: shortJobId(related?.id),
             name: jobHeading(related),
@@ -802,7 +813,7 @@ export function jobCenter(options = {}) {
                 try {
                     await this.readTimeline();
                 } catch (error) {
-                    this.timelineError = error.message || 'Timeline is unavailable.';
+                    this.timelineError = error.message || 'the request failed';
                 }
             }
             return this.detail;
@@ -823,6 +834,7 @@ export function jobCenter(options = {}) {
                         this._timelineAgain = false;
                         await this.readTimelinePages();
                     } while (this._timelineAgain && !this.timelineMore && !this._destroyed);
+                    this.timelineError = '';
                 } finally {
                     this._timelineReading = null;
                 }
@@ -863,17 +875,32 @@ export function jobCenter(options = {}) {
             try {
                 await this.readTimeline();
             } catch (error) {
-                this.timelineError = error.message || 'Later events could not be loaded.';
+                this.timelineError = error.message || 'the request failed';
                 this.timelineMore = true;
             }
         },
 
-        // An event the stream delivered for this Job: the timeline reads what
-        // follows the last event it holds. Nothing is read while the page holds
-        // only part of the timeline; "Show later events" reaches it.
+        // An event the stream delivered for this Job, or the stream reaching
+        // its head: the timeline reads what follows the last event it holds.
+        // The stream starts at the head, so an event published after the page
+        // read its timeline and before the stream connected reaches the page
+        // only this way. Nothing is read while the page holds only part of the
+        // timeline; "Show later events" reaches it. A read that fails says so,
+        // and Try again reads again.
         followTimeline() {
             if (!this._timelineStarted || this.timelineMore || this._destroyed) return;
-            this.readTimeline().catch(() => {});
+            this.readTimeline().catch(error => {
+                if (!this._destroyed) this.timelineError = error.message || 'the request failed';
+            });
+        },
+
+        async retryTimeline() {
+            this.timelineError = '';
+            try {
+                await this.readTimeline();
+            } catch (error) {
+                this.timelineError = error.message || 'the request failed';
+            }
         },
 
         async refreshJobPreference(id) {
@@ -1038,12 +1065,14 @@ export function jobCenter(options = {}) {
             this._streamRetryDelay = 0;
             // The page read its Job while the stream was connecting at the
             // head, so a change made between the two is in neither: it is read
-            // again once, now, or once the page's own read has finished.
+            // again once, now, or once the page's own read has finished. Its
+            // timeline likewise reads what followed the events it holds.
             if (this._reconcileOnCatchUp) {
                 this._reconcileOnCatchUp = false;
                 if (this.loading || !this.detail) this._reconcileAfterLoad = true;
                 else this.reconcileDetail();
             }
+            this.followTimeline();
         },
 
         // Reads this page's Job again and applies it through the snapshot
@@ -1183,6 +1212,7 @@ export function jobCenter(options = {}) {
         },
         outputCountText(job) { return outputCountText(advertisedOutputs(job).length); },
         lineageGroups(job) { return lineageGroups(job); },
+        timelineEventLabel(event) { return timelineEventLabel(event); },
         showsProgress(job) { return showsProgress(job); },
         phaseText(job) { return phaseText(job); },
         accountText(job, role) { return jobAccountText(job, role); },
