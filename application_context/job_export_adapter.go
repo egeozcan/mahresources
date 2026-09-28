@@ -846,11 +846,12 @@ func (a *groupExportAdapter) Commands(_ context.Context, commandContext jobs.Com
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
 		Destructive:  true,
+		Bulk:         true,
 		Confirmation: "Stop this export? Nothing is added to the library by it.",
 	}}
 	switch commandContext.Snapshot.State {
 	case jobs.StateFailed, jobs.StateCancelled, jobs.StateInterrupted:
-		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry", Bulk: true})
 	case jobs.StateSucceeded:
 		commands = append(commands, jobs.Command{Key: jobs.CommandRepeat, Label: "Export again"})
 	}

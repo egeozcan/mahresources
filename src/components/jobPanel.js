@@ -1,5 +1,6 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 import * as userSettings from '../userSettings.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
 import { blockingModal, isRendered, refuseOverModal } from '../utils/modality.js';
@@ -412,6 +413,7 @@ export function jobPanel() {
         _streamTouchSeq: 0,
         _streamTouched: new Map(),
         _ownerViewer: 0,
+        _stopAnnouncing: null,
 
         init() {
             this.finishedLimit = panelFinishedLimit();
@@ -422,6 +424,7 @@ export function jobPanel() {
             this.ownerScope = this.$el?.dataset?.jobPanelOwnerScope === 'me' ? 'me' : '';
             this.adoptPendingOwnerChoice();
             this._liveRegion = createLiveRegion();
+            this.registerAnnouncements();
             this._trigger = this.$el?.querySelector?.('.job-panel-trigger') || null;
             this._root = this.$el || null;
             this._keydownHandler = event => this.handleShortcut(event);
@@ -479,6 +482,7 @@ export function jobPanel() {
 
         destroy() {
             this._destroyed = true;
+            this.unregisterAnnouncements();
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
             if (this._onlineHandler) window.removeEventListener('online', this._onlineHandler);
@@ -1426,6 +1430,66 @@ export function jobPanel() {
             this.refresh();
         },
 
+        // The page's own Job views hand the drawer the changes they see
+        // (utils/jobAnnouncements.js), so the drawer's ledger decides each one
+        // once, including a Job its capped lists never read.
+        registerAnnouncements() {
+            this._stopAnnouncing = followJobAnnouncements({ hear: changes => this.hearFromPage(changes) });
+        },
+
+        // The Jobs this drawer announces: every Job its stream follows, which
+        // with My jobs chosen is the administrator's own; once its stream
+        // stopped, none.
+        followsJob(job) {
+            return !this.streamStopped &&
+                (this.ownerScope !== 'me' || (job?.ownerUserId != null && Number(job.ownerUserId) === this._ownerViewer));
+        },
+
+        // Changes a page saw on its own cards, heard as a read of this stream
+        // generation, and said through the ledger, so a change the drawer has
+        // already heard (from its stream or its own read) is not said again.
+        // A Job the drawer never read, one its capped lists leave out, is heard
+        // from the page's card before the change, as a read would have heard
+        // it; so is one the drawer last heard at an older version than that
+        // card, since the change is measured from what the reader last saw.
+        // While the stream is still catching up nothing can be said here
+        // (hearJob), so the change is recorded, which keeps the drawer from
+        // saying it later, and left to the page with the Jobs it does not
+        // follow.
+        hearFromPage(changes) {
+            const left = [];
+            const spoken = [];
+            for (const change of changes) {
+                const { previous, next } = change || {};
+                if (!next?.id || !next.state || !this.followsJob(next)) {
+                    left.push(change);
+                    continue;
+                }
+                const heard = this._heard.get(next.id);
+                const shown = heard ? null : this.jobs.find(row => row.id === next.id);
+                const known = heard ? heard.version : shown ? Number(shown.version || 0) : -1;
+                const version = Number(previous?.version || 0);
+                if (previous?.state && version > known) {
+                    this._heard.delete(next.id);
+                    this._heard.set(next.id, {
+                        state: previous.state, version, stateSince: version, generation: this._streamGeneration, withheld: '',
+                    });
+                }
+                if (this.streamCaughtUp) this.hearFromRead(next, this._streamGeneration, spoken);
+                else {
+                    this.hearJob(next);
+                    left.push(change);
+                }
+            }
+            this.announceNews(spoken);
+            return left;
+        },
+
+        unregisterAnnouncements() {
+            this._stopAnnouncing?.();
+            this._stopAnnouncing = null;
+        },
+
         // A live progress frame updates the row it names in place. It is not a
         // lifecycle event: it never refetches the list, never inserts a row the
         // list did not return, and is never announced — a screen reader told
@@ -1602,6 +1666,13 @@ export function jobPanel() {
         // render is misread: refreshed for although the page lists it, or not
         // refreshed for although it does not (its resource then appears on the
         // next load). Widening the comparison moves the error to the other side.
+        // Known limit: only the rows the drawer reads are seen, and its Finished
+        // group holds the newest finishedLimit. A download that more than that
+        // many Jobs finish after, before the drawer reads again, refreshes
+        // nothing by itself. A burst of downloads is not lost, since its newest
+        // are read and one refresh re-reads the whole list; seeing every success
+        // would need a Kind the stream's events do not carry, or a refresh for
+        // any Job's success, which morphs the lists under the reader far more.
         trackResourceCompletion(job) {
             if (!job?.id || job.state !== 'succeeded' ||
                 (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||

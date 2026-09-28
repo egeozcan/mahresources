@@ -38,6 +38,7 @@ import {
     stateLabel,
     warningEvents,
 } from './jobCenter.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 
 const unfamiliarJob = {
     id: 'job-unknown-kind',
@@ -730,6 +731,35 @@ describe('Job Center event stream catch-up boundary', () => {
         sendJob('cancelled', 5, 13);
         expect(center._liveRegion.announce).toHaveBeenCalledTimes(2);
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
+    });
+
+    test('hands its Job\'s change to the drawer, and says it, with its reason, only when the drawer hands it back', () => {
+        const center = jobCenter();
+        const running = { id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 };
+        center.jobs = [running];
+        center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const failed = {
+            id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'failed', version: 3, ownerUserId: 8,
+            failure: { code: 'http-404', message: 'HTTP 404 Not Found' },
+        };
+
+        const heard: any[] = [];
+        const stop = followJobAnnouncements({ hear: (changes: any[]) => { heard.push(...changes); return []; } });
+        center.applyStreamSnapshot(failed, null, true);
+        expect(heard).toEqual([{ previous: running, next: failed }]);
+        expect(center._liveRegion.announce).not.toHaveBeenCalled();
+        stop();
+
+        // An administrator's drawer on My jobs hands another account's Job
+        // back, so the page that shows it says its change.
+        const stopOwn = followJobAnnouncements({ hear: (changes: any[]) => changes });
+        center.jobs = [{ ...failed, state: 'running', version: 3 }];
+        center.detail = null;
+        center.details = {};
+        center.applyStreamSnapshot({ ...failed, version: 4 }, null, true);
+        expect(center._liveRegion.announce).toHaveBeenCalledTimes(1);
+        expect(center._liveRegion.announce).toHaveBeenCalledWith('sunrise.png failed: HTTP 404 Not Found.');
+        stopOwn();
     });
 
     test('a stream that reset its cursor reloads the page rather than repairing it', () => {

@@ -51,7 +51,9 @@
         </ul>
     </div>
     {% endif %}
-    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter jobs" action="/jobs" method="get"
+    {# autocomplete="off": a page reloaded by Back must show the filters its address #}
+    {# names, not the choices the browser remembers from before it was left.       #}
+    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter jobs" action="/jobs" method="get" autocomplete="off"
           x-data="jobFilterTimes()" @submit="submit()">
         <div class="filter-controls-scroll">
         <div class="sidebar-group">
@@ -89,7 +91,18 @@
             </select>
             <p id="job-filter-command-help" class="mt-0.5 text-xs text-stone-500">Jobs currently offering this command.</p>
 
-            {% include "/partials/form/textInput.tpl" with name='origin' label='Origin' value=jobFilter.OriginText %}
+            {% if jobOriginOptions %}
+            <fieldset class="mt-2">
+                <legend class="block text-xs font-mono font-medium text-stone-600">Origin</legend>
+                {% for origin in jobOriginOptions %}
+                <label class="flex items-center gap-2 min-h-7 cursor-pointer">
+                    <input type="checkbox" name="origin" value="{{ origin }}"{% if origin in jobFilter.Origins %} checked{% endif %} class="focus:ring-1 focus:ring-amber-600 h-3.5 w-3.5 text-amber-700 border-stone-300 rounded">
+                    <span class="text-xs font-mono font-medium text-stone-600">{{ origin }}</span>
+                </label>
+                {% endfor %}
+            </fieldset>
+            {% endif %}
+            {% if jobAccountFilters %}
             {% if jobOwnerOptions %}
             {# An administrator sees every account's Jobs, so they pick a person rather than type a user number. #}
             <label for="job-filter-owner" class="block text-xs font-mono font-medium text-stone-600 mt-2">Owner</label>
@@ -111,6 +124,7 @@
             {% else %}
             {% include "/partials/form/textInput.tpl" with name='ownerId' label='Owner ID' value=jobFilter.OwnerID %}
             {% include "/partials/form/textInput.tpl" with name='actorId' label='Actor ID' value=jobFilter.ActorID %}
+            {% endif %}
             {% endif %}
             {# datetime-local, not the shared date input: a bookmark or a legacy link can #}
             {# name an instant, and a date would widen it to a whole day on the next submit. #}
@@ -167,4 +181,50 @@
         </div>
         {% include "/partials/form/searchButton.tpl" %}
     </form>
+    {% if jobQuickFilters %}
+    {# The figures are read only when the reader opens them: a summary scans every Job the filter selects. #}
+    <div class="sidebar-group w-full mt-3 text-sm" x-data="jobSummary()" data-summary-query="{{ jobSummaryQuery }}" data-export-query="{{ jobSummaryExportQuery }}" data-testid="job-summary">
+        <details @toggle="$event.target.open && !summary && !loading && load()">
+            <summary class="cursor-pointer font-mono font-medium text-stone-700">Summary of these jobs</summary>
+            <label for="job-summary-window" class="block text-xs font-mono font-medium text-stone-600 mt-2">Accepted in the last</label>
+            <select id="job-summary-window" x-model="window" @change="load()" class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+                <option value="1d">day</option>
+                <option value="7d">7 days</option>
+                <option value="30d">30 days</option>
+                <option value="90d">90 days</option>
+            </select>
+            <p x-show="loading" class="mt-2 text-xs text-stone-600">Reading the summary…</p>
+            <p x-show="error" x-text="error" class="mt-2 text-xs text-red-800"></p>
+            <dl x-show="summary && !loading" class="mt-2 grid gap-1 text-xs" data-job-summary-figures>
+                <template x-for="figure in figures()" :key="figure.label">
+                    <div><dt class="inline font-medium text-stone-700" x-text="figure.label + ':'"></dt> <dd class="inline text-stone-800" x-text="figure.value"></dd></div>
+                </template>
+            </dl>
+        </details>
+        {% if jobSummaryExportOffered %}
+        <details class="mt-2">
+            <summary class="cursor-pointer font-mono font-medium text-stone-700">Export a summary</summary>
+            <p class="mt-1 text-xs text-stone-600">Queues a CSV or JSON summary of these jobs over a range longer than 90 days.</p>
+            {% if jobSummaryExportRefusal %}
+            <p class="mt-1 text-xs text-stone-800" data-job-summary-export-refusal>{{ jobSummaryExportRefusal }}</p>
+            {% else %}
+            <form class="mt-1 grid gap-1" aria-label="Export a summary of these jobs" @submit.prevent="exportSummary()">
+                <label for="job-summary-from" class="text-xs font-mono font-medium text-stone-600">From</label>
+                <input id="job-summary-from" type="date" required x-model="exportFrom" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                <label for="job-summary-to" class="text-xs font-mono font-medium text-stone-600">To</label>
+                <input id="job-summary-to" type="date" required x-model="exportTo" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                <label for="job-summary-format" class="text-xs font-mono font-medium text-stone-600">Format</label>
+                <select id="job-summary-format" x-model="exportFormat" class="text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600">
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                </select>
+                <button type="submit" :aria-disabled="exporting" class="mt-1 py-1.5 px-3 border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-amber-600">Export summary</button>
+            </form>
+            <p x-show="exportError" x-text="exportError" role="alert" class="mt-1 text-xs text-red-800"></p>
+            <p x-show="exported" role="status" class="mt-1 text-xs text-stone-800"><a :href="exported?.url" class="underline" x-text="exported?.title"></a> is queued.</p>
+            {% endif %}
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
 {% endblock %}

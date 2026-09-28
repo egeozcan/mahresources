@@ -156,3 +156,45 @@ test('an administrator\'s drawer lists their own jobs until they choose everyone
     await adminContext.close();
   }
 });
+
+test('an owner\'s open drawer lets go of a failure another account retried', async ({ browser, baseURL, authSeed }) => {
+  const name = `retried-elsewhere-${Date.now()}.bin`;
+  const userContext = await browser.newContext({ baseURL });
+  const adminContext = await browser.newContext({ baseURL });
+  try {
+    const user = await userContext.newPage();
+    await loginAs(user, authSeed.user);
+    const jobId = await failedDownload(user, authSeed.scopeGroupId, name);
+    await user.goto('/dashboard');
+    await user.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const attention = user.locator(`[data-job-panel-group="attention"] [data-job-panel-row][data-job-id="${jobId}"]`);
+    await expect(attention).toHaveCount(1);
+    // Every event of the failure has reached the drawer and no list read is
+    // pending, so what follows can only come from the retry.
+    await expect.poll(async () => {
+      const events = (await (await user.request.get(`/v1/jobs/${encodeURIComponent(jobId)}/events`)).json()).events as Array<{ deliverySequence?: number }>;
+      return events.length > 0 && events.every(event => event.deliverySequence);
+    }, { timeout: 15_000 }).toBe(true);
+    await user.waitForTimeout(2500);
+    await expect.poll(() => user.evaluate(() => {
+      const panel = (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'));
+      return !!panel.streamCaughtUp && !panel._panelRefreshPromise && !panel._panelRefreshTimer && !panel._panelRefreshMaxTimer;
+    }), { timeout: 15_000 }).toBe(true);
+
+    const admin = await adminContext.newPage();
+    await loginAs(admin, authSeed.admin);
+    const detail = await (await admin.request.get(`/v1/jobs/${encodeURIComponent(jobId)}`)).json();
+    const retried = await admin.request.post(`/v1/jobs/${encodeURIComponent(jobId)}/commands/retry`, {
+      headers: { 'X-CSRF-Token': await csrfOf(admin) },
+      data: { expectedVersion: detail.version, idempotencyKey: `retry-${name}`, origin: 'ui' },
+    });
+    expect(retried.ok(), await retried.text()).toBe(true);
+
+    // Nothing on the owner's page changes or reloads: the retried Job tells
+    // its viewers, and the drawer reads its lists again.
+    await expect(attention).toHaveCount(0, { timeout: 15_000 });
+  } finally {
+    await userContext.close();
+    await adminContext.close();
+  }
+});

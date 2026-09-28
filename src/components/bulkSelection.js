@@ -46,6 +46,9 @@ export function createBulkSelection(scope = null) {
     activeEditor: null,
     lastSelected: null,
     lastSelectedElement: null,
+    // What one selected row is called, which the bulk bar sets from its list's
+    // entity so the announcement says what its visible count says.
+    noun: 'item',
 
     init() {
 
@@ -151,7 +154,7 @@ export function createBulkSelection(scope = null) {
 
       this.selectedIds.add(id);
       this.syncCheckboxes(id, true);
-      this.announce(`${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected`);
+      this.announce(this.selectedCountText());
     },
 
     deselect(id, el = null) {
@@ -165,7 +168,11 @@ export function createBulkSelection(scope = null) {
 
       this.selectedIds.delete(id);
       this.syncCheckboxes(id, false);
-      this.announce(this.selectedIds.size > 0 ? `${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected` : 'Selection cleared');
+      this.announce(this.selectedIds.size > 0 ? this.selectedCountText() : 'Selection cleared');
+    },
+
+    selectedCountText() {
+      return `${this.selectedIds.size} ${this.noun || 'item'}${this.selectedIds.size === 1 ? '' : 's'} selected`;
     },
 
     toggle(id, el = null) {
@@ -380,6 +387,12 @@ export function createBulkSelection(scope = null) {
 
 export function bulkSelectionForms() {
   return {
+    // Declared for the reason selectableItem's are: each bulk action's forms
+    // sit in their own scope under the bar's, and an undeclared property would
+    // be one slot every action overwrites.
+    _selection: null,
+    _forms: null,
+
     init() {
       // $root dies with the subtree, so capture it while it is attached.
       const root = this.$root;
@@ -412,6 +425,14 @@ export function bulkSelectionForms() {
 
 export function selectableItem({ itemNo, itemId } = {}) {
   return {
+    // Declared, not only assigned in init(): a card nested in another component
+    // (the Job Center's list) shares a scope stack with it, and Alpine writes an
+    // undeclared property to the outermost scope. Every card then held the last
+    // card's checkbox, and a card leaving the list unregistered another's.
+    _selection: null,
+    _checkbox: null,
+    _entityObserver: null,
+
     init() {
       const el = this.$root.querySelector("input[type='checkbox']");
 

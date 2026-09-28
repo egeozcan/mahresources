@@ -1,5 +1,6 @@
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 import {
     applyProgressFrame,
@@ -1178,8 +1179,17 @@ export function jobCenter(options = {}) {
                     .catch(() => { if (String(result.jobId) === String(this.detailId)) this.reconcileDetail({ announce: announceSnapshot }); });
                 return;
             }
+            const incoming = eventJob(message);
+            const previous = this.jobs.find(job => job.id === incoming?.id);
             this.jobs = result.jobs;
-            if (result.announcement) this._liveRegion?.announce(result.announcement);
+            if (result.announcement) this.sayLifecycle(previous, incoming, result.announcement);
+        },
+
+        // A Job's state change goes to the drawer's ledger, which says it once
+        // if the drawer follows the Job (utils/jobAnnouncements.js); this page
+        // says it only when the drawer hands it back.
+        sayLifecycle(previous, job, text) {
+            if (text && tellDrawerOfJobs([{ previous, next: job }]).length) this._liveRegion?.announce(text);
         },
 
         updateJob(job) {
@@ -1201,7 +1211,7 @@ export function jobCenter(options = {}) {
             const stale = current => current && Number(job.version || 0) > 0 && Number(job.version || 0) < Number(current.version || 0);
             if (!stale(this.details[job.id])) this.details[job.id] = mergeFetchedProgress(mergeJobSnapshot(this.details[job.id], job), this.details[job.id]);
             if (this.detail?.id === job.id && !stale(this.detail)) this.detail = mergeFetchedProgress(mergeJobSnapshot(this.detail, job), this.detail);
-            if (announce && result.announcement) this._liveRegion?.announce(result.announcement);
+            if (announce && result.announcement) this.sayLifecycle(held.get(job.id), job, result.announcement);
         },
 
         progressText(job) { return progressText(job); },

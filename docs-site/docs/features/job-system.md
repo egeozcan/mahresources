@@ -168,7 +168,11 @@ the initial state included, and before sending it, and once a second while
 idle; events arriving within a quarter second of the last check wait for the
 next one and share it. When the credential no longer authenticates, after a logout,
 a disabled account or a revoked token, the stream closes. After a role or scope
-change it stays open and sends only what the account may see now.
+change it stays open and sends only what the account may see now. A change that
+widens what the account sees applies to the events published from the
+canonical stream's last poll before it on: the stream has already read past the
+earlier events it could not send, and does not send them late as if they were
+new. The lists show those Jobs.
 
 ## Progress, metrics and graphs
 
@@ -303,7 +307,11 @@ the same way; the Job Center says when its list could not be refreshed, and a
 Job's page whose read failed offers **Try again** and a link to All jobs.
 
 Progress updates arrive over the live stream. They are not announced to screen readers; state changes are,
-once each, with the reason when a Job fails. That includes a Job accepted and
+once each, with the reason when a Job fails. The drawer announces the Jobs it
+follows, on every page, including a Job its short lists leave out that the Job
+Center or a Job's page shows changing; those pages announce only a Job the
+drawer does not follow, such as another account's Job while an administrator's
+drawer shows **My jobs**. That includes a Job accepted and
 finished within a moment of each other, such as a download refused with a 404:
 its outcome is announced even though the drawer never showed it running. A Job
 whose outcome the live stream had already published when the page connected,
@@ -317,7 +325,9 @@ the live stream dropped are announced the same way. A Job counted this way can s
 announced by name if the drawer reads it later.
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
-shows the same line under each Job's bar.
+shows the speed and time left under each running Job's bar, and moves the bar,
+the amount and the time left as progress arrives, without reading the list
+again.
 
 Titles and figure labels wrap rather than end in an ellipsis, and below 640 px
 wide each Job's figures take one column. On a viewport less than 480 px tall,
@@ -326,9 +336,12 @@ and footer do not leave the list less than a row.
 
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
-to watch, and a retry that fails is listed there in its own right. Known
-limit: an account that cannot write, such as a guest, is not told of a retry it
-cannot see, so a failure another account retried stays in its Needs attention.
+to watch, and a retry that fails is listed there in its own right. A Retry or
+Continue records a `retried` event on the Job it follows, naming no successor,
+so an open drawer lets go of a failure at once even when another account, such
+as an administrator, retried it. Known limit: an account that cannot write,
+such as a guest, is not told of a retry it cannot see (it is not sent that
+event), so a failure another account retried stays in its Needs attention.
 
 An administrator's drawer offers **My jobs** and **Everyone's**. It starts on
 **My jobs** (`owner=me`), so its badges count only the administrator's own work,
@@ -436,7 +449,13 @@ advertised command, and the viewer's pin and dismissal preferences, which take
 dismissed Jobs too; the `/jobs` page instead writes its default,
 `dismissed=false`, into its address. On the API, `owner=me` lists the asking
 account's own Jobs without naming its id, and `ownerDeleted=true` lists Jobs
-whose owner's account was deleted.
+whose owner's account was deleted. The text filter (`search`) matches a Job's
+id, title, the values in its summary (not its field names), its failure message
+and its outputs' labels without regard to case (ASCII letters only on SQLite),
+and ignores spaces around the term. A search reads every Job the other filters
+leave: at a million Jobs, expect up to about a second on SQLite and about three
+seconds on PostgreSQL, longest for a number or for a word most summaries use
+as a field name.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent
@@ -476,8 +495,10 @@ name instead. `mr jobs queue` returns the legacy queue response explicitly.
 
 ## Summary analytics and exports
 
-Interactive `summary` is capped at 90 days. For an explicit range longer than
-90 days, queue an owner-visible export:
+Interactive `summary` is capped at 90 days. The Job Center shows it for the
+list's current filter under **Summary of these jobs**, and queues an export of
+that filter from **Export a summary**. For an explicit range longer than 90
+days, queue an owner-visible export:
 
 ```bash
 mr jobs summary export \
@@ -486,6 +507,13 @@ mr jobs summary export \
   --kind remote-download \
   --format csv
 ```
+
+The export's Job is titled with its range by day ("Job summary, 2025-01-01 to
+2026-01-01") and its summary lists its filter in the list API's parameter names,
+so exports of different filters can be told apart. The file records both before
+its figures: the CSV starts with `range` rows (`from`, `to`) and one `filter`
+row per filter value, and the JSON carries `from`, `to` and a `filter` object,
+empty when nothing was filtered.
 
 A summary's failures by class count every Job that recorded a failure: each
 failed Job, and each interrupted Job that recorded why it was interrupted. An

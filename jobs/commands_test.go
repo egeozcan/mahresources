@@ -2338,3 +2338,92 @@ func TestAReadOnlyOwnerIsNotToldAnotherAccountRetriedTheirJob(t *testing.T) {
 		t.Fatalf("noInboundRelationship=retry-of lists %d jobs to a read-only owner, want their job", len(notRetried.Jobs))
 	}
 }
+
+// TestAnImplicitAdministratorsRetryRecordsNoOwner pins the successor of a Retry
+// made with authentication off: the implicit administrator every request runs
+// as has an account for its own preferences, but work it starts records no
+// owner or actor, as the Jobs it submits directly do. A Retry therefore gains
+// no owner its source lacked, and runs as the host, as its source did.
+func TestAnImplicitAdministratorsRetryRecordsNoOwner(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	root := Access{UserID: 1, Administrator: true, Implicit: true}
+
+	ancestor := h.acceptReplayable(nil)
+	h.fail(ancestor.ID)
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(ancestor.ID, CommandRetry, "idem-implicit-retry", root))
+	if err != nil {
+		t.Fatalf("retrying a failed job: %v", err)
+	}
+	requireResult(t, "a retry", result, CommandStatusSucceeded, CommandCodeApplied)
+	successor := jobRow(t, h.deps, result.SuccessorID)
+	if successor.OwnerUserID != nil || successor.ActorUserID != nil {
+		t.Fatalf("the successor's owner and actor = %v, %v; want none, as its source has", successor.OwnerUserID, successor.ActorUserID)
+	}
+}
+
+// TestARetryTellsItsAncestorsViewersWithoutNamingTheSuccessor pins the event a
+// Retry records on the Job it retries: an administrator's Retry of an owner's
+// failure makes a successor the owner cannot see, and without an event on the
+// ancestor the owner's open views learn nothing until they happen to read
+// again. The event names no successor. An account that cannot write, which is
+// not told of a retry it cannot see, is not sent it either.
+func TestARetryTellsItsAncestorsViewersWithoutNamingTheSuccessor(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	ancestor := h.acceptReplayable(&owner)
+	h.fail(ancestor.ID)
+	before := jobRow(t, h.deps, ancestor.ID).Version
+
+	administrator := Access{UserID: 1, Administrator: true}
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(ancestor.ID, CommandRetry, "idem-told", administrator))
+	if err != nil || result.SuccessorID == "" {
+		t.Fatalf("retry: %+v, %v", result, err)
+	}
+	if after := jobRow(t, h.deps, ancestor.ID).Version; after != before {
+		t.Fatalf("the ancestor's version moved from %d to %d; a retry leaves the Job it retries as it was", before, after)
+	}
+	if _, err := h.svc.PublishPendingEvents(h.deps, 0); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	retried := func(events []Event) []Event {
+		var out []Event
+		for _, event := range events {
+			if event.Type == EventRetried {
+				out = append(out, event)
+			}
+		}
+		return out
+	}
+	ownerView := Access{UserID: owner}
+	timeline, err := h.svc.Timeline(h.deps, ownerView, ancestor.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("owner's timeline: %v", err)
+	}
+	told := retried(timeline)
+	if len(told) != 1 || strings.Contains(string(told[0].Detail), result.SuccessorID) {
+		t.Fatalf("the owner's timeline = %+v, want one retried event that names no successor", told)
+	}
+	published, err := h.svc.PublishedEvents(h.deps, ownerView, EventFilter{OwnedByViewer: true}, 0, 0)
+	if err != nil {
+		t.Fatalf("owner's stream: %v", err)
+	}
+	if len(retried(published)) != 1 {
+		t.Fatalf("the owner's stream carries %d retried events, want the one that tells it", len(retried(published)))
+	}
+
+	readOnly := Access{UserID: owner, ReadOnly: true}
+	timeline, err = h.svc.Timeline(h.deps, readOnly, ancestor.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("read-only timeline: %v", err)
+	}
+	published, err = h.svc.PublishedEvents(h.deps, readOnly, EventFilter{}, 0, 0)
+	if err != nil {
+		t.Fatalf("read-only stream: %v", err)
+	}
+	if len(retried(timeline)) != 0 || len(retried(published)) != 0 {
+		t.Fatal("an account that cannot write was told of a retry it cannot see")
+	}
+}

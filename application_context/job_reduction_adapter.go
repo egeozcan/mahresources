@@ -444,6 +444,7 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
 		Destructive:  true,
+		Bulk:         true,
 		Confirmation: "Stop clustering? The Reduction keeps the plan it had.",
 	}}
 	state := commandContext.Snapshot.State
@@ -456,7 +457,7 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 		return commands, nil
 	}
 	if a.ctx.reductionComputableOn(commandContext.Deps, summary.ReductionID) {
-		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Compute again"})
+		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Compute again", Bulk: true})
 	}
 	return commands, nil
 }

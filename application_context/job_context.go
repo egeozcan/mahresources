@@ -119,7 +119,10 @@ func (ctx *MahresourcesContext) JobService() *jobs.Service {
 // where it opens a Job it owns.
 func (ctx *MahresourcesContext) jobAccess() jobs.Access {
 	principal := ctx.Principal()
-	return jobs.Access{UserID: principal.UserID, Administrator: principal.IsAdmin(), ReadOnly: !principal.CanWrite()}
+	return jobs.Access{
+		UserID: principal.UserID, Administrator: principal.IsAdmin(), ReadOnly: !principal.CanWrite(),
+		Implicit: principal.SuperUser,
+	}
 }
 
 // ListJobs returns one bounded page of the Jobs this context's principal may see.

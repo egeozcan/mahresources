@@ -61,7 +61,7 @@ func legacyDownloadsLocation(values url.Values) string {
 		}
 	}
 	if value := strings.TrimSpace(values.Get("URL")); value != "" {
-		query.Set("search", value)
+		query.Set("search", legacyDownloadSearchTerm(value))
 	}
 	for old, canonical := range map[string]string{
 		"CreatedAfter":  "acceptedAfter",
@@ -76,9 +76,28 @@ func legacyDownloadsLocation(values url.Values) string {
 	return "/jobs?" + query.Encode()
 }
 
+// legacyDownloadSearchTerm carries a legacy URL filter to a Job Center search.
+// A Job keeps no URL, only its summary's host and the file its path names
+// (application_context.DownloadFileNameInURL), so a whole URL is searched for by
+// that file, or by its host when its path names none. Anything else, the part
+// of a URL the legacy box was usually given, is searched for as typed.
+func legacyDownloadSearchTerm(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return value
+	}
+	if file := application_context.DownloadFileNameInURL(value); file != "" {
+		return file
+	}
+	return parsed.Host
+}
+
+// canonicalJobTimeBound carries one legacy date bound. A bare date stays a date:
+// the Job Center reads it as the whole local day at either end, so an old link's
+// "from that day to that day" still lists that day rather than an empty instant.
 func canonicalJobTimeBound(value string) string {
-	if parsed, err := time.Parse("2006-01-02", value); err == nil {
-		return parsed.UTC().Format(time.RFC3339)
+	if _, err := time.Parse("2006-01-02", value); err == nil {
+		return value
 	}
 	if _, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return value

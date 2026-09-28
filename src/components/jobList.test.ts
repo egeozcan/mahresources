@@ -6,13 +6,16 @@ import {
     datetimeInputFromInstant,
     instantFromDatetimeInput,
     jobBulkCommands,
+    bulkCommandReport,
     jobFilterTimes,
     jobList,
+    jobSummary,
     localizeJobTimes,
     keepDetailsOpen,
     stateChangeAnnouncement,
     stateChanges,
 } from './jobList.js';
+import { followJobAnnouncements } from '../utils/jobAnnouncements.js';
 
 afterEach(() => {
     vi.useRealTimers();
@@ -203,7 +206,8 @@ describe('job list live refresh', () => {
         await vi.advanceTimersByTimeAsync(5);
 
         expect(onRowChanges).toHaveBeenCalledTimes(1);
-        expect(onRowChanges.mock.calls[0][0].map((job: { id: string }) => job.id)).toEqual(['a']);
+        expect(onRowChanges.mock.calls[0][0].map((change: any) => [change.previous.state, change.next.id, change.next.state]))
+            .toEqual([['running', 'a', 'failed']]);
         expect(stateChangeAnnouncement(onRowChanges.mock.calls[0][0])).toBe('Import failed.');
     });
 
@@ -217,6 +221,37 @@ describe('job list live refresh', () => {
         const before = new Map([['p', { id: 'p', title: 'Sweep', state: 'running' }]]);
         const after = new Map([['p', { id: 'p', title: 'Sweep', state: 'succeeded', phase: 'partial' }]]);
         expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('Sweep partially completed.');
+    });
+
+    test('says a failure with its reason, as the drawer does', () => {
+        const before = new Map([['f', { id: 'f', title: 'sunrise.png', state: 'running' }]]);
+        const after = new Map([['f', { id: 'f', title: 'sunrise.png', state: 'failed', failure: { code: 'http-404', message: 'HTTP 404 Not Found' } }]]);
+        expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('sunrise.png failed: HTTP 404 Not Found.');
+    });
+
+    test('hands its changes to the drawer and says the ones the drawer hands back', () => {
+        const heard: any[] = [];
+        const stop = followJobAnnouncements({
+            hear: (changes: any[]) => {
+                heard.push(...changes);
+                return changes.filter(change => change.next.ownerUserId !== 7);
+            },
+        });
+        const list = jobList();
+        const said: string[] = [];
+        list._liveRegion = { announce: (text: string) => said.push(text), destroy() {} } as any;
+        const mine = { previous: { id: 'mine', state: 'running', version: 2 }, next: { id: 'mine', title: 'mine.bin', state: 'succeeded', version: 3, ownerUserId: 7 } };
+        const theirs = {
+            previous: { id: 'theirs', state: 'running', version: 2 },
+            next: { id: 'theirs', title: 'theirs.bin', state: 'failed', version: 3, ownerUserId: 8, failure: { message: 'HTTP 403 Forbidden' } },
+        };
+        list.announceChanges([mine, theirs]);
+        expect(heard).toEqual([mine, theirs]);
+        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.']);
+        stop();
+        // With no drawer on the page, the list says everything itself.
+        list.announceChanges([mine]);
+        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.', 'mine.bin succeeded.']);
     });
 
     test('keeps a details element the reader opened open across the morph', () => {
@@ -237,7 +272,7 @@ describe('job bulk commands', () => {
     function selection(ids: string[], versions: Record<string, number> = {}) {
         return {
             selectedIds: new Set(ids),
-            options: Object.fromEntries(ids.map(id => [id, { entity: { id, version: versions[id] ?? 1 } }])),
+            options: Object.fromEntries(ids.map(id => [id, { entity: { id, title: `${id}.png`, version: versions[id] ?? 1 } }])),
             announce: vi.fn(),
         };
     }
@@ -289,12 +324,39 @@ describe('job bulk commands', () => {
         const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
         expect(body.jobIds).toEqual(['a', 'b']);
         expect(body.idempotencyKey).toEqual(expect.any(String));
-        expect(component.outcomes).toEqual(results);
-        expect(component.$selection.announce).toHaveBeenCalledWith('1 of 2 jobs: dismiss.');
-        expect(notices).toEqual(['1 of 2 jobs: dismiss.']);
+        // Each outcome names its Job as the list does, with a link, since the
+        // refresh may already have taken its card away.
+        expect(component.outcomes).toEqual([
+            { jobId: 'a', title: 'a.png', url: '/job?id=a', text: 'Done' },
+            { jobId: 'b', title: 'b.png', url: '/job?id=b', text: 'Changed' },
+        ]);
+        const said = 'Dismissed 1 of 2 selected jobs. Not done for b.png: Changed.';
+        expect(component.$selection.announce).toHaveBeenCalledWith(said);
+        expect(notices).toEqual([said]);
         expect(refresh).toHaveBeenCalledTimes(1);
         window.removeEventListener('job-list-refresh', refresh);
         window.removeEventListener('job-list-notice', onNotice);
+    });
+
+    test('a bulk result reads as what was done to how many of the selected jobs', () => {
+        const titles = { a: 'a.png', b: 'b.png', c: 'c.png', d: 'd.png', e: 'e.png' };
+        const applied = (jobId: string) => ({ jobId, status: 'succeeded', code: 'applied' });
+        const refused = (jobId: string, message = '') => ({ jobId, status: 'failed', code: 'not-advertised', message });
+        const say = (key: string, label: string, ids: string[], results: object[]) =>
+            bulkCommandReport({ key, label }, ids, results, titles).message;
+
+        expect(say('pin', 'Pin', ['a'], [applied('a')])).toBe('Pinned 1 of 1 selected job.');
+        expect(say('unpin', 'Unpin', ['a', 'b'], [applied('a'), applied('b')])).toBe('Unpinned 2 of 2 selected jobs.');
+        expect(say('undismiss', 'Undismiss', ['a'], [applied('a')])).toBe('Returned 1 of 1 selected job to the list.');
+        expect(say('retry', 'Retry', ['a', 'b'], [applied('a'), refused('b', 'the job does not offer that command')]))
+            .toBe('Retried 1 of 2 selected jobs. Not done for b.png: the job does not offer that command.');
+        expect(say('cancel', 'Cancel', ['a', 'b'], [applied('a'), { jobId: 'b', status: 'succeeded', code: 'requested' }]))
+            .toBe('Cancelled 1 of 2 selected jobs. Cancel requested for 1 of 2 selected jobs.');
+        expect(say('pin-lineage', 'Pin visible lineage', ['a'], [applied('a')])).toBe('Pin visible lineage done for 1 of 1 selected job.');
+        expect(say('dismiss', 'Dismiss', ['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'e'].map(id => refused(id))))
+            .toBe('Dismiss was not done for a.png, b.png, c.png and 2 more; each says why in the list of outcomes.');
+        expect(bulkCommandReport({ key: 'dismiss', label: 'Dismiss' }, ['a'], [refused('a')], titles).outcomes)
+            .toEqual([{ jobId: 'a', title: 'a.png', url: '/job?id=a', text: 'No longer offered' }]);
     });
 
     test('a pin changes no Job version, so the row pin state invalidates the cached offer', async () => {
@@ -378,7 +440,7 @@ describe('job bulk commands', () => {
         // The refresh removed the dismissed card and moved the other's version.
         component.$selection = selection(['b'], { b: 2 });
         await component.sync();
-        expect(component.outcomes).toEqual(results);
+        expect(component.outcomes).toEqual([{ jobId: 'b', title: 'b.png', url: '/job?id=b', text: 'Changed' }]);
     });
 
     test('a failed request shows its reason, not only announces it', async () => {
@@ -462,6 +524,24 @@ describe('job bulk commands', () => {
         component.$selection = selection(['a']);
         await component.sync();
         expect(component.error).toBe('');
+    });
+
+    test('a bulk Cancel asks in the Kind\'s own words when every selected job shares them, and plainly when they differ', async () => {
+        const ask = vi.fn(async () => false);
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const cancel = (confirmation: string) => ({ key: 'cancel', label: 'Cancel', bulk: true, destructive: true, confirmation });
+        const component = Object.assign(jobBulkCommands({ fetchImpl: vi.fn() }), { $selection: selection(['a', 'b']) });
+        component.details = {
+            a: { id: 'a', version: 1, commands: [cancel('Stop this download?')] },
+            b: { id: 'b', version: 1, commands: [cancel('Stop this download?')] },
+        };
+        await component.run(cancel('Stop this download?'));
+        expect(ask.mock.calls[0][0]).toBe('Stop this download? This applies to 2 selected jobs.');
+
+        component.details.b = { id: 'b', version: 1, commands: [cancel('Stop this export?')] };
+        await component.run(cancel('Stop this download?'));
+        expect(ask.mock.calls[1][0]).toBe('Cancel the selected jobs? This applies to 2 selected jobs.');
+        expect(ask.mock.calls[1][1]).toMatchObject({ destructive: true, confirmLabel: 'Cancel' });
     });
 
     test('asks before running a command that needs confirmation', async () => {
@@ -620,6 +700,231 @@ describe('job list stream', () => {
     });
 });
 
+describe('job summary panel', () => {
+    const summary = {
+        total: 120, succeeded: 90, failed: 10, terminal: 100, successRate: 0.9,
+        queue: { median: 1_500_000_000, p95: 12_000_000_000 }, run: { median: 65_000_000_000, p95: 600_000_000_000 },
+        failures: [{ class: 'dependency', count: 7 }, { class: 'timeout', count: 3 }],
+    };
+
+    test('reads the list\'s own filter over the chosen window and says the figures in words', async () => {
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => summary }));
+        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'state=failed&dismissed=false' });
+        panel.window = '7d';
+        await panel.load();
+        expect(fetchImpl.mock.calls[0][0]).toBe('/v1/jobs/summary?state=failed&dismissed=false&window=7d');
+        expect(panel.figures()).toEqual([
+            { label: 'Jobs', value: '120' },
+            { label: 'Succeeded', value: '90 of 100 finished (90%)' },
+            { label: 'Failed', value: '10' },
+            { label: 'Time queued', value: 'median 2 s, 95% within 12 s' },
+            { label: 'Time running', value: 'median 1 min, 95% within 10 min' },
+            { label: 'Failures by class', value: 'dependency 7, timeout 3' },
+        ]);
+    });
+
+    test('says why a summary could not be read', async () => {
+        const panel = Object.assign(jobSummary({ fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'window may not exceed 90 days' }) })) }), { query: '' });
+        await panel.load();
+        expect(panel.error).toBe('window may not exceed 90 days');
+        expect(panel.summary).toBe(null);
+    });
+
+    test('applies only the answer for the window chosen last', async () => {
+        const answers: Array<(value: unknown) => void> = [];
+        const fetchImpl = vi.fn(() => new Promise(resolve => answers.push(resolve)));
+        const panel = Object.assign(jobSummary({ fetchImpl: fetchImpl as any }), { query: '' });
+        panel.window = '30d';
+        const slow = panel.load();
+        panel.window = '7d';
+        const fast = panel.load();
+        answers[1]({ ok: true, json: async () => ({ ...summary, total: 7 }) });
+        await fast;
+        answers[0]({ ok: true, json: async () => ({ ...summary, total: 30 }) });
+        await slow;
+        expect(panel.summary.total).toBe(7);
+        expect(panel.loading).toBe(false);
+    });
+
+    test('queues one export for a second press while the first is on its way', async () => {
+        let answer!: (value: unknown) => void;
+        const fetchImpl = vi.fn(() => new Promise(resolve => { answer = resolve; }));
+        const panel = Object.assign(jobSummary({ fetchImpl: fetchImpl as any }), { exportQuery: '' });
+        panel.exportFrom = '2025-01-01';
+        panel.exportTo = '2025-12-31';
+        const first = panel.exportSummary();
+        await panel.exportSummary();
+        answer({ ok: true, json: async () => ({ job: { id: 'export-1', title: 'Job summary' } }) });
+        await first;
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    test('queues an export of the list\'s filter for the chosen days, and links the Job it made', async () => {
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ job: { id: 'export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' } }) }));
+        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'kind=remote-download&owner=me', exportQuery: 'kind=remote-download&ownerId=9' });
+        panel.exportFrom = '2025-01-01';
+        panel.exportTo = '2025-12-31';
+        panel.exportFormat = 'json';
+        await panel.exportSummary();
+        const [url, init] = fetchImpl.mock.calls[0];
+        expect(url).toBe('/v1/jobs/summary/export?kind=remote-download&ownerId=9');
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body)).toEqual({
+            from: new Date('2025-01-01T00:00').toISOString(), to: new Date('2026-01-01T00:00').toISOString(), format: 'json',
+        });
+        expect(panel.exported).toEqual({ url: '/job?id=export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' });
+    });
+
+    test('shows an export\'s refusal as the server words it', async () => {
+        const panel = Object.assign(jobSummary({
+            fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'summary export range must exceed 90 days' }) })),
+        }), { query: '' });
+        panel.exportFrom = '2026-01-01';
+        panel.exportTo = '2026-01-02';
+        await panel.exportSummary();
+        expect(panel.exportError).toBe('summary export range must exceed 90 days');
+        expect(panel.exported).toBe(null);
+    });
+});
+
+describe('job list live progress', () => {
+    // A running card as the server renders it (templates/partials/job.tpl).
+    function runningCard(id: string, { version = 3, updatedAt = '2026-09-28T10:00:00Z' } = {}) {
+        return `<article data-job-id="${id}"><div data-entity='${JSON.stringify({ id, state: 'running', title: `${id}.bin`, version })}'>
+            <div data-job-progress data-progress-updated-at="${updatedAt}">
+                <span data-job-progress-text>91756 / 2097152 bytes</span><span data-job-progress-value>4%</span>
+                <div role="progressbar" data-job-progress-bar aria-valuenow="4" aria-valuetext="91756 / 2097152 bytes" aria-label="${id}.bin progress: 91756 / 2097152 bytes">
+                    <div class="h-2 rounded bg-amber-800" data-job-progress-fill style="width:4%"></div>
+                </div>
+                <p data-job-stats>63.8 KB/s · about 31 s left</p>
+            </div>
+        </div></article>`;
+    }
+
+    function frame(id: string, completed: number, extra: object = {}) {
+        return {
+            jobId: id, version: 3, state: 'running',
+            progress: {
+                completed, total: 2097152, unit: 'bytes', rate: 65536, updatedAt: '2026-09-28T10:00:10Z',
+                eta: '2026-09-28T10:00:40Z', etaEstimated: true, ...extra,
+            },
+        };
+    }
+
+    function listOn(html: string) {
+        document.body.innerHTML = `<main><section class="list-container">${html}</section></main>`;
+        const list = jobList();
+        (list as any).$root = document.body;
+        return list;
+    }
+
+    const progressOf = (id: string) => {
+        const card = document.querySelector(`[data-job-id="${id}"]`)!;
+        return {
+            text: card.querySelector('[data-job-progress-text]')!.textContent,
+            value: card.querySelector('[data-job-progress-value]')!.textContent,
+            now: card.querySelector('[data-job-progress-bar]')!.getAttribute('aria-valuenow'),
+            width: (card.querySelector('[data-job-progress-fill]') as HTMLElement).style.width,
+            stats: card.querySelector('[data-job-stats]')!.textContent,
+        };
+    };
+
+    test('a progress frame moves a running card\'s bar, amount, speed and time left', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a') + runningCard('b'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        const moved = progressOf('a');
+        // The line above the bar and the stats line follow the rules every Job
+        // surface shares (progressText, jobStatsText): the amount is in the
+        // stats line, formatted, with the speed and the time left.
+        expect({ ...moved, stats: undefined }).toEqual({ text: 'Working', value: '50%', now: '50', width: '50%', stats: undefined });
+        expect(moved.stats).toContain('1.0 MB of 2.0 MB');
+        expect(moved.stats).toContain('64.0 KB/s');
+        expect(moved.stats).toContain('about 30 s left');
+        // A card no frame named is left as the server drew it.
+        expect(progressOf('b').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('time left counts down between frames, and a stalled speed goes away', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        vi.advanceTimersByTime(5000);
+        expect(progressOf('a').stats).toContain('64.0 KB/s');
+        expect(progressOf('a').stats).toContain('about 25 s left');
+        vi.advanceTimersByTime(6000);
+        expect(progressOf('a').stats).not.toContain('/s');
+        expect(progressOf('a').stats).not.toContain('left');
+        list.destroy();
+    });
+
+    test('a frame for a card that is not on the page, or older than the card, changes nothing', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a', { version: 5 }));
+        list.handleProgressFrame({ data: JSON.stringify(frame('z', 1048576)) });
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('a frame older than the progress a refresh drew moves nothing back', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:21Z') });
+        const list = listOn(runningCard('a', { updatedAt: '2026-09-28T10:00:20Z' }));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('4%');
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1572864, { updatedAt: '2026-09-28T10:00:21Z' })) });
+        expect(progressOf('a').value).toBe('75%');
+        // Nor does one older than a frame already drawn.
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576, { updatedAt: '2026-09-28T10:00:20.500Z' })) });
+        expect(progressOf('a').value).toBe('75%');
+        list.destroy();
+    });
+
+    test('a refresh that drew older progress than the page holds is brought forward again', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        // The refresh read the Job before that frame was reported.
+        document.querySelector('section')!.innerHTML = runningCard('a', { updatedAt: '2026-09-28T10:00:05Z' });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('50%');
+        // One that read it after draws what it read, and the page lets it.
+        document.querySelector('section')!.innerHTML = runningCard('a', { updatedAt: '2026-09-28T10:00:11Z' });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('the stream delivers progress frames to the page', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const list = listOn(runningCard('a'));
+        list._refresher = { request: vi.fn(), destroy: vi.fn() } as any;
+        list.connect();
+        const stream = list.eventSource as unknown as FakeEventSource;
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('50%');
+        // Progress is not a lifecycle change: it refetches nothing.
+        expect(list._refresher.request).not.toHaveBeenCalled();
+        list.destroy();
+    });
+});
+
+// happy-dom's PageTransitionEvent does not carry persisted, so the page show a
+// browser dispatches is built by hand.
+function pageShow(persisted: boolean) {
+    const event = new Event('pageshow');
+    Object.defineProperty(event, 'persisted', { value: persisted });
+    return event;
+}
+
 describe('job filter times', () => {
     test('an end bound shows the minute it closes and converts back to that minute\'s last instant', () => {
         const end = instantFromDatetimeInput('2026-09-01T15:00', true);
@@ -657,5 +962,48 @@ describe('job filter times', () => {
         const submitted = Object.fromEntries(new FormData(form).entries());
         expect(submitted.acceptedBefore).toBe('2026-09-01T13:00:00Z');
         expect(submitted.acceptedAfter).toBe(new Date('2026-09-01T09:15').toISOString());
+    });
+    test('a page brought back from the back-forward cache shows the filters it was rendered with', () => {
+        document.body.innerHTML = `<form>
+            <input type="checkbox" name="kind" value="plugin-action">
+            <input type="checkbox" name="state" value="succeeded" checked>
+            <select name="pinned"><option value="">Any</option><option value="false">Not pinned</option></select>
+            <input type="datetime-local" name="acceptedAfter" data-bound="start" data-instant="2026-09-01T10:00:00Z">
+        </form>`;
+        const form = document.querySelector('form')!;
+        const times = Object.assign(jobFilterTimes(), { $root: form });
+        times.init();
+        const shown = form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value;
+        // The reader changes the form and applies it, and the browser keeps this
+        // page as it was left: the new choices, and the instants submit() swapped in.
+        form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked = true;
+        form.querySelector<HTMLSelectElement>('select')!.value = 'false';
+        form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value = '2026-09-03T08:00';
+        times.submit();
+
+        window.dispatchEvent(pageShow(true));
+
+        const entries = [...new FormData(form).entries()];
+        expect(entries).toEqual([
+            ['state', 'succeeded'],
+            ['pinned', ''],
+            ['acceptedAfter', shown],
+        ]);
+        // A second apply sends the time the reader then chooses, not the old one.
+        form.querySelector<HTMLInputElement>('input[type="datetime-local"]')!.value = '2026-09-04T08:00';
+        times.submit();
+        expect(new FormData(form).getAll('acceptedAfter')).toEqual([new Date('2026-09-04T08:00').toISOString()]);
+        times.destroy();
+    });
+
+    test('an ordinary page show leaves the form alone', () => {
+        document.body.innerHTML = `<form><input type="checkbox" name="kind" value="plugin-action"></form>`;
+        const form = document.querySelector('form')!;
+        const times = Object.assign(jobFilterTimes(), { $root: form });
+        times.init();
+        form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked = true;
+        window.dispatchEvent(pageShow(false));
+        expect(form.querySelector<HTMLInputElement>('input[name="kind"]')!.checked).toBe(true);
+        times.destroy();
     });
 });

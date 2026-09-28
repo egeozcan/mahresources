@@ -92,10 +92,75 @@ func jobSummaryExportScopeFor(principal *auth.Principal, filter jobs.Filter) (jo
 	return jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: principal.UserID}, nil
 }
 
+// jobSummaryExportDescription is the export's readable summary: its range, its
+// format and the filter it applies, so a list of exports reads as a list of
+// different questions rather than one title repeated.
 type jobSummaryExportDescription struct {
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Format string    `json:"format"`
+	From   time.Time           `json:"from"`
+	To     time.Time           `json:"to"`
+	Format string              `json:"format"`
+	Filter map[string][]string `json:"filter,omitempty"`
+}
+
+// jobSummaryFilterTerms is a sealed filter in the list API's own parameter names
+// and spellings, one term per value, in a fixed order: what an export's Job and
+// its file say it summarizes. The dimensions an export refuses to seal
+// (unsealableSummaryFilterDimension) never reach it.
+func jobSummaryFilterTerms(filter jobs.Filter) [][2]string {
+	var terms [][2]string
+	add := func(name string, values ...string) {
+		for _, value := range values {
+			terms = append(terms, [2]string{name, value})
+		}
+	}
+	id := func(value *uint) string { return strconv.FormatUint(uint64(*value), 10) }
+	instant := func(value *time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+	add("state", filter.States...)
+	add("kind", filter.Kinds...)
+	add("origin", filter.Origins...)
+	if filter.OwnerID != nil {
+		add("ownerId", id(filter.OwnerID))
+	}
+	if filter.ActorID != nil {
+		add("actorId", id(filter.ActorID))
+	}
+	if filter.AcceptedAfter != nil {
+		add("acceptedAfter", instant(filter.AcceptedAfter))
+	}
+	if filter.AcceptedBefore != nil {
+		add("acceptedBefore", instant(filter.AcceptedBefore))
+	}
+	if filter.Relationship != "" {
+		add("relationship", filter.Relationship)
+	}
+	if filter.Search != "" {
+		add("search", filter.Search)
+	}
+	if filter.Pinned != nil {
+		add("pinned", strconv.FormatBool(*filter.Pinned))
+	}
+	if filter.Dismissed != nil {
+		add("dismissed", strconv.FormatBool(*filter.Dismissed))
+	}
+	if filter.Command != "" {
+		add("command", filter.Command)
+	}
+	return terms
+}
+
+// jobSummaryFilterValues is jobSummaryFilterTerms keyed by parameter, as a query
+// string holds it. It is never nil, so a JSON export with no filter says so.
+func jobSummaryFilterValues(filter jobs.Filter) map[string][]string {
+	values := map[string][]string{}
+	for _, term := range jobSummaryFilterTerms(filter) {
+		values[term[0]] = append(values[term[0]], term[1])
+	}
+	return values
+}
+
+// jobSummaryExportTitle names the range an export covers, by day.
+func jobSummaryExportTitle(from, to time.Time) string {
+	return fmt.Sprintf("Job summary, %s to %s", from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02"))
 }
 
 func jobSummaryExportCodec() jobs.ReplayCodec {
@@ -105,7 +170,11 @@ func jobSummaryExportCodec() jobs.ReplayCodec {
 			if err != nil {
 				return nil, err
 			}
-			return json.Marshal(jobSummaryExportDescription{From: input.From, To: input.To, Format: input.Format})
+			description := jobSummaryExportDescription{From: input.From, To: input.To, Format: input.Format}
+			if values := jobSummaryFilterValues(input.Filter); len(values) > 0 {
+				description.Filter = values
+			}
+			return json.Marshal(description)
 		},
 		Encode: func(raw json.RawMessage) (json.RawMessage, error) {
 			if _, err := jobSummaryExportInputOf(raw); err != nil {
@@ -153,6 +222,13 @@ func unsealableSummaryFilterDimension(filter jobs.Filter) string {
 		return "owner=me"
 	}
 	return ""
+}
+
+// SummaryExportUnsealableDimension names the filter dimension a summary export
+// refuses to seal, or "" when it can seal the filter: the rule acceptance
+// applies, for a page that offers the export.
+func SummaryExportUnsealableDimension(filter jobs.Filter) string {
+	return unsealableSummaryFilterDimension(filter)
 }
 
 func jobSummaryExportInputOf(raw json.RawMessage) (*jobSummaryExportInput, error) {
@@ -222,7 +298,7 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 	if err != nil {
 		return fmt.Errorf("summarize Jobs for export: %w", err)
 	}
-	content, err := encodeJobSummaryExport(summary, input.Format)
+	content, err := encodeJobSummaryExport(summary, input.Filter, input.Format)
 	if err != nil {
 		return err
 	}
@@ -357,9 +433,16 @@ func (a *jobSummaryExportAdapter) AuthorizeJobOutput(_ context.Context, request 
 	return nil
 }
 
-func encodeJobSummaryExport(summary jobs.Summary, format string) ([]byte, error) {
+// encodeJobSummaryExport writes one export's file. Both formats say what the
+// numbers describe before the numbers: the range, and the filter in the list's
+// own parameter names, so a file downloaded and set aside still says which
+// question it answers.
+func encodeJobSummaryExport(summary jobs.Summary, filter jobs.Filter, format string) ([]byte, error) {
 	if format == "json" {
-		return json.MarshalIndent(summary, "", "  ")
+		return json.MarshalIndent(struct {
+			jobs.Summary
+			Filter map[string][]string `json:"filter"`
+		}{summary, jobSummaryFilterValues(filter)}, "", "  ")
 	}
 	var builder strings.Builder
 	writer := csv.NewWriter(&builder)
@@ -368,6 +451,17 @@ func encodeJobSummaryExport(summary jobs.Summary, format string) ([]byte, error)
 	}
 	write := func(metric, dimension, value string) error {
 		return writer.Write([]string{metric, dimension, value})
+	}
+	if err := write("range", "from", summary.From.UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+	if err := write("range", "to", summary.To.UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+	for _, term := range jobSummaryFilterTerms(filter) {
+		if err := write("filter", term[0], term[1]); err != nil {
+			return nil, err
+		}
 	}
 	for _, state := range sortedCountKeys(summary.ByState) {
 		if err := write("jobs_by_state", state, strconv.FormatInt(summary.ByState[state], 10)); err != nil {
@@ -451,7 +545,7 @@ func (ctx *MahresourcesContext) SubmitJobSummaryExport(filter jobs.Filter, from,
 	return service.Accept(ctx.jobDeps(), jobs.Acceptance{
 		Kind: JobKindSummaryExport, KindVersion: jobSummaryExportVersion,
 		State: jobs.StateQueued, OwnerUserID: owner, ActorUserID: owner, Origin: origin,
-		Title: "Job summary export", Replay: jobs.ReplayInput{Input: encoded},
+		Title: jobSummaryExportTitle(input.From, input.To), Replay: jobs.ReplayInput{Input: encoded},
 	})
 }
 

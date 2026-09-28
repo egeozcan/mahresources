@@ -391,7 +391,9 @@ or interrupted), **Active** (scheduled, queued, running, or paused),
 me**. A failed or interrupted Job is both Finished and Needs attention. Each count is how many Jobs the list shows with that link selected,
 under your other filters. Select an active link again to clear it. The **Filter** form narrows
 the list by text, state, Kind, currently available command, origin, owner,
-actor, and acceptance time. Times are in your browser's time zone, and an
+actor, and acceptance time. **Origin** lists where a Job came from: `api` (a
+page or an API request), `cli`, `plugin`, `schedule` and `admin`. Times are in
+your browser's time zone, and an
 **Accepted before** time includes the whole minute it names. **Dismissed** starts
 at **Not dismissed**; choose **Any** to include dismissed Jobs, or **Dismissed**
 to see only those Jobs. The address always names this choice: opening `/jobs`
@@ -399,12 +401,31 @@ without it adds `dismissed=false`, so a copied Job Center address lists the same
 Jobs through the API and the CLI, which include dismissed Jobs unless asked not
 to. Dismissal does not delete Job history. **Saved searches** keep a filter for reuse.
 
-Open a Job to see its progress, when it ran and how long, its timeline, outputs,
-and related Jobs, each named with how it is related (such as **Retry of**), its
+Below the filters, **Summary of these jobs** reads the figures of the Jobs the
+filters select, accepted in the last day, 7, 30 or 90 days: how many there are,
+how many succeeded of those finished, how many failed, the median and 95th
+percentile of the time they waited and ran, and their failures by class. It is
+read only when you open it. **Export a summary** queues a CSV or JSON export of
+the same filter for a range of whole days longer than 90 days, and links the
+export's Job, whose page offers the file once it is ready. **Mine** is exported
+as your account's own Jobs; a filter an export cannot take (the partially
+completed state, **Has been**, **Has not been**, a deleted account as owner) is
+named instead of the form. An account that cannot write is not offered the
+export.
+
+Each card's **Details** lists when the Job was accepted, started and finished,
+and the fields of its summary, such as a download's host. Open a Job to see its
+progress, when it ran and how long, its timeline, outputs, and related Jobs, each named with how it is related (such as **Retry of**), its
 state and when it was accepted; see [The Job page](../features/job-system.md#the-job-page).
 Use only the controls displayed on that Job; available commands are checked again when
 submitted. Selecting several Jobs offers only commands they all advertise for
-bulk use, with a separate result for each Job.
+bulk use, with a separate result for each Job, named by its title and linked to
+its page. A summary such as "Pinned 3 of 3 selected jobs." is shown on the page
+and announced, and names the Jobs the command was not done for. Cancel and
+Retry work on several Jobs at once: Cancel asks first and says how many Jobs it
+stops, in the Kind's own words when every selected Job is of one Kind, and each
+Job of a bulk Retry is checked as a Retry of that Job alone would be. A deferred
+download's **Download now** is offered for one Job at a time.
 
 A succeeded Job always shows complete progress, including a download whose
 size the remote server never reported. Under each bar one line gives the amount,
@@ -435,7 +456,9 @@ Old `/downloads` links redirect to `/jobs` with recognized filters translated,
 listing downloads scheduled for later as well as immediate ones. A status
 filter lists every state the old page showed under that status: `pending`
 includes scheduled work, `paused` includes blocked work, and `failed` includes
-interrupted work.
+interrupted work. A bare date in `CreatedAfter` or `CreatedBefore` names the whole
+day in the server's time zone, as a date does on the Job Center, so a range from
+one day to the same day lists that day's downloads.
 Legacy `/v1/downloads` API routes remain available during the compatibility
 window. Download history retention remains configurable on `/admin/settings`;
 see [Job System](../features/job-system.md#retention) for canonical Job and

@@ -3,9 +3,12 @@ import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel } from '../utils/jobPreferenceChannel.js';
 import {
-    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel, nextStreamRetryDelay,
-    reloadAfterStreamReset, selectedBulkCommands, stateLabel, streamCursorSequence,
+    EVENT_SOURCE_CLOSED, canonicalStreamURL, commandConfirmation, commandDismissLabel, commandFocusSuccessorKeys, commandLabel,
+    lifecycleAnnouncement, nextStreamRetryDelay, progressAccessibleText, progressIndeterminate, progressText, progressValue,
+    jobStatsText, reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
+import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
+import { applyProgressFrame, formatDuration } from './jobProgress.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
@@ -63,6 +66,8 @@ export function createJobListRefresher({
     currentURL = () => window.location.href,
     morph = (from, to) => morphAndReinitChangedComponents(from, to, keepDetailsOpen()),
     onRowChanges = () => {},
+    // Told after each refresh has morphed the list in.
+    onRefreshed = () => {},
     onUnavailable = () => {},
     // Told when a refresh fails, and when one succeeds again, so the page can
     // say that what it shows may be out of date.
@@ -106,6 +111,7 @@ export function createJobListRefresher({
                 localizeJobTimes(list);
                 const changes = stateChanges(before, rowStates(list));
                 if (changes.length) onRowChanges(changes);
+                onRefreshed();
             }
             morphRegion(root, refreshed, QUICK_FILTERS_SELECTOR, morph, null);
             morphRegion(root, refreshed, PAGINATION_SELECTOR, morph, 'footer');
@@ -164,22 +170,93 @@ export function rowStates(container) {
 
 /**
  * The Jobs whose state a refresh changed, among those on the page both before and
- * after it. A row that appeared or left is a change of membership, which the
- * refreshed list itself shows; announcing it would repeat every filter's churn.
+ * after it, each as `{ previous, next }`. A row that appeared or left is a change
+ * of membership, which the refreshed list itself shows; announcing it would
+ * repeat every filter's churn.
  */
 export function stateChanges(before, after) {
     const changes = [];
     for (const [id, next] of after) {
         const previous = before.get(id);
-        if (previous && previous.state !== next.state) changes.push(next);
+        if (previous && previous.state !== next.state) changes.push({ previous, next });
     }
     return changes;
 }
 
+// A refresh's state changes as one message, each in the words the drawer uses,
+// a failure with its reason.
 export function stateChangeAnnouncement(changes) {
     if (!changes.length) return '';
     if (changes.length > 3) return `${changes.length} jobs changed state.`;
-    return changes.map(job => `${job.title || job.kind || 'Job'} ${stateLabel(job).toLowerCase()}.`).join(' ');
+    return changes.map(({ next }) => lifecycleAnnouncement(next)).join(' ');
+}
+
+/**
+ * What a /jobs card's progress block shows for a Job, worked out as the server
+ * draws the card (jobRowProgressBar and jobRowStats in job_template_context.go)
+ * with the helpers the drawer and a Job's page use: the line above the bar, its
+ * value, whether it pulses, what it says to a screen reader, and the speed line
+ * (the amount, then the live speed and time left while running, or the
+ * average once finished).
+ */
+export function cardProgressView(job, now = Date.now()) {
+    return {
+        text: progressText(job),
+        value: progressValue(job),
+        indeterminate: progressIndeterminate(job),
+        accessible: progressAccessibleText(job),
+        // The one stats rule every surface shares (jobRowStats on the server):
+        // amount, then speed, then time left.
+        stats: jobStatsText(job, now),
+    };
+}
+
+/**
+ * Draw a progress view into a card's progress block, in place of what the
+ * server drew there. A card with no block (work that reported nothing yet) is
+ * left for the refresh its next lifecycle change brings.
+ */
+export function applyCardProgress(card, view, title) {
+    const block = card?.querySelector('[data-job-progress]');
+    if (!block) return false;
+    const text = block.querySelector('[data-job-progress-text]');
+    const value = block.querySelector('[data-job-progress-value]');
+    const bar = block.querySelector('[data-job-progress-bar]');
+    const fill = block.querySelector('[data-job-progress-fill]');
+    const stats = block.querySelector('[data-job-stats]');
+    if (text) text.textContent = view.text;
+    if (value) value.textContent = view.value !== null ? `${view.value}%` : view.indeterminate ? 'In progress' : '';
+    if (bar) {
+        if (view.value !== null) bar.setAttribute('aria-valuenow', String(view.value));
+        else bar.removeAttribute('aria-valuenow');
+        bar.setAttribute('aria-valuetext', view.accessible);
+        bar.setAttribute('aria-label', `${title} progress: ${view.accessible}`);
+    }
+    if (fill) {
+        fill.classList.toggle('w-full', view.value === null && view.indeterminate);
+        fill.classList.toggle('motion-safe:animate-pulse', view.value === null && view.indeterminate);
+        fill.style.width = view.value !== null ? `${view.value}%` : '';
+    }
+    if (stats) {
+        stats.textContent = view.stats;
+        stats.hidden = !view.stats;
+    }
+    return true;
+}
+
+function cardFor(root, jobId) {
+    for (const card of root?.querySelectorAll?.('[data-job-id]') || []) {
+        if (card.getAttribute('data-job-id') === jobId) return card;
+    }
+    return null;
+}
+
+function cardEntity(card) {
+    try {
+        return JSON.parse(card?.querySelector('[data-entity]')?.dataset.entity || 'null');
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -206,6 +283,12 @@ export function jobList() {
         _streamRetryTimer: null,
         _streamRetryDelay: 0,
         _preferences: null,
+        _onRefreshRequest: null,
+        _onNotice: null,
+        // The newest live progress each card was drawn from, by Job id, and
+        // the clock that counts their time left down between frames.
+        _progress: new Map(),
+        _progressClock: null,
         // Set once the stream has given a cursor, which a reopened stream then
         // resumes from, even v2:0.
         _holdsCursor: false,
@@ -214,7 +297,7 @@ export function jobList() {
             this._liveRegion = createLiveRegion();
             localizeJobTimes(this.$root);
             this._refresher = createJobListRefresher({
-                onRowChanges: changes => this._liveRegion?.announce(stateChangeAnnouncement(changes)),
+                onRowChanges: changes => this.announceChanges(changes),
                 onUnavailable: () => {
                     this.connectionStatus = 'unavailable';
                     clearTimeout(this._streamRetryTimer);
@@ -222,6 +305,7 @@ export function jobList() {
                     this.eventSource = null;
                     source?.close();
                 },
+                onRefreshed: () => this.reapplyProgress(),
                 onFailed: () => { this.refreshFailed = true; },
                 onRecovered: () => { this.refreshFailed = false; },
             });
@@ -236,6 +320,8 @@ export function jobList() {
 
         destroy() {
             clearTimeout(this._streamRetryTimer);
+            clearInterval(this._progressClock);
+            this._progressClock = null;
             const source = this.eventSource;
             this.eventSource = null;
             source?.close();
@@ -244,6 +330,15 @@ export function jobList() {
             this._liveRegion?.destroy();
             window.removeEventListener('job-list-refresh', this._onRefreshRequest);
             window.removeEventListener('job-list-notice', this._onNotice);
+        },
+
+        // The drawer's ledger says the changes it follows, on this page as on
+        // every other, and has not already heard; the list says the ones it
+        // hands back, such as another account's Job while an administrator's
+        // drawer lists their own.
+        announceChanges(changes) {
+            const message = stateChangeAnnouncement(tellDrawerOfJobs(changes));
+            if (message) this._liveRegion?.announce(message);
         },
 
         get connectionText() {
@@ -296,6 +391,84 @@ export function jobList() {
             for (const name of ['message', 'job']) {
                 source.addEventListener(name, current((event) => this.handleStreamMessage(event)));
             }
+            source.addEventListener('job-progress', current((event) => this.handleProgressFrame(event)));
+        },
+
+        // A live progress frame redraws the progress of the card it names, as
+        // the drawer's rows are: in place, never announced, and never a reason
+        // to refetch the page, which a lifecycle change is. A frame older than
+        // the card, or for a Job not on this page, changes nothing.
+        handleProgressFrame(event) {
+            let frame;
+            try { frame = JSON.parse(event.data); } catch { return; }
+            if (!frame?.jobId) return;
+            const card = cardFor(this.$root, frame.jobId);
+            const entity = cardEntity(card);
+            if (!entity?.id) return;
+            const held = this._progress.get(frame.jobId);
+            // A frame reported before what the card already shows, drawn by a
+            // refresh or by a later frame, would move its bar back.
+            const reportedAt = Date.parse(frame.progress?.updatedAt || '');
+            const drawnAt = Math.max(
+                Date.parse(card.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '') || 0,
+                Date.parse(held?.progress?.updatedAt || '') || 0,
+            );
+            if (Number.isFinite(reportedAt) && reportedAt < drawnAt) return;
+            const base = held && Number(held.version || 0) >= Number(entity.version || 0)
+                ? { ...held, state: entity.state }
+                : { ...entity, progress: {} };
+            const next = applyProgressFrame(base, frame);
+            if (next === base) return;
+            this._progress.set(frame.jobId, next);
+            applyCardProgress(card, cardProgressView(next, Date.now()), next.title || entity.title || 'Job');
+            this.keepProgressClock();
+        },
+
+        // After a refresh, a card the server drew from older progress than a
+        // frame the page holds is drawn from the frame again, so the refresh
+        // does not move a bar back. A card whose Job left running, or whose
+        // drawing is as new as the frame, is the server's.
+        reapplyProgress() {
+            for (const [jobId, held] of this._progress) {
+                const card = cardFor(this.$root, jobId);
+                const entity = cardEntity(card);
+                const drawnAt = Date.parse(card?.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '');
+                const heldAt = Date.parse(held.progress?.updatedAt || '');
+                if (!entity || entity.state !== 'running' || !(heldAt > drawnAt || Number.isNaN(drawnAt))) {
+                    this._progress.delete(jobId);
+                    continue;
+                }
+                const job = { ...held, state: entity.state, version: Math.max(Number(held.version || 0), Number(entity.version || 0)) };
+                this._progress.set(jobId, job);
+                applyCardProgress(card, cardProgressView(job, Date.now()), job.title || entity.title || 'Job');
+            }
+            this.keepProgressClock();
+        },
+
+        // "about 31 s left" counts down between frames, and a speed nothing has
+        // reported for a while goes, as in the drawer: once a second while a
+        // running card is drawn from a frame.
+        keepProgressClock() {
+            const running = [...this._progress.values()].some(job => job.state === 'running');
+            if (running && !this._progressClock) {
+                this._progressClock = setInterval(() => this.tickProgress(), 1000);
+            } else if (!running && this._progressClock) {
+                clearInterval(this._progressClock);
+                this._progressClock = null;
+            }
+        },
+
+        tickProgress() {
+            const now = Date.now();
+            for (const [jobId, job] of this._progress) {
+                const card = cardFor(this.$root, jobId);
+                if (!card) {
+                    this._progress.delete(jobId);
+                    continue;
+                }
+                applyCardProgress(card, cardProgressView(job, now), job.title || 'Job');
+            }
+            this.keepProgressClock();
         },
 
         handleStreamMessage(event) {
@@ -314,6 +487,95 @@ export function jobList() {
             this._refresher.request();
         },
     };
+}
+
+// What a bulk command did, said in the past tense for the commands whose result
+// the rows show; any other command is said as done.
+const BULK_DONE = {
+    pin: count => `Pinned ${count}`,
+    unpin: count => `Unpinned ${count}`,
+    dismiss: count => `Dismissed ${count}`,
+    undismiss: count => `Returned ${count}`,
+    retry: count => `Retried ${count}`,
+    cancel: count => `Cancelled ${count}`,
+};
+
+// A refusal's code, for an outcome that carries no message of its own.
+const BULK_REFUSAL_TEXT = {
+    'not-advertised': 'No longer offered',
+    'not-found': 'Not found',
+    conflict: 'Changed meanwhile; try again',
+    'chain-conflict': 'Already retried',
+    'in-flight': 'Already running',
+    'key-reused': 'Sent twice; try again',
+};
+
+function selectedJobs(count, total) {
+    return `${count} of ${total} selected ${total === 1 ? 'job' : 'jobs'}`;
+}
+
+function namedList(names) {
+    if (names.length <= 3) return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+}
+
+/**
+ * A bulk command's results in words: one row per Job, named by its title and
+ * linked, because the refresh the command causes can take its card away; and
+ * one sentence for the notice and the live region, saying what was done to how
+ * many of the selected Jobs, and which were not, by name.
+ */
+export function bulkCommandReport(command, ids, results, titles = {}) {
+    const outcomes = (results || []).map(result => {
+        const done = result.status === 'succeeded' && result.code === 'applied';
+        const requested = result.code === 'requested';
+        return {
+            jobId: result.jobId,
+            title: titles[result.jobId] || 'Job',
+            url: `/job?id=${encodeURIComponent(result.jobId)}`,
+            text: done ? 'Done' : requested ? 'Requested'
+                : (result.message || BULK_REFUSAL_TEXT[result.code] || result.code || result.status || 'Not done'),
+            outcome: done ? 'done' : requested ? 'requested' : 'refused',
+        };
+    });
+    const total = ids.length;
+    const count = kind => outcomes.filter(outcome => outcome.outcome === kind).length;
+    const done = count('done');
+    const requested = count('requested');
+    const refused = outcomes.filter(outcome => outcome.outcome === 'refused');
+    const label = commandLabel(command);
+    const parts = [];
+    if (done > 0) {
+        const phrase = BULK_DONE[command?.key];
+        parts.push(phrase
+            ? `${phrase(selectedJobs(done, total))}${command.key === 'undismiss' ? ' to the list' : ''}.`
+            : `${label} done for ${selectedJobs(done, total)}.`);
+    }
+    if (requested > 0) parts.push(`${label} requested for ${selectedJobs(requested, total)}.`);
+    if (refused.length > 0) {
+        const lead = parts.length ? 'Not done for' : `${label} was not done for`;
+        const names = namedList(refused.map(outcome => outcome.title));
+        parts.push(refused.length === 1
+            ? `${lead} ${names}: ${refused[0].text}.`
+            : `${lead} ${names}; each says why in the list of outcomes.`);
+    }
+    return {
+        message: parts.join(' '),
+        outcomes: outcomes.map(({ outcome: _, ...row }) => row),
+    };
+}
+
+/**
+ * What a bulk command asks before it runs: the Kind's own words when every
+ * selected Job's command says the same thing, and a plain question when they
+ * differ, since one Kind's warning ("Stop this download?") is wrong about another.
+ */
+export function bulkCommandConfirmation(command, jobs) {
+    const asked = new Set((jobs || []).map(job => commandConfirmation(
+        (job?.commands || []).find(offered => offered.key === command?.key) || command,
+    )));
+    if (asked.size <= 1) return asked.size ? [...asked][0] : commandConfirmation(command);
+    return `${commandLabel(command)} the selected jobs?`;
 }
 
 function idempotencyKey() {
@@ -336,6 +598,8 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         error: '',
         outcomes: [],
         _generation: 0,
+        _root: null,
+        _focusKeeper: null,
 
         init() {
             this.$watch(() => this.selectionKey(), () => { void this.sync(); });
@@ -453,7 +717,7 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
         async run(command) {
             const ids = this.selectedIds();
             if (!ids.length || this.busy || this.loading) return;
-            const confirmation = commandConfirmation(command);
+            const confirmation = bulkCommandConfirmation(command, ids.map(id => this.details[id]));
             if (confirmation) {
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
                     `${confirmation} This applies to ${ids.length} selected ${ids.length === 1 ? 'job' : 'jobs'}.`,
@@ -472,6 +736,9 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                     return;
                 }
             }
+            // The titles are read now: the refresh the command causes can take
+            // a card, and its title, away before the answer is shown.
+            const titles = Object.fromEntries(ids.map(id => [id, this.$selection.options[id]?.entity?.title || this.details[id]?.title || '']));
             const key = idempotencyKey();
             this.busy = true;
             this.outcomes = [];
@@ -488,10 +755,10 @@ export function jobBulkCommands({ fetchImpl = (...args) => fetch(...args) } = {}
                         method: 'POST', body: JSON.stringify({ jobIds: ids }),
                     }, payload);
                 }
-                this.outcomes = payload.results || payload.outcomes || [];
-                const applied = this.outcomes.filter(outcome => outcome.status === 'succeeded' || outcome.code === 'applied').length;
+                const report = bulkCommandReport(command, ids, payload.results || payload.outcomes || [], titles);
+                this.outcomes = report.outcomes;
                 if (response.ok) {
-                    this.report(`${applied} of ${ids.length} ${ids.length === 1 ? 'job' : 'jobs'}: ${commandLabel(command).toLowerCase()}.`);
+                    this.report(report.message);
                 } else {
                     this.report(payload.error || `The bulk command could not be completed (${response.status}).`, true);
                 }
@@ -517,6 +784,109 @@ function bulkFocusTarget(root, key) {
         document.querySelector('main'),
     ];
     return candidates.find(candidate => candidate?.isConnected && candidate.checkVisibility?.() !== false) || null;
+}
+
+// A summary duration, which the API gives in nanoseconds.
+function summaryDuration(stats) {
+    return `median ${formatDuration((stats?.median || 0) / 1e9)}, 95% within ${formatDuration((stats?.p95 || 0) / 1e9)}`;
+}
+
+async function answerOf(response, what) {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `${what} failed (${response.status}).`);
+    return payload;
+}
+
+/**
+ * The Job Center's summary panel: the figures of the Jobs the list's filter
+ * selects, read when the reader asks for them, and a summary export of the
+ * same filter over a longer range. `query` is that filter as the API reads it
+ * (jobAPIQuery in job_template_context.go).
+ */
+export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
+    return {
+        query: '',
+        // The filter as a summary export seals it (jobSummaryExportFilter):
+        // the viewer's own Jobs asked for by id.
+        exportQuery: '',
+        window: '30d',
+        loading: false,
+        error: '',
+        summary: null,
+        exportFrom: '',
+        exportTo: '',
+        exportFormat: 'csv',
+        exporting: false,
+        exportError: '',
+        exported: null,
+        _read: 0,
+
+        init() {
+            this.query = this.$root?.dataset.summaryQuery || '';
+            this.exportQuery = this.$root?.dataset.exportQuery || '';
+        },
+
+        // Each read is numbered: an answer for a window the reader has since
+        // changed is not applied over the one they chose.
+        async load() {
+            const read = ++this._read;
+            this.loading = true;
+            this.error = '';
+            try {
+                const separator = this.query ? '&' : '';
+                const response = await fetchImpl(`/v1/jobs/summary?${this.query}${separator}window=${encodeURIComponent(this.window)}`, { headers: { Accept: 'application/json' } });
+                const summary = await answerOf(response, 'Reading the summary');
+                if (read === this._read) this.summary = summary;
+            } catch (error) {
+                if (read === this._read) {
+                    this.summary = null;
+                    this.error = error.message;
+                }
+            } finally {
+                if (read === this._read) this.loading = false;
+            }
+        },
+
+        figures() {
+            const summary = this.summary;
+            if (!summary) return [];
+            const failures = (summary.failures || []).map(failure => `${failure.class} ${failure.count}`).join(', ');
+            return [
+                { label: 'Jobs', value: String(summary.total) },
+                { label: 'Succeeded', value: `${summary.succeeded} of ${summary.terminal} finished (${Math.round((summary.successRate || 0) * 100)}%)` },
+                { label: 'Failed', value: String(summary.failed) },
+                { label: 'Time queued', value: summaryDuration(summary.queue) },
+                { label: 'Time running', value: summaryDuration(summary.run) },
+                ...(failures ? [{ label: 'Failures by class', value: failures }] : []),
+            ];
+        },
+
+        // The range is whole days in the reader's zone: from the first day's
+        // start to the end of the last.
+        async exportSummary() {
+            // One export per press: a second while the first is on its way would
+            // queue the same costly export twice.
+            if (this.exporting) return;
+            this.exporting = true;
+            this.exportError = '';
+            this.exported = null;
+            try {
+                const to = new Date(`${this.exportTo}T00:00`);
+                to.setDate(to.getDate() + 1);
+                const response = await fetchImpl(`/v1/jobs/summary/export${this.exportQuery ? `?${this.exportQuery}` : ''}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    body: JSON.stringify({ from: new Date(`${this.exportFrom}T00:00`).toISOString(), to: to.toISOString(), format: this.exportFormat }),
+                });
+                const job = (await answerOf(response, 'The summary export')).job || {};
+                this.exported = { url: `/job?id=${encodeURIComponent(job.id)}`, title: job.title || 'Job summary export' };
+            } catch (error) {
+                this.exportError = error.message;
+            } finally {
+                this.exporting = false;
+            }
+        },
+    };
 }
 
 function pad(value, width = 2) {
@@ -582,7 +952,23 @@ export function instantFromDatetimeInput(value, end = false) {
  */
 export function jobFilterTimes() {
     return {
+        _onPageShow: null,
+
         init() {
+            this.showInstants();
+            // A page the back-forward cache brings back is the one the reader
+            // left, form and all: the choices made for the page they went on
+            // to, and the instants submit() swapped in. Its address is this
+            // page's, so the form goes back to what was rendered for it.
+            this._onPageShow = event => { if (event.persisted) this.restore(); };
+            window.addEventListener('pageshow', this._onPageShow);
+        },
+
+        destroy() {
+            window.removeEventListener('pageshow', this._onPageShow);
+        },
+
+        showInstants() {
             for (const input of this.timeInputs()) {
                 const instant = input.dataset.instant;
                 if (!instant) continue;
@@ -590,6 +976,15 @@ export function jobFilterTimes() {
                 if (input.value.length > 16) input.step = '1';
                 input.dataset.shown = input.value;
             }
+        },
+
+        restore() {
+            for (const hidden of this.$root.querySelectorAll('input[type="hidden"][data-bound-instant]')) hidden.remove();
+            for (const input of this.timeInputs()) {
+                if (input.dataset.name) input.name = input.dataset.name;
+            }
+            this.$root.reset();
+            this.showInstants();
         },
 
         timeInputs() {
@@ -608,6 +1003,8 @@ export function jobFilterTimes() {
                 hidden.type = 'hidden';
                 hidden.name = input.name;
                 hidden.value = instant;
+                hidden.dataset.boundInstant = '';
+                input.dataset.name = input.name;
                 input.removeAttribute('name');
                 input.after(hidden);
             }

@@ -5,9 +5,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/download_queue"
+	"mahresources/server/jobview"
 )
 
 func TestLegacyDownloadsLocationCarriesOnlyEquivalentFilters(t *testing.T) {
@@ -40,8 +42,8 @@ func TestLegacyDownloadsLocationCarriesOnlyEquivalentFilters(t *testing.T) {
 	if got := query.Get("search"); got != "example.test/a b" {
 		t.Fatalf("search = %q, want trimmed URL", got)
 	}
-	if got := query.Get("acceptedAfter"); got != "2026-09-23T00:00:00Z" {
-		t.Fatalf("acceptedAfter = %q, want UTC start of legacy date", got)
+	if got := query.Get("acceptedAfter"); got != "2026-09-23" {
+		t.Fatalf("acceptedAfter = %q, want the bare date, which the Job Center reads as the whole local day", got)
 	}
 	if got := query.Get("acceptedBefore"); got != "2026-09-24T12:30:00+02:00" {
 		t.Fatalf("acceptedBefore = %q, want original RFC3339 instant", got)
@@ -83,6 +85,50 @@ func TestLegacyDownloadStatusesNameTheStatesTheyWereProjectedFrom(t *testing.T) 
 		parsed, _ := url.Parse(legacyDownloadsLocation(url.Values{"Status": {status}}))
 		if got := parsed.Query()["state"]; !slices.Equal(got, want) {
 			t.Fatalf("Status=%s = %v, want %v", status, got, want)
+		}
+	}
+}
+
+// TestALegacyDateRangeOfOneDayListsThatDay pins the reading of an old bookmark for
+// "the downloads of that day": a bare date is passed through as a date, which the
+// Job Center reads as the whole local day at either end, rather than turned into
+// UTC midnight, which made a same-day range a zero-width window.
+func TestALegacyDateRangeOfOneDayListsThatDay(t *testing.T) {
+	parsed, err := url.Parse(legacyDownloadsLocation(url.Values{"CreatedAfter": {"2026-09-26"}, "CreatedBefore": {"2026-09-26"}}))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	filter, err := jobview.ParseFilter(parsed.Query())
+	if err != nil {
+		t.Fatalf("the translated filter is unreadable: %v", err)
+	}
+	wantStart := time.Date(2026, 9, 26, 0, 0, 0, 0, time.Local).UTC()
+	wantEnd := time.Date(2026, 9, 27, 0, 0, 0, 0, time.Local).Add(-time.Nanosecond).UTC()
+	if filter.AcceptedAfter == nil || !filter.AcceptedAfter.Equal(wantStart) ||
+		filter.AcceptedBefore == nil || !filter.AcceptedBefore.Equal(wantEnd) {
+		t.Fatalf("a one-day range reads %v .. %v, want %v .. %v", filter.AcceptedAfter, filter.AcceptedBefore, wantStart, wantEnd)
+	}
+}
+
+// TestALegacyURLFilterSearchesForTheFileTheURLNames pins how an old /downloads
+// link's URL filter is carried: a whole URL is searched for by the file its path
+// names, which is what a download is titled by, since the Job Center keeps no
+// URL; a URL naming no file by its host; and a fragment as it was typed.
+func TestALegacyURLFilterSearchesForTheFileTheURLNames(t *testing.T) {
+	for typed, want := range map[string]string{
+		"http://127.0.0.1:18900/status/404/missing-photo.jpg?sig=secret": "missing-photo.jpg",
+		"https://files.example.test/Caf%C3%A9%20terrace.png":             "Café terrace.png",
+		"https://files.example.test/":                                    "files.example.test",
+		"https://files.example.test/download/9f2c4a":                     "files.example.test",
+		"missing-photo":    "missing-photo",
+		"example.test/a b": "example.test/a b",
+	} {
+		parsed, err := url.Parse(legacyDownloadsLocation(url.Values{"URL": {typed}}))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if got := parsed.Query().Get("search"); got != want {
+			t.Errorf("URL=%q searches for %q, want %q", typed, got, want)
 		}
 	}
 }

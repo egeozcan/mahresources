@@ -12,6 +12,12 @@ summary, then publishes a typed artifact on the accepted Job. The artifact
 expires according to the server's export-retention setting. Read the Job with
 `jobs get` to inspect its output and commands.
 
+The accepted Job is titled with the range by day ("Job summary, 2025-01-01 to
+2026-01-01") and its summary lists the filter, in the list API's parameter
+names. The file says the same before its figures: the CSV starts with `range`
+rows (`from`, `to`) and one `filter` row per filter value, and the JSON has
+`from`, `to` and a `filter` object, which is empty when nothing was filtered.
+
 The accepted Job is owned by the submitting account. Filtering by another
 owner or actor does not grant access to that person's Jobs.
 

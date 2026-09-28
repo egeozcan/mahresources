@@ -89,7 +89,10 @@ test.describe('Job Center', () => {
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'blocked' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'queued' })).not.toBeChecked();
-    await expect(form.getByRole('searchbox', { name: 'Origin' })).toHaveValue('api, plugin');
+    const origins = form.getByRole('group', { name: 'Origin' });
+    await expect(origins.getByRole('checkbox', { name: 'api', exact: true })).toBeChecked();
+    await expect(origins.getByRole('checkbox', { name: 'plugin', exact: true })).toBeChecked();
+    await expect(origins.getByRole('checkbox', { name: 'schedule', exact: true })).not.toBeChecked();
     await expect(form.getByLabel('Accepted after')).toHaveValue('2026-09-01T14:30');
     await expect(form.getByLabel('Accepted before')).toHaveValue('2026-09-20T23:59');
     await expect(form.getByRole('combobox', { name: 'Relationship' })).toHaveValue('retry-of');
@@ -104,7 +107,7 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('kind')).toBe('remote-download');
     expect(url.searchParams.get('command')).toBe('retry');
     expect(url.searchParams.get('dismissed')).toBe('any');
-    expect(url.searchParams.get('origin')).toBe('api, plugin');
+    expect(url.searchParams.getAll('origin')).toEqual(['api', 'plugin']);
     // With JavaScript the bounds travel as instants: an untouched one exactly as
     // it arrived, so neither the time of day nor the end of the range moves.
     const [after, before] = await page.evaluate(() => [
@@ -116,6 +119,23 @@ test.describe('Job Center', () => {
     await expect(form.getByLabel('Accepted after')).toHaveValue('2026-09-01T14:30');
     await expect(form.getByLabel('Accepted before')).toHaveValue('2026-09-20T23:59');
     await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('after Back the filter form shows the filters of the page it returns to', async ({ page }) => {
+    await page.goto('/jobs?state=succeeded&dismissed=false');
+    const form = page.getByRole('form', { name: 'Filter jobs' });
+    await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
+
+    await form.getByRole('checkbox', { name: 'plugin-action', exact: true }).check();
+    await form.getByRole('combobox', { name: 'Pinned' }).selectOption('false');
+    await form.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/pinned=false/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/jobs\?state=succeeded&dismissed=false$/);
+    await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'plugin-action', exact: true })).not.toBeChecked();
+    await expect(form.getByRole('combobox', { name: 'Pinned' })).toHaveValue('');
   });
 
   test('the State filter selects partially completed jobs, which the card names', async ({ page, request, apiClient }) => {
@@ -339,11 +359,82 @@ test.describe('Job Center', () => {
     // The default list hides what the viewer dismissed; the live refresh removes both,
     // and with them the bar, so the summary stays visible on the page itself.
     await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.getByTestId('job-list-notice')).toHaveText('2 of 2 jobs: dismiss.');
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Dismissed 2 of 2 selected jobs.');
     await expect.poll(async () => {
       const response = await request.get(`/v1/jobs?search=${encodeURIComponent(name)}&dismissed=true`);
       return ((await response.json()).jobs as Job[]).length;
     }).toBe(2);
+  });
+
+  test('a job whose card leaves the list leaves the bulk selection', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-ghost-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const jobs = [];
+    for (const suffix of ['a', 'b', 'c', 'd', 'e']) {
+      jobs.push(await submitFailingDownload(request, groupId, `${name}-${suffix}.bin`));
+    }
+    for (const job of jobs) await waitForJobState(request, job.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
+    await expect(page.locator('[data-job-id]')).toHaveCount(5);
+    for (const job of jobs.slice(0, 3)) {
+      await page.locator(`[data-job-id="${job.canonicalId}"]`).getByRole('checkbox').check();
+    }
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('3 jobs selected');
+
+    // Dismissed from the bar: the three cards leave, and so do their selections.
+    await page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await expect(page.locator('[data-job-id]')).toHaveCount(2, { timeout: 10_000 });
+    await expect(page.getByTestId('bulk-selected-count')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('bulkSelection').selectedIds.size)).toBe(0);
+
+    // Removed by a refresh this page did not ask for: another tab dismissed it.
+    const [fourth, fifth] = jobs.slice(3);
+    await page.locator(`[data-job-id="${fourth.canonicalId}"]`).getByRole('checkbox').check();
+    await page.locator(`[data-job-id="${fifth.canonicalId}"]`).getByRole('checkbox').check();
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('2 jobs selected');
+    const dismissed = await request.post('/v1/jobs/commands/dismiss', {
+      data: { jobIds: [fourth.canonicalId], idempotencyKey: `ghost-${stamp}` },
+      headers: { 'Idempotency-Key': `ghost-${stamp}` },
+    });
+    expect(dismissed.ok(), await dismissed.text()).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('job-list-refresh')));
+    await expect(page.locator('[data-job-id]')).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('1 job selected');
+    await expect.poll(() => page.evaluate(() => [...(window as any).Alpine.store('bulkSelection').selectedIds])).toEqual([fifth.canonicalId]);
+
+    // Outcomes and the summary name the Job, not its id or the command's key.
+    await page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Pin', exact: true }).click();
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Pinned 1 of 1 selected job.');
+    const outcomes = page.getByRole('list', { name: 'Bulk command outcomes' });
+    await expect(outcomes.getByRole('link', { name: `${name}-e.bin`, exact: true })).toHaveAttribute('href', `/job?id=${fifth.canonicalId}`);
+  });
+
+  test('several failed downloads are retried from the bulk bar at once', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-bulk-retry-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const first = await submitFailingDownload(request, groupId, `${name}-a.bin`);
+    const second = await submitFailingDownload(request, groupId, `${name}-b.bin`);
+    await waitForJobState(request, first.canonicalId, 'failed');
+    await waitForJobState(request, second.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&state=failed&noInboundRelationship=retry-of&dismissed=false`);
+    await page.locator(`[data-job-id="${first.canonicalId}"]`).getByRole('checkbox').check();
+    await page.locator(`[data-job-id="${second.canonicalId}"]`).getByRole('checkbox').check();
+    const retry = page.getByRole('group', { name: 'Commands for the selected jobs' }).getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Retried 2 of 2 selected jobs.');
+    // Retried, both leave a list of failures nobody has retried. Their
+    // successors fetch the same dead address and may fail into it themselves.
+    for (const job of [first, second]) {
+      await expect(page.locator(`[data-job-id="${job.canonicalId}"]`)).toHaveCount(0, { timeout: 10_000 });
+    }
+    for (const job of [first, second]) {
+      await expect.poll(async () => (await readJob(request, job.canonicalId) as any)?.lineage?.successors?.length ?? 0).toBeGreaterThan(0);
+    }
   });
 
   test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {
@@ -367,17 +458,18 @@ test.describe('Job Center', () => {
       const response = await request.get('/v1/jobs?kind=remote-download&state=succeeded&limit=50');
       if (!response.ok()) return false;
       const body = await response.json();
-      return (body.jobs as Job[]).some(candidate => candidate.title === `Download from ${new URL(source).host}`);
+      // A download the form names no file for is titled by the file its URL names.
+      return (body.jobs as Job[]).some(candidate => candidate.title === 'ms-icon-150x150.png');
     }, { timeout: 20_000 }).toBe(true);
 
-    const panelLink = panel.getByRole('link', { name: /^View created resource for Download from / }).first();
+    const panelLink = panel.getByRole('link', { name: /^View created resource for ms-icon-150x150\.png/ }).first();
     await expect(panelLink).toBeVisible();
     await panelLink.click();
     await expect(page).toHaveURL(/\/resource\?id=\d+$/);
     const resourceURL = page.url();
 
     await page.goto('/jobs');
-    const listLink = page.getByRole('link', { name: /^View created resource for Download from / }).first();
+    const listLink = page.getByRole('link', { name: /^View created resource for ms-icon-150x150\.png/ }).first();
     await expect(listLink).toBeVisible();
     await listLink.click();
     await expect(page).toHaveURL(/\/resource\?id=\d+$/);
@@ -393,11 +485,74 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('kind')).toBe('remote-download');
     expect(url.searchParams.get('state')).toBe('failed');
     expect(url.searchParams.get('search')).toBe('legacy-search');
-    expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00Z');
+    expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01');
     await expect(page.getByTestId('job-center')).toBeVisible();
     const form = page.getByRole('form', { name: 'Filter jobs' });
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
     await expect(form.getByRole('searchbox', { name: 'Search' })).toHaveValue('legacy-search');
+  });
+
+  test('a download is titled by the file its URL names, and an old /downloads link finds it by that URL', async ({ page, request }) => {
+    const stamp = Date.now();
+    const file = `legacy-find-${stamp}.bin`;
+    const url = `${DEAD_URL}archive/${file}?sig=${stamp}`;
+    const response = await request.post('/v1/download/submit', { data: { URL: url } });
+    expect(response.status(), await response.text()).toBe(202);
+    const id = (await response.json()).jobs?.[0]?.canonicalJobId as string;
+    await waitForJobState(request, id, 'failed');
+    expect((await readJob(request, id))?.title).toBe(file);
+
+    // One titled by a name its submitter chose is found by its URL's file too.
+    const namedFile = `legacy-named-${stamp}.bin`;
+    const named = await request.post('/v1/download/submit', { data: { URL: `${DEAD_URL}archive/${namedFile}`, FileName: `Chosen name ${stamp}` } });
+    expect(named.status(), await named.text()).toBe(202);
+    const namedId = (await named.json()).jobs?.[0]?.canonicalJobId as string;
+    await waitForJobState(request, namedId, 'failed');
+
+    for (const [typed, found] of [[url, id], [file, id], [`${DEAD_URL}archive/${namedFile}`, namedId]]) {
+      await page.goto(`/downloads?URL=${encodeURIComponent(typed)}`);
+      await expect(page).toHaveURL(/\/jobs\?/);
+      await expect(page.locator(`[data-job-id="${found}"]`)).toBeVisible();
+    }
+  });
+
+  test('summarizes the listed jobs on request and queues a summary export of the same filter', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `job-center-summary-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const failed = await submitFailingDownload(request, groupId, `${name}.bin`);
+    await waitForJobState(request, failed.canonicalId, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
+    const panel = page.getByTestId('job-summary');
+    await panel.getByText('Summary of these jobs', { exact: true }).click();
+    const figures = panel.locator('[data-job-summary-figures]');
+    await expect(figures).toContainText('Jobs: 1');
+    await expect(figures).toContainText('Failed: 1');
+
+    await panel.getByText('Export a summary', { exact: true }).click();
+    const form = panel.getByRole('form', { name: 'Export a summary of these jobs' });
+    await form.getByLabel('From').fill('2026-01-01');
+    await form.getByLabel('To').fill('2026-01-10');
+    await form.getByRole('button', { name: 'Export summary' }).click();
+    await expect(panel.getByRole('alert')).toHaveText('summary export range must exceed 90 days');
+
+    await form.getByLabel('From').fill('2025-01-01');
+    await form.getByRole('button', { name: 'Export summary' }).click();
+    // The range is whole local days, so its UTC title depends on the zone.
+    const queued = panel.getByRole('link', { name: /^Job summary, \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}$/ });
+    await expect(queued).toBeVisible();
+    const href = await queued.getAttribute('href');
+    const exported = await readJob(request, new URL(href!, 'http://localhost').searchParams.get('id')!);
+    expect((exported as any)?.kind).toBe('job-summary-export');
+    expect(JSON.stringify((exported as any)?.summary)).toContain(name);
+
+    // A filter an export cannot seal says so rather than offering a form every
+    // submission of which is refused.
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&noInboundRelationship=retry-of&dismissed=false`);
+    await panel.getByText('Export a summary', { exact: true }).click();
+    await expect(panel.locator('[data-job-summary-export-refusal]')).toHaveText('A summary export cannot filter by Has not been. Change the filter to export a summary.');
+    await expect(panel.getByRole('form', { name: 'Export a summary of these jobs' })).toHaveCount(0);
   });
 
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {

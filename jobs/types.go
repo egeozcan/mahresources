@@ -356,6 +356,13 @@ const (
 	// executor is told, so what was asked of a Job survives an executor that
 	// stops answering.
 	EventControlRequested = "control-requested"
+	// EventRetried records on a Job that a Retry or Continue successor now
+	// extends its chain. It names no successor, which may belong to an account
+	// the Job's own viewers cannot see: it is what tells those viewers their
+	// failure was taken care of, as the retried filter already says. An account
+	// that cannot write is not sent it (retriedEventHidden), as it is not told
+	// of such a retry by that filter either.
+	EventRetried = "retried"
 )
 
 // Bounds on everything searchable. A summary, event detail or failure message
@@ -610,10 +617,16 @@ func (d Deps) now() time.Time {
 // offered to someone whose only outcome is that refusal is not a control. The
 // zero value is a principal that may write, which is what every internal caller
 // acting as the host means.
+//
+// Implicit marks the administrator a deployment without authentication runs
+// every request as. It has an account for its own preferences, but the work it
+// starts records no owner or actor, as the Jobs it submits directly do, so a
+// Retry does not gain an owner its source lacked.
 type Access struct {
 	UserID        uint
 	Administrator bool
 	ReadOnly      bool
+	Implicit      bool
 }
 
 // Filter selects the Jobs one visible listing, summary or event scan returns.
@@ -660,7 +673,8 @@ type Filter struct {
 	NoInboundRelationship string
 
 	// Search matches the bounded, sanitized text a viewer may read: the UUID,
-	// title, sanitized summary, sanitized failure message and output labels. It
+	// title, the values of the sanitized summary (not its keys or JSON
+	// punctuation), sanitized failure message and output labels. It
 	// never reaches ciphertext or a protected diagnostic reference.
 	Search string
 

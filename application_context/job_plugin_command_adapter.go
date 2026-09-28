@@ -188,7 +188,7 @@ func (*pluginCommandJobAdapter) CleanupArtifacts(context.Context, jobs.ArtifactC
 	return jobs.ArtifactCleanupResult{}, nil
 }
 func (a *pluginCommandJobAdapter) Commands(_ context.Context, command jobs.CommandContext) ([]jobs.Command, error) {
-	commands := []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Confirmation: "Cancel this plugin command?"},
+	commands := []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Bulk: true, Confirmation: "Cancel this plugin command?"},
 		{Key: "inspect", Label: "Inspect command history"}}
 	if a.kind == JobKindPluginCommandImport {
 		eligible, err := a.pluginCommandImportRetryEligible(command.Deps, command.Snapshot.ID)

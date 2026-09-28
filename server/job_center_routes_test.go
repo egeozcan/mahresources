@@ -143,3 +143,69 @@ func TestAScheduledJobCardSaysWhenItStarts(t *testing.T) {
 		t.Fatal("the scheduled card draws a progress bar for work nobody is doing")
 	}
 }
+
+// TestAnIndeterminateJobCardHonoursReducedMotion renders a running card whose
+// total is unknown. Its bar may pulse only for a reader who has not asked for
+// reduced motion, as the drawer's and the detail page's bars do.
+func TestAnIndeterminateJobCardHonoursReducedMotion(t *testing.T) {
+	set := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("../templates", nil))
+	page, err := set.FromFile("listJobs.tpl")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	context := template_context_providers.JobCenterListContextProvider(nil)(httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil))
+	context["jobs"] = []template_context_providers.JobRow{{
+		ID: "running-card", Title: "Download", Kind: "remote-download", State: "running",
+		StateLabel: "Running", BadgeClass: "card-badge--live", DetailURL: "/job?id=running-card", Entity: "{}",
+		Progress: &template_context_providers.JobRowProgress{Text: "Working", Indeterminate: true, AccessibleText: "Working; total unknown"},
+	}}
+	rendered, err := page.Execute(context)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	start := strings.Index(rendered, `data-job-id="running-card"`)
+	end := strings.Index(rendered[start:], "</article>")
+	if start < 0 || end < 0 {
+		t.Fatal("the running card was not rendered")
+	}
+	card := rendered[start : start+end]
+	if !strings.Contains(card, "motion-safe:animate-pulse") {
+		t.Fatal("the indeterminate bar does not pulse at all")
+	}
+	if strings.Contains(strings.ReplaceAll(card, "motion-safe:animate-pulse", ""), "animate-pulse") {
+		t.Fatal("the indeterminate bar pulses for a reader who asked for reduced motion")
+	}
+}
+
+// TestAJobCardListsItsSummaryAsFields renders a card whose Kind summarized it as
+// fields: they are listed under their labels in the card's details, and the
+// card shows no JSON.
+func TestAJobCardListsItsSummaryAsFields(t *testing.T) {
+	set := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("../templates", nil))
+	page, err := set.FromFile("listJobs.tpl")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	context := template_context_providers.JobCenterListContextProvider(nil)(httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil))
+	context["jobs"] = []template_context_providers.JobRow{{
+		ID: "summary-card", Title: "sunrise.png", Kind: "remote-download", State: "failed",
+		StateLabel: "Failed", BadgeClass: "card-badge--danger", DetailURL: "/job?id=summary-card", Entity: "{}",
+		SummaryFields: []template_context_providers.JobSummaryField{{Label: "Host", Value: "files.example.test"}, {Label: "Targets", Value: "owner:1"}},
+	}}
+	rendered, err := page.Execute(context)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	start := strings.Index(rendered, `data-job-id="summary-card"`)
+	end := strings.Index(rendered[start:], "</article>")
+	if start < 0 || end < 0 {
+		t.Fatal("the card was not rendered")
+	}
+	card := rendered[start : start+end]
+	if !strings.Contains(card, `<div data-job-summary-field><dt class="inline">Host</dt> <dd class="inline break-words">files.example.test</dd></div>`) {
+		t.Fatalf("the card does not list its summary's fields:\n%s", card)
+	}
+	if strings.Contains(card, `{&quot;`) || strings.Contains(card, `{"`) {
+		t.Fatal("the card shows its summary as JSON")
+	}
+}

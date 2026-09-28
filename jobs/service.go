@@ -377,11 +377,16 @@ func validateAcceptance(a *Acceptance) error {
 		return invalid("title is %d bytes, over the %d-byte ceiling", len(a.Title), MaxTitleBytes)
 	}
 	if len(a.Summary) > 0 {
-		if len(a.Summary) > MaxSummaryBytes {
-			return invalid("summary is %d bytes, over the %d-byte ceiling", len(a.Summary), MaxSummaryBytes)
-		}
 		if !json.Valid(a.Summary) {
 			return invalid("summary is not valid JSON")
+		}
+		canonical, err := canonicalSummary(a.Summary)
+		if err != nil {
+			return invalid("summary is not valid JSON")
+		}
+		a.Summary = canonical
+		if len(a.Summary) > MaxSummaryBytes {
+			return invalid("summary is %d bytes, over the %d-byte ceiling", len(a.Summary), MaxSummaryBytes)
 		}
 	} else {
 		a.Summary = nil

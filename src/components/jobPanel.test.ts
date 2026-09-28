@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as userSettings from '../userSettings.js';
 import { epochMicros, jobPanel, panelActiveOrder, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
+import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -1234,6 +1235,49 @@ describe('Job Center panel accessibility hooks', () => {
         await panel.refresh();
 
         expect(completions()).toEqual([{ jobId: 'dl-new' }]);
+    });
+
+    // A Retry records a retried event on the Job it follows: not a transition,
+    // since the Job keeps its state and version, but news that its failure was
+    // taken care of. The drawer reads its lists again on it, and the failure
+    // leaves Needs attention without a word: its outcome was said when it
+    // failed, and nothing about it is new.
+    test('a failure someone retried leaves Needs attention without being said again', async () => {
+        const failed = {
+            id: 'dl-retried', title: 'sunrise.png', kind: 'remote-download', state: 'failed', version: 3,
+            failure: { code: 'http-500', message: 'HTTP 500 Internal Server Error' },
+        };
+        let retried = false;
+        const spoken: string[] = [];
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.requestJSON = vi.fn(async (raw: string) => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs') {
+                const needsAttention = url.searchParams.getAll('state').includes('failed');
+                const hidesRetried = url.searchParams.get('noInboundRelationship') === 'retry-of';
+                return { jobs: needsAttention && !(retried && hidesRetried) ? [failed] : [] };
+            }
+            return { ...failed, commands: [] };
+        }) as any;
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:20' }) });
+        await panel.refresh();
+        expect(panel.jobs.map(job => job.id)).toEqual(['dl-retried']);
+
+        retried = true;
+        expect(panelLifecycleEvents.has('retried')).toBe(false);
+        const refreshes = vi.spyOn(panel, 'schedulePanelRefresh');
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'dl-retried', jobVersion: 3, type: 'retried', sequence: 6, deliverySequence: 21 }),
+            lastEventId: 'v2:21',
+        });
+        expect(refreshes).toHaveBeenCalled();
+        await panel.refresh();
+
+        expect(panel.jobs).toEqual([]);
+        await new Promise(resolve => setTimeout(resolve, 80));
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        expect(spoken).toEqual([]);
     });
 
     test('orders a finish and a render inside one millisecond', () => {
@@ -4128,7 +4172,7 @@ describe('Job Center lifecycle event types', () => {
     const repo = (path: string) => fileURLToPath(new URL(`../../${path}`, import.meta.url));
     // Event types that record no transition; every other Event constant must be
     // one the panel treats as a live lifecycle event.
-    const NOT_TRANSITIONS = new Set(['warning', 'events-truncated', 'output-published', 'output-expired', 'output-removed', 'control-requested']);
+    const NOT_TRANSITIONS = new Set(['warning', 'events-truncated', 'output-published', 'output-expired', 'output-removed', 'control-requested', 'retried']);
 
     test('every lifecycle Event constant in jobs/types.go is known to the panel', () => {
         const types = readFileSync(repo('jobs/types.go'), 'utf8');
@@ -4178,5 +4222,129 @@ describe('Job Center lifecycle event types', () => {
         for (const type of types) {
             if (!NOT_TRANSITIONS.has(type)) expect(panelLifecycleEvents.has(type), type).toBe(true);
         }
+    });
+});
+
+describe('which page region announces a Job', () => {
+    const running = { id: 'far', title: 'far.bin', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 };
+    const succeeded = { ...running, state: 'succeeded', version: 4 };
+
+    function caughtUpPanel(spoken: string[] = []) {
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.streamCaughtUp = true;
+        panel._streamGeneration = 1;
+        (panel as any).registerAnnouncements();
+        return panel;
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    // The drawer's lists are capped, so a page shows Jobs the drawer never
+    // reads. The page's card before the change stands for what the drawer
+    // heard, and the change is said once, whichever region saw it first.
+    test('a change to a Job the drawer\'s lists leave out is said once, by the drawer', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'far', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 30 }),
+            lastEventId: 'v2:30',
+        });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+
+        // The same change seen again, by the page's next refresh or the
+        // drawer's own read, is not news.
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        const again: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, again);
+        expect(again).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
+    test('a change the drawer has already said is not said again when the page hands it over', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        panel.jobs = [running];
+        panel.hearJob(running);
+        const news: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, news);
+        panel.announceNews(news);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
+    // The drawer read the Job while it ran, and never read its pause: the
+    // page's card before the change is the newer record of what the reader saw.
+    test('measures the change from the page\'s card when that is newer than what the drawer heard', () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        panel.hearJob(running);
+        const paused = { ...running, state: 'paused', version: 3 };
+        const resumed = { ...running, state: 'running', version: 4 };
+
+        expect(tellDrawerOfJobs([{ previous: paused, next: resumed }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin running.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
+    test('hands back what it does not follow, and what it cannot say yet', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        const theirs = { previous: running, next: succeeded };
+        const mine = {
+            previous: { ...running, id: 'mine', title: 'mine.bin', ownerUserId: 7 },
+            next: { ...succeeded, id: 'mine', title: 'mine.bin', ownerUserId: 7 },
+        };
+        const nobodys = {
+            previous: { ...running, id: 'nobody', ownerUserId: null },
+            next: { ...succeeded, id: 'nobody', ownerUserId: null },
+        };
+
+        // An administrator's drawer on My jobs follows their own Jobs only.
+        panel._ownerViewer = 7;
+        panel.ownerScope = 'me';
+        expect(tellDrawerOfJobs([theirs, mine, nobodys])).toEqual([theirs, nobodys]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['mine.bin succeeded.']);
+
+        // Still catching up, the drawer can say nothing: the page says the
+        // change, and the drawer records it so its live event is not news.
+        panel.ownerScope = '';
+        panel.streamCaughtUp = false;
+        expect(tellDrawerOfJobs([theirs])).toEqual([theirs]);
+        panel.streamCaughtUp = true;
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'far', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 31 }),
+            lastEventId: 'v2:31',
+        });
+        const read: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, read);
+        expect(read).toEqual([]);
+
+        // A drawer whose stream stopped says nothing about Jobs.
+        panel.streamStopped = true;
+        expect(tellDrawerOfJobs([mine])).toEqual([mine]);
+        panel.streamStopped = false;
+
+        (panel as any).unregisterAnnouncements();
+        expect(tellDrawerOfJobs([mine])).toEqual([mine]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['mine.bin succeeded.']);
     });
 });

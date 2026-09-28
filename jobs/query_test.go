@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mahresources/models"
+	"mahresources/models/types"
 
 	"gorm.io/gorm"
 )
@@ -2709,5 +2710,88 @@ func TestEventSequenceHeadNeverFallsWhenEventsAreDeleted(t *testing.T) {
 	}
 	if visible, err := svc.PublishedEventHead(deps, Access{UserID: 1, Administrator: true}, EventFilter{}); err != nil || visible != 0 {
 		t.Fatalf("visible head after the events were deleted = %d, %v; want 0", visible, err)
+	}
+}
+
+// TestListSearchMatchesSummaryValuesNotItsSyntax pins what the search box reads
+// of a Job's structured summary: its values, the text and numbers a person can
+// see in it, and not its keys or JSON punctuation. A quote once matched every
+// Job and a key name every Job of a Kind.
+func TestListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T) {
+	testListSearchMatchesSummaryValuesNotItsSyntax(t, newTestDeps(t))
+}
+
+func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
+	t.Helper()
+	svc := NewService()
+	admin := Access{UserID: 1, Administrator: true}
+	accept := func(title, summary string) Snapshot {
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Summary: json.RawMessage(summary), Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	download := accept("sunrise.png", `{"scheme":"http","host":"files.example.test","targets":["owner:12","group:3"]}`)
+	export := accept("an export", `{"rootGroups":[987654321],"subtree":true,"fidelity":["blobs"]}`)
+	plain := accept("a plain summary", `"nothing in common"`)
+
+	search := func(term string) []string {
+		t.Helper()
+		return pageIDs(listFor(t, svc, deps, admin, Filter{Search: term}, Cursor{}, 0))
+	}
+	requireIDs(t, "a string value", search("files.example"), download.ID)
+	requireIDs(t, "a value inside a list", search("group:3"), download.ID)
+	requireIDs(t, "a number inside a list", search("987654321"), export.ID)
+	requireIDs(t, "a value in any case", search("BLOBS"), export.ID)
+	for _, term := range []string{`"`, "{", "scheme", "rootGroups", `":"`, "true"} {
+		if got := search(term); len(got) != 0 {
+			t.Errorf("search for %q matched %v through the summary's syntax, want nothing", term, got)
+		}
+	}
+	requireIDs(t, "a summary that is one string", search("in common"), plain.ID)
+	// A summary is stored as Go's encoder writes it, whoever wrote the bytes it
+	// was accepted with, so a value spelled with escapes is found by its text.
+	spelled := accept("a spelled summary", `{"place":"caf\u00e9 terrace","size":1e3}`)
+	requireIDs(t, "a value its writer spelled with an escape", search("café"), spelled.ID)
+	// A number is matched as the engine renders it, which is not always as it
+	// was written: 1e3 reads as 1000.
+	requireIDs(t, "a number the engine renders its own way", search("1000"), spelled.ID)
+
+	// A character the JSON encoder escapes is in the value, not in the text.
+	escaped := accept("an escaped summary", `{"note":"fish \u0026 chips","quote":"say \"when\""}`)
+	requireIDs(t, "a value with an escaped character", search("fish & chips"), escaped.ID)
+	requireIDs(t, "a value with quotes", search(`"when"`), escaped.ID)
+
+	// A summary an earlier release stored as its writer spelled it, before
+	// summaries were stored as Go's encoder writes them: its escapes hide the
+	// characters they stand for from its text, and it is still found by them.
+	older := accept("an older summary", `{"note":"placeholder"}`)
+	spelledByAnother := `{"dish":"cr\u00e8me br\u00fbl\u00e9e","path":"a\/b","smile":"\ud83d\ude00 grin","amp":"x \u0026 y"}`
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", older.ID).
+		Update("summary", types.JSON(spelledByAnother)).Error; err != nil {
+		t.Fatalf("store a summary as an earlier release did: %v", err)
+	}
+	requireIDs(t, "an older summary's escaped letter", search("crème brûlée"), older.ID)
+	requireIDs(t, "an older summary's escaped slash", search("a/b"), older.ID)
+	requireIDs(t, "an older summary's escaped emoji", search("\U0001F600 grin"), older.ID)
+	if got := search("placeholder"); len(got) != 0 {
+		t.Errorf("search for the replaced summary's value matched %v, want nothing", got)
+	}
+}
+
+// TestASummaryIsStoredAsGosEncoderWritesIt pins canonicalSummary: escapes the
+// encoder would not write are resolved, the ones it would are written its way,
+// numbers keep their text and keys their order.
+func TestASummaryIsStoredAsGosEncoderWritesIt(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"b":"caf\u00e9", "a":[1e3, true, null, {"x":"<y>&"}]}`: `{"b":"café","a":[1e3,true,null,{"x":"\u003cy\u003e\u0026"}]}`,
+		` "plain" `:            `"plain"`,
+		`[]`:                   `[]`,
+		`{"k":{},"l":[[1],2]}`: `{"k":{},"l":[[1],2]}`,
+	} {
+		got, err := canonicalSummary(json.RawMessage(raw))
+		if err != nil || string(got) != want {
+			t.Errorf("canonicalSummary(%s) = %s, %v; want %s", raw, got, err, want)
+		}
 	}
 }

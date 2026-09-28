@@ -69,6 +69,7 @@
                 <div><dt class="inline">Started</dt> <dd class="inline">{% if job.Started.ISO %}<time data-local-time="seconds" datetime="{{ job.Started.ISO }}">{{ job.Started.Display }}</time>{% else %}Not started{% endif %}</dd></div>
                 {% if job.Finished.ISO %}<div><dt class="inline">Finished</dt> <dd class="inline"><time data-local-time="seconds" datetime="{{ job.Finished.ISO }}">{{ job.Finished.Display }}</time></dd></div>{% endif %}
                 <div><dt class="inline">Version</dt> <dd class="inline font-mono">{{ job.Version }}</dd></div>
+                {% for field in job.SummaryFields %}<div data-job-summary-field><dt class="inline">{{ field.Label }}</dt> <dd class="inline break-words">{{ field.Value }}</dd></div>{% endfor %}
             </dl>
         </details>
     </div>

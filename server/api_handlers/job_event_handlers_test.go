@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +39,11 @@ type jobEventContextStub struct {
 	// published head, which a reset resumes from.
 	issued *uint64
 	head   uint64
+	// issuedErr fails every read of the allocator's head after the first,
+	// which a resumed stream makes before it reads anything.
+	issuedErr   error
+	issuedReads int
+	afterMu     sync.Mutex
 	// filters records the stream filter each read was made with.
 	filters   []jobs.EventFilter
 	filtersMu sync.Mutex
@@ -56,6 +62,10 @@ func (s *jobEventContextStub) recordedFilters() []jobs.EventFilter {
 }
 
 func (s *jobEventContextStub) GetJobEventSequenceHead() (uint64, error) {
+	s.issuedReads++
+	if s.issuedErr != nil && s.issuedReads > 1 {
+		return 0, s.issuedErr
+	}
 	if s.issued == nil {
 		return math.MaxUint64, nil
 	}
@@ -95,7 +105,9 @@ func (s *jobEventContextStub) GetPublishedJobEvents(filter jobs.EventFilter, aft
 	s.recordFilter(filter)
 	s.called++
 	s.lastAfter = after
+	s.afterMu.Lock()
 	s.after = append(s.after, after)
+	s.afterMu.Unlock()
 	if len(s.pages) > 0 {
 		pageIndex := s.called - 1
 		if pageIndex < len(s.pages) {
@@ -738,5 +750,79 @@ func TestCanonicalJobSSEOwnerMeNarrowsEveryRead(t *testing.T) {
 		if filter.OwnedByViewer {
 			t.Fatalf("read %d of an unfiltered stream carried the owner filter", i)
 		}
+	}
+}
+
+// TestCanonicalJobSSEMovesItsCursorPastEventsItsReaderCannotSee pins the poll
+// of a reader who sees few of the deployment's events: once a read above its
+// cursor comes back short, the cursor moves to the allocator's head read before
+// it, so the next poll does not read everyone else's events again. The marker
+// still names the last cursor the reader was sent, and a head that could not be
+// read leaves the cursor where it was.
+func TestCanonicalJobSSEMovesItsCursorPastEventsItsReaderCannotSee(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		issuedErr error
+		wantNext  uint64
+	}{
+		{"the head is read", nil, 500},
+		{"the head cannot be read", errors.New("database unavailable"), 10},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			issued := uint64(500)
+			ctx := &jobEventContextStub{issued: &issued, issuedErr: tt.issuedErr}
+			response := newSSETestWriter()
+			requestCtx, cancel := context.WithCancel(context.Background())
+			request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&owner=me", nil).WithContext(requestCtx)
+			request.Header.Set("Last-Event-ID", "v2:10")
+			finished := make(chan struct{})
+			go func() {
+				GetCanonicalJobEventsHandler(ctx)(response, request)
+				close(finished)
+			}()
+			select {
+			case <-response.caughtUpWritten:
+			case <-time.After(2 * time.Second):
+				cancel()
+				t.Fatal("SSE did not announce the catch-up boundary")
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				ctx.afterMu.Lock()
+				polls := len(ctx.after)
+				ctx.afterMu.Unlock()
+				if polls >= 2 || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			cancel()
+			<-finished
+			if len(ctx.after) < 2 || ctx.after[0] != 10 || ctx.after[1] != tt.wantNext {
+				t.Fatalf("polls read from %v, want 10 then %d", ctx.after, tt.wantNext)
+			}
+			if !strings.Contains(response.String(), `{"cursor":"v2:10"}`) {
+				t.Fatalf("SSE body = %q, want the marker to name the reader's own cursor", response.String())
+			}
+		})
+	}
+}
+
+// TestCanonicalJobSSEDoesNotMovePastAPageItHasNotRead pins the other half: a
+// full page means more of this reader's events may follow, so the cursor
+// stays at the last event sent and the next page is read from there.
+func TestCanonicalJobSSEDoesNotMovePastAPageItHasNotRead(t *testing.T) {
+	pageSize := jobs.DefaultEventPageSize
+	page := make([]jobs.Event, 0, pageSize)
+	for i := 0; i < pageSize; i++ {
+		sequence := uint64(i + 11)
+		page = append(page, jobs.Event{ID: "event-" + strconv.FormatUint(sequence, 10), JobID: "job", Sequence: sequence,
+			Type: jobs.EventQueued, DeliverySequence: &sequence})
+	}
+	issued := uint64(5000)
+	ctx := &jobEventContextStub{issued: &issued, pages: [][]jobs.Event{page}}
+	runCanonicalStreamUntilCaughtUp(t, ctx, "/v1/jobs/events?version=2", "v2:10")
+	if len(ctx.after) < 2 || ctx.after[1] != uint64(pageSize+10) {
+		t.Fatalf("polls read from %v, want the second from the last event of the full page, %d", ctx.after, pageSize+10)
 	}
 }

@@ -475,3 +475,7 @@ func waitForABlockedQuery(t *testing.T, db *gorm.DB) {
 	}
 	t.Fatal("timed out waiting for a statement to block on a lock in this database")
 }
+
+func TestListSearchMatchesSummaryValuesNotItsSyntaxOnPostgres(t *testing.T) {
+	testListSearchMatchesSummaryValuesNotItsSyntax(t, newPGDeps(t))
+}

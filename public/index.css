@@ -239,6 +239,16 @@ html {
     .navbar-toggle {
         display: none;
     }
+
+    /* Links that do not fit beside the header's other controls fold behind
+       the menu button, as they do below 900px (mobileNav.js fitLinks). */
+    .navbar--collapsed .navbar-links {
+        display: none;
+    }
+
+    .navbar--collapsed .navbar-toggle {
+        display: flex;
+    }
 }
 
 .navbar-link {

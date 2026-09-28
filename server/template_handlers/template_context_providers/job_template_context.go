@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
@@ -80,10 +81,13 @@ type JobRow struct {
 	State      string
 	StateLabel string
 	// BadgeClass is the colour the state's tone takes (jobToneClass).
-	BadgeClass     string
-	Phase          string
-	Pinned         bool
+	BadgeClass string
+	Phase      string
+	Pinned     bool
+	// SummaryText is a summary the Kind wrote as one sentence; SummaryFields is
+	// one it wrote as fields (jobSummaryPresentation).
 	SummaryText    string
+	SummaryFields  []JobSummaryField
 	FailureMessage string
 	Accepted       JobRowTime
 	// Started and Finished are pre-formatted because a nil *time.Time is truthy
@@ -95,7 +99,10 @@ type JobRow struct {
 	ScheduledFor JobRowTime
 	Version      uint64
 	Progress     *JobRowProgress
-	Result       jobview.ResultLink
+	// ProgressUpdatedAt is when the progress drawn was reported, for the page
+	// to tell whether a live progress frame it holds is newer than a refresh.
+	ProgressUpdatedAt string
+	Result            jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
@@ -148,12 +155,11 @@ type JobQuickFilter struct {
 
 // JobFilterForm is what the sidebar form shows as currently chosen.
 type JobFilterForm struct {
-	Search     string
-	Command    string
-	Kinds      []string
-	States     []string
-	Origins    []string
-	OriginText string
+	Search  string
+	Command string
+	Kinds   []string
+	States  []string
+	Origins []string
 	// Owner is the administrator's Owner select: "me", an account id, or
 	// "deleted" (jobOwnerChoice). OwnerID is the plain owner id field others see.
 	Owner          string
@@ -203,12 +209,19 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
+		base["jobSummaryQuery"] = jobAPIQuery(query)
+		base["jobOriginOptions"] = jobOriginOptions(jobFilterForm(query).Origins)
 		// An administrator's Owner and Actor selects are drawn before the filter
 		// is read, so a page refusing its filter still offers them with the
-		// address's choices, and correcting the filter keeps them.
+		// address's choices, and correcting the filter keeps them. With
+		// authentication off every request is the one implicit administrator, so
+		// there is nobody to filter by: the Owner and Actor filters are not
+		// offered at all, and cards name no owner.
 		accounts, _ := reader.(JobAccountReader)
 		viewer := auth.PrincipalFromContext(request.Context())
-		if accounts != nil && viewer.IsAdmin() {
+		accountFilters := viewer == nil || !viewer.SuperUser
+		base["jobAccountFilters"] = accountFilters
+		if accounts != nil && accountFilters && viewer.IsAdmin() {
 			options, err := accounts.JobAccountOptions()
 			if err != nil {
 				return addJobListError(err, base)
@@ -248,7 +261,10 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		for _, snapshot := range page.Jobs {
 			rows = append(rows, jobRow(reader, snapshot))
 		}
-		if accounts != nil && viewer.IsAdmin() {
+		// An export is a write: an account that cannot write is not offered one.
+		base["jobSummaryExportOffered"] = viewer == nil || viewer.CanWrite()
+		base["jobSummaryExportQuery"], base["jobSummaryExportRefusal"] = jobSummaryExportFilter(query, filter, viewer)
+		if accounts != nil && accountFilters && viewer.IsAdmin() {
 			if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
 				return addJobListError(err, base)
 			}
@@ -320,6 +336,26 @@ func jobKindOptions(registered, requested []string) []JobSelectOption {
 	options := make([]JobSelectOption, 0, len(kinds))
 	for _, kind := range kinds {
 		options = append(options, JobSelectOption{Value: kind, Label: jobview.KindLabel(kind)})
+	}
+	return options
+}
+
+// jobOrigins are the origins the host records on the Jobs it accepts: a request
+// to the API or a page ("api"), the CLI's commands ("cli"), a plugin ("plugin"),
+// a schedule or a deferred start ("schedule"), and administrative maintenance
+// ("admin"). A client may name its own origin on a command, so the vocabulary is
+// not closed; a successor from the page keeps its ancestor's.
+var jobOrigins = []string{"api", "cli", "plugin", "schedule", "admin"}
+
+// jobOriginOptions is the Origin checkboxes: the host's origins, plus any origin
+// the URL names that is not among them — one a client chose itself — so
+// resubmitting the form does not silently drop it.
+func jobOriginOptions(requested []string) []string {
+	options := append([]string(nil), jobOrigins...)
+	for _, origin := range requested {
+		if !slices.Contains(options, origin) {
+			options = append(options, origin)
+		}
 	}
 	return options
 }
@@ -418,15 +454,7 @@ func undismissedDefaultRedirect(request *http.Request) string {
 // lists what the viewer has not dismissed unless they ask otherwise;
 // `dismissed=any` is that asking, and reads as it does on the API.
 func jobListFilter(query url.Values) (jobs.Filter, error) {
-	query = withoutEmptyValues(query)
-	switch owner := query.Get("owner"); {
-	case owner == jobOwnerDeletedOption:
-		query.Del("owner")
-		query.Set("ownerDeleted", "true")
-	case owner != "" && owner != jobOwnerMineOption && query.Get("ownerId") == "":
-		query.Del("owner")
-		query.Set("ownerId", owner)
-	}
+	query = withAPIOwner(withoutEmptyValues(query))
 	filter, err := jobview.ParseFilter(query)
 	if err != nil {
 		return jobs.Filter{}, err
@@ -436,6 +464,65 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 		filter.Dismissed = &undismissed
 	}
 	return filter, nil
+}
+
+// jobAPIQuery is the list's filter as the Job API reads it, for the summary
+// panel and the summary export: the page position dropped, and the Owner
+// select's choice spelled as the API reads it.
+func jobAPIQuery(query url.Values) string {
+	values := withAPIOwner(withoutEmptyValues(query))
+	for _, position := range []string{"cursor", "before", "view"} {
+		values.Del(position)
+	}
+	return values.Encode()
+}
+
+// jobSummaryExportFilter is the list's filter as a summary export seals it, or,
+// when the export cannot seal it, why not in the words of the form. An export's
+// filter runs later, possibly on an older worker, so it refuses the dimensions
+// added after its Kind version; owner=me is one of them, and the viewer's own
+// Jobs are the same question asked by the viewer's id, which it seals.
+func jobSummaryExportFilter(query url.Values, filter jobs.Filter, viewer *auth.Principal) (string, string) {
+	values := withAPIOwner(withoutEmptyValues(query))
+	for _, position := range []string{"cursor", "before", "view"} {
+		values.Del(position)
+	}
+	if values.Get("owner") == jobOwnerMineOption && viewer != nil && viewer.UserID != 0 {
+		values.Del("owner")
+		values.Set("ownerId", strconv.FormatUint(uint64(viewer.UserID), 10))
+		filter.OwnedByViewer = false
+	}
+	if refused := application_context.SummaryExportUnsealableDimension(filter); refused != "" {
+		if words, ok := jobSummaryExportDimensionWords[refused]; ok {
+			refused = words
+		}
+		return "", "A summary export cannot filter by " + refused + ". Change the filter to export a summary."
+	}
+	return values.Encode(), ""
+}
+
+// jobSummaryExportDimensionWords names the dimensions an export refuses as the
+// filter form does.
+var jobSummaryExportDimensionWords = map[string]string{
+	"inboundRelationship":   "Has been",
+	"noInboundRelationship": "Has not been",
+	"ownerDeleted":          "a deleted account as owner",
+	"owner=me":              "your own jobs",
+}
+
+// withAPIOwner spells the Owner select's choice as the API reads it: an account
+// id as ownerId and a deleted account as ownerDeleted=true, leaving "me", the
+// API's own owner=me, as it is.
+func withAPIOwner(values url.Values) url.Values {
+	switch owner := values.Get("owner"); {
+	case owner == jobOwnerDeletedOption:
+		values.Del("owner")
+		values.Set("ownerDeleted", "true")
+	case owner != "" && owner != jobOwnerMineOption && values.Get("ownerId") == "":
+		values.Del("owner")
+		values.Set("ownerId", owner)
+	}
+	return values
 }
 
 func withoutEmptyValues(values url.Values) url.Values {
@@ -510,9 +597,6 @@ func jobFilterForm(query url.Values) JobFilterForm {
 	}
 	form.AcceptedAfterInstant = boundInstant(query.Get("acceptedAfter"), false)
 	form.AcceptedBeforeInstant = boundInstant(query.Get("acceptedBefore"), true)
-	// Every origin stays in the one field, comma-separated as the parser reads
-	// it; showing only the first would drop the rest on the next submit.
-	form.OriginText = strings.Join(form.Origins, ", ")
 	return form
 }
 
@@ -711,10 +795,18 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, KindLabel: jobview.KindLabel(snapshot.Kind), State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobToneClass(presentation.Tone),
 		Phase: jobview.PhaseText(snapshot), Pinned: snapshot.Pinned,
-		SummaryText: jobSummaryText(snapshot.Summary), Accepted: jobRowTime(&snapshot.AcceptedAt),
-		Started: jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
+		Accepted: jobRowTime(&snapshot.AcceptedAt),
+		Started:  jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
 		Progress:  jobRowProgress(snapshot),
 		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
+	}
+	row.SummaryText, row.SummaryFields = jobSummaryPresentation(snapshot.Summary)
+	if snapshot.ProgressUpdatedAt != nil {
+		row.ProgressUpdatedAt = snapshot.ProgressUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if jobIsPartial(snapshot) {
+		// The badge already says it; the phase beside it would say it twice.
+		row.Phase = ""
 	}
 	if snapshot.State == jobs.StateScheduled {
 		row.ScheduledFor = jobRowTime(snapshot.ScheduledFor)
@@ -735,10 +827,18 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 			row.Result = jobview.ResultLinkFor(snapshot, outputs)
 		}
 	}
-	entity, _ := json.Marshal(map[string]any{
+	// The owner and the failure are for the page's own announcement of a change
+	// (jobList.js announceChanges): whether the drawer says it, and why a Job
+	// failed when the page does.
+	payload := map[string]any{
 		"id": snapshot.ID, "title": title, "kind": snapshot.Kind, "state": snapshot.State,
 		"phase": snapshot.Phase, "version": snapshot.Version, "pinned": snapshot.Pinned, "dismissed": snapshot.Dismissed,
-	})
+		"ownerUserId": snapshot.OwnerUserID,
+	}
+	if snapshot.Failure != nil {
+		payload["failure"] = map[string]string{"code": snapshot.Failure.Code, "message": snapshot.Failure.Message}
+	}
+	entity, _ := json.Marshal(payload)
 	row.Entity = string(entity)
 	return row
 }
@@ -759,22 +859,130 @@ func jobToneClass(tone string) string {
 	return "job-tone--" + tone
 }
 
-// jobSummaryText shows a Job's structured summary: a JSON string as its text,
-// anything else as compact JSON.
-func jobSummaryText(raw json.RawMessage) string {
+// JobSummaryField is one field of a Job's summary as a card lists it.
+type JobSummaryField struct {
+	Label string
+	Value string
+}
+
+// jobSummaryPresentation reads a Job's summary for a card. A summary the Kind
+// wrote as a string is shown as that sentence. One written as an object is
+// listed field by field, in the Kind's order, each under its key in words; its
+// JSON text, braces and quotes and all, is notation nobody should have to read.
+// A list's items are joined, a flag reads yes or no, a nested object reads as
+// its own key: value pairs, and a null field is left out.
+func jobSummaryPresentation(raw json.RawMessage) (string, []JobSummaryField) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return ""
+		return "", nil
 	}
 	var text string
 	if err := json.Unmarshal(trimmed, &text); err == nil {
-		return text
+		return text, nil
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, trimmed); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		// Not an object: the whole value is one field.
+		whole := json.NewDecoder(bytes.NewReader(trimmed))
+		whole.UseNumber()
+		var value any
+		if err := whole.Decode(&value); err != nil {
+			return "", nil
+		}
+		if shown := jobSummaryValue(value); shown != "" {
+			return "", []JobSummaryField{{Label: "Summary", Value: shown}}
+		}
+		return "", nil
+	}
+	var fields []JobSummaryField
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", nil
+		}
+		key, _ := token.(string)
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return "", nil
+		}
+		if shown := jobSummaryValue(value); shown != "" {
+			fields = append(fields, JobSummaryField{Label: jobSummaryLabel(key), Value: shown})
+		}
+	}
+	return "", fields
+}
+
+// jobSummaryValue is one summary value as text, or "" for nothing to show. A
+// nested object's keys stay as written: they are a sub-document's own names,
+// such as a list filter's parameters, and sorted, since the order is lost.
+func jobSummaryValue(value any) string {
+	switch typed := value.(type) {
+	case nil:
 		return ""
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case bool:
+		if typed {
+			return "yes"
+		}
+		return "no"
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if shown := jobSummaryValue(item); shown != "" {
+				parts = append(parts, shown)
+			}
+		}
+		return strings.Join(parts, ", ")
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			if shown := jobSummaryValue(typed[key]); shown != "" {
+				parts = append(parts, key+": "+shown)
+			}
+		}
+		return strings.Join(parts, "; ")
 	}
-	return compact.String()
+	return fmt.Sprint(value)
+}
+
+// jobSummaryLabel is a summary key in words: a camelCase key split at each
+// capital that follows a lower-case letter, the first word capitalised, an
+// all-capital or numbered word (M2M) kept as written and Id written ID.
+func jobSummaryLabel(key string) string {
+	var words []string
+	start := 0
+	runes := []rune(key)
+	for i := 1; i < len(runes); i++ {
+		if unicode.IsUpper(runes[i]) && unicode.IsLower(runes[i-1]) {
+			words = append(words, string(runes[start:i]))
+			start = i
+		}
+	}
+	words = append(words, string(runes[start:]))
+	for i, word := range words {
+		switch {
+		case word == "Id" || word == "id":
+			words[i] = "ID"
+		case strings.ToUpper(word) == word:
+		default:
+			words[i] = strings.ToLower(word)
+		}
+	}
+	if len(words) > 0 && words[0] != "" {
+		first := []rune(words[0])
+		first[0] = unicode.ToUpper(first[0])
+		words[0] = string(first)
+	}
+	return strings.Join(words, " ")
 }
 
 // jobRowProgress mirrors the progress rules the detail page and the panel use.

@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -542,6 +544,12 @@ func (s *Service) sealReplay(deps Deps, job models.Job, input ReplayInput, now t
 		// Kind and version are what an operator needs to find it.
 		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: %s v%d could not be sanitized",
 			ErrInvalidReplay, job.Kind, job.KindVersion)
+	}
+	if !json.Valid(summary) {
+		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: the summary is not valid JSON", ErrInvalidReplay)
+	}
+	if summary, err = canonicalSummary(summary); err != nil {
+		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: the summary is not valid JSON", ErrInvalidReplay)
 	}
 	if err := validateReplayJSON("summary", summary, MaxSummaryBytes); err != nil {
 		return models.JobReplayEnvelope{}, nil, err
@@ -1387,4 +1395,61 @@ func HasReplayCodec(s *Service, kind string, version uint) bool {
 		return false
 	}
 	return s.hasReplayCodec(kind, version)
+}
+
+// canonicalSummary is a summary as Go's JSON encoder writes it, whoever wrote the
+// bytes it arrived as: a string's characters as they are unless the encoder must
+// escape them, each number as it was written, and the keys in the order they
+// came. The search box relies on it (summaryValueMatches): only in this form is
+// a term with none of the escaped characters sure to appear in the text of a
+// summary that holds it in a string.
+func canonicalSummary(raw json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var out bytes.Buffer
+	// Each open container, and whether the next token in it is a key that
+	// follows another member.
+	type level struct {
+		object bool
+		items  int
+	}
+	var stack []level
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if delim, ok := token.(json.Delim); ok && (delim == '}' || delim == ']') {
+			stack = stack[:len(stack)-1]
+			out.WriteByte(byte(delim))
+			continue
+		}
+		if n := len(stack); n > 0 {
+			top := &stack[n-1]
+			switch {
+			case top.object && top.items%2 == 1:
+				out.WriteByte(':')
+			case top.items > 0:
+				out.WriteByte(',')
+			}
+			top.items++
+		}
+		switch value := token.(type) {
+		case json.Delim:
+			out.WriteByte(byte(value))
+			stack = append(stack, level{object: value == '{'})
+		case json.Number:
+			out.WriteString(value.String())
+		default:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			out.Write(encoded)
+		}
+	}
+	return out.Bytes(), nil
 }

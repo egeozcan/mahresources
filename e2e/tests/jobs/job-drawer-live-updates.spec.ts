@@ -335,4 +335,34 @@ test.describe('Job Center pages when a read fails', () => {
       server.close();
     }
   });
+  test('a running card on the Job Center moves with its progress frames, without refetching the list', async ({ page, request }) => {
+    const { server, base } = await startServer();
+    const ids: string[] = [];
+    try {
+      const name = `job-center-progress-${Date.now()}.bin`;
+      await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
+      await expect(page.getByTestId('job-live-status')).toHaveText('Live updates connected', { timeout: 15_000 });
+      ids.push(await submitDownload(request, `${base}/slow/${name}`, name));
+      const card = page.locator(`[data-job-id="${ids[0]}"]`);
+      const value = card.locator('[data-job-progress-value]');
+      await expect(value).toHaveText(/^\d+%$/, { timeout: 15_000 });
+
+      // From here on the list is only refetched for a lifecycle change, and the
+      // download's next one is its success.
+      let refetches = 0;
+      page.on('request', request => {
+        if (new URL(request.url()).pathname === '/jobs') refetches += 1;
+      });
+      const first = Number((await value.textContent())!.replace('%', ''));
+      await expect.poll(async () => Number((await value.textContent())!.replace('%', '')), { timeout: 10_000 })
+        .toBeGreaterThan(first);
+      const moved = Number((await value.textContent())!.replace('%', ''));
+      if (moved < 100) expect(refetches).toBe(0);
+      await expect(card.locator('[data-job-stats]')).toContainText('/s');
+      await waitForState(request, ids[0], 'succeeded');
+    } finally {
+      await dismiss(request, ids);
+      server.close();
+    }
+  });
 });

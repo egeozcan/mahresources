@@ -1,15 +1,18 @@
 package template_context_providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/jobs"
@@ -660,8 +663,8 @@ func TestJobFilterFormKeepsWhatTheURLAsked(t *testing.T) {
 		"acceptedAfter":  {time.Date(2026, 9, 1, 14, 0, 0, 0, time.Local).UTC().Format(time.RFC3339)},
 		"acceptedBefore": {"2026-09-02"},
 	})
-	if form.OriginText != "api, plugin, schedule" {
-		t.Errorf("origins = %q", form.OriginText)
+	if !slices.Equal(form.Origins, []string{"api", "plugin", "schedule"}) {
+		t.Errorf("origins = %q", form.Origins)
 	}
 	if form.AcceptedAfter != "2026-09-01T14:00" {
 		t.Errorf("after = %q, want the instant's local minute", form.AcceptedAfter)
@@ -716,6 +719,23 @@ func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
 	form := jobFilterForm(url.Values{"inboundRelationship": {"repeat-of"}, "noInboundRelationship": {"retry-of"}})
 	if form.InboundRelationship != "repeat-of" || form.NoInboundRelationship != "retry-of" {
 		t.Fatalf("form = %+v", form)
+	}
+}
+
+// TestJobOriginOptionsOfferTheHostsOriginsAndKeepAnyTheURLNames pins the Origin
+// checkboxes: every origin the host records is offered by name, so a reader
+// picks one rather than guessing an exact spelling, and an origin a client chose
+// itself stays offered when the URL names it, or resubmitting would drop it.
+func TestJobOriginOptionsOfferTheHostsOriginsAndKeepAnyTheURLNames(t *testing.T) {
+	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?origin=my-script&origin=api&dismissed=false")
+	options, _ := ctx["jobOriginOptions"].([]string)
+	for _, origin := range []string{"api", "cli", "plugin", "schedule", "admin", "my-script"} {
+		if !slices.Contains(options, origin) {
+			t.Errorf("origin options = %v, missing %q", options, origin)
+		}
+	}
+	if slices.Index(options, "my-script") < slices.Index(options, "admin") {
+		t.Errorf("origin options = %v: an origin only the URL names belongs after the host's own", options)
 	}
 }
 
@@ -817,6 +837,170 @@ func TestTheOwnerSelectAsksForOneOwnerChoice(t *testing.T) {
 		}
 		if form := ctx["jobFilter"].(JobFilterForm); form.Owner != c.shown {
 			t.Fatalf("%s shows the Owner select as %q, want %q", c.target, form.Owner, c.shown)
+		}
+	}
+}
+
+// TestJobSummaryReadsAsFieldsNotJSON pins how a card shows a structured summary:
+// each field under a label in words, in the order the Kind wrote them, with a
+// list's items joined, a flag as yes or no, and a nested object as its own
+// pairs, never the JSON text with its braces and quotes.
+func TestJobSummaryReadsAsFieldsNotJSON(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		text string
+		want []JobSummaryField
+	}{
+		{
+			raw: `{"scheme":"http","host":"127.0.0.1:18900","targets":["owner:1","group:4"]}`,
+			want: []JobSummaryField{
+				{Label: "Scheme", Value: "http"}, {Label: "Host", Value: "127.0.0.1:18900"},
+				{Label: "Targets", Value: "owner:1, group:4"},
+			},
+		},
+		{
+			raw: `{"subtype":"action","plugin":"demo","entityId":12,"entityType":"resource","cancellable":true}`,
+			want: []JobSummaryField{
+				{Label: "Subtype", Value: "action"}, {Label: "Plugin", Value: "demo"},
+				{Label: "Entity ID", Value: "12"}, {Label: "Entity type", Value: "resource"}, {Label: "Cancellable", Value: "yes"},
+			},
+		},
+		{
+			raw: `{"rootGroups":[2,3],"subtree":false,"relatedM2M":true,"missing":null}`,
+			want: []JobSummaryField{
+				{Label: "Root groups", Value: "2, 3"}, {Label: "Subtree", Value: "no"}, {Label: "Related M2M", Value: "yes"},
+			},
+		},
+		{
+			raw: `{"format":"csv","filter":{"kind":["remote-download"],"state":["failed","blocked"]}}`,
+			want: []JobSummaryField{
+				{Label: "Format", Value: "csv"}, {Label: "Filter", Value: "kind: remote-download; state: failed, blocked"},
+			},
+		},
+		{raw: `"a sentence the Kind wrote"`, text: "a sentence the Kind wrote"},
+		{raw: `["one","two"]`, want: []JobSummaryField{{Label: "Summary", Value: "one, two"}}},
+		{raw: `null`},
+		{raw: ``},
+	} {
+		text, fields := jobSummaryPresentation(json.RawMessage(tc.raw))
+		if text != tc.text || !slices.Equal(fields, tc.want) {
+			t.Errorf("summary %s = %q %v, want %q %v", tc.raw, text, fields, tc.text, tc.want)
+		}
+	}
+}
+
+// fakeAccountedJobListReader is a list reader that can name accounts, as the
+// application context can.
+type fakeAccountedJobListReader struct{ fakeJobListReader }
+
+func (f *fakeAccountedJobListReader) JobAccountLabels(ids []uint) (map[uint]string, error) {
+	return map[uint]string{}, nil
+}
+
+func (f *fakeAccountedJobListReader) JobAccountOptions() ([]application_context.JobAccountOption, error) {
+	return []application_context.JobAccountOption{{ID: 2, Label: "someone"}}, nil
+}
+
+// TestTheAccountFiltersNeedAccountsToTellApart pins when the Owner and Actor
+// filters are offered: an administrator of a deployment with accounts picks one
+// by name, and with authentication off, where every request is the one implicit
+// administrator, there is nobody to tell apart and neither filter is offered.
+func TestTheAccountFiltersNeedAccountsToTellApart(t *testing.T) {
+	render := func(principal *auth.Principal) pongo2.Context {
+		request := httptest.NewRequest(http.MethodGet, "/jobs?dismissed=false", nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
+		return jobListContextProvider(&fakeAccountedJobListReader{})(request)
+	}
+	admin := render(&auth.Principal{UserID: 1, Role: models.RoleAdmin})
+	if admin["jobAccountFilters"] != true || admin["jobOwnerOptions"] == nil {
+		t.Fatalf("an administrator with accounts is offered account filters %v, owner options %v", admin["jobAccountFilters"], admin["jobOwnerOptions"])
+	}
+	implicit := render(&auth.Principal{UserID: 1, Role: models.RoleAdmin, SuperUser: true})
+	if implicit["jobAccountFilters"] != false || implicit["jobOwnerOptions"] != nil {
+		t.Fatalf("with authentication off the account filters are offered: %v, %v", implicit["jobAccountFilters"], implicit["jobOwnerOptions"])
+	}
+}
+
+// TestAJobCardSaysWhoOwnsItAndWhyItFailed pins the card payload the page reads
+// when a refresh changes a row: its owner, so the page can tell whether the
+// drawer announces it, and its failure, so the page says why when it does not.
+func TestAJobCardSaysWhoOwnsItAndWhyItFailed(t *testing.T) {
+	owner := uint(8)
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{
+		ID: "failed-card", Kind: "remote-download", State: jobs.StateFailed, Title: "sunrise.png", OwnerUserID: &owner,
+		Failure: &jobs.Failure{Code: "http-404", Class: jobs.FailureClassDependency, Message: "HTTP 404 Not Found"},
+	})
+	var entity struct {
+		OwnerUserID *uint `json:"ownerUserId"`
+		Failure     *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"failure"`
+	}
+	if err := json.Unmarshal([]byte(row.Entity), &entity); err != nil {
+		t.Fatalf("decode %s: %v", row.Entity, err)
+	}
+	if entity.OwnerUserID == nil || *entity.OwnerUserID != owner || entity.Failure == nil || entity.Failure.Message != "HTTP 404 Not Found" || entity.Failure.Code != "http-404" {
+		t.Fatalf("card payload = %s, want its owner and its failure", row.Entity)
+	}
+	if unowned := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "unowned", Kind: "remote-download", State: jobs.StateQueued}); strings.Contains(unowned.Entity, "failure") || !strings.Contains(unowned.Entity, `"ownerUserId":null`) {
+		t.Fatalf("an unowned, unfailed card payload = %s", unowned.Entity)
+	}
+}
+
+// TestTheSummaryAsksTheAPIForTheListsOwnFilter pins the query the summary panel
+// and the summary export send: the list's filter in the API's own parameters,
+// with the page position dropped and the Owner select's choices spelled as the
+// API reads them.
+func TestTheSummaryAsksTheAPIForTheListsOwnFilter(t *testing.T) {
+	for target, want := range map[string]url.Values{
+		"/jobs?state=failed&kind=remote-download&dismissed=false&cursor=list-v1.x&view=all&search=": {
+			"state": {"failed"}, "kind": {"remote-download"}, "dismissed": {"false"},
+		},
+		"/jobs?owner=7&dismissed=any":       {"ownerId": {"7"}, "dismissed": {"any"}},
+		"/jobs?owner=deleted&dismissed=any": {"ownerDeleted": {"true"}, "dismissed": {"any"}},
+		"/jobs?owner=me&dismissed=false":    {"owner": {"me"}, "dismissed": {"false"}},
+	} {
+		ctx := renderJobList(t, &fakeJobListReader{}, target)
+		got, err := url.ParseQuery(ctx["jobSummaryQuery"].(string))
+		if err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s summarizes %v, want %v", target, got, want)
+		}
+		if _, err := jobview.ParseFilter(got); err != nil {
+			t.Errorf("%s summarizes a query the API refuses: %v", target, err)
+		}
+	}
+}
+
+// TestTheSummaryExportIsOfferedOnlyForAFilterItCanSeal pins the export form:
+// the viewer's own Jobs are asked for by id, which an export can seal where
+// owner=me it cannot, and a filter an export refuses says so in words instead of
+// offering a form whose every submission is refused.
+func TestTheSummaryExportIsOfferedOnlyForAFilterItCanSeal(t *testing.T) {
+	render := func(target string) pongo2.Context {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), &auth.Principal{UserID: 9, Role: models.RoleUser}))
+		return jobListContextProvider(&fakeJobListReader{})(request)
+	}
+	mine := render("/jobs?owner=me&state=failed&dismissed=false")
+	query, err := url.ParseQuery(mine["jobSummaryExportQuery"].(string))
+	if err != nil || query.Get("ownerId") != "9" || query.Has("owner") || query.Get("state") != "failed" {
+		t.Fatalf("the export of the viewer's own Jobs asks %v (%v), want ownerId=9 and the rest of the filter", query, err)
+	}
+	if refusal := mine["jobSummaryExportRefusal"]; refusal != "" {
+		t.Fatalf("the viewer's own Jobs are refused for export: %v", refusal)
+	}
+	for target, want := range map[string]string{
+		"/jobs?noInboundRelationship=retry-of&dismissed=false": "Has not been",
+		"/jobs?inboundRelationship=retry-of&dismissed=false":   "Has been",
+		"/jobs?state=partial&dismissed=false":                  "partially completed",
+		"/jobs?owner=deleted&dismissed=false":                  "deleted account",
+	} {
+		if refusal, _ := render(target)["jobSummaryExportRefusal"].(string); !strings.Contains(refusal, want) {
+			t.Errorf("%s is refused as %q, want it to name %q", target, refusal, want)
 		}
 	}
 }

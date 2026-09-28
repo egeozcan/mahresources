@@ -696,8 +696,13 @@ func preferencePredicate(column string, want bool) string {
 }
 
 // applySearch narrows a listing to the bounded sanitized text a viewer may read:
-// the Job's identity, title, sanitized summary and sanitized failure message,
-// and the labels of its outputs.
+// the Job's identity, title, the values of its sanitized summary, its sanitized
+// failure message, and the labels of its outputs.
+//
+// The summary is read by its values — every string and number in it, however
+// deep — and never as JSON text: its keys and punctuation are notation, not
+// something a person saw, and matching them made a quote find every Job and a
+// key name every Job of a Kind (summaryValueMatches).
 //
 // Two things are deliberately out of reach. The replay envelope is another
 // table, and its contents are ciphertext — a search can never reach them. The
@@ -714,14 +719,81 @@ func applySearch(db *gorm.DB, term string) *gorm.DB {
 	}
 	pattern, escape := database_scopes.LikePattern(term)
 	operator := database_scopes.GetLikeOperator(db)
+	summary, summaryArgs := summaryValueMatches(db, term, pattern, operator, escape)
+	args := append([]any{pattern, pattern}, summaryArgs...)
+	args = append(args, pattern, pattern)
 	return db.Where(
 		"(jobs.id "+operator+" ?"+escape+
 			" OR jobs.title "+operator+" ?"+escape+
-			" OR COALESCE(CAST(jobs.summary AS TEXT), '') "+operator+" ?"+escape+
+			" OR "+summary+
 			" OR jobs.failure_message "+operator+" ?"+escape+
 			" OR EXISTS (SELECT 1 FROM job_outputs o WHERE o.job_id = jobs.id AND o.label "+operator+" ?"+escape+"))",
-		pattern, pattern, pattern, pattern, pattern,
+		args...,
 	)
+}
+
+// summaryValueMatches is the predicate, with its arguments, that some string or
+// number in the Job's summary matches a search pattern. Each engine walks the
+// document with its own JSON functions: SQLite's json_tree gives every node with
+// its type and its value as SQL text (atom), and PostgreSQL's strict `$.**` path
+// yields every node once, whose text `#>> '{}'` is. A summary that is not valid
+// JSON has no values to match on SQLite, where json_tree would otherwise fail the
+// query; PostgreSQL's jsonb column cannot hold one.
+//
+// Walking a document costs several times what matching its text does, and a
+// search that finds one Job reads every row. So the walk only reads a summary
+// whose text could hold the term. A string value's characters appear in the
+// text as they are, except where they are escaped, so a term with a character
+// an escape must stand for (a quote, a backslash, a control character) or that
+// Go's encoder escapes (< > & U+2028 U+2029) is walked alone. So is a term that
+// could be part of a number, since a number is not written as the engine renders
+// it (1e3 reads as 1000). For any other term:
+//   - PostgreSQL stores the summary as jsonb and renders it anew, every other
+//     character as it is, whoever wrote it: its text holds the term whenever a
+//     value does.
+//   - SQLite keeps the text as written. Go's encoder writes no other escape, and
+//     every summary accepted now is stored as it writes it (canonicalSummary).
+//     An earlier release stored a summary as its writer spelled it, where `\/` or
+//     a `\u` escape may hide a character of the term, so a summary with either,
+//     beyond the three Go writes for < > &, is walked whatever its text holds.
+func summaryValueMatches(db *gorm.DB, term, pattern, operator, escape string) (string, []any) {
+	postgres := db.Dialector.Name() == "postgres"
+	walk := "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
+		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
+	if postgres {
+		walk = "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
+			" WHERE jsonb_typeof(node.value) IN ('string', 'number') AND (node.value #>> '{}') " + operator + " ?" + escape + ")"
+	}
+	if !termIsWrittenAsIs(term) || termCouldBeANumber(term) {
+		return walk, []any{pattern}
+	}
+	text := "COALESCE(CAST(jobs.summary AS TEXT), '')"
+	holds := text + " " + operator + " ?" + escape
+	if postgres {
+		return "(" + holds + " AND " + walk + ")", []any{pattern, pattern}
+	}
+	mayHide := "instr(" + text + ", ?) > 0 OR (instr(" + text + ", ?) > 0 AND " +
+		"instr(REPLACE(REPLACE(REPLACE(" + text + ", ?, ''), ?, ''), ?, ''), ?) > 0)"
+	return "((" + holds + " OR " + mayHide + ") AND " + walk + ")",
+		[]any{pattern, `\/`, `\u`, `\u0026`, `\u003c`, `\u003e`, `\u`, pattern}
+}
+
+// termCouldBeANumber reports whether a term is made only of what a number's
+// text is made of, so it could match a number the engine renders differently
+// from how the summary wrote it.
+func termCouldBeANumber(term string) bool {
+	return !strings.ContainsFunc(term, func(r rune) bool {
+		return (r < '0' || r > '9') && !strings.ContainsRune(".eE+-", r)
+	})
+}
+
+// termIsWrittenAsIs reports whether Go's JSON encoder writes every character of
+// a term unchanged inside a string: it escapes a quote, a backslash, a control
+// character, <, > and &, and the line and paragraph separators.
+func termIsWrittenAsIs(term string) bool {
+	return !strings.ContainsFunc(term, func(r rune) bool {
+		return r < 0x20 || r == '"' || r == '\\' || r == '<' || r == '>' || r == '&' || r == '\u2028' || r == '\u2029'
+	})
 }
 
 // continueAfter applies a keyset position. A zero cursor is the start of the
@@ -1239,7 +1311,7 @@ func (s *Service) Timeline(deps Deps, access Access, jobID string, afterSequence
 	}
 
 	var rows []models.JobEvent
-	err = deps.DB.Where("job_id = ? AND sequence > ?", jobID, afterSequence).
+	err = retriedEventHidden(deps.DB.Where("job_id = ? AND sequence > ?", jobID, afterSequence), access).
 		Order("sequence ASC").Limit(size).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read timeline: %w", err)
@@ -1260,14 +1332,25 @@ func (s *Service) PublishedEvents(deps Deps, access Access, filter EventFilter, 
 		return nil, err
 	}
 	var rows []models.JobEvent
-	err = deps.DB.
+	err = retriedEventHidden(deps.DB.
 		Where("delivery_sequence IS NOT NULL AND delivery_sequence > ?", afterDelivery).
-		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)), access).
 		Order("delivery_sequence ASC").Limit(size).Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("jobs: read published events: %w", err)
 	}
 	return eventsOf(rows), nil
+}
+
+// retriedEventHidden leaves EventRetried out of what an account that cannot
+// write reads of a timeline or a stream. Such an account is not told of a
+// retry it cannot see (linkedJobs reads a hidden successor as absent for it),
+// and the event would tell it one exists.
+func retriedEventHidden(db *gorm.DB, access Access) *gorm.DB {
+	if !access.ReadOnly {
+		return db
+	}
+	return db.Where("type <> ?", EventRetried)
 }
 
 // streamJobIDs is the stream's set of Jobs: the visible ones, narrowed by the
@@ -1305,9 +1388,9 @@ func (s *Service) EventSequenceHead(deps Deps) (uint64, error) {
 // client starting over, and nothing above it has been published for this asker.
 func (s *Service) PublishedEventHead(deps Deps, access Access, filter EventFilter) (uint64, error) {
 	var heads []uint64
-	err := deps.DB.Model(&models.JobEvent{}).
+	err := retriedEventHidden(deps.DB.Model(&models.JobEvent{}).
 		Where("delivery_sequence IS NOT NULL").
-		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)).
+		Where("job_id IN (?)", streamJobIDs(deps.DB, access, filter)), access).
 		Order("delivery_sequence DESC").Limit(1).
 		Pluck("delivery_sequence", &heads).Error
 	if err != nil {

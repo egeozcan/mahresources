@@ -274,3 +274,18 @@ func TestParseFilterReadsALocalDateTimeToItsPrecision(t *testing.T) {
 		t.Fatalf("second bound = %v, %v", seconds.AcceptedBefore, err)
 	}
 }
+
+// TestParseFilterTrimsTheSearchTerm pins that a pasted term's surrounding spaces
+// are not part of what is searched for: " heartbeat " finds what "heartbeat"
+// finds, and a term of spaces alone is no search at all.
+func TestParseFilterTrimsTheSearchTerm(t *testing.T) {
+	for raw, want := range map[string]string{" heartbeat ": "heartbeat", "\theart beat\n": "heart beat", "   ": ""} {
+		filter, err := ParseFilter(url.Values{"search": {raw}})
+		if err != nil {
+			t.Fatalf("ParseFilter(%q): %v", raw, err)
+		}
+		if filter.Search != want {
+			t.Errorf("search %q read as %q, want %q", raw, filter.Search, want)
+		}
+	}
+}

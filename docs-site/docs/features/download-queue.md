@@ -192,6 +192,23 @@ states:
 | `cancelled` | Cancelled by user |
 | `paused` | Paused by user (can be resumed) |
 
+A download's Job is titled with the file name the submission chose, or else
+the file the URL's path names: its last segment, decoded, when that segment has
+an extension (`sunrise.png` for `https://example.com/photos/sunrise.png?sig=...`).
+Otherwise it reads "Download from" and the host. The query, the fragment and a
+path segment without an extension, where a link usually keeps its token, never
+reach the title. The Job's summary keeps the URL's file beside a chosen name, so
+a search for the file finds the download whatever it is titled. An old
+`/downloads?URL=` link opens the Job Center searching for the file the URL
+names, or its host, since a Job keeps no URL.
+
+A page that lists resources reads its lists again when the Jobs drawer sees a
+download succeed after the page was rendered, so the new resource appears
+without a reload. Known limit: the drawer reads only the newest finished Jobs
+(its Finished group's limit, 10 by default), so a download that more than that
+many other Jobs finish after, before the drawer reads again, does not refresh
+the page by itself; the next refresh, or a reload, shows its resource.
+
 A failed download's Job records why it failed: for example
 `HTTP 403 Forbidden`, `connect: connection refused`, or the timeout that ended
 the transfer. A transfer that runs past `-remote-overall-timeout` says it did

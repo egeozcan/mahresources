@@ -32,15 +32,42 @@ export function mobileNav() {
      */
     activeNav: '',
 
+    /**
+     * Whether the links are folded behind the menu button although the window
+     * is desktop-wide, because they do not fit beside the header's other
+     * controls. How wide they are depends on the deployment (plugins add menus,
+     * an account adds its name, the Jobs button gains badges), so it is
+     * measured rather than set as a breakpoint: pushed past the right edge, the
+     * Jobs button and the settings could not be reached at all.
+     */
+    linksCollapsed: false,
+
     /** The control that opened the panel, so focus can go back to it. */
     _trigger: null,
     /** The component root, captured once — `$el` in a method is the caller. */
     _root: null,
+    /** The links' own width, measured whenever they show. */
+    _linksWidth: 0,
+    _linksObserver: null,
 
     initMobileNav() {
       this._root = this.$el;
       this.currentPath = this.$el.dataset.currentPath || '';
       this.activeNav = this.$el.dataset.activeNav || '';
+
+      const header = this._root.closest?.('header');
+      if (header && typeof ResizeObserver !== 'undefined') {
+        this._linksObserver = new ResizeObserver(() => this.fitLinks());
+        // The header itself, what shares it (the Jobs button's badges come and
+        // go), and the links, whose width settles once the web font loads.
+        this._linksObserver.observe(header);
+        for (const child of header.children) {
+          if (child !== this._root) this._linksObserver.observe(child);
+        }
+        const links = this._root.querySelector('.navbar-links');
+        if (links) this._linksObserver.observe(links);
+        this.fitLinks();
+      }
 
       this.$watch('mobileOpen', (open) => {
         if (open) return;
@@ -75,6 +102,31 @@ export function mobileNav() {
 
     closeMobileNav() {
       this.mobileOpen = false;
+    },
+
+    destroy() {
+      this._linksObserver?.disconnect();
+    },
+
+    // Folds the links behind the menu button when they are wider than the
+    // header leaves them, and unfolds them once they fit again. Below the
+    // mobile breakpoint the stylesheet folds them anyway, and they measure 0.
+    fitLinks() {
+      const header = this._root?.closest?.('header');
+      const links = this._root?.querySelector('.navbar-links');
+      if (!header || !links) return;
+      if (!this.linksCollapsed && links.offsetWidth > 0) this._linksWidth = links.scrollWidth;
+      if (!this._linksWidth) return;
+      const style = getComputedStyle(header);
+      const gap = parseFloat(style.columnGap) || 0;
+      let available = header.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+      for (const child of header.children) {
+        if (child === this._root || child.offsetWidth === 0) continue;
+        available -= child.offsetWidth + gap;
+      }
+      const collapsed = this._linksWidth > available;
+      if (!collapsed && this.linksCollapsed) this.mobileOpen = false;
+      this.linksCollapsed = collapsed;
     },
   };
 }
