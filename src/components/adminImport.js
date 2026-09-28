@@ -1,5 +1,19 @@
 import { errorMessageFromResponse } from '../index.js';
 
+// The decisions a review starts from, before its plan's suggestions are applied.
+function freshDecisions() {
+  return {
+    parent_group_id: null,
+    resource_collision_policy: 'skip',
+    guid_collision_policy: 'merge',
+    acknowledge_missing_hashes: false,
+    mapping_actions: {},    // keyed by source_export_id or source_key
+    dangling_actions: {},   // keyed by dangling ref id
+    excluded_items: [],     // export IDs unchecked in the item tree
+    shell_group_actions: {},
+  };
+}
+
 export function adminImport() {
   return {
     selectedFile: null,
@@ -11,16 +25,7 @@ export function adminImport() {
     eventSource: null,
 
     // Decision state — collected from interactive review controls
-    decisions: {
-      parent_group_id: null,
-      resource_collision_policy: 'skip',
-      guid_collision_policy: 'merge',
-      acknowledge_missing_hashes: false,
-      mapping_actions: {},    // keyed by source_export_id or source_key
-      dangling_actions: {},   // keyed by dangling ref id
-      excluded_items: [],     // export IDs unchecked in the item tree
-      shell_group_actions: {},
-    },
+    decisions: freshDecisions(),
 
     // UI helpers
     parentGroupQuery: '',
@@ -67,12 +72,36 @@ export function adminImport() {
       this.closeApplySSE();
     },
 
+    // Forgets everything one import left on the page, so the next one (an
+    // upload, or a handle to resume) starts from nothing: its review, its
+    // decisions, its apply and its report.
+    resetImport() {
+      this.closeSSE();
+      this.closeApplySSE();
+      this.jobId = null;
+      this.job = null;
+      this.plan = null;
+      this.error = null;
+      this.decisions = freshDecisions();
+      this.parentGroupQuery = '';
+      this.parentGroupResults = [];
+      this.parentGroupName = '';
+      this.parentActiveIndex = -1;
+      this.flattenedItems = [];
+      this.applying = false;
+      this.applyJobId = null;
+      this.applyJob = null;
+      this.applyPhase = '';
+      this.applyResult = null;
+      this.applyOutcome = '';
+      this.resumeNotice = '';
+      this.resumeJobURL = '';
+    },
+
     async upload() {
       if (!this.selectedFile) return;
+      this.resetImport();
       this.uploading = true;
-      this.error = null;
-      this.plan = null;
-      this.jobId = null;
 
       try {
         const formData = new FormData();
@@ -121,10 +150,8 @@ export function adminImport() {
      * page can tell nobody whether an import is there.
      */
     async resume(handle) {
+      this.resetImport();
       this.jobId = handle;
-      this.error = null;
-      this.resumeNotice = '';
-      this.resumeJobURL = '';
       const encoded = encodeURIComponent(handle);
       try {
         const planResp = await fetch(`/v1/imports/${encoded}/plan`);
@@ -201,9 +228,13 @@ export function adminImport() {
 
     async latestApply(parseJobId) {
       if (!parseJobId) return null;
+      // A 404 is a Job this viewer cannot see; any other failure is a read that
+      // answered nothing, and is reported rather than read as invisibility.
       const read = async (id) => {
         const resp = await fetch(`/v1/jobs/${encodeURIComponent(id)}`);
-        return resp.ok ? resp.json() : null;
+        if (resp.status === 404) return null;
+        if (!resp.ok) throw new Error('The import\'s Jobs could not be read: ' + await errorMessageFromResponse(resp));
+        return resp.json();
       };
       const newest = (jobs) => (Array.isArray(jobs) ? jobs : [])
         .filter(job => job?.kind === 'group-import-apply')
@@ -211,11 +242,11 @@ export function adminImport() {
       const parse = await read(parseJobId);
       let apply = newest(parse?.lineage?.children);
       // A Retry of an apply is a new Job linked to it; the newest one is the one
-      // whose outcome the report describes. An apply whose detail cannot be read,
-      // or that was retried by an account this viewer cannot see, has an outcome
-      // this viewer cannot know, and answers null rather than a guess. The walk
-      // is bounded.
-      for (let hop = 0; apply && hop < 10; hop++) {
+      // whose outcome the report describes. An apply this viewer cannot see, or
+      // one retried by an account it cannot see, has an outcome it cannot know,
+      // and answers null rather than a guess. Retry lineage is linear, so the walk
+      // ends; the cap only guards a malformed answer.
+      for (let hop = 0; apply && hop < 1000; hop++) {
         const detail = await read(apply.id);
         if (!detail || detail.lineage?.retriedElsewhere) return null;
         const next = newest(detail.lineage?.successors);

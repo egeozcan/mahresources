@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"mahresources/application_context"
 	"mahresources/models"
 )
 
@@ -186,8 +187,13 @@ func TestAPairBeyondTheThresholdIsNotClustered(t *testing.T) {
 // the pair table asks the same question. A legacy pair with no aHash distance
 // passes, as it does there.
 func TestAPairTheAHashGuardRejectsIsNotClustered(t *testing.T) {
-	tc := SetupTestEnv(t)
+	assertTheAHashGuardKeepsAPairOutOfAReduction(t, SetupTestEnv(t))
+}
 
+func assertTheAHashGuardKeepsAPairOutOfAReduction(t *testing.T, tc *TestContext) {
+	t.Helper()
+	require.NoError(t, tc.AppCtx.Settings().Set(application_context.KeyHashSimilarityThreshold, "10", "test", "tester"))
+	require.NoError(t, tc.AppCtx.Settings().Set(application_context.KeyHashAHashThreshold, "5", "test", "tester"))
 	a := addImage(t, tc, "guard-a.jpg", 800, 800)
 	b := addImage(t, tc, "guard-b.jpg", 400, 400)
 	c := addImage(t, tc, "guard-c.jpg", 300, 300)
