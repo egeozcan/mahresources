@@ -301,7 +301,7 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 	if rows[0].Result.URL != "/v1/jobs/ok/outputs?key=entity" || rows[0].Progress == nil || rows[0].Progress.Percent != 100 {
 		t.Fatalf("succeeded row = %+v", rows[0])
 	}
-	if rows[1].Title != "remote-download" || rows[1].FailureMessage != "404" || rows[1].Progress != nil {
+	if rows[1].Title != "Download" || rows[1].FailureMessage != "404" || rows[1].Progress != nil {
 		t.Fatalf("failed row = %+v", rows[1])
 	}
 }
@@ -313,14 +313,35 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 func TestJobRowProgressNamesEveryBar(t *testing.T) {
 	i64 := func(v int64) *int64 { return &v }
 
+	// The amount is not the bar's label: it leads the stats line, formatted.
 	paused := jobRowProgress(jobs.Snapshot{State: jobs.StatePaused, Progress: jobs.Progress{Completed: i64(20), Total: i64(50), Unit: "MB"}})
-	if paused == nil || !paused.Known || paused.Percent != 40 || paused.Text != "20 / 50 MB" || paused.Indeterminate {
+	if paused == nil || !paused.Known || paused.Percent != 40 || paused.Text != "" || paused.Indeterminate ||
+		paused.AccessibleText != "20 of 50 MB" || paused.Stats != "20 of 50 MB" {
 		t.Fatalf("paused = %+v", paused)
 	}
+	sized := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{
+		Completed: i64(8051532), Total: i64(20971520), Unit: "bytes", Message: "downloading"}})
+	if sized.Text != "downloading" || sized.AccessibleText != "downloading; 7.6 MB of 20.0 MB" || sized.Stats != "7.6 MB of 20.0 MB" {
+		t.Fatalf("sized download = %+v", sized)
+	}
 
-	unknown := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Completed: i64(7), Unit: "bytes"}})
-	if unknown == nil || unknown.Known || !unknown.Indeterminate || unknown.AccessibleText != "7 bytes processed; total unknown" {
+	unknown := jobRowProgress(jobs.Snapshot{State: jobs.StateRunning, Progress: jobs.Progress{Completed: i64(240350), Unit: "bytes"}})
+	if unknown == nil || unknown.Known || !unknown.Indeterminate || unknown.AccessibleText != "Working; 235 KB processed; total unknown" || unknown.Stats != "235 KB" {
 		t.Fatalf("unknown total = %+v", unknown)
+	}
+
+	// A rebuild's phase is not what a finished card says, nor its count twice.
+	rebuilt := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded, Progress: jobs.Progress{
+		Completed: i64(11), Total: i64(11), Unit: "items", Message: "recomputing"}})
+	if rebuilt.Text != "Completed" || rebuilt.Percent != 100 || rebuilt.Stats != "11 items" {
+		t.Fatalf("finished rebuild = %+v", rebuilt)
+	}
+
+	// Stopped work whose total was never known keeps its amount, with its unit,
+	// and draws no fill: neither Known nor Indeterminate.
+	cancelled := jobRowProgress(jobs.Snapshot{State: jobs.StateCancelled, Progress: jobs.Progress{Completed: i64(240350), Unit: "bytes"}})
+	if cancelled == nil || cancelled.Known || cancelled.Indeterminate || cancelled.Stats != "235 KB" {
+		t.Fatalf("cancelled download of unknown size = %+v", cancelled)
 	}
 
 	finished := jobRowProgress(jobs.Snapshot{State: jobs.StateSucceeded})
@@ -413,6 +434,15 @@ func TestAStoppedJobThatReportedOnlyMetricsShowsThem(t *testing.T) {
 	}
 }
 
+// TestJobRowNamesItsKindInWords: the card reads "Download", not
+// "remote-download", and a Job with no title is named after its Kind in words.
+func TestJobRowNamesItsKindInWords(t *testing.T) {
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "k", Kind: "remote-download", State: jobs.StateQueued})
+	if row.Kind != "remote-download" || row.KindLabel != "Download" || row.Title != "Download" {
+		t.Fatalf("row kind %q, label %q, title %q", row.Kind, row.KindLabel, row.Title)
+	}
+}
+
 // TestJobRowSaysWhenScheduledWorkStarts: the time is what tells one scheduled
 // Job from another, and the card shows it, in the same zone as its other times.
 func TestJobRowSaysWhenScheduledWorkStarts(t *testing.T) {
@@ -435,21 +465,21 @@ func TestJobRowSaysWhenScheduledWorkStarts(t *testing.T) {
 // attention rather than as failed.
 func TestJobRowBadgeFollowsTheStateTable(t *testing.T) {
 	cases := map[jobs.State]string{
-		jobs.StateRunning:     "card-badge--live",
-		jobs.StateQueued:      "card-badge--live",
-		jobs.StatePaused:      "card-badge--live",
-		jobs.StateBlocked:     "card-badge--warning",
-		jobs.StateSucceeded:   "card-badge--success",
-		jobs.StateFailed:      "card-badge--danger",
-		jobs.StateInterrupted: "card-badge--danger",
-		jobs.StateCancelled:   "card-badge--muted",
+		jobs.StateRunning:     "job-tone--working",
+		jobs.StateQueued:      "job-tone--waiting",
+		jobs.StatePaused:      "job-tone--paused",
+		jobs.StateBlocked:     "job-tone--warning",
+		jobs.StateSucceeded:   "job-tone--done",
+		jobs.StateFailed:      "job-tone--failed",
+		jobs.StateInterrupted: "job-tone--failed",
+		jobs.StateCancelled:   "job-tone--neutral",
 	}
 	for state, want := range cases {
 		if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "x", State: state}).BadgeClass; got != want {
 			t.Fatalf("a %s card's badge is %q, want %q", state, got, want)
 		}
 	}
-	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "card-badge--warning" {
+	if got := jobRow(&fakeJobListReader{}, jobs.Snapshot{ID: "p", State: jobs.StateSucceeded, Phase: jobs.PhasePartial}).BadgeClass; got != "job-tone--warning" {
 		t.Fatalf("a partial success's badge is %q", got)
 	}
 	// A pause asked for and not yet confirmed: the card says it is pausing, not
@@ -498,7 +528,7 @@ func TestJobCommandOptionsKeepEveryFilterableKey(t *testing.T) {
 	// The select shows words, not keys: what a Job card's button says.
 	for key, label := range map[string]string{
 		"retry": "Retry", "continue": "Continue", "inspect": "Inspect command history",
-		"retry-import": "Retry import", "pin-lineage": "Pin visible lineage", "forget": "Forget replay input",
+		"retry-import": "Retry import", "pin-lineage": "Pin with related jobs", "forget": "Forget saved input",
 	} {
 		if labels[key] != label {
 			t.Errorf("the command filter offers %q as %q, want %q", key, labels[key], label)
@@ -530,9 +560,16 @@ func TestJobInboundRelationshipOptionsKeepAValueTheURLNames(t *testing.T) {
 
 func TestJobKindOptionsKeepAKindTheURLNames(t *testing.T) {
 	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?kind=retired-kind&kind=group-export&dismissed=false")
-	options := ctx["jobKindOptions"].([]string)
-	if !slices.Contains(options, "retired-kind") || !slices.Contains(options, "group-export") || !slices.Contains(options, "remote-download") {
-		t.Fatalf("kind options = %v: a Kind the URL names must stay offered, or resubmitting drops it", options)
+	labels := map[string]string{}
+	for _, option := range ctx["jobKindOptions"].([]JobSelectOption) {
+		labels[option.Value] = option.Label
+	}
+	if _, ok := labels["retired-kind"]; !ok || labels["group-export"] == "" || labels["remote-download"] == "" {
+		t.Fatalf("kind options = %v: a Kind the URL names must stay offered, or resubmitting drops it", labels)
+	}
+	// Labelled in words, valued by identifier; a Kind with no words keeps its identifier.
+	if labels["remote-download"] != "Download" || labels["group-export"] != "Group export" || labels["retired-kind"] != "retired-kind" {
+		t.Fatalf("kind labels = %v", labels)
 	}
 }
 

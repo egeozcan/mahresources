@@ -83,7 +83,9 @@ test.describe('Job Center', () => {
     const form = page.getByRole('form', { name: 'Filter jobs' });
     await expect(form.getByRole('searchbox', { name: 'Search' })).toHaveValue('archive');
     await expect(form.getByRole('combobox', { name: 'Available command' })).toHaveValue('retry');
-    await expect(form.getByRole('checkbox', { name: 'remote-download' })).toBeChecked();
+    // The Kind reads in words; its value is still the identifier the address names.
+    await expect(form.getByRole('checkbox', { name: 'Download', exact: true })).toBeChecked();
+    await expect(form.getByRole('checkbox', { name: 'Download', exact: true })).toHaveAttribute('value', 'remote-download');
     await expect(form.getByRole('checkbox', { name: 'failed' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'blocked' })).toBeChecked();
     await expect(form.getByRole('checkbox', { name: 'queued' })).not.toBeChecked();
@@ -457,7 +459,7 @@ test.describe('Job Center', () => {
     await expect(page.locator(`[data-job-id="${retried.canonicalId}"]`)).toBeVisible();
     await expect(page.locator(`[data-job-id="${untouched.canonicalId}"]`)).toBeVisible();
     // The command select shows words, and still sends the key.
-    await expect(form.getByRole('combobox', { name: 'Available command' }).locator('option', { hasText: 'Forget replay input' })).toHaveAttribute('value', 'forget');
+    await expect(form.getByRole('combobox', { name: 'Available command' }).locator('option', { hasText: 'Forget saved input' })).toHaveAttribute('value', 'forget');
 
     await form.getByRole('combobox', { name: 'Has not been' }).selectOption({ label: 'retried or continued' });
     await form.getByRole('button', { name: 'Apply Filters' }).click();

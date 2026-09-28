@@ -26,6 +26,7 @@ import {
     commandDismissLabel,
     failureText,
     jobCommands,
+    jobName,
     advertisedOutputs,
     reduceJobStreamEvent,
     resultAccessibleLabel,
@@ -39,18 +40,19 @@ import {
     progressIndeterminate,
     progressText,
     progressValue,
+    jobAmountText,
+    jobEtaText,
+    jobRateText,
+    jobStatsText,
     phaseText,
     scheduledText,
 } from './jobCenter.js';
-import { isWorking, presentState, statesInGroup } from './jobStates.js';
+import { isWorking, presentState, stateSinceText, statesInGroup } from './jobStates.js';
+import { blockedReasonText, kindLabel } from './jobVocabulary.js';
 import {
     applyProgressFrame,
-    formatAmount,
     mergeFetchedProgress,
-    liveEtaText,
-    liveRateText,
     formatMetric,
-    formatRate,
     graphLatest,
     graphSeries,
     graphSummary,
@@ -96,6 +98,21 @@ export function panelGroups(finishedLimit) {
         { key: 'active', states: statesInGroup('active'), limit: OPEN_WORK_LIMIT, series: true },
         { key: 'finished', states: FINISHED_STATES, limit: finishedLimit, series: false },
     ];
+}
+
+// The order of Active and scheduled: the work that is going on, newest state
+// change first, then the scheduled work by when it starts, the soonest first.
+// When a scheduled Job was scheduled says nothing about which starts next.
+export function panelActiveOrder(jobs) {
+    const scheduled = [];
+    const rest = [];
+    for (const job of jobs || []) (stateOf(job) === 'scheduled' ? scheduled : rest).push(job);
+    const startsAt = job => {
+        const at = Date.parse(job?.scheduledFor || '');
+        return Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+    };
+    scheduled.sort((a, b) => startsAt(a) - startsAt(b) || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+    return [...rest, ...scheduled];
 }
 
 // Where All jobs shows the rest of a group the drawer caps.
@@ -252,7 +269,7 @@ export function panelFocusSuccessorKeys(key) {
 const ROW_SHOWN_COMMANDS = { pin: 'pinned', unpin: 'unpinned', undismiss: 'returned to the list' };
 
 function commandDoneText(job, command) {
-    return `${job?.title || job?.kind || 'Job'} ${ROW_SHOWN_COMMANDS[command?.key]}.`;
+    return `${jobName(job, 'Job')} ${ROW_SHOWN_COMMANDS[command?.key]}.`;
 }
 
 function commandKey() {
@@ -520,7 +537,7 @@ export function jobPanel() {
 
         get counts() { return panelCounts(this.jobs); },
         get attentionJobs() { return this.jobs.filter(job => classifyJobState(job) === 'attention'); },
-        get activeJobs() { return this.jobs.filter(job => classifyJobState(job) === 'active'); },
+        get activeJobs() { return panelActiveOrder(this.jobs.filter(job => classifyJobState(job) === 'active')); },
         get finishedJobs() { return this.jobs.filter(job => classifyJobState(job) === 'finished'); },
         // The drawer's sections, in the order a person acts on them. An empty
         // section is left out rather than drawn with nothing under it.
@@ -1661,6 +1678,18 @@ export function jobPanel() {
         moreCommandsFor(job) { return panelCommandSplit(this.commandsFor(job)).more; },
         stateTone(job) { return panelStateTone(job); },
         ownerText(job) { return panelOwnerText(job, this._ownerViewer); },
+        kindText(job) { return kindLabel(job?.kind); },
+        // How long ago the row entered its state, counted on the drawer's own
+        // clock. It is not in a live region: the ledger says what changed, and
+        // this text is read when a reader reaches it, not every second.
+        sinceText(job) { return stateSinceText(job, this.now); },
+        sinceTitle(job) {
+            const at = new Date(job?.stateEnteredAt || '');
+            return Number.isNaN(at.getTime()) ? '' : at.toLocaleString();
+        },
+        // Why a blocked Job is blocked, in one line: the detail page's timeline
+        // holds the rest.
+        blockedText(job) { return stateOf(job) === 'blocked' ? blockedReasonText(job?.blockedReason) : ''; },
 
         setNotice(text, { link = null, undo = null, watch = null } = {}) {
             this.notice = text || '';
@@ -2003,7 +2032,7 @@ export function jobPanel() {
             const key = commandKey();
             // Changes a live event proved, said with the command's notice.
             const proved = [];
-            const name = job.title || job.kind || 'Job';
+            const name = jobName(job, 'Job');
             try {
                 const result = await this.requestJSON(commandEndpoint(job, command), {
                     method: 'POST',
@@ -2247,23 +2276,10 @@ export function jobPanel() {
         // Everything the bar shows, for a reader who cannot see it.
         progressValueText(job) {
             const value = progressValue(job);
-            const parts = [value === null ? '' : `${value}%`, this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean);
+            const parts = [value === null ? '' : `${value}%`, jobAmountText(job), jobRateText(job, this.now), jobEtaText(job, this.now)].filter(Boolean);
             return parts.length ? parts.join(', ') : progressAccessibleText(job);
         },
-        amountText(job) { return formatAmount(job?.progress); },
-        rateText(job) {
-            const progress = job?.progress || {};
-            if (job?.state === 'running') return liveRateText(progress, this.now);
-            if (classifyJobState(job) === 'finished') {
-                const average = formatRate(progress.averageRate, progress.unit);
-                return average ? `average ${average}` : '';
-            }
-            return '';
-        },
-        etaText(job) { return job?.state === 'running' ? liveEtaText(job?.progress, this.now) : ''; },
-        statsText(job) {
-            return [this.amountText(job), this.rateText(job), this.etaText(job)].filter(Boolean).join(' · ');
-        },
+        statsText(job) { return jobStatsText(job, this.now); },
         metricsFor(job) { return job?.progress?.metrics || []; },
         metricText(metric) { return formatMetric(metric); },
         graphsFor(job) { return classifyJobState(job) === 'active' ? graphSeries(job) : []; },

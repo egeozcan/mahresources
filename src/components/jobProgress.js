@@ -16,16 +16,38 @@ function finite(value) {
     return typeof value === 'number' && Number.isFinite(value);
 }
 
-export function formatBytes(bytes) {
-    if (!finite(bytes) || bytes < 0) return '';
+function byteUnit(bytes) {
     let value = bytes;
     let unit = 0;
     while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
         value /= 1024;
         unit += 1;
     }
-    const digits = unit === 0 || value >= 100 ? 0 : 1;
-    return `${value.toFixed(digits)} ${BYTE_UNITS[unit]}`;
+    return unit;
+}
+
+// A byte count in the given unit: two decimals below 1 of it, one below 100,
+// none above. `floor` rounds down, for an amount that must not read as a total
+// it has not reached.
+function formatBytesIn(bytes, unit, floor = false) {
+    const value = bytes / 1024 ** unit;
+    const digits = unit === 0 || value >= 100 ? 0 : value < 1 ? 2 : 1;
+    const scale = 10 ** digits;
+    const shown = floor ? Math.floor(value * scale) / scale : value;
+    return `${shown.toFixed(digits)} ${BYTE_UNITS[unit]}`;
+}
+
+export function formatBytes(bytes) {
+    if (!finite(bytes) || bytes < 0) return '';
+    return formatBytesIn(bytes, byteUnit(bytes));
+}
+
+// "600 KB of 1.0 MB" makes a reader compare 600 with 1.0: a completed amount
+// that is at least a tenth of its total is shown in the total's unit, "0.58 MB
+// of 1.0 MB". A smaller one keeps its own, or it would read "0.00 MB".
+function formatByteAmount(completed, total) {
+    const unit = completed >= total / 10 && completed <= total ? byteUnit(total) : byteUnit(completed);
+    return `${formatBytesIn(completed, unit, completed < total)} of ${formatBytes(total)}`;
 }
 
 function formatNumber(value) {
@@ -68,12 +90,31 @@ export function formatQuantity(value, unit = '') {
     }
 }
 
-/** A rate per second in its unit, or '' where a speed says nothing (percent). */
+// The smallest rate a figure per second can show: a byte, or a tenth of a count.
+function showsPerSecond(rate, unit) {
+    return rate === 0 || rate >= (unit === 'bytes' ? 1 : 0.1);
+}
+
+/**
+ * A rate in its unit, or '' where a speed says nothing (percent). A rate too
+ * slow to show per second is shown per minute, or per hour, so one share a
+ * minute reads "1 shares/min" rather than "0 shares/s".
+ */
 export function formatRate(rate, unit = '') {
     if (!finite(rate) || rate < 0 || unit === 'percent') return '';
-    if (unit === 'bytes') return `${formatBytes(rate)}/s`;
-    if (unit === '' || unit === 'items') return `${formatNumber(rate)}/s`;
-    return `${formatNumber(rate)} ${unit}/s`;
+    let value = rate;
+    let per = 's';
+    if (!showsPerSecond(value, unit)) {
+        value *= 60;
+        per = 'min';
+        if (!showsPerSecond(value, unit)) {
+            value *= 60;
+            per = 'h';
+        }
+    }
+    if (unit === 'bytes') return `${formatBytes(value)}/${per}`;
+    if (unit === '') return `${formatNumber(value)}/${per}`;
+    return `${formatNumber(value)} ${unit}/${per}`;
 }
 
 // How long a speed stays true without a new report, matching the server's own
@@ -98,26 +139,35 @@ export function liveEtaText(progress, now = Date.now()) {
     return formatEta(progress, now);
 }
 
-/** "about 14 s left" for an estimate, "14 s left" for an executor's own ETA. */
+/**
+ * "about 14 s left" for an estimate, "14 s left" for an executor's own ETA. An
+ * estimate under a second is "almost done": "about under 1 s left" says the
+ * same thing twice.
+ */
 export function formatEta(progress, now = Date.now()) {
     const eta = progress?.eta ? Date.parse(progress.eta) : NaN;
     if (!Number.isFinite(eta)) return '';
     const remaining = (eta - now) / 1000;
     if (remaining <= 0) return progress.etaEstimated ? 'almost done' : '';
+    if (remaining < 1 && progress.etaEstimated) return 'almost done';
     const text = `${formatDuration(remaining)} left`;
     return progress.etaEstimated ? `about ${text}` : text;
 }
 
-/** "12.3 MB of 40 MB", "3 of 12 items", or just the completed amount. */
-export function formatAmount(progress) {
+/**
+ * "12.3 MB of 40 MB", "3 of 12 items", or just the completed amount. Bytes short
+ * of their total are rounded down, so they never read as the total before they
+ * are. A `finished` Job's amount that reached its total is just the amount:
+ * "558 B of 558 B" says it twice.
+ */
+export function formatAmount(progress, { finished = false } = {}) {
     const completed = progress?.completed;
     if (!finite(completed) || progress?.unit === 'percent') return '';
     const unit = progress.unit || '';
     const total = progress.total;
-    if (finite(total) && total > 0) {
-        if (unit === 'bytes') return `${formatBytes(completed)} of ${formatBytes(total)}`;
-        const suffix = unit && unit !== 'items' ? ` ${unit}` : unit === 'items' ? ' items' : '';
-        return `${formatNumber(completed)} of ${formatNumber(total)}${suffix}`;
+    if (finite(total) && total > 0 && !(finished && completed >= total)) {
+        if (unit === 'bytes') return formatByteAmount(completed, total);
+        return `${formatNumber(completed)} of ${formatNumber(total)}${unit ? ` ${unit}` : ''}`;
     }
     if (unit === 'items') return `${formatNumber(completed)} items`;
     return formatQuantity(completed, unit);

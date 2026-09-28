@@ -178,7 +178,8 @@ snapshot, not a Job Event. It never appears on the timeline and never moves the
 Job's version.
 
 A snapshot may also carry up to 8 **metrics**: named figures reported beside the
-primary measure, such as the segments of an HLS stream next to its bytes. Each
+primary measure, such as the bytes an HLS stream received next to its segment
+count. Each
 metric has a key, a label, a value, an optional total and an optional unit. Up
 to 3 metrics per snapshot can be marked for graphing.
 
@@ -196,6 +197,10 @@ reload, a restart and the Job finishing:
   that did not go down, and a gap of at most 10 seconds or three intervals,
   whichever is longer. A pause or a restart therefore shows as a gap, not as a
   slow stretch.
+- When a Job finishes, the points at the end of its series that counted
+  nothing since the point before record no rate, so its speed graph ends at the
+  last speed it measured rather than dropping to zero. A stall the Job moved on
+  from stays in the graph.
 
 The server derives two figures from the series:
 
@@ -205,19 +210,41 @@ The server derives two figures from the series:
 - **Time left**: the executor's own estimate when it gave one. Otherwise it is
   estimated from the speed and the remaining amount, and marked as an estimate.
 
-A finished Job reports its **average rate** across the series instead of a
-speed. No speed is shown for a Job counting in `percent`.
+A Job that is not running reports its **average rate** (`averageRate` in the
+API) instead of a speed, and the drawer, the Job Center and a Job's page show
+it once the Job has ended: the amount it counted divided by the time it spent
+running. Time spent queued, paused or blocked is left out. The amount is taken
+as the Job's own work, counted from zero, so work done before its first report
+is included. Known limit: a Job that reports counts carried over from earlier
+work, such as a Continue whose first report is "120 of 500", is averaged as
+though it did them. A Job that counted nothing has no average. No speed is
+shown for a Job counting in `percent`.
+
+Every surface writes these figures the same way, on one line under the bar:
+the amount, then the speed and the time left while the Job runs, or its average
+once it has ended ("6.5 MB of 20.0 MB · 1.2 MB/s · about 12 s left"). An amount
+at least a tenth of its total is written in the total's unit ("0.97 MB of 1.0
+MB") and rounded down, so it never reads as the total before it is. A finished
+Job whose amount reached its total gives the amount once ("558 B"). A speed
+too slow to show per second is given per minute or per hour ("1 shares/min").
+An estimated time left under a second reads "almost done". The bar's own label
+says what the Job is doing, and a succeeded Job's bar reads **Completed**.
 
 Who reports what:
 
 | Work | Primary measure | Metrics |
 |------|-----------------|---------|
-| Download with a known size | Bytes of the total | HLS segments, when the stream has them |
+| Download with a known size | Bytes of the total | None |
 | Download of unknown size | Bytes received, no total | None |
-| HLS stream | Segments of the total | Bytes received |
-| Group export | Bytes written | Items of the current phase |
+| HLS stream | Segments of the total, video and audio together, from the playlist to the end | Bytes received; the video's size once assembled |
+| Group export | Bytes written, of the export's estimated size until the count passes it; once finished, the archive's size | Items of the current phase |
+| Similarity recompute | Hash rows of the total | None |
 | Plugin action, schedule or `mah.start_job` | Percent, or the plugin's own counts | Whatever the plugin reports |
 | Plugin command | Whatever the command prints | Whatever the command prints |
+
+An HLS stream counts segments through the assembly too, where every segment is
+done, so its bar does not fall back to zero while the video is put together and
+its history keeps one unit to the end.
 
 Plugins report metrics with the table form of `mah.job_progress`; see
 [Counts, metrics and graphs](./plugin-actions.md#counts-metrics-and-graphs).
@@ -234,7 +261,18 @@ for each graphed metric. A finished Job shows its average speed.
 
 Each group lists the Jobs that entered their current state most recently
 first, so a Job that has just finished or failed is at the top of its group
-however long ago it was accepted. Work that is running, waiting or needs
+however long ago it was accepted. Scheduled Jobs follow the rest of **Active and
+scheduled** in the order they start, the soonest first. A blocked Job says why
+in one line under its title; its page's timeline has the event that blocked it.
+A row names the Job's Kind in words, such as **Download** or **Scheduled
+download**, and says how long ago the Job entered its state ("failed 3 min
+ago", "started 20 s ago"), with the full time when you point at it; a
+scheduled row says when it starts instead. The API and the Job Center's
+addresses keep the Kind's identifier (`remote-download`), and the Job Center's
+Kind filter shows the words. Known limit: the drawer orders scheduled rows
+among those it read, and it reads Active and scheduled Jobs by when they
+entered their state, so with more than 50 of them the soonest to start may be
+among the ones on All jobs. Work that is running, waiting or needs
 attention is listed up to 50 Jobs per group, and Finished Jobs up to the
 `download_cockpit_limit` setting (default 10). A group that has more says
 "Showing the 50 most recent." with a link to the same Jobs on the All jobs page,
@@ -276,7 +314,7 @@ the live stream dropped are announced the same way. A Job counted this way can s
 announced by name if the drawer reads it later.
 
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
-shows the speed and time left under each running Job's bar.
+shows the same line under each Job's bar.
 
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
@@ -296,9 +334,9 @@ only their own Jobs and are offered no choice.
 
 A command asks for confirmation only when it stops work or cannot be undone:
 Cancel and any other command marked destructive, a command whose Kind gives a
-confirmation (a deferred download's **Download now**), and **Forget replay
+confirmation (a deferred download's **Download now**), and **Forget saved
 input**. Its confirming button is red only for a destructive command. Dismiss,
-Undismiss, Pin, Unpin and Pin visible lineage run at once, because each only
+Undismiss, Pin, Unpin and **Pin with related jobs** run at once, because each only
 changes the viewer's own list or retention and can be reversed. A dismissed
 Job's page reads **Dismissed by you** and offers **Undismiss**, and a row
 dismissed in the drawer leaves a notice with **Undo**. **Dismiss finished**
@@ -460,7 +498,9 @@ outside it becomes a new Resource of their own (see
 [Duplicate Detection](../concepts/resources.md#duplicate-detection)).
 
 Every Job's `progress` object carries `metrics`, `rate` (running Jobs only),
-`averageRate`, `eta` with `etaEstimated`, and `updatedAt`. The progress series
+`averageRate` (Jobs that are not running), `eta` with `etaEstimated`, and
+`updatedAt`. A blocked Job carries `blockedReason`, the reason code its latest
+`blocked` event recorded, such as `role-refused`. The progress series
 is included as `progress.series` on `GET /v1/jobs/{id}`, and on `GET /v1/jobs`
 only with `include=progressSeries`. Series points use short names: `t` is Unix
 milliseconds, `c` the completed amount, `r` the rate per second since the

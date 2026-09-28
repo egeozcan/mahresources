@@ -58,7 +58,7 @@ test.describe('Job Center panel accessibility', () => {
     const detail = page.getByTestId('job-detail');
     const controls = detail.getByRole('group', { name: 'Advertised job commands' });
     await expect(controls).toBeVisible();
-    await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   });
 
   test('axe finds no serious or critical violations in the open panel', async ({ page, checkComponentA11y }) => {
@@ -94,7 +94,7 @@ test.describe('Job Center panel accessibility', () => {
     await openPanel(page);
     const controls = page.getByRole('group', { name: 'Advertised controls' });
     await expect(controls).toBeVisible();
-    await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
     await checkComponentA11y('#job-center-panel', {
       // The dialog uses local header/footer sections; these are not the page's
       // banner or contentinfo landmarks.
@@ -269,7 +269,7 @@ test.describe('Job Center focus in forced colors', () => {
 
     // Forget cannot be undone, so it asks first.
     await row.locator('summary').click();
-    await row.getByRole('button', { name: 'Forget replay input' }).focus();
+    await row.getByRole('button', { name: 'Forget saved input' }).focus();
     await page.keyboard.press('Enter');
     const confirm = page.getByRole('alertdialog');
     await expect(confirm).toBeVisible();

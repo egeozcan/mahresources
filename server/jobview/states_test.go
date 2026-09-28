@@ -1,7 +1,9 @@
 package jobview
 
 import (
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"mahresources/jobs"
@@ -22,8 +24,8 @@ func TestTheStateTableNamesEveryStateAsTheLifecycleDefinesIt(t *testing.T) {
 		if !ok {
 			t.Fatalf("the table has no entry for %s", state)
 		}
-		if entry.Label == "" || !slices.Contains(tones, entry.Tone) {
-			t.Fatalf("%s has label %q and tone %q", state, entry.Label, entry.Tone)
+		if entry.Label == "" || !slices.Contains(tones, entry.Tone) || entry.Since == "" {
+			t.Fatalf("%s has label %q, tone %q and since %q", state, entry.Label, entry.Tone, entry.Since)
 		}
 		if entry.Terminal != state.Terminal() {
 			t.Fatalf("%s is terminal=%v in the table and %v in the lifecycle", state, entry.Terminal, state.Terminal())
@@ -44,7 +46,7 @@ func TestTheStateTableNamesEveryStateAsTheLifecycleDefinesIt(t *testing.T) {
 	if got, want := TerminalStates(), []string{"succeeded", "failed", "cancelled", "interrupted"}; !slices.Equal(got, want) {
 		t.Fatalf("terminal = %v, want %v", got, want)
 	}
-	if !slices.Contains(tones, statePresentations.Partial.Tone) || statePresentations.Partial.Label == "" {
+	if !slices.Contains(tones, statePresentations.Partial.Tone) || statePresentations.Partial.Label == "" || statePresentations.Partial.Since == "" {
 		t.Fatalf("the partial entry is %+v", statePresentations.Partial)
 	}
 	if len(statePresentations.RunningIntents) != 2 {
@@ -98,6 +100,28 @@ func TestPresentJobSaysWhatARequestedControlIsDoing(t *testing.T) {
 		}
 		if got.Working != (tc.snapshot.State == jobs.StateRunning) {
 			t.Fatalf("%s with intent %q is working=%v", tc.snapshot.State, tc.snapshot.ControlIntent, got.Working)
+		}
+	}
+}
+
+// TestEveryToneHasItsColour: a surface draws a state's tone with the class the
+// tone names (job-tone--<tone> in public/index.css), so a tone the table uses
+// with no rule there would draw a pill with no colour at all.
+func TestEveryToneHasItsColour(t *testing.T) {
+	css, err := os.ReadFile("../../public/index.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tones := []string{statePresentations.Partial.Tone, statePresentations.Unknown.Tone}
+	for _, entry := range statePresentations.States {
+		tones = append(tones, entry.Tone)
+	}
+	for _, entry := range statePresentations.RunningIntents {
+		tones = append(tones, entry.Tone)
+	}
+	for _, tone := range tones {
+		if !strings.Contains(string(css), ".job-tone--"+tone+" ") && !strings.Contains(string(css), ".job-tone--"+tone+",") {
+			t.Errorf("public/index.css has no rule for the %q tone", tone)
 		}
 	}
 }

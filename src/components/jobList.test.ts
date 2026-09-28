@@ -440,7 +440,7 @@ describe('job bulk commands', () => {
         const onNotice = (event: Event) => notices.push((event as CustomEvent).detail.message);
         window.addEventListener('job-list-notice', onNotice);
 
-        await component.run({ key: 'forget', label: 'Forget replay input', bulk: true, destructive: true });
+        await component.run({ key: 'forget', label: 'Forget saved input', bulk: true, destructive: true });
 
         expect(fetchImpl).not.toHaveBeenCalled();
         expect(component.error).toMatch(/selection changed/i);
@@ -470,7 +470,7 @@ describe('job bulk commands', () => {
         const fetchImpl = vi.fn();
         const component = Object.assign(jobBulkCommands({ fetchImpl }), { $selection: selection(['a']) });
 
-        await component.run({ key: 'forget', label: 'Forget replay input', bulk: true, destructive: true });
+        await component.run({ key: 'forget', label: 'Forget saved input', bulk: true, destructive: true });
 
         expect(ask).toHaveBeenCalledTimes(1);
         expect(fetchImpl).not.toHaveBeenCalled();

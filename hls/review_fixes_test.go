@@ -289,12 +289,21 @@ func TestSeparateAudioRenditionIsMuxedIn(t *testing.T) {
 	}
 	srv, counter := serve(t, dir)
 
-	res, err := fetchAll(t, deps(), srv.URL+"/master.m3u8", Options{}, nil)
+	// The audio's segments continue the video's count rather than restarting
+	// it: a restart reads as the download going backwards.
+	var reports []progressReport
+	var mu sync.Mutex
+	res, err := fetchAll(t, deps(), srv.URL+"/master.m3u8", Options{}, func(phase string, done, total, received int64) {
+		mu.Lock()
+		defer mu.Unlock()
+		reports = append(reports, progressReport{phase, done, total, received})
+	})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	defer res.Cleanup()
 	defer res.Body.Close()
+	checkProgressReports(t, reports)
 
 	if counter.Get("/audio.m3u8") == 0 {
 		t.Fatal("the audio rendition was never fetched, so the result is a silent video")

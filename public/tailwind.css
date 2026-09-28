@@ -3323,6 +3323,9 @@
     --tw-ease: var(--ease-out);
     transition-timing-function: var(--ease-out);
   }
+  .forced-color-adjust-none {
+    forced-color-adjust: none;
+  }
   .select-none {
     -webkit-user-select: none;
     user-select: none;
@@ -4926,6 +4929,22 @@
       &:focus-visible {
         color: var(--color-stone-950);
       }
+    }
+  }
+  .forced-colors\:border {
+    @media (forced-colors: active) {
+      border-style: var(--tw-border-style);
+      border-width: 1px;
+    }
+  }
+  .forced-colors\:border-\[CanvasText\] {
+    @media (forced-colors: active) {
+      border-color: CanvasText;
+    }
+  }
+  .forced-colors\:bg-\[Highlight\] {
+    @media (forced-colors: active) {
+      background-color: Highlight;
     }
   }
   .\[\&\:\:-webkit-details-marker\]\:hidden {

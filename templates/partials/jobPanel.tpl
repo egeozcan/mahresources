@@ -105,14 +105,9 @@
                                 <li class="px-4 py-3 hover:bg-stone-50">
                                 <article data-job-panel-row :data-job-id="job.id" :aria-labelledby="'job-panel-title-' + job.id" class="flex items-start gap-3">
                                     {# The icon repeats the pill beside the title, so it is hidden from assistive technology. #}
+                                    {# The tone's colour is the one every Job surface gives it (job-tone--* in public/index.css). #}
                                     <span aria-hidden="true" class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                                          :class="{
-                                              'bg-amber-100 text-amber-800': stateTone(job) === 'working',
-                                              'bg-stone-100 text-stone-600': stateTone(job) === 'waiting' || stateTone(job) === 'neutral',
-                                              'bg-yellow-100 text-yellow-800': stateTone(job) === 'paused' || stateTone(job) === 'warning',
-                                              'bg-green-100 text-green-800': stateTone(job) === 'done',
-                                              'bg-red-100 text-red-700': stateTone(job) === 'failed'
-                                          }">
+                                          :class="'job-tone--' + stateTone(job)">
                                         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
                                             <path x-show="stateTone(job) === 'working'" d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14" />
                                             <path x-show="stateTone(job) === 'waiting'" d="M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -126,21 +121,16 @@
 
                                     <div class="min-w-0 flex-1">
                                         <div class="flex items-start justify-between gap-2">
-                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || job.kind || job.id"
+                                            <a :id="'job-panel-title-' + job.id" :href="detailURL(job)" :title="job.title || kindText(job) || job.id"
                                                class="min-w-0 truncate text-sm font-medium text-stone-900 underline decoration-stone-300 underline-offset-2 hover:text-amber-900 hover:decoration-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700"
-                                               x-text="job.title || job.kind || job.id"></a>
-                                            <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-                                                  :class="{
-                                                      'bg-amber-100 text-amber-900': stateTone(job) === 'working',
-                                                      'bg-stone-100 text-stone-700': stateTone(job) === 'waiting' || stateTone(job) === 'neutral',
-                                                      'bg-yellow-100 text-yellow-900': stateTone(job) === 'paused' || stateTone(job) === 'warning',
-                                                      'bg-green-100 text-green-800': stateTone(job) === 'done',
-                                                      'bg-red-100 text-red-800': stateTone(job) === 'failed'
-                                                  }"
+                                               x-text="job.title || kindText(job) || job.id"></a>
+                                            <span class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium" data-job-panel-state
+                                                  :class="'job-tone--' + stateTone(job)"
                                                   x-text="stateLabel(job)"></span>
                                         </div>
                                         <p class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-stone-600">
-                                            <span class="truncate" x-text="job.kind"></span>
+                                            <span class="truncate" data-job-panel-kind x-text="kindText(job)"></span>
+                                            <time x-show="sinceText(job)" x-cloak data-job-panel-since :datetime="job.stateEnteredAt" :title="sinceTitle(job)" x-text="sinceText(job)"></time>
                                             <span x-show="ownerText(job)" x-cloak class="truncate" data-job-panel-owner x-text="ownerText(job)"></span>
                                             <span x-show="job.pinned" x-cloak class="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1.5 font-medium text-amber-900">Pinned by you</span>
                                         </p>
@@ -150,6 +140,8 @@
 
                                         {# The reason a job failed, as its Kind recorded it; the /jobs detail page shows the same text. #}
                                         <p x-show="failureText(job)" x-cloak class="mt-1 break-words text-xs text-red-800" data-job-panel-failure><span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span></p>
+                                        {# Why a blocked job is blocked, as its blocked event recorded it; the Job page's timeline has the rest. #}
+                                        <p x-show="blockedText(job)" x-cloak class="mt-1 break-words text-xs text-amber-900" data-job-panel-blocked><span class="font-medium">Reason:</span> <span x-text="blockedText(job)"></span></p>
 
                                         <template x-if="showsProgress(job)">
                                             <div class="mt-2" data-job-panel-progress>
@@ -157,10 +149,11 @@
                                                     <span class="min-w-0 truncate" x-text="progressLabel(job)"></span>
                                                     <span class="shrink-0 font-medium tabular-nums text-amber-900" x-text="progressValue(job) === null ? (progressIndeterminate(job) ? 'In progress' : '') : progressValue(job) + '%'"></span>
                                                 </div>
-                                                <div class="h-2 overflow-hidden rounded-full bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                                                {# Forced colours drop backgrounds, so the track keeps a border and the fill a system colour. #}
+                                                <div class="h-2 overflow-hidden rounded-full bg-stone-200 forced-colors:border forced-colors:border-[CanvasText]" role="progressbar" aria-valuemin="0" aria-valuemax="100"
                                                      :aria-valuenow="progressValue(job)" :aria-valuetext="progressValueText(job)"
-                                                     :aria-label="(job.title || job.kind || 'Job') + ' progress'">
-                                                    <div class="h-2 rounded-full transition-[width] duration-300 motion-reduce:transition-none" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-700', progressIndeterminate(job) ? 'w-full motion-safe:animate-pulse' : '']"
+                                                     :aria-label="(job.title || kindText(job) || 'Job') + ' progress'">
+                                                    <div class="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none forced-color-adjust-none forced-colors:bg-[Highlight]" :class="[job.state === 'paused' ? 'bg-stone-400' : 'bg-amber-700', progressIndeterminate(job) ? 'w-full motion-safe:animate-pulse' : '']"
                                                          :style="{ width: progressIndeterminate(job) ? '100%' : (progressValue(job) ?? 0) + '%' }"></div>
                                                 </div>
                                             </div>

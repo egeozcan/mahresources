@@ -474,15 +474,7 @@ func TestAnOwnedExportPublishesItsOwnOutcomeAndHandsItsClaimBack(t *testing.T) {
 		t.Fatalf("terminal export queue snapshot = phase %q, %d/%d bytes, %d/%d phase items; want completed with both byte and item progress",
 			terminalQueue.Phase, terminalQueue.Progress, terminalQueue.TotalSize, terminalQueue.PhaseCount, terminalQueue.PhaseTotal)
 	}
-	if finished.Progress.Unit != "bytes" {
-		t.Errorf("finished export progress unit = %q, want bytes", finished.Progress.Unit)
-	}
-	if finished.Progress.Completed == nil || *finished.Progress.Completed != terminalQueue.Progress {
-		t.Errorf("finished export byte progress = %v, want terminal queue count %d", finished.Progress.Completed, terminalQueue.Progress)
-	}
-	if finished.Progress.Total == nil || *finished.Progress.Total != terminalQueue.TotalSize {
-		t.Errorf("finished export byte estimate = %v, want terminal queue estimate %d", finished.Progress.Total, terminalQueue.TotalSize)
-	}
+	assertExportReportsItsArchiveForTest(t, ctx, finished)
 
 	legacy, err := ctx.ProjectDownloadJob(submission.QueueJobID)
 	if err != nil {

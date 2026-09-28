@@ -699,8 +699,9 @@ func (a *groupExportAdapter) publishOutcome(execution jobs.Execution, request *E
 		if path == "" {
 			path = exportArchivePath(execution.JobID, request.Gzip)
 		}
-		if err := a.ctx.publishQueueArtifact(execution, jobExportArtifactOutput, "Exported archive",
-			path, a.ctx.exportArtifactExpiry()); err != nil {
+		size, err := a.ctx.publishQueueArtifactSized(execution, jobExportArtifactOutput, "Exported archive",
+			path, a.ctx.exportArtifactExpiry())
+		if err != nil {
 			if errors.Is(err, errQueueStagedOutputMissing) {
 				// The queue says the tar was written and there is no file: that is not
 				// a success, whatever the queue's own status says, and it is the one
@@ -720,7 +721,14 @@ func (a *groupExportAdapter) publishOutcome(execution jobs.Execution, request *E
 			// immutable `export-artifact-missing`.
 			return err
 		}
-		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobExportArtifactOutput})
+		// The count the export reported stops before its tar and gzip trailers,
+		// and its total was an estimate: a finished export reads as the archive
+		// its publication verified.
+		return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobExportArtifactOutput},
+			func(progress jobs.Progress) jobs.Progress {
+				progress.Completed, progress.Total, progress.Unit, progress.ETA = &size, &size, "bytes", nil
+				return progress
+			})
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
 	default:

@@ -405,7 +405,9 @@ submitted. Selecting several Jobs offers only commands they all advertise for
 bulk use, with a separate result for each Job.
 
 A succeeded Job always shows complete progress, including a download whose
-size the remote server never reported. When a Job created a Resource, Note, or
+size the remote server never reported. Under each bar one line gives the amount,
+then the speed and time left while the Job runs or its average speed once it
+has ended. A blocked Job's row in the **Jobs** panel says why it is blocked. When a Job created a Resource, Note, or
 Group, open it from the **Jobs** panel, the Job Center list, or the Job detail
 page. A download shows **View created resource**; a plugin action shows a typed
 entity link such as **View resource**. Older plugin Jobs with only a result
@@ -417,8 +419,8 @@ you are on and offers **Open the new job**; the retried failure leaves **Needs
 attention**. Dismiss hides a finished Job from your view: in the panel the
 notice offers **Undo**, and a dismissed Job's page reads **Dismissed by you**
 and offers **Undismiss**. **Dismiss finished** asks first, saying how many Jobs
-it dismisses. Forget removes a Job's stored replay input and cannot be undone,
-so it asks for confirmation. A pin keeps Job metadata and its event history from
+it dismisses. **Forget saved input** removes the input a Job saved for Retry,
+Continue and Repeat and cannot be undone, so it asks for confirmation. A pin keeps Job metadata and its event history from
 ordinary retention, while linked Jobs and output artifacts keep their own
 retention rules. Pinned Jobs show **Pinned by you** in the list, detail page,
 and Jobs panel; **Unpin** removes your pin. Administrators can see Jobs across

@@ -982,6 +982,49 @@ html {
     background: #bae6fd;
 }
 
+/* A Job state's tone, one colour on every Job surface: the drawer's pill and
+   icon, a /jobs card's badge and the Job page's pill. The tone comes from
+   server/jobview/job_states.json, and the label says the same thing in words.
+   The border keeps a pill's outline in forced colours, which drop backgrounds. */
+.job-tone--working,
+.job-tone--working:hover {
+    background: #e0f2fe;
+    color: #075985;
+    border: 1px solid #bae6fd;
+}
+
+.job-tone--waiting,
+.job-tone--waiting:hover,
+.job-tone--paused,
+.job-tone--paused:hover,
+.job-tone--neutral,
+.job-tone--neutral:hover {
+    background: #f5f5f4;
+    color: #44403c;
+    border: 1px solid #d6d3d1;
+}
+
+.job-tone--warning,
+.job-tone--warning:hover {
+    background: #fef3c7;
+    color: #78350f;
+    border: 1px solid #fcd34d;
+}
+
+.job-tone--done,
+.job-tone--done:hover {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.job-tone--failed,
+.job-tone--failed:hover {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
 /* The destructive twin of --action: a card-level button, not a label. */
 .card-badge--danger-action {
     background: #b91c1c;

@@ -15,6 +15,9 @@ import {
     mergeLivePoint,
     sparklinePath,
 } from './jobProgress.js';
+// The /jobs card formats in Go (job_progress_format.go) and reads this table too,
+// so one Job's figures read alike on every surface.
+import formatCases from '../../server/template_handlers/template_context_providers/testdata/job_progress_format.json';
 
 describe('job progress formatting', () => {
     test('scales bytes and formats quantities by unit', () => {
@@ -28,9 +31,11 @@ describe('job progress formatting', () => {
         expect(formatQuantity(90, 'seconds')).toBe('2 min');
     });
 
+
     test('formats a rate, and none for a percent', () => {
         expect(formatRate(2.1 * 1024 * 1024, 'bytes')).toBe('2.1 MB/s');
-        expect(formatRate(4.5, 'items')).toBe('4.5/s');
+        expect(formatRate(4.5, 'items')).toBe('4.5 items/s');
+        expect(formatRate(4.5, '')).toBe('4.5/s');
         expect(formatRate(12, 'rows')).toBe('12 rows/s');
         expect(formatRate(3, 'percent')).toBe('');
         expect(formatRate(undefined, 'bytes')).toBe('');
@@ -44,11 +49,42 @@ describe('job progress formatting', () => {
         expect(formatEta({}, now)).toBe('');
     });
 
+    test('an estimate under a second says almost done, not "about under 1 s left"', () => {
+        const now = Date.parse('2026-09-25T10:00:00Z');
+        expect(formatEta({ eta: '2026-09-25T10:00:00.400Z', etaEstimated: true }, now)).toBe('almost done');
+        expect(formatEta({ eta: '2026-09-25T10:00:00.400Z' }, now)).toBe('under 1 s left');
+    });
+
     test('formats an amount and a metric with its total', () => {
         expect(formatAmount({ completed: 1024, total: 4096, unit: 'bytes' })).toBe('1.0 KB of 4.0 KB');
         expect(formatAmount({ completed: 3, total: 12, unit: 'items' })).toBe('3 of 12 items');
         expect(formatAmount({ completed: 2048, unit: 'bytes' })).toBe('2.0 KB');
         expect(formatAmount({ completed: 40, total: 100, unit: 'percent' })).toBe('');
+        expect(formatAmount({ completed: 1200, total: 5000, unit: 'rows' })).toBe('1,200 of 5,000 rows');
+    });
+
+    test('an amount near its total is in the total\'s unit', () => {
+        expect(formatAmount({ completed: 1003 * 1024, total: 1024 * 1024, unit: 'bytes' })).toBe('0.97 MB of 1.0 MB');
+        expect(formatAmount({ completed: 600, total: 1000, unit: 'bytes' })).toBe('600 B of 1000 B');
+        expect(formatAmount({ completed: 5 * 1024, total: 20 * 1024 * 1024, unit: 'bytes' })).toBe('5.0 KB of 20.0 MB');
+        expect(formatAmount({ completed: 3 * 1024 * 1024, total: 20 * 1024 * 1024, unit: 'bytes' })).toBe('3.0 MB of 20.0 MB');
+    });
+
+    test('an amount short of its total never reads as the total', () => {
+        // 99.95% of a megabyte rounds to "1.00 MB", which beside "1.0 MB" says done.
+        expect(formatAmount({ completed: 1048000, total: 1048576, unit: 'bytes' })).toBe('0.99 MB of 1.0 MB');
+        expect(formatAmount({ completed: 1027072, total: 1048576, unit: 'bytes' })).toBe('0.97 MB of 1.0 MB');
+        expect(formatAmount({ completed: 99.96 * 1024 * 1024, total: 200 * 1024 * 1024, unit: 'bytes' })).toBe('99.9 MB of 200 MB');
+        expect(formatAmount({ completed: 1048576, total: 1048576, unit: 'bytes' })).toBe('1.0 MB of 1.0 MB');
+    });
+
+    test('a finished amount that reached its total is just the amount', () => {
+        expect(formatAmount({ completed: 558, total: 558, unit: 'bytes' }, { finished: true })).toBe('558 B');
+        expect(formatAmount({ completed: 11, total: 11, unit: 'items' }, { finished: true })).toBe('11 items');
+        expect(formatAmount({ completed: 4, total: 4, unit: 'shares' }, { finished: true })).toBe('4 shares');
+        expect(formatAmount({ completed: 4, total: 4 }, { finished: true })).toBe('4');
+        expect(formatAmount({ completed: 5, total: 10, unit: 'chunks' }, { finished: true })).toBe('5 of 10 chunks');
+        expect(formatAmount({ completed: 558, total: 558, unit: 'bytes' })).toBe('558 B of 558 B');
         expect(formatMetric({ key: 'segments', value: 12, total: 40, unit: 'items' })).toBe('12 of 40');
         expect(formatMetric({ key: 'downloaded', value: 5 * 1024 * 1024, unit: 'bytes' })).toBe('5.0 MB');
     });
@@ -233,5 +269,19 @@ describe('unit changes and key collisions', () => {
         const job = { progress: { unit: 'bytes', metrics: [{ key: 'rate', label: 'Rate', value: 1, graph: true }],
             series: { unit: 'bytes', points: [{ t: 0, c: 0, v: { rate: 1 } }, { t: 1000, c: 10, r: 10, v: { rate: 2 } }] } } };
         expect(graphSeries(job).map(s => s.key)).toEqual([':speed', 'rate']);
+    });
+});
+
+
+describe('job progress formatting shared with the server', () => {
+    test.each(formatCases.amounts)('amount $text', ({ progress, finished, text }) => {
+        expect(formatAmount(progress, { finished: !!finished })).toBe(text);
+    });
+    test.each(formatCases.rates)('rate $text', ({ rate, unit, text }) => {
+        expect(formatRate(rate, unit)).toBe(text);
+    });
+    test.each(formatCases.etas)('eta $text', ({ seconds, estimated, text }) => {
+        const now = Date.parse('2026-09-28T10:00:00Z');
+        expect(formatEta({ eta: new Date(now + seconds * 1000).toISOString(), etaEstimated: estimated }, now)).toBe(text);
     });
 });

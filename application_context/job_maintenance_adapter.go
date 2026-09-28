@@ -315,7 +315,8 @@ const maintenanceJobSource = "similarity-recompute"
 
 // buildSimilarityRecomputeRunFn is the maintenance executor's body: the rebuild the
 // admin surface has always run, with the queue's own cancellation and progress
-// plumbing around it.
+// plumbing around it. It counts hash rows, so it reports through the phase
+// counters, which the Job reads as items; the byte counters are read as bytes.
 func (ctx *MahresourcesContext) buildSimilarityRecomputeRunFn() download_queue.JobRunFn {
 	return func(jobCtx context.Context, _ *download_queue.DownloadJob, progress download_queue.ProgressSink) error {
 		batchSize := ctx.Config.HashBatchSize
@@ -324,7 +325,7 @@ func (ctx *MahresourcesContext) buildSimilarityRecomputeRunFn() download_queue.J
 		}
 		return hash_worker.RecomputeV2Pairs(ctx.db, batchSize,
 			func() bool { return jobCtx.Err() != nil },
-			func(done, total int64) { progress.UpdateProgress(done, total) },
+			func(done, total int64) { progress.SetPhaseProgress(done, total) },
 		)
 	}
 }

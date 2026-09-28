@@ -2,9 +2,12 @@ package application_context
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
+	"mahresources/hash_worker"
 	"mahresources/jobs"
+	"mahresources/models"
 )
 
 // This file drives the maintenance Kind: the similarity recompute the admin surface
@@ -71,5 +74,39 @@ func TestAMaintenanceJobAdvertisesNoRepeat(t *testing.T) {
 	}
 	if offersCommand(commands, jobs.CommandRetry) {
 		t.Fatalf("a succeeded maintenance job advertised a Retry: %+v", commands)
+	}
+}
+
+// TestASimilarityRecomputeCountsItsRowsAsItems. The rebuild counts hash rows,
+// not bytes, so a Job that reported them through the byte counters read "11 B
+// of 11 B" and any speed as B/s.
+func TestASimilarityRecomputeCountsItsRowsAsItems(t *testing.T) {
+	ctx := newWorkflowJobContext(t)
+	for i := 0; i < 2; i++ {
+		resource := models.Resource{Name: fmt.Sprintf("similar-%d", i)}
+		if err := ctx.db.Create(&resource).Error; err != nil {
+			t.Fatalf("seed resource: %v", err)
+		}
+		version, hash := hash_worker.HashVersionV2, int64(0x0f0f0f0f+i)
+		if err := ctx.db.Create(&models.ImageHash{
+			ResourceId: &resource.ID, HashVersion: &version, PHashInt: &hash, Status: models.HashStatusOK,
+		}).Error; err != nil {
+			t.Fatalf("seed hash: %v", err)
+		}
+	}
+
+	if _, err := ctx.RecomputeSimilarities(); err != nil {
+		t.Fatalf("submit the recompute: %v", err)
+	}
+	snap := jobOfKindForTest(t, ctx, JobKindSimilarityRecompute)
+	snap = waitForSnapshot(t, ctx, snap.ID, "the recompute to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if snap.State != jobs.StateSucceeded {
+		t.Fatalf("the recompute ended %s (%+v)", snap.State, snap.Failure)
+	}
+	progress := snap.Progress
+	if progress.Unit != "items" || progress.Completed == nil || *progress.Completed != 2 || progress.Total == nil || *progress.Total != 2 {
+		t.Fatalf("final progress = %+v; want 2 of 2 items", progress)
 	}
 }

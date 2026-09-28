@@ -86,11 +86,23 @@ func (s ProgressSeries) CurrentRate(now time.Time) *float64 {
 	return &rate
 }
 
-// AverageRate is Completed's change per second across the whole series: the
-// figure a finished Job reports in place of a current speed. It is nil when
-// the series has no two comparable counts.
+// AverageRate is Completed's change per second across the whole series. It is
+// nil when the series has no two comparable counts, or when nothing was counted
+// between them: an average of zero says less than the amount beside it does.
+// Snapshot.AverageRate, which measures over the Job's running time, is what a
+// finished Job reports; this is its measure for a Job with no running time
+// banked.
 func (s ProgressSeries) AverageRate() *float64 {
-	var first, last *SeriesPoint
+	first, last := s.countedEnds()
+	if first == nil || last == first || last.At <= first.At || *last.Completed <= *first.Completed {
+		return nil
+	}
+	rate := (*last.Completed - *first.Completed) / (float64(last.At-first.At) / 1000)
+	return &rate
+}
+
+// countedEnds is the first and the last point that hold a count.
+func (s ProgressSeries) countedEnds() (first, last *SeriesPoint) {
 	for i := range s.Points {
 		if s.Points[i].Completed == nil {
 			continue
@@ -100,11 +112,7 @@ func (s ProgressSeries) AverageRate() *float64 {
 		}
 		last = &s.Points[i]
 	}
-	if first == nil || last == first || last.At <= first.At || *last.Completed < *first.Completed {
-		return nil
-	}
-	rate := (*last.Completed - *first.Completed) / (float64(last.At-first.At) / 1000)
-	return &rate
+	return first, last
 }
 
 // EstimateETA estimates when a Job whose total is known finishes at the given
@@ -213,6 +221,9 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		}
 		series.Points[count-1] = point
 		changed = true
+	}
+	if final {
+		endAtLastMovement(series.Points)
 	}
 
 	for len(series.Points) > MaxSeriesPoints {
@@ -334,6 +345,28 @@ func mergePoints(a, b SeriesPoint) SeriesPoint {
 	return merged
 }
 
+// endAtLastMovement ends a finished series at the last speed it measured. The
+// points at its end that counted nothing since the one before are the Job no
+// longer counting before it ended, not a slowdown to zero, so their rates are
+// dropped and a graph ends where the work last moved rather than in a plunge.
+// A stall the Job moved on from is left as the zero it was.
+func endAtLastMovement(points []SeriesPoint) {
+	for i := len(points) - 1; i > 0; i-- {
+		if points[i].Completed == nil || points[i-1].Completed == nil || !sameCount(points[i].Completed, points[i-1].Completed) {
+			return
+		}
+		points[i].Rate = nil
+	}
+}
+
+// sameCount reports whether two points hold the same count, or neither holds one.
+func sameCount(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func graphedValues(metrics []Metric) map[string]float64 {
 	var values map[string]float64
 	for _, metric := range metrics {
@@ -425,6 +458,32 @@ func decodeSeries(raw types.JSON) ProgressSeries {
 		return ProgressSeries{}
 	}
 	return series
+}
+
+// AverageRate is what a Job that is not running reports in place of a speed:
+// the amount it counted per second of running. Time spent queued, paused or
+// blocked is left out, and work done before the first report is kept in: the
+// count a Job reports is its own work, counted from zero. (A Job that reports
+// counts carried over from earlier work, a Continue whose first report is "120
+// of 500", is averaged as though it did them; nothing on the Job says which of
+// its first count it did itself.) It is nil while the Job runs, since the
+// running time of the current stint is banked only when it ends; nil when the
+// Job counted nothing; and measured across the series
+// (ProgressSeries.AverageRate) when no running time was banked.
+func (s Snapshot) AverageRate() *float64 {
+	if s.State == StateRunning {
+		return nil
+	}
+	running := s.RunningDuration.Seconds()
+	if running <= 0 {
+		return s.ProgressSeries.AverageRate()
+	}
+	_, last := s.ProgressSeries.countedEnds()
+	if last == nil || *last.Completed <= 0 {
+		return nil
+	}
+	rate := *last.Completed / running
+	return &rate
 }
 
 // LiveRate is the Job's current speed, answered only while it runs: a paused

@@ -60,7 +60,7 @@ test('an administrator sees whose job is whose, and an owner is told when anothe
 
     await user.goto(`/job?id=${encodeURIComponent(jobId)}`);
     await expect(user.locator('[data-job-retried-elsewhere]')).toBeVisible();
-    await expect(user.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Retry' })).toHaveCount(0);
+    await expect(user.getByRole('group', { name: 'Advertised job commands' }).getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
     // An owner's own drawer names no owner on their own rows.
     await user.getByRole('button', { name: 'Open Jobs panel' }).click();
     await expect(user.locator(`[data-job-panel-row][data-job-id="${jobId}"] [data-job-panel-owner]`)).toBeHidden();

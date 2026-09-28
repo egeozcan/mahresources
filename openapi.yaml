@@ -861,6 +861,8 @@ components:
                     description: Duration in nanoseconds.
                     format: int64
                     type: integer
+                blockedReason:
+                    type: string
                 commands:
                     items:
                         $ref: '#/components/schemas/JobCommandResponsePartial'
@@ -1190,6 +1192,8 @@ components:
                     description: Duration in nanoseconds.
                     format: int64
                     type: integer
+                blockedReason:
+                    type: string
                 controlIntent:
                     type: string
                 dismissed:

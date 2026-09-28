@@ -237,12 +237,12 @@ function withCommands(job: MockJob, keys: Array<[string, string, MockJob?]>) {
 test.describe('Job commands keep their controls current', () => {
   test('Forget in the drawer takes Retry and Forget away, and a refused command says the Kind\'s reason', async ({ page }) => {
     const store = jobStore([withCommands(failedJob('stale-drawer', 'Stale drawer job'), [
-      ['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }], ['forget', 'Forget replay input', { destructive: true }],
+      ['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }], ['forget', 'Forget saved input', { destructive: true }],
     ])]);
     await serveStore(page, store);
     await page.route('**/v1/jobs/stale-drawer/commands/forget', route => {
       store.set('stale-drawer', withCommands(store.jobs.get('stale-drawer')!, [['dismiss', 'Dismiss', { bulk: true }]]));
-      return route.fulfill({ json: { jobId: 'stale-drawer', key: 'forget', status: 'succeeded', code: 'applied', message: 'replay input forgotten' } });
+      return route.fulfill({ json: { jobId: 'stale-drawer', key: 'forget', status: 'succeeded', code: 'applied', message: 'saved input forgotten' } });
     });
 
     await page.goto('/dashboard');
@@ -250,14 +250,14 @@ test.describe('Job commands keep their controls current', () => {
     const row = drawer.locator('article[data-job-id="stale-drawer"]');
     await row.locator('summary').click();
     // Forget cannot be undone: it asks, and its button reads as destructive.
-    const forget = row.getByRole('button', { name: 'Forget replay input' });
+    const forget = row.getByRole('button', { name: 'Forget saved input' });
     await expect(forget).toHaveClass(/text-red-700/);
     await forget.click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget saved input' }).click();
 
-    await expect(drawer.locator('[data-job-panel-notice]')).toHaveText('Stale drawer job: replay input forgotten.');
+    await expect(drawer.locator('[data-job-panel-notice]')).toHaveText('Stale drawer job: saved input forgotten.');
     await expect(row.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
-    await expect(row.getByRole('button', { name: 'Forget replay input' })).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Forget saved input' })).toHaveCount(0);
   });
 
   test('a refusal on the detail page says the Kind\'s own reason and replaces the controls', async ({ page }) => {
@@ -350,16 +350,16 @@ test.describe('Job command answers in the drawer', () => {
   });
 
   test('a notice is gone when the drawer opens again', async ({ page }) => {
-    const store = jobStore([withCommands(failedJob('forget-close', 'Forget close job'), [['forget', 'Forget replay input', { destructive: true }]])]);
+    const store = jobStore([withCommands(failedJob('forget-close', 'Forget close job'), [['forget', 'Forget saved input', { destructive: true }]])]);
     await serveStore(page, store);
-    await page.route('**/v1/jobs/forget-close/commands/forget', route => route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } }));
+    await page.route('**/v1/jobs/forget-close/commands/forget', route => route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } }));
 
     await page.goto('/dashboard');
     let drawer = await openDrawer(page);
     const row = drawer.locator('article[data-job-id="forget-close"]');
     await row.locator('summary').click();
-    await row.getByRole('button', { name: 'Forget replay input' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+    await row.getByRole('button', { name: 'Forget saved input' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget saved input' }).click();
     await expect(drawer.locator('[data-job-panel-notice]')).toBeVisible();
 
     await page.keyboard.press('Escape');
@@ -516,24 +516,24 @@ test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
 
   test('a row that moves while another row\'s command is still running keeps focus too', async ({ page }) => {
     const store = jobStore([
-      withCommands(failedJob('focus-a', 'Commanded row', { acceptedAt: '2026-09-26T10:02:00Z' }), [['forget', 'Forget replay input', { destructive: true }]]),
+      withCommands(failedJob('focus-a', 'Commanded row', { acceptedAt: '2026-09-26T10:02:00Z' }), [['forget', 'Forget saved input', { destructive: true }]]),
       runningJob('focus-b', 'Moving row', { acceptedAt: '2026-09-26T10:01:00Z' }),
     ]);
     await serveStore(page, store);
     let release = () => {};
     await page.route('**/v1/jobs/focus-a/commands/forget', async route => {
       await new Promise<void>(resolve => { release = resolve; });
-      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } });
+      return route.fulfill({ json: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } });
     });
 
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
     const rowA = drawer.locator('article[data-job-id="focus-a"]');
     await rowA.locator('summary').click();
-    await rowA.getByRole('button', { name: 'Forget replay input' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget replay input' }).click();
+    await rowA.getByRole('button', { name: 'Forget saved input' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Forget saved input' }).click();
     // The confirmation hands focus back to Forget once it has closed.
-    await expect(rowA.getByRole('button', { name: 'Forget replay input' })).toBeFocused();
+    await expect(rowA.getByRole('button', { name: 'Forget saved input' })).toBeFocused();
 
     // While A's command waits, the reader moves to B, and B finishes.
     const titleB = drawer.locator('article[data-job-id="focus-b"]').getByRole('link', { name: 'Moving row' });

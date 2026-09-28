@@ -547,24 +547,38 @@ func (j *DownloadJob) updateProgressForRun(runID uint64, downloaded, total int64
 	return true
 }
 
-// setPhaseForRun writes the phase label and its counters, but only while this
-// attempt still owns the job.
+// advanceStreamForRun records one HLS progress report — the phase, the segments
+// done of the total and the bytes received — but only while this attempt still
+// owns the job, and never backwards.
 //
 // Unguarded, a segment callback still unwinding from an abandoned attempt
 // overwrites the counters of the attempt that replaced it -- and publishes an
 // event describing a phase the job left. Same rule as updateProgressForRun, and
 // for the same reason: a pause and resume starts a second attempt beside the
 // first while the first is still finishing its last segment.
-func (j *DownloadJob) setPhaseForRun(runID uint64, phase string, current, total int64) bool {
+//
+// Segment workers report as they finish, so
+// a worker that counted segment 1 can report after the one that counted segment
+// 2; applied as they come, the later report would take the count, the bytes
+// and the rate measured from them back down. A report of the same phase and
+// total keeps the larger count, and the bytes received only grow.
+func (j *DownloadJob) advanceStreamForRun(runID uint64, phase string, done, total, received int64) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	if !j.ownedByRunLocked(runID) {
 		return false
 	}
+	if phase == j.Phase && total == j.PhaseTotal && done < j.PhaseCount {
+		done = j.PhaseCount
+	}
+	if received < j.Progress {
+		received = j.Progress
+	}
 	j.Phase = phase
-	j.PhaseCount = current
+	j.PhaseCount = done
 	j.PhaseTotal = total
+	j.setProgressLocked(received, -1)
 	return true
 }
 

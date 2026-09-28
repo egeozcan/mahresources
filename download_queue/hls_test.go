@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"mahresources/contracts"
+	"mahresources/hls"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -282,5 +283,82 @@ func TestATruncatedTransferIsNotStoredAsASuccess(t *testing.T) {
 	}
 	if created.body != nil {
 		t.Errorf("stored %d bytes from a failed transfer", len(created.body))
+	}
+}
+
+// TestAnHLSDownloadMirrorsItsSegmentsNotThePlaylistSize. The playlist response's
+// Content-Length is the size of a few lines of text; once the body is known to be
+// a playlist it must not stand as the download's total, the assembly must report
+// every segment done rather than none, and the assembled result must reach the
+// durable Job rather than stop at whatever the last throttled report said.
+func TestAnHLSDownloadMirrorsItsSegmentsNotThePlaylistSize(t *testing.T) {
+	ffmpeg := hlsFfmpeg(t)
+	dm := createTestManager()
+	dm.resourceCtx = &recordingResourceCreator{}
+	dm.ffmpegPath = func() string { return ffmpeg }
+	sink := &recordingCanonicalSink{}
+	dm.SetCanonicalSink(sink)
+	srv := buildAndServeStreamOf(t, ffmpeg, 4)
+
+	ref := CanonicalRef{JobID: "0192f0aa-0000-7000-8000-0000000000h1", ExecutionToken: "0192f0aa-0000-7000-8000-0000000000h2"}
+	if _, err := dm.SubmitForPluginWithOptions(&query_models.ResourceFromRemoteCreator{URL: srv.URL + "/index.m3u8"},
+		nil, "", SubmissionOptions{JobID: "legacy-hls", Canonical: &ref}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForCanonical(t, "the HLS download to finish", func() bool { return len(sink.finishedFor(ref.JobID)) > 0 })
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var sawMux, sawAssembled bool
+	for _, mirror := range sink.progress {
+		snap := mirror.snap
+		if snap.Phase == "" {
+			continue
+		}
+		if snap.Status == JobStatusProcessing {
+			sawAssembled = true
+			if snap.TotalSize <= 0 || snap.Progress != snap.TotalSize || snap.PhaseCount != snap.PhaseTotal {
+				t.Fatalf("assembled mirror: %d of %d bytes, %d of %d segments; want the video's size and every segment",
+					snap.Progress, snap.TotalSize, snap.PhaseCount, snap.PhaseTotal)
+			}
+			continue
+		}
+		if snap.TotalSize > 0 {
+			t.Fatalf("mirror in phase %q carries a total of %d bytes, the playlist's own size", snap.Phase, snap.TotalSize)
+		}
+		if snap.Phase == hls.PhaseMuxing {
+			sawMux = true
+			if snap.PhaseTotal == 0 || snap.PhaseCount != snap.PhaseTotal {
+				t.Fatalf("assembly mirror: %d of %d segments; want every segment done", snap.PhaseCount, snap.PhaseTotal)
+			}
+			if snap.Progress == 0 {
+				t.Fatal("assembly mirror carries no bytes received")
+			}
+		}
+	}
+	if !sawMux || !sawAssembled {
+		t.Fatalf("mirrors saw the assembly %v and its result %v; want both", sawMux, sawAssembled)
+	}
+}
+
+// TestAnHLSReportArrivingLateDoesNotTakeProgressBack. Segment workers report as
+// they finish, so the report that counted segment 1 can arrive after the one
+// that counted segment 2. The later-arriving, older report must not lower the
+// count or the bytes received, which the Job's rate is measured from.
+func TestAnHLSReportArrivingLateDoesNotTakeProgressBack(t *testing.T) {
+	job := &DownloadJob{ID: "hls-order", Status: JobStatusDownloading, TotalSize: -1, ctx: context.Background()}
+	if !job.advanceStreamForRun(0, hls.PhaseSegments, 2, 10, 4096) {
+		t.Fatal("the attempt that owns the job could not report")
+	}
+	job.advanceStreamForRun(0, hls.PhaseSegments, 1, 10, 2048)
+	snap := job.Snapshot()
+	if snap.PhaseCount != 2 || snap.PhaseTotal != 10 || snap.Progress != 4096 || snap.TotalSize != -1 {
+		t.Fatalf("after a late report: %d of %d segments, %d bytes of %d; want 2 of 10 and 4096 bytes of unknown",
+			snap.PhaseCount, snap.PhaseTotal, snap.Progress, snap.TotalSize)
+	}
+	// A new phase starts its own count: the assembly reports every segment done.
+	job.advanceStreamForRun(0, hls.PhaseMuxing, 10, 10, 8192)
+	if snap := job.Snapshot(); snap.Phase != hls.PhaseMuxing || snap.PhaseCount != 10 || snap.Progress != 8192 {
+		t.Fatalf("the assembly reads %q %d of %d, %d bytes", snap.Phase, snap.PhaseCount, snap.PhaseTotal, snap.Progress)
 	}
 }

@@ -51,7 +51,7 @@ test.describe('plugin action outcomes', () => {
     await page.goto(`/job?id=${encodeURIComponent(id)}`);
     const failure = page.getByRole('region', { name: 'Failure' });
     await expect(failure).toContainText('Upstream rejected chunk 6: HTTP 502 Bad Gateway');
-    await expect(failure).toContainText('Class: dependency');
+    await expect(failure).toContainText('Failure type: A dependency failed');
   });
 
   test('a running action that declares cancel can be cancelled from its page', async ({ page, request }) => {

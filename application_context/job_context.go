@@ -151,6 +151,17 @@ func (ctx *MahresourcesContext) CountJobsByState(filter jobs.Filter) (map[string
 	return service.CountByState(ctx.jobDeps(), ctx.jobAccess(), filter)
 }
 
+// JobBlockedReasons says why each blocked Job among these snapshots is blocked,
+// by the reason its blocked event recorded. The snapshots are ones this principal
+// was already allowed to read.
+func (ctx *MahresourcesContext) JobBlockedReasons(snapshots []jobs.Snapshot) (map[string]string, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	return service.BlockedReasons(ctx.jobDeps(), snapshots)
+}
+
 // VisibleJobKinds names the registered Kinds whose Jobs this principal can see,
 // sorted: every Kind for an administrator, and only owner-visible Kinds for
 // everybody else, since an admin-class Job is never listed to them.

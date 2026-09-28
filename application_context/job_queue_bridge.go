@@ -1094,7 +1094,9 @@ func queueJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 		done := snap.Progress
 		progress.Completed = &done
 		progress.Unit = "bytes"
-		if snap.TotalSize > 0 {
+		// The total is an estimate made before the export started. Once the
+		// count passes it, it was an estimate that turned out low, not a total.
+		if snap.TotalSize > 0 && done <= snap.TotalSize {
 			total := snap.TotalSize
 			progress.Total = &total
 		}
@@ -1174,6 +1176,21 @@ func (ctx *MahresourcesContext) finishQueueJob(
 	failure *jobs.Failure,
 	requiredOutputs []string,
 ) error {
+	return ctx.finishQueueJobWith(execution, outcome, failure, requiredOutputs, nil)
+}
+
+// finishQueueJobWith is finishQueueJob for an executor that knows its final figures
+// only once its work is over: final derives the success's last progress snapshot
+// from the one the Job holds, and the snapshot lands in the same guarded write as
+// the outcome. A cancellation that wins the outcome keeps the Job's progress as it
+// stood.
+func (ctx *MahresourcesContext) finishQueueJobWith(
+	execution jobs.Execution,
+	outcome jobs.State,
+	failure *jobs.Failure,
+	requiredOutputs []string,
+	final func(jobs.Progress) jobs.Progress,
+) error {
 	service := ctx.JobService()
 	if service == nil {
 		return nil
@@ -1200,6 +1217,13 @@ func (ctx *MahresourcesContext) finishQueueJob(
 			attemptFailure = nil
 			attemptRequiredOutputs = nil
 		}
+		var finalProgress *jobs.Progress
+		if final != nil && attemptOutcome == outcome {
+			progress := final(current.Progress)
+			// The phase is the Job's own, which the outcome does not change.
+			progress.Phase = ""
+			finalProgress = &progress
+		}
 		if err := ctx.jobFaults.completionWrite(); err != nil {
 			return err
 		}
@@ -1209,6 +1233,7 @@ func (ctx *MahresourcesContext) finishQueueJob(
 			Outcome:         attemptOutcome,
 			Failure:         attemptFailure,
 			RequiredOutputs: attemptRequiredOutputs,
+			FinalProgress:   finalProgress,
 		})
 		switch {
 		case err == nil:
@@ -1302,13 +1327,25 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 	expiresAt time.Time,
 	summaryScopes ...jobSummaryExportDataScope,
 ) error {
+	_, err := ctx.publishQueueArtifactSized(execution, key, label, path, expiresAt, summaryScopes...)
+	return err
+}
+
+// publishQueueArtifactSized is publishQueueArtifact answering the size it
+// verified and published, for a Kind whose last figures are the artifact's.
+func (ctx *MahresourcesContext) publishQueueArtifactSized(
+	execution jobs.Execution,
+	key, label, path string,
+	expiresAt time.Time,
+	summaryScopes ...jobSummaryExportDataScope,
+) (int64, error) {
 	if len(summaryScopes) > 1 || (execution.Kind == JobKindSummaryExport && (len(summaryScopes) != 1 || !summaryScopes[0].valid())) ||
 		(execution.Kind != JobKindSummaryExport && len(summaryScopes) != 0) {
-		return errors.New("invalid summary export artifact scope")
+		return 0, errors.New("invalid summary export artifact scope")
 	}
 	info, err := ctx.GetDefaultFs().Stat(path)
 	if err != nil {
-		return fmt.Errorf("%w: the artifact %s is not there: %w", errQueueStagedOutputMissing, path, err)
+		return 0, fmt.Errorf("%w: the artifact %s is not there: %w", errQueueStagedOutputMissing, path, err)
 	}
 	artifactReference := queueArtifactReference{Path: path, Size: info.Size()}
 	if len(summaryScopes) == 1 {
@@ -1318,23 +1355,23 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 	if execution.Kind == JobKindGroupExport {
 		request, requestErr := exportRequestOf(execution.Input)
 		if requestErr != nil || path != exportArchivePath(execution.JobID, request.Gzip) {
-			return errors.New("group export artifact path does not match its canonical Job")
+			return 0, errors.New("group export artifact path does not match its canonical Job")
 		}
 		manifest, manifestErr := readGroupExportScopeManifestFromPath(ctx, path)
 		if manifestErr != nil {
-			return fmt.Errorf("verify group export scope manifest: %w", manifestErr)
+			return 0, fmt.Errorf("verify group export scope manifest: %w", manifestErr)
 		}
 		if err := validateGroupExportScopeManifest(manifest, execution.Input); err != nil {
-			return fmt.Errorf("verify group export scope manifest: %w", err)
+			return 0, fmt.Errorf("verify group export scope manifest: %w", err)
 		}
 		artifactReference.ScopeManifestVersion = jobExportScopeManifestVersion
 	}
 	reference, err := json.Marshal(artifactReference)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := ctx.jobFaults.outputPublication(); err != nil {
-		return err
+		return 0, err
 	}
 	_, err = execution.Output(jobs.OutputInput{
 		Key:       key,
@@ -1344,7 +1381,10 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 		Required:  true,
 		ExpiresAt: &expiresAt,
 	})
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 // errQueueStagedOutputMissing reports that the file a queue-backed output names is not

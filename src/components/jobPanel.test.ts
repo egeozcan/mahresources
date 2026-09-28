@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as userSettings from '../userSettings.js';
-import { epochMicros, jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
+import { epochMicros, jobPanel, panelActiveOrder, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -610,7 +610,7 @@ describe('Job Center panel', () => {
     test('a command whose result the row cannot show keeps the server\'s words in the box', async () => {
         const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'pinned 2 of 3 visible related jobs' } }));
 
-        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin visible lineage', jobVersion: 4 });
+        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin with related jobs', jobVersion: 4 });
 
         expect(panel.notice).toBe('first.bin: pinned 2 of 3 visible related jobs.');
     });
@@ -704,15 +704,15 @@ describe('Job Center panel', () => {
             : { ...panel.jobs[0], state: 'succeeded', version: 5, commands: [] });
         panel.jobs[0] = { ...panel.jobs[0], state: 'running' };
 
-        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin visible lineage', jobVersion: 4 });
+        await panel.runCommand(panel.jobs[0], { key: 'pin-lineage', label: 'Pin with related jobs', jobVersion: 4 });
 
         expect(panel.notice).toBe('first.bin: pinned 3 of 3 visible related jobs.');
     });
 
     test('closing the drawer takes the box away', async () => {
-        const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } }));
-        await panel.runCommand(panel.jobs[0], { key: 'forget', label: 'Forget replay input', jobVersion: 4 });
-        expect(panel.notice).toBe('first.bin: replay input forgotten.');
+        const panel = rowCommandPanel(() => ({ result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } }));
+        await panel.runCommand(panel.jobs[0], { key: 'forget', label: 'Forget saved input', jobVersion: 4 });
+        expect(panel.notice).toBe('first.bin: saved input forgotten.');
 
         panel.onDrawerClosed();
 
@@ -731,12 +731,12 @@ describe('Job Center panel', () => {
     test('a command that moves no version still has its row\'s controls read again', async () => {
         const commands = [
             { key: 'retry', label: 'Retry', jobVersion: 4 },
-            { key: 'forget', label: 'Forget replay input', jobVersion: 4 },
+            { key: 'forget', label: 'Forget saved input', jobVersion: 4 },
             { key: 'pin', label: 'Pin', jobVersion: 4 },
         ];
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'
             // The answer's snapshot carries no commands.
-            ? { result: { status: 'succeeded', code: 'applied', message: 'replay input forgotten', job: { ...panel.jobs[0], commands: undefined } } }
+            ? { result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten', job: { ...panel.jobs[0], commands: undefined } } }
             : { ...panel.jobs[0], commands: [commands[2]] });
         panel.jobs[0] = { ...panel.jobs[0], commands };
         panel.details[panel.jobs[0].id] = panel.jobs[0];
@@ -748,9 +748,9 @@ describe('Job Center panel', () => {
 
     test('a reread answered after the row moved on keeps the newer row\'s controls', async () => {
         let answerRead: (value: any) => void = () => {};
-        const commands = [{ key: 'forget', label: 'Forget replay input', jobVersion: 4 }, { key: 'retry', label: 'Retry', jobVersion: 4 }];
+        const commands = [{ key: 'forget', label: 'Forget saved input', jobVersion: 4 }, { key: 'retry', label: 'Retry', jobVersion: 4 }];
         const panel = rowCommandPanel((_url, init) => init.method === 'POST'
-            ? { result: { status: 'succeeded', code: 'applied', message: 'replay input forgotten' } }
+            ? { result: { status: 'succeeded', code: 'applied', message: 'saved input forgotten' } }
             : new Promise(resolve => { answerRead = resolve; }));
         panel.jobs[0] = { ...panel.jobs[0], commands };
         panel.details[panel.jobs[0].id] = panel.jobs[0];
@@ -1054,8 +1054,7 @@ describe('Job Center drawer live progress', () => {
             progress: { completed: 10, total: 10, unit: 'items', averageRate: 2.5,
                 series: { unit: 'items', points: [{ t: 0, c: 0 }, { t: 4000, c: 10, r: 2.5 }] } },
         };
-        expect(panel.rateText(job)).toBe('average 2.5/s');
-        expect(panel.etaText(job)).toBe('');
+        expect(panel.statsText(job)).toBe('10 items · average 2.5 items/s');
         expect(panel.graphsFor(job)).toEqual([]);
         expect(panel.showsProgress(job)).toBe(false);
     });
@@ -1341,7 +1340,7 @@ describe('Job Center panel accessibility hooks', () => {
         panel.requestJSON = vi.fn(async () => ({ result: {} }));
         const job = { id: 'dl-1', title: 'old.bin', kind: 'remote-download', state: 'failed', version: 10 };
 
-        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget replay input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
+        const running = panel.runCommandUnfocused(job, { key: 'forget', label: 'Forget saved input', endpoint: '/v1/jobs/dl-1/commands/forget', jobVersion: 10 });
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:875', reset: true }) });
         answerConfirmation(true);
         await running;
@@ -3417,6 +3416,30 @@ describe('Job Center panel rows', () => {
         expect(panelStateTone({ state: 'interrupted' })).toBe('failed');
         expect(panelStateTone({ state: 'cancelled' })).toBe('neutral');
         expect(panelStateTone({})).toBe('neutral');
+    });
+
+    test('lists scheduled work by when it starts, after the work going on now', () => {
+        const rows = [
+            { id: 'late', state: 'scheduled', scheduledFor: '2026-09-28T18:00:00Z' },
+            { id: 'running', state: 'running' },
+            { id: 'soon', state: 'scheduled', scheduledFor: '2026-09-28T12:00:00Z' },
+            { id: 'queued', state: 'queued' },
+            { id: 'unknown', state: 'scheduled' },
+        ];
+        expect(panelActiveOrder(rows).map(job => job.id)).toEqual(['running', 'queued', 'soon', 'late', 'unknown']);
+
+        const panel = jobPanel();
+        panel.jobs = rows;
+        expect(panel.activeJobs.map(job => job.id)).toEqual(['running', 'queued', 'soon', 'late', 'unknown']);
+    });
+
+    test('names the Kind in words and says why a blocked job is blocked', () => {
+        const panel = jobPanel();
+        expect(panel.kindText({ kind: 'remote-download' })).toBe('Download');
+        expect(panel.blockedText({ state: 'blocked', blockedReason: 'plugin-unavailable' })).toBe('Its plugin is disabled or not loaded.');
+        // Only a blocked Job says why it is blocked.
+        expect(panel.blockedText({ state: 'queued', blockedReason: 'plugin-unavailable' })).toBe('');
+        expect(panel.blockedText({ state: 'blocked' })).toBe('');
     });
 
     test('the panel exposes the split per job, after the pin filter', () => {
