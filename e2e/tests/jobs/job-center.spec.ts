@@ -425,8 +425,11 @@ test.describe('Job Center', () => {
     await expect(retry).toBeVisible();
     await retry.click();
     await expect(page.getByTestId('job-list-notice')).toHaveText('Retried 2 of 2 selected jobs.');
-    // Retried, both leave a list of failures nobody has retried.
-    await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
+    // Retried, both leave a list of failures nobody has retried. Their
+    // successors fetch the same dead address and may fail into it themselves.
+    for (const job of [first, second]) {
+      await expect(page.locator(`[data-job-id="${job.canonicalId}"]`)).toHaveCount(0, { timeout: 10_000 });
+    }
     for (const job of [first, second]) {
       await expect.poll(async () => (await readJob(request, job.canonicalId) as any)?.lineage?.successors?.length ?? 0).toBeGreaterThan(0);
     }
