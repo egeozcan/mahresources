@@ -72,4 +72,31 @@ remediation plan and operator documentation.
 
 ## Completion record
 
-Review counts, final commits and gates will be recorded here after they finish.
+The resumed reviews use the full original lane scope, not just the preceding
+round's findings. The table below is a progress checkpoint; it will be replaced
+with the final reviewed commits and merged gates before completion.
+
+| Lane | P0/P1 findings by round so far | Current disposition |
+| --- | --- | --- |
+| List | 8, 2, 2 | Card membership/clock ownership and full-precision progress ordering repaired at `bbf3e878`; final round pending. |
+| Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
+| Numbers | 2, 4, 1, 2 | Round 4 reproduced an assembly graph losing real movement and key-only HLS traffic refreshing rate/ETA; producer-bound repair in progress. |
+| Kinds | 1, 2, 2, 2, 1 | Producer-bound report API/UI/CLI repair committed at `4254179f`; fresh full gates and round 6 pending. |
+| Flakes | 2, 2, 1, 0 | Round 4 clean at `5db9018a`; a separately confirmed inherited command shutdown defect requires a further repair and review. |
+
+List's whole-Go runs exposed the inherited shutdown defect twice. Passing isolated
+20-run and package three-run controls did not explain it. A temporary caller ledger
+over 300 exact-test iterations then caught two failures: the dispatcher had already
+finished the row as Interrupted with “server interrupted”, while the original
+parent and descendant were alive in the same verified owned process group. Recovery
+could no longer see that row in its nonterminal read. The finisher call is proved;
+the precise preceding interleave is being forced by a deterministic regression.
+These diagnostic overlays are not passing final gates.
+
+Earlier browser retries remain observations unless their causes were reproduced.
+The five lightbox/schema retries on the pre-pause Flakes head are not claimed fixed
+by the subsequent no-retry suite. The mobile Resources width retry matches the
+card-meta overflow class repaired by Flakes; the final merged gate and the existing
+long-name regression must verify the combined result. The independent inherited
+drawer test leak was attributed with delayed owner traces on both master and List,
+then repaired by fixture-owned cleanup in Flakes.
