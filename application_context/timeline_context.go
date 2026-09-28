@@ -160,7 +160,7 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 		updated := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
 			Model(&models.Resource{}).
 			Scopes(database_scopes.InstantRange("resources.updated_at", b.Start, b.End)).
-			Where("resources.updated_at > resources.created_at")
+			Scopes(database_scopes.InstantAfter("resources.updated_at", "resources.created_at"))
 		if mrqlFilter != nil {
 			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
 			if err != nil {
@@ -208,7 +208,7 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 		updated := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
 			Model(&models.Note{}).
 			Scopes(database_scopes.InstantRange("notes.updated_at", b.Start, b.End)).
-			Where("notes.updated_at > notes.created_at")
+			Scopes(database_scopes.InstantAfter("notes.updated_at", "notes.created_at"))
 		if mrqlFilter != nil {
 			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
 			if err != nil {
@@ -256,7 +256,7 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 		updated := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
 			Model(&models.Group{}).
 			Scopes(database_scopes.InstantRange("groups.updated_at", b.Start, b.End)).
-			Where("groups.updated_at > groups.created_at")
+			Scopes(database_scopes.InstantAfter("groups.updated_at", "groups.created_at"))
 		if mrqlFilter != nil {
 			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
 			if err != nil {
@@ -294,7 +294,7 @@ func (ctx *MahresourcesContext) GetTagTimelineCounts(
 		err = ctx.db.Scopes(database_scopes.TagQuery(query, true)).
 			Model(&models.Tag{}).
 			Scopes(database_scopes.InstantRange("updated_at", b.Start, b.End)).
-			Where("updated_at > created_at").
+			Scopes(database_scopes.InstantAfter("updated_at", "created_at")).
 			Count(&updatedCount).Error
 		if err != nil {
 			return nil, fmt.Errorf("counting updated tags for bucket %q: %w", b.Label, err)
@@ -327,7 +327,7 @@ func (ctx *MahresourcesContext) GetCategoryTimelineCounts(
 		err = ctx.db.Scopes(database_scopes.CategoryQuery(query, true)).
 			Model(&models.Category{}).
 			Scopes(database_scopes.InstantRange("updated_at", b.Start, b.End)).
-			Where("updated_at > created_at").
+			Scopes(database_scopes.InstantAfter("updated_at", "created_at")).
 			Count(&updatedCount).Error
 		if err != nil {
 			return nil, fmt.Errorf("counting updated categories for bucket %q: %w", b.Label, err)
@@ -360,7 +360,7 @@ func (ctx *MahresourcesContext) GetQueryTimelineCounts(
 		err = ctx.db.Scopes(database_scopes.QueryQuery(query, true)).
 			Model(&models.Query{}).
 			Scopes(database_scopes.InstantRange("updated_at", b.Start, b.End)).
-			Where("updated_at > created_at").
+			Scopes(database_scopes.InstantAfter("updated_at", "created_at")).
 			Count(&updatedCount).Error
 		if err != nil {
 			return nil, fmt.Errorf("counting updated queries for bucket %q: %w", b.Label, err)

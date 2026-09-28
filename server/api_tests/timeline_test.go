@@ -361,7 +361,7 @@ func TestTimelineAPI_CountsARowInTheBucketOfItsInstantWhateverOffsetItWasWritten
 					t.Fatalf("stamp %s: %v", name, err)
 				}
 			}
-			// One row in last week and two in this one, so a row counted in the
+			// One row in last week and three in this one, so a row counted in the
 			// neighbouring bucket changes both counts rather than trading places
 			// with a row that went the other way.
 			stamp("created last week", lastWeek.In(east), lastWeek.In(east))
@@ -370,6 +370,11 @@ func TestTimelineAPI_CountsARowInTheBucketOfItsInstantWhateverOffsetItWasWritten
 			stamp("updated last week", longBefore.In(east), lastWeek.In(east))
 			stamp("updated this week", longBefore.In(west), thisWeek.In(west))
 			stamp("also updated this week", longBefore.In(west), thisWeek.In(west))
+			// Created at 23:05 UTC written at +02:00, updated five minutes later
+			// written in UTC: the update's text sorts before the creation's, so
+			// comparing the two columns as text never counted it as updated.
+			createdEast := time.Date(2026, 1, 12, 23, 5, 0, 0, time.UTC)
+			stamp("updated in another offset", createdEast.In(east), createdEast.Add(5*time.Minute))
 
 			rr := tc.MakeRequest(http.MethodGet, e.endpoint+"?granularity=weekly&columns=2&anchor=2026-01-12", nil)
 			if rr.Code != http.StatusOK {
@@ -382,7 +387,7 @@ func TestTimelineAPI_CountsARowInTheBucketOfItsInstantWhateverOffsetItWasWritten
 			if len(resp.Buckets) != 2 {
 				t.Fatalf("expected 2 buckets, got %d", len(resp.Buckets))
 			}
-			for i, want := range []int64{1, 2} {
+			for i, want := range []int64{1, 3} {
 				b := resp.Buckets[i]
 				if b.Created != want || b.Updated != want {
 					t.Errorf("bucket %d (%s to %s) = %d created, %d updated; want %d of each",

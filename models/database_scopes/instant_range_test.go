@@ -2,6 +2,7 @@ package database_scopes
 
 import (
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -100,5 +101,42 @@ func TestInstantRangeKeepsTheColumnIndexOnSQLite(t *testing.T) {
 	joined := strings.Join(plan, "; ")
 	if !strings.Contains(joined, "idx_stamps_at") {
 		t.Fatalf("query plan does not use the column index: %s", joined)
+	}
+}
+
+// A row is "after" only when its later column holds a later instant, however
+// the two columns were written.
+func TestInstantAfterComparesInstantsOnSQLite(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "after.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.Exec("CREATE TABLE pairs (id INTEGER PRIMARY KEY, created DATETIME, updated DATETIME)").Error; err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	rows := []struct {
+		created, updated string
+		after            bool
+	}{
+		{"2026-01-13 01:05:00+02:00", "2026-01-12 23:10:00+00:00", true},  // five minutes later, sorts earlier as text
+		{"2026-01-12 12:00:00+00:00", "2026-01-12 14:00:00+02:00", false}, // the same instant
+		{"2026-01-12 12:00:00+00:00", "2026-01-12 13:00:00+02:00", false}, // an hour earlier, sorts later as text
+		{"2026-01-12 12:00:00+00:00", "2026-01-12 12:00:00.5+00:00", true},
+	}
+	var want []int
+	for i, row := range rows {
+		if err := db.Exec("INSERT INTO pairs (id, created, updated) VALUES (?, ?, ?)", i+1, row.created, row.updated).Error; err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		if row.after {
+			want = append(want, i+1)
+		}
+	}
+	var got []int
+	if err := db.Table("pairs").Scopes(InstantAfter("updated", "created")).Order("id").Pluck("id", &got).Error; err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("rows updated after they were created = %v, want %v", got, want)
 	}
 }

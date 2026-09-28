@@ -351,6 +351,23 @@ func InstantRange(column string, start, end time.Time) func(db *gorm.DB) *gorm.D
 	}
 }
 
+// InstantAfter is a scope keeping the rows whose later column holds a later
+// instant than their earlier one.
+//
+// On SQLite the two columns are text in whatever offset each was written in, so
+// a row created at 01:05 +02:00 and updated five minutes later in UTC (23:10
+// +00:00) compared as updated before it was created. julianday() compares the
+// instants. The scope adds no range of its own, so it rides on one that already
+// bounds the scan, InstantRange's for one; PostgreSQL compares instants already.
+func InstantAfter(later, earlier string) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if db.Config.Dialector.Name() != "sqlite" {
+			return db.Where(later + " > " + earlier)
+		}
+		return db.Where("julianday(" + later + ") > julianday(" + earlier + ")")
+	}
+}
+
 // sqliteJulianFormat writes a bound julianday() reads as UTC: no offset, and the
 // milliseconds it resolves.
 const sqliteJulianFormat = "2006-01-02 15:04:05.000"
