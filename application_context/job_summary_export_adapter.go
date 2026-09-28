@@ -224,6 +224,13 @@ func unsealableSummaryFilterDimension(filter jobs.Filter) string {
 	return ""
 }
 
+// SummaryExportUnsealableDimension names the filter dimension a summary export
+// refuses to seal, or "" when it can seal the filter: the rule acceptance
+// applies, for a page that offers the export.
+func SummaryExportUnsealableDimension(filter jobs.Filter) string {
+	return unsealableSummaryFilterDimension(filter)
+}
+
 func jobSummaryExportInputOf(raw json.RawMessage) (*jobSummaryExportInput, error) {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return nil, errors.New("a Job summary export input is not valid JSON")

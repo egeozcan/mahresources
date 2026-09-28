@@ -779,3 +779,33 @@ func TestTheSummaryAsksTheAPIForTheListsOwnFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSummaryExportIsOfferedOnlyForAFilterItCanSeal pins the export form:
+// the viewer's own Jobs are asked for by id, which an export can seal where
+// owner=me it cannot, and a filter an export refuses says so in words instead of
+// offering a form whose every submission is refused.
+func TestTheSummaryExportIsOfferedOnlyForAFilterItCanSeal(t *testing.T) {
+	render := func(target string) pongo2.Context {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), &auth.Principal{UserID: 9, Role: models.RoleUser}))
+		return jobListContextProvider(&fakeJobListReader{})(request)
+	}
+	mine := render("/jobs?owner=me&state=failed&dismissed=false")
+	query, err := url.ParseQuery(mine["jobSummaryExportQuery"].(string))
+	if err != nil || query.Get("ownerId") != "9" || query.Has("owner") || query.Get("state") != "failed" {
+		t.Fatalf("the export of the viewer's own Jobs asks %v (%v), want ownerId=9 and the rest of the filter", query, err)
+	}
+	if refusal := mine["jobSummaryExportRefusal"]; refusal != "" {
+		t.Fatalf("the viewer's own Jobs are refused for export: %v", refusal)
+	}
+	for target, want := range map[string]string{
+		"/jobs?noInboundRelationship=retry-of&dismissed=false": "Has not been",
+		"/jobs?inboundRelationship=retry-of&dismissed=false":   "Has been",
+		"/jobs?state=partial&dismissed=false":                  "partially completed",
+		"/jobs?owner=deleted&dismissed=false":                  "deleted account",
+	} {
+		if refusal, _ := render(target)["jobSummaryExportRefusal"].(string); !strings.Contains(refusal, want) {
+			t.Errorf("%s is refused as %q, want it to name %q", target, refusal, want)
+		}
+	}
+}

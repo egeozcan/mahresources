@@ -544,6 +544,13 @@ test.describe('Job Center', () => {
     const exported = await readJob(request, new URL(href!, 'http://localhost').searchParams.get('id')!);
     expect((exported as any)?.kind).toBe('job-summary-export');
     expect(JSON.stringify((exported as any)?.summary)).toContain(name);
+
+    // A filter an export cannot seal says so rather than offering a form every
+    // submission of which is refused.
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}&noInboundRelationship=retry-of&dismissed=false`);
+    await panel.getByText('Export a summary', { exact: true }).click();
+    await expect(panel.locator('[data-job-summary-export-refusal]')).toHaveText('A summary export cannot filter by Has not been. Change the filter to export a summary.');
+    await expect(panel.getByRole('form', { name: 'Export a summary of these jobs' })).toHaveCount(0);
   });
 
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {

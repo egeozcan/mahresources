@@ -406,9 +406,11 @@ how many succeeded of those finished, how many failed, the median and 95th
 percentile of the time they waited and ran, and their failures by class. It is
 read only when you open it. **Export a summary** queues a CSV or JSON export of
 the same filter for a range of whole days longer than 90 days, and links the
-export's Job, whose page offers the file once it is ready; a filter an export
-cannot take is refused with the reason. An account that cannot write is not
-offered the export.
+export's Job, whose page offers the file once it is ready. **Mine** is exported
+as your account's own Jobs; a filter an export cannot take (the partially
+completed state, **Has been**, **Has not been**, a deleted account as owner) is
+named instead of the form. An account that cannot write is not offered the
+export.
 
 Each card's **Details** lists when the Job was accepted, started and finished,
 and the fields of its summary, such as a download's host. Open a Job to see its

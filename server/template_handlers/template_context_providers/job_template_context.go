@@ -249,6 +249,7 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		base["jobAccountFilters"] = viewer == nil || !viewer.SuperUser
 		// An export is a write: an account that cannot write is not offered one.
 		base["jobSummaryExportOffered"] = viewer == nil || viewer.CanWrite()
+		base["jobSummaryExportQuery"], base["jobSummaryExportRefusal"] = jobSummaryExportFilter(query, filter, viewer)
 		if accounts, ok := reader.(JobAccountReader); ok && base["jobAccountFilters"] == true {
 			if viewer.IsAdmin() {
 				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
@@ -462,6 +463,39 @@ func jobAPIQuery(query url.Values) string {
 		values.Del(position)
 	}
 	return values.Encode()
+}
+
+// jobSummaryExportFilter is the list's filter as a summary export seals it, or,
+// when the export cannot seal it, why not in the words of the form. An export's
+// filter runs later, possibly on an older worker, so it refuses the dimensions
+// added after its Kind version; owner=me is one of them, and the viewer's own
+// Jobs are the same question asked by the viewer's id, which it seals.
+func jobSummaryExportFilter(query url.Values, filter jobs.Filter, viewer *auth.Principal) (string, string) {
+	values := withAPIOwner(withoutEmptyValues(query))
+	for _, position := range []string{"cursor", "before", "view"} {
+		values.Del(position)
+	}
+	if values.Get("owner") == jobOwnerMineOption && viewer != nil && viewer.UserID != 0 {
+		values.Del("owner")
+		values.Set("ownerId", strconv.FormatUint(uint64(viewer.UserID), 10))
+		filter.OwnedByViewer = false
+	}
+	if refused := application_context.SummaryExportUnsealableDimension(filter); refused != "" {
+		if words, ok := jobSummaryExportDimensionWords[refused]; ok {
+			refused = words
+		}
+		return "", "A summary export cannot filter by " + refused + ". Change the filter to export a summary."
+	}
+	return values.Encode(), ""
+}
+
+// jobSummaryExportDimensionWords names the dimensions an export refuses as the
+// filter form does.
+var jobSummaryExportDimensionWords = map[string]string{
+	"inboundRelationship":   "Has been",
+	"noInboundRelationship": "Has not been",
+	"ownerDeleted":          "a deleted account as owner",
+	"owner=me":              "your own jobs",
 }
 
 // withAPIOwner spells the Owner select's choice as the API reads it: an account

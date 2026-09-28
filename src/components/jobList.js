@@ -804,6 +804,9 @@ async function answerOf(response, what) {
 export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
     return {
         query: '',
+        // The filter as a summary export seals it (jobSummaryExportFilter):
+        // the viewer's own Jobs asked for by id.
+        exportQuery: '',
         window: '30d',
         loading: false,
         error: '',
@@ -814,23 +817,31 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
         exporting: false,
         exportError: '',
         exported: null,
+        _read: 0,
 
         init() {
             this.query = this.$root?.dataset.summaryQuery || '';
+            this.exportQuery = this.$root?.dataset.exportQuery || '';
         },
 
+        // Each read is numbered: an answer for a window the reader has since
+        // changed is not applied over the one they chose.
         async load() {
+            const read = ++this._read;
             this.loading = true;
             this.error = '';
             try {
                 const separator = this.query ? '&' : '';
                 const response = await fetchImpl(`/v1/jobs/summary?${this.query}${separator}window=${encodeURIComponent(this.window)}`, { headers: { Accept: 'application/json' } });
-                this.summary = await answerOf(response, 'Reading the summary');
+                const summary = await answerOf(response, 'Reading the summary');
+                if (read === this._read) this.summary = summary;
             } catch (error) {
-                this.summary = null;
-                this.error = error.message;
+                if (read === this._read) {
+                    this.summary = null;
+                    this.error = error.message;
+                }
             } finally {
-                this.loading = false;
+                if (read === this._read) this.loading = false;
             }
         },
 
@@ -851,13 +862,16 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
         // The range is whole days in the reader's zone: from the first day's
         // start to the end of the last.
         async exportSummary() {
+            // One export per press: a second while the first is on its way would
+            // queue the same costly export twice.
+            if (this.exporting) return;
             this.exporting = true;
             this.exportError = '';
             this.exported = null;
             try {
                 const to = new Date(`${this.exportTo}T00:00`);
                 to.setDate(to.getDate() + 1);
-                const response = await fetchImpl(`/v1/jobs/summary/export${this.query ? `?${this.query}` : ''}`, {
+                const response = await fetchImpl(`/v1/jobs/summary/export${this.exportQuery ? `?${this.exportQuery}` : ''}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
                     body: JSON.stringify({ from: new Date(`${this.exportFrom}T00:00`).toISOString(), to: to.toISOString(), format: this.exportFormat }),

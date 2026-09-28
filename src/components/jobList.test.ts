@@ -722,15 +722,44 @@ describe('job summary panel', () => {
         expect(panel.summary).toBe(null);
     });
 
+    test('applies only the answer for the window chosen last', async () => {
+        const answers: Array<(value: unknown) => void> = [];
+        const fetchImpl = vi.fn(() => new Promise(resolve => answers.push(resolve)));
+        const panel = Object.assign(jobSummary({ fetchImpl: fetchImpl as any }), { query: '' });
+        panel.window = '30d';
+        const slow = panel.load();
+        panel.window = '7d';
+        const fast = panel.load();
+        answers[1]({ ok: true, json: async () => ({ ...summary, total: 7 }) });
+        await fast;
+        answers[0]({ ok: true, json: async () => ({ ...summary, total: 30 }) });
+        await slow;
+        expect(panel.summary.total).toBe(7);
+        expect(panel.loading).toBe(false);
+    });
+
+    test('queues one export for a second press while the first is on its way', async () => {
+        let answer!: (value: unknown) => void;
+        const fetchImpl = vi.fn(() => new Promise(resolve => { answer = resolve; }));
+        const panel = Object.assign(jobSummary({ fetchImpl: fetchImpl as any }), { exportQuery: '' });
+        panel.exportFrom = '2025-01-01';
+        panel.exportTo = '2025-12-31';
+        const first = panel.exportSummary();
+        await panel.exportSummary();
+        answer({ ok: true, json: async () => ({ job: { id: 'export-1', title: 'Job summary' } }) });
+        await first;
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     test('queues an export of the list\'s filter for the chosen days, and links the Job it made', async () => {
         const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ job: { id: 'export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' } }) }));
-        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'kind=remote-download' });
+        const panel = Object.assign(jobSummary({ fetchImpl }), { query: 'kind=remote-download&owner=me', exportQuery: 'kind=remote-download&ownerId=9' });
         panel.exportFrom = '2025-01-01';
         panel.exportTo = '2025-12-31';
         panel.exportFormat = 'json';
         await panel.exportSummary();
         const [url, init] = fetchImpl.mock.calls[0];
-        expect(url).toBe('/v1/jobs/summary/export?kind=remote-download');
+        expect(url).toBe('/v1/jobs/summary/export?kind=remote-download&ownerId=9');
         expect(init.method).toBe('POST');
         expect(JSON.parse(init.body)).toEqual({
             from: new Date('2025-01-01T00:00').toISOString(), to: new Date('2026-01-01T00:00').toISOString(), format: 'json',
