@@ -15,6 +15,9 @@ function mapOption(raw) {
  */
 export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
     const { profile } = profileBridge;
+    // Optional chip link (the tag editor's chips go to the tag page). Null for every
+    // other profile, whose selected chips are not navigation.
+    const itemHrefFor = profileBridge.itemHref || null;
     // A profile without form metadata is not part of a submitted form: the lightbox tag editor
     // and the entity picker's filters render one, so there is no field name, no minimum to
     // enforce, and Escape returns focus to the surrounding surface instead of the form.
@@ -534,6 +537,22 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             }
 
             return `${item.Name} (${item.Category.Name})`
+        },
+
+        /** Where the chip for this item links, or null when it is not a link. */
+        entityHref(item) {
+            return itemHrefFor ? itemHrefFor(item) : null;
+        },
+
+        // The tag editor overrides these with its profile's in-flight/failed keys.
+        // Declared here so the shared chip markup can ask every profile without an
+        // undeclared identifier in an Alpine expression (which would throw).
+        isPending() {
+            return false;
+        },
+
+        isFailed() {
+            return false;
         },
 
         // Total roving options including the virtual "Create X" row when present.

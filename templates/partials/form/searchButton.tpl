@@ -3,8 +3,8 @@
 {# partial (merge, save, modal, etc.) keep their normal document-flow behavior. #}
 {% if not small %}<div class="filter-submit-bar pt-3 w-full">{% endif %}
 {# `disabledWhen` is an Alpine expression evaluated in the surrounding form's #}
-{# scope. Used by the merge and Add Tags forms so the submit is unavailable #}
-{# while the selection is empty (findings 16/92, 56/91). #}
+{# scope. The merge forms use it so the submit is unavailable while the #}
+{# selection is empty (findings 16/92, 56/91). #}
 <button type="submit"
     {% if disabledWhen %}:disabled="{{ disabledWhen }}"{% endif %}
     {% if describedBy %}aria-describedby="{{ describedBy }}"{% endif %}

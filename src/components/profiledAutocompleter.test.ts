@@ -308,6 +308,88 @@ describe('profiled autocompleter bridge', () => {
         selector.destroy();
     });
 
+    test('association writes for one tag are serialized so the last transition wins', async () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const calls: string[] = [];
+        let releaseFirst!: () => void;
+        const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+            calls.push(url);
+            // Hold the add open so the remove that supersedes it has to wait.
+            return calls.length === 1
+                ? first.then(() => ({ ok: true, status: 200 }))
+                : Promise.resolve({ ok: true, status: 200 });
+        });
+
+        const selector = mount(tagEditorSelector({
+            usage: 'resource',
+            addUrl: '/v1/resources/addTags',
+            removeUrl: '/v1/resources/removeTags',
+            entityId: 7,
+        }) as ProfiledSelector);
+
+        selector._core.dispatch({
+            type: 'select-option',
+            option: { key: alpha.ID, label: alpha.Name, raw: alpha },
+        });
+        selector._core.dispatch({ type: 'remove-option', key: alpha.ID });
+
+        // The adapter owns the transport: the remove must not race the add it
+        // supersedes, or the server keeps whichever lands last rather than what
+        // the reader last chose.
+        await vi.waitFor(() => expect(calls).toEqual(['/v1/resources/addTags']));
+        releaseFirst();
+        await vi.waitFor(() =>
+            expect(calls).toEqual(['/v1/resources/addTags', '/v1/resources/removeTags']),
+        );
+
+        selector.destroy();
+    });
+
+    test('the built-in URL adapter announces a failed write, but a caller adapter does not', async () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const ROLLBACK = 'Could not update tags; the change was undone.';
+        const text = (component: ProfiledSelector) =>
+            (component as unknown as { _liveRegion: { element: { textContent: string } } })
+                ._liveRegion.element.textContent;
+        const dispatchSelect = (component: ProfiledSelector) =>
+            component._core.dispatch({
+                type: 'select-option',
+                option: { key: alpha.ID, label: alpha.Name, raw: alpha },
+            });
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+            Promise.resolve({ ok: false, status: 500 }),
+        );
+
+        const sidebar = mount(tagEditorSelector({
+            usage: 'resource',
+            addUrl: '/v1/resources/addTags',
+            removeUrl: '/v1/resources/removeTags',
+            entityId: 7,
+        }) as ProfiledSelector);
+        dispatchSelect(sidebar);
+        await vi.waitFor(() => expect(text(sidebar)).toBe(ROLLBACK));
+        sidebar.destroy();
+
+        // A caller-supplied adapter (the lightbox) announces its own failure, so
+        // the generic rollback message must not be spoken a second time. Wait for
+        // the rollback itself first, so the assertion is not passing because the
+        // failure has not been processed yet.
+        const caller = mount(tagEditorSelector({
+            usage: 'resource',
+            association: {
+                add: () => Promise.reject(new Error('nope')),
+                remove: () => Promise.resolve(),
+            },
+        }) as ProfiledSelector);
+        dispatchSelect(caller);
+        await vi.waitFor(() => expect(caller.selectedResults).toEqual([]));
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(text(caller)).not.toBe(ROLLBACK);
+        caller.destroy();
+    });
+
     test('a zero maximum keeps a multi-value field unlimited rather than blocking selection', () => {
         const alpha = { ID: 1, Name: 'Alpha' };
         const beta = { ID: 2, Name: 'Beta' };

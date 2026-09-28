@@ -344,4 +344,33 @@ describe('tag editor profile', () => {
         expect(profile.getSnapshot()).toEqual({ pendingKeys: [], failedKeys: [], destroyed: true });
         expect(profile.selector.getSnapshot().destroyed).toBe(true);
     });
+
+    test('the entity browser excludes what the entity already has, as the selection changes', () => {
+        const alpha = tag(1, 'Alpha');
+        const beta = tag(2, 'Beta');
+        const writes = persistence();
+        writes.add.mockReturnValue(Promise.resolve());
+        writes.remove.mockReturnValue(Promise.resolve());
+        const profile = createTagEditorProfile({
+            usage: 'resource',
+            selected: [alpha],
+            association: writes.adapter,
+        });
+
+        // The picker filters by excludedKeys at the source, so a seeded tag has to
+        // be in it or the browser offers back a tag the entity already has.
+        expect(profile.browse.excludedKeys().map(String)).toContain('1');
+
+        profile.selector.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+        expect(profile.browse.excludedKeys().map(String)).toEqual(
+            expect.arrayContaining(['1', '2']),
+        );
+
+        profile.selector.dispatch({ type: 'remove-option', key: alpha.ID });
+        expect(profile.browse.excludedKeys().map(String)).not.toContain('1');
+        expect(profile.browse.excludedKeys().map(String)).toContain('2');
+    });
 });

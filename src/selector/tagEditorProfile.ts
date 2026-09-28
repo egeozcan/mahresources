@@ -118,7 +118,17 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
         });
         this.form = field.form;
         this.lookup = field.lookup;
-        this.browse = field.browse;
+        // The entity browser filters by `excludedKeys` at the source (pickerSession),
+        // and this profile is the one place that knows the current selection changes
+        // as tags are added and removed. Without this the browser offers a tag the
+        // entity already has, which is the same defect the dropdown avoids.
+        this.browse = Object.freeze({
+            ...field.browse,
+            excludedKeys: () => [
+                ...field.browse.excludedKeys(),
+                ...this.selected.map((option) => canonicalKey(option.key)),
+            ],
+        });
         this.interaction = field.interaction;
         this.presentation = field.presentation;
         this.association = association;

@@ -36,7 +36,7 @@ test.describe.serial('Note Section Config - Hidden sections', () => {
     await page.goto(`/note?id=${noteId}`);
     await page.waitForLoadState('load');
 
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(0);
   });
 
@@ -139,7 +139,7 @@ test.describe.serial('Note Section Config - Default behavior', () => {
 
     await expect(page.locator('text=Default sections should be visible')).toHaveCount(1);
 
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(1);
 
     const noteTypeLink = page.locator('a[href*="/noteType?id="]');
@@ -168,7 +168,7 @@ test.describe.serial('Note Section Config - No NoteType fallback', () => {
 
     await expect(page.locator('text=Note without any note type')).toHaveCount(1);
 
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(1);
   });
 });

@@ -425,60 +425,82 @@ func TestResourceUploadForm_RequiresAFileUnlessAURLIsGiven(t *testing.T) {
 // 16/92 and 56/91 — the merge and Add Tags forms guard an empty selection
 // ---------------------------------------------------------------------------
 
-// TestMergeAndAddTagsForms_CarryASelectionGuard asserts the server-rendered half
-// of the guard. The behaviour itself (disabled button, no destructive confirm)
-// is covered by e2e/tests/regressions/empty-selection-guards.spec.ts.
-func TestMergeAndAddTagsForms_CarryASelectionGuard(t *testing.T) {
+// TestMergeGuardAndImmediateTagEditor asserts the server-rendered half of the
+// merge guard and the detail tag list's contract. The behaviour itself (disabled
+// merge button, no destructive confirm, tags persisted without a reload) is
+// covered by e2e/tests/regressions/ws3-empty-selection-guards.spec.ts.
+func TestMergeGuardAndImmediateTagEditor(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	tag := createTagViaAPI(t, tc, "ws3-guard-tag")
 	group := tc.CreateDummyGroup("ws3-guard-group")
 
-	cases := []struct {
-		name  string
-		path  string
-		guard string
+	// The merge forms keep a submit button, so their guard is visible twice over:
+	// the declaration and the button's disabled binding.
+	mergeCases := []struct {
+		name string
+		path string
 	}{
-		{"tag merge", "/tag?id=" + uitoa(tag), "requireSelection: { field: 'losers' }"},
-		{"group merge", "/group?id=" + uitoa(uint(group.ID)), "requireSelection: { field: 'losers' }"},
-		{"group add tags", "/group?id=" + uitoa(uint(group.ID)), "selectionRequired({ field: 'editedId' })"},
+		{"tag merge", "/tag?id=" + uitoa(tag)},
+		{"group merge", "/group?id=" + uitoa(uint(group.ID))},
 	}
-
-	for _, c := range cases {
+	for _, c := range mergeCases {
 		t.Run(c.name, func(t *testing.T) {
 			body := tc.requestWithAccept(http.MethodGet, c.path, browserAccept, "").Body.String()
-			if !strings.Contains(body, c.guard) {
-				t.Errorf("the %s form should declare a selection guard (%s)", c.name, c.guard)
+			if !strings.Contains(body, "requireSelection: { field: 'losers' }") {
+				t.Errorf("the %s form should declare a selection guard", c.name)
 			}
 			if !strings.Contains(body, `:disabled="!hasSelection"`) {
 				t.Errorf("the %s submit should be unavailable while the selection is empty", c.name)
 			}
 		})
 	}
+
+	t.Run("group add tags", func(t *testing.T) {
+		body := tc.requestWithAccept(http.MethodGet, "/group?id="+uitoa(uint(group.ID)), browserAccept, "").Body.String()
+		if !strings.Contains(body, "tagEditorSelector({") {
+			t.Error("the detail tag list should use the immediate tag-editor profile")
+		}
+		if !strings.Contains(body, "addUrl: '/v1/groups/addTags'") {
+			t.Error("the tag editor should name the group addTags endpoint")
+		}
+		if !strings.Contains(body, "removeUrl: '/v1/groups/removeTags'") {
+			t.Error("the tag editor should name the group removeTags endpoint")
+		}
+		// No form and no submit button: the association is persisted as it is chosen,
+		// so nothing may reintroduce a manual submit.
+		if strings.Contains(body, "Add&nbsp;Tags") {
+			t.Error("the tag list should no longer offer a submit button")
+		}
+	})
 }
 
-// TestAddTagsFormOnEveryEntityPage is the control that the Add Tags guard reaches
+// TestAddTagsFormOnEveryEntityPage is the control that the tag editor reaches
 // all four templates that include partials/tagList.tpl, not just the group page.
 func TestAddTagsFormOnEveryEntityPage(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	group := tc.CreateDummyGroup("ws3-addtags-group")
 	note := tc.CreateDummyNote("ws3-addtags-note")
+	resource := tc.CreateDummyResource(t, "ws3-addtags-resource")
 
 	paths := []string{
 		"/group?id=" + uitoa(uint(group.ID)),
 		"/note?id=" + uitoa(uint(note.ID)),
 		"/note/text?id=" + uitoa(uint(note.ID)),
+		"/resource?id=" + uitoa(uint(resource.ID)),
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			body := tc.requestWithAccept(http.MethodGet, path, browserAccept, "").Body.String()
-			// Positive control: the form is on this page at all.
-			if !strings.Contains(body, "Add&nbsp;Tags") {
-				t.Skipf("%s does not render the Add Tags form", path)
+			// Fail, not skip: every one of these pages must render the editor, so a
+			// missing field marker is the regression this test exists to catch rather
+			// than a reason to pass.
+			if !strings.Contains(body, `data-selector-field="editedId"`) {
+				t.Fatalf("%s does not render the tag editor", path)
 			}
-			if !strings.Contains(body, "selectionRequired({ field: 'editedId' })") {
-				t.Errorf("%s should guard its Add Tags submit", path)
+			if !strings.Contains(body, "tagEditorSelector({") {
+				t.Errorf("%s should use the immediate tag editor", path)
 			}
 		})
 	}

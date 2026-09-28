@@ -2224,3 +2224,46 @@ where the review's own record lives.
 
 - A caption goes inside the box of the control it describes. The trim range line sat between the button row and the slider with 6px above it and 38px below, and 22px of that 38px was dead air inside the slider's `h-16` track row — a 12px bar centred in 64px. Moving the caption into that box and sizing the row to what it actually holds gave 12px above and 16px below, and took 32px off the dialog. The dead space was never a padding value; it was a height that had been set generously once and never revisited. It also halved the click target for the track, from 64px to 32px, which is still above WCAG 2.2's 24px minimum — worth measuring, not assuming, when a height changes something interactive.
 - Measure the complaint before fixing it. "Too close to the top, too far from the bottom" turned out to be 6px and 38px; the obvious fix — adding margin above the text — would have made the worse half worse, because the space below was not a margin at all.
+
+## Auto-adding sidebar tags on the detail pages — 2026-09-28
+
+- The first attempt kept the native form and auto-submitted it from the selector's
+  `onChange`. It shipped the two defects the reader then reported: a full page reload
+  per tag, and a suggestion list that offered tags the entity already had. Both have
+  the same root — the form posted a set the server had to be told about, and the
+  selector was seeded with nothing. The fix was not to auto-submit harder; it was to
+  use the profile that already persists associations as they change
+  (`tagEditorProfile`) and to seed it with the entity's tags.
+- Already-selected options are filtered by the selector core, from its `selected`
+  set — not by the source, not by the endpoint. A tag list that renders its tags
+  somewhere else and starts the selector empty therefore offers every one of them
+  back. Seed the selector with the entity's associations; do not add a second filter.
+- Optimistic persistence and a server-rendered list cannot both own the same chips.
+  Rendering the entity's tags only from the selector's `selectedResults` is what
+  makes an in-place add visible without a refetch; keeping a server-rendered copy
+  beside it leaves duplication or staleness, and a reload is the only thing that
+  reconciles them.
+- The `tagEditorProfile`'s association adapter was lightbox-only because the lightbox
+  also keeps a details cache and a recent-tag list. A caller that has nothing but the
+  endpoints (the sidebar) should not have to write that adapter: name the add/remove
+  URLs and the entity id, and let the bridge build it. One adapter used twice beats
+  two adapters that drift.
+- A profile invalidates a superseded write's *result*, but it cannot recall a request
+  the server may already have applied. A rapid add-then-remove therefore settles in
+  whatever order the responses arrive, and the row and the UI can disagree. The
+  adapter — which owns the transport — is where that is fixed: serialize per key,
+  so the last transition the reader gave is the last one the server sees.
+- The entity browser filters on `browse.excludedKeys`, the dropdown filters on the
+  selector's `selected`. Seeding `selected` therefore fixes the dropdown and leaves
+  the browser offering the same tags back. A profile that knows its associations
+  should override `excludedKeys` to include its current selection, at the profile
+  rather than at each caller.
+- The shared chip markup asks `isPending`/`isFailed` of *every* profile. A bare
+  `pendingIds` there is an undeclared identifier for the others and throws; declare
+  the predicates as false defaults on the base adapter and override them where the
+  state exists (the same shape as the chip `itemHref`). This is the general rule for
+  one partial serving profiles with different state.
+- An optimistic announce needs a paired failure announce. The live region said
+  "Added X"; a silent rollback tells a screen-reader user a change happened and never
+  that it was undone. The rollback is the half that is easy to forget because the
+  visual state is already correct.

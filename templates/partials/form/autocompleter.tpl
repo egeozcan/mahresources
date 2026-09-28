@@ -2,10 +2,13 @@
 {# (entity/usage) rather than endpoints. Every profile renders identical markup, hidden #}
 {# controls, ids and ARIA relationships. #}
 <div
-        x-data="{% if profile == 'single' %}singleEntitySelector{% elif profile == 'multi' %}multiEntitySelector{% elif profile == 'creatable' %}creatableEntitySelector{% elif profile == 'tag' %}tagFieldSelector{% endif %}({
+        x-data="{% if profile == 'single' %}singleEntitySelector{% elif profile == 'multi' %}multiEntitySelector{% elif profile == 'creatable' %}creatableEntitySelector{% elif profile == 'tag' %}tagFieldSelector{% elif profile == 'tagEditor' %}tagEditorSelector{% endif %}({
         {% if entity %}entity: '{{ entity }}',{% endif %}
-        {% if usage %}{% if profile == 'tag' %}usage: '{{ usage }}',{% else %}tagSuggestions: { usage: '{{ usage }}' },{% endif %}{% endif %}
+        {% if usage %}{% if profile == 'tag' or profile == 'tagEditor' %}usage: '{{ usage }}',{% else %}tagSuggestions: { usage: '{{ usage }}' },{% endif %}{% endif %}
         selected: {{ selectedItems|json }} || [],
+        {# The tag editor persists each association immediately, so it needs the endpoints #}
+        {# and the owning entity rather than a form to submit. #}
+        {% if profile == 'tagEditor' %}addUrl: '{{ addUrl }}', removeUrl: '{{ removeUrl }}', entityId: {{ entityId }},{% endif %}
         {% if not standalone %}form: { name: '{{ elName }}', minimum: parseInt('{{ min }}') || 0 },{% endif %}
         {% if max %}maximum: parseInt('{{ max }}') || 0,{% endif %}
         {% if categoryDecoration %}categoryDecoration: true,{% endif %}

@@ -2,16 +2,25 @@
     <p class="
             inline-flex rounded items-center py-0.5 pl-2 pr-0.5 text-xs font-mono font-medium bg-amber-100
             text-amber-800 my-0.5 mr-0.5
-        ">
-        <span class="break-all" x-text="getItemDisplayName(result)"></span>
+        "
+        {# The tag editor publishes in-flight/failed keys; every other profile answers false. #}
+        :class="{ 'opacity-60 tag-pending': isPending(result), 'tag-shake': isFailed(result) }"
+        :data-tag-pending="isPending(result) ? 'true' : 'false'">
+        <template x-if="entityHref(result)">
+            <a class="break-all hover:underline" :href="entityHref(result)" x-text="getItemDisplayName(result)"></a>
+        </template>
+        <template x-if="!entityHref(result)">
+            <span class="break-all" x-text="getItemDisplayName(result)"></span>
+        </template>
         <button
                 @click="removeItem(result)"
                 type="button"
                 :aria-label="'Remove ' + getItemDisplayName(result)"
+                :disabled="isPending(result)"
                 class="
                         flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
                         text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-hidden
-                        focus:bg-amber-700 focus:text-white"
+                        focus:bg-amber-700 focus:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 tabindex="0"
                 @keydown.enter.prevent="let root = $el.closest('[x-data]'); removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())"
                 @keydown.space.prevent="let root = $el.closest('[x-data]'); removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())"

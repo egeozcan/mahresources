@@ -6,7 +6,7 @@ import { selectorRegistry, observeSelectorField } from '../selector/selectorRegi
  * HTML POSTs to `/v1/…` with a `?redirect=`, so submitting one empty navigated the
  * whole page to a raw API URL and left the reader on an error page.
  *
- * Exposes `hasSelection` for the submit button's `:disabled`, and
+ * Exposes `hasSelection` for a submit button's `:disabled`, and
  * `blockEmptySubmit(event)` for the submit handler. Both are needed: a disabled
  * button does not stop `form.requestSubmit()`, which the selector itself calls
  * when the user presses Enter in the combobox.
@@ -69,28 +69,6 @@ export function selectionRequiredState({ field, message = 'Choose at least one i
             if (this.hasSelection) return false;
             event.preventDefault();
             return true;
-        },
-    };
-}
-
-/**
- * Alpine factory for a form whose only guard is the selection requirement (the
- * Add Tags form). Merge forms compose the same state into `confirmAction`, so the
- * destructive confirmation is skipped rather than shown over an empty selection.
- */
-export function selectionRequired(options = {}) {
-    return {
-        ...selectionRequiredState(options),
-        init() {
-            this.initSelectionRequired(this.$el);
-        },
-        destroy() {
-            this.destroySelectionRequired();
-        },
-        events: {
-            ['@submit'](event) {
-                this.blockEmptySubmit(event);
-            },
         },
     };
 }

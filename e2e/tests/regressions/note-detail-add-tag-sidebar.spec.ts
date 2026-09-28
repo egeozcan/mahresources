@@ -56,27 +56,27 @@ test.describe('Note detail page should have Add Tag form in sidebar', () => {
     const tagsHeading = page.locator('aside h2, [role="complementary"] h2').filter({ hasText: 'Tags' });
     await expect(tagsHeading).toBeVisible({ timeout: 5000 });
 
-    // The "Add Tag" form should be present in the sidebar, just like on group and resource detail pages.
-    // On group detail page: form[action*="addTags"] with an autocompleter combobox is present.
+    // The tag editor (autocompleter) should be present in the sidebar, just like on group and resource detail pages.
+    // On group detail page: the `[data-selector-field="editedId"]` tag editor is present.
     // On resource detail page: same pattern.
-    // On note detail page: this form is MISSING (the bug).
-    const addTagForm = page.locator('form[action*="addTags"]');
-    await expect(addTagForm).toBeVisible({ timeout: 3000 });
+    // On note detail page: this editor is MISSING (the bug).
+    const tagEditor = page.locator('[data-selector-field="editedId"]');
+    await expect(tagEditor).toBeVisible({ timeout: 3000 });
   });
 
   test('group detail page has Add Tag form for comparison', async ({
     page,
   }) => {
-    // Navigate to the group detail page to confirm it HAS the Add Tag form
+    // Navigate to the group detail page to confirm it HAS the tag editor
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
-    // The "Add Tag" form should be present on the group detail page
-    const addTagForm = page.locator('form[action*="addTags"]');
-    await expect(addTagForm).toBeVisible({ timeout: 3000 });
+    // The tag editor should be present on the group detail page
+    const tagEditor = page.locator('[data-selector-field="editedId"]');
+    await expect(tagEditor).toBeVisible({ timeout: 3000 });
 
     // And it should have an autocompleter combobox
-    const tagCombobox = addTagForm.locator('[role="combobox"]');
+    const tagCombobox = tagEditor.locator('[role="combobox"]');
     await expect(tagCombobox).toBeVisible();
   });
 

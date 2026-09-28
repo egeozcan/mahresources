@@ -39,7 +39,7 @@ test.describe.serial('Group Section Config - Hidden sections', () => {
     await page.waitForLoadState('load');
 
     // Tags section in sidebar should not be present (no addTags form)
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(0);
   });
 
@@ -184,7 +184,7 @@ test.describe.serial('Group Section Config - Default behavior', () => {
     await expect(page.locator('text=Merge others with this group?')).toHaveCount(1);
 
     // Tags section (addTags form) should be visible
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(1);
   });
 });
@@ -255,7 +255,7 @@ test.describe.serial('Resource Section Config', () => {
     await page.goto(`/resource?Id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    const tagForm = page.locator('form[action*="addTags"]');
+    const tagForm = page.locator('[data-selector-field="editedId"]');
     await expect(tagForm).toHaveCount(0);
   });
 });

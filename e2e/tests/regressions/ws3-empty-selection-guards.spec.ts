@@ -8,11 +8,13 @@
  * reader accepted a destructive-sounding prompt and was then ejected from the
  * app with the message "one or more losers required".
  *
- * The server-rendered half (the guard is declared, the submit is bound to the
- * selection, the message no longer says "losers") is covered by
+ * The server-rendered half (the merge guard is declared, its submit is bound to
+ * the selection, the message no longer says "losers") is covered by
  * server/api_tests/ws3_error_surface_test.go. This spec covers the behaviour:
- * the button is unavailable, no confirmation fires, the page does not move, and
- * the happy path still works. That confirmation is the in-app
+ * the merge button is unavailable, no confirmation fires, the page does not move,
+ * the happy path still works, and the detail tag editor — no form, no submit
+ * button, persisted as each tag is chosen — neither reloads the page nor offers
+ * a tag the entity already has. That confirmation is the in-app
  * `role="alertdialog"` rather than `window.confirm`, so it is driven through
  * e2e/helpers/confirm-dialog.ts and asserted as ordinary DOM.
  */
@@ -25,7 +27,7 @@ function failOnPageError(page: Page, sink: string[]) {
   page.on('pageerror', (error) => sink.push(error.message));
 }
 
-test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
+test.describe('Merge guard and the in-place tag editor', () => {
   let runId: string;
   let categoryId: number;
 
@@ -119,36 +121,44 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
     await apiClient.deleteTag(winner.ID);
   });
 
-  test('the group Add Tags button is unavailable while nothing is chosen', async ({
+  test('a tag already on the entity is not offered by the editor', async ({
     page,
     apiClient,
   }) => {
     const errors: string[] = [];
     failOnPageError(page, errors);
 
-    const group = await apiClient.createGroup({ name: `ws3 addtags ${runId}`, categoryId });
+    const group = await apiClient.createGroup({ name: `ws3 filter ${runId}`, categoryId });
+    const attached = await apiClient.createTag(`ws3 attached ${runId}`, 'already on the group');
+    await apiClient.addTagsToGroups([group.ID], [attached.ID]);
 
     try {
       await page.goto(`/group?id=${group.ID}`);
       await page.waitForLoadState('load');
 
-      const addTags = page.getByRole('button', { name: 'Add Tags' });
-      await expect(addTags).toBeVisible();
-      await expect(addTags).toBeDisabled();
-      await expect(page.getByText('Choose at least one tag first.')).toBeVisible();
+      const field = page.locator('[data-selector-field="editedId"] input[role="combobox"]');
+      const search = page.waitForResponse((r) => r.url().includes('/v1/tags/suggest'));
+      await field.fill(attached.Name);
+      const suggestions = (await (await search).json()) as { ID: number }[];
 
-      const form = page.locator('form:has(button:text("Add Tags"))');
-      await form.evaluate((el: HTMLFormElement) => el.requestSubmit());
-      await page.waitForTimeout(300);
-
-      expect(page.url()).toContain(`/group?id=${group.ID}`);
+      // Positive control: the server did return the tag (it is the only one
+      // matching); the selector is what keeps an already-attached tag out of the
+      // list — and seeding it with the entity's tags is what makes that happen.
+      // Without the seed it is offered back as a result, and as a create row for
+      // the very name the entity already has.
+      expect(suggestions.some((t) => t.ID === attached.ID)).toBe(true);
+      await expect(page.getByRole('option', { name: attached.Name, exact: true })).toHaveCount(0);
+      await expect(
+        page.getByRole('option', { name: `Create "${attached.Name}"`, exact: true }),
+      ).toHaveCount(0);
       expect(errors).toEqual([]);
     } finally {
       await apiClient.deleteGroup(group.ID);
+      await apiClient.deleteTag(attached.ID);
     }
   });
 
-  test('the group Add Tags button still adds a tag once one is chosen', async ({
+  test('choosing a tag adds it in place, with no submit button and no reload', async ({
     page,
     apiClient,
   }) => {
@@ -162,16 +172,23 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
       await page.goto(`/group?id=${group.ID}`);
       await page.waitForLoadState('load');
 
+      // The explicit button, and the form it lived in, are gone.
+      await expect(page.locator('form[action*="addTags"]')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Add Tags' })).toHaveCount(0);
+
+      // A page-lifetime marker survives only if the add does not reload the page.
+      await page.evaluate(() => {
+        (window as unknown as { __inPlace?: boolean }).__inPlace = true;
+      });
+
       const field = page.locator('[data-selector-field="editedId"] input[role="combobox"]');
       await field.fill(`ws3 attach ${runId}`);
+      const added = page.waitForResponse(
+        (r) => r.url().includes('/v1/groups/addTags') && r.request().method() === 'POST',
+      );
       await page.locator(`[role="option"]:has-text("ws3 attach ${runId}")`).first().click();
+      await added;
 
-      const addTags = page.getByRole('button', { name: 'Add Tags' });
-      await expect(addTags).toBeEnabled();
-      await addTags.click();
-      await page.waitForLoadState('load');
-
-      // Persisted state, not the rendered chip.
       await expect
         .poll(async () => {
           const fresh = (await apiClient.getGroup(group.ID)) as unknown as {
@@ -180,7 +197,140 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
           return (fresh.Tags ?? []).some((t) => t.ID === tag.ID);
         })
         .toBe(true);
+
+      expect(
+        await page.evaluate(() => (window as unknown as { __inPlace?: boolean }).__inPlace),
+      ).toBe(true);
       expect(errors).toEqual([]);
+    } finally {
+      await apiClient.deleteGroup(group.ID);
+      await apiClient.deleteTag(tag.ID);
+    }
+  });
+
+  test('creating a new tag from the sidebar adds it in place', async ({ page, apiClient }) => {
+    const errors: string[] = [];
+    failOnPageError(page, errors);
+
+    const group = await apiClient.createGroup({ name: `ws3 createtag ${runId}`, categoryId });
+    const tagName = `ws3 newtag ${runId}`;
+    let createdId: number | undefined;
+
+    try {
+      await page.goto(`/group?id=${group.ID}`);
+      await page.waitForLoadState('load');
+
+      await page.evaluate(() => {
+        (window as unknown as { __inPlace?: boolean }).__inPlace = true;
+      });
+
+      const field = page.locator('[data-selector-field="editedId"] input[role="combobox"]');
+      await field.fill(tagName);
+      const createRow = page.getByRole('option', { name: `Create "${tagName}"`, exact: true });
+      await expect(createRow).toBeVisible();
+
+      // Choosing the virtual create row creates the tag and persists the
+      // association in one step, in place.
+      const tagCreated = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === '/v1/tag' && r.request().method() === 'POST',
+      );
+      const added = page.waitForResponse(
+        (r) => r.url().includes('/v1/groups/addTags') && r.request().method() === 'POST',
+      );
+      await createRow.click();
+      await tagCreated;
+      await added;
+
+      await expect
+        .poll(async () => {
+          const fresh = (await apiClient.getGroup(group.ID)) as unknown as {
+            Tags?: { Name: string }[];
+          };
+          return (fresh.Tags ?? []).some((t) => t.Name === tagName);
+        })
+        .toBe(true);
+      expect(
+        await page.evaluate(() => (window as unknown as { __inPlace?: boolean }).__inPlace),
+      ).toBe(true);
+      createdId = (await apiClient.getTags()).find((t) => t.Name === tagName)?.ID;
+      expect(errors).toEqual([]);
+    } finally {
+      await apiClient.deleteGroup(group.ID);
+      if (createdId) await apiClient.deleteTag(createdId);
+    }
+  });
+
+  test('removing a tag from a chip persists it, and the chip links to the tag', async ({
+    page,
+    apiClient,
+  }) => {
+    const errors: string[] = [];
+    failOnPageError(page, errors);
+
+    const group = await apiClient.createGroup({ name: `ws3 remove ${runId}`, categoryId });
+    const tag = await apiClient.createTag(`ws3 removable ${runId}`);
+    await apiClient.addTagsToGroups([group.ID], [tag.ID]);
+
+    try {
+      await page.goto(`/group?id=${group.ID}`);
+      await page.waitForLoadState('load');
+
+      // The chip is still a link to the tag's own page...
+      const tagEditor = page.locator('[data-selector-field="editedId"]');
+      const chip = tagEditor.getByRole('link', { name: tag.Name, exact: true });
+      await expect(chip).toHaveAttribute('href', `/tag?id=${tag.ID}`);
+
+      // ...with a remove control that persists the removal in place.
+      const removed = page.waitForResponse(
+        (r) => r.url().includes('/v1/groups/removeTags') && r.request().method() === 'POST',
+      );
+      await page.getByRole('button', { name: `Remove ${tag.Name}`, exact: true }).click();
+      await removed;
+
+      await expect
+        .poll(async () => {
+          const fresh = (await apiClient.getGroup(group.ID)) as unknown as {
+            Tags?: { ID: number }[];
+          };
+          return (fresh.Tags ?? []).some((t) => t.ID === tag.ID);
+        })
+        .toBe(false);
+      await expect(chip).toHaveCount(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await apiClient.deleteGroup(group.ID);
+      await apiClient.deleteTag(tag.ID);
+    }
+  });
+
+  test('a failed add rolls the chip back and announces it', async ({ page, apiClient }) => {
+    const errors: string[] = [];
+    failOnPageError(page, errors);
+
+    const group = await apiClient.createGroup({ name: `ws3 fail ${runId}`, categoryId });
+    const tag = await apiClient.createTag(`ws3 failing ${runId}`);
+
+    try {
+      await page.goto(`/group?id=${group.ID}`);
+      await page.waitForLoadState('load');
+
+      await page.route('**/v1/groups/addTags', (route) =>
+        route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"nope"}' }),
+      );
+
+      const field = page.locator('[data-selector-field="editedId"] input[role="combobox"]');
+      await field.fill(tag.Name);
+      await page.locator(`[role="option"]:has-text("${tag.Name}")`).first().click();
+
+      // The optimistic chip is rolled back, and the reader is told rather than
+      // being left with the live region's optimistic "Added".
+      await expect(page.getByRole('link', { name: tag.Name, exact: true })).toHaveCount(0);
+      await expect(
+        page.locator('[data-selector-field="editedId"]').locator('[role="status"]'),
+      ).toContainText(/could not update tags/i, { timeout: 5000 });
+      expect(errors).toEqual([]);
+
+      await page.unroute('**/v1/groups/addTags');
     } finally {
       await apiClient.deleteGroup(group.ID);
       await apiClient.deleteTag(tag.ID);
