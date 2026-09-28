@@ -742,10 +742,13 @@ func applySearch(db *gorm.DB, term string) *gorm.DB {
 //
 // Walking a document costs several times what matching its text does, and a
 // search that finds one Job reads every row. So the walk only reads a summary
-// whose text holds the term, when that test is sound: a summary is written by
-// Go's JSON encoder, which writes a value's characters as they are unless it
-// must escape them, and a term holding none of those characters appears in the
-// text of every summary that has it in a value. A term with one is walked alone.
+// whose text holds the term, when that test is sound: every summary is stored as
+// Go's JSON encoder writes it (canonicalSummary), which writes a string value's
+// characters as they are unless it must escape them, so a term holding none of
+// those characters appears in the text of every summary holding it in a string.
+// A number is not: the engine renders it its own way (1e3 as 1000), so a term
+// that could be part of one is walked alone, as is a term with an escaped
+// character.
 func summaryValueMatches(db *gorm.DB, term, pattern, operator, escape string) (string, []any) {
 	walk := "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
 		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
@@ -753,10 +756,19 @@ func summaryValueMatches(db *gorm.DB, term, pattern, operator, escape string) (s
 		walk = "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
 			" WHERE jsonb_typeof(node.value) IN ('string', 'number') AND (node.value #>> '{}') " + operator + " ?" + escape + ")"
 	}
-	if !termIsWrittenAsIs(term) {
+	if !termIsWrittenAsIs(term) || termCouldBeANumber(term) {
 		return walk, []any{pattern}
 	}
 	return "(COALESCE(CAST(jobs.summary AS TEXT), '') " + operator + " ?" + escape + " AND " + walk + ")", []any{pattern, pattern}
+}
+
+// termCouldBeANumber reports whether a term is made only of what a number's
+// text is made of, so it could match a number the engine renders differently
+// from how the summary wrote it.
+func termCouldBeANumber(term string) bool {
+	return !strings.ContainsFunc(term, func(r rune) bool {
+		return (r < '0' || r > '9') && !strings.ContainsRune(".eE+-", r)
+	})
 }
 
 // termIsWrittenAsIs reports whether Go's JSON encoder writes every character of

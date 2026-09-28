@@ -2680,8 +2680,33 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 		}
 	}
 	requireIDs(t, "a summary that is one string", search("in common"), plain.ID)
+	// A summary is stored as Go's encoder writes it, whoever wrote the bytes it
+	// was accepted with, so a value spelled with escapes is found by its text.
+	spelled := accept("a spelled summary", `{"place":"caf\u00e9 terrace","size":1e3}`)
+	requireIDs(t, "a value its writer spelled with an escape", search("café"), spelled.ID)
+	// A number is matched as the engine renders it, which is not always as it
+	// was written: 1e3 reads as 1000.
+	requireIDs(t, "a number the engine renders its own way", search("1000"), spelled.ID)
+
 	// A character the JSON encoder escapes is in the value, not in the text.
 	escaped := accept("an escaped summary", `{"note":"fish \u0026 chips","quote":"say \"when\""}`)
 	requireIDs(t, "a value with an escaped character", search("fish & chips"), escaped.ID)
 	requireIDs(t, "a value with quotes", search(`"when"`), escaped.ID)
+}
+
+// TestASummaryIsStoredAsGosEncoderWritesIt pins canonicalSummary: escapes the
+// encoder would not write are resolved, the ones it would are written its way,
+// numbers keep their text and keys their order.
+func TestASummaryIsStoredAsGosEncoderWritesIt(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"b":"caf\u00e9", "a":[1e3, true, null, {"x":"<y>&"}]}`: `{"b":"café","a":[1e3,true,null,{"x":"\u003cy\u003e\u0026"}]}`,
+		` "plain" `:            `"plain"`,
+		`[]`:                   `[]`,
+		`{"k":{},"l":[[1],2]}`: `{"k":{},"l":[[1],2]}`,
+	} {
+		got, err := canonicalSummary(json.RawMessage(raw))
+		if err != nil || string(got) != want {
+			t.Errorf("canonicalSummary(%s) = %s, %v; want %s", raw, got, err, want)
+		}
+	}
 }
