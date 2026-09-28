@@ -199,8 +199,10 @@ The server derives two figures from the series:
 - **Time left**: the executor's own estimate when it gave one. Otherwise it is
   estimated from the speed and the remaining amount, and marked as an estimate.
 
-A Job that is not running reports its **average rate** instead of a speed: the
-amount it counted divided by the time it spent running. Time spent queued,
+A Job that is not running reports its **average rate** (`averageRate` in the
+API) instead of a speed, and the drawer, the Job Center and a Job's page show
+it once the Job has ended: the amount it counted divided by the time it spent
+running. Time spent queued,
 paused or blocked is left out. The count starts from zero, so work done before
 the Job's first report is included, unless that first report already carried a
 count (a Continue that picks up at 120 of 500 did not do those 120 itself). A

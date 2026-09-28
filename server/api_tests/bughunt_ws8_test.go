@@ -141,7 +141,9 @@ func TestDashboardTimeAttributeIsARealInstant(t *testing.T) {
 		t.Fatalf("GET /dashboard = %d, want 200", resp.Code)
 	}
 
-	matches := regexp.MustCompile(`datetime="([^"]+)"`).FindAllStringSubmatch(resp.Body.String(), -1)
+	// The attribute itself, not an Alpine binding of it (`:datetime="job.x"`),
+	// whose value is an expression the browser evaluates to an API instant.
+	matches := regexp.MustCompile(`\sdatetime="([^"]+)"`).FindAllStringSubmatch(resp.Body.String(), -1)
 	if len(matches) == 0 {
 		t.Skip("dashboard rendered no <time datetime> elements; nothing to assert")
 	}

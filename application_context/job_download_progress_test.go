@@ -49,6 +49,8 @@ func TestDownloadJobProgressChoosesAMeasureWithATotalWhenThereIsOne(t *testing.T
 
 	// Once assembled the queue knows the video's size, and the segments still
 	// come first: switching to bytes at the end would erase the Job's history.
+	// The byte counters now hold the video, not what crossed the network, so
+	// the metric says which figure it is.
 	assembled := downloadJobProgress(&download_queue.DownloadJob{
 		Status: download_queue.JobStatusProcessing, Progress: 9 << 20, TotalSize: 9 << 20,
 		Phase: "assembling video", PhaseCount: 40, PhaseTotal: 40,
@@ -56,8 +58,11 @@ func TestDownloadJobProgressChoosesAMeasureWithATotalWhenThereIsOne(t *testing.T
 	if assembled.Unit != "items" || *assembled.Completed != 40 || *assembled.Total != 40 {
 		t.Fatalf("assembled HLS transfer = %+v; want 40 of 40 segments", assembled)
 	}
-	if downloaded := metricByKey(assembled.Metrics, "downloaded"); downloaded == nil || downloaded.Value != 9<<20 {
-		t.Fatalf("assembled HLS metrics = %+v; want the video's bytes", assembled.Metrics)
+	if size := metricByKey(assembled.Metrics, "size"); size == nil || size.Value != 9<<20 || size.Label != "Video size" || size.Unit != "bytes" {
+		t.Fatalf("assembled HLS metrics = %+v; want the video's size", assembled.Metrics)
+	}
+	if downloaded := metricByKey(assembled.Metrics, "downloaded"); downloaded != nil {
+		t.Fatalf("assembled HLS metrics = %+v; the video's size is not the bytes received", assembled.Metrics)
 	}
 
 	queued := downloadJobProgress(&download_queue.DownloadJob{Status: download_queue.JobStatusPending})

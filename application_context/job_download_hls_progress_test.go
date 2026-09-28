@@ -35,9 +35,13 @@ func TestAnHLSDownloadCountsItsSegmentsToTheEnd(t *testing.T) {
 		*progress.Total < 1 || *progress.Completed != *progress.Total {
 		t.Fatalf("final progress = %+v (completed %v, total %v); want every segment of the total", progress, progress.Completed, progress.Total)
 	}
-	downloaded := metricByKey(progress.Metrics, "downloaded")
-	if downloaded == nil || downloaded.Unit != "bytes" || downloaded.Value < 10_000 {
-		t.Fatalf("final metrics = %+v; want the video's bytes as the downloaded metric", progress.Metrics)
+	resources, err := ctx.GetResources(0, 10, &query_models.ResourceSearchQuery{})
+	if err != nil || len(resources) != 1 {
+		t.Fatalf("resources = %d (%v); want the one assembled video", len(resources), err)
+	}
+	size := metricByKey(progress.Metrics, "size")
+	if size == nil || size.Unit != "bytes" || size.Value != float64(resources[0].FileSize) {
+		t.Fatalf("final metrics = %+v; want the video's size, %d bytes", progress.Metrics, resources[0].FileSize)
 	}
 
 	series := done.ProgressSeries

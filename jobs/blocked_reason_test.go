@@ -1,8 +1,11 @@
 package jobs
 
 import (
+	"fmt"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"mahresources/models"
 	"mahresources/models/types"
@@ -50,5 +53,59 @@ func TestBlockedReasonsReadTheLatestBlockedEvent(t *testing.T) {
 	}
 	if reason, ok := reasons[resumed.ID]; ok {
 		t.Fatalf("a Job that is no longer blocked reads %q", reason)
+	}
+}
+
+// A Job blocked and resumed many times keeps every blocked event on its
+// timeline. The read answers one row per Job, the latest, however long that
+// history grows: a listing must not scan and carry a Job's whole history to
+// say one line.
+func TestBlockedReasonsReadOneRowPerJob(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	now := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
+	job := seedJob(t, deps, StateBlocked, now, 400)
+	for sequence := uint64(1); sequence <= 400; sequence++ {
+		eventType, detail := EventBlocked, fmt.Sprintf(`{"reason":"reason-%d"}`, sequence)
+		if sequence%2 == 0 {
+			eventType, detail = EventQueued, `{}`
+		}
+		if sequence == 399 {
+			detail = `{"reason":"role-refused"}`
+		}
+		if err := deps.DB.Create(&models.JobEvent{
+			ID: types.NewUUIDv7(), JobID: job.ID, Sequence: sequence, JobVersion: sequence,
+			Type: eventType, Detail: types.JSON(detail), CreatedAt: now,
+		}).Error; err != nil {
+			t.Fatalf("seed event: %v", err)
+		}
+	}
+
+	var rows int64
+	callback := "test:count-blocked-reason-rows"
+	if err := deps.DB.Callback().Raw().After("gorm:raw").Register(callback, func(tx *gorm.DB) {
+		rows += tx.Statement.RowsAffected
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+		rows += tx.Statement.RowsAffected
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = deps.DB.Callback().Raw().Remove(callback)
+		_ = deps.DB.Callback().Query().Remove(callback)
+	})
+
+	reasons, err := svc.BlockedReasons(deps, []Snapshot{{ID: job.ID, State: StateBlocked}})
+	if err != nil {
+		t.Fatalf("BlockedReasons: %v", err)
+	}
+	if reasons[job.ID] != "role-refused" {
+		t.Fatalf("reason = %q; want the latest", reasons[job.ID])
+	}
+	if rows != 1 {
+		t.Fatalf("the read returned %d rows for one Job; want one", rows)
 	}
 }

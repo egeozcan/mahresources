@@ -1366,12 +1366,13 @@ func (s *jobDownloadSink) mirrorRefusal(err error) error {
 // downloadJobProgress is the durable progress one transfer snapshot describes.
 //
 // An HLS stream counts its segments (the queue's phase counters) from the moment
-// its playlist is read to the end, the assembly included, with the bytes
-// received as a metric: its size is unknown until its last segment lands, and
-// the segments have a total, which is what gives the bar a percentage and the
-// Job an ETA. Once assembled the queue records the video's size in its byte
-// counters too, and the segments still come first: a Job that changed its unit
-// at the end would lose the history its speed and graph are drawn from. Any
+// its playlist is read to the end, the assembly included: its size is unknown
+// until its last segment lands, and the segments have a total, which is what
+// gives the bar a percentage and the Job an ETA. Beside them, a metric: the
+// bytes received while the byte counters carry no total, and the video's size
+// once the queue records the assembled file in them, which is a different
+// figure and says so. The segments still come first then: a Job that changed its
+// unit at the end would lose the history its speed and graph are drawn from. Any
 // other download counts bytes, of the total when the size is known and alone
 // when it is not, since a chunked response still has a speed worth showing.
 func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
@@ -1380,7 +1381,12 @@ func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 	case snap.PhaseTotal > 0:
 		completed, total := snap.PhaseCount, snap.PhaseTotal
 		progress.Completed, progress.Total, progress.Unit = &completed, &total, "items"
-		if snap.Progress > 0 {
+		switch {
+		case snap.TotalSize > 0:
+			progress.Metrics = append(progress.Metrics, jobs.Metric{
+				Key: "size", Label: "Video size", Value: float64(snap.TotalSize), Unit: "bytes",
+			})
+		case snap.Progress > 0:
 			progress.Metrics = append(progress.Metrics, jobs.Metric{
 				Key: "downloaded", Label: "Downloaded", Value: float64(snap.Progress), Unit: "bytes",
 			})
