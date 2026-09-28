@@ -358,7 +358,10 @@ account's own Jobs without naming its id, and `ownerDeleted=true` lists Jobs
 whose owner's account was deleted. The text filter (`search`) matches a Job's
 id, title, the values in its summary (not its field names), its failure message
 and its outputs' labels without regard to case (ASCII letters only on SQLite),
-and ignores spaces around the term.
+and ignores spaces around the term. A search reads every Job the other filters
+leave: at a million Jobs, expect up to about a second on SQLite and about three
+seconds on PostgreSQL, longest for a number or for a word most summaries use
+as a field name.
 
 A lineage link has two ends, and each has a filter. `relationship` matches the
 Job the link starts from: a Retry, Continue or Repeat successor, or a parent
