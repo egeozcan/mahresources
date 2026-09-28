@@ -249,6 +249,11 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 			// sees few of the deployment's events (an owner=me stream, anyone who
 			// is not an administrator) does not read everyone else's again on
 			// every poll. A failed read of it only leaves the cursor where it is.
+			// A viewer whose access widens while the stream is open is therefore
+			// not sent the events it could not see before, only those published
+			// from here on. That is deliberate: the Job lists are the record, and
+			// the next list read shows the newly visible Jobs, while their history
+			// sent now would arrive as live events and be announced as news.
 			issued, issuedErr := ctx.GetJobEventSequenceHead()
 			events, err := ctx.GetPublishedJobEvents(filter, cursor, catchupPageSize)
 			if err != nil {
