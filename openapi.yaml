@@ -6014,13 +6014,18 @@ paths:
                 - imports
     /v1/imports/{jobId}/result:
         get:
-            description: Returns the ImportApplyResult JSON for a completed apply job.
+            description: Returns the flat ImportApplyResult and apply_outcome. The outcome is reported only when the report's producing Apply remains visible and verifiable to the current reader; otherwise it is unknown. Producer metadata is not returned.
             operationId: getImportResult
             parameters:
-                - description: The apply job ID whose result to fetch
+                - description: The import parse handle whose current result report to fetch
                   in: path
                   name: jobId
                   required: true
+                  schema:
+                    type: string
+                - description: Canonical Apply Job ID expected by a live result reader; a newer report from another Apply is returned with apply_outcome=unknown.
+                  in: header
+                  name: X-Expected-Import-Apply
                   schema:
                     type: string
             responses:
