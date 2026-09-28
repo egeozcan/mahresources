@@ -113,9 +113,9 @@ with the final reviewed commits and merged gates before completion.
 
 | Lane | P0/P1 findings by round so far | Current disposition |
 | --- | --- | --- |
-| List | 8, 2, 2, 1 | Round 4's fetched-marker ownership finding is repaired at `0eb34029`. All fresh lane gates pass, including 2,337 browser/CLI tests with no retries; independent full round 5 is in progress. |
+| List | 8, 2, 2, 1, 0 | Round 5 clean at `0eb34029`. Independent full review, actual direct/opened-queue probes, cache/preference matrix, API/clock/calendar checks and all fresh lane gates pass. Browser/CLI: 2,337 tests, no retries. |
 | Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
-| Numbers | 2, 4, 1, 2, 2 | Round 5's replacement and compaction findings are repaired at `d8e2804a`, with all original probes and broad gates passing. Before full round 6, the coordinator reproduced a decreased count becoming a neutral endpoint when Activity ends in the same report; append and final replacement both carry a rate across that restart under compaction. The hard-gap guard is being repaired before fresh gates and review. |
+| Numbers | 2, 4, 1, 2, 2 | Round 5's replacement and compaction findings are repaired at `d8e2804a`; the additional pre-review decreasing-count/Activity-ending hard-gap guard is closed at `cfcec370`. Original movement, real Cancel and append/replacement restart probes all pass. Fresh full Go, JavaScript and build pass; PostgreSQL Go, browser and full round 6 remain pending. |
 | Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`. Local follow-ups closed at `2e558d23` and merged: report-read notices preserve an accepted failed/cancelled Job, primitive report outcomes live in contracts, and a test comment describes its scenario. Focused tests, build and coordinator producer/fault probes pass. |
 | Flakes | 2, 2, 1, 0, 0 | Round 5 clean at `f007c51f`, including independent forced shutdown-selection red/green and timestamp probes. All final lane gates pass, with 2,318 browser/CLI tests and no retries. |
 
