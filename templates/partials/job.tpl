@@ -42,7 +42,7 @@
         {% if job.Progress %}
         {# The data-job-progress hooks are where a live progress frame lands (jobList.js #}
         {# applyCardProgress); the stats line is always rendered so it has a place to.  #}
-        <div class="mt-3 max-w-xl" data-job-progress{% if job.ProgressUpdatedAt %} data-progress-updated-at="{{ job.ProgressUpdatedAt }}"{% endif %}>
+        <div class="mt-3 max-w-xl" data-job-progress{% if job.ProgressUpdatedAt %} data-progress-updated-at="{{ job.ProgressUpdatedAt }}"{% endif %}{% if job.ProgressSnapshotJSON %} data-progress-snapshot="{{ job.ProgressSnapshotJSON }}"{% endif %}>
             <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600">
                 <span data-job-progress-text>{{ job.Progress.Text }}</span>
                 <span data-job-progress-value>{% if job.Progress.Known %}{{ job.Progress.Percent }}%{% elif job.Progress.Indeterminate %}In progress{% endif %}</span>

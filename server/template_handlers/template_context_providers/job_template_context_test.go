@@ -3,10 +3,12 @@ package template_context_providers
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -358,6 +360,46 @@ func TestJobRowProgressNamesEveryBar(t *testing.T) {
 	}
 	if bar := jobRowProgress(jobs.Snapshot{State: jobs.StateFailed}); bar != nil {
 		t.Fatalf("a failed job with no progress drew a bar: %+v", bar)
+	}
+}
+
+func TestRunningJobCardRendersItsProgressSnapshot(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	updatedAt := now.Add(-time.Second)
+	eta := now.Add(30 * time.Second)
+	rate := 128.0
+	completed, total := int64(10), int64(30)
+	row := jobRow(&fakeJobListReader{}, jobs.Snapshot{
+		ID: "job-progress-clock", Kind: "remote-download", State: jobs.StateRunning, Title: "transfer.bin", Version: 3,
+		Progress:          jobs.Progress{Completed: &completed, Total: &total, Unit: "item's", ETA: &eta},
+		ProgressSeries:    jobs.ProgressSeries{Rate: &rate, Anchor: &jobs.RateAnchor{At: now.UnixMilli(), Completed: float64(completed)}},
+		ProgressUpdatedAt: &updatedAt,
+	})
+	if row.ProgressSnapshotJSON == "" {
+		t.Fatal("running row has progress but no progress snapshot")
+	}
+	var snapshot jobRowProgressSnapshot
+	if err := json.Unmarshal([]byte(row.ProgressSnapshotJSON), &snapshot); err != nil {
+		t.Fatalf("progress snapshot JSON %q: %v", row.ProgressSnapshotJSON, err)
+	}
+	if snapshot.Completed == nil || *snapshot.Completed != completed || snapshot.Total == nil || *snapshot.Total != total ||
+		snapshot.Unit != "item's" || snapshot.Rate == nil || *snapshot.Rate != rate || snapshot.ETA == nil || !snapshot.ETA.Equal(eta) {
+		t.Fatalf("progress snapshot = %+v, want its amount, unit, rate and ETA", snapshot)
+	}
+	template, err := pongo2.FromFile("../../../templates/partials/job.tpl")
+	if err != nil {
+		t.Fatalf("load Job card template: %v", err)
+	}
+	rendered, err := template.Execute(pongo2.Context{"job": row})
+	if err != nil {
+		t.Fatalf("render Job card: %v", err)
+	}
+	match := regexp.MustCompile(`data-progress-snapshot="([^"]*)"`).FindStringSubmatch(rendered)
+	if len(match) != 2 {
+		t.Fatalf("rendered card has no progress snapshot attribute: %s", rendered)
+	}
+	if got := html.UnescapeString(match[1]); got != row.ProgressSnapshotJSON {
+		t.Fatalf("rendered progress snapshot = %q, want %q", got, row.ProgressSnapshotJSON)
 	}
 }
 

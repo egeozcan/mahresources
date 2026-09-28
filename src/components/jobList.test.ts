@@ -770,7 +770,7 @@ describe('job summary panel', () => {
         expect(url).toBe('/v1/jobs/summary/export?kind=remote-download&ownerId=9');
         expect(init.method).toBe('POST');
         expect(JSON.parse(init.body)).toEqual({
-            from: new Date('2025-01-01T00:00').toISOString(), to: new Date('2026-01-01T00:00').toISOString(), format: 'json',
+            from: new Date('2025-01-01T00:00').toISOString(), to: localDayEndForTest('2025-12-31'), format: 'json',
         });
         expect(panel.exported).toEqual({ url: '/job?id=export-1', title: 'Job summary, 2025-01-01 to 2026-01-01' });
     });
@@ -785,16 +785,51 @@ describe('job summary panel', () => {
         expect(panel.exportError).toBe('summary export range must exceed 90 days');
         expect(panel.exported).toBe(null);
     });
+
+    test.each(['2026-03-29', '2026-10-25'])('ends the selected local day before midnight across DST: %s', async day => {
+        const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ job: { id: 'export-1' } }) }));
+        const panel = Object.assign(jobSummary({ fetchImpl }), { exportQuery: '' });
+        panel.exportFrom = day;
+        panel.exportTo = day;
+        await panel.exportSummary();
+        const { to } = JSON.parse(fetchImpl.mock.calls[0][1].body);
+        expect(to).toBe(localDayEndForTest(day));
+        expect(to).toMatch(/\.999999999Z$/);
+        if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'Europe/Berlin') {
+            const start = new Date(`${day}T00:00`).getTime();
+            const next = new Date(`${day}T00:00`);
+            next.setDate(next.getDate() + 1);
+            const expectedHours = day === '2026-03-29' ? 23 : 25;
+            expect(next.getTime() - start).toBe(expectedHours * 60 * 60 * 1000);
+        }
+    });
 });
+
+function localDayEndForTest(day: string) {
+    const nextMidnight = new Date(`${day}T00:00`);
+    nextMidnight.setDate(nextMidnight.getDate() + 1);
+    nextMidnight.setTime(nextMidnight.getTime() - 1);
+    return nextMidnight.toISOString().replace(/\.(\d{3})Z$/, '.$1999999Z');
+}
 
 describe('job list live progress', () => {
     // A running card as the server renders it (templates/partials/job.tpl).
-    function runningCard(id: string, { version = 3, updatedAt = '2026-09-28T10:00:00Z' } = {}) {
+    function runningCard(id: string, {
+        version = 3,
+        updatedAt = '2026-09-28T10:00:00Z',
+        completed = 91756,
+        total = 2097152,
+        rate = 65536,
+        eta = '2026-09-28T10:00:31Z',
+        etaEstimated = true,
+    } = {}) {
+        const percent = Math.round(completed / total * 100);
+        const snapshot = JSON.stringify({ completed, total, unit: 'bytes', rate, eta, etaEstimated });
         return `<article data-job-id="${id}"><div data-entity='${JSON.stringify({ id, state: 'running', title: `${id}.bin`, version })}'>
-            <div data-job-progress data-progress-updated-at="${updatedAt}">
-                <span data-job-progress-text>91756 / 2097152 bytes</span><span data-job-progress-value>4%</span>
-                <div role="progressbar" data-job-progress-bar aria-valuenow="4" aria-valuetext="91756 / 2097152 bytes" aria-label="${id}.bin progress: 91756 / 2097152 bytes">
-                    <div class="h-2 rounded bg-amber-800" data-job-progress-fill style="width:4%"></div>
+            <div data-job-progress data-progress-updated-at="${updatedAt}" data-progress-snapshot='${snapshot}'>
+                <span data-job-progress-text>${completed} / ${total} bytes</span><span data-job-progress-value>${percent}%</span>
+                <div role="progressbar" data-job-progress-bar aria-valuenow="${percent}" aria-valuetext="${completed} / ${total} bytes" aria-label="${id}.bin progress: ${completed} / ${total} bytes">
+                    <div class="h-2 rounded bg-amber-800" data-job-progress-fill style="width:${percent}%"></div>
                 </div>
                 <p data-job-stats>63.8 KB/s · about 31 s left</p>
             </div>
@@ -891,6 +926,86 @@ describe('job list live progress', () => {
         document.querySelector('section')!.innerHTML = runningCard('a', { updatedAt: '2026-09-28T10:00:11Z' });
         list.reapplyProgress();
         expect(progressOf('a').value).toBe('4%');
+        list.destroy();
+    });
+
+    test('an equal-timestamp refresh keeps a frame clocking until its rate and estimate go stale', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        document.querySelector('section')!.innerHTML = runningCard('a', {
+            updatedAt: '2026-09-28T10:00:10Z', completed: 1048576, rate: 65536, eta: '2026-09-28T10:00:40Z',
+        });
+        list.reapplyProgress();
+        expect(list._progress.has('a')).toBe(true);
+        expect(list._progressClock).not.toBe(null);
+        vi.advanceTimersByTime(5000);
+        expect(progressOf('a').stats).toContain('about 25 s left');
+        vi.advanceTimersByTime(6000);
+        expect(progressOf('a').stats).not.toContain('/s');
+        expect(progressOf('a').stats).not.toContain('left');
+        list.destroy();
+    });
+
+    test('a newer server-rendered progress snapshot replaces an older held frame', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:15Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        document.querySelector('section')!.innerHTML = runningCard('a', {
+            updatedAt: '2026-09-28T10:00:12Z', completed: 1572864, rate: 1024, eta: '2026-09-28T10:00:52Z',
+        });
+        list.reapplyProgress();
+        expect(list._progress.get('a')?.progress).toMatchObject({ unit: 'bytes', rate: 1024, eta: '2026-09-28T10:00:52Z' });
+        expect(progressOf('a').value).toBe('75%');
+        vi.advanceTimersByTime(5000);
+        expect(progressOf('a').stats).toContain('about 32 s left');
+        list.destroy();
+    });
+
+    test('a newer server-rendered Job version wins when executor timestamps disagree', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:15Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576, { updatedAt: '2026-09-28T10:00:10Z' })) });
+        document.querySelector('section')!.innerHTML = runningCard('a', {
+            version: 4, updatedAt: '2026-09-28T10:00:09Z', completed: 786432, rate: 2048, eta: '2026-09-28T10:00:55Z',
+        });
+        list.reapplyProgress();
+        expect(list._progress.get('a')).toMatchObject({
+            version: 4, progress: { unit: 'bytes', rate: 2048, eta: '2026-09-28T10:00:55Z' },
+        });
+        expect(progressOf('a').value).toBe('38%');
+        list.destroy();
+    });
+
+    test('a held newer server snapshot restores its bar after a later stale refresh', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:15Z') });
+        const list = listOn(runningCard('a'));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576, { updatedAt: '2026-09-28T10:00:10Z' })) });
+        document.querySelector('section')!.innerHTML = runningCard('a', {
+            updatedAt: '2026-09-28T10:00:12Z', completed: 1572864, rate: 1024, eta: '2026-09-28T10:00:52Z',
+        });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('75%');
+        document.querySelector('section')!.innerHTML = runningCard('a', {
+            updatedAt: '2026-09-28T10:00:11Z', completed: 524288, rate: 512, eta: '2026-09-28T10:00:45Z',
+        });
+        list.reapplyProgress();
+        expect(progressOf('a').value).toBe('75%');
+        expect(progressOf('a').text).toBe('1572864 / 2097152 bytes');
+        list.destroy();
+    });
+
+    test('initial server-rendered progress starts a clock before any SSE frame arrives', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('a', { updatedAt: '2026-09-28T10:00:10Z', eta: '2026-09-28T10:00:40Z' }));
+        list.init();
+        expect(list._progress.has('a')).toBe(true);
+        expect(list._progressClock).not.toBe(null);
+        vi.advanceTimersByTime(5000);
+        expect(progressOf('a').stats).toContain('about 25 s left');
+        vi.advanceTimersByTime(6000);
+        expect(progressOf('a').stats).not.toContain('/s');
+        expect(progressOf('a').stats).not.toContain('left');
         list.destroy();
     });
 
