@@ -47,7 +47,7 @@
   </section>
 
   <!-- Error -->
-  <div x-show="error" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
+  <div x-show="error" role="alert" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
 
   {# An import named by ?job= whose review is gone: what became of it, and the #}
   {# Job page that records its apply. #}
@@ -427,7 +427,7 @@
       <h2 class="text-sm font-medium font-mono text-stone-700">Import Result</h2>
       <p x-show="resumeJobURL" class="text-sm"><a :href="resumeJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the import's Job</a></p>
         <!-- Success result -->
-        <template x-if="applyResult && !error">
+        <template x-if="applyResult && !error && applyOutcome !== 'unknown'">
           <div class="space-y-3" data-testid="import-apply-result">
             <div class="flex items-center gap-2 text-emerald-700">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
@@ -488,6 +488,43 @@
                 <div class="flex flex-wrap gap-1">
                   <template x-for="gid in applyResult.created_group_ids" :key="gid">
                     <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'Group #' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- A report whose apply this viewer cannot see: never shown as a success -->
+        <template x-if="applyResult && !error && applyOutcome === 'unknown'">
+          <div class="space-y-3" data-testid="import-apply-unknown">
+            <p class="text-sm text-stone-700">An apply took this import's plan, but its outcome is not available to you: another account applied it, or its Job is no longer kept. The report it wrote is below; it may describe a partial import.</p>
+            <template x-if="applyResult.created_group_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="gid in applyResult.created_group_ids" :key="gid">
+                    <a :href="'/group?id=' + gid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Group #' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_resource_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Resources</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="rid in applyResult.created_resource_ids" :key="rid">
+                    <a :href="'/resource?id=' + rid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Resource #' + rid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_note_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Notes</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="nid in applyResult.created_note_ids" :key="nid">
+                    <a :href="'/note?id=' + nid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Note #' + nid"></a>
                   </template>
                 </div>
               </div>

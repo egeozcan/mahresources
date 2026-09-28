@@ -38,6 +38,11 @@ export function adminImport() {
     applyJob: null,
     applyPhase: '',
     applyResult: null,
+    // How the apply the report belongs to ended, as far as this viewer can tell:
+    // 'succeeded', 'failed', or 'unknown' when its Job cannot be read (another
+    // account applied the import, or its record is gone). An unknown outcome is
+    // never shown as a success: a partial apply writes a report too.
+    applyOutcome: '',
     applyEventSource: null,
 
     // Set when /admin/import?job=<handle> names an import whose review cannot
@@ -135,10 +140,13 @@ export function adminImport() {
         // took the plan (or the import's files were removed). The parse's own
         // record says which.
         const jobResp = await fetch(`/v1/jobs/get?id=${encoded}`);
-        if (!jobResp.ok) {
+        if (jobResp.status === 404) {
           this.jobId = null;
           this.resumeNotice = 'This import could not be found. Its files may have been removed; upload the archive again to import it.';
           return;
+        }
+        if (!jobResp.ok) {
+          throw new Error(await errorMessageFromResponse(jobResp));
         }
         const parse = await jobResp.json();
         this.job = parse;
@@ -166,19 +174,28 @@ export function adminImport() {
     async resumeApplied(handle, parseJobId) {
       const apply = await this.latestApply(parseJobId);
       const resultResp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/result`);
+      // Only a 404 means there is no report; any other failure is a read that
+      // answered nothing, and says so rather than looking like a removed import.
+      if (!resultResp.ok && resultResp.status !== 404) {
+        throw new Error('The import report could not be read: ' + await errorMessageFromResponse(resultResp));
+      }
       const result = resultResp.ok ? await resultResp.json() : null;
       const state = apply?.state || '';
       if (state === 'queued' || state === 'running' || state === 'scheduled' || state === 'paused' || state === 'blocked') {
         this.resumeNotice = 'This import is being applied. Follow it in the Jobs panel or on its Job page.';
         return;
       }
-      if (!result) {
-        this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
-        return;
-      }
-      if (state && state !== 'succeeded') {
+      const failed = state !== '' && state !== 'succeeded';
+      if (failed) {
         this.error = apply?.failure?.message || `The apply ended ${state}.`;
       }
+      if (!result) {
+        if (!failed) {
+          this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
+        }
+        return;
+      }
+      this.applyOutcome = state === 'succeeded' ? 'succeeded' : (failed ? 'failed' : 'unknown');
       this.applyResult = result;
     },
 
@@ -194,14 +211,18 @@ export function adminImport() {
       const parse = await read(parseJobId);
       let apply = newest(parse?.lineage?.children);
       // A Retry of an apply is a new Job linked to it; the newest one is the one
-      // whose outcome the report describes. The walk is bounded.
+      // whose outcome the report describes. An apply whose detail cannot be read,
+      // or that was retried by an account this viewer cannot see, has an outcome
+      // this viewer cannot know, and answers null rather than a guess. The walk
+      // is bounded.
       for (let hop = 0; apply && hop < 10; hop++) {
         const detail = await read(apply.id);
-        const next = newest(detail?.lineage?.successors);
-        if (!next) return detail || apply;
+        if (!detail || detail.lineage?.retriedElsewhere) return null;
+        const next = newest(detail.lineage?.successors);
+        if (!next) return detail;
         apply = next;
       }
-      return apply;
+      return null;
     },
 
     // SSE subscription — matches existing adminExport.js pattern exactly
@@ -749,10 +770,12 @@ export function adminImport() {
         this.applyPhase = payload.job.phase || '';
         if (payload.job.status === 'completed') {
           this.applying = false;
+          this.applyOutcome = 'succeeded';
           this.fetchApplyResult();
           this.closeApplySSE();
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.applying = false;
+          this.applyOutcome = 'failed';
           this.error = payload.job.error || `Apply job ${payload.job.status}`;
           this.fetchApplyResult(); // partial-failure may have result
           this.closeApplySSE();
