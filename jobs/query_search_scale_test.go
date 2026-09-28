@@ -65,7 +65,7 @@ func runJobSearchScaleEvidence(t *testing.T, engine string, deps Deps) {
 	// The whole search predicate, as it was (the summary as JSON text) and as it
 	// is (applySearch), run alternately five times each so load on the machine
 	// falls on both alike; the fastest of each is reported.
-	for _, term := range []string{"needle-424242", "scheme"} {
+	for _, term := range []string{"needle-424242", "scheme", "424242"} {
 		pattern, escape := database_scopes.LikePattern(term)
 		before := "(jobs.id " + operator + " ?" + escape + " OR jobs.title " + operator + " ?" + escape +
 			" OR COALESCE(CAST(jobs.summary AS TEXT), '') " + operator + " ?" + escape +
