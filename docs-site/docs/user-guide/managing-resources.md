@@ -267,13 +267,18 @@ Cut a video down to a single time range.
 
 1. Navigate to the video resource
 2. In the sidebar, click **Video Actions…**
-3. Drag the range slider handles to set the start and end, or type exact **Start (s)** and **End (s)** values
-4. Optionally add a **Comment**
-5. Click **Trim Video**
+3. Watch the preview, and either drag the range slider handles to set the start and end or type exact **Start (s)** and **End (s)** values. Moving a handle moves the preview to the frame it would cut from
+4. Alternatively, play or scrub the preview and press **Set Start** and **Set End** to mark the range off the playhead wherever it happens to be. **Preview Range** plays just the marked range, stopping where the trim will stop. The preview's own controls are there for scrubbing freely
+5. Optionally add a **Comment**
+6. Click **Trim Video**
 
 Trimming creates a new version containing only the selected range and clears cached thumbnails. The output is always re-encoded as MP4 (H.264 video, AAC audio), regardless of the source format. Time values accept plain seconds, `MM:SS`, or `HH:MM:SS`.
 
 Closing the dialog without trimming keeps whatever you had dialled in, so you can step away and come back to the same range.
+
+:::note
+The range slider needs to know how long the video is. The server probes it with `ffprobe` when the file is on a local filesystem; where it cannot — a network or alternative storage location, or no `ffprobe` on the host — the preview element in the dialog supplies the duration instead, so the slider appears either way. Only the *duration* needs the probe; the times are sent as text and are used exactly as typed.
+:::
 
 ## Finding Similar Resources
 

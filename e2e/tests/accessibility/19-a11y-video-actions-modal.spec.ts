@@ -73,6 +73,151 @@ test.describe.serial('Video actions popup accessibility', () => {
     await expect(popup.locator('[role="slider"]')).toHaveCount(2);
   });
 
+  test('the slider renders, because the preview supplies the duration', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    // The harness runs -ephemeral, which is memory-fs, and ProbeVideoDuration
+    // refuses without a local filesystem — so the server reports a duration of
+    // 0 and the slider, gated on a known duration, used to vanish with nothing
+    // on screen saying why. The media element knows its own duration, so the
+    // slider has to appear once the metadata lands.
+    const popup = await openVideoActions(page);
+
+    // The popup's own element, which is already loading, rather than a second
+    // throwaway one: this ran as a race under full-suite load and reported a
+    // duration of 0 for a video the dialog was playing perfectly well.
+    const duration = await popup.locator('video').evaluate(
+      (v) =>
+        new Promise<number>((resolve) => {
+          const el = v as HTMLVideoElement;
+          if (el.readyState >= 1 && isFinite(el.duration) && el.duration > 0) {
+            resolve(el.duration);
+            return;
+          }
+          const t = setTimeout(() => resolve(-1), 15000);
+          el.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve(el.duration); }, { once: true });
+          el.addEventListener('error', () => { clearTimeout(t); resolve(-1); }, { once: true });
+        }),
+    );
+    expect(duration).toBeGreaterThan(0);
+
+    await expect(popup.getByTestId('trim-range-hint')).toBeVisible();
+    await expect(popup.locator('[role="slider"]').first()).toBeVisible();
+    // The whole video is selected by default, so End is filled in and the trim
+    // button is live rather than disabled behind a validation message.
+    const end = popup.locator(`#trim-end-${resourceId}`);
+    await expect(end).not.toHaveValue('');
+    await expect(end).toHaveValue(duration.toFixed(1));
+    await expect(popup.locator('button:has-text("Trim Video")')).toBeEnabled();
+  });
+
+  test('Preview Range plays the range and stops where the trim would', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    const popup = await openVideoActions(page);
+    await popup.locator(`#trim-start-${resourceId}`).fill('0.5');
+    await popup.locator(`#trim-end-${resourceId}`).fill('1.5');
+    await expect(popup.getByTestId('trim-range-hint')).toHaveText('Playing 0.5s to 1.5s');
+
+    await popup.getByTestId('trim-preview').click();
+    // Playing from the start of the range. Asserted by accessible name rather
+    // than by text: the button carries both labels and x-show hides one of them,
+    // which the text content still reports.
+    const previewButton = popup.getByRole('button', { name: 'Stop Preview' });
+    await expect(previewButton).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).currentTime))
+      .toBeGreaterThan(0.5);
+
+    // The range is a second long, so it stops on its own rather than running on.
+    await expect
+      .poll(
+        () => page.evaluate(() => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).paused),
+        { timeout: 8000 },
+      )
+      .toBe(true);
+    await expect(popup.getByRole('button', { name: 'Preview Range' })).toBeVisible();
+    // Rewound to the start of the range, so Preview again replays the same thing.
+    const current = await page.evaluate(
+      () => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).currentTime,
+    );
+    expect(current).toBeLessThan(1.5);
+  });
+
+  test('moving the selection seeks the paused preview, and leaves a playing one alone', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    const popup = await openVideoActions(page);
+    const currentTime = () =>
+      page.evaluate(() => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).currentTime);
+
+    await popup.locator(`#trim-start-${resourceId}`).fill('2');
+    await expect.poll(currentTime).toBeCloseTo(2, 1);
+
+    // Playing: the dialog must not yank the video away from the reader.
+    await page.evaluate(() => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).play());
+    await popup.locator(`#trim-start-${resourceId}`).fill('3');
+    const whilePlaying = await currentTime();
+    await page.evaluate(() => (document.querySelector('[data-trim-section] video') as HTMLVideoElement).pause());
+    expect(whilePlaying).toBeGreaterThan(2);
+  });
+
+  test('Set Start and Set End mark the range off the playhead', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    const popup = await openVideoActions(page);
+    const seekTo = (seconds: number) =>
+      page.evaluate((s) => {
+        const v = document.querySelector('[data-trim-section] video') as HTMLVideoElement;
+        v.currentTime = s;
+      }, seconds);
+    const start = popup.locator(`#trim-start-${resourceId}`);
+    const end = popup.locator(`#trim-end-${resourceId}`);
+
+    // The whole video is selected by default, so the reader scrubs to where they
+    // want it to begin and marks it.
+    await seekTo(1.25);
+    await popup.getByTestId('trim-mark-start').click();
+    await expect(start).toHaveValue('1.3');
+
+    // ...then scrubs to where it should end and marks that.
+    await seekTo(4.75);
+    await popup.getByTestId('trim-mark-end').click();
+    await expect(end).toHaveValue('4.8');
+
+    // Both marks went through the text fields, so the hint and the range agree
+    // and the trim button is live.
+    await expect(popup.getByTestId('trim-range-hint')).toHaveText('Playing 1.3s to 4.8s');
+    await expect(popup.locator('button:has-text("Trim Video")')).toBeEnabled();
+  });
+
+  test('marking past the other end moves it rather than producing an invalid range', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    const popup = await openVideoActions(page);
+    const start = popup.locator(`#trim-start-${resourceId}`);
+    const end = popup.locator(`#trim-end-${resourceId}`);
+
+    await start.fill('1');
+    await end.fill('3');
+
+    // Mark a start past the end. The same rule typing a start past the end gets.
+    await page.evaluate(() => {
+      (document.querySelector('[data-trim-section] video') as HTMLVideoElement).currentTime = 5;
+    });
+    await popup.getByTestId('trim-mark-start').click();
+    await expect(start).toHaveValue('5.0');
+
+    const endValue = parseFloat(await end.inputValue());
+    expect(endValue).toBeGreaterThan(5);
+    await expect(popup.locator('button:has-text("Trim Video")')).toBeEnabled();
+  });
+
   test('Escape closes the popup and returns focus to its button', async ({ page }) => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
@@ -98,13 +243,15 @@ test.describe.serial('Video actions popup accessibility', () => {
         return !!dlg && !!document.activeElement && dlg.contains(document.activeElement);
       });
 
-    // Six controls (close, start, end, comment, trim, and the two slider
-    // thumbs); past the last and back past the first in both directions.
-    for (let i = 0; i < 8; i += 1) {
+    // Every tabbable in the dialog, walked past in both directions: close, the
+    // media element (one stop — its own controls are reached from there), the
+    // three preview buttons, start, end, comment, trim, and the two slider
+    // thumbs. The loop has to exceed the count or the trap is never exercised.
+    for (let i = 0; i < 14; i += 1) {
       await page.keyboard.press('Tab');
       expect(await insideDialog()).toBe(true);
     }
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 14; i += 1) {
       await page.keyboard.press('Shift+Tab');
       expect(await insideDialog()).toBe(true);
     }

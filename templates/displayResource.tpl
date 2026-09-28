@@ -492,9 +492,70 @@
                 <div class="px-5 pb-4 pt-3">
                 <p class="text-xs text-stone-600 mb-2">Trim Video: drag the handles to select a range, or type exact times below. The result is saved as a new version.</p>
 
+                {# The preview, and where the duration comes from when the   #}
+                {# server could not probe it. `ProbeVideoDuration` needs a    #}
+                {# local filesystem and a working ffprobe, so it answers 0    #}
+                {# for every memory-fs deployment — every -ephemeral run,    #}
+                {# the e2e harness, any demo — and the slider is gated on a  #}
+                {# known duration. The element knows its own, for free, so   #}
+                {# loadedmetadata adopts it and the slider appears.           #}
+                <div class="mb-3">
+                    <video x-ref="player" controls preload="metadata"
+                           src="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}"
+                           class="w-full max-h-[200px] rounded-md bg-stone-900"
+                           aria-label="Preview of {{ resource.Name }}"
+                           @loadedmetadata="adoptMetadata($event)"
+                           @timeupdate="onTimeUpdate($event)"
+                           @play="previewing = true"
+                           @pause="previewing = false"
+                           @ended="previewing = false">
+                        Your browser cannot play this video.
+                    </video>
+                    {# The buttons on their own row: all four controls in one flex #}
+                    {# row squeezed the labels into two lines each at 480px, which #}
+                    {# read as broken rather than compact.                        #}
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                        {# Plays the range and stops where the trim will.     #}
+                        {# The native controls above stay, so free scrubbing  #}
+                        {# is still there and the video is one tab stop       #}
+                        {# rather than a wall of custom controls at 480px.    #}
+                        <button type="button" @click="togglePreview()" data-testid="trim-preview"
+                                class="whitespace-nowrap inline-flex justify-center py-1.5 px-3 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-400">
+                            <span x-show="!previewing">Preview Range</span>
+                            <span x-show="previewing">Stop Preview</span>
+                        </button>
+                        {# Mark the in and out points wherever the playhead    #}
+                        {# happens to be. Disabled until the duration is      #}
+                        {# known, because before that the playhead is nowhere #}
+                        {# and marking it would be marking 0.0.               #}
+                        <button type="button" @click="markCurrentTime('start')" data-testid="trim-mark-start"
+                                :disabled="!canMarkTime"
+                                aria-label="Set Start to the current time"
+                                class="whitespace-nowrap inline-flex justify-center py-1.5 px-3 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-400">
+                            Set Start
+                        </button>
+                        <button type="button" @click="markCurrentTime('end')" data-testid="trim-mark-end"
+                                :disabled="!canMarkTime"
+                                aria-label="Set End to the current time"
+                                class="whitespace-nowrap inline-flex justify-center py-1.5 px-3 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-stone-400">
+                            Set End
+                        </button>
+                    </div>
+                </div>
+
         {# Dual-range slider #}
-        <div class="w-[90%] mx-auto mb-3" x-show="duration > 0">
-            <div class="relative h-16 flex items-center cursor-pointer select-none"
+        <div class="w-[90%] mx-auto mt-3 mb-3" x-show="duration > 0">
+            {# The range, as a caption of the control it describes. It used to #}
+            {# sit between the button row and the slider with 6px above it and #}
+            {# 38px below, and 22px of that 38px was the dead air in the h-16   #}
+            {# track row below — a 12px bar centred in 64px. In here the row is #}
+            {# sized to what it holds and the caption is attached to the bar it #}
+            {# is talking about. The hint needs no x-show of its own: the box   #}
+            {# is already gated on a known duration, and before the metadata    #}
+            {# lands formatTime() would render a null End as 0.0s.             #}
+            <p class="text-xs text-stone-500 text-center mb-1.5" data-testid="trim-range-hint"
+               x-text="'Playing ' + formatTime(start) + ' to ' + formatTime(end)"></p>
+            <div class="relative h-8 flex items-center cursor-pointer select-none"
                 x-ref="sliderTrack"
                 @pointerdown="onTrackPointerDown($event)"
                 @pointermove="onPointerMove($event)"

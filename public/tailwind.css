@@ -1542,6 +1542,9 @@
   .max-h-\[90vh\] {
     max-height: 90vh;
   }
+  .max-h-\[200px\] {
+    max-height: 200px;
+  }
   .min-h-0 {
     min-height: 0;
   }

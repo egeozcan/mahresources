@@ -164,3 +164,93 @@ scope for a move; worth a separate pass.
 - `tests/accessibility/` + `tests/lightbox/` + `custom-thumbnail` +
   `entities/resource` — 365 passed. `npm run test:unit` 1869 · `go test` clean ·
   `./scripts/css-scan-test.sh` clean.
+
+## Follow-up: a preview in the trim dialog, and the slider that was never really there (same day)
+
+**"The slider is gone" was half right, and the half that was wrong is the
+interesting half.** The markup was untouched and still in the popup, gated on
+`x-show="duration > 0"`. But `duration` comes from `ProbeVideoDuration`, which
+requires a local filesystem ("video duration probing requires a local
+filesystem") and a working ffprobe. So it is 0 for every memory-fs deployment —
+which is every `-ephemeral` run, including the whole e2e harness and every demo —
+and for any non-local storage location. The slider silently did not render, and
+`End (s)` sat empty with "End time must be a positive number" on open. That is
+what was being looked at, and it predates the popups.
+
+**The preview is the fix, because the media element knows its own duration.**
+`loadedmetadata` on a `<video>` gives the same number ffprobe would (verified:
+both report 6.083333 for `sample-video.mp4`) for free, on any filesystem, with no
+server round trip. So the duration is adopted from the element when the server
+could not supply it, and the slider appears — in the popup, on the demo, and in
+e2e. A range already dialled in is never clobbered: only an untouched `end` is
+completed from what we now know.
+
+**What "preview" means here.** A `<video controls preload="metadata">` over the
+resource's own bytes (`/v1/resource/view`, which 302s to the static file server
+and answers `Range`, so seeking works), plus a **Preview Range** button that
+plays from `start` and stops at `end`. A preview that stops where the trim will
+is the one question a trimmer cannot answer by looking at it. The native
+controls stay, so free scrubbing is still available and the media element is one
+tab stop rather than a wall of custom controls in a 480px dialog.
+
+**The preview follows the selection, and yields to the reader.** Moving a handle
+or typing a time seeks the player to the new `start` — but only while it is
+paused, and only on drag *end* rather than on every `pointermove`, which would
+queue a seek per mouse event. While the reader is watching something, the
+preview is left alone; a preview that fights the person using it is worse than
+one that lags. The stop-at-`end` is gated on the same flag, so watching the whole
+video by hand is never cut short at the trim point.
+
+### Verification
+
+- `src/components/videoTrimmer.test.ts` (new) — duration adoption, the range
+  stopping where the trim will, the paused-only auto-seek, and that a range
+  already dialled in survives the metadata arriving late.
+- `19-a11y-video-actions-modal.spec.ts` — the slider is there (two thumbs, a
+  known duration), the preview plays and stops at the end, and the video is one
+  tab stop inside the dialog rather than a trap problem.
+- Confirmed before building: Playwright's Chromium here reports
+  `canPlayType('video/mp4; codecs="avc1.42E01E") === "probably"`, `loadedmetadata`
+  fires with duration 6.083333, and `currentTime = 3` produces a `seeked` event —
+  so this is e2e-testable here rather than only in theory.
+
+### Two defects the work turned up, both from the slider becoming visible
+
+1. **`adoptMetadata` seeded `end` and left `start` null.** Nothing about that
+   looks wrong on screen — `6.08 > null` coerces, so the button enabled, the
+   thumb sat at 0% and the label read `0.0s` — but `role="slider"` with no
+   `aria-valuenow` is a critical `aria-required-attr` violation, and axe had
+   never reported it because the slider had never rendered anywhere it could
+   look. Both ends are seeded now, and the unit test says why.
+
+2. **`hasTimes()` preferred the slider state while `submit()` posts the text
+   fields.** Clearing End left a live button under "End time must be a positive
+   number", and preferring a known duration turned that from a rare state into
+   the normal one — it is what the existing `resource-trim` "invalid times"
+   case was actually reporting. The text fields win now, because the slider is a
+   view of them (`syncFromSlider` writes them, `syncFromText` syncs back) and
+   they are what the request carries.
+
+The visible control is what makes its neighbours testable. Neither of these was
+reachable in any test environment before, which is exactly why neither had been
+found.
+
+## Follow-up: Set Start / Set End off the playhead (same day)
+
+Two buttons beside the preview that mark the range from wherever the playhead is,
+which is the way you actually mark a cut: play it, mark it, keep going.
+
+They write through `startText` / `endText` and `syncFromText()`, not by
+assigning `this.start`, so the ordering rule and the clamping stay one
+implementation each and the text fields — which `submit()` posts — cannot drift
+from the slider that mirrors them. Marking a start past the end pushes the end
+along, exactly as typing one does; the end of a video is clamped, because it is
+not a place a trim can cut at.
+
+**One defect only e2e could see.** `canMarkTime` read `$refs.player.duration`,
+and `$refs` is not reactive: Alpine evaluated `:disabled="!canMarkTime"` on the
+first render and never again, so a dialog opened before the metadata landed kept
+the buttons disabled forever. The unit test called the getter directly and passed
+the whole time. It now reads `this.duration`, which `adoptMetadata` writes, so it
+recomputes exactly when it should — and the e2e that clicks the buttons is what
+pins it.
