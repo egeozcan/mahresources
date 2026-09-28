@@ -555,6 +555,111 @@ func TestNeutralEndpointMarkerPersistsAndLegacyNilRatesStayHardGaps(t *testing.T
 	}
 }
 
+func TestActivityEndingCountDecreaseStaysHardAcrossPlacementAndCompaction(t *testing.T) {
+	newSeries := func() ProgressSeries {
+		var series ProgressSeries
+		series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+		series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(1), Unit: "items", Activity: true}, false)
+		return series
+	}
+	assertHardDecrease := func(t *testing.T, series ProgressSeries) {
+		t.Helper()
+		last := series.Points[len(series.Points)-1]
+		if last.Rate != nil || last.RateNeutral {
+			t.Fatalf("decreasing Activity-ending point = %+v; want no rate and a hard boundary", last)
+		}
+		merged := mergePoints(series.Points[len(series.Points)-2], last)
+		if merged.Rate != nil || merged.RateNeutral {
+			t.Fatalf("compaction crossed the decreasing-count boundary: %+v", merged)
+		}
+	}
+
+	t.Run("append decrease accepted by service", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		clock := at(0)
+		deps.Now = func() time.Time { return clock }
+		job := seededExecution(t, deps, StateRunning, "claim-decreasing-activity")
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-decreasing-activity"}
+		if _, err := svc.UpdateProgress(deps, ref, Progress{Completed: int64Ptr(0), Unit: "items"}); err != nil {
+			t.Fatalf("initial count: %v", err)
+		}
+		clock = at(1)
+		if _, err := svc.UpdateProgress(deps, ref, Progress{Completed: int64Ptr(1), Unit: "items", Activity: true}); err != nil {
+			t.Fatalf("active count increase: %v", err)
+		}
+		clock = at(2)
+		snap, err := svc.UpdateProgress(deps, ref, Progress{Completed: int64Ptr(0), Unit: "items"})
+		if err != nil {
+			t.Fatalf("service rejected the executor's decreasing restart count: %v", err)
+		}
+		assertHardDecrease(t, snap.ProgressSeries)
+	})
+
+	t.Run("final replacement falls from replaced point", func(t *testing.T) {
+		series := newSeries()
+		series, _ = advanceSeries(series, at(1.2), Progress{Completed: int64Ptr(0), Unit: "items"}, true)
+		assertHardDecrease(t, series)
+	})
+
+	t.Run("final replacement cannot measure from the penultimate point across a decrease", func(t *testing.T) {
+		series := newSeries()
+		series, _ = advanceSeries(series, at(2), Progress{Completed: int64Ptr(3), Unit: "items", Activity: true}, false)
+		// pointRate's required baseline is the penultimate 1-count point, so
+		// 1->2 would produce a positive rate. The final count fell from the point
+		// being replaced (3), which is a restart boundary and must override it.
+		series, _ = advanceSeries(series, at(2.2), Progress{Completed: int64Ptr(2), Unit: "items"}, true)
+		assertHardDecrease(t, series)
+	})
+
+	t.Run("cap compaction and final trim keep the gap hard", func(t *testing.T) {
+		series := newSeries()
+		series, _ = advanceSeries(series, at(2), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+		gapAt := series.Points[len(series.Points)-1].At
+		if last := series.Points[len(series.Points)-1]; last.Rate != nil || last.RateNeutral {
+			t.Fatalf("setup count-decrease point = %+v; want a hard boundary", last)
+		}
+		for second := 3; second <= 400; second++ {
+			series, _ = advanceSeries(series, at(float64(second)), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+		}
+		series, _ = advanceSeries(series, at(401), Progress{Completed: int64Ptr(0), Unit: "items"}, true)
+		assertProgressSeriesAnchoredAndBounded(t, series, at(0), at(401).UnixMilli())
+		for _, point := range series.Points {
+			if point.At >= gapAt && point.Rate != nil && *point.Rate > 0 {
+				t.Fatalf("compacted/finalized count decrease inherited positive earlier rate: %+v", point)
+			}
+		}
+	})
+}
+
+func TestNoMeasureCanBeNeutralButUnitChangeWithoutCountIsHard(t *testing.T) {
+	t.Run("phase-only completion omission", func(t *testing.T) {
+		var series ProgressSeries
+		series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+		series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(1), Unit: "items", Activity: true}, false)
+		series, _ = advanceSeries(series, at(2), Progress{Phase: "assembling", Message: "muxing"}, false)
+		last := series.Points[len(series.Points)-1]
+		if last.Completed != nil || last.Rate != nil || !last.RateNeutral {
+			t.Fatalf("no-measure phase endpoint = %+v; want no count/rate and an explicit neutral marker", last)
+		}
+		merged := mergePoints(series.Points[len(series.Points)-2], last)
+		if merged.Completed != nil || merged.Rate == nil || *merged.Rate <= 0 {
+			t.Fatalf("neutral no-measure endpoint failed to retain the prior graph sample without inventing a count: %+v", merged)
+		}
+	})
+
+	t.Run("unit change without a count", func(t *testing.T) {
+		var series ProgressSeries
+		series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+		series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(1), Unit: "items", Activity: true}, false)
+		series, _ = advanceSeries(series, at(2), Progress{Unit: "bytes"}, false)
+		last := series.Points[len(series.Points)-1]
+		if last.Completed != nil || last.Rate != nil || last.RateNeutral {
+			t.Fatalf("unit-change endpoint = %+v; want no count/rate and a hard boundary", last)
+		}
+	})
+}
+
 func positiveRatePointCount(series ProgressSeries) int {
 	count := 0
 	for _, point := range series.Points {

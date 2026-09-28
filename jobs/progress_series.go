@@ -173,6 +173,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	// counting segments and finishing) says nothing about the unit, and must
 	// not erase the history measured in it.
 	noMeasure := progress.Completed == nil && progress.Unit == ""
+	unitChanged := false
 	if progress.Unit != series.Unit && !noMeasure {
 		if len(series.Points) > 0 || series.Anchor != nil {
 			for i := range series.Points {
@@ -183,6 +184,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		}
 		series.ActivityAt = nil
 		series.Unit = progress.Unit
+		unitChanged = true
 		changed = true
 	}
 
@@ -256,7 +258,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		changed = true
 	}
 
-	point := SeriesPoint{At: nowMs, Completed: completed, RateNeutral: completed == nil, Values: graphedValues(progress.Metrics)}
+	point := SeriesPoint{At: nowMs, Completed: completed, RateNeutral: completed == nil && !unitChanged, Values: graphedValues(progress.Metrics)}
 	count := len(series.Points)
 	switch {
 	case count == 0:
@@ -265,7 +267,11 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	case nowMs-series.Points[count-1].At >= series.IntervalMs:
 		previous := series.Points[count-1]
 		point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
-		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, pointCountAdvanced(previous, point))
+		if pointCountDecreased(previous, point) {
+			point.Rate = nil
+		}
+		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh,
+			pointCountAdvanced(previous, point), neutralActivityEndpoint(previous, point, unitChanged))
 		series.Points = append(series.Points, point)
 		changed = true
 	case final:
@@ -274,12 +280,21 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		if count > 1 {
 			point.Rate = pointRate(series.Points[count-2], point, max(stale, 3*series.IntervalMs))
 		}
+		latest := series.Points[count-1]
+		decreasedFromLatest := pointCountDecreased(latest, point)
+		if decreasedFromLatest {
+			// The final rate baseline is the penultimate sample, but a value that
+			// fell from the point being replaced signals a restart within that
+			// interval. Do not publish a plausible rate across the decrease.
+			point.Rate = nil
+		}
 		movementBaseline := count - 1
 		if count > 1 {
 			movementBaseline = count - 2
 		}
 		countAdvanced := count > 1 && pointCountAdvanced(series.Points[movementBaseline], point)
-		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, countAdvanced)
+		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh,
+			countAdvanced, neutralActivityEndpoint(latest, point, unitChanged))
 		series.Points[count-1] = point
 		changed = true
 	}
@@ -295,14 +310,14 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	return series, changed
 }
 
-func setActivityPointRate(point *SeriesPoint, measuredRate *float64, active, activityEnded, countAdvanced bool) {
+func setActivityPointRate(point *SeriesPoint, measuredRate *float64, active, activityEnded, countAdvanced, neutralEndpoint bool) {
 	switch {
 	case activityEnded && !countAdvanced:
 		// A phase-only report can end a byte-activity lease, but it is not a
 		// count measurement. Mark only this endpoint neutral; any earlier stale,
 		// pause, restart, or unit boundary remains on its own point.
 		point.Rate = nil
-		point.RateNeutral = true
+		point.RateNeutral = neutralEndpoint
 	case (active || activityEnded) && measuredRate != nil:
 		// When activity ends alongside real count movement, retain the
 		// measured count rate. Activity describes freshness; Completed remains
@@ -314,6 +329,20 @@ func setActivityPointRate(point *SeriesPoint, measuredRate *float64, active, act
 
 func pointCountAdvanced(previous, point SeriesPoint) bool {
 	return previous.Completed != nil && point.Completed != nil && *point.Completed > *previous.Completed
+}
+
+func pointCountDecreased(previous, point SeriesPoint) bool {
+	return previous.Completed != nil && point.Completed != nil && *point.Completed < *previous.Completed
+}
+
+func neutralActivityEndpoint(previous, point SeriesPoint, unitChanged bool) bool {
+	if unitChanged {
+		return false
+	}
+	if point.Completed == nil {
+		return true
+	}
+	return previous.Completed != nil && *previous.Completed == *point.Completed
 }
 
 // reuniteMetricUnits drops a graphed key's history when the key comes back in a
