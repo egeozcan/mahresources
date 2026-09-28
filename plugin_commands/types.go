@@ -301,6 +301,11 @@ type QueuedRun struct {
 	completionLifecycle *commandCompletionLifecycle
 }
 
+// Executor must not return while a process group it started could still write
+// to the run's exchange or output. A runner that cannot prove group death and
+// drain its output readers must keep Execute live. This makes a complete worker
+// drain an explicit cleanup proof for shutdown's retry after terminal persistence
+// fails; an expired drain does not provide that proof.
 type Executor interface {
 	Execute(context.Context, QueuedRun) Outcome
 }

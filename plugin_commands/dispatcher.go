@@ -73,13 +73,14 @@ type Dispatcher struct {
 	importQuotaMu       sync.Mutex
 	importQuotaReserved map[string]int64
 
-	shutdownStarted func() // test barrier; nil in production
-	sweepMu         sync.Mutex
-	sweepCursor     *RetentionCursor
-	sweepThrough    *RetentionCursor
-	sweepInterval   time.Duration
-	sweepBatchSize  int
-	now             func() time.Time
+	shutdownStarted         func() // test barrier; nil in production
+	shutdownAfterWorkerWait func() // test barrier; nil in production
+	sweepMu                 sync.Mutex
+	sweepCursor             *RetentionCursor
+	sweepThrough            *RetentionCursor
+	sweepInterval           time.Duration
+	sweepBatchSize          int
+	now                     func() time.Time
 }
 
 type runControl struct {
@@ -106,7 +107,8 @@ type completionDispatchTracker struct {
 const (
 	completionUnclaimed uint32 = iota
 	completionClaimed
-	completionSettled
+	completionSettledUnclaimed
+	completionSettledClaimed
 )
 
 // commandCompletionLifecycle gives exactly one execution path ownership of an
@@ -124,23 +126,34 @@ func newCommandCompletionLifecycle(settle func()) *commandCompletionLifecycle {
 }
 
 func (l *commandCompletionLifecycle) claim() bool {
-	return l == nil || l.state.CompareAndSwap(completionUnclaimed, completionClaimed)
+	if l == nil {
+		return true
+	}
+	return l.state.CompareAndSwap(completionUnclaimed, completionClaimed)
 }
 
 func (l *commandCompletionLifecycle) settleClaimed() {
-	if l != nil && l.state.CompareAndSwap(completionClaimed, completionSettled) {
+	if l != nil && l.state.CompareAndSwap(completionClaimed, completionSettledClaimed) {
 		l.settle()
 	}
 }
 
 func (l *commandCompletionLifecycle) settleUnclaimed() {
-	if l != nil && l.state.CompareAndSwap(completionUnclaimed, completionSettled) {
+	if l != nil && l.state.CompareAndSwap(completionUnclaimed, completionSettledUnclaimed) {
 		l.settle()
 	}
 }
 
-func (l *commandCompletionLifecycle) isClaimed() bool {
-	return l != nil && l.state.Load() == completionClaimed
+func (l *commandCompletionLifecycle) wasEverClaimed() bool {
+	if l == nil {
+		return false
+	}
+	switch l.state.Load() {
+	case completionClaimed, completionSettledClaimed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (t *completionDispatchTracker) begin(plugin string) func() {
@@ -956,10 +969,17 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 	select {
 	case <-workersDone:
 	case <-ctx.Done():
+	}
+	// If both became ready together, select may choose workersDone even though
+	// the drain deadline expired. Preserve the expired-drain path in that case.
+	if err := ctx.Err(); err != nil {
 		timedOut = true
 		if firstErr == nil {
-			firstErr = ctx.Err()
+			firstErr = err
 		}
+	}
+	if d.shutdownAfterWorkerWait != nil {
+		d.shutdownAfterWorkerWait()
 	}
 
 	if !timedOut {
@@ -988,9 +1008,11 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 	for id, active := range state.activeCommands {
 		active.cancel(errDispatcherShutdown)
 		var finishErr error
-		if timedOut && active.run.completionLifecycle != nil && active.run.completionLifecycle.isClaimed() {
-			// A claimed worker may still own a verified process group. It alone may
-			// publish terminal state after proving the group dead and pipes closed.
+		if timedOut && active.run.completionLifecycle.wasEverClaimed() {
+			// A worker may have returned without a durable terminal write just as
+			// the bounded drain expired. Keep its row recoverable even if its
+			// completion lifecycle has already settled: startup recovery, rather
+			// than shutdown, must prove any recorded process group is quiescent.
 			finishErr = ctx.Err()
 		} else {
 			_, finishErr = d.finishShutdownRun(id, false)

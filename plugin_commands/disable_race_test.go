@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -644,6 +645,218 @@ func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
 		t.Fatalf("recovery left process group %d alive after returning", pgid)
 	}
 	waited = true
+}
+
+// manualDeadlineContext lets the test expire Stop's drain deadline only after
+// shutdown has accepted the request, without relying on a sleep near the race.
+type manualDeadlineContext struct {
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+func newManualDeadlineContext() *manualDeadlineContext {
+	return &manualDeadlineContext{done: make(chan struct{})}
+}
+
+func (c *manualDeadlineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *manualDeadlineContext) Done() <-chan struct{}       { return c.done }
+func (c *manualDeadlineContext) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+func (*manualDeadlineContext) Value(any) any { return nil }
+func (c *manualDeadlineContext) expire() {
+	c.mu.Lock()
+	c.err = context.DeadlineExceeded
+	close(c.done)
+	c.mu.Unlock()
+}
+
+func TestShutdownDeadlinePreservesSettledClaimedGroupForRecovery(t *testing.T) {
+	root := t.TempDir()
+	exchange := filepath.Join(root, "helper-exchange")
+	if err := os.MkdirAll(exchange, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := newDispatcherTestStore()
+	jobs := &dispatcherTestJobs{}
+	workerEntered := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	workerReturned := make(chan struct{})
+	spawned := make(chan *exec.Cmd, 1)
+	shutdownStarted := make(chan struct{})
+	workerWaitSelected := make(chan struct{})
+	releaseClassification := make(chan struct{})
+	settings := lifecycleSettings{root: root, exchange: time.Hour, output: time.Hour}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Settings: settings,
+		Executor: dispatcherExecutorFunc(func(_ context.Context, run QueuedRun) Outcome {
+			cmd := exec.Command(os.Args[0], helperProcessFlag, "spawn-descendant", exchange)
+			cmd.Env = append(os.Environ(), "MAHR_COMMAND_RUN_ID="+run.RunID)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Errorf("start owned helper: %v", err)
+				return Outcome{Status: RunStatusFailed, Error: err.Error()}
+			}
+			spawned <- cmd
+			if won, err := store.MarkRunRunning(run.RunID, time.Now().UTC()); err != nil || !won {
+				t.Errorf("MarkRunRunning() = %v, %v", won, err)
+				return Outcome{Status: RunStatusFailed, Error: fmt.Sprint(err)}
+			}
+			if err := store.SetRunProcessGroup(run.RunID, cmd.Process.Pid, "test-boot-session"); err != nil {
+				t.Errorf("SetRunProcessGroup: %v", err)
+			}
+			close(workerEntered)
+			<-releaseWorker
+			return Outcome{Status: RunStatusRunning}
+		}),
+	})
+	d.shutdownStarted = func() { close(shutdownStarted) }
+	d.shutdownAfterWorkerWait = func() {
+		close(workerWaitSelected)
+		<-releaseClassification
+	}
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := d.Submit(CommandRequest{
+		PluginName: "p", Declaration: Declaration{Name: "blocked", Argv: []string{"blocked"}, Timeout: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	workerDone := make(chan Outcome, 1)
+	go func() {
+		defer close(workerReturned)
+		workerDone <- jobs.commandSnapshot()[0].run(context.Background(), nopProgress{})
+	}()
+	select {
+	case <-workerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start owned process group")
+	}
+	cmd := <-spawned
+	pgid := cmd.Process.Pid
+	var waitStarted, waited bool
+	waitDone := make(chan error, 1)
+	var releaseWorkerOnce, releaseClassificationOnce sync.Once
+	finishWorker := func() { releaseWorkerOnce.Do(func() { close(releaseWorker) }) }
+	continueClassification := func() { releaseClassificationOnce.Do(func() { close(releaseClassification) }) }
+	t.Cleanup(func() {
+		finishWorker()
+		continueClassification()
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		select {
+		case <-workerReturned:
+		case <-time.After(time.Second):
+			t.Errorf("managed worker did not return during cleanup")
+		}
+		if !waited {
+			if !waitStarted {
+				waitStarted = true
+				go func() { waitDone <- cmd.Wait() }()
+			}
+			select {
+			case <-waitDone:
+			case <-time.After(time.Second):
+				t.Errorf("owned helper process %d did not exit during cleanup", pgid)
+			}
+		}
+	})
+	descendantPID := waitForHelperPID(t, filepath.Join(exchange, "descendant.pid"))
+
+	stopCtx := newManualDeadlineContext()
+	stopped := make(chan error, 1)
+	go func() { stopped <- d.Stop(stopCtx) }()
+	select {
+	case <-shutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher shutdown did not start")
+	}
+	stopCtx.expire()
+	select {
+	case <-workerWaitSelected:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not select the expired drain context")
+	}
+
+	// Let the real managed callback settle after the deadline result is chosen,
+	// but before shutdown decides whether it owns terminal publication.
+	finishWorker()
+	select {
+	case outcome := <-workerDone:
+		if outcome.Status != RunStatusRunning {
+			t.Fatalf("managed worker outcome = %+v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not return after release")
+	}
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("settled worker retained %d completion lifecycles", active)
+	}
+	if err := syscall.Kill(descendantPID, 0); err != nil {
+		t.Fatalf("precondition: descendant did not survive settled worker: %v", err)
+	}
+	record, _, err := store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusRunning || record.FinishedAt != nil {
+		t.Fatalf("worker published a terminal result without proving group death: %+v", record)
+	}
+
+	continueClassification()
+	select {
+	case <-d.done:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher owner did not finish deadline shutdown")
+	}
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop() error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Stop() did not return after bounded shutdown")
+	}
+	record, _, err = store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusRunning || record.FinishedAt != nil {
+		t.Fatalf("shutdown destroyed recovery evidence after the claimed worker settled: %+v", record)
+	}
+	if err := syscall.Kill(descendantPID, 0); err != nil {
+		t.Fatalf("precondition: descendant did not survive until Recover: %v", err)
+	}
+
+	recovery := NewDispatcher(Dependencies{Store: store, Settings: settings})
+	if err := recovery.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForTestProcessExit(t, descendantPID, time.Second)
+	identity, err := (nativeProcessInspector{}).InspectGroup(pgid, runID)
+	if err != nil || identity.State != GroupDead {
+		t.Fatalf("recovery returned before terminating descendant %d: identity=%+v err=%v", descendantPID, identity, err)
+	}
+	record, _, err = store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusInterrupted || record.FinishedAt == nil {
+		t.Fatalf("recovery did not classify run after terminating its group: %+v", record)
+	}
+	waitStarted = true
+	go func() { waitDone <- cmd.Wait() }()
+	select {
+	case <-waitDone:
+		waited = true
+	case <-time.After(time.Second):
+		t.Fatalf("recovery left process group %d alive after returning", pgid)
+	}
 }
 
 func TestShutdownDoesNotSettleClaimedCallbackBeforeDeliveryReturns(t *testing.T) {
