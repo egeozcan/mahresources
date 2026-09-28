@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"testing"
+	"time"
 
 	"mahresources/download_queue"
 	"mahresources/hls"
@@ -73,13 +74,18 @@ func TestDownloadJobProgressChoosesAMeasureWithATotalWhenThereIsOne(t *testing.T
 }
 
 func TestDownloadJobProgressCarriesOnlyActiveHLSByteHeartbeats(t *testing.T) {
+	activityAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	snap := &download_queue.DownloadJob{
 		Status: download_queue.JobStatusDownloading,
 		Phase:  hls.PhaseSegments, PhaseCount: 2, PhaseTotal: 20,
-		Progress: 4096, ProgressActivity: true,
+		Progress: 4096, ProgressActivity: true, ProgressActivityAt: activityAt,
 	}
-	if progress := downloadJobProgress(snap); !progress.Activity {
+	progress := downloadJobProgress(snap)
+	if !progress.Activity {
 		t.Fatal("active segment-byte snapshot lost its sampler activity hint")
+	}
+	if progress.ActivityAt == nil || !progress.ActivityAt.Equal(activityAt) {
+		t.Fatalf("active segment-byte snapshot activity time = %v, want original read time %v", progress.ActivityAt, activityAt)
 	}
 
 	for _, tc := range []struct {
@@ -93,7 +99,7 @@ func TestDownloadJobProgressCarriesOnlyActiveHLSByteHeartbeats(t *testing.T) {
 			copy := *snap
 			tc.edit(&copy)
 			progress := downloadJobProgress(&copy)
-			if progress.Activity {
+			if progress.Activity || progress.ActivityAt != nil {
 				t.Fatalf("%s snapshot retained active segment heartbeat", tc.name)
 			}
 			if paused := pausedDownloadProgress(progress); paused.Activity {

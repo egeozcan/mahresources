@@ -1015,6 +1015,10 @@ type Progress struct {
 	// but never increases Completed; only adapters with real activity evidence
 	// should set it.
 	Activity bool
+	// ActivityAt is when that evidence was observed. It is optional for callers
+	// whose activity is reported immediately; coalescing adapters should pass
+	// the original time so a delayed mirror cannot revive a stale rate.
+	ActivityAt *time.Time `json:"-"`
 	// Metrics are the figures reported beside the primary measure. Like the
 	// fields above, each tick replaces the whole set: a nil slice clears it.
 	Metrics []Metric

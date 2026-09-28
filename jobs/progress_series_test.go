@@ -82,6 +82,31 @@ func TestAdvanceSeriesDoesNotChargeAPauseToTheRate(t *testing.T) {
 	}
 }
 
+func TestUnchangedCountDoesNotRebaseItsRateAnchor(t *testing.T) {
+	var series ProgressSeries
+	series, _ = advanceSeries(series, at(0), bytesProgress(0), false)
+	series, _ = advanceSeries(series, at(1), bytesProgress(1000), false)
+	for second := 2; second <= 10; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), bytesProgress(1000), false)
+	}
+	if series.Anchor == nil || series.Anchor.At != at(1).UnixMilli() {
+		t.Fatalf("unchanged count moved the rate anchor: %+v; want the last count change at %d", series.Anchor, at(1).UnixMilli())
+	}
+	if got := series.CurrentRate(at(11.001)); got != nil {
+		t.Fatalf("unchanged count kept the old rate fresh past its count deadline: %v", *got)
+	}
+	series, _ = advanceSeries(series, at(11.001), bytesProgress(1000), false)
+	for second := 12; second <= 15; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), bytesProgress(1000), false)
+	}
+	if got := series.CurrentRate(at(15)); got != nil {
+		t.Fatalf("same-count heartbeats recreated a rate after its stale window: %v", *got)
+	}
+	if series.Anchor == nil || series.Anchor.At != at(11.001).UnixMilli() {
+		t.Fatalf("same-count heartbeats repeatedly moved the empty anchor: %+v", series.Anchor)
+	}
+}
+
 func TestHLSActivityKeepsSegmentRateFreshBetweenBatches(t *testing.T) {
 	var series ProgressSeries
 	segmentProgress := func(completed int64, activity bool) Progress {
@@ -196,6 +221,122 @@ func TestHLSActivityHeartbeatsKeepServiceRateETAAndGraphAliveAcrossSlowBatches(t
 	if last.Rate != nil {
 		t.Fatalf("first post-stall graph point reused the old rate: %+v", last)
 	}
+}
+
+func TestHLSActivityRetainsNewCountMeasuredAtAssembly(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := at(0)
+	deps.Now = func() time.Time { return clock }
+	job := seededExecution(t, deps, StateRunning, "claim-hls-assembly-count")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-hls-assembly-count"}
+	total := int64(4)
+	var snap Snapshot
+	for second := int64(0); second < 15; second++ {
+		clock = at(float64(second))
+		completed := int64(0)
+		var err error
+		snap, err = svc.UpdateProgress(deps, ref, Progress{
+			Phase: "downloading segments", Completed: &completed, Total: &total,
+			Unit: "items", Activity: second > 0,
+		})
+		if err != nil {
+			t.Fatalf("UpdateProgress at %ds: %v", second, err)
+		}
+	}
+	clock = at(15)
+	completed := int64(4)
+	var err error
+	snap, err = svc.UpdateProgress(deps, ref, Progress{
+		Phase: "downloading segments", Message: "assembling video",
+		Completed: &completed, Total: &total, Unit: "items",
+	})
+	if err != nil {
+		t.Fatalf("UpdateProgress at assembly: %v", err)
+	}
+	if rate := snap.LiveRate(clock); rate == nil || math.Abs(*rate-4.0/15.0) > 1e-9 {
+		t.Fatalf("live rate at assembly = %v; want 4/15 items/s", rate)
+	}
+	last := snap.ProgressSeries.Points[len(snap.ProgressSeries.Points)-1]
+	if last.Completed == nil || *last.Completed != float64(completed) || last.Rate == nil || *last.Rate <= 0 {
+		t.Fatalf("assembly graph point = %+v; want the measured 4-of-4 count and positive rate", last)
+	}
+	if snap.ProgressSeries.ActivityAt != nil {
+		t.Fatalf("assembly kept a segment activity lease: %d", *snap.ProgressSeries.ActivityAt)
+	}
+}
+
+func TestDelayedHLSActivityMirrorUsesTheOriginalReadTime(t *testing.T) {
+	var series ProgressSeries
+	series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+	series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	readAt := at(2)
+	series, _ = advanceSeries(series, at(2), Progress{
+		Completed: int64Ptr(1), Unit: "items", Activity: true, ActivityAt: &readAt,
+	}, false)
+	if got := series.CurrentRate(at(12)); got == nil {
+		t.Fatal("the source read was not fresh at the ten-second boundary")
+	}
+
+	// A throttled completion or key-phase callback can arrive long after the
+	// last media bytes. Replaying the old activity flag must not restart its
+	// freshness window from the callback time.
+	series, _ = advanceSeries(series, at(13), Progress{
+		Completed: int64Ptr(1), Unit: "items", Activity: true, ActivityAt: &readAt,
+	}, false)
+	if got := series.CurrentRate(at(13)); got != nil {
+		t.Fatalf("a delayed mirror revived stale segment activity: %v", *got)
+	}
+	if series.ActivityAt != nil {
+		t.Fatalf("stale source activity remained recorded at %d", *series.ActivityAt)
+	}
+}
+
+func TestHLSActivityMovementSurvivesFinalReplacementAndCompaction(t *testing.T) {
+	segmentProgress := func(completed int64, activity bool) Progress {
+		return Progress{Completed: int64Ptr(completed), Total: int64Ptr(4), Unit: "items", Activity: activity}
+	}
+
+	t.Run("final replacement", func(t *testing.T) {
+		var series ProgressSeries
+		series, _ = advanceSeries(series, at(0), segmentProgress(0, false), false)
+		for second := int64(1); second < 15; second++ {
+			series, _ = advanceSeries(series, at(float64(second)), segmentProgress(0, true), false)
+		}
+		series, _ = advanceSeries(series, at(15), segmentProgress(4, false), true)
+		last := series.Points[len(series.Points)-1]
+		if last.Completed == nil || *last.Completed != 4 || last.Rate == nil || *last.Rate <= 0 {
+			t.Fatalf("final point = %+v; want final count movement retained", last)
+		}
+		if series.Rate != nil || series.Anchor != nil {
+			t.Fatalf("final series still exposes a live measurement: %+v", series)
+		}
+	})
+
+	t.Run("compaction", func(t *testing.T) {
+		const nowSecond = MaxSeriesPoints
+		series := ProgressSeries{IntervalMs: 1000, Unit: "items", Points: make([]SeriesPoint, MaxSeriesPoints)}
+		for i := range series.Points {
+			completed := 0.0
+			series.Points[i] = SeriesPoint{At: at(float64(i)).UnixMilli(), Completed: &completed}
+		}
+		anchorAt := at(float64(nowSecond - 15)).UnixMilli()
+		anchorCompleted := 0.0
+		series.Anchor = &RateAnchor{At: anchorAt, Completed: anchorCompleted}
+		activityAt := at(float64(nowSecond - 1)).UnixMilli()
+		series.ActivityAt = &activityAt
+		completed := int64(4)
+		series, _ = advanceSeries(series, at(float64(nowSecond)), Progress{
+			Completed: &completed, Unit: "items",
+		}, false)
+		if len(series.Points) > MaxSeriesPoints {
+			t.Fatalf("compaction left %d points, over the %d point bound", len(series.Points), MaxSeriesPoints)
+		}
+		last := series.Points[len(series.Points)-1]
+		if last.Completed == nil || *last.Completed != 4 || last.Rate == nil || *last.Rate <= 0 {
+			t.Fatalf("compacted last point = %+v; want the new count movement retained", last)
+		}
+	})
 }
 
 func TestHLSActivityClearsAtPauseRestartAndAssemblyBoundaries(t *testing.T) {

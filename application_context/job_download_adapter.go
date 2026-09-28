@@ -1382,6 +1382,10 @@ func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 		Phase: downloadPhase(snap), Message: snap.Phase,
 		Activity: snap.ProgressActivity && snap.Status == download_queue.JobStatusDownloading && snap.Phase == hls.PhaseSegments,
 	}
+	if progress.Activity {
+		activityAt := snap.ProgressActivityAt
+		progress.ActivityAt = &activityAt
+	}
 	switch {
 	case snap.PhaseTotal > 0:
 		completed, total := snap.PhaseCount, snap.PhaseTotal

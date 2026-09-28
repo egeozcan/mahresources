@@ -65,14 +65,16 @@ type DownloadJob struct {
 	Phase      string `json:"phase,omitempty"`
 	PhaseCount int64  `json:"phaseCount,omitempty"`
 	PhaseTotal int64  `json:"phaseTotal,omitempty"`
-	// ProgressActivity is set only on an HLS snapshot sent to the canonical
-	// progress mirror when bytes advanced since its previous heartbeat. It is a
-	// sampler hint, not part of the queue's public representation.
-	ProgressActivity    bool     `json:"-"`
-	ResultPath          string   `json:"resultPath,omitempty"`
-	Warnings            []string `json:"warnings,omitempty"`
-	AuthoritativeID     string   `json:"authoritativeId,omitempty"`
-	AuthoritativeStatus string   `json:"authoritativeStatus,omitempty"`
+	// ProgressActivity and ProgressActivityAt are set only on an HLS snapshot
+	// sent to the canonical progress mirror. The timestamp comes from an actual
+	// media segment-body read; neither field is part of the queue's public
+	// representation.
+	ProgressActivity    bool      `json:"-"`
+	ProgressActivityAt  time.Time `json:"-"`
+	ResultPath          string    `json:"resultPath,omitempty"`
+	Warnings            []string  `json:"warnings,omitempty"`
+	AuthoritativeID     string    `json:"authoritativeId,omitempty"`
+	AuthoritativeStatus string    `json:"authoritativeStatus,omitempty"`
 
 	// CanonicalJobID is the durable Job this queue entry publishes into, and is
 	// empty for a queue that runs without the control plane (the CLI, the package's

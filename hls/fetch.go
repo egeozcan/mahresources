@@ -156,7 +156,9 @@ func (opt Options) withDefaults() Options {
 // received is every byte fetched so far, playlists and keys included: the
 // figure the download's byte budget is charged with. While a segment is being
 // read, repeated reports may keep done unchanged while received grows; these
-// are activity heartbeats, not extra completed segments.
+// are progress callbacks, not extra completed segments. Callers that use byte
+// reads to refresh a coarse-count rate should use FetchWithSegmentActivity,
+// whose separate callback identifies actual media segment-body reads.
 //
 // **Called concurrently**, from each segment worker. A callback touching shared
 // state must guard it.
@@ -173,10 +175,11 @@ const (
 // segmentTally counts one download's segments across every media playlist it
 // fetches, and reports through its Progress.
 type segmentTally struct {
-	p     Progress
-	spent *atomic.Int64
-	total int64
-	done  atomic.Int64
+	p               Progress
+	segmentActivity func(time.Time)
+	spent           *atomic.Int64
+	total           int64
+	done            atomic.Int64
 }
 
 func (t *segmentTally) report(phase string, done int64) {
@@ -205,6 +208,20 @@ type Result struct {
 // lost to the sniff. On any error the working directory is removed before
 // returning, so a caller that only checks err leaks nothing.
 func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress) (*Result, error) {
+	return fetch(ctx, d, playlistURL, head, body, opt, p, nil)
+}
+
+// FetchWithSegmentActivity is Fetch with an additional signal for freshness
+// sampling. The callback runs after a positive, budget-charged read from a
+// media segment body and carries that read's time. Playlist, key and
+// initialization-map reads do not invoke it. The callback is concurrent across
+// segment workers and should only record the observation; Progress remains the
+// compatible callback for phase/count/received snapshots.
+func FetchWithSegmentActivity(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress, onSegmentActivity func(time.Time)) (*Result, error) {
+	return fetch(ctx, d, playlistURL, head, body, opt, p, onSegmentActivity)
+}
+
+func fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress, onSegmentActivity func(time.Time)) (*Result, error) {
 	opt = opt.withDefaults()
 
 	if d.CheckURL == nil {
@@ -231,7 +248,7 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	// the count at the first segment let tens of megabytes cross the network
 	// outside a limit the operator set.
 	var spent atomic.Int64
-	tally := &segmentTally{p: p, spent: &spent}
+	tally := &segmentTally{p: p, segmentActivity: onSegmentActivity, spent: &spent}
 	tally.report(PhasePlaylist, 0)
 
 	m, err := resolveMedia(ctx, d, playlistURL, head, body, opt, &spent)
@@ -639,6 +656,9 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 			// byte activity through the same callback while that segment is still
 			// downloading; done remains unchanged until the file lands.
 			if _, err := fetchToFileWithProgress(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total, func() {
+				if tally.segmentActivity != nil {
+					tally.segmentActivity(time.Now())
+				}
 				tally.report(PhaseSegments, tally.done.Load())
 			}); err != nil {
 				fail(fmt.Errorf("could not download segment %d of %d: %w", i+1, len(m.segments), err))

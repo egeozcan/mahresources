@@ -211,6 +211,9 @@ func TestHLSByteReadsMirrorActivityBeforeTheSegmentCompletes(t *testing.T) {
 		t.Fatalf("byte heartbeat snapshot = phase %q, status %q, %d of %d, %d bytes; want active 0-of-1 with bytes before completion",
 			active.Phase, active.Status, active.PhaseCount, active.PhaseTotal, active.Progress)
 	}
+	if active.ProgressActivityAt.IsZero() {
+		t.Fatal("byte heartbeat snapshot did not preserve the segment-body read time")
+	}
 	closeRelease()
 	err := <-finished
 	workerFinished = true

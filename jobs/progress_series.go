@@ -24,10 +24,11 @@ const (
 
 	seriesBaseIntervalMs = int64(1000)
 	rateAnchorIntervalMs = int64(1000)
-	// rateStaleAfter is how long a current rate stays true without a tick to
-	// refresh it. A transfer that stalls stops ticking, and the last measured
-	// speed must not keep being reported as if bytes were still arriving.
-	rateStaleAfter = 10 * time.Second
+	// ProgressRateFreshFor is how long a current rate stays true without new
+	// evidence. Producers that coalesce activity callbacks must preserve the
+	// source time so a delayed mirror cannot restart this window.
+	ProgressRateFreshFor = 10 * time.Second
+	rateStaleAfter       = ProgressRateFreshFor
 )
 
 // Metric is one named figure reported beside a Job's primary measure. See
@@ -185,12 +186,18 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	stale := rateStaleAfter.Milliseconds()
 	activityAt := series.ActivityAt
 	activityWasFresh := activityAt != nil && nowMs-*activityAt >= 0 && nowMs-*activityAt <= stale
+	reportedActivityAt := nowMs
+	if progress.ActivityAt != nil && progress.ActivityAt.UnixMilli() <= nowMs {
+		reportedActivityAt = progress.ActivityAt.UnixMilli()
+	}
+	reportedActivityAge := nowMs - reportedActivityAt
+	activityEvidenceFresh := progress.Activity && reportedActivityAge >= 0 && reportedActivityAge <= stale
 	activityCanBridge := activityWasFresh
-	if progress.Activity && !activityWasFresh && activityAt == nil && series.Anchor != nil {
+	if activityEvidenceFresh && !activityWasFresh && activityAt == nil && series.Anchor != nil {
 		anchorAge := nowMs - series.Anchor.At
 		activityCanBridge = anchorAge >= 0 && anchorAge <= stale
 	}
-	if progress.Activity && activityAt != nil && !activityWasFresh {
+	if activityEvidenceFresh && activityAt != nil && !activityWasFresh {
 		// A byte report after an unobserved gap starts a new measurement window;
 		// it cannot make the old count delta current again.
 		if series.Anchor != nil || series.Rate != nil {
@@ -198,9 +205,9 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 			changed = true
 		}
 	}
-	if progress.Activity {
-		if series.ActivityAt == nil || *series.ActivityAt != nowMs {
-			series.ActivityAt = &nowMs
+	if activityEvidenceFresh {
+		if series.ActivityAt == nil || reportedActivityAt > *series.ActivityAt {
+			series.ActivityAt = &reportedActivityAt
 			changed = true
 		}
 	}
@@ -223,10 +230,10 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		series.Anchor = &RateAnchor{At: nowMs, Completed: *completed}
 		series.Rate = nil
 		changed = true
-	case (progress.Activity || activityWasFresh) && *completed == series.Anchor.Completed:
-		// Bytes prove that a coarse HLS measure is still moving, but they are not
-		// a segment count. Keep the segment anchor and its last measured rate;
-		// an unchanged count must not turn a healthy stream into zero speed.
+	case *completed == series.Anchor.Completed:
+		// An unchanged count is never a new count measurement. Fresh activity
+		// can keep this anchor's rate visible, but metadata/phase reports cannot
+		// rebase it with a zero delta and extend the stale window.
 	case nowMs-series.Anchor.At >= rateAnchorIntervalMs:
 		elapsed := float64(nowMs-series.Anchor.At) / 1000
 		instant := (*completed - series.Anchor.Completed) / elapsed
@@ -237,7 +244,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		series.Anchor = &RateAnchor{At: nowMs, Completed: *completed}
 		changed = true
 	}
-	if !progress.Activity && series.ActivityAt != nil {
+	if (!progress.Activity && series.ActivityAt != nil) || (progress.Activity && !activityEvidenceFresh && !activityWasFresh && series.ActivityAt != nil) {
 		series.ActivityAt = nil
 		changed = true
 	}
@@ -255,7 +262,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	case nowMs-series.Points[count-1].At >= series.IntervalMs:
 		previous := series.Points[count-1]
 		point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
-		setActivityPointRate(&point, series, progress.Activity, !progress.Activity && activityWasFresh)
+		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, pointCountAdvanced(previous, point))
 		series.Points = append(series.Points, point)
 		changed = true
 	case final:
@@ -264,7 +271,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		if count > 1 {
 			point.Rate = pointRate(series.Points[count-2], point, max(stale, 3*series.IntervalMs))
 		}
-		setActivityPointRate(&point, series, progress.Activity, !progress.Activity && activityWasFresh)
+		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, count > 0 && pointCountAdvanced(series.Points[count-1], point))
 		series.Points[count-1] = point
 		changed = true
 	}
@@ -280,14 +287,23 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 	return series, changed
 }
 
-func setActivityPointRate(point *SeriesPoint, series ProgressSeries, active, activityEnded bool) {
+func setActivityPointRate(point *SeriesPoint, measuredRate *float64, active, activityEnded, countAdvanced bool) {
 	switch {
-	case activityEnded:
+	case activityEnded && !countAdvanced:
+		// A phase-only report can end a byte-activity lease, but it is not a
+		// count measurement. Keep the graph's existing stale/pause boundary.
 		point.Rate = nil
-	case active && series.Rate != nil:
-		rate := *series.Rate
+	case (active || activityEnded) && measuredRate != nil:
+		// When activity ends alongside real count movement, retain the
+		// measured count rate. Activity describes freshness; Completed remains
+		// the graph's measurement.
+		rate := *measuredRate
 		point.Rate = &rate
 	}
+}
+
+func pointCountAdvanced(previous, point SeriesPoint) bool {
+	return previous.Completed != nil && point.Completed != nil && *point.Completed > *previous.Completed
 }
 
 // reuniteMetricUnits drops a graphed key's history when the key comes back in a
