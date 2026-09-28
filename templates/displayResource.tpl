@@ -469,9 +469,28 @@
 
     {% if sc.ImageOperations %}
     {% if isVideo %}
+    {# One button, and a popup for what it does, on the same rules as the Custom #}
+    {# Thumbnail and Image Actions groups above (see sidebarPopup.js).            #}
+    {# The x-data root stays put and only the UI is behind the x-if, so a trim    #}
+    {# already in flight finishes even if the dialog is closed over it, and the #}
+    {# times dialled in are still there when it is reopened.                     #}
     <div class="sidebar-group" x-data="videoTrimmer({ resourceId: {{ resource.ID }}, videoDuration: {{ videoDuration }} })" data-trim-section="{{ resource.ID }}">
-        {% include "/partials/sideTitle.tpl" with title="Trim Video" %}
-        <p class="text-xs text-stone-600 mb-2">Drag the handles to select a range, or type exact times below. The result is saved as a new version.</p>
+        {% include "/partials/sideTitle.tpl" with title="Video Actions" %}
+        <button type="button" @click="open($event)" data-testid="video-actions-open"
+            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+            Video Actions…
+        </button>
+        <template x-if="isOpen">
+        <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
+            <div class="plugin-action-modal" role="dialog" aria-modal="true"
+                 aria-labelledby="video-actions-title-{{ resource.ID }}"
+                 x-trap.noreturn.noscroll="isOpen">
+                <header class="plugin-action-modal-header">
+                    <h3 class="plugin-action-modal-title" id="video-actions-title-{{ resource.ID }}">Video Actions</h3>
+                    <button type="button" @click="close()" class="plugin-action-modal-close" aria-label="Close">&times;</button>
+                </header>
+                <div class="px-5 pb-4 pt-3">
+                <p class="text-xs text-stone-600 mb-2">Trim Video: drag the handles to select a range, or type exact times below. The result is saved as a new version.</p>
 
         {# Dual-range slider #}
         <div class="w-[90%] mx-auto mb-3" x-show="duration > 0">
@@ -534,6 +553,10 @@
             <span x-show="isSubmitting">Trimming…</span>
         </button>
         <p x-show="errorMessage" x-text="errorMessage" class="text-xs text-red-700 mt-2" role="alert"></p>
+                </div>
+            </div>
+        </div>
+        </template>
     </div>
     {% endif %}
     {% endif %}

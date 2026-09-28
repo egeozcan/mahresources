@@ -11,7 +11,7 @@
  */
 import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
-import { openCropDialog } from '../../helpers/image-actions';
+import { openCropDialog } from '../../helpers/sidebar-popups';
 
 test.describe.serial('Image crop modal accessibility', () => {
   let resourceId: number;

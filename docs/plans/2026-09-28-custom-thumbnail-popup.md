@@ -1,4 +1,4 @@
-# Sidebar popups: Custom Thumbnail, then Image Actions (2026-09-28)
+# Sidebar popups: Custom Thumbnail, Image Actions, Video Actions (2026-09-28)
 
 ## Goal
 
@@ -122,3 +122,45 @@ than as the change that caused it. They go through
 - Measured the two sidebar buttons at 1400/1100/900/768/500/390px: no clipping
   and no overflow at any of them, so the `…` in the label is the ellipsis
   character and not truncation.
+
+## Follow-up: Video Actions (same day)
+
+Trim Video got the same treatment — one **Video Actions…** button, a popup
+holding the whole trimmer. The third caller needed no new behaviour, which is
+what the `sidebarPopup.js` extraction bought: the diff in `videoTrimmer.js` is
+one spread, and the open/close/focus/modality coverage transferred from the other
+two components unchanged.
+
+Two things decided the shape:
+
+- **The `x-data` root stays on the always-mounted sidebar group; only the UI is
+  behind the `x-if`.** `submit()` posts and then reloads, so a component that
+  lived and died with the dialog would orphan an in-flight request, and the
+  times the reader had dialled in would be gone on reopen. `data-trim-section`
+  is unchanged for the same reason. The slider's `x-ref` is read at pointer
+  time rather than at init, so it does not mind the element being absent while
+  the popup is shut. An e2e case pins the state surviving a close/reopen.
+- **The popup is 480px and the trimmer is a form with a slider in it.** Checked
+  by forcing a duration and screenshotting: the track, both thumbs, the selected
+  range and the time labels all fit.
+
+`e2e/helpers/image-actions.ts` became `e2e/helpers/sidebar-popups.ts` with an
+`openVideoActions` and an `openCustomThumbnail` beside `openImageActions` — the
+same shape three times over, so one file is where the next one goes.
+
+**Observed, not changed:** the trimmer's `validationError` and `errorMessage`
+are `x-show` paragraphs carrying `role="alert"` — a live region that is
+`display:none` until its text is set, which is the unreliably-announced shape
+`cropModal.tpl` already works around. Pre-existing on this markup and out of
+scope for a move; worth a separate pass.
+
+### Verification (video actions)
+
+- `e2e/tests/accessibility/19-a11y-video-actions-modal.spec.ts` — 6 passed:
+  closed sidebar shows one button, axe over the open popup, the slider and all
+  three inputs inside the dialog, Escape + focus return, the trap both ways,
+  and state surviving a close/reopen.
+- `resource-trim` — 3 passed (the two that drive the form now open the popup).
+- `tests/accessibility/` + `tests/lightbox/` + `custom-thumbnail` +
+  `entities/resource` — 365 passed. `npm run test:unit` 1869 · `go test` clean ·
+  `./scripts/css-scan-test.sh` clean.

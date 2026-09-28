@@ -1,6 +1,6 @@
 import { test, expect } from '../../fixtures/base.fixture';
 import { getWorkerBaseUrl } from '../../fixtures/base.fixture';
-import { openCropDialog } from '../../helpers/image-actions';
+import { openCropDialog } from '../../helpers/sidebar-popups';
 import path from 'path';
 
 async function fetchVersionCount(request: any, resourceId: number): Promise<number> {

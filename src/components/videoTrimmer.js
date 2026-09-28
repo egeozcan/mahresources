@@ -2,11 +2,24 @@
 //
 // Provides a visual timeline slider with draggable start (green) and end (red) thumbs,
 // plus text inputs for precise times. Submits via POST to /v1/resources/trim.
+//
+// The sidebar group is one **Video Actions…** button and a popup holding the
+// trimmer, on the shared rules in sidebarPopup.js.
+//
+// The component stays mounted with the popup closed, which is why the x-data
+// root is the sidebar group and only the UI is behind the x-if. A trim in
+// flight finishes and navigates whether or not the reader closes the dialog on
+// the way, and the times they had dialled in are still there when they reopen
+// it. The slider's track ref is read at pointer time, not at init, so it does
+// not care that the element is not in the document while the popup is shut.
+
+import { sidebarPopup } from './sidebarPopup.js';
 
 export function videoTrimmer({ resourceId, videoDuration = 0 }) {
   const duration = parseFloat(videoDuration) || 0;
 
   return {
+    ...sidebarPopup(),
     resourceId,
     duration,
     start: duration > 0 ? 0 : null,

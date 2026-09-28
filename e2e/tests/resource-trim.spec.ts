@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/base.fixture';
 import { getWorkerBaseUrl } from '../fixtures/base.fixture';
+import { openVideoActions } from '../helpers/sidebar-popups';
 import path from 'path';
 
 async function fetchVersionCount(request: any, resourceId: number): Promise<number> {
@@ -50,9 +51,13 @@ test.describe.serial('Resource trim', () => {
     const resourceId = await createVideoResource(apiClient, `Trim happy-path ${testRunId}`);
     await resourcePage.gotoDisplay(resourceId);
 
-    // The trim form lives in a sidebar section with data-trim-section
+    // The trimmer is a sidebar section with data-trim-section, and its controls
+    // live in a dialog behind the Video Actions… button, so the section is
+    // there with the popup closed and the controls only once it is open.
     const trimSection = page.locator(`[data-trim-section="${resourceId}"]`);
     await expect(trimSection).toBeVisible({ timeout: 10000 });
+    await expect(trimSection.locator('button:has-text("Trim Video")')).toHaveCount(0);
+    await openVideoActions(page);
 
     // Verify the version panel shows "Versions (1)" (lazy v1) before trim
     await expect(page.locator('summary:has-text("Versions (1)")')).toBeVisible({ timeout: 10000 });
@@ -90,6 +95,7 @@ test.describe.serial('Resource trim', () => {
 
     const trimSection = page.locator(`[data-trim-section="${resourceId}"]`);
     await expect(trimSection).toBeVisible();
+    await openVideoActions(page);
 
     // Directly set Alpine component state — empty end is uncorrectable
     await trimSection.evaluate((el) => {

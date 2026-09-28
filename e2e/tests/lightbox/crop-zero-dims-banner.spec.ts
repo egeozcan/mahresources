@@ -9,7 +9,7 @@
  * decode failure.
  */
 import { test, expect } from '../../fixtures/base.fixture';
-import { openCropDialog } from '../../helpers/image-actions';
+import { openCropDialog } from '../../helpers/sidebar-popups';
 import path from 'path';
 
 test.describe('BH-008: crop modal surfaces decode failures', () => {

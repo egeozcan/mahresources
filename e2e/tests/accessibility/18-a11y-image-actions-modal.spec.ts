@@ -11,7 +11,7 @@
  */
 import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
-import { openImageActions, openCropDialog } from '../../helpers/image-actions';
+import { openImageActions, openCropDialog } from '../../helpers/sidebar-popups';
 
 test.describe.serial('Image actions popup accessibility', () => {
   let resourceId: number;

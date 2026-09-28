@@ -259,19 +259,21 @@ This re-reads the image file and updates the stored width/height values.
 
 ## Video Operations
 
-Video resources have a trim operation available in the sidebar. Trimming requires FFmpeg.
+Video resources have a trim operation in the sidebar under **Video Actions**. Clicking **Video Actions…** opens a dialog with the trimmer. Trimming requires FFmpeg.
 
 ### Trim Video
 
 Cut a video down to a single time range.
 
 1. Navigate to the video resource
-2. In the sidebar, find **Trim Video**
+2. In the sidebar, click **Video Actions…**
 3. Drag the range slider handles to set the start and end, or type exact **Start (s)** and **End (s)** values
 4. Optionally add a **Comment**
 5. Click **Trim Video**
 
 Trimming creates a new version containing only the selected range and clears cached thumbnails. The output is always re-encoded as MP4 (H.264 video, AAC audio), regardless of the source format. Time values accept plain seconds, `MM:SS`, or `HH:MM:SS`.
+
+Closing the dialog without trimming keeps whatever you had dialled in, so you can step away and come back to the same range.
 
 ## Finding Similar Resources
 
