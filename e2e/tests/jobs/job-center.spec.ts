@@ -126,15 +126,17 @@ test.describe('Job Center', () => {
     const form = page.getByRole('form', { name: 'Filter jobs' });
     await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
 
-    await form.getByRole('checkbox', { name: 'plugin-action', exact: true }).check();
+    const pluginActionKind = form.getByRole('checkbox', { name: 'Plugin action', exact: true });
+    await pluginActionKind.check();
     await form.getByRole('combobox', { name: 'Pinned' }).selectOption('false');
     await form.getByRole('button', { name: 'Apply Filters' }).click();
     await expect(page).toHaveURL(/pinned=false/);
+    expect(new URL(page.url()).searchParams.getAll('kind')).toContain('plugin-action');
 
     await page.goBack();
     await expect(page).toHaveURL(/\/jobs\?state=succeeded&dismissed=false$/);
     await expect(form.getByRole('checkbox', { name: 'succeeded', exact: true })).toBeChecked();
-    await expect(form.getByRole('checkbox', { name: 'plugin-action', exact: true })).not.toBeChecked();
+    await expect(pluginActionKind).not.toBeChecked();
     await expect(form.getByRole('combobox', { name: 'Pinned' })).toHaveValue('');
   });
 

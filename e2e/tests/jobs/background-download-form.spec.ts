@@ -11,6 +11,7 @@ test.describe('Download in background from the create form', () => {
   test('stays on the form, opens the Jobs panel on the download, and says it started', async ({ page, request, baseURL }) => {
     const groupId = await createGroup(request, `background-form-${Date.now()}`);
     const source = `${baseURL}/public/favicon/ms-icon-150x150.png`;
+    const sourceTitle = new URL(source).pathname.split('/').pop()!;
     await page.goto(`/resource/new?OwnerId=${groupId}&URL=${encodeURIComponent(source)}`);
 
     const background = page.getByLabel('Download in background');
@@ -24,7 +25,7 @@ test.describe('Download in background from the create form', () => {
 
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     await expect(panel).toBeVisible();
-    await expect(panel.getByText(`Download from ${new URL(source).host}`).first()).toBeVisible();
+    await expect(panel.getByRole('article', { name: sourceTitle, exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/resource\/new/);
 
     await page.keyboard.press('Escape');
