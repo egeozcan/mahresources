@@ -113,9 +113,9 @@ with the final reviewed commits and merged gates before completion.
 
 | Lane | P0/P1 findings by round so far | Current disposition |
 | --- | --- | --- |
-| List | 8, 2, 2, 1 | Round 4's fetched-marker ownership finding is repaired at `0eb34029`. Original independent direct and opened-queue probes, full Go, PostgreSQL Go, JavaScript (1,732 tests) and build pass; browser and full round 5 remain pending. |
+| List | 8, 2, 2, 1 | Round 4's fetched-marker ownership finding is repaired at `0eb34029`. All fresh lane gates pass, including 2,337 browser/CLI tests with no retries; independent full round 5 is in progress. |
 | Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
-| Numbers | 2, 4, 1, 2, 2 | Round 5's replacement and compaction findings are repaired at `d8e2804a`. All original independent clocked probes and real HLS Cancel pass; full Go, JavaScript (1,735 tests) and build pass. PostgreSQL Go, browser and full round 6 remain pending. |
+| Numbers | 2, 4, 1, 2, 2 | Round 5's replacement and compaction findings are repaired at `d8e2804a`, with all original probes and broad gates passing. Before full round 6, the coordinator reproduced a decreased count becoming a neutral endpoint when Activity ends in the same report; append and final replacement both carry a rate across that restart under compaction. The hard-gap guard is being repaired before fresh gates and review. |
 | Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`. Local follow-ups closed at `2e558d23` and merged: report-read notices preserve an accepted failed/cancelled Job, primitive report outcomes live in contracts, and a test comment describes its scenario. Focused tests, build and coordinator producer/fault probes pass. |
 | Flakes | 2, 2, 1, 0, 0 | Round 5 clean at `f007c51f`, including independent forced shutdown-selection red/green and timestamp probes. All final lane gates pass, with 2,318 browser/CLI tests and no retries. |
 
@@ -148,3 +148,10 @@ paginated-column focus test. It failed during setup, before the focus assertions
 when POST `/v1/plugins/project-management/api/task/create` timed out after ten
 seconds. Its cause remains unproved; it is not labelled a baseline failure or a
 fixed focus regression.
+
+The subsequent Numbers run at `d8e2804a` passed with one retry in the mobile
+horizontal-overflow guard (`ws10-global-chrome.spec.ts:75`): body scroll width
+was 411 px at a 390 px viewport. Its cause remains unproved. Screenshot, video
+and error context were copied outside the worktree before another run could
+overwrite them. This result precedes the additional hard-restart guard and is
+not used as its final gate.
