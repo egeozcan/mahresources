@@ -874,8 +874,9 @@ export function jobCenter(options = {}) {
                 return;
             }
             const incoming = eventJob(message);
-            const previous = this.jobs.find(job => job.id === incoming?.id);
-            this.jobs = result.jobs;
+            const held = new Map(this.jobs.map(job => [job.id, job]));
+            const previous = held.get(incoming?.id);
+            this.jobs = result.jobs.map(next => mergeFetchedProgress(next, held.get(next.id)));
             if (result.announcement) this.sayLifecycle(previous, incoming, result.announcement);
         },
 
@@ -1095,6 +1096,9 @@ const SNAPSHOT_OMITTED_WHEN_EMPTY = ['phase', 'failure', 'controlIntent', 'repla
 
 export function mergeJobSnapshot(current, incoming) {
     const merged = { ...(current || {}), ...incoming };
+    // A server snapshot has no client-only progress version marker. Do not let
+    // spreading that marker forward make its own older snapshot look newer.
+    if (current && incoming && !Object.hasOwn(incoming, 'progressVersion')) delete merged.progressVersion;
     if (current && incoming && Number(incoming.version || 0) > Number(current.version || 0)) {
         for (const key of SNAPSHOT_OMITTED_WHEN_EMPTY) if (!(key in incoming)) delete merged[key];
     }

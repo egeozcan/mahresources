@@ -853,6 +853,26 @@ describe('job list live progress', () => {
         return list;
     }
 
+    function refreshThroughRefresher(list: ReturnType<typeof jobList>) {
+        let rows = '';
+        const fetchImpl = vi.fn(async () => ({
+            ok: true,
+            text: async () => page({ rows, quick: '' }),
+        }));
+        const refresher = createJobListRefresher({
+            fetchImpl,
+            morph: replace,
+            onRefreshed: () => list.reconcileProgressCards(),
+            debounceMs: 1,
+        });
+        (list as any)._refresher = refresher;
+        return async (nextRows: string) => {
+            rows = nextRows;
+            refresher.request();
+            await vi.advanceTimersByTimeAsync(2);
+        };
+    }
+
     const progressOf = (id: string) => {
         const card = document.querySelector(`[data-job-id="${id}"]`)!;
         return {
@@ -1006,6 +1026,86 @@ describe('job list live progress', () => {
         vi.advanceTimersByTime(6000);
         expect(progressOf('a').stats).not.toContain('/s');
         expect(progressOf('a').stats).not.toContain('left');
+        list.destroy();
+    });
+
+    test('the refresher seeds a newly inserted running card after its only frame arrived before insertion', async () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn('');
+        list.initializeProgressClock();
+        const refresh = refreshThroughRefresher(list);
+        list.handleProgressFrame({ data: JSON.stringify(frame('new', 1048576)) });
+        expect(list._progress.has('new')).toBe(false);
+
+        await refresh(runningCard('new'));
+        expect(list._progress.has('new')).toBe(true);
+        expect(list._progressClock).not.toBe(null);
+        vi.advanceTimersByTime(11000);
+        expect(progressOf('new').stats).not.toContain('/s');
+        expect(progressOf('new').stats).not.toContain('left');
+        list.destroy();
+    });
+
+    test('the refresher seeds a queued card when it becomes running without another frame', async () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const queued = `<article data-job-id="queued"><div data-entity='${JSON.stringify({ id: 'queued', state: 'queued', title: 'queued.bin', version: 3 })}'></div></article>`;
+        const list = listOn(queued);
+        list.initializeProgressClock();
+        const refresh = refreshThroughRefresher(list);
+
+        await refresh(runningCard('queued'));
+        expect(list._progress.has('queued')).toBe(true);
+        expect(list._progressClock).not.toBe(null);
+        vi.advanceTimersByTime(11000);
+        expect(progressOf('queued').stats).not.toContain('/s');
+        list.destroy();
+    });
+
+    test('the refresher rehydrates a running card that returns after removal', async () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('returning'));
+        list.initializeProgressClock();
+        const refresh = refreshThroughRefresher(list);
+
+        await refresh('');
+        expect(list._progress.has('returning')).toBe(false);
+        expect(list._progressClock).toBe(null);
+        list.handleProgressFrame({ data: JSON.stringify(frame('returning', 1048576)) });
+        expect(list._progress.has('returning')).toBe(false);
+
+        await refresh(runningCard('returning'));
+        expect(list._progress.has('returning')).toBe(true);
+        expect(list._progressClock).not.toBe(null);
+        vi.advanceTimersByTime(11000);
+        expect(progressOf('returning').stats).not.toContain('/s');
+        list.destroy();
+    });
+
+    test('the refresher and frame path compare full timestamps and prefer a higher frame version', async () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
+        const list = listOn(runningCard('precise', {
+            updatedAt: '2026-09-28T10:00:00.0001Z', total: 1000, completed: 100,
+        }));
+        list.initializeProgressClock();
+        const refresh = refreshThroughRefresher(list);
+
+        await refresh(runningCard('precise', {
+            updatedAt: '2026-09-28T10:00:00.0009Z', total: 1000, completed: 900,
+        }));
+        expect(progressOf('precise').value).toBe('90%');
+        list.handleProgressFrame({ data: JSON.stringify(frame('precise', 50, {
+            total: 1000, updatedAt: '2026-09-28T10:00:00.000001Z',
+        })) });
+        expect(progressOf('precise').value).toBe('90%');
+
+        list.handleProgressFrame({ data: JSON.stringify({
+            ...frame('precise', 950, { total: 1000, updatedAt: '2026-09-28T09:59:59.999999Z' }), version: 4,
+        }) });
+        expect(progressOf('precise').value).toBe('95%');
+        list.handleProgressFrame({ data: JSON.stringify(frame('precise', 10, {
+            total: 1000, updatedAt: '2026-09-28T10:00:00.000999Z',
+        })) });
+        expect(progressOf('precise').value).toBe('95%');
         list.destroy();
     });
 

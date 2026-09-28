@@ -8,7 +8,10 @@ import {
     reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
 import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
-import { applyProgressFrame, formatDuration, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
+import {
+    applyProgressFrame, compareProgressSnapshotOrder, formatDuration, formatRate, liveEtaText, liveRateText,
+    mergeFetchedProgress,
+} from './jobProgress.js';
 import { terminalStates } from './jobStates.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
@@ -341,7 +344,7 @@ export function jobList() {
                     this.eventSource = null;
                     source?.close();
                 },
-                onRefreshed: () => this.reapplyProgress(),
+                onRefreshed: () => this.reconcileProgressCards(),
                 onFailed: () => { this.refreshFailed = true; },
                 onRecovered: () => { this.refreshFailed = false; },
             });
@@ -442,69 +445,56 @@ export function jobList() {
             const entity = cardEntity(card);
             if (!entity?.id) return;
             const held = this._progress.get(frame.jobId);
-            // A frame reported before what the card already shows, drawn by a
-            // refresh or by a later frame, would move its bar back.
-            const reportedAt = Date.parse(frame.progress?.updatedAt || '');
-            const drawnAt = Math.max(
-                Date.parse(card.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '') || 0,
-                Date.parse(held?.progress?.updatedAt || '') || 0,
-            );
-            if (Number.isFinite(reportedAt) && reportedAt < drawnAt) return;
-            const base = held && Number(held.version || 0) >= Number(entity.version || 0)
-                ? { ...held, state: entity.state }
-                : { ...entity, progress: {} };
+            const rendered = { ...entity, progress: cardProgressSnapshot(card) || {} };
+            const base = held && compareProgressSnapshotOrder(rendered, held) <= 0
+                ? { ...held, state: entity.state, title: entity.title || held.title }
+                : held ? mergeFetchedProgress(rendered, held) : rendered;
+            if (base !== held && base.progress) this._progress.set(frame.jobId, base);
             const next = applyProgressFrame(base, frame);
-            if (next === base) return;
+            if (next === base) {
+                this.keepProgressClock();
+                return;
+            }
             this._progress.set(frame.jobId, next);
             applyCardProgress(card, cardProgressView(next, Date.now()), next.title || entity.title || 'Job');
             this.keepProgressClock();
         },
 
-        // The server-rendered card already has the latest progress text and bar,
-        // but its ETA and rate need the same clock as a live frame so those
-        // figures count down and disappear when the report goes stale.
-        initializeProgressClock() {
+        // Hydration and every server refresh use the same comparison: retained
+        // snapshots win ties/older copies, newer server snapshots replace them,
+        // and only running cards still rendered in this list remain tracked.
+        reconcileProgressCards() {
+            const previouslyHeld = this._progress;
+            const reconciled = new Map();
             for (const card of this.$root?.querySelectorAll?.('[data-job-id]') || []) {
                 const entity = cardEntity(card);
                 if (!entity?.id || entity.state !== 'running') continue;
+                const held = previouslyHeld.get(entity.id);
                 const progress = cardProgressSnapshot(card);
-                if (!progress) continue;
-                this._progress.set(entity.id, { ...entity, progress });
+                const rendered = { ...entity, progress: progress || {} };
+                if (!held) {
+                    if (progress) reconciled.set(entity.id, rendered);
+                    continue;
+                }
+                const order = compareProgressSnapshotOrder(rendered, held);
+                if (order > 0) {
+                    if (progress) reconciled.set(entity.id, mergeFetchedProgress(rendered, held));
+                    continue;
+                }
+                const retained = { ...held, state: entity.state, title: entity.title || held.title };
+                reconciled.set(entity.id, retained);
+                applyCardProgress(card, cardProgressView(retained, Date.now()), retained.title || 'Job');
             }
+            this._progress = reconciled;
             this.keepProgressClock();
         },
 
-        // After a refresh, a held frame wins an equal or older snapshot; a
-        // newer server version or progress timestamp wins regardless of the
-        // other clock, since separate executors may stamp their own clocks.
+        initializeProgressClock() {
+            this.reconcileProgressCards();
+        },
+
         reapplyProgress() {
-            for (const [jobId, held] of this._progress) {
-                const card = cardFor(this.$root, jobId);
-                const entity = cardEntity(card);
-                const drawnAt = Date.parse(card?.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '');
-                const heldAt = Date.parse(held.progress?.updatedAt || '');
-                if (!entity || entity.state !== 'running') {
-                    this._progress.delete(jobId);
-                    continue;
-                }
-                const heldVersion = Number(held.version || 0);
-                const renderedVersion = Number(entity.version || 0);
-                const renderedProgressIsNewer = renderedVersion > heldVersion || (
-                    renderedVersion === heldVersion && Number.isFinite(drawnAt) &&
-                    (!Number.isFinite(heldAt) || drawnAt > heldAt)
-                );
-                if (renderedProgressIsNewer) {
-                    const progress = cardProgressSnapshot(card);
-                    if (progress) {
-                        this._progress.set(jobId, { ...entity, progress });
-                    } else {
-                        this._progress.delete(jobId);
-                    }
-                    continue;
-                }
-                applyCardProgress(card, cardProgressView(held, Date.now()), held.title || entity.title || 'Job');
-            }
-            this.keepProgressClock();
+            this.reconcileProgressCards();
         },
 
         // "about 31 s left" counts down between frames, and a speed nothing has

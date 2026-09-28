@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
     applyProgressFrame,
+    compareProgressSnapshotOrder,
     formatAmount,
     formatBytes,
     formatEta,
@@ -184,6 +185,70 @@ describe('graph gaps and newer versions', () => {
         expect(mergeFetchedProgress(resumed, held).progress.completed).toBe(10);
         const frame = { jobId: 'j', version: 3, progress: { completed: 12, updatedAt: '2026-09-25T10:00:11Z' } };
         expect(applyProgressFrame(held, frame).progress.completed).toBe(12);
+    });
+
+    test('orders API RFC3339Nano progress timestamps below millisecond precision', () => {
+        const old = { id: 'j', version: 1, progress: { completed: 50, updatedAt: '2026-09-28T10:00:00.000001Z' } };
+        const middle = { id: 'j', version: 1, progress: { completed: 100, updatedAt: '2026-09-28T10:00:00.0001Z' } };
+        const newest = { id: 'j', version: 1, progress: { completed: 900, updatedAt: '2026-09-28T10:00:00.0009Z' } };
+
+        const afterMiddle = mergeFetchedProgress(middle, old);
+        expect(afterMiddle.progress.completed).toBe(100);
+        const afterNewest = mergeFetchedProgress(newest, afterMiddle);
+        expect(afterNewest.progress.completed).toBe(900);
+
+        const staleFrame = { jobId: 'j', version: 1, progress: { completed: 5, updatedAt: '2026-09-28T10:00:00.000001Z' } };
+        expect(applyProgressFrame(afterNewest, staleFrame)).toBe(afterNewest);
+    });
+
+    test('compares normalized instants and nanosecond differences', () => {
+        const held = { id: 'j', version: 4, progress: { completed: 90, updatedAt: '2026-09-28T10:00:00.000000009Z' } };
+        const equivalentOffset = { jobId: 'j', version: 4, progress: { completed: 80, updatedAt: '2026-09-28T11:00:00.000000009+01:00' } };
+        expect(applyProgressFrame(held, equivalentOffset)).toBe(held);
+
+        const oneNanosecondOlder = { jobId: 'j', version: 4, progress: { completed: 5, updatedAt: '2026-09-28T10:00:00.000000008Z' } };
+        expect(applyProgressFrame(held, oneNanosecondOlder)).toBe(held);
+        const oneNanosecondNewer = { jobId: 'j', version: 4, progress: { completed: 95, updatedAt: '2026-09-28T10:00:00.000000010Z' } };
+        expect(applyProgressFrame(held, oneNanosecondNewer).progress.completed).toBe(95);
+    });
+
+    test('a newer frame version wins despite executor clock skew and blocks older versions afterward', () => {
+        const held = { id: 'j', version: 3, progress: { completed: 10, updatedAt: '2026-09-28T10:00:00.0009Z' } };
+        const resumed = applyProgressFrame(held, {
+            jobId: 'j', version: 4, progress: { completed: 90, updatedAt: '2026-09-28T09:59:59.999999Z' },
+        });
+        expect(resumed.progress.completed).toBe(90);
+        expect(resumed.version).toBe(3); // progress frames do not mutate lifecycle state
+
+        const stale = applyProgressFrame(resumed, {
+            jobId: 'j', version: 3, progress: { completed: 5, updatedAt: '2026-09-28T10:00:00.000999Z' },
+        });
+        expect(stale).toBe(resumed);
+        const staleFetch = mergeFetchedProgress({
+            id: 'j', version: 2, progress: { completed: 4, updatedAt: '2026-09-28T11:00:00Z' },
+        }, resumed);
+        expect(staleFetch.progress.completed).toBe(90);
+    });
+
+    test('same-version fetched snapshots prefer valid timestamps and do not let invalid times displace them', () => {
+        const held = { id: 'j', version: 2, progress: { completed: 900, updatedAt: '2026-09-28T10:00:00.0009Z' } };
+        const invalid = { id: 'j', version: 2, progress: { completed: 10, updatedAt: 'not-a-time' } };
+        expect(mergeFetchedProgress(invalid, held).progress.completed).toBe(900);
+
+        const validWithoutHeldTime = { id: 'j', version: 2, progress: { completed: 50, updatedAt: '2026-09-28T10:00:00.000001Z' } };
+        const unclocked = { id: 'j', version: 2, progress: { completed: 10, updatedAt: '' } };
+        expect(mergeFetchedProgress(validWithoutHeldTime, unclocked).progress.completed).toBe(50);
+    });
+
+    test('the shared ordering defines version, timestamp equality, offsets and invalid timestamps', () => {
+        const held = { version: 3, progress: { updatedAt: '2026-09-28T10:00:00.0001Z' } };
+        expect(compareProgressSnapshotOrder({ version: 4, progress: { updatedAt: '2026-09-28T09:00:00Z' } }, held)).toBe(1);
+        expect(compareProgressSnapshotOrder({ version: 2, progress: { updatedAt: '2026-09-28T11:00:00Z' } }, held)).toBe(-1);
+        expect(compareProgressSnapshotOrder({ version: 3, progress: { updatedAt: '2026-09-28T11:00:00.0001+01:00' } }, held)).toBe(0);
+        expect(compareProgressSnapshotOrder({ version: 3, progress: { updatedAt: '2026-09-28T10:00:00.000100001Z' } }, held)).toBe(1);
+        expect(compareProgressSnapshotOrder({ version: 3, progress: { updatedAt: 'bad' } }, held)).toBe(-1);
+        expect(compareProgressSnapshotOrder({ version: 3, progress: { updatedAt: '2026-09-28T10:00:00.0001Z' } }, { version: 3, progress: { updatedAt: 'bad' } })).toBe(1);
+        expect(compareProgressSnapshotOrder({ version: 3, progress: { updatedAt: 'bad' } }, { version: 3, progress: {} })).toBe(null);
     });
 });
 
