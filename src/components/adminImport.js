@@ -14,6 +14,10 @@ function freshDecisions() {
   };
 }
 
+function terminalApplyFailure(job) {
+  return job?.failure?.message || job?.error || (job?.status === 'cancelled' ? 'The apply was cancelled.' : 'The apply failed.');
+}
+
 export function adminImport() {
   return {
     selectedFile: null,
@@ -54,6 +58,8 @@ export function adminImport() {
     // never shown as a success: a partial apply writes a report too.
     applyOutcome: '',
     applyEventSource: null,
+    applyReadNotice: '',
+    applyJobURL: '',
 
     // Set when /admin/import?job=<handle> names an import whose review cannot
     // be shown any more: what happened to it, and the page of the Job that
@@ -112,6 +118,8 @@ export function adminImport() {
       this.applyPhase = '';
       this.applyResult = null;
       this.applyOutcome = '';
+      this.applyReadNotice = '';
+      this.applyJobURL = '';
       this.resumeNotice = '';
       this.resumeJobURL = '';
     },
@@ -855,6 +863,8 @@ export function adminImport() {
       this.applyJob = null;
       this.applyPhase = '';
       this.error = null;
+      this.applyReadNotice = '';
+      this.applyJobURL = '';
 
       try {
         const resp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/apply`, {
@@ -878,6 +888,7 @@ export function adminImport() {
         if (!this.ownsImport(generation)) return;
         this.applyJobId = data.jobId;
         this.applyCanonicalJobId = data.canonicalJobId || null;
+        this.applyJobURL = this.applyCanonicalJobId ? '/job?id=' + encodeURIComponent(this.applyCanonicalJobId) : '';
         this.subscribeApplyProgress(data.jobId, handle, generation, this.applyCanonicalJobId);
       } catch (err) {
         if (!this.ownsImport(generation)) return;
@@ -899,13 +910,15 @@ export function adminImport() {
         if (payload.job.status === 'completed') {
           this.applying = false;
           this.applyOutcome = '';
+          this.applyReadNotice = '';
           this.error = null;
           void this.fetchApplyResult(importHandle, generation, canonicalApplyId, payload.job);
           this.closeApplySSE(source);
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.applying = false;
           this.applyOutcome = '';
-          this.error = null;
+          this.applyReadNotice = '';
+          this.error = terminalApplyFailure(payload.job);
           void this.fetchApplyResult(importHandle, generation, canonicalApplyId, payload.job); // partial-failure may have result
           this.closeApplySSE(source);
         }
@@ -933,26 +946,41 @@ export function adminImport() {
 
     async fetchApplyResult(importHandle = this.jobId, generation = this._importGeneration, expectedApplyId = null, terminalJob = null) {
       if (!this.ownsImport(generation)) return;
+      const jobFailure = terminalJob && (terminalJob.status === 'failed' || terminalJob.status === 'cancelled')
+        ? terminalApplyFailure(terminalJob)
+        : null;
       try {
         const init = expectedApplyId ? { headers: { 'X-Expected-Import-Apply': expectedApplyId } } : undefined;
         const resp = await fetch(`/v1/imports/${encodeURIComponent(importHandle)}/result`, init);
         if (!this.ownsImport(generation)) return;
         if (!resp.ok) {
-          if (resp.status === 404 && terminalJob && terminalJob.status !== 'completed') {
-            this.error = terminalJob.failure?.message || terminalJob.error || `Apply job ${terminalJob.status}; no report is available.`;
+          this.applyOutcome = '';
+          this.applyResult = null;
+          if (resp.status === 404) {
+            this.applyReadNotice = 'No Apply report is available. Check the accepted Apply Job for its status.';
+          } else {
+            this.applyReadNotice = 'The Apply report could not be read. Check the accepted Apply Job for its status and details.';
           }
-          return; // 404 means no report is available
+          this.error = jobFailure;
+          return; // An unreadable response does not establish a report outcome.
         }
         const result = await resp.json();
         if (!this.ownsImport(generation)) return;
-        this.applyResult = result;
-        this.applyOutcome = result.apply_outcome === 'succeeded' || result.apply_outcome === 'failed' || result.apply_outcome === 'cancelled'
+        const outcome = result.apply_outcome === 'succeeded' || result.apply_outcome === 'failed' || result.apply_outcome === 'cancelled'
           ? result.apply_outcome
           : 'unknown';
-        this.error = this.applyOutcome === 'failed' || this.applyOutcome === 'cancelled'
-          ? (result.apply_failure || terminalJob?.failure?.message || terminalJob?.error || (this.applyOutcome === 'cancelled' ? 'The apply was cancelled.' : 'The apply failed.'))
+        const failure = outcome === 'failed' || outcome === 'cancelled'
+          ? (result.apply_failure || terminalApplyFailure(terminalJob))
           : null;
-      } catch (e) { /* ignore */ }
+        this.applyResult = result;
+        this.applyOutcome = outcome;
+        this.applyReadNotice = '';
+        this.error = failure;
+      } catch (e) {
+        if (!this.ownsImport(generation)) return;
+        this.applyReadNotice = 'The Apply report could not be read. Check the accepted Apply Job for its status and details.';
+        this.error = jobFailure;
+      }
     },
 
     closeApplySSE(requestedSource = this.applyEventSource) {

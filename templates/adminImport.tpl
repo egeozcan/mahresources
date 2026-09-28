@@ -49,6 +49,11 @@
   <!-- Error -->
   <div x-show="error" role="alert" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
 
+  <div x-show="applyReadNotice" role="status" class="rounded-md bg-stone-50 border border-stone-200 p-4 text-sm text-stone-700" data-testid="import-apply-read-notice">
+    <p x-text="applyReadNotice"></p>
+    <p x-show="applyJobURL" class="mt-2"><a :href="applyJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the accepted Apply Job</a></p>
+  </div>
+
   {# An import named by ?job= whose review is gone: what became of it, and the #}
   {# Job page that records its apply. #}
   <div x-show="resumeNotice" role="status" class="rounded-md bg-stone-50 border border-stone-200 p-4 text-sm text-stone-700" data-testid="import-resume-notice">

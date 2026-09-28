@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/groupio"
 	"mahresources/jobs"
@@ -206,14 +207,9 @@ type importApplyReportProvenance struct {
 	Report json.RawMessage `json:"report"`
 }
 
-// ImportApplyReportOutcome is the safe, viewer-authorized outcome paired with
-// the report currently stored for one import. Unknown means its producer could
-// not be verified or is not visible to this caller.
-type ImportApplyReportOutcome struct {
-	State          string
-	FailureMessage string
-	Known          bool
-}
+// ImportApplyReportOutcome is an application-context alias for the shared
+// boundary value returned by the import-report reader.
+type ImportApplyReportOutcome = contracts.ImportApplyReportOutcome
 
 func readImportApplyReportPublication(fs afero.Fs, handle string) ([]byte, string, bool) {
 	data, err := afero.ReadFile(fs, importResultProvenancePathFor(handle))
