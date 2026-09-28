@@ -70,6 +70,12 @@ scheduled Job; and a download outside the capped Finished read triggering no res
 list refresh on its own. Rolling-upgrade and retention limits remain in the
 remediation plan and operator documentation.
 
+Two additional accepted limits are explicit in the feature reference: a Continue
+that reports counts carried from earlier work is averaged as though this Job did
+that work; and a zero live similarity-distance threshold is honored by the list
+and MRQL while Resource Reduction falls back to a positive configured value or
+10. Neither policy was expanded by the final repairs.
+
 ## Accepted product decisions
 
 - Job titles snapshot their subject's name at acceptance: the export group,
@@ -136,3 +142,9 @@ card-meta overflow class repaired by Flakes; the final merged gate and the exist
 long-name regression must verify the combined result. The independent inherited
 drawer test leak was attributed with delayed owner traces on both master and List,
 then repaired by fixture-owned cleanup in Flakes.
+
+The final List browser run also had one passing retry in Project Management's
+paginated-column focus test. It failed during setup, before the focus assertions,
+when POST `/v1/plugins/project-management/api/task/create` timed out after ten
+seconds. Its cause remains unproved; it is not labelled a baseline failure or a
+fixed focus regression.
