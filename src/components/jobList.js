@@ -412,6 +412,14 @@ export function jobList() {
             const entity = cardEntity(card);
             if (!entity?.id) return;
             const held = this._progress.get(frame.jobId);
+            // A frame reported before what the card already shows, drawn by a
+            // refresh or by a later frame, would move its bar back.
+            const reportedAt = Date.parse(frame.progress?.updatedAt || '');
+            const drawnAt = Math.max(
+                Date.parse(card.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '') || 0,
+                Date.parse(held?.progress?.updatedAt || '') || 0,
+            );
+            if (Number.isFinite(reportedAt) && reportedAt < drawnAt) return;
             const base = held && Number(held.version || 0) >= Number(entity.version || 0)
                 ? { ...held, state: entity.state }
                 : { ...entity, progress: {} };

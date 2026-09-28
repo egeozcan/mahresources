@@ -858,6 +858,19 @@ describe('job list live progress', () => {
         list.destroy();
     });
 
+    test('a frame older than the progress a refresh drew moves nothing back', () => {
+        vi.useFakeTimers({ now: new Date('2026-09-28T10:00:21Z') });
+        const list = listOn(runningCard('a', { updatedAt: '2026-09-28T10:00:20Z' }));
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576)) });
+        expect(progressOf('a').value).toBe('4%');
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1572864, { updatedAt: '2026-09-28T10:00:21Z' })) });
+        expect(progressOf('a').value).toBe('75%');
+        // Nor does one older than a frame already drawn.
+        list.handleProgressFrame({ data: JSON.stringify(frame('a', 1048576, { updatedAt: '2026-09-28T10:00:20.500Z' })) });
+        expect(progressOf('a').value).toBe('75%');
+        list.destroy();
+    });
+
     test('a refresh that drew older progress than the page holds is brought forward again', () => {
         vi.useFakeTimers({ now: new Date('2026-09-28T10:00:10Z') });
         const list = listOn(runningCard('a'));
