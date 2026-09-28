@@ -1,0 +1,67 @@
+You are reviewing one lane of a remediation batch in the mahresources repository (Go + Pongo2 templates + Alpine.js; SQLite and PostgreSQL). Your working directory is the lane's git worktree. Read CLAUDE.md first; it states the house rules (layering, the db handle travels per call, SQLite BEGIN IMMEDIATE, a11y, docs must match code, deployments with millions of rows).
+
+Base commit: bdafcb51. Review `git diff bdafcb51..HEAD`. Commits:
+
+bec48eb4 Refuse a queue follower once the database is closing
+c1b78607 Start no queue worker once Shutdown has begun
+b1bb1368 Keep an update microseconds after its create in the timeline count
+1b08a24c Create the E2E server log directory, and state the date guard's limit
+f6be39f1 Drain a generic queue job at shutdown like a download
+444c5193 Count a timeline update by instant, not by timestamp text
+ec78b24b Say whether the browser or the blink control ignored reduced motion
+b3cd3872 Stop the queue and wait out its followers when an api test ends
+4d248436 Pin note dates reading back as written on PostgreSQL
+2cc7cac8 Let an E2E run keep each worker server's output
+7edd39fd Document UTC timeline buckets and wall-clock note dates
+1384a9a0 Read a note's start and end dates back as the wall clock written
+15d30863 Pin mah.util.today as installed without a capability
+c3858688 Wait out queue followers before the ephemeral database closes
+177f8b0d Wrap a long owner or category name inside a resource card
+01fdbd39 Wait out a queue execution's follower before a test closes its database
+a80a6a21 Mark a PM task overdue against the local calendar, not UTC's
+6d6fe797 Count a timeline row in the bucket that holds its instant on SQLite
+
+The issues this lane fixes (it owns tests, harness code, and minimal product fixes where a failing test exposed a real bug):
+
+D1. Date boundary, timeline: the `mr groups|queries|resources timeline` doctests failed between local midnight and UTC midnight. Cause claimed: timeline buckets are UTC calendar periods, GORM stamps rows in the server's zone, and SQLite stores times as text in the offset given, so `created_at >= ? AND created_at < ?` compared wall clocks. Fix: `database_scopes.InstantRange` (models/database_scopes/db_utils.go) compares instants with julianday() on SQLite inside an indexed text window on the bare column; timeline_context.go routes all 12 bucket queries through it.
+D2. Date boundary, Project Management "(overdue)": the task-date shortcode compared a note's due date (a wall-clock value parsed without a zone) with the date part of mah.util.now_iso() (UTC), and the board (pm-core.js) with new Date().toISOString(). Fix: new host function mah.util.today() (server's local calendar date), the Lua shortcode uses it, the browser code uses the viewer's local date (PMCore.today), a new time-log entry's default date too. The bundled plugin is mirrored byte-for-byte into e2e/test-plugins. Guard: e2e/tests/regressions/date-boundary.spec.ts runs its own server (TZ), browser (timezoneId) and dates in a zone a day away from UTC's at the moment it starts.
+D3. Found by that guard on PostgreSQL: a note's StartDate/EndDate are parsed without a zone as UTC, but pgx returns timestamptz in the process's zone, so on PG they read back shifted, the edit form offered the shifted value, and every save (and the note API's partial edit, and plugin patch_note) moved them again. Fix: Note.AfterFind returns both in UTC, matching SQLite. Audit claim: no other person-entered date is parsed without a zone into a timestamp column.
+F1. Flake: `TempDir RemoveAll cleanup: directory not empty` in PG TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction (and once in api_tests TestGroupExportSubmissionAcceptsADurableJobBeforeDispatch). Cause claimed: ownQueueExecution's follower and claim-renewal goroutines were tracked by nothing and write after the Job reads terminal. Fix: a shared WaitGroup on MahresourcesContext, WaitQueueFollowers, called by both test harnesses' cleanup (after shutting the queue down) and by ReleaseEphemeralDatabase (-memory-db) before closing.
+F2. Flake: ws10-global-chrome:75 and phase3-sweeps mobile overflow on /resources failed now and then: the offender was a resource card's `.card-meta-link`. Cause claimed: a long owner or resource-category name in a nowrap meta item overflows 390px; data-dependent because each worker's server holds other specs' rows. Fix: `.card-meta .card-meta-link` wraps (public/index.css), deterministic spec card-meta-long-names.spec.ts.
+F3. Harness: E2E_SERVER_LOG_DIR keeps each worker server's output (opt-in).
+Not yet root-caused, and not claimed fixed: calendar-event-modal-a11y and blocks specs (a block editor control never appears within 10s, once in several full runs; twice at the same moment in two PG workers) and compare-page-teardown:553 (`.compare-diff--unified` never appears once); compare-difference-measurement:456 (aria-disabled stayed unset after emulateMedia reduce once) only gained a diagnostic precondition.
+
+Round 1 of this review found four things; all were accepted and fixed:
+- P1: the timeline's Updated count still compared `updated_at > created_at` as SQLite text. Fixed in 444c5193: `database_scopes.InstantAfter` compares the two columns with julianday() on SQLite; the API test gained a row updated five minutes after creation in a different offset, and a unit test covers equal instants in different notations.
+- P1: generic queue workers (export, import, clustering) were not drained by DownloadManager.Shutdown, so a test or -memory-db release could close the database under a run still writing. Fixed in f6be39f1: they start through startGenericWorker, registered with the same bounded drain as download workers (TestShutdownWaitsForAGenericJobToUnwind); CLAUDE.md no longer says they are not drained.
+- P2: E2E_SERVER_LOG_DIR naming a missing directory broke worker startup. Fixed in 1b08a24c (mkdir -p).
+- P2: the date-boundary spec's zone choice across UTC midnight. The chosen zone's next midnight is at least two hours after the choice, so its dates cannot change mid-test; no zone stays a day away across UTC midnight, so a straddling run only loses discrimination. Documented in the spec rather than changed.
+
+Also added since round 1: ec78b24b (a diagnostic precondition in the reduced-motion compare test), 4d248436 and b3cd3872 were already in round 1's range.
+
+Round 2 found four things:
+- P1: generic queue workers were counted for the drain after the registry lock was released, so Shutdown could return before one started, and work submitted after Shutdown ran. Fixed in c1b78607: registerWorker counts a worker under dm.mu (read or write) and refuses once Shutdown has begun (Shutdown closes done before taking the write lock and waits after releasing it); every start site now holds the lock; the entry stays pending and its durable Job is left for the next process. Test: TestAJobSubmittedDuringShutdownIsNotStarted.
+- P1: InstantAfter's julianday() comparison lost updates within a millisecond of the create. Fixed in b1bb1368: within one millisecond the text decides, only between values ending in the same offset (substr(x, -6)); unit cases for .0001/.0004 both ways and for one instant in two offsets.
+- P2: followers were counted only when they started, so a wait that had seen zero could let the DB close under one counted a moment later. Fixed in bec48eb4: queueFollowerGroup marks itself stopped under the lock that counts starts; StopQueueFollowers (renamed from WaitQueueFollowers) refuses new followers and waits. Test: TestAStoppedFollowerGroupStartsNoFollower.
+- P2 (declined): the server-rendered overdue mark uses the server's calendar and the board the viewer's, so the two can disagree when the server and viewer zones differ. Evidence for declining: server-rendered HTML has no viewer zone to use (the task-date shortcode renders on list and hover surfaces with no browser involved); the docs (docs-site/docs/features/project-management.md, "Statuses and priorities") state which calendar each surface uses; before this lane both used UTC's, which was wrong for every viewer and server outside UTC. Agreeing per page would need the browser to recompute server-rendered marks, a feature rather than a fix. If you disagree, say what a server-rendered surface should use instead.
+
+Previously declined, with evidence: the PM calendar split above.
+
+
+Review for:
+(a) whether each listed issue is really fixed at its root (not a symptom patch), and whether the claimed causes are right;
+(b) correctness, security, concurrency and data defects the change introduces. Specific questions worth your time: InstantRange's window margin and its interaction with every text shape SQLite may hold for these columns, julianday precision, index use, and PostgreSQL behaviour; Note.AfterFind on every read path (preloads, Scan, raw SQL, MRQL, export/import, plugin adapters) and anything that relied on the old location; the WaitGroup's Add/Done pairing, bounded waits, and whether any other goroutine writes after a Job reads terminal; mah.util.today semantics and the sandbox posture; the date-boundary spec's zone choice across the UTC day;
+(c) regressions elsewhere, missing tests, accessibility regressions, and docs (docs-site, CLAUDE.md, e2e/README.md) that now disagree with the code.
+
+Push back rather than validate. For each issue D1-D3 and F1-F3, and each round 1 and round 2 fix, list what you read and what you ran.
+
+Tag every finding P0, P1, P2 or P3, by consequence, not by how likely the interleaving is.
+P0 = data loss or corruption, a security or access-control hole, a crash or a server that cannot
+start, or work that runs twice or is lost for good. P1 = broken: a listed issue that is not
+actually fixed at its root, a regression of existing behaviour, a user-facing path that fails or
+gives a wrong result, or an accessibility barrier that blocks a task. P2 = wrong or confusing but
+survivable: a workaround exists, it occurs only under an injected infrastructure fault (a stalled
+or failing DB call), missing or weak tests, or docs that disagree with the code. P3 = polish:
+wording, style, naming, or a pre-existing problem this change neither causes nor worsens.
+For each finding give file:line, a concrete failing scenario, and a suggested fix. End your
+answer with exactly one line: `BLOCKING COUNT: N`, where N is the number of P0 and P1 findings.
