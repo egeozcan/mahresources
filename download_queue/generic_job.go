@@ -203,9 +203,11 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 	// that says it exists.
 	m.notifyJob("added", job)
 
-	m.mu.Unlock()
+	// Under the registry lock, which orders it against Shutdown's drain
+	// (registerWorker).
+	m.startGenericWorker(job)
 
-	go m.processGenericJob(job)
+	m.mu.Unlock()
 
 	return job, nil
 }

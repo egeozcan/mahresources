@@ -807,6 +807,20 @@ html {
     text-decoration: none;
 }
 
+/* An owner or category name can be one long unbroken string (a URL, a hash, a
+   generated id), and .card-meta-item is nowrap, so a link holding one pushed the
+   card past a narrow viewport, where html/body clip it away. The link wraps
+   inside itself where it has to. overflow-wrap: anywhere, not the break-word
+   `.list-container a` sets: break-word does not lower the link's min-content
+   width, so the nowrap item still refused to shrink. anywhere rather than
+   break-all, following .card-title, so ordinary names keep their word
+   boundaries. Two classes, to outrank that element rule. */
+.card-meta .card-meta-link {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 .card-meta-link:hover {
     color: #92400e;
     text-decoration: underline;

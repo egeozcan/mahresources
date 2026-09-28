@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // isolateTempDir points os.TempDir at a fresh directory for the test.
@@ -105,6 +106,35 @@ func TestEphemeralDatabaseLivesInAPrivateDirectoryAndIsRemovedOnRelease(t *testi
 	}
 	if err := ctx.ReleaseEphemeralDatabase(); err != nil {
 		t.Fatalf("a second release should be a no-op, got %v", err)
+	}
+}
+
+// A queue execution's follower goes on writing after its Job reads terminal, so
+// releasing the database waits for it rather than closing the handle under a
+// write in flight.
+func TestReleasingTheEphemeralDatabaseWaitsForAQueueFollower(t *testing.T) {
+	isolateTempDir(t)
+	ctx, exec := openEphemeralContext(t)
+	if err := exec("CREATE TABLE follower_probe (id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatalf("writing to the ephemeral database: %v", err)
+	}
+
+	ctx.queueFollowers.start(1)
+	released := make(chan error, 1)
+	go func() { released <- ctx.ReleaseEphemeralDatabase() }()
+	select {
+	case err := <-released:
+		ctx.queueFollowers.done()
+		t.Fatalf("the database was released with a follower still running (%v)", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	writeErr := exec("INSERT INTO follower_probe (id) VALUES (1)")
+	ctx.queueFollowers.done()
+	if writeErr != nil {
+		t.Fatalf("the follower's write failed: %v", writeErr)
+	}
+	if err := <-released; err != nil {
+		t.Fatalf("releasing the ephemeral database: %v", err)
 	}
 }
 

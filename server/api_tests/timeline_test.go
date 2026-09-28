@@ -45,11 +45,8 @@ func TestTimelineAPI_WithEntities_CorrectBucketing(t *testing.T) {
 		t.Fatalf("failed to create tag: %v", err)
 	}
 
-	// Pin created_at to a fixed mid-month UTC instant and anchor the timeline to the same
-	// instant. GORM stamps created_at in the machine's LOCAL timezone but the timeline
-	// buckets are built in UTC, so a run near a month boundary on a non-UTC machine could
-	// place the entity in the previous month's bucket. A fixed mid-month UTC value keeps the
-	// entity and the current-month bucket in the same frame, far from any boundary.
+	// Pin created_at to a fixed mid-month instant and anchor the timeline to it, so
+	// the bucket the tag lands in does not depend on the day the test runs.
 	anchorTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	if err := tc.DB.Model(tag).UpdateColumn("created_at", anchorTime).Error; err != nil {
 		t.Fatalf("failed to pin created_at: %v", err)
@@ -282,4 +279,121 @@ func TestTimelineAPI_ResponseStructure(t *testing.T) {
 
 func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+// A row is counted in the bucket that holds its instant, whatever offset its
+// timestamp was written in. Buckets are UTC calendar periods; GORM stamps rows
+// in the server's zone, and SQLite keeps a time as text in the offset it was
+// given. Near a UTC midnight the row's wall clock and its instant then fall in
+// different buckets, so a comparison of the text put a row created just after
+// local midnight east of UTC in no bucket at all, and one created just after UTC
+// midnight west of it in the bucket before its own.
+func TestTimelineAPI_CountsARowInTheBucketOfItsInstantWhateverOffsetItWasWrittenIn(t *testing.T) {
+	east := time.FixedZone("UTC+2", 2*3600)
+	west := time.FixedZone("UTC-5", -5*3600)
+	// Sunday 23:30 UTC, written as Monday 01:30 at +02:00: the week that ends at
+	// Monday 00:00 UTC holds it.
+	lastWeek := time.Date(2026, 1, 11, 23, 30, 0, 0, time.UTC)
+	// Monday 00:30 UTC, written as Sunday 19:30 at -05:00: the week that starts
+	// at Monday 00:00 UTC holds it.
+	thisWeek := time.Date(2026, 1, 12, 0, 30, 0, 0, time.UTC)
+	longBefore := time.Date(2025, 12, 1, 12, 0, 0, 0, time.UTC)
+
+	type entity struct {
+		endpoint string
+		table    string
+		create   func(tc *TestContext, name string) uint
+	}
+	entities := []entity{
+		{"/v1/resources/timeline", "resources", func(tc *TestContext, name string) uint {
+			row := &models.Resource{Name: name}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create resource: %v", err)
+			}
+			return row.ID
+		}},
+		{"/v1/notes/timeline", "notes", func(tc *TestContext, name string) uint {
+			row := &models.Note{Name: name}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create note: %v", err)
+			}
+			return row.ID
+		}},
+		{"/v1/groups/timeline", "groups", func(tc *TestContext, name string) uint {
+			row := &models.Group{Name: name}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create group: %v", err)
+			}
+			return row.ID
+		}},
+		{"/v1/tags/timeline", "tags", func(tc *TestContext, name string) uint {
+			row := &models.Tag{Name: name}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create tag: %v", err)
+			}
+			return row.ID
+		}},
+		{"/v1/categories/timeline", "categories", func(tc *TestContext, name string) uint {
+			row := &models.Category{Name: name}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create category: %v", err)
+			}
+			return row.ID
+		}},
+		{"/v1/queries/timeline", "queries", func(tc *TestContext, name string) uint {
+			row := &models.Query{Name: name, Text: "tag = x"}
+			if err := tc.DB.Create(row).Error; err != nil {
+				t.Fatalf("create query: %v", err)
+			}
+			return row.ID
+		}},
+	}
+
+	for _, e := range entities {
+		t.Run(e.table, func(t *testing.T) {
+			tc := SetupTestEnv(t)
+			stamp := func(name string, created, updated time.Time) {
+				id := e.create(tc, name)
+				if err := tc.DB.Table(e.table).Where("id = ?", id).UpdateColumns(map[string]any{
+					"created_at": created,
+					"updated_at": updated,
+				}).Error; err != nil {
+					t.Fatalf("stamp %s: %v", name, err)
+				}
+			}
+			// One row in last week and three in this one, so a row counted in the
+			// neighbouring bucket changes both counts rather than trading places
+			// with a row that went the other way.
+			stamp("created last week", lastWeek.In(east), lastWeek.In(east))
+			stamp("created this week", thisWeek.In(west), thisWeek.In(west))
+			stamp("also created this week", thisWeek.In(west), thisWeek.In(west))
+			stamp("updated last week", longBefore.In(east), lastWeek.In(east))
+			stamp("updated this week", longBefore.In(west), thisWeek.In(west))
+			stamp("also updated this week", longBefore.In(west), thisWeek.In(west))
+			// Created at 23:05 UTC written at +02:00, updated five minutes later
+			// written in UTC: the update's text sorts before the creation's, so
+			// comparing the two columns as text never counted it as updated.
+			createdEast := time.Date(2026, 1, 12, 23, 5, 0, 0, time.UTC)
+			stamp("updated in another offset", createdEast.In(east), createdEast.Add(5*time.Minute))
+
+			rr := tc.MakeRequest(http.MethodGet, e.endpoint+"?granularity=weekly&columns=2&anchor=2026-01-12", nil)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var resp models.TimelineResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
+			if len(resp.Buckets) != 2 {
+				t.Fatalf("expected 2 buckets, got %d", len(resp.Buckets))
+			}
+			for i, want := range []int64{1, 3} {
+				b := resp.Buckets[i]
+				if b.Created != want || b.Updated != want {
+					t.Errorf("bucket %d (%s to %s) = %d created, %d updated; want %d of each",
+						i, b.Start.Format(time.RFC3339), b.End.Format(time.RFC3339), b.Created, b.Updated, want)
+				}
+			}
+		})
+	}
 }

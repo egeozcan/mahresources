@@ -1,8 +1,16 @@
 package application_context
 
 import (
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"gorm.io/gorm"
+
+	"mahresources/jobs"
+	"mahresources/models"
 )
 
 // cleanupMahresourcesTestContext stops the process-lifetime workers started by
@@ -23,6 +31,11 @@ func cleanupMahresourcesTestContext(t *testing.T, ctx *MahresourcesContext) {
 		}
 		if ctx.downloadManager != nil && !ctx.downloadManager.ShuttingDown() {
 			ctx.downloadManager.Shutdown()
+		}
+		// A queue-backed execution's follower goes on writing after its Job reads
+		// terminal, and a write during the directory's removal recreates the journal.
+		if !ctx.StopQueueFollowers(10 * time.Second) {
+			t.Errorf("a queue follower was still running when the fixture closed its database")
 		}
 		if ctx.pluginManager != nil {
 			ctx.pluginManager.Close()
@@ -52,5 +65,77 @@ func TestMahresourcesTestContextCleanupStopsQueueAndClosesDatabase(t *testing.T)
 	}
 	if err := sqlDB.Ping(); err == nil || !strings.Contains(err.Error(), "database is closed") {
 		t.Fatalf("database ping after fixture cleanup = %v, want closed database", err)
+	}
+}
+
+// A queue-backed execution's outcome is published by a goroutine that goes on
+// writing after the Job reads terminal: a Resource Reduction's source mapping is
+// refreshed once the outcome has committed. The fixture's cleanup closes the
+// database and removes its directory, so it has to wait that goroutine out. A
+// write that lands during the removal recreates the SQLite journal and fails the
+// test that had already passed with "directory not empty".
+func TestTestContextCleanupWaitsForTheQueueFollower(t *testing.T) {
+	var mappingWritten atomic.Bool
+	t.Run("fixture", func(t *testing.T) {
+		ctx := newWorkflowJobContext(t)
+		isMapping := func(db *gorm.DB) bool { return db.Statement.Table == "job_source_mappings" }
+		// Slow enough that the test body has returned before the write lands.
+		slow := func(db *gorm.DB) {
+			if isMapping(db) {
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+		landed := func(db *gorm.DB) {
+			if isMapping(db) && db.Error == nil {
+				mappingWritten.Store(true)
+			}
+		}
+		callbacks := ctx.db.Callback()
+		if err := errors.Join(
+			callbacks.Create().Before("gorm:create").Register("test:slow-mapping-create", slow),
+			callbacks.Update().Before("gorm:update").Register("test:slow-mapping-update", slow),
+			callbacks.Create().After("gorm:create").Register("test:mapping-created", landed),
+			callbacks.Update().After("gorm:update").Register("test:mapping-updated", landed),
+		); err != nil {
+			t.Fatalf("register callbacks: %v", err)
+		}
+
+		reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusFailed)
+		if _, err := ctx.RequestReductionCompute(reduction.ID, reduction.Version, nil, false, nil); err != nil {
+			t.Fatalf("request the compute: %v", err)
+		}
+		snap := jobOfKindForTest(t, ctx, JobKindReductionCompute)
+		waitForSnapshot(t, ctx, snap.ID, "the clustering run to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+	})
+	if !mappingWritten.Load() {
+		t.Fatal("the fixture closed its database while the queue follower was still publishing")
+	}
+}
+
+// Once the database is closing no follower may start: counting one after the
+// wait had seen zero would let it write to a closed database.
+func TestAStoppedFollowerGroupStartsNoFollower(t *testing.T) {
+	group := newQueueFollowerGroup()
+	if !group.start(1) {
+		t.Fatal("a live group refused a follower")
+	}
+	stopped := make(chan bool, 1)
+	go func() { stopped <- group.stop(5 * time.Second) }()
+	select {
+	case <-stopped:
+		t.Fatal("stop returned with a follower still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if group.start(1) {
+		t.Fatal("a stopping group started a follower")
+	}
+	group.done()
+	if !<-stopped {
+		t.Fatal("stop timed out after the last follower finished")
+	}
+	if group.start(1) {
+		t.Fatal("a stopped group started a follower")
 	}
 }

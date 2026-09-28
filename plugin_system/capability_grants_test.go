@@ -94,7 +94,7 @@ function init() end
 		"mah.shortcode", "mah.block_type", "mah.display_type",
 		// Always installed: none of these reads or writes anything outside the
 		// plugin itself.
-		"mah.json", "mah.json.encode", "mah.util", "mah.util.now", "mah.log",
+		"mah.json", "mah.json.encode", "mah.util", "mah.util.now", "mah.util.today", "mah.log",
 		"mah.html_escape", "mah.sleep", "mah.abort", "mah.doc", "mah.get_setting",
 	}
 	for _, path := range granted {

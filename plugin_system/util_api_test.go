@@ -2,6 +2,9 @@ package plugin_system
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -61,6 +64,41 @@ func TestUtilApi_NowISOIsUTC(t *testing.T) {
 	}
 	if time.Since(parsed) > time.Minute || time.Since(parsed) < -time.Minute {
 		t.Errorf("now_iso() = %q, too far from now", got)
+	}
+}
+
+// today() is the calendar date in the server's zone. A note's start and end
+// dates are wall-clock values without a zone, so a plugin asking whether one has
+// passed needs the local date; the date part of now_iso() is UTC's, a day away
+// from it for hours of every day east or west of UTC. The server's zone is fixed
+// at process start, so each zone runs in a child process. Between them the two
+// zones differ from UTC's date at every hour.
+func TestUtilApi_TodayIsTheServersCalendarDate(t *testing.T) {
+	if os.Getenv("MAH_UTIL_TODAY_CHILD") == "1" {
+		t.Logf("TODAY=%s", renderUtil(t, `return mah.util.today()`))
+		return
+	}
+	marker := regexp.MustCompile(`TODAY=(\S*)`)
+	for _, zone := range []string{"Etc/GMT-14", "Etc/GMT+12"} {
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			t.Fatalf("load %s: %v", zone, err)
+		}
+		before := time.Now().In(loc).Format("2006-01-02")
+		cmd := exec.Command(os.Args[0], "-test.run=^TestUtilApi_TodayIsTheServersCalendarDate$", "-test.v", "-test.count=1")
+		cmd.Env = append(os.Environ(), "MAH_UTIL_TODAY_CHILD=1", "TZ="+zone)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("child in %s: %v\n%s", zone, err, out)
+		}
+		after := time.Now().In(loc).Format("2006-01-02")
+		found := marker.FindSubmatch(out)
+		if found == nil {
+			t.Fatalf("child in %s printed no date:\n%s", zone, out)
+		}
+		if got := string(found[1]); got != before && got != after {
+			t.Errorf("today() in %s = %q, want %q (UTC's date is %s)", zone, got, before, time.Now().UTC().Format("2006-01-02"))
+		}
 	}
 }
 
@@ -145,7 +183,7 @@ func TestUtilApi_SandboxPostureUnchanged(t *testing.T) {
         table.sort(names)
         return table.concat(names, ",")
 `)
-	want := "base64,hex,hmac_sha256,now,now_iso,secure_compare,sha256"
+	want := "base64,hex,hmac_sha256,now,now_iso,secure_compare,sha256,today"
 	if got != want {
 		t.Errorf("mah.util surface = %q, want %q", got, want)
 	}

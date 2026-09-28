@@ -1661,6 +1661,7 @@ filesystem, process or network reach.
 |----------|---------|
 | `mah.util.now()` | Unix seconds as a number, fractional |
 | `mah.util.now_iso()` | RFC3339 timestamp in **UTC** |
+| `mah.util.today()` | The server's calendar date in its local zone, `YYYY-MM-DD` |
 | `mah.util.base64.encode(str)` | Base64 string |
 | `mah.util.base64.decode(str)` | Decoded string, or `nil, error_string` |
 | `mah.util.hex.encode(str)` | Lowercase hex string |
@@ -1671,6 +1672,13 @@ filesystem, process or network reach.
 
 `now_iso()` is UTC deliberately: local-offset timestamps compare
 lexicographically against UTC bounds and mis-sort silently.
+
+`today()` is for the other kind of date. A note's `StartDate` and `EndDate` are
+wall-clock values without a zone (the host parses the `YYYY-MM-DDTHH:MM` it
+is given with no zone), so whether a due date has passed is a question for the local
+calendar. The date part of `now_iso()` is UTC's, which is a day away from the
+local date for part of every day outside UTC; compare a note's date with
+`today()` instead.
 
 ### Verifying a webhook signature
 

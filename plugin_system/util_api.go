@@ -41,6 +41,16 @@ func (pm *PluginManager) registerUtilModule(L *lua.LState, mahMod *lua.LTable) {
 		return 1
 	}))
 
+	// mah.util.today() -> string
+	// The server's calendar date, YYYY-MM-DD, in its local zone. A note's start
+	// and end dates are wall-clock values without a zone, so whether one has
+	// passed is a question for the local calendar; now_iso()'s date is UTC's,
+	// which differs from it for hours of every day outside UTC.
+	utilMod.RawSetString("today", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LString(time.Now().Format("2006-01-02")))
+		return 1
+	}))
+
 	// mah.util.base64.encode(str) -> string
 	// mah.util.base64.decode(str) -> string or (nil, error)
 	b64Mod := L.NewTable()

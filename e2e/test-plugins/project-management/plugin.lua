@@ -1116,8 +1116,10 @@ local function render_task_date(ctx)
     local date = due:sub(1, 10)
     if not date:match("^%d%d%d%d%-%d%d%-%d%d$") then return "" end
     local cfg = resolved_config()
+    -- The due date is a wall-clock value without a zone, so it is compared with
+    -- the server's calendar date, not UTC's.
     local overdue = effective_status(ctx.value, cfg) ~= cfg.done_status
-        and date < mah.util.now_iso():sub(1, 10)
+        and date < mah.util.today()
     return '<span class="pm-entity-date' .. (overdue and " pm-overdue" or "") .. '">Due '
         .. mah.html_escape(date) .. (overdue and " (overdue)" or "") .. "</span>"
 end

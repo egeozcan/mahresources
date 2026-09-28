@@ -204,6 +204,19 @@ func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+	// Registered after the database's own cleanup, so it runs first. A queue-backed
+	// execution's follower goes on writing after its Job reads terminal, and a test
+	// may return before its work does; stopping the queue makes the followers let
+	// go, and a write that lands while the database directory is being removed
+	// recreates the journal and fails the test with "directory not empty".
+	t.Cleanup(func() {
+		if dm := appCtx.DownloadManager(); dm != nil && !dm.ShuttingDown() {
+			dm.Shutdown()
+		}
+		if !appCtx.StopQueueFollowers(10 * time.Second) {
+			t.Errorf("a queue execution was still publishing when the test closed its database")
+		}
+	})
 	appCtx.SetJobService(jobs.NewService())
 	replayKey, err := jobs.GenerateReplayKey()
 	if err != nil {
