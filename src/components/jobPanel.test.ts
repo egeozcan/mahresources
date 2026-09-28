@@ -4263,6 +4263,22 @@ describe('which page region announces a Job', () => {
         (panel as any).unregisterAnnouncements();
     });
 
+    // The drawer read the Job while it ran, and never read its pause: the
+    // page's card before the change is the newer record of what the reader saw.
+    test('measures the change from the page\'s card when that is newer than what the drawer heard', () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        panel.hearJob(running);
+        const paused = { ...running, state: 'paused', version: 3 };
+        const resumed = { ...running, state: 'running', version: 4 };
+
+        expect(tellDrawerOfJobs([{ previous: paused, next: resumed }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin running.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
     test('hands back what it does not follow, and what it cannot say yet', async () => {
         vi.useFakeTimers();
         const spoken: string[] = [];

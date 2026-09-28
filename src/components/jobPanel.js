@@ -1429,7 +1429,9 @@ export function jobPanel() {
         // already heard (from its stream or its own read) is not said again.
         // A Job the drawer never read, one its capped lists leave out, is heard
         // from the page's card before the change, as a read would have heard
-        // it. While the stream is still catching up nothing can be said here
+        // it; so is one the drawer last heard at an older version than that
+        // card, since the change is measured from what the reader last saw.
+        // While the stream is still catching up nothing can be said here
         // (hearJob), so the change is recorded, which keeps the drawer from
         // saying it later, and left to the page with the Jobs it does not
         // follow.
@@ -1442,8 +1444,12 @@ export function jobPanel() {
                     left.push(change);
                     continue;
                 }
-                if (previous?.state && !this._heard.has(next.id) && !this.jobs.some(row => row.id === next.id)) {
-                    const version = Number(previous.version || 0);
+                const heard = this._heard.get(next.id);
+                const shown = heard ? null : this.jobs.find(row => row.id === next.id);
+                const known = heard ? heard.version : shown ? Number(shown.version || 0) : -1;
+                const version = Number(previous?.version || 0);
+                if (previous?.state && version > known) {
+                    this._heard.delete(next.id);
                     this._heard.set(next.id, {
                         state: previous.state, version, stateSince: version, generation: this._streamGeneration, withheld: '',
                     });
