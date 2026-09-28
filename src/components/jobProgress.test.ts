@@ -70,11 +70,12 @@ describe('job progress formatting', () => {
         expect(formatAmount({ completed: 3 * 1024 * 1024, total: 20 * 1024 * 1024, unit: 'bytes' })).toBe('3.0 MB of 20.0 MB');
     });
 
-    test('an amount short of its total never reads as the total', () => {
+    test('a byte amount rounds down, though close rounded figures can match', () => {
         // 99.95% of a megabyte rounds to "1.00 MB", which beside "1.0 MB" says done.
         expect(formatAmount({ completed: 1048000, total: 1048576, unit: 'bytes' })).toBe('0.99 MB of 1.0 MB');
         expect(formatAmount({ completed: 1027072, total: 1048576, unit: 'bytes' })).toBe('0.97 MB of 1.0 MB');
         expect(formatAmount({ completed: 99.96 * 1024 * 1024, total: 200 * 1024 * 1024, unit: 'bytes' })).toBe('99.9 MB of 200 MB');
+        expect(formatAmount({ completed: 1049000, total: 1050000, unit: 'bytes' })).toBe('1.0 MB of 1.0 MB');
         expect(formatAmount({ completed: 1048576, total: 1048576, unit: 'bytes' })).toBe('1.0 MB of 1.0 MB');
     });
 

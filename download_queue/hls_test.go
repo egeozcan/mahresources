@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"mahresources/contracts"
 	"mahresources/hls"
@@ -44,6 +46,10 @@ func (c *recordingResourceCreator) AddResource(file contracts.File, fileName str
 	return &models.Resource{ID: 1, Name: q.Name}, nil
 }
 
+func (c *recordingResourceCreator) AddResourceForJob(_ string, _ *uint, file contracts.File, fileName string, q *query_models.ResourceCreator) (*models.Resource, error) {
+	return c.AddResource(file, fileName, q)
+}
+
 func hlsFfmpeg(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("ffmpeg")
@@ -62,6 +68,16 @@ func buildAndServeStream(t *testing.T, ffmpeg string) *httptest.Server {
 
 func buildAndServeStreamOf(t *testing.T, ffmpeg string, seconds int) *httptest.Server {
 	t.Helper()
+	dir := buildStreamDirectory(t, ffmpeg, seconds)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(dir, filepath.Base(r.URL.Path)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func buildStreamDirectory(t *testing.T, ffmpeg string, seconds int) string {
+	t.Helper()
 	dir := t.TempDir()
 	cmd := exec.Command(ffmpeg,
 		"-hide_banner", "-loglevel", "error",
@@ -74,11 +90,154 @@ func buildAndServeStreamOf(t *testing.T, ffmpeg string, seconds int) *httptest.S
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the test stream: %v\n%s", err, out)
 	}
+	return dir
+}
+
+type activityRecordingSink struct {
+	updates chan *DownloadJob
+}
+
+func (s *activityRecordingSink) DownloadProgress(_ CanonicalRef, snap *DownloadJob) error {
+	s.updates <- snap
+	return nil
+}
+
+func (*activityRecordingSink) DownloadHeld(_ CanonicalRef, _ *DownloadJob) HoldRecord {
+	return HoldRecorded
+}
+
+func (*activityRecordingSink) DownloadFinished(_ CanonicalRef, _ *DownloadJob) error { return nil }
+
+func (*activityRecordingSink) DownloadInterrupted(_ CanonicalRef, _ *DownloadJob) error { return nil }
+
+func TestHLSByteReadsMirrorActivityBeforeTheSegmentCompletes(t *testing.T) {
+	ffmpeg := hlsFfmpeg(t)
+	dir := buildStreamDirectory(t, ffmpeg, 2)
+	segmentStarted := make(chan struct{})
+	segmentBlocked := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(closeRelease)
+	var gateOnce sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(dir, filepath.Base(r.URL.Path)))
+		path := filepath.Join(dir, filepath.Base(r.URL.Path))
+		controlled := false
+		if strings.HasSuffix(r.URL.Path, ".ts") {
+			gateOnce.Do(func() { controlled = true })
+		}
+		if !controlled {
+			http.ServeFile(w, r, path)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		third := len(data) / 3
+		_, _ = w.Write(data[:third])
+		w.(http.Flusher).Flush()
+		close(segmentStarted)
+		time.Sleep(650 * time.Millisecond)
+		_, _ = w.Write(data[third : 2*third])
+		w.(http.Flusher).Flush()
+		close(segmentBlocked)
+		select {
+		case <-release:
+			_, _ = w.Write(data[2*third:])
+		case <-r.Context().Done():
+		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv
+
+	created := &recordingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = created
+	dm.ffmpegPath = func() string { return ffmpeg }
+	dm.hlsOptions.Concurrency = 1
+	sink := &activityRecordingSink{updates: make(chan *DownloadJob, 64)}
+	dm.SetCanonicalSink(sink)
+	job := &DownloadJob{
+		ID: "hls-activity", URL: srv.URL + "/index.m3u8", Status: JobStatusDownloading,
+		Source: JobSourceDownload, TotalSize: -1,
+		creator: &query_models.ResourceFromRemoteCreator{}, ctx: context.Background(),
+	}
+	if !job.AttachCanonical(CanonicalRef{JobID: "durable-hls-activity", ExecutionToken: "attempt-1"}) {
+		t.Fatal("could not attach the HLS job to its durable execution")
+	}
+	finished := make(chan error, 1)
+	workerFinished := false
+	go func() {
+		_, err := dm.downloadWithProgress(job.GetContext(), 0, job)
+		finished <- err
+	}()
+	t.Cleanup(func() {
+		closeRelease()
+		if workerFinished {
+			return
+		}
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("the HLS worker did not stop during test cleanup")
+		}
+	})
+
+	select {
+	case <-segmentStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first segment request did not start")
+	}
+	deadline := time.After(5 * time.Second)
+	var active *DownloadJob
+	for active == nil {
+		select {
+		case snap := <-sink.updates:
+			if snap.ProgressActivity {
+				active = snap
+			}
+		case <-deadline:
+			t.Fatal("no byte activity heartbeat reached the canonical sink")
+		}
+	}
+	select {
+	case <-segmentBlocked:
+	case <-time.After(time.Second):
+		t.Fatal("the segment was not held incomplete when its heartbeat arrived")
+	}
+	if active.Phase != hls.PhaseSegments || active.Status != JobStatusDownloading || active.PhaseCount != 0 || active.Progress <= 0 {
+		t.Fatalf("byte heartbeat snapshot = phase %q, status %q, %d of %d, %d bytes; want active 0-of-1 with bytes before completion",
+			active.Phase, active.Status, active.PhaseCount, active.PhaseTotal, active.Progress)
+	}
+	if active.ProgressActivityAt.IsZero() {
+		t.Fatal("byte heartbeat snapshot did not preserve the segment-body read time")
+	}
+	closeRelease()
+	err := <-finished
+	workerFinished = true
+	if err != nil {
+		t.Fatalf("downloadWithProgress: %v", err)
+	}
+
+	sawAssembly := false
+	for {
+		select {
+		case snap := <-sink.updates:
+			if snap.Phase == hls.PhaseMuxing {
+				sawAssembly = true
+				if snap.ProgressActivity {
+					t.Fatal("assembly snapshot retained segment byte activity")
+				}
+			}
+		default:
+			if !sawAssembly {
+				t.Fatal("durable mirror never observed the HLS assembly phase")
+			}
+			return
+		}
+	}
 }
 
 func TestDownloadWithProgressAssemblesAnHLSPlaylist(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"mahresources/download_queue"
+	"mahresources/hls"
 	"mahresources/hostfetch"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -1282,6 +1283,7 @@ func pausedDownloadProgress(progress jobs.Progress) jobs.Progress {
 	progress.Phase = ""
 	progress.Message = jobDownloadPausedMessage
 	progress.ETA = nil
+	progress.Activity = false
 	return progress
 }
 
@@ -1436,7 +1438,14 @@ func (s *jobDownloadSink) mirrorRefusal(err error) error {
 // other download counts bytes, of the total when the size is known and alone
 // when it is not, since a chunked response still has a speed worth showing.
 func downloadJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
-	progress := jobs.Progress{Phase: downloadPhase(snap), Message: snap.Phase}
+	progress := jobs.Progress{
+		Phase: downloadPhase(snap), Message: snap.Phase,
+		Activity: snap.ProgressActivity && snap.Status == download_queue.JobStatusDownloading && snap.Phase == hls.PhaseSegments,
+	}
+	if progress.Activity {
+		activityAt := snap.ProgressActivityAt
+		progress.ActivityAt = &activityAt
+	}
 	switch {
 	case snap.PhaseTotal > 0:
 		completed, total := snap.PhaseCount, snap.PhaseTotal

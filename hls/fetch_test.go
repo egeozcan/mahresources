@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // buildStream produces a real three-segment HLS stream on disk with ffmpeg, so
@@ -163,11 +164,12 @@ type progressReport struct {
 }
 
 // checkProgressReports holds the promises Progress makes: once the playlist is
-// read the segment total never changes and the count starts from zero only
-// once (a separate audio rendition continues it), the bytes received only
-// grow, and the assembly reports every segment done rather than a count of
-// zero. Segment workers report as they finish, so two reports can arrive out
-// of order; the count is not checked for order.
+// read the segment total never changes, the count starts at zero (a separate
+// audio rendition continues it), and the bytes received only grow. Reports
+// may repeat the same done count while segment bytes arrive, and the assembly
+// reports every segment done rather than a count of zero. Segment workers
+// report as they finish, so two reports can arrive out of order; the count is
+// not checked for order.
 func checkProgressReports(t *testing.T, reports []progressReport) {
 	t.Helper()
 	var total, received int64
@@ -193,8 +195,8 @@ func checkProgressReports(t *testing.T, reports []progressReport) {
 			zeros++
 		}
 	}
-	if zeros != 1 {
-		t.Fatalf("the segment count started from zero %d times; want once", zeros)
+	if zeros == 0 {
+		t.Fatal("the segment count never reported its initial zero")
 	}
 	last := reports[len(reports)-1]
 	if last.phase != PhaseMuxing || last.done != last.total || last.total == 0 {
@@ -202,6 +204,203 @@ func checkProgressReports(t *testing.T, reports []progressReport) {
 	}
 	if last.received == 0 {
 		t.Fatalf("last report = %+v; want the bytes received", last)
+	}
+}
+
+func TestSegmentByteCallbackRunsBeforeTheSegmentCompletes(t *testing.T) {
+	segmentBytes := []byte(strings.Repeat("s", 8192))
+	segmentStarted := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(closeRelease)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(segmentBytes)))
+		_, _ = w.Write(segmentBytes[:len(segmentBytes)/2])
+		w.(http.Flusher).Flush()
+		close(segmentStarted)
+		select {
+		case <-release:
+			_, _ = w.Write(segmentBytes[len(segmentBytes)/2:])
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var spent atomic.Int64
+	reports := make(chan progressReport, 16)
+	activities := make(chan time.Time, 16)
+	tally := &segmentTally{
+		p: func(phase string, done, total, received int64) {
+			reports <- progressReport{phase: phase, done: done, total: total, received: received}
+		},
+		segmentActivity: func(at time.Time) { activities <- at },
+		spent:           &spent,
+		total:           1,
+	}
+	m := &media{
+		targetDuration: 1,
+		segments:       []segment{{target: fetchTarget{url: srv.URL + "/segment.ts"}, duration: 1}},
+	}
+	dir := t.TempDir()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := downloadParts(context.Background(), deps(), m, dir, Defaults(), tally)
+		finished <- err
+	}()
+
+	select {
+	case <-segmentStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the segment request did not begin")
+	}
+	deadline := time.After(2 * time.Second)
+	sawProgress, sawActivity := false, false
+	for !sawProgress || !sawActivity {
+		select {
+		case report := <-reports:
+			if report.phase == PhaseSegments && report.done == 0 && report.received > 0 {
+				sawProgress = true
+			}
+		case at := <-activities:
+			if at.IsZero() {
+				t.Fatal("segment activity callback did not include its read time")
+			}
+			sawActivity = true
+		case <-deadline:
+			t.Fatal("no progress and segment-activity callbacks arrived while the segment was incomplete")
+		}
+	}
+	select {
+	case err := <-finished:
+		t.Fatalf("the segment finished before its byte heartbeat: %v", err)
+	default:
+	}
+	closeRelease()
+	if err := <-finished; err != nil {
+		t.Fatalf("downloadParts: %v", err)
+	}
+}
+
+func TestFetchWithSegmentActivityIgnoresPlaylistMapAndKeyBodies(t *testing.T) {
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\nvideo.m3u8\n"
+	mediaPlaylist := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="enc.key"` + "\n" +
+		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
+		"#EXTINF:1.0,\nsegment.m4s\n#EXT-X-ENDLIST\n"
+	segmentStarted := make(chan struct{})
+	allowSegmentBytes := make(chan struct{})
+	firstSegmentBytesSent := make(chan struct{})
+	releaseSegment := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(releaseSegment) }) }
+	t.Cleanup(closeRelease)
+	var mu sync.Mutex
+	served := map[string]bool{}
+	markServed := func(name string) {
+		mu.Lock()
+		served[name] = true
+		mu.Unlock()
+	}
+	segmentBytes := []byte(strings.Repeat("s", 8192))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
+		markServed(name)
+		switch name {
+		case "master.m3u8":
+			_, _ = fmt.Fprint(w, master)
+		case "video.m3u8":
+			_, _ = fmt.Fprint(w, mediaPlaylist)
+		case "init.mp4":
+			_, _ = w.Write([]byte(strings.Repeat("i", 1024)))
+		case "enc.key":
+			_, _ = w.Write([]byte("0123456789abcdef"))
+		case "segment.m4s":
+			close(segmentStarted)
+			select {
+			case <-allowSegmentBytes:
+			case <-r.Context().Done():
+				return
+			}
+			_, _ = w.Write(segmentBytes[:len(segmentBytes)/2])
+			w.(http.Flusher).Flush()
+			close(firstSegmentBytesSent)
+			select {
+			case <-releaseSegment:
+				_, _ = w.Write(segmentBytes[len(segmentBytes)/2:])
+			case <-r.Context().Done():
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := http.DefaultClient
+	head, response := open(t, client, srv.URL+"/master.m3u8")
+	defer response.Body.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	activities := make(chan time.Time, 8)
+	finished := make(chan error, 1)
+	go func() {
+		_, err := FetchWithSegmentActivity(ctx, Deps{
+			Client: client, FfmpegPath: "/unused/ffmpeg", CheckURL: func(string) error { return nil },
+		}, srv.URL+"/master.m3u8", head, response.Body, Options{Concurrency: 1}, nil, func(at time.Time) {
+			activities <- at
+		})
+		finished <- err
+	}()
+	select {
+	case <-segmentStarted:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("HLS fetch did not reach the held media segment")
+	}
+	mu.Lock()
+	for _, name := range []string{"master.m3u8", "video.m3u8", "init.mp4", "enc.key", "segment.m4s"} {
+		if !served[name] {
+			mu.Unlock()
+			cancel()
+			t.Fatalf("fetch reached segment body before reading %s", name)
+		}
+	}
+	mu.Unlock()
+	select {
+	case activityAt := <-activities:
+		cancel()
+		t.Fatalf("metadata-only transfer produced segment activity at %s", activityAt)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(allowSegmentBytes)
+	select {
+	case <-firstSegmentBytesSent:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("the test server did not send the first segment bytes")
+	}
+	select {
+	case activityAt := <-activities:
+		if activityAt.IsZero() {
+			cancel()
+			t.Fatal("media-body activity callback omitted its source time")
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("segment-body bytes did not produce activity")
+	}
+	select {
+	case err := <-finished:
+		cancel()
+		t.Fatalf("fetch finished while the media segment was still held: %v", err)
+	default:
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fetch did not stop after cancellation")
 	}
 }
 

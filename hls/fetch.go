@@ -154,7 +154,11 @@ func (opt Options) withDefaults() Options {
 // until the playlist is read, and during PhaseMuxing every segment is done. The
 // mux's own length is not knowable in advance, so it has no count of its own.
 // received is every byte fetched so far, playlists and keys included: the
-// figure the download's byte budget is charged with.
+// figure the download's byte budget is charged with. While a segment is being
+// read, repeated reports may keep done unchanged while received grows; these
+// are progress callbacks, not extra completed segments. Callers that use byte
+// reads to refresh a coarse-count rate should use FetchWithSegmentActivity,
+// whose separate callback identifies actual media segment-body reads.
 //
 // **Called concurrently**, from each segment worker. A callback touching shared
 // state must guard it.
@@ -171,10 +175,11 @@ const (
 // segmentTally counts one download's segments across every media playlist it
 // fetches, and reports through its Progress.
 type segmentTally struct {
-	p     Progress
-	spent *atomic.Int64
-	total int64
-	done  atomic.Int64
+	p               Progress
+	segmentActivity func(time.Time)
+	spent           *atomic.Int64
+	total           int64
+	done            atomic.Int64
 }
 
 func (t *segmentTally) report(phase string, done int64) {
@@ -203,6 +208,20 @@ type Result struct {
 // lost to the sniff. On any error the working directory is removed before
 // returning, so a caller that only checks err leaks nothing.
 func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress) (*Result, error) {
+	return fetch(ctx, d, playlistURL, head, body, opt, p, nil)
+}
+
+// FetchWithSegmentActivity is Fetch with an additional signal for freshness
+// sampling. The callback runs after a positive, budget-charged read from a
+// media segment body and carries that read's time. Playlist, key and
+// initialization-map reads do not invoke it. The callback is concurrent across
+// segment workers and should only record the observation; Progress remains the
+// compatible callback for phase/count/received snapshots.
+func FetchWithSegmentActivity(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress, onSegmentActivity func(time.Time)) (*Result, error) {
+	return fetch(ctx, d, playlistURL, head, body, opt, p, onSegmentActivity)
+}
+
+func fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress, onSegmentActivity func(time.Time)) (*Result, error) {
 	opt = opt.withDefaults()
 
 	if d.CheckURL == nil {
@@ -229,7 +248,7 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	// the count at the first segment let tens of megabytes cross the network
 	// outside a limit the operator set.
 	var spent atomic.Int64
-	tally := &segmentTally{p: p, spent: &spent}
+	tally := &segmentTally{p: p, segmentActivity: onSegmentActivity, spent: &spent}
 	tally.report(PhasePlaylist, 0)
 
 	m, err := resolveMedia(ctx, d, playlistURL, head, body, opt, &spent)
@@ -632,7 +651,16 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 		go func(i int, seg segment) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if _, err := fetchToFile(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total); err != nil {
+			// Segment count is the useful primary measure, but a large segment can
+			// take longer than the Jobs sampler's stale window to finish. Report
+			// byte activity through the same callback while that segment is still
+			// downloading; done remains unchanged until the file lands.
+			if _, err := fetchToFileWithProgress(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total, func() {
+				if tally.segmentActivity != nil {
+					tally.segmentActivity(time.Now())
+				}
+				tally.report(PhaseSegments, tally.done.Load())
+			}); err != nil {
 				fail(fmt.Errorf("could not download segment %d of %d: %w", i+1, len(m.segments), err))
 				return
 			}
@@ -654,6 +682,10 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 // fetchToFile downloads one target to path, retrying transient failures, and
 // charges its bytes against the download's total budget.
 func fetchToFile(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
+	return fetchToFileWithProgress(ctx, d, t, path, opt, total, nil)
+}
+
+func fetchToFileWithProgress(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64, onRead func()) (int64, error) {
 	var lastErr error
 	for attempt := 0; attempt <= opt.SegmentRetries; attempt++ {
 		if attempt > 0 {
@@ -663,7 +695,7 @@ func fetchToFile(ctx context.Context, d Deps, t fetchTarget, path string, opt Op
 			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 			}
 		}
-		n, err := fetchToFileOnce(ctx, d, t, path, opt, total)
+		n, err := fetchToFileOnceWithProgress(ctx, d, t, path, opt, total, onRead)
 		if err == nil {
 			return n, nil
 		}
@@ -699,6 +731,10 @@ func isPermanent(err error) bool {
 }
 
 func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
+	return fetchToFileOnceWithProgress(ctx, d, t, path, opt, total, nil)
+}
+
+func fetchToFileOnceWithProgress(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64, onRead func()) (int64, error) {
 	rc, _, rangeIgnored, err := get(ctx, d, t)
 	if err != nil {
 		return 0, err
@@ -713,7 +749,7 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 
 	// The budget is charged as bytes land, not after: a single segment served
 	// as an endless stream would otherwise defeat the whole cap.
-	src := io.Reader(&budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes})
+	src := io.Reader(&budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes, onRead: onRead})
 
 	if rangeIgnored {
 		// Charged, not discarded: these bytes crossed the network too, and
@@ -756,9 +792,10 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 // budgetReader charges everything it reads against a shared byte budget and
 // fails the moment the budget is spent.
 type budgetReader struct {
-	r     io.Reader
-	total *atomic.Int64
-	limit int64
+	r      io.Reader
+	total  *atomic.Int64
+	limit  int64
+	onRead func()
 }
 
 func (b *budgetReader) Read(p []byte) (int, error) {
@@ -769,6 +806,9 @@ func (b *budgetReader) Read(p []byte) (int, error) {
 			Limit:  true,
 			cause:  errBudgetExceeded,
 		}
+	}
+	if n > 0 && b.onRead != nil {
+		b.onRead()
 	}
 	return n, err
 }

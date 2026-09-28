@@ -11,6 +11,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/hls"
 	"mahresources/hostfetch"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"net"
@@ -33,6 +34,35 @@ const (
 	PausedJobRetentionDuration = 24 * time.Hour
 	MaxResourceNameLength      = 1000
 )
+
+// hlsActivityWindow coalesces segment-body reads for the canonical sampler.
+// It retains their original time, so a later throttled completion or phase
+// callback cannot make old bytes look newly received.
+type hlsActivityWindow struct {
+	pending bool
+	at      time.Time
+}
+
+func (w *hlsActivityWindow) record(at time.Time) {
+	w.pending = true
+	if at.After(w.at) {
+		w.at = at
+	}
+}
+
+func (w *hlsActivityWindow) reset() {
+	w.pending = false
+	w.at = time.Time{}
+}
+
+func (w *hlsActivityWindow) take(now time.Time) time.Time {
+	at := w.at
+	if !w.pending || at.IsZero() || now.Before(at) || now.Sub(at) > jobs.ProgressRateFreshFor {
+		at = time.Time{}
+	}
+	w.reset()
+	return at
+}
 
 // ManagerConfig controls runtime parameters of the DownloadManager. Zero
 // values fall back to the package constants MaxConcurrentDownloads and
@@ -1152,6 +1182,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	var notifyMu sync.Mutex
 	var lastNotify time.Time
 	var lastPhase string
+	var segmentActivity hlsActivityWindow
 	// Serializes the durable progress mirror across segment workers. Each
 	// mirror takes its snapshot once it holds this, so two workers that both
 	// found a notification due cannot commit in the wrong order and leave the
@@ -1174,7 +1205,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	if overall := dm.currentSettings().OverallTimeout(); overall > 0 {
 		opts.OverallTimeout = overall
 	}
-	result, err := hls.Fetch(ctx, deps, base, head, body, opts,
+	result, err := hls.FetchWithSegmentActivity(ctx, deps, base, head, body, opts,
 		func(phase string, done, total, received int64) {
 			// Guarded by the attempt, like every other write about this job: a
 			// callback unwinding from an abandoned attempt must not relabel the
@@ -1187,18 +1218,37 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			// events. A phase change is always sent, since those are rare and
 			// are the part a watcher is actually waiting for.
 			notifyMu.Lock()
-			due := phase != lastPhase || time.Since(lastNotify) >= progressNotifyInterval
+			phaseChanged := phase != lastPhase
+			if phaseChanged {
+				// Do not carry a read heartbeat across a phase boundary. The HLS
+				// producer marks segment-body reads separately from shared-budget
+				// bytes, so playlists, keys and maps cannot masquerade as work.
+				segmentActivity.reset()
+			}
+			now := time.Now()
+			due := phaseChanged || now.Sub(lastNotify) >= progressNotifyInterval
+			activityAt := time.Time{}
 			if due {
-				lastNotify = time.Now()
+				lastNotify = now
 				lastPhase = phase
+				observedAt := segmentActivity.take(now)
+				if phase == hls.PhaseSegments {
+					activityAt = observedAt
+				}
 			}
 			notifyMu.Unlock()
 			if due {
 				dm.notifyJob("updated", job)
 				mirrorMu.Lock()
-				dm.mirrorProgressForRun(job, runID)
+				dm.mirrorHLSProgressForRun(job, runID, !activityAt.IsZero(), activityAt)
 				mirrorMu.Unlock()
 			}
+		}, func(activityAt time.Time) {
+			notifyMu.Lock()
+			if lastPhase == hls.PhaseSegments {
+				segmentActivity.record(activityAt)
+			}
+			notifyMu.Unlock()
 		})
 	if err != nil {
 		return nil, dm.describeFetchError(job.URL, err)
@@ -1985,6 +2035,20 @@ func (dm *DownloadManager) currentCanonicalSink() CanonicalSink {
 // record that cannot be written must not change what the download does.
 func (dm *DownloadManager) mirrorProgressForRun(job *DownloadJob, runID uint64) {
 	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadProgress(ref, snap)
+	})
+}
+
+// mirrorHLSProgressForRun mirrors the throttled segment snapshot with the
+// activity pulse accumulated by assembleHLS. The hint is carried on the copy
+// handed to the durable sampler; it never becomes queue state or public JSON.
+func (dm *DownloadManager) mirrorHLSProgressForRun(job *DownloadJob, runID uint64, active bool, activityAt time.Time) {
+	dm.mirrorForRun(job, runID, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		snap.ProgressActivity = active
+		snap.ProgressActivityAt = time.Time{}
+		if active {
+			snap.ProgressActivityAt = activityAt
+		}
 		return sink.DownloadProgress(ref, snap)
 	})
 }
