@@ -2154,3 +2154,7 @@ where the review's own record lives.
 - When two lanes share an interface, let the consumer build against a marked stand-in in its own commit. The merge deleted the stand-in and kept everything else without judgment calls.
 - A reviewer of one lane keeps finding faults in code another lane is replacing. Say up front that such findings are declined as superseded, and check them after the merge instead.
 - A test that claims Jobs by hand must run on a harness without a dispatch loop. Eight tests did not, and the loop took their Job first under load.
+
+## Jobs QA remediation, batch 4 — 2026-09-28
+
+- Follow the current agent and review preferences when resuming a handoff. Historical CLI review instructions do not override a request to use collaboration subagents with specified models and reasoning effort.
