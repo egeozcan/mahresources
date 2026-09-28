@@ -151,41 +151,58 @@ test.describe('one announcement per Job state change', () => {
   // The drawer's lists are capped, so the Job Center shows Jobs the drawer
   // never reads. With its Finished group at one row, two downloads finishing
   // together leave at least one of them out of it, and the list hands that
-  // change to the drawer, which says each once.
-  test('Jobs the drawer\'s capped lists leave out are heard once each on the Job Center', async ({ browser, baseURL, authSeed }) => {
-    const held = await startHeldServer();
-    const adminContext = await browser.newContext({ baseURL });
-    try {
-      const admin = await adminContext.newPage();
-      await recordAnnouncements(admin);
-      await admin.route(url => url.pathname === '/jobs', async route => {
-        const response = await route.fetch();
-        const body = (await response.text())
-          .replace(/(name="x-jobs-panel-finished-limit" content=")\d+/, (_, head) => `${head}1`);
-        await route.fulfill({ response, body });
-      });
-      await loginAs(admin, authSeed.admin);
-      const stamp = Date.now();
-      const files = [`capped-a-${stamp}.bin`, `capped-b-${stamp}.bin`];
-      const ids = [];
-      for (const file of files) ids.push(await submit(admin, `${held.base}/${file}`, authSeed.outsideGroupId));
-      await expect.poll(held.heldCount, { timeout: 20_000 }).toBe(2);
+  // change to the drawer, which says each once, on My jobs and on Everyone's.
+  // Each scope gets an administrator of its own: the choice is stored on the
+  // account, and the shared one's must stay My jobs for the tests above.
+  for (const scope of ['mine', 'everyone'] as const) {
+    test(`Jobs the drawer's capped lists leave out are heard once each on the Job Center (${scope})`, async ({ browser, baseURL, authSeed }) => {
+      const held = await startHeldServer();
+      const rootContext = await browser.newContext({ baseURL });
+      const adminContext = await browser.newContext({ baseURL });
+      try {
+        const root = await rootContext.newPage();
+        await loginAs(root, authSeed.admin);
+        const stamp = Date.now();
+        const creds = { username: `capped_${scope}_${stamp}`, password: 'password1', role: 'admin' };
+        const created = await root.request.post('/v1/users', { headers: { 'X-CSRF-Token': await csrfOf(root) }, data: creds });
+        expect(created.ok(), await created.text()).toBe(true);
 
-      await admin.goto(`/jobs?search=${stamp}`);
-      const center = admin.getByTestId('job-center');
-      for (const id of ids) await expect(center.locator(`[data-job-id="${id}"]`)).toContainText('Running');
-      await expect.poll(() => admin.evaluate(() =>
-        (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'))?.streamCaughtUp === true)).toBe(true);
+        const admin = await adminContext.newPage();
+        await recordAnnouncements(admin);
+        await admin.route(url => url.pathname === '/jobs', async route => {
+          const response = await route.fetch();
+          const body = (await response.text())
+            .replace(/(name="x-jobs-panel-finished-limit" content=")\d+/, (_, head) => `${head}1`);
+          await route.fulfill({ response, body });
+        });
+        await loginAs(admin, creds);
+        const saved = await admin.request.put('/v1/account/settings/jobsPanelScope', {
+          headers: { 'X-CSRF-Token': await csrfOf(admin) }, data: { value: scope },
+        });
+        expect(saved.ok(), await saved.text()).toBe(true);
+        const files = [`capped-${scope}-a-${stamp}.bin`, `capped-${scope}-b-${stamp}.bin`];
+        const ids = [];
+        for (const file of files) ids.push(await submit(admin, `${held.base}/${file}`, authSeed.outsideGroupId));
+        await expect.poll(held.heldCount, { timeout: 20_000 }).toBe(2);
 
-      held.release();
-      for (const file of files) {
-        await expect.poll(() => announcementsOf(admin, `${file} succeeded`), { timeout: 20_000 }).toEqual(['drawer']);
+        await admin.goto(`/jobs?search=${stamp}`);
+        await expect(admin.getByTestId('job-panel-root')).toHaveAttribute('data-job-panel-owner-scope', scope === 'mine' ? 'me' : '');
+        const center = admin.getByTestId('job-center');
+        for (const id of ids) await expect(center.locator(`[data-job-id="${id}"]`)).toContainText('Running');
+        await expect.poll(() => admin.evaluate(() =>
+          (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'))?.streamCaughtUp === true)).toBe(true);
+
+        held.release();
+        for (const file of files) {
+          await expect.poll(() => announcementsOf(admin, `${file} succeeded`), { timeout: 20_000 }).toEqual(['drawer']);
+        }
+        await admin.waitForTimeout(3000);
+        for (const file of files) expect(await announcementsOf(admin, `${file} succeeded`)).toEqual(['drawer']);
+      } finally {
+        await adminContext.close();
+        await rootContext.close();
+        held.server.close();
       }
-      await admin.waitForTimeout(3000);
-      for (const file of files) expect(await announcementsOf(admin, `${file} succeeded`)).toEqual(['drawer']);
-    } finally {
-      await adminContext.close();
-      held.server.close();
-    }
-  });
+    });
+  }
 });
