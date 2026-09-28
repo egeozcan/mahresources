@@ -1013,7 +1013,8 @@ describe('job list live progress', () => {
         });
         list.reapplyProgress();
         expect(progressOf('a').value).toBe('75%');
-        expect(progressOf('a').text).toBe('1572864 / 2097152 bytes');
+        expect(progressOf('a').text).toBe('Working');
+        expect(progressOf('a').stats).toContain('1.5 MB of 2.0 MB');
         list.destroy();
     });
 
