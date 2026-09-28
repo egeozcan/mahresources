@@ -107,11 +107,11 @@ with the final reviewed commits and merged gates before completion.
 
 | Lane | P0/P1 findings by round so far | Current disposition |
 | --- | --- | --- |
-| List | 8, 2, 2 | Card membership/clock ownership and full-precision progress ordering repaired at `bbf3e878`; final round pending. |
+| List | 8, 2, 2 | All final lane gates pass at `d9a788a6`; full round 4 active. |
 | Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
-| Numbers | 2, 4, 1, 2 | Round 4 reproduced an assembly graph losing real movement and key-only HLS traffic refreshing rate/ETA; producer-bound repair in progress. |
-| Kinds | 1, 2, 2, 2, 1 | Producer-bound report API/UI/CLI repair committed at `4254179f`; fresh full gates and round 6 pending. |
-| Flakes | 2, 2, 1, 0 | Round 4 clean at `5db9018a`; a separately confirmed inherited command shutdown defect requires a further repair and review. |
+| Numbers | 2, 4, 1, 2, 2 | Round 5 at `f443eb7c` confirms media-source freshness repairs, but finds measured graph movement lost at final replacement and compaction; general preservation repair in progress. |
+| Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`; cheap local report-read notice and standards findings are being closed. |
+| Flakes | 2, 2, 1, 0 | All final gates pass at `f007c51f`, including 2,318 browser/CLI tests with no retries; the new shutdown ownership repair still requires round 5. |
 
 List's whole-Go runs exposed the inherited shutdown defect twice. Passing isolated
 20-run and package three-run controls did not explain it. A temporary caller ledger
