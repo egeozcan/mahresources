@@ -42,12 +42,15 @@ type Metric = jobmetrics.Metric
 // At is Unix milliseconds. Rate is the sampled progress per second. Ordinary
 // progress uses comparable neighboring counts; an executor with a coarse
 // count may carry its last measured rate across fresh activity reports that do
-// not change that count. Values holds the graphed metrics.
+// not change that count. RateNeutral is internal stored-history metadata that
+// distinguishes such no-new-sample endpoints from actual measurement gaps.
+// Values holds the graphed metrics.
 type SeriesPoint struct {
-	At        int64              `json:"t"`
-	Completed *float64           `json:"c,omitempty"`
-	Rate      *float64           `json:"r,omitempty"`
-	Values    map[string]float64 `json:"v,omitempty"`
+	At          int64              `json:"t"`
+	Completed   *float64           `json:"c,omitempty"`
+	Rate        *float64           `json:"r,omitempty"`
+	RateNeutral bool               `json:"rateNeutral,omitempty"`
+	Values      map[string]float64 `json:"v,omitempty"`
 }
 
 // RateAnchor is the count and instant the current rate is measured from.
@@ -253,7 +256,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		changed = true
 	}
 
-	point := SeriesPoint{At: nowMs, Completed: completed, Values: graphedValues(progress.Metrics)}
+	point := SeriesPoint{At: nowMs, Completed: completed, RateNeutral: completed == nil, Values: graphedValues(progress.Metrics)}
 	count := len(series.Points)
 	switch {
 	case count == 0:
@@ -271,7 +274,12 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		if count > 1 {
 			point.Rate = pointRate(series.Points[count-2], point, max(stale, 3*series.IntervalMs))
 		}
-		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, count > 0 && pointCountAdvanced(series.Points[count-1], point))
+		movementBaseline := count - 1
+		if count > 1 {
+			movementBaseline = count - 2
+		}
+		countAdvanced := count > 1 && pointCountAdvanced(series.Points[movementBaseline], point)
+		setActivityPointRate(&point, series.Rate, progress.Activity, !progress.Activity && activityWasFresh, countAdvanced)
 		series.Points[count-1] = point
 		changed = true
 	}
@@ -291,8 +299,10 @@ func setActivityPointRate(point *SeriesPoint, measuredRate *float64, active, act
 	switch {
 	case activityEnded && !countAdvanced:
 		// A phase-only report can end a byte-activity lease, but it is not a
-		// count measurement. Keep the graph's existing stale/pause boundary.
+		// count measurement. Mark only this endpoint neutral; any earlier stale,
+		// pause, restart, or unit boundary remains on its own point.
 		point.Rate = nil
+		point.RateNeutral = true
 	case (active || activityEnded) && measuredRate != nil:
 		// When activity ends alongside real count movement, retain the
 		// measured count rate. Activity describes freshness; Completed remains
@@ -389,16 +399,25 @@ func compactPoints(points []SeriesPoint) []SeriesPoint {
 
 func mergePoints(a, b SeriesPoint) SeriesPoint {
 	merged := SeriesPoint{At: b.At, Completed: b.Completed}
-	// A nil rate on the later point marks a gap (a pause, a restart, a change
-	// of unit) ending there, and the merged point sits at its timestamp, so it
-	// keeps the gap rather than inheriting the earlier point's throughput.
+	// A nil rate is ambiguous by itself: a neutral endpoint has no new count
+	// sample but may carry an earlier measured rate through compaction, while an
+	// unmarked nil rate is a hard boundary (including old stored points whose
+	// meaning cannot be recovered). Never carry a rate through a hard boundary.
 	switch {
 	case a.Rate != nil && b.Rate != nil:
 		rate := (*a.Rate + *b.Rate) / 2
 		merged.Rate = &rate
+		merged.RateNeutral = b.RateNeutral
 	case b.Rate != nil:
 		rate := *b.Rate
 		merged.Rate = &rate
+		merged.RateNeutral = b.RateNeutral
+	case b.RateNeutral && a.Rate != nil:
+		rate := *a.Rate
+		merged.Rate = &rate
+		merged.RateNeutral = true
+	case b.RateNeutral && a.RateNeutral:
+		merged.RateNeutral = true
 	}
 	// Only the later point's keys survive a merge. Keeping the union would let a
 	// reporter that changes which metrics it graphs grow every merged point by
@@ -418,16 +437,21 @@ func mergePoints(a, b SeriesPoint) SeriesPoint {
 }
 
 // endAtLastMovement ends a finished series at the last speed it measured. The
-// points at its end that counted nothing since the one before are the Job no
-// longer counting before it ended, not a slowdown to zero, so their rates are
-// dropped and a graph ends where the work last moved rather than in a plunge.
-// A stall the Job moved on from is left as the zero it was.
+// same-count tail is not a slowdown to zero, so sampled rates there are dropped
+// and no-sample endpoints become neutral for compaction. A nil hard-gap point
+// stops the trim; finalization cannot relabel a real pause, restart, or unit
+// change as an endpoint that may inherit an earlier rate. A stall the Job
+// moved on from is left as the zero it was.
 func endAtLastMovement(points []SeriesPoint) {
 	for i := len(points) - 1; i > 0; i-- {
 		if points[i].Completed == nil || points[i-1].Completed == nil || !sameCount(points[i].Completed, points[i-1].Completed) {
 			return
 		}
+		if points[i].Rate == nil && !points[i].RateNeutral {
+			return
+		}
 		points[i].Rate = nil
+		points[i].RateNeutral = true
 	}
 }
 

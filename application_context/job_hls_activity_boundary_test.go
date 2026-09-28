@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -242,4 +243,134 @@ func TestCanonicalHLSAudioKeyDoesNotRenewSegmentRateFreshness(t *testing.T) {
 	if done := waitForSnapshot(t, ctx, jobID, "the released encrypted audio download", func(s jobs.Snapshot) bool { return s.State.Terminal() }); done.State != jobs.StateSucceeded {
 		t.Fatalf("released HLS download ended as %s: %+v", done.State, done.Failure)
 	}
+}
+
+// A completed segment is a real count measurement even when cancellation ends
+// the download before the next segment body finishes. The terminal snapshot
+// replaces the current graph point, so this proves the queue-to-Jobs path keeps
+// the last measured movement through the actual advertised Cancel command.
+func TestCanonicalHLSCancelRetainsMeasuredGraphMovement(t *testing.T) {
+	ffmpeg := hlsTestFfmpeg(t)
+	dir := buildHLSStream(t, ffmpeg)
+	releaseSecond := make(chan struct{})
+	var releaseOnce sync.Once
+	freeSecond := func() { releaseOnce.Do(func() { close(releaseSecond) }) }
+	t.Cleanup(freeSecond)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
+		if name == "index.m3u8" {
+			http.ServeFile(w, r, filepath.Join(dir, name))
+			return
+		}
+		if strings.HasPrefix(name, "s") && strings.HasSuffix(name, ".ts") {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+			third := len(data) / 3
+			_, _ = w.Write(data[:third])
+			w.(http.Flusher).Flush()
+			time.Sleep(1200 * time.Millisecond)
+			_, _ = w.Write(data[third : 2*third])
+			w.(http.Flusher).Flush()
+			if name == "s1.ts" {
+				select {
+				case <-releaseSecond:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			_, _ = w.Write(data[2*third:])
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(dir, name))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.FfmpegPath = ffmpeg
+	ctx.downloadManager.Shutdown()
+	ctx.downloadManager = download_queue.NewDownloadManagerWithConfig(ctx,
+		download_queue.NewStaticDownloadSettings(download_queue.TimeoutConfig{OverallTimeout: 40 * time.Second}, 0),
+		download_queue.ManagerConfig{Concurrency: 1, FfmpegPath: func() string { return ffmpeg }, HLSOptions: hls.Options{Concurrency: 1}},
+	)
+	observer := &hlsActivityObserver{jobDownloadSink: &jobDownloadSink{ctx: ctx}, updates: make(chan hlsActivityObservation, 128)}
+	ctx.downloadManager.SetCanonicalSink(observer)
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{Claimant: "canonical-hls-cancel-measurement", Interval: 50 * time.Millisecond})
+	runtime.Start()
+	t.Cleanup(runtime.Stop)
+
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/index.m3u8"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil {
+		t.Fatalf("submitting HLS download: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	var measured *hlsActivityObservation
+	deadline := time.After(8 * time.Second)
+	for measured == nil {
+		select {
+		case observation := <-observer.updates:
+			if observation.queue.ProgressActivity && observation.queue.PhaseCount > 0 &&
+				positiveGraphMovement(observation.durable.ProgressSeries) {
+				copy := observation
+				measured = &copy
+			}
+		case <-deadline:
+			freeSecond()
+			t.Fatal("no real positive graph sample was observed while the second media segment was held")
+		}
+	}
+	if measured.queue.PhaseCount != 1 {
+		freeSecond()
+		t.Fatalf("the held second segment already changed the completed count: %+v", measured.queue)
+	}
+
+	commands, err := ctx.AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		freeSecond()
+		t.Fatalf("advertised commands: %v", err)
+	}
+	if !hasCommand(commands, jobs.CommandCancel) {
+		freeSecond()
+		t.Fatalf("the in-flight HLS job did not advertise Cancel: %+v", commands)
+	}
+	latest, err := ctx.GetJob(jobID)
+	if err != nil {
+		freeSecond()
+		t.Fatalf("read current Job before cancellation: %v", err)
+	}
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandCancel, IdempotencyKey: "cancel-after-first-segment", ExpectedVersion: latest.Version,
+	})
+	if err != nil {
+		freeSecond()
+		t.Fatalf("cancel HLS download: %v", err)
+	}
+	if result.Status != jobs.CommandStatusSucceeded {
+		freeSecond()
+		t.Fatalf("cancel command answered %s/%s: %s", result.Status, result.Code, result.Message)
+	}
+
+	ended := waitForSnapshot(t, ctx, jobID, "the canonical HLS cancellation", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+	freeSecond()
+	if ended.State != jobs.StateCancelled {
+		t.Fatalf("HLS download ended as %s after advertised Cancel", ended.State)
+	}
+	if ended.Progress.Completed == nil || *ended.Progress.Completed != measured.queue.PhaseCount {
+		t.Fatalf("terminal count = %v, want the last completed segment count %d", ended.Progress.Completed, measured.queue.PhaseCount)
+	}
+	if !positiveGraphMovement(ended.ProgressSeries) {
+		t.Fatalf("terminal replacement erased measured movement from the canonical stream: %+v", ended.ProgressSeries.Points)
+	}
+}
+
+func positiveGraphMovement(series jobs.ProgressSeries) bool {
+	for _, point := range series.Points {
+		if point.Rate != nil && *point.Rate > 0 {
+			return true
+		}
+	}
+	return false
 }

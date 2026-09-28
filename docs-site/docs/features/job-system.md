@@ -592,8 +592,8 @@ is included as `progress.series` on `GET /v1/jobs/{id}`, and on `GET /v1/jobs`
 only with `include=progressSeries`. Series points use short names: `t` is Unix
 milliseconds, `c` the completed amount, `r` the sampled rate per second, and `v`
 the graphed metrics by key. For HLS, `r` can carry the last measured segment
-rate during fresh byte activity between count changes. `series.activityAt` is
-the optional Unix-millisecond time of that activity evidence. `series.units`
+rate during fresh byte activity between count changes. The source timestamp for
+that activity is internal and is not included in the response. `series.units`
 records each graphed key's unit; a key that comes back in another unit starts a
 fresh history. A tick without a measure, such as an HLS mux update, leaves the
 history as it was.
