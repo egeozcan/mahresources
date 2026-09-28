@@ -83,7 +83,7 @@ func TestRunImportApplyJob_RestoresPlanOnFailure(t *testing.T) {
 	runFn := ctx.buildImportApplyRunFn(jobID, consumedPath, &ImportDecisions{
 		MappingActions:  map[string]MappingAction{},
 		DanglingActions: map[string]DanglingAction{},
-	})
+	}, "")
 	if err := runFn(context.Background(), nil, facadeSink{}); err == nil {
 		t.Fatal("expected the executor to return an error when the tar is missing")
 	}
@@ -94,6 +94,109 @@ func TestRunImportApplyJob_RestoresPlanOnFailure(t *testing.T) {
 	}
 	if exists, _ := afero.Exists(ctx.GetDefaultFs(), consumedPath); exists {
 		t.Errorf("consumed plan still exists at %s after restoration", consumedPath)
+	}
+}
+
+func TestImportApplyReportPublicationBindsIdenticalReportsAtomically(t *testing.T) {
+	ctx := importTestContext(t, "import_report_publication")
+	fs := ctx.GetDefaultFs()
+	result := &ImportApplyResult{CreatedGroups: 1, CreatedGroupIDs: []uint{41}, RetrySafe: true}
+
+	if err := ctx.persistImportApplyReport("imp-identical-report", "apply-first", result); err != nil {
+		t.Fatalf("publish first Apply report: %v", err)
+	}
+	firstSnapshot, err := afero.ReadFile(fs, importResultSnapshotPathFor("imp-identical-report", "apply-first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flatBefore, err := afero.ReadFile(fs, importResultPathFor("imp-identical-report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ctx.persistImportApplyReport("imp-identical-report", "apply-second", result); err != nil {
+		t.Fatalf("publish second Apply report: %v", err)
+	}
+	flatAfter, err := afero.ReadFile(fs, importResultPathFor("imp-identical-report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSnapshot, err := afero.ReadFile(fs, importResultSnapshotPathFor("imp-identical-report", "apply-second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(flatBefore, flatAfter) || !bytes.Equal(firstSnapshot, secondSnapshot) || !bytes.Equal(flatAfter, secondSnapshot) {
+		t.Fatalf("successive identical reports changed bytes: first=%s second=%s snapshot=%s", flatBefore, flatAfter, secondSnapshot)
+	}
+	var publication importApplyReportProvenance
+	publicationBytes, err := afero.ReadFile(fs, importResultProvenancePathFor("imp-identical-report"))
+	if err != nil || json.Unmarshal(publicationBytes, &publication) != nil {
+		t.Fatalf("read publication record %s: %v", publicationBytes, err)
+	}
+	if publication.ProducerJobID != "apply-second" || !bytes.Equal(publication.Report, flatAfter) {
+		t.Fatalf("publication does not atomically name the second Apply: producer=%q report=%s", publication.ProducerJobID, publication.Report)
+	}
+	if bytes.Contains(flatAfter, []byte("producer_job_id")) || bytes.Contains(flatAfter, []byte("apply-second")) {
+		t.Fatalf("producer metadata entered the flat result: %s", flatAfter)
+	}
+}
+
+func TestLegacyImportReportDoesNotInheritPreviousProducer(t *testing.T) {
+	ctx := importTestContext(t, "import_report_legacy")
+	if err := ctx.persistImportApplyReport("imp-legacy-report", "apply-old", &ImportApplyResult{CreatedGroups: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.persistImportApplyReport("imp-legacy-report", "", &ImportApplyResult{CreatedGroups: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := afero.Exists(ctx.GetDefaultFs(), importResultProvenancePathFor("imp-legacy-report")); err != nil || exists {
+		t.Fatalf("legacy result retained provenance: exists=%t err=%v", exists, err)
+	}
+	report, outcome, err := ctx.ReadImportApplyReport("imp-legacy-report", "")
+	if err != nil || outcome.Known {
+		t.Fatalf("legacy report outcome %+v, error %v", outcome, err)
+	}
+	var result ImportApplyResult
+	if err := json.Unmarshal(report, &result); err != nil || result.CreatedGroups != 2 {
+		t.Fatalf("legacy report was not returned flat: %s (%v)", report, err)
+	}
+}
+
+type importResultReadCountingFs struct {
+	afero.Fs
+	reads map[string]int
+}
+
+func (fs *importResultReadCountingFs) Open(name string) (afero.File, error) {
+	fs.reads[filepath.Clean(name)]++
+	return fs.Fs.Open(name)
+}
+
+func TestImportApplyReportReadsPublicationOnceWithoutRereadingFlatAlias(t *testing.T) {
+	ctx := importTestContext(t, "import_report_single_read")
+	handle := "imp-single-read"
+	if err := ctx.persistImportApplyReport(handle, "apply-single-read", &ImportApplyResult{CreatedGroups: 3}); err != nil {
+		t.Fatal(err)
+	}
+	counted := &importResultReadCountingFs{Fs: ctx.fs, reads: map[string]int{}}
+	ctx.fs = counted
+
+	report, outcome, err := ctx.ReadImportApplyReport(handle, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Known {
+		t.Fatal("a test context without a Job Service reported a verified outcome")
+	}
+	var result ImportApplyResult
+	if err := json.Unmarshal(report, &result); err != nil || result.CreatedGroups != 3 {
+		t.Fatalf("publication report %s (%v)", report, err)
+	}
+	if counted.reads[filepath.Clean(importResultProvenancePathFor(handle))] != 1 {
+		t.Fatalf("publication record opened %d times, want once: %v", counted.reads[filepath.Clean(importResultProvenancePathFor(handle))], counted.reads)
+	}
+	if counted.reads[filepath.Clean(importResultPathFor(handle))] != 0 {
+		t.Fatalf("reader reread the mutable flat alias after opening its publication: %v", counted.reads)
 	}
 }
 
@@ -212,7 +315,7 @@ func TestRunImportApplyJob_LegacyArchiveWithNoMutationsRestoresItsPlan(t *testin
 		}
 	}
 
-	runFn := ctx.buildImportApplyRunFn(jobID, consumedPath, decisions)
+	runFn := ctx.buildImportApplyRunFn(jobID, consumedPath, decisions, "")
 	if err := runFn(cancelledCtx, nil, facadeSink{}); err == nil {
 		t.Fatal("expected the executor to return an error (cancelled context)")
 	}
@@ -524,6 +627,8 @@ func TestStartupCleanupKeepsTheInputsANonterminalJobStillNeeds(t *testing.T) {
 	required := []string{
 		importArchivePathFor(parseHandle),
 		importPlanPathFor(parseHandle),
+		importResultProvenancePathFor(parseHandle),
+		importResultSnapshotPathFor(parseHandle, "apply-survives-restart"),
 	}
 	for _, path := range required {
 		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {

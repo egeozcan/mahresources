@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { adminImport } from './adminImport.js';
+import reporterOwnerResult from './fixtures/import-r5-owner-result.json';
 
 type Routes = Record<string, { status: number; body: unknown }>;
 
@@ -37,7 +38,7 @@ afterEach(() => {
 });
 
 describe('reopening an import an apply took', () => {
-  it('uses the server newest-first apply order for fractional times and equal-instant ties', async () => {
+  it('preserves the server newest-first order for fractional times and equal-instant ties', async () => {
     const laterAt = '2026-09-28T05:00:00.11Z';
     const earlierAt = '2026-09-28T05:00:00.1Z';
     expect(Date.parse(laterAt) - Date.parse(earlierAt)).toBe(10);
@@ -50,78 +51,106 @@ describe('reopening an import an apply took', () => {
       '/v1/jobs/apply-tie-z': { status: 200, body: { id: 'apply-tie-z', state: 'succeeded', lineage: { successors: [] } } },
       '/v1/jobs/apply-tie-a': { status: 200, body: { id: 'apply-tie-a', state: 'failed', failure: { message: 'same-instant lower ID' }, lineage: { successors: [] } } },
       '/v1/jobs/apply-old': { status: 200, body: { id: 'apply-old', state: 'failed', failure: { message: 'older apply failed' }, lineage: { successors: [] } } },
-      '/v1/imports/imp-1/result': { status: 200, body: report },
     });
     const c = adminImport();
 
-    await c.resumeApplied('imp-1', 'parse-1');
+    const apply = await c.latestApply('parse-1');
 
-    expect(c.applyOutcome).toBe('succeeded');
-    expect(c.error).toBeNull();
+    expect(apply?.id).toBe('apply-tie-z');
+    expect(apply?.state).toBe('succeeded');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/v1/jobs/parse-1', '/v1/jobs/apply-tie-z', '/v1/imports/imp-1/result',
+      '/v1/jobs/parse-1', '/v1/jobs/apply-tie-z',
     ]);
   });
 
-  it('shows the report as a success only when the apply this viewer can see succeeded', async () => {
-    serve({
-      '/v1/imports/imp-1/result': { status: 200, body: report },
-      '/v1/jobs/parse-1': parseDetail([{ id: 'apply-1', kind: 'group-import-apply', state: 'succeeded', acceptedAt: '2026-09-28T00:00:00Z' }]),
-      '/v1/jobs/apply-1': { status: 200, body: { id: 'apply-1', state: 'succeeded', lineage: { successors: [] } } },
+  it('uses the outcome attached to the report instead of selecting a visible Job', async () => {
+    const fetchMock = serve({
+      '/v1/imports/imp-1/result': { status: 200, body: { ...report, apply_outcome: 'succeeded' } },
     });
     const c = adminImport();
-    await c.resumeApplied('imp-1', 'parse-1');
+    await c.resumeApplied('imp-1');
     expect(c.applyOutcome).toBe('succeeded');
-    expect(c.applyResult).toEqual(report);
+    expect(c.applyResult).toMatchObject(report);
     expect(c.error).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/v1/imports/imp-1/result']);
   });
 
-  it('says the outcome is not available when the viewer cannot see the apply', async () => {
+  it('shows a report-bound unknown outcome', async () => {
     serve({
-      '/v1/imports/imp-1/result': { status: 200, body: report },
-      '/v1/jobs/parse-1': parseDetail([]),
+      '/v1/imports/imp-1/result': { status: 200, body: { ...report, apply_outcome: 'unknown' } },
     });
     const c = adminImport();
-    await c.resumeApplied('imp-1', 'parse-1');
+    await c.resumeApplied('imp-1');
     expect(c.applyOutcome).toBe('unknown');
-    expect(c.applyResult).toEqual(report);
+    expect(c.applyResult).toMatchObject(report);
     expect(c.error).toBeNull();
   });
 
-  it('says the outcome is not available when another account retried the apply', async () => {
+  it('shows the report-bound failed outcome and failure text', async () => {
     serve({
-      '/v1/imports/imp-1/result': { status: 200, body: report },
-      '/v1/jobs/parse-1': parseDetail([{ id: 'apply-1', kind: 'group-import-apply', state: 'failed', acceptedAt: '2026-09-28T00:00:00Z' }]),
-      '/v1/jobs/apply-1': { status: 200, body: { id: 'apply-1', state: 'failed', lineage: { successors: [], retriedElsewhere: true } } },
+      '/v1/imports/imp-1/result': { status: 200, body: { ...report, apply_outcome: 'failed', apply_failure: 'the import could not be applied' } },
     });
     const c = adminImport();
-    await c.resumeApplied('imp-1', 'parse-1');
-    expect(c.applyOutcome).toBe('unknown');
-    expect(c.error).toBeNull();
-  });
-
-  it('follows a Retry to the newest apply and reports its failure', async () => {
-    serve({
-      '/v1/imports/imp-1/result': { status: 200, body: report },
-      '/v1/jobs/parse-1': parseDetail([{ id: 'apply-1', kind: 'group-import-apply', state: 'succeeded', acceptedAt: '2026-09-28T00:00:00Z' }]),
-      '/v1/jobs/apply-1': { status: 200, body: { id: 'apply-1', state: 'succeeded', lineage: { successors: [{ id: 'apply-2', kind: 'group-import-apply', acceptedAt: '2026-09-28T00:05:00Z' }] } } },
-      '/v1/jobs/apply-2': { status: 200, body: { id: 'apply-2', state: 'failed', failure: { message: 'the import could not be applied' }, lineage: { successors: [] } } },
-    });
-    const c = adminImport();
-    await c.resumeApplied('imp-1', 'parse-1');
+    await c.resumeApplied('imp-1');
     expect(c.applyOutcome).toBe('failed');
     expect(c.error).toBe('the import could not be applied');
+  });
+
+  it('uses the report-bound unknown outcome instead of an older visible failed Apply', async () => {
+    // Captured by the R5 owner-bound API replay: a failed owner Apply restored
+    // the plan, then an admin's fresh Apply wrote this successful report. The
+    // owner still sees the older failed child but cannot see the report producer.
+    const fetchMock = serve({ '/v1/imports/imp-1/result': { status: 200, body: reporterOwnerResult } });
+    const c = adminImport();
+
+    await c.resumeApplied('imp-1');
+
+    expect(c.applyOutcome).toBe('unknown');
+    expect(c.error).toBeNull();
+    expect(c.applyResult).toMatchObject({ created_groups: 1, created_group_ids: [2] });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/v1/imports/imp-1/result']);
+  });
+
+  it('reports an unavailable outcome when there is no result to associate', async () => {
+    serve({ '/v1/imports/imp-1/result': { status: 404, body: { error: 'not found' } } });
+    const c = adminImport();
+    await c.resumeApplied('imp-1');
+    expect(c.applyOutcome).toBe('unknown');
+    expect(c.applyResult).toBeNull();
+    expect(c.resumeNotice).toContain('could not be verified');
   });
 
   it('reports a report that could not be read instead of calling the import removed', async () => {
     serve({
       '/v1/imports/imp-1/result': { status: 500, body: { error: 'disk unavailable' } },
-      '/v1/jobs/parse-1': parseDetail([]),
     });
     const c = adminImport();
-    await expect(c.resumeApplied('imp-1', 'parse-1')).rejects.toThrow('The import report could not be read: disk unavailable');
+    await expect(c.resumeApplied('imp-1')).rejects.toThrow('The import report could not be read: disk unavailable');
     expect(c.resumeNotice).toBe('');
     expect(c.applyResult).toBeNull();
+  });
+
+  it('binds a live completion result request to the accepted canonical Apply', async () => {
+    const listeners: Record<string, (event: { data: string }) => void> = {};
+    vi.stubGlobal('EventSource', class {
+      addEventListener(type: string, listener: (event: { data: string }) => void) { listeners[type] = listener; }
+      close() {}
+    });
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
+      ...report, apply_outcome: 'unknown',
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const c = adminImport();
+    c.subscribeApplyProgress('queue-handle', 'imp-1', c._importGeneration, 'canonical-apply-1');
+
+    listeners.updated({ data: JSON.stringify({ job: { id: 'queue-handle', status: 'completed' } }) });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/imports/imp-1/result', {
+      headers: { 'X-Expected-Import-Apply': 'canonical-apply-1' },
+    });
+    expect(c.applyOutcome).toBe('unknown');
+    expect(c.error).toBeNull();
   });
 });
 
@@ -179,7 +208,6 @@ describe('a second import on the same page', () => {
     let reportReadStarted!: () => void;
     const reportStarted = new Promise<void>(done => { reportReadStarted = done; });
     const fetchMock = vi.fn(async (url: string) => {
-      if (url === '/v1/jobs/parse-a') return new Response(JSON.stringify({ id: 'parse-a', lineage: { children: [] } }));
       if (url === '/v1/imports/imp-a/result') { reportReadStarted(); return oldReport.promise; }
       if (url === '/v1/groups/import/parse') return new Response(JSON.stringify({ jobId: 'imp-b' }), { status: 202 });
       if (url === '/v1/imports/imp-b/plan') return new Response(JSON.stringify(plan('archive B')));
@@ -190,7 +218,7 @@ describe('a second import on the same page', () => {
     const c = adminImport();
     c.selectedFile = new Blob(['archive B']) as never;
 
-    const restoringA = c.resumeApplied('imp-a', 'parse-a');
+    const restoringA = c.resumeApplied('imp-a');
     await reportStarted;
     await c.upload();
     await c.onParseComplete('imp-b');

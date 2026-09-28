@@ -44,6 +44,7 @@ export function adminImport() {
     // Apply state
     applying: false,
     applyJobId: null,
+    applyCanonicalJobId: null,
     applyJob: null,
     applyPhase: '',
     applyResult: null,
@@ -106,6 +107,7 @@ export function adminImport() {
       this.shellGroupDestNames = {};
       this.applying = false;
       this.applyJobId = null;
+      this.applyCanonicalJobId = null;
       this.applyJob = null;
       this.applyPhase = '';
       this.applyResult = null;
@@ -245,7 +247,7 @@ export function adminImport() {
         const parseResp = await fetch(`/v1/jobs/get?id=${encodeURIComponent(handle)}`);
         if (!this.ownsImport(generation)) return;
         if (!parseResp.ok) {
-          if (parseResp.status === 404) return this.resumeApplied(handle, null, generation);
+          if (parseResp.status === 404) return this.resumeApplied(handle, generation);
           const message = await errorMessageFromResponse(parseResp);
           if (!this.ownsImport(generation)) return;
           throw new Error(message);
@@ -256,15 +258,13 @@ export function adminImport() {
       }
       if (!this.ownsImport(generation)) return;
       this.jobId = null;
-      await this.resumeApplied(handle, parseJobId, generation);
+      await this.resumeApplied(handle, generation);
     },
 
-    // Shows what became of an import whose plan an apply took: the apply's report,
-    // and whether that apply succeeded, failed or is still running, read from the
-    // newest apply the parse's Job lists (following its Retries).
-    async resumeApplied(handle, parseJobId, generation = this._importGeneration) {
-      if (!this.ownsImport(generation)) return;
-      const apply = await this.latestApply(parseJobId, generation);
+    // Shows an apply report only with the outcome the server verified for the
+    // exact Job that published that report. Visible lineage is history, not proof
+    // that one of its Jobs produced the current report.
+    async resumeApplied(handle, generation = this._importGeneration) {
       if (!this.ownsImport(generation)) return;
       const resultResp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/result`);
       if (!this.ownsImport(generation)) return;
@@ -277,23 +277,20 @@ export function adminImport() {
       }
       const result = resultResp.ok ? await resultResp.json() : null;
       if (!this.ownsImport(generation)) return;
-      const state = apply?.state || '';
-      if (state === 'queued' || state === 'running' || state === 'scheduled' || state === 'paused' || state === 'blocked') {
-        this.resumeNotice = 'This import is being applied. Follow it in the Jobs panel or on its Job page.';
-        return;
-      }
-      const failed = state !== '' && state !== 'succeeded';
-      if (failed) {
-        this.error = apply?.failure?.message || `The apply ended ${state}.`;
-      }
       if (!result) {
-        if (!failed) {
-          this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
-        }
+        this.applyOutcome = 'unknown';
+        this.resumeNotice = 'The import report is not available, so its outcome could not be verified.';
         return;
       }
-      this.applyOutcome = state === 'succeeded' ? 'succeeded' : (failed ? 'failed' : 'unknown');
+      const state = result.apply_outcome;
+      this.applyOutcome = state === 'succeeded' || state === 'failed' || state === 'cancelled' ? state : 'unknown';
       this.applyResult = result;
+      this.error = this.applyOutcome === 'failed' || this.applyOutcome === 'cancelled'
+        ? (result.apply_failure || (this.applyOutcome === 'cancelled' ? 'The apply was cancelled.' : 'The apply failed.'))
+        : null;
+      this.resumeNotice = ['queued', 'running', 'scheduled', 'paused', 'blocked'].includes(state)
+        ? 'This import is being applied. Follow it in the Jobs panel or on its Job page.'
+        : '';
     },
 
     async latestApply(parseJobId, generation = this._importGeneration) {
@@ -854,6 +851,7 @@ export function adminImport() {
       const decisions = JSON.stringify(this.decisions);
       this.applying = true;
       this.applyResult = null;
+      this.applyOutcome = '';
       this.applyJob = null;
       this.applyPhase = '';
       this.error = null;
@@ -879,7 +877,8 @@ export function adminImport() {
         const data = await resp.json();
         if (!this.ownsImport(generation)) return;
         this.applyJobId = data.jobId;
-        this.subscribeApplyProgress(data.jobId, handle, generation);
+        this.applyCanonicalJobId = data.canonicalJobId || null;
+        this.subscribeApplyProgress(data.jobId, handle, generation, this.applyCanonicalJobId);
       } catch (err) {
         if (!this.ownsImport(generation)) return;
         this.error = err.message;
@@ -887,7 +886,7 @@ export function adminImport() {
       }
     },
 
-    subscribeApplyProgress(jobId, importHandle = this.jobId, generation = this._importGeneration) {
+    subscribeApplyProgress(jobId, importHandle = this.jobId, generation = this._importGeneration, canonicalApplyId = null) {
       if (!this.ownsImport(generation)) return;
       this.closeApplySSE();
       const source = new EventSource('/v1/jobs/events');
@@ -899,14 +898,15 @@ export function adminImport() {
         this.applyPhase = payload.job.phase || '';
         if (payload.job.status === 'completed') {
           this.applying = false;
-          this.applyOutcome = 'succeeded';
-          void this.fetchApplyResult(importHandle, generation);
+          this.applyOutcome = '';
+          this.error = null;
+          void this.fetchApplyResult(importHandle, generation, canonicalApplyId, payload.job);
           this.closeApplySSE(source);
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.applying = false;
-          this.applyOutcome = 'failed';
-          this.error = payload.job.error || `Apply job ${payload.job.status}`;
-          void this.fetchApplyResult(importHandle, generation); // partial-failure may have result
+          this.applyOutcome = '';
+          this.error = null;
+          void this.fetchApplyResult(importHandle, generation, canonicalApplyId, payload.job); // partial-failure may have result
           this.closeApplySSE(source);
         }
       };
@@ -931,15 +931,27 @@ export function adminImport() {
       source.addEventListener('removed', handler);
     },
 
-    async fetchApplyResult(importHandle = this.jobId, generation = this._importGeneration) {
+    async fetchApplyResult(importHandle = this.jobId, generation = this._importGeneration, expectedApplyId = null, terminalJob = null) {
       if (!this.ownsImport(generation)) return;
       try {
-        const resp = await fetch(`/v1/imports/${encodeURIComponent(importHandle)}/result`);
+        const init = expectedApplyId ? { headers: { 'X-Expected-Import-Apply': expectedApplyId } } : undefined;
+        const resp = await fetch(`/v1/imports/${encodeURIComponent(importHandle)}/result`, init);
         if (!this.ownsImport(generation)) return;
-        if (!resp.ok) return; // 404 means no result yet
+        if (!resp.ok) {
+          if (resp.status === 404 && terminalJob && terminalJob.status !== 'completed') {
+            this.error = terminalJob.failure?.message || terminalJob.error || `Apply job ${terminalJob.status}; no report is available.`;
+          }
+          return; // 404 means no report is available
+        }
         const result = await resp.json();
         if (!this.ownsImport(generation)) return;
         this.applyResult = result;
+        this.applyOutcome = result.apply_outcome === 'succeeded' || result.apply_outcome === 'failed' || result.apply_outcome === 'cancelled'
+          ? result.apply_outcome
+          : 'unknown';
+        this.error = this.applyOutcome === 'failed' || this.applyOutcome === 'cancelled'
+          ? (result.apply_failure || terminalJob?.failure?.message || terminalJob?.error || (this.applyOutcome === 'cancelled' ? 'The apply was cancelled.' : 'The apply failed.'))
+          : null;
       } catch (e) { /* ignore */ }
     },
 

@@ -3143,11 +3143,15 @@ func registerImportRoutes(r *openapi.Registry) {
 		Path:        "/v1/imports/{jobId}/result",
 		OperationID: "getImportResult",
 		Summary:     "Get the import apply result",
-		Description: "Returns the ImportApplyResult JSON for a completed apply job.",
+		Description: "Returns the flat ImportApplyResult and apply_outcome. The outcome is reported only when the report's producing Apply remains visible and verifiable to the current reader; otherwise it is unknown. Producer metadata is not returned.",
 		Tags:        []string{"imports"},
 		PathParams: []openapi.PathParam{
-			{Name: "jobId", Type: "string", Description: "The apply job ID whose result to fetch"},
+			{Name: "jobId", Type: "string", Description: "The import parse handle whose current result report to fetch"},
 		},
+		ExtraHeaderParams: []openapi.HeaderParam{{
+			Name: "X-Expected-Import-Apply", Type: "string",
+			Description: "Canonical Apply Job ID expected by a live result reader; a newer report from another Apply is returned with apply_outcome=unknown.",
+		}},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }

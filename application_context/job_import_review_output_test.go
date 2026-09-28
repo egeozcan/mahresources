@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/spf13/afero"
+
 	"mahresources/auth"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -68,9 +70,25 @@ func TestAParsedImportLinksToItsReviewWhileItsFilesRemain(t *testing.T) {
 	if _, found := offered(); !found {
 		t.Fatal("the review link went away while the page still has the apply's report to show")
 	}
+	for _, path := range []string{
+		importResultProvenancePathFor(handle),
+		importResultSnapshotPathFor(handle, apply.CanonicalJobID),
+	} {
+		if exists, err := afero.Exists(ctx.GetDefaultFs(), path); err != nil || !exists {
+			t.Fatalf("apply result publication %s is missing: exists=%t err=%v", path, exists, err)
+		}
+	}
 
 	if err := ctx.DeleteImportFiles(handle); err != nil {
 		t.Fatalf("remove the import's files: %v", err)
+	}
+	for _, path := range []string{
+		importResultProvenancePathFor(handle),
+		importResultSnapshotPathFor(handle, apply.CanonicalJobID),
+	} {
+		if exists, err := afero.Exists(ctx.GetDefaultFs(), path); err != nil || exists {
+			t.Fatalf("import cleanup kept result publication %s: exists=%t err=%v", path, exists, err)
+		}
 	}
 	if _, found := offered(); found {
 		t.Fatal("the review link is still offered after the import's files were removed")

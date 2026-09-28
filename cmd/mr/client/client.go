@@ -214,11 +214,20 @@ func decodeResponse(resp *http.Response, result any) error {
 
 // Get performs a GET request and decodes the JSON response into result.
 func (c *Client) Get(path string, query url.Values, result any) error {
+	return c.GetWithHeaders(path, query, result, nil)
+}
+
+// GetWithHeaders performs a GET request with additional request-scoped headers
+// and decodes its JSON response into result.
+func (c *Client) GetWithHeaders(path string, query url.Values, result any, headers map[string]string) error {
 	req, err := http.NewRequest(http.MethodGet, c.buildURL(path, query), nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

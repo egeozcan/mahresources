@@ -3,6 +3,7 @@ package api_tests
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -59,6 +60,53 @@ func (m *mockImportContext) DownloadManager() *download_queue.DownloadManager {
 
 func (m *mockImportContext) GetDefaultFs() afero.Fs {
 	return afero.NewMemMapFs()
+}
+
+type publicationImportContext struct {
+	*mockImportContext
+	reads      int
+	expectedID string
+	producerID string
+}
+
+func (m *publicationImportContext) ReadImportApplyReport(_ string, expectedProducerID string) ([]byte, application_context.ImportApplyReportOutcome, error) {
+	m.reads++
+	m.expectedID = expectedProducerID
+	return []byte(`{"created_groups":1,"created_group_ids":[42]}`), application_context.ImportApplyReportOutcome{
+		State: "succeeded", Known: true,
+	}, nil
+}
+
+func TestImportResultHandlerReadsOneBoundPublicationWithoutExposingProducer(t *testing.T) {
+	ctx := &publicationImportContext{mockImportContext: &mockImportContext{}, producerID: "private-apply-id"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/imports/imp-handler/result", nil)
+	req.Header.Set("X-Expected-Import-Apply", ctx.producerID)
+	req = setMuxVars(req, map[string]string{"jobId": "imp-handler"})
+	response := httptest.NewRecorder()
+
+	api_handlers.GetImportResultHandler(ctx)(response, req)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("result status %d: %s", response.Code, response.Body.String())
+	}
+	if ctx.reads != 1 || ctx.expectedID != ctx.producerID {
+		t.Fatalf("publication reads=%d expected producer=%q, want exactly one read bound to accepted Apply %q", ctx.reads, ctx.expectedID, ctx.producerID)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var groups int
+	var outcome string
+	if err := json.Unmarshal(body["created_groups"], &groups); err != nil || groups != 1 {
+		t.Fatalf("flat report missing from response: %s (%v)", response.Body.String(), err)
+	}
+	if err := json.Unmarshal(body["apply_outcome"], &outcome); err != nil || outcome != "succeeded" {
+		t.Fatalf("verified outcome missing from response: %s (%v)", response.Body.String(), err)
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte(ctx.producerID)) || bytes.Contains(response.Body.Bytes(), []byte("producer_job_id")) {
+		t.Fatalf("private producer metadata escaped the API: %s", response.Body.String())
+	}
 }
 
 // setMuxVars sets gorilla mux path variables on the request for testing.

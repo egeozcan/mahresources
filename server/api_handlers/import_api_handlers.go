@@ -94,6 +94,20 @@ type importAuthorization interface {
 	ImportJobAuthorized(parseHandle string) (authorized bool, answered bool)
 }
 
+// importApplyReportReader is an optional application capability. It reads the
+// report and its producer from one publication record, then returns an outcome
+// only after reauthorizing that producer for the current request principal. Its
+// internal producer ID never enters the response.
+type importApplyReportReader interface {
+	ReadImportApplyReport(parseHandle, expectedProducerID string) ([]byte, application_context.ImportApplyReportOutcome, error)
+}
+
+type importApplyResultResponse struct {
+	application_context.ImportApplyResult
+	ApplyOutcome string `json:"apply_outcome"`
+	ApplyFailure string `json:"apply_failure,omitempty"`
+}
+
 // GetImportParseHandler — POST /v1/groups/import/parse
 //
 // Accepts a multipart file upload, stages the tar under _imports/, and enqueues
@@ -231,8 +245,9 @@ func GetImportPlanHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Req
 
 // GetImportResultHandler — GET /v1/imports/{jobId}/result
 //
-// Returns the ImportApplyResult JSON for a completed apply job. Returns 404 if
-// the result file does not exist yet.
+// Returns the flat ImportApplyResult plus the outcome of its report producer
+// when that Apply Job remains visible and verifiable to this reader. Otherwise
+// apply_outcome is "unknown". Returns 404 if the result file does not exist yet.
 func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -246,20 +261,55 @@ func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 			return
 		}
 
-		resultPath := filepath.Join("_imports", jobID+".result.json")
-		f, err := ctx.GetDefaultFs().Open(resultPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				http.Error(w, "import result not found", http.StatusNotFound)
+		requestCtx := ctx
+		if binder, ok := ctx.(principalBinder); ok {
+			requestCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
+		}
+		var data []byte
+		outcome := application_context.ImportApplyReportOutcome{State: "unknown"}
+		if reader, ok := requestCtx.(importApplyReportReader); ok {
+			var err error
+			data, outcome, err = reader.ReadImportApplyReport(jobID, r.Header.Get("X-Expected-Import-Apply"))
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					http.Error(w, "import result not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			resultPath := filepath.Join("_imports", jobID+".result.json")
+			f, err := ctx.GetDefaultFs().Open(resultPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					http.Error(w, "import result not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			data, err = io.ReadAll(f)
+			_ = f.Close()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		var result application_context.ImportApplyResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			http.Error(w, "import result is not valid JSON", http.StatusInternalServerError)
 			return
 		}
-		defer f.Close()
+
+		response := importApplyResultResponse{ImportApplyResult: result, ApplyOutcome: "unknown"}
+		if outcome.Known {
+			response.ApplyOutcome = outcome.State
+			response.ApplyFailure = outcome.FailureMessage
+		}
 
 		w.Header().Set("Content-Type", constants.JSON)
-		_, _ = io.Copy(w, f)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }
 
