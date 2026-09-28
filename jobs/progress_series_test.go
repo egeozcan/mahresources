@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mahresources/models"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mahresources/models/types"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -300,13 +303,15 @@ func TestHLSActivityMovementSurvivesFinalReplacementAndCompaction(t *testing.T) 
 	t.Run("final replacement", func(t *testing.T) {
 		var series ProgressSeries
 		series, _ = advanceSeries(series, at(0), segmentProgress(0, false), false)
-		for second := int64(1); second < 15; second++ {
-			series, _ = advanceSeries(series, at(float64(second)), segmentProgress(0, true), false)
+		series, _ = advanceSeries(series, at(1), segmentProgress(1, true), false)
+		pointsBeforeFinal := len(series.Points)
+		series, _ = advanceSeries(series, at(1.2), segmentProgress(1, false), true)
+		if len(series.Points) != pointsBeforeFinal {
+			t.Fatalf("final point at 1.2s appended %d points, want replacement of the point at 1s", len(series.Points))
 		}
-		series, _ = advanceSeries(series, at(15), segmentProgress(4, false), true)
 		last := series.Points[len(series.Points)-1]
-		if last.Completed == nil || *last.Completed != 4 || last.Rate == nil || *last.Rate <= 0 {
-			t.Fatalf("final point = %+v; want final count movement retained", last)
+		if last.At != at(1.2).UnixMilli() || last.Completed == nil || *last.Completed != 1 || last.Rate == nil || *last.Rate <= 0 {
+			t.Fatalf("final point = %+v; want the real 0-to-1 movement retained in the sub-interval replacement", last)
 		}
 		if series.Rate != nil || series.Anchor != nil {
 			t.Fatalf("final series still exposes a live measurement: %+v", series)
@@ -339,6 +344,240 @@ func TestHLSActivityMovementSurvivesFinalReplacementAndCompaction(t *testing.T) 
 	})
 }
 
+func TestFinishRetainsMovementOnASameCountFinalReplacementForEveryOutcome(t *testing.T) {
+	tests := []struct {
+		name    string
+		outcome State
+		failure *Failure
+	}{
+		{name: "cancelled", outcome: StateCancelled},
+		{name: "succeeded", outcome: StateSucceeded},
+		{name: "failed", outcome: StateFailed, failure: &Failure{Code: "test-failed", Class: FailureClassInternal}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			svc := NewService()
+			clock := at(0)
+			deps.Now = func() time.Time { return clock }
+			job := seededExecution(t, deps, StateRunning, "claim-final-replacement")
+			ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-final-replacement"}
+			if _, err := svc.UpdateProgress(deps, ref, Progress{
+				Completed: int64Ptr(0), Total: int64Ptr(4), Unit: "items",
+			}); err != nil {
+				t.Fatalf("seed zero count: %v", err)
+			}
+
+			clock = at(1)
+			moving, err := svc.UpdateProgress(deps, ref, Progress{
+				Completed: int64Ptr(1), Total: int64Ptr(4), Unit: "items", Activity: true,
+			})
+			if err != nil {
+				t.Fatalf("report the measured count: %v", err)
+			}
+			if positiveRatePointCount(moving.ProgressSeries) == 0 {
+				t.Fatal("setup did not record the actual 0-to-1 movement")
+			}
+
+			clock = at(1.2)
+			ended, err := svc.Finish(deps, FinishRequest{
+				ExecutionRef: ref, ExpectedVersion: job.Version, Outcome: tt.outcome, Failure: tt.failure,
+			})
+			if err != nil {
+				t.Fatalf("Finish %s: %v", tt.outcome, err)
+			}
+			if ended.State != tt.outcome || len(ended.ProgressSeries.Points) != len(moving.ProgressSeries.Points) {
+				t.Fatalf("terminal result = %s with %d points, want %s and same-count replacement of %d points",
+					ended.State, len(ended.ProgressSeries.Points), tt.outcome, len(moving.ProgressSeries.Points))
+			}
+			last := ended.ProgressSeries.Points[len(ended.ProgressSeries.Points)-1]
+			if last.At != at(1.2).UnixMilli() || last.Completed == nil || *last.Completed != 1 || last.Rate == nil || *last.Rate <= 0 {
+				t.Fatalf("final point = %+v; want the original measured movement retained at the replacement timestamp", last)
+			}
+			if positiveRatePointCount(ended.ProgressSeries) == 0 {
+				t.Fatalf("Finish(%s) erased the only measured movement", tt.outcome)
+			}
+		})
+	}
+}
+
+func TestCompactionKeepsMovementAcrossTerminalAndActivityBoundaries(t *testing.T) {
+	t.Run("ordinary succeeded finish at the cap", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		clock := at(0)
+		deps.Now = func() time.Time { return clock }
+		job := seededExecution(t, deps, StateRunning, "claim-terminal-compaction")
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-terminal-compaction"}
+		for second := 0; second < MaxSeriesPoints-1; second++ {
+			clock = at(float64(second))
+			if _, err := svc.UpdateProgress(deps, ref, Progress{
+				Completed: int64Ptr(0), Total: int64Ptr(1), Unit: "items",
+			}); err != nil {
+				t.Fatalf("unchanged count at %ds: %v", second, err)
+			}
+		}
+		clock = at(float64(MaxSeriesPoints - 1))
+		moving, err := svc.UpdateProgress(deps, ref, Progress{
+			Completed: int64Ptr(1), Total: int64Ptr(1), Unit: "items",
+		})
+		if err != nil {
+			t.Fatalf("report final count: %v", err)
+		}
+		if len(moving.ProgressSeries.Points) != MaxSeriesPoints || positiveRatePointCount(moving.ProgressSeries) == 0 {
+			t.Fatalf("pre-finish series has %d points and %d positive rates; want the full cap and measured movement",
+				len(moving.ProgressSeries.Points), positiveRatePointCount(moving.ProgressSeries))
+		}
+		clock = at(float64(MaxSeriesPoints))
+		ended, err := svc.Finish(deps, FinishRequest{
+			ExecutionRef: ref, ExpectedVersion: job.Version, Outcome: StateSucceeded,
+		})
+		if err != nil {
+			t.Fatalf("Finish succeeded: %v", err)
+		}
+		if positiveRatePointCount(ended.ProgressSeries) == 0 {
+			t.Fatal("final no-movement replacement and compaction erased the last measured count movement")
+		}
+		assertProgressSeriesAnchoredAndBounded(t, ended.ProgressSeries, at(0), at(float64(MaxSeriesPoints)).UnixMilli())
+	})
+
+	t.Run("activity-ending metadata at the cap", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		clock := at(0)
+		deps.Now = func() time.Time { return clock }
+		job := seededExecution(t, deps, StateRunning, "claim-activity-compaction")
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-activity-compaction"}
+		for second := 0; second < MaxSeriesPoints-1; second++ {
+			clock = at(float64(second))
+			if _, err := svc.UpdateProgress(deps, ref, Progress{
+				Completed: int64Ptr(0), Total: int64Ptr(4), Unit: "items", Activity: second > 0,
+			}); err != nil {
+				t.Fatalf("segment heartbeat at %ds: %v", second, err)
+			}
+		}
+		clock = at(float64(MaxSeriesPoints - 1))
+		moving, err := svc.UpdateProgress(deps, ref, Progress{
+			Completed: int64Ptr(1), Total: int64Ptr(4), Unit: "items", Activity: true,
+		})
+		if err != nil {
+			t.Fatalf("report segment movement: %v", err)
+		}
+		if positiveRatePointCount(moving.ProgressSeries) == 0 {
+			t.Fatal("setup did not record the actual segment movement")
+		}
+		clock = at(float64(MaxSeriesPoints))
+		endedActivity, err := svc.UpdateProgress(deps, ref, Progress{
+			Completed: int64Ptr(1), Total: int64Ptr(4), Unit: "items", Message: "assembling video",
+		})
+		if err != nil {
+			t.Fatalf("end segment activity: %v", err)
+		}
+		if positiveRatePointCount(endedActivity.ProgressSeries) == 0 {
+			t.Fatal("same-count phase report at the compaction boundary erased the last measured segment movement")
+		}
+		if endedActivity.ProgressSeries.Anchor == nil || endedActivity.ProgressSeries.Anchor.At != at(float64(MaxSeriesPoints-1)).UnixMilli() {
+			t.Fatalf("metadata report rebased the count anchor: %+v", endedActivity.ProgressSeries.Anchor)
+		}
+		assertProgressSeriesAnchoredAndBounded(t, endedActivity.ProgressSeries, at(0), at(float64(MaxSeriesPoints)).UnixMilli())
+	})
+}
+
+func TestProgressSeriesCompactionPreservesMovementAcrossCapacityBoundaries(t *testing.T) {
+	for _, pointCount := range []int{MaxSeriesPoints - 1, MaxSeriesPoints, MaxSeriesPoints + 1, MaxSeriesPoints + 2, 241, 481} {
+		t.Run(fmt.Sprintf("points_%d", pointCount), func(t *testing.T) {
+			series := ProgressSeries{IntervalMs: seriesBaseIntervalMs, Unit: "items", Points: make([]SeriesPoint, pointCount)}
+			for i := range series.Points {
+				completed := 0.0
+				if i > 0 {
+					completed = 1
+				}
+				series.Points[i] = SeriesPoint{At: at(float64(i)).UnixMilli(), Completed: &completed}
+				if i == 1 {
+					rate := 1.0
+					series.Points[i].Rate = &rate
+				}
+				if i > 1 {
+					series.Points[i].RateNeutral = true
+				}
+			}
+			latestAt := series.Points[len(series.Points)-1].At
+			completed := int64(1)
+			series, _ = advanceSeries(series, at(float64(pointCount)), Progress{
+				Completed: &completed, Total: int64Ptr(2), Unit: "items",
+			}, false)
+			assertProgressSeriesAnchoredAndBounded(t, series, at(0), at(float64(pointCount)).UnixMilli())
+			if latestAt >= series.Points[len(series.Points)-1].At {
+				t.Fatalf("latest timestamp %d did not advance past %d", series.Points[len(series.Points)-1].At, latestAt)
+			}
+			if positiveRatePointCount(series) == 0 {
+				t.Fatalf("compaction of %d seeded points erased the only actual movement", pointCount)
+			}
+		})
+	}
+}
+
+func TestCompactionDoesNotCarryRateAcrossAStaleGap(t *testing.T) {
+	one := 1.0
+	movement := SeriesPoint{At: at(1).UnixMilli(), Completed: &one, Rate: f64(1)}
+	stale := SeriesPoint{At: at(12).UnixMilli(), Completed: &one}
+	merged := mergePoints(movement, stale)
+	if merged.Rate != nil || merged.RateNeutral {
+		t.Fatalf("compacted stale gap = %+v; a true gap must remain empty and non-neutral", merged)
+	}
+}
+
+func TestNeutralEndpointMarkerPersistsAndLegacyNilRatesStayHardGaps(t *testing.T) {
+	completed := 1.0
+	series := ProgressSeries{Points: []SeriesPoint{{At: at(1).UnixMilli(), Completed: &completed, RateNeutral: true}}}
+	cloned := cloneSeries(series)
+	if !cloned.Points[0].RateNeutral {
+		t.Fatal("cloneSeries dropped the internal neutral endpoint marker")
+	}
+	raw, err := json.Marshal(series)
+	if err != nil {
+		t.Fatalf("encode progress history: %v", err)
+	}
+	loaded := decodeSeries(types.JSON(raw))
+	if !loaded.Points[0].RateNeutral {
+		t.Fatalf("stored neutral endpoint loaded as %+v", loaded.Points[0])
+	}
+
+	// Older stored points have no marker. Their nil rate remains a hard gap, so
+	// adding this metadata does not backfill uncertain historical intervals.
+	legacy := decodeSeries(types.JSON([]byte(`{"points":[{"t":1746493445000,"c":1}]}`)))
+	if len(legacy.Points) != 1 || legacy.Points[0].RateNeutral {
+		t.Fatalf("legacy point became neutral after decoding: %+v", legacy.Points)
+	}
+	merged := mergePoints(SeriesPoint{At: at(0).UnixMilli(), Completed: &completed, Rate: f64(2)}, legacy.Points[0])
+	if merged.Rate != nil || merged.RateNeutral {
+		t.Fatalf("legacy nil rate merged across a hard gap: %+v", merged)
+	}
+}
+
+func positiveRatePointCount(series ProgressSeries) int {
+	count := 0
+	for _, point := range series.Points {
+		if point.Rate != nil && *point.Rate > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func assertProgressSeriesAnchoredAndBounded(t *testing.T, series ProgressSeries, first time.Time, latestAt int64) {
+	t.Helper()
+	if len(series.Points) == 0 || len(series.Points) > MaxSeriesPoints {
+		t.Fatalf("series has %d points; want 1..%d", len(series.Points), MaxSeriesPoints)
+	}
+	if series.Points[0].At != first.UnixMilli() {
+		t.Fatalf("compaction moved the first point to %d; want first Job timestamp %d", series.Points[0].At, first.UnixMilli())
+	}
+	if last := series.Points[len(series.Points)-1].At; last != latestAt {
+		t.Fatalf("compaction ended at %d; want latest timestamp %d", last, latestAt)
+	}
+}
+
 func TestHLSActivityClearsAtPauseRestartAndAssemblyBoundaries(t *testing.T) {
 	segmentProgress := func(completed int64, activity bool) Progress {
 		return Progress{Completed: int64Ptr(completed), Total: int64Ptr(8), Unit: "items", Activity: activity}
@@ -354,6 +593,10 @@ func TestHLSActivityClearsAtPauseRestartAndAssemblyBoundaries(t *testing.T) {
 	// A paused snapshot ends the activity lease. StatePaused also suppresses a
 	// live rate even while the last measured count anchor is young.
 	series, _ = advanceSeries(series, at(3), segmentProgress(1, false), false)
+	pausedPoint := series.Points[len(series.Points)-1]
+	if pausedPoint.Rate != nil || !pausedPoint.RateNeutral {
+		t.Fatalf("same-count pause endpoint = %+v; want a neutral endpoint without a sample", pausedPoint)
+	}
 	if series.ActivityAt != nil {
 		t.Fatalf("pause kept HLS activity live at %d", *series.ActivityAt)
 	}
@@ -365,6 +608,10 @@ func TestHLSActivityClearsAtPauseRestartAndAssemblyBoundaries(t *testing.T) {
 	// Resume restarts the segment count. Its decrease resets the old rate, and
 	// assembly leaves no segment-byte activity timestamp behind.
 	series, _ = advanceSeries(series, at(4), segmentProgress(0, false), false)
+	restartPoint := series.Points[len(series.Points)-1]
+	if restartPoint.Rate != nil || restartPoint.RateNeutral {
+		t.Fatalf("decreasing restart endpoint = %+v; want a hard restart boundary", restartPoint)
+	}
 	if got := series.CurrentRate(at(4)); got != nil {
 		t.Fatalf("restarted segment count kept its earlier rate: %v", *got)
 	}
@@ -421,8 +668,145 @@ func TestAdvanceSeriesDropsRatesWhenTheUnitChanges(t *testing.T) {
 			t.Fatalf("point %d kept a %v rate measured in another unit", i, *point.Rate)
 		}
 	}
+	if last := series.Points[len(series.Points)-1]; last.RateNeutral {
+		t.Fatalf("unit-change boundary was marked neutral: %+v", last)
+	}
 	if got := series.CurrentRate(at(2)); got != nil {
 		t.Fatalf("current rate crossed a unit change: %v", *got)
+	}
+}
+
+func TestFinalTrimAndCompactionKeepStaleAndRestartBoundaries(t *testing.T) {
+	var series ProgressSeries
+	series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+	series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(1), Unit: "items", Activity: true}, false)
+	series, _ = advanceSeries(series, at(2), Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	if last := series.Points[len(series.Points)-1]; last.Rate != nil || !last.RateNeutral {
+		t.Fatalf("activity-ending pause endpoint = %+v; want neutral without a count sample", last)
+	}
+
+	// No progress arrives during the real stale interval. The next same-count
+	// snapshot is a hard boundary, even though terminal trimming later sees only
+	// unchanged counts at the end of the series.
+	staleAt := at(13)
+	series, _ = advanceSeries(series, staleAt, Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	staleIndex := len(series.Points) - 1
+	if stalePoint := series.Points[staleIndex]; stalePoint.Rate != nil || stalePoint.RateNeutral {
+		t.Fatalf("stale pause endpoint = %+v; want a hard gap", stalePoint)
+	}
+	for second := 14; second < 20; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	}
+	series, _ = advanceSeries(series, at(20), Progress{Completed: int64Ptr(0), Unit: "items"}, false)
+	if restartPoint := series.Points[len(series.Points)-1]; restartPoint.Rate != nil || restartPoint.RateNeutral {
+		t.Fatalf("count-decrease restart = %+v; want a hard restart boundary", restartPoint)
+	}
+	series, _ = advanceSeries(series, at(21), Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	for second := 22; second <= MaxSeriesPoints+4; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), Progress{Completed: int64Ptr(1), Unit: "items"}, false)
+	}
+	series, _ = advanceSeries(series, at(float64(MaxSeriesPoints+5)), Progress{Completed: int64Ptr(1), Unit: "items"}, true)
+	if len(series.Points) > MaxSeriesPoints {
+		t.Fatalf("terminal series has %d points, over %d", len(series.Points), MaxSeriesPoints)
+	}
+	if positiveRatePointCount(series) == 0 {
+		t.Fatal("compaction erased the post-restart count measurement")
+	}
+	if series.Points[0].At != at(0).UnixMilli() {
+		t.Fatalf("compaction moved first Job timestamp to %d", series.Points[0].At)
+	}
+	for _, point := range series.Points {
+		if point.At >= staleAt.UnixMilli() && point.At < at(21).UnixMilli() && point.Rate != nil && *point.Rate > 0 {
+			t.Fatalf("stale/restart interval inherited a positive rate: %+v", point)
+		}
+	}
+}
+
+func TestServicePauseResumeKeepsRestartGapHardThroughCompaction(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := at(0)
+	deps.Now = func() time.Time { return clock }
+	registerTestAdapter(t, svc, testDefinition())
+	accepted := acceptQueued(t, svc, deps, nil)
+	first, ok := claimOnce(t, svc, deps, "pause-resume-runtime-a")
+	if !ok {
+		t.Fatal("the accepted Job was not claimed")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: first.ExecutionToken}
+	zero, one := int64(0), int64(1)
+	if _, err := svc.UpdateProgress(deps, ref, Progress{Completed: &zero, Unit: "items"}); err != nil {
+		t.Fatalf("initial count: %v", err)
+	}
+	clock = at(1)
+	moving, err := svc.UpdateProgress(deps, ref, Progress{Completed: &one, Unit: "items", Activity: true})
+	if err != nil {
+		t.Fatalf("first attempt count movement: %v", err)
+	}
+	if positiveRatePointCount(moving.ProgressSeries) == 0 {
+		t.Fatal("setup did not record the first attempt's measured rate")
+	}
+	clock = at(2)
+	paused, err := svc.Transition(deps, Transition{
+		JobID: accepted.ID, ExpectedVersion: moving.Version, ExecutionToken: first.ExecutionToken, To: StatePaused,
+	})
+	if err != nil {
+		t.Fatalf("running -> paused: %v", err)
+	}
+	if paused.State != StatePaused || paused.LiveRate(clock) != nil {
+		t.Fatalf("paused Job = %s with live rate %v", paused.State, paused.LiveRate(clock))
+	}
+
+	clock = at(20)
+	queued, err := svc.Transition(deps, Transition{JobID: accepted.ID, ExpectedVersion: paused.Version, To: StateQueued})
+	if err != nil {
+		t.Fatalf("paused -> queued: %v", err)
+	}
+	if queued.State != StateQueued {
+		t.Fatalf("resume queued the Job as %s", queued.State)
+	}
+	resumedExecution, ok := claimOnce(t, svc, deps, "pause-resume-runtime-b")
+	if !ok {
+		t.Fatal("the resumed Job was not claimed")
+	}
+	resumedRef := ExecutionRef{JobID: accepted.ID, ExecutionToken: resumedExecution.ExecutionToken}
+	clock = at(20.5)
+	reset, err := svc.UpdateProgress(deps, resumedRef, Progress{Completed: &zero, Unit: "items"})
+	if err != nil {
+		t.Fatalf("resumed executor's reset count: %v", err)
+	}
+	if reset.ProgressSeries.Points[len(reset.ProgressSeries.Points)-1].RateNeutral {
+		t.Fatalf("the real pause/restart count reset was marked neutral: %+v", reset.ProgressSeries.Points[len(reset.ProgressSeries.Points)-1])
+	}
+	if reset.LiveRate(clock) != nil {
+		t.Fatalf("resumed executor reused the pre-pause rate: %v", reset.LiveRate(clock))
+	}
+	clock = at(21.5)
+	resumedMovement, err := svc.UpdateProgress(deps, resumedRef, Progress{Completed: &one, Unit: "items"})
+	if err != nil {
+		t.Fatalf("resumed count movement: %v", err)
+	}
+	if rate := resumedMovement.LiveRate(clock); rate == nil || *rate <= 0 {
+		t.Fatalf("fresh resumed count movement has live rate %v", rate)
+	}
+
+	// Feed the actual service-produced lifecycle history through repeated
+	// sampling and compaction, then trim its unchanged terminal tail. The
+	// pre-pause sample must stop at the restart gap; only the resumed movement
+	// may remain on the far side of that boundary.
+	series := resumedMovement.ProgressSeries
+	for second := 23; second <= 500; second++ {
+		series, _ = advanceSeries(series, at(float64(second)), Progress{Completed: &one, Unit: "items"}, false)
+	}
+	series, _ = advanceSeries(series, at(501), Progress{Completed: &one, Unit: "items"}, true)
+	assertProgressSeriesAnchoredAndBounded(t, series, at(0), at(501).UnixMilli())
+	if positiveRatePointCount(series) == 0 {
+		t.Fatal("pause/resume compaction erased the resumed count movement")
+	}
+	for _, point := range series.Points {
+		if point.At >= at(20).UnixMilli() && point.At < at(21.5).UnixMilli() && point.Rate != nil && *point.Rate > 0 {
+			t.Fatalf("pre-pause movement crossed the actual pause/restart gap: %+v", point)
+		}
 	}
 }
 

@@ -523,6 +523,20 @@ func TestJobListIncludesTheProgressSeriesOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+func TestJobSeriesProjectionKeepsSamplingMarkersPrivate(t *testing.T) {
+	snap := progressSnapshot("job-private-series-markers", jobs.StateRunning)
+	activityAt := time.Now().UnixMilli()
+	snap.ProgressSeries.ActivityAt = &activityAt
+	snap.ProgressSeries.Points[1].RateNeutral = true
+	encoded, err := json.Marshal(jobProgressResponse(snap, time.Now(), true))
+	if err != nil {
+		t.Fatalf("encode public progress response: %v", err)
+	}
+	if strings.Contains(string(encoded), "activityAt") || strings.Contains(string(encoded), "rateNeutral") {
+		t.Fatalf("internal sampling markers leaked into the public response: %s", encoded)
+	}
+}
+
 func TestJobProgressReportsNoLiveRateOnceTheJobStops(t *testing.T) {
 	for _, state := range []jobs.State{jobs.StatePaused, jobs.StateSucceeded} {
 		progress := jobProgressResponse(progressSnapshot("job-1", state), time.Now(), false)
