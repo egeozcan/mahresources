@@ -477,6 +477,15 @@ describe('command confirmation rule', () => {
         expect(mergeJobSnapshot({ version: 2, phase: 'downloading' }, { version: 3 })).toEqual({ version: 3 });
         expect(mergeJobSnapshot({ version: 3, phase: 'downloading' }, { version: 3 })).toEqual({ version: 3, phase: 'downloading' });
     });
+
+    test('snapshot merging clears inherited progress versions but keeps a source-owned marker', () => {
+        const held = { id: 'job', version: 3, progressVersion: 4, progress: { completed: 900 } };
+        const serverCopy = mergeJobSnapshot(held, { id: 'job', version: 3, progress: { completed: 20 } });
+        expect(serverCopy).toEqual({ id: 'job', version: 3, progress: { completed: 20 } });
+
+        const markedCopy = mergeJobSnapshot(held, { id: 'job', version: 4, progressVersion: 5, progress: { completed: 950 } });
+        expect(markedCopy).toEqual({ id: 'job', version: 4, progressVersion: 5, progress: { completed: 950 } });
+    });
 });
 
 describe('canonical event reducer', () => {
