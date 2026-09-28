@@ -22,8 +22,9 @@ const parseDetail = (children: unknown[]) => ({ status: 200, body: { id: 'parse-
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 const plan = (name: string) => ({
@@ -32,6 +33,34 @@ const plan = (name: string) => ({
   counts: { groups: 1, resources: 0, notes: 0, series: 0 },
   conflicts: { guid_matches: 0, resource_guid_matches: 0, resource_hash_matches: 0 },
 });
+
+async function startLiveApply(
+  c: ReturnType<typeof adminImport>,
+  readResult: () => Promise<Response> | Response,
+) {
+  const listeners: Record<string, (event: { data: string }) => void> = {};
+  vi.stubGlobal('EventSource', class {
+    addEventListener(type: string, listener: (event: { data: string }) => void) { listeners[type] = listener; }
+    close() {}
+  });
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/v1/imports/imp-1/apply') {
+      return new Response(JSON.stringify({ jobId: 'queue-handle', canonicalJobId: 'canonical-apply-1' }), { status: 202 });
+    }
+    if (url === '/v1/imports/imp-1/result') return readResult();
+    throw new Error(`unexpected request ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  c.jobId = 'imp-1';
+  c.plan = plan('archive A');
+  await c.apply();
+  return {
+    fetchMock,
+    emit(job: unknown) {
+      listeners.updated?.({ data: JSON.stringify({ job }) });
+    },
+  };
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -97,9 +126,8 @@ describe('reopening an import an apply took', () => {
   });
 
   it('uses the report-bound unknown outcome instead of an older visible failed Apply', async () => {
-    // Captured by the R5 owner-bound API replay: a failed owner Apply restored
-    // the plan, then an admin's fresh Apply wrote this successful report. The
-    // owner still sees the older failed child but cannot see the report producer.
+    // The owner's Apply failed and restored its plan; an administrator's fresh
+    // Apply then wrote this report, whose producer is hidden from the owner.
     const fetchMock = serve({ '/v1/imports/imp-1/result': { status: 200, body: reporterOwnerResult } });
     const c = adminImport();
 
@@ -151,6 +179,122 @@ describe('reopening an import an apply took', () => {
     });
     expect(c.applyOutcome).toBe('unknown');
     expect(c.error).toBeNull();
+  });
+});
+
+describe('live Apply result reads', () => {
+  it.each([
+    ['HTTP failure', () => new Response('{"error":"disk unavailable"}', { status: 500 })],
+    ['network failure', () => Promise.reject(new Error('offline'))],
+    ['undecodable response', () => new Response('{not json', { status: 200 })],
+  ])('keeps the accepted Job failure and announces a %s', async (_label, readResult) => {
+    const c = adminImport();
+    const live = await startLiveApply(c, readResult);
+
+    live.emit({ id: 'queue-handle', status: 'failed', failure: { message: 'honest A failure' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(c.error).toBe('honest A failure');
+    expect(c.applyReadNotice).toContain('report could not be read');
+    expect(c.applyJobURL).toBe('/job?id=canonical-apply-1');
+    expect(c.applyOutcome).toBe('');
+    expect(c.applyResult).toBeNull();
+  });
+
+  it('keeps a completed Job separate from a failed result read', async () => {
+    const c = adminImport();
+    const live = await startLiveApply(c, () => new Response('unavailable', { status: 503 }));
+
+    live.emit({ id: 'queue-handle', status: 'completed' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(c.error).toBeNull();
+    expect(c.applyOutcome).toBe('');
+    expect(c.applyReadNotice).toContain('report could not be read');
+    expect(c.applyJobURL).toBe('/job?id=canonical-apply-1');
+  });
+
+  it('shows the accepted Job failure when its result is truly missing', async () => {
+    const c = adminImport();
+    const live = await startLiveApply(c, () => new Response('{"error":"not found"}', { status: 404 }));
+
+    live.emit({ id: 'queue-handle', status: 'failed', failure: { message: 'honest A failure' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(c.error).toBe('honest A failure');
+    expect(c.applyOutcome).toBe('');
+    expect(c.applyResult).toBeNull();
+    expect(c.applyReadNotice).toContain('No Apply report is available');
+    expect(c.applyJobURL).toBe('/job?id=canonical-apply-1');
+  });
+
+  it('does not attach the accepted Job failure to a newer unknown report', async () => {
+    const c = adminImport();
+    const live = await startLiveApply(c, () => new Response(JSON.stringify({
+      created_groups: 1, created_group_ids: [42], apply_outcome: 'unknown',
+    }), { status: 200 }));
+
+    live.emit({ id: 'queue-handle', status: 'failed', failure: { message: 'honest A failure' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(live.fetchMock).toHaveBeenCalledWith('/v1/imports/imp-1/result', {
+      headers: { 'X-Expected-Import-Apply': 'canonical-apply-1' },
+    });
+    expect(c.error).toBeNull();
+    expect(c.applyOutcome).toBe('unknown');
+    expect(c.applyResult).toMatchObject({ created_groups: 1, created_group_ids: [42] });
+    expect(c.applyReadNotice).toBe('');
+  });
+
+  it('does not publish a delayed result decode failure after reset', async () => {
+    const body = deferred<unknown>();
+    const bodyStarted = deferred<void>();
+    const c = adminImport();
+    const live = await startLiveApply(c, () => ({
+      ok: true,
+      status: 200,
+      json() {
+        bodyStarted.resolve();
+        return body.promise;
+      },
+    } as Response));
+
+    live.emit({ id: 'queue-handle', status: 'failed', failure: { message: 'honest A failure' } });
+    await bodyStarted.promise;
+    c.resetImport();
+    c.jobId = 'imp-2';
+    c.error = 'B error';
+    c.applyReadNotice = 'B report notice';
+    c.applyJobURL = '/job?id=canonical-apply-2';
+    body.reject(new Error('invalid JSON'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(c.jobId).toBe('imp-2');
+    expect(c.error).toBe('B error');
+    expect(c.applyReadNotice).toBe('B report notice');
+    expect(c.applyJobURL).toBe('/job?id=canonical-apply-2');
+    expect(c.applyOutcome).toBe('');
+    expect(c.applyResult).toBeNull();
+  });
+
+  it('does not publish a delayed HTTP result-read fault after reset', async () => {
+    const response = deferred<Response>();
+    const c = adminImport();
+    const live = await startLiveApply(c, () => response.promise);
+
+    live.emit({ id: 'queue-handle', status: 'failed', failure: { message: 'honest A failure' } });
+    c.resetImport();
+    c.jobId = 'imp-2';
+    c.error = 'B error';
+    c.applyReadNotice = 'B report notice';
+    c.applyJobURL = '/job?id=canonical-apply-2';
+    response.resolve(new Response('unavailable', { status: 500 }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(c.jobId).toBe('imp-2');
+    expect(c.error).toBe('B error');
+    expect(c.applyReadNotice).toBe('B report notice');
+    expect(c.applyJobURL).toBe('/job?id=canonical-apply-2');
   });
 });
 

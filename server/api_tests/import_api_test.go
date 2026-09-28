@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
+	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/server/api_handlers"
 )
@@ -69,10 +70,10 @@ type publicationImportContext struct {
 	producerID string
 }
 
-func (m *publicationImportContext) ReadImportApplyReport(_ string, expectedProducerID string) ([]byte, application_context.ImportApplyReportOutcome, error) {
+func (m *publicationImportContext) ReadImportApplyReport(_ string, expectedProducerID string) ([]byte, contracts.ImportApplyReportOutcome, error) {
 	m.reads++
 	m.expectedID = expectedProducerID
-	return []byte(`{"created_groups":1,"created_group_ids":[42]}`), application_context.ImportApplyReportOutcome{
+	return []byte(`{"created_groups":1,"created_group_ids":[42]}`), contracts.ImportApplyReportOutcome{
 		State: "succeeded", Known: true,
 	}, nil
 }

@@ -17,6 +17,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/download_queue"
 )
 
@@ -99,7 +100,7 @@ type importAuthorization interface {
 // only after reauthorizing that producer for the current request principal. Its
 // internal producer ID never enters the response.
 type importApplyReportReader interface {
-	ReadImportApplyReport(parseHandle, expectedProducerID string) ([]byte, application_context.ImportApplyReportOutcome, error)
+	ReadImportApplyReport(parseHandle, expectedProducerID string) ([]byte, contracts.ImportApplyReportOutcome, error)
 }
 
 type importApplyResultResponse struct {
@@ -266,7 +267,7 @@ func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 			requestCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
 		}
 		var data []byte
-		outcome := application_context.ImportApplyReportOutcome{State: "unknown"}
+		outcome := contracts.ImportApplyReportOutcome{State: "unknown"}
 		if reader, ok := requestCtx.(importApplyReportReader); ok {
 			var err error
 			data, outcome, err = reader.ReadImportApplyReport(jobID, r.Header.Get("X-Expected-Import-Apply"))
