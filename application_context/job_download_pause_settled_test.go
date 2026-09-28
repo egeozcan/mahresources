@@ -134,9 +134,9 @@ func TestACanonicalPauseConfirmsFollowerHoldAfterPublication(t *testing.T) {
 	}()
 
 	// A command request advances the version before calling its adapter. Wait for
-	// that committed intent so releasing the publication seam cannot race ahead of
-	// the foreground command reaching its bounded hold-answer wait.
-	waitForSnapshot(t, ctx, jobID, "the foreground pause request to reach its adapter", func(snap jobs.Snapshot) bool {
+	// its committed intent before releasing publication; the follower may publish
+	// before the foreground command reaches its bounded hold-answer wait.
+	waitForSnapshot(t, ctx, jobID, "the foreground pause intent to commit", func(snap jobs.Snapshot) bool {
 		return snap.Version > running.Version && snap.State == jobs.StateRunning && snap.ControlIntent == jobs.ControlIntentPause
 	})
 	releasePublication()
