@@ -1,0 +1,68 @@
+# Jobs QA batch 4 verification
+
+This is the durable record for completing the 2026-09-28 handoff. The originating
+94-issue sweep and batch outcomes are recorded in
+[the remediation plan](2026-09-26-jobs-qa-remediation.md).
+
+Implementation agents use `gpt-6-luna` at `max`; independent review agents use
+`gpt-6-sol` at `xhigh`. The current session uses subagents, as requested by the user.
+Each review is pinned to a lane HEAD and compares it with batch 3 commit `bdafcb51`.
+P0 and P1 findings block completion. A substantial round with zero blockers ends
+a lane's review loop; subsequent changes are limited to cheap local P2/P3 work.
+
+## Integration checks
+
+- A controlled older Job-detail response released after a successful Pin cannot
+  replace the new pinned state or its advertised Unpin command. The probe exercised
+  the actual merged drawer command and preference epoch.
+- The detail timeline's generic event humanizer labels `retried` as “Retried”.
+- A PostgreSQL overlay test constructs `newPostgresOwnershipFixture`, verifies the
+  actual dialect, requests a clustering run titled “Clusters for L6 reduction
+  photos”, waits for success, and drains queue followers before database cleanup.
+  It passed on the merged tree. The similarly named ordinary title test uses a
+  SQLite fixture even when the test binary has the `postgres` build tag.
+
+## Remaining work outside this batch
+
+These follow-ups were not assigned to a batch 4 lane and remain separate work.
+
+- Add a colour signature to image hashes, a shared colour-distance guard and runtime
+  threshold, and a legacy-row backfill. Existing pHash/dHash/aHash compare luminance;
+  images differing only in hue can still match (K4). The Near-Identical tier is
+  unchecked by default. Measurements found hue-only pairs within pHash 10 differing
+  by 89–173 mean RGB units, true near-duplicates by at most 1.0, and ordinary
+  brightness/gamma/saturation changes by 17–41.
+- Index extracted Job summary values. Searching one million Jobs can take about one
+  second on SQLite or three seconds on PostgreSQL after other filters.
+- Bound download dispatch's repeated scan of all Jobs waiting for a busy URL through
+  a database-side waiter key or index.
+- Adopt router-wide 405 responses with `Allow`, and HEAD for GET routes; this changes
+  the contract of all routes and needs its own work.
+- Refresh a page's CSRF token after the user signs in again in another tab.
+- Decide whether MRQL Enter submits a complete query when the user has not moved its
+  automatically highlighted autocomplete suggestion.
+- Audit nested Alpine components that assign fields undeclared in their data object:
+  confirmAction, resourceUpload, mrqlBar, codeEditor, blockEditor and globalSearch.
+- Reconcile a `jobs.Claim` whose post-commit snapshot read fails instead of dropping
+  the accepted execution until lease expiry.
+- Fence export artifact deletion so a stalled retention delete cannot remove a
+  rerun's republished archive; use publication-specific paths or a row-lock rename.
+- Move the API test harness to the production SQLite driver, with explicit handling
+  of foreign keys and fixture assumptions.
+- Audit the administrator overview's legacy `/job` handles.
+- Format the pre-existing `jobs/list_page*_test.go` files separately.
+- Add Reduction Recompute lineage in its own change.
+- Wire PostgreSQL API fixtures' runtime settings explicitly, including the valid
+  threshold-zero case rather than accidental fallback behavior.
+
+Known limits retained from earlier batches include clock skew around page loads;
+a read-only viewer retaining an ancestor under Needs attention after an invisible
+administrator Retry; a rapid Mine/Everyone change followed immediately by navigation
+persisting the preceding choice; a drawer's 50-row active read missing the soonest
+scheduled Job; and a download outside the capped Finished read triggering no resource
+list refresh on its own. Rolling-upgrade and retention limits remain in the
+remediation plan and operator documentation.
+
+## Completion record
+
+Review counts, final commits and gates will be recorded here after they finish.

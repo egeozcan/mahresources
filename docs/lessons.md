@@ -2158,3 +2158,9 @@ where the review's own record lives.
 ## Jobs QA remediation, batch 4 — 2026-09-28
 
 - Follow the current agent and review preferences when resuming a handoff. Historical CLI review instructions do not override a request to use collaboration subagents with specified models and reasoning effort.
+- Keep an agent active until its process sessions finish. In this collaboration runtime, ending a subagent turn can terminate its unfinished tests; the coordinator should own long-running suites when review slots must be freed.
+- A running progress view owns a clock even when no new SSE frame arrives. Keep equal snapshots, adopt newer server snapshots, and stop only when the Job leaves running or its card leaves the page; test initial rendering and unrelated refreshes.
+- Match calendar filters to the API's endpoint contract. An inclusive upper bound for a local day must end at its last nanosecond, using the next local calendar midnight so daylight-saving days keep their correct length.
+- Give an async import one generation owner, and route every continuation through it. Reset, another upload and teardown invalidate plan, report, lineage, search, Apply and SSE responses together. A first absent plan is not proof it stayed absent while another read completed.
+- Check a reporter's real cadence against its sampler. Complete HLS segments can arrive farther apart than a generic stale-rate window while bytes are continuously arriving; a fast local fixture does not prove useful running rate, ETA or graph behavior.
+- A PostgreSQL build tag does not make every fixture PostgreSQL. Verify the actual dialect and construct a PostgreSQL fixture for cross-engine claims; the ordinary clustering-title fixture remained SQLite under the tag.
