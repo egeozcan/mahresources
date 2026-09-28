@@ -1814,6 +1814,8 @@ func TestADownloadIsTitledByTheFileItFetches(t *testing.T) {
 		{url: "http://files.example.test?token=secret", want: "Download from files.example.test"},
 		{url: "http://files.example.test/a/b.bin", fileName: "chosen.bin", want: "chosen.bin"},
 		{url: "http://files.example.test/download/secret9f2c4a", want: "Download from files.example.test"},
+		{url: "http://files.example.test/download/secretQ3x9-Zk_L0pWm8Rv2Ts6Yb4Nc1Hd7Jf5Ga", want: "Download from files.example.test"},
+		{url: "http://files.example.test/d/secret.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV", want: "Download from files.example.test"},
 		{url: "http://files.example.test/share/secret9f2c4a.", want: "Download from files.example.test"},
 		{url: "http://files.example.test/t/.secret", want: "Download from files.example.test"},
 		{url: "http://files.example.test/t/archive.tar.gz", want: "archive.tar.gz"},
