@@ -3216,6 +3216,146 @@ describe('Job Center panel accessibility hooks', () => {
         panel.destroy();
     });
 
+    test.each(['direct loadDetail', 'opened drawer detail-reader queue'])('%s reconciles server detail without inheriting a held progress marker', async path => {
+        const id = 'job-progress-detail';
+        const panel = jobPanel();
+        panel.isOpen = true;
+        panel.jobs = [{
+            id, kind: 'remote-download', state: 'running', version: 3, pinned: false,
+            progress: { completed: 100, total: 1000, updatedAt: '2026-09-28T09:59:59Z' },
+        }];
+
+        let resolveFirst: (value: unknown) => void = () => {};
+        let markStarted: () => void = () => {};
+        const firstStarted = new Promise<void>(resolve => { markStarted = resolve; });
+        const firstResponse = new Promise(resolve => { resolveFirst = resolve; });
+        let answer: unknown = firstResponse;
+        panel.requestJSON = vi.fn(async () => {
+            markStarted();
+            return answer;
+        });
+
+        const reading = path === 'direct loadDetail'
+            ? panel.loadDetail(panel.jobs[0])
+            : panel.loadStaleDetails();
+        await firstStarted;
+        panel.handleProgressFrame({ data: JSON.stringify({
+            jobId: id, version: 4,
+            progress: { completed: 900, total: 1000, updatedAt: '2026-09-28T09:59:59.999999999Z' },
+        }) });
+        resolveFirst({
+            id, kind: 'remote-download', state: 'running', version: 3, pinned: true,
+            phase: 'downloading', progress: { completed: 20, total: 1000, updatedAt: '2026-09-28T10:00:03Z' },
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 3 }],
+            outputs: [{ key: 'download', label: 'Downloaded file' }], lineage: { retryOf: 'source' },
+        });
+        await reading;
+
+        expect(panel.jobs[0]).toMatchObject({
+            version: 3, pinned: true, phase: 'downloading', progressVersion: 4,
+            progress: { completed: 900, updatedAt: '2026-09-28T09:59:59.999999999Z' },
+        });
+        expect(panel.details[id]).toMatchObject({
+            version: 3, pinned: true, commands: [{ key: 'cancel', jobVersion: 3 }],
+            outputs: [{ key: 'download' }], lineage: { retryOf: 'source' },
+        });
+        expect(Object.hasOwn(panel.details[id], 'progressVersion')).toBe(false);
+        expect(panel.commandsFor(panel.jobs[0])).toEqual([{ key: 'cancel', label: 'Cancel', jobVersion: 3 }]);
+
+        // A future timestamp cannot make a lower lifecycle version current.
+        answer = {
+            id, kind: 'remote-download', state: 'running', version: 2,
+            progress: { completed: 999, total: 1000, updatedAt: '2026-09-28T12:00:00Z' },
+        };
+        expect(await panel.loadDetail(panel.jobs[0])).toBe('failed');
+        expect(panel.jobs[0].progress.completed).toBe(900);
+        expect(panel.details[id].version).toBe(3);
+
+        // A later frame at the same execution version remains admissible even
+        // though its executor clock predates the server detail's stale copy.
+        panel.handleProgressFrame({ data: JSON.stringify({
+            jobId: id, version: 4,
+            progress: { completed: 910, total: 1000, updatedAt: '2026-09-28T10:00:00Z' },
+        }) });
+        expect(panel.jobs[0].progress.completed).toBe(910);
+
+        // Once the server lifecycle catches up, its own same-version snapshot
+        // wins by timestamp and clears the held client-only marker.
+        answer = {
+            id, kind: 'remote-download', state: 'running', version: 4, pinned: true,
+            phase: 'verifying', progress: { completed: 920, total: 1000, updatedAt: '2026-09-28T10:00:01Z' },
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 4 }],
+        };
+        expect(await panel.loadDetail(panel.jobs[0])).toBe('read');
+        expect(panel.jobs[0]).toMatchObject({
+            version: 4, pinned: true, phase: 'verifying',
+            progress: { completed: 920, updatedAt: '2026-09-28T10:00:01Z' },
+        });
+        expect(Object.hasOwn(panel.jobs[0], 'progressVersion')).toBe(false);
+        expect(panel.details[id].commands[0].jobVersion).toBe(4);
+
+        // Equal lifecycle versions use the full timestamp: newer snapshots
+        // advance progress, while an earlier executor clock cannot rewind it.
+        answer = {
+            id, kind: 'remote-download', state: 'running', version: 4,
+            progress: { completed: 940, total: 1000, updatedAt: '2026-09-28T10:00:02Z' },
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 4 }],
+        };
+        expect(await panel.loadDetail(panel.jobs[0])).toBe('read');
+        expect(panel.jobs[0].progress.completed).toBe(940);
+        answer = {
+            id, kind: 'remote-download', state: 'running', version: 4,
+            progress: { completed: 930, total: 1000, updatedAt: '2026-09-28T10:00:01.999999999Z' },
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 4 }],
+        };
+        expect(await panel.loadDetail(panel.jobs[0])).toBe('read');
+        expect(panel.jobs[0].progress.completed).toBe(940);
+
+        // A strictly newer lifecycle version stays authoritative even when
+        // its executor clock is earlier than the version-4 progress.
+        answer = {
+            id, kind: 'remote-download', state: 'running', version: 5,
+            progress: { completed: 50, total: 1000, updatedAt: '2026-09-28T09:00:00Z' },
+            commands: [{ key: 'cancel', label: 'Cancel', jobVersion: 5 }],
+        };
+        expect(await panel.loadDetail(panel.jobs[0])).toBe('read');
+        expect(panel.jobs[0]).toMatchObject({ version: 5, progress: { completed: 50 } });
+        expect(Object.hasOwn(panel.jobs[0], 'progressVersion')).toBe(false);
+        expect(panel.details[id].commands[0].jobVersion).toBe(5);
+    });
+
+    test('drawer snapshot cache reconciles source progress markers before merging metadata', () => {
+        const id = 'job-progress-cache';
+        const panel = jobPanel();
+        const held = {
+            id, kind: 'remote-download', state: 'running', version: 3, progressVersion: 4,
+            progress: { completed: 900, total: 1000, updatedAt: '2026-09-28T09:59:59.999999999Z' },
+            commands: [{ key: 'cancel', jobVersion: 3 }],
+        };
+        panel.jobs = [held];
+        panel.details[id] = { ...held };
+
+        panel.applyStreamSnapshot({
+            id, kind: 'remote-download', state: 'running', version: 3,
+            progress: { completed: 20, total: 1000, updatedAt: '2026-09-28T10:00:03Z' },
+            commands: [{ key: 'cancel', jobVersion: 3 }],
+        });
+        expect(panel.jobs[0].progress.completed).toBe(900);
+        expect(panel.jobs[0].progressVersion).toBe(4);
+        expect(panel.details[id].progress.completed).toBe(900);
+        expect(panel.details[id].progressVersion).toBe(4);
+
+        panel.applyStreamSnapshot({
+            id, kind: 'remote-download', state: 'running', version: 4,
+            progress: { completed: 920, total: 1000, updatedAt: '2026-09-28T10:00:01Z' },
+            commands: [{ key: 'cancel', jobVersion: 4 }],
+        });
+        expect(panel.jobs[0].progress.completed).toBe(920);
+        expect(Object.hasOwn(panel.jobs[0], 'progressVersion')).toBe(false);
+        expect(panel.details[id].progress.completed).toBe(920);
+        expect(Object.hasOwn(panel.details[id], 'progressVersion')).toBe(false);
+    });
+
     test('keeps visible command details when unrelated live events arrive during the detail request', async () => {
         vi.useFakeTimers();
         let resolveDetail: (value: unknown) => void = () => {};

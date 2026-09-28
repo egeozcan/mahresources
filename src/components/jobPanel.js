@@ -27,6 +27,7 @@ import {
     commandDismissLabel,
     failureText,
     jobCommands,
+    mergeJobSnapshot,
     advertisedOutputs,
     reduceJobStreamEvent,
     resultAccessibleLabel,
@@ -1043,13 +1044,13 @@ export function jobPanel() {
             this.details[job.id] = detail;
             this._detailEpochs.set(String(job.id), epoch);
             const spoken = [];
-            this.hearFromRead({ ...current, ...detail }, streamGeneration, spoken);
+            this.hearFromRead(mergeJobSnapshot(current, detail), streamGeneration, spoken);
             // The row takes the detail's state, not its commands, outputs or
             // lineage: those live in `details`, fenced by version and epoch. A
             // row carrying commands counts as its own detail (loadStaleDetails),
             // which a copied list would make true long after it went stale.
             const { commands: _commands, outputs: _outputs, lineage: _lineage, ...state } = detail;
-            this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? { ...row, ...state } : row));
+            this.jobs = this.bounded(this.jobs.map(row => row.id === job.id ? mergeJobSnapshot(row, state) : row));
             this.announceNews(spoken);
             return 'read';
         },
@@ -1682,7 +1683,7 @@ export function jobPanel() {
             // The reader asked for this change and is told by the command's own
             // notice; it is recorded so no later read says it again, unless a
             // live event proved it happened on its own.
-            const heard = { ...this.jobs.find(row => row.id === job.id), ...job };
+            const heard = mergeJobSnapshot(this.jobs.find(row => row.id === job.id), job);
             const news = [];
             if (asRead) this.hearFromRead(heard, this._streamGeneration, news);
             else {
@@ -1693,7 +1694,8 @@ export function jobPanel() {
             else if (news.length) this.announceNews(news);
             this.jobs = this.bounded(result.jobs);
             this.trackResourceCompletion(job);
-            this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
+            const currentDetail = this.details[job.id];
+            this.details[job.id] = mergeFetchedProgress(mergeJobSnapshot(currentDetail, job), currentDetail);
             if (announce && result.announcement) this.announceNews([this.newsEntry(job.id, result.announcement)]);
         },
 
