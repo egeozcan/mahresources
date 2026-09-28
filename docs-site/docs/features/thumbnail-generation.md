@@ -117,10 +117,10 @@ The worker creates null thumbnails (width=0, height=0) so any size can be derive
 
 In addition to the automatic pipeline, you can upload your own image to use as the thumbnail for any resource. A custom thumbnail overrides the generated one.
 
-From the resource detail page, the **Custom Thumbnail** sidebar controls let you:
+From the resource detail page, the **Custom Thumbnail** button in the sidebar opens a dialog that lets you:
 
 - **Upload Image** -- choose an image file; the file picker accepts PNG, JPEG, WebP, and GIF
-- **Paste** -- paste an image from the clipboard anywhere on the page
+- **Paste** -- paste an image from the clipboard while the dialog is open. The paste is deliberately not page-wide: the dialog owns it, so an image pasted anywhere else on the page is not silently turned into a thumbnail
 - **Regenerate from Source** -- clear the stored thumbnails so the next request regenerates them automatically
 
 ### How a custom thumbnail is stored

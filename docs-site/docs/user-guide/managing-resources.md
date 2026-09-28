@@ -354,10 +354,10 @@ Thumbnails are generated on demand when first requested and cached in the databa
 
 ### Custom Thumbnails
 
-You can replace the auto-generated thumbnail of any resource with your own image. The **Custom Thumbnail** controls appear in the sidebar next to the preview:
+You can replace the auto-generated thumbnail of any resource with your own image. The **Custom Thumbnail** section appears in the sidebar next to the preview, and opens a dialog:
 
 - **Upload Image** -- pick an image file (PNG, JPEG, WebP, or GIF) to use as the thumbnail
-- **Paste** -- copy an image and paste it anywhere on the resource detail page to upload it as the thumbnail
+- **Paste** -- with the dialog open, paste an image from the clipboard to upload it as the thumbnail. A paste anywhere else on the page is not accepted
 - **Regenerate from Source** -- clear the custom and cached thumbnails so the next view regenerates from the original file
 
 Uploading a custom thumbnail does not create a new version -- it only changes the stored preview. The image is resized so its longest edge is at most 1920px and stored as JPEG. For the full pipeline details, see [Thumbnail Generation](../features/thumbnail-generation.md).

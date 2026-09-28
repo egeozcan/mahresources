@@ -2154,3 +2154,21 @@ where the review's own record lives.
 - When two lanes share an interface, let the consumer build against a marked stand-in in its own commit. The merge deleted the stand-in and kept everything else without judgment calls.
 - A reviewer of one lane keeps finding faults in code another lane is replacing. Say up front that such findings are declined as superseded, and check them after the merge instead.
 - A test that claims Jobs by hand must run on a harness without a dispatch loop. Eight tests did not, and the loop took their Job first under load.
+
+## Custom Thumbnail popup — 2026-09-28
+
+- `docs/todo.md` in this repo is the 2026-07-29 UI bug-hunt **ledger**, and
+  `internal/arch/findings_coverage_test.go` parses it. CLAUDE.md's "write the plan
+  to `docs/todo.md`" is a generic instruction that this repo's own history
+  contradicts: overwriting it fails two arch tests with "the ledger parse is
+  broken". Put the plan in `docs/plans/<date>-<slug>.md`.
+- A pongo2 `{# … #}` comment may not span lines. A multi-line one is not a
+  render error caught at startup — the templates are parsed on first render, so
+  the server answers every HTML request with a panic (`net::ERR_EMPTY_RESPONSE` in
+  e2e) and only the page that uses the template is affected. One comment per
+  line, the way the rest of `displayResource.tpl` does it.
+- Two `window` listeners for the same event are one event handled twice, and
+  `preventDefault()` does not separate them — only `stopImmediatePropagation()`
+  does, and only for listeners registered *later* on the same node and phase. A
+  capture-phase listener does not depend on registration order at all, so it is
+  the one to reach for when ownership of a shared event is the point.
