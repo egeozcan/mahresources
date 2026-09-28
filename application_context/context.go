@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -589,12 +588,12 @@ type MahresourcesContext struct {
 	jobService *jobs.Service
 	// queueFollowers counts the goroutines ownQueueExecution starts for an
 	// execution this process admitted: the one that publishes its outcome and the
-	// one that renews its claim. The queue's own drain covers only its download
-	// workers, and a Job reads terminal before its follower's last writes land (a
-	// Reduction's source-mapping refresh, the claim release), so whatever closes
-	// the database waits them out through WaitQueueFollowers. A pointer, so every
-	// clone of the context counts into one group.
-	queueFollowers *sync.WaitGroup
+	// one that renews its claim. The queue's drain covers its own workers, and a Job
+	// reads terminal before its follower's last writes land (a Reduction's
+	// source-mapping refresh, the claim release), so whatever closes the database
+	// waits them out through StopQueueFollowers. A pointer, so every clone of the
+	// context counts into one group.
+	queueFollowers *queueFollowerGroup
 	// queueClaimLease overrides the lease a queue-backed admission claims with.
 	// Zero means the Kind's own lease; only tests set it, because the renewal that
 	// keeps a claim alive is otherwise reachable in two-minute increments and would
@@ -985,7 +984,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
 		shareServerListening:      &atomic.Bool{},
 		dispatchChecks:            newDispatchCheckDeferrals(),
-		queueFollowers:            &sync.WaitGroup{},
+		queueFollowers:            newQueueFollowerGroup(),
 	}
 
 	ctx.pluginCommandController = newPluginCommandRuntimeController(ctx)

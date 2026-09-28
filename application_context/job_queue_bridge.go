@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"slices"
+	"sync"
 	"time"
 
 	"mahresources/download_queue"
@@ -263,21 +264,19 @@ func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, e
 		return
 	}
 	execution := admission.Execution
-	done := make(chan struct{})
 	followers := ctx.queueFollowers
-	if followers != nil {
-		followers.Add(2)
+	if !followers.start(2) {
+		// The database is closing: nothing here could publish, and the Job keeps its
+		// claim for the next process to settle, as a shutdown leaves every other.
+		return
 	}
+	done := make(chan struct{})
 	go func() {
-		if followers != nil {
-			defer followers.Done()
-		}
+		defer followers.done()
 		ctx.renewQueueExecutionClaim(execution, admission.Lease, done)
 	}()
 	go func() {
-		if followers != nil {
-			defer followers.Done()
-		}
+		defer followers.done()
 		defer close(done)
 		snap, stopped := ctx.followQueueExecution(execution, entry)
 		if stopped {
@@ -645,20 +644,66 @@ func (ctx *MahresourcesContext) recordOwnedHold(execution jobs.Execution, entry 
 	}
 }
 
-// WaitQueueFollowers waits, at most timeout, for every goroutine ownQueueExecution
-// started, and reports whether they all returned. Once the queue is shutting down
-// they stop following and stop retrying a publication, so what is left to wait
-// for is a write already in flight.
+// StopQueueFollowers refuses followers for any execution admitted from now on
+// and waits, at most timeout, for the ones already started, reporting whether
+// they all returned. Once the queue is shutting down they stop following and
+// stop retrying a publication, so what is left to wait for is a write already in
+// flight.
 //
-// Only something that closes the database calls it: the test harnesses, and
+// Only something about to close the database calls it: the test harnesses, and
 // ReleaseEphemeralDatabase for -memory-db. A persistent deployment never closes
 // its database; the process exits, and a follower cut short there leaves its Job
 // running with its claim, for the next process to reconcile.
-func (ctx *MahresourcesContext) WaitQueueFollowers(timeout time.Duration) bool {
-	if ctx == nil || ctx.queueFollowers == nil {
+func (ctx *MahresourcesContext) StopQueueFollowers(timeout time.Duration) bool {
+	if ctx == nil {
 		return true
 	}
-	return waitForWaitGroup(ctx.queueFollowers, timeout)
+	return ctx.queueFollowers.stop(timeout)
+}
+
+// queueFollowerGroup counts the goroutines ownQueueExecution starts, and refuses
+// new ones once stopped. The refusal and the count share one lock, so a follower
+// either is counted before stop begins waiting or is never started; counting it
+// after the wait had seen zero would let it write to a closed database.
+type queueFollowerGroup struct {
+	mu      sync.Mutex
+	stopped bool
+	running sync.WaitGroup
+}
+
+func newQueueFollowerGroup() *queueFollowerGroup {
+	return &queueFollowerGroup{}
+}
+
+// start counts n followers about to start, or reports false once stopped. A nil
+// group (a context not built by NewMahresourcesContext) counts nothing.
+func (g *queueFollowerGroup) start(n int) bool {
+	if g == nil {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped {
+		return false
+	}
+	g.running.Add(n)
+	return true
+}
+
+func (g *queueFollowerGroup) done() {
+	if g != nil {
+		g.running.Done()
+	}
+}
+
+func (g *queueFollowerGroup) stop(timeout time.Duration) bool {
+	if g == nil {
+		return true
+	}
+	g.mu.Lock()
+	g.stopped = true
+	g.mu.Unlock()
+	return waitForWaitGroup(&g.running, timeout)
 }
 
 // queueIsShuttingDown reports whether this deployment's queue has begun stopping.

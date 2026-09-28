@@ -34,7 +34,7 @@ func cleanupMahresourcesTestContext(t *testing.T, ctx *MahresourcesContext) {
 		}
 		// A queue-backed execution's follower goes on writing after its Job reads
 		// terminal, and a write during the directory's removal recreates the journal.
-		if !ctx.WaitQueueFollowers(10 * time.Second) {
+		if !ctx.StopQueueFollowers(10 * time.Second) {
 			t.Errorf("a queue follower was still running when the fixture closed its database")
 		}
 		if ctx.pluginManager != nil {
@@ -111,5 +111,31 @@ func TestTestContextCleanupWaitsForTheQueueFollower(t *testing.T) {
 	})
 	if !mappingWritten.Load() {
 		t.Fatal("the fixture closed its database while the queue follower was still publishing")
+	}
+}
+
+// Once the database is closing no follower may start: counting one after the
+// wait had seen zero would let it write to a closed database.
+func TestAStoppedFollowerGroupStartsNoFollower(t *testing.T) {
+	group := newQueueFollowerGroup()
+	if !group.start(1) {
+		t.Fatal("a live group refused a follower")
+	}
+	stopped := make(chan bool, 1)
+	go func() { stopped <- group.stop(5 * time.Second) }()
+	select {
+	case <-stopped:
+		t.Fatal("stop returned with a follower still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if group.start(1) {
+		t.Fatal("a stopping group started a follower")
+	}
+	group.done()
+	if !<-stopped {
+		t.Fatal("stop timed out after the last follower finished")
+	}
+	if group.start(1) {
+		t.Fatal("a stopped group started a follower")
 	}
 }

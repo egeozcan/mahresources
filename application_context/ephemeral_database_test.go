@@ -119,17 +119,17 @@ func TestReleasingTheEphemeralDatabaseWaitsForAQueueFollower(t *testing.T) {
 		t.Fatalf("writing to the ephemeral database: %v", err)
 	}
 
-	ctx.queueFollowers.Add(1)
+	ctx.queueFollowers.start(1)
 	released := make(chan error, 1)
 	go func() { released <- ctx.ReleaseEphemeralDatabase() }()
 	select {
 	case err := <-released:
-		ctx.queueFollowers.Done()
+		ctx.queueFollowers.done()
 		t.Fatalf("the database was released with a follower still running (%v)", err)
 	case <-time.After(200 * time.Millisecond):
 	}
 	writeErr := exec("INSERT INTO follower_probe (id) VALUES (1)")
-	ctx.queueFollowers.Done()
+	ctx.queueFollowers.done()
 	if writeErr != nil {
 		t.Fatalf("the follower's write failed: %v", writeErr)
 	}

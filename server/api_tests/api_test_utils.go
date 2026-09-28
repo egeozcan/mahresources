@@ -213,7 +213,7 @@ func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.
 		if dm := appCtx.DownloadManager(); dm != nil && !dm.ShuttingDown() {
 			dm.Shutdown()
 		}
-		if !appCtx.WaitQueueFollowers(10 * time.Second) {
+		if !appCtx.StopQueueFollowers(10 * time.Second) {
 			t.Errorf("a queue execution was still publishing when the test closed its database")
 		}
 	})
