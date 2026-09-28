@@ -70,6 +70,35 @@ scheduled Job; and a download outside the capped Finished read triggering no res
 list refresh on its own. Rolling-upgrade and retention limits remain in the
 remediation plan and operator documentation.
 
+## Accepted product decisions
+
+- Job titles snapshot their subject's name at acceptance: the export group,
+  Reduction or import filename. The title audit found no reader outside the owner
+  and administrators. Download titles use the decoded last URL segment only when
+  it has a stem and a 1–10 character alphanumeric extension; other paths retain
+  the host title.
+- Job Center cards and the detail page show absolute local times; drawer rows
+  show relative ages. Project Management's server-rendered overdue marks use the
+  server's calendar, while its board uses the viewer's calendar, as documented.
+- With authentication disabled, a Retry gains no owner its source lacked. Owner
+  and Actor filters are hidden; execution principals keep their existing rules.
+- Cancel and Retry are bulk commands. Bulk Cancel confirms the selected count;
+  a deferred download's Download now remains a single-Job command. Selection
+  fields belong to each nested Alpine component.
+- One announcement ledger lets the drawer speak for the Jobs it follows and a
+  page speak for the rest. Account promotion sends events published after the
+  promotion; the lists remain the history.
+- State colours and readable Kind, origin and failure labels are shared across
+  surfaces. Amber denotes Needs attention. The recorded contrast measurements
+  apply to the light theme. Forget saved input avoids including the adjacent
+  Retry command's name in its label.
+- Import review is an authorized entity-output link. Unknown and invisible
+  handles have the same not-found response. Report outcome requires proof of
+  its producer, independently of visible lineage.
+- Summary-value search keeps correct matching at the measured million-row cost
+  above. The eight-character title suffix is a readable short ID, with the full
+  ID shown on the page; the historical collision finding was accepted as P2.
+
 ## Completion record
 
 The resumed reviews use the full original lane scope, not just the preceding
