@@ -85,10 +85,15 @@ func TestAClusteringRunIsTitledByItsReduction(t *testing.T) {
 	if snap.Title != "Clusters for L6 reduction photos" {
 		t.Fatalf("the clustering run is titled %q, want %q", snap.Title, "Clusters for L6 reduction photos")
 	}
+	// The run finishes before the test does, so nothing it writes outlives the
+	// test's database and directory.
+	waitForSnapshot(t, ctx, snap.ID, "the clustering run to finish", func(s jobs.Snapshot) bool { return s.State.Terminal() })
 }
 
+// jobTitleForTest answers a Job's title once the Job has finished, so nothing it
+// writes outlives the test's database and directory.
 func jobTitleForTest(t *testing.T, ctx *MahresourcesContext, jobID string) string {
 	t.Helper()
-	snap := waitForSnapshot(t, ctx, jobID, "the Job to be recorded", func(jobs.Snapshot) bool { return true })
+	snap := waitForSnapshot(t, ctx, jobID, "the Job to finish", func(s jobs.Snapshot) bool { return s.State.Terminal() })
 	return snap.Title
 }
