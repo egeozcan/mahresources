@@ -2244,6 +2244,35 @@ func TestSummaryRangeUsesSharedVisibilityAndFiltersPastInteractiveCeiling(t *tes
 	}
 }
 
+func TestSummaryRangeIncludesFinalNanosecondAndExcludesNextMidnight(t *testing.T) {
+	deps := newTestDeps(t)
+	acceptedAt := time.Time{}
+	deps.Now = func() time.Time { return acceptedAt }
+	svc := NewService()
+	accept := func(title string, at time.Time) Snapshot {
+		t.Helper()
+		acceptedAt = at
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Summary: json.RawMessage(`"range boundary"`), Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	from := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	nextMidnight := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	first := accept("first instant", from)
+	last := accept("last nanosecond", nextMidnight.Add(-time.Nanosecond))
+	next := accept("next day's midnight", nextMidnight)
+
+	summary, err := svc.SummaryRange(deps, Access{Administrator: true}, Filter{}, from, nextMidnight.Add(-time.Nanosecond))
+	if err != nil {
+		t.Fatalf("SummaryRange: %v", err)
+	}
+	if summary.Total != 2 {
+		t.Fatalf("range ending at %s returned %d Jobs; want the first and final nanosecond Jobs (%s, %s), excluding next day's midnight Job %s",
+			nextMidnight.Add(-time.Nanosecond).Format(time.RFC3339Nano), summary.Total, first.ID, last.ID, next.ID)
+	}
+}
+
 // TestSummaryCountsStatesKindsDurationsAndFailures covers what the aggregate
 // reports: counts by state and Kind, the success rate over settled work, queue
 // and run duration percentiles, and the sanitized failure classifications.
@@ -2754,8 +2783,11 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 	spelled := accept("a spelled summary", `{"place":"caf\u00e9 terrace","size":1e3}`)
 	requireIDs(t, "a value its writer spelled with an escape", search("café"), spelled.ID)
 	// A number is matched as the engine renders it, which is not always as it
-	// was written: 1e3 reads as 1000.
-	requireIDs(t, "a number the engine renders its own way", search("1000"), spelled.ID)
+	// was written: 1e3 reads as 1000. Search also reads IDs, so another Job may
+	// legitimately match this term through its UUID rather than its summary.
+	if got := search("1000"); !slices.Contains(got, spelled.ID) {
+		t.Errorf("search for a number the engine renders its own way returned %v, want the Job %s whose 1e3 summary value reads as 1000", got, spelled.ID)
+	}
 
 	// A character the JSON encoder escapes is in the value, not in the text.
 	escaped := accept("an escaped summary", `{"note":"fish \u0026 chips","quote":"say \"when\""}`)

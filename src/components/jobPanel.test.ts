@@ -1084,6 +1084,34 @@ describe('Job Center drawer live progress', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
+    test('drawer frames and list answers preserve version-first nanosecond ordering', async () => {
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'job-precision', title: 'Download', kind: 'remote-download', state: 'running', version: 3,
+            progress: { completed: 900, total: 1000, updatedAt: '2026-09-28T10:00:00.0009Z' } }];
+
+        panel.handleProgressFrame({ data: JSON.stringify({
+            jobId: 'job-precision', version: 4,
+            progress: { completed: 910, total: 1000, updatedAt: '2026-09-28T09:59:59.999999Z' },
+        }) });
+        expect(panel.jobs[0].progress.completed).toBe(910);
+
+        panel.handleProgressFrame({ data: JSON.stringify({
+            jobId: 'job-precision', version: 3,
+            progress: { completed: 5, total: 1000, updatedAt: '2026-09-28T10:00:00.000999Z' },
+        }) });
+        expect(panel.jobs[0].progress.completed).toBe(910);
+
+        await panel.handleStreamMessage({ data: JSON.stringify({
+            job: { id: 'job-precision', state: 'running', version: 3,
+                progress: { completed: 20, total: 1000, updatedAt: '2026-09-28T10:00:00.000999Z' } },
+            deliverySequence: 1,
+        }) });
+        expect(panel.jobs[0].progress.completed).toBe(910);
+        panel.jobs = panel.bounded([{ id: 'job-precision', state: 'running', version: 4,
+            progress: { completed: 950, total: 1000, updatedAt: '2026-09-28T09:59:59.999999001Z' } }]);
+        expect(panel.jobs[0].progress.completed).toBe(950);
+    });
+
     test('a finished row shows its average speed and no graph', () => {
         const panel = jobPanel();
         const job = {

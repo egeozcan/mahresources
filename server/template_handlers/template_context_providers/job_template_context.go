@@ -102,7 +102,10 @@ type JobRow struct {
 	// ProgressUpdatedAt is when the progress drawn was reported, for the page
 	// to tell whether a live progress frame it holds is newer than a refresh.
 	ProgressUpdatedAt string
-	Result            jobview.ResultLink
+	// ProgressSnapshotJSON carries the public progress fields needed to keep a
+	// running card's server-rendered bar and figures current between stream frames.
+	ProgressSnapshotJSON string
+	Result               jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
@@ -141,6 +144,17 @@ type JobRowProgress struct {
 	// Stats is the speed line under the bar: the live rate and time left while
 	// the Job runs, its average rate once it has finished.
 	Stats string
+}
+
+type jobRowProgressSnapshot struct {
+	Phase        string     `json:"phase,omitempty"`
+	Completed    *int64     `json:"completed,omitempty"`
+	Total        *int64     `json:"total,omitempty"`
+	Unit         string     `json:"unit,omitempty"`
+	Message      string     `json:"message,omitempty"`
+	Rate         *float64   `json:"rate,omitempty"`
+	ETA          *time.Time `json:"eta,omitempty"`
+	ETAEstimated bool       `json:"etaEstimated,omitempty"`
 }
 
 // JobQuickFilter is one sidebar link: a named slice of the list with the number
@@ -791,14 +805,16 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 		title = snapshot.ID
 	}
 	presentation := jobview.PresentJob(snapshot)
+	now := time.Now()
 	row := JobRow{
 		ID: snapshot.ID, Title: title, Kind: snapshot.Kind, KindLabel: jobview.KindLabel(snapshot.Kind), State: string(snapshot.State),
 		StateLabel: presentation.Label, BadgeClass: jobToneClass(presentation.Tone),
 		Phase: jobview.PhaseText(snapshot), Pinned: snapshot.Pinned,
 		Accepted: jobRowTime(&snapshot.AcceptedAt),
 		Started:  jobRowTime(snapshot.StartedAt), Finished: jobRowTime(snapshot.FinishedAt), Version: snapshot.Version,
-		Progress:  jobRowProgress(snapshot),
-		DetailURL: "/job?id=" + url.QueryEscape(snapshot.ID),
+		Progress:             jobRowProgressAt(snapshot, now),
+		ProgressSnapshotJSON: jobRowProgressSnapshotJSON(snapshot, now),
+		DetailURL:            "/job?id=" + url.QueryEscape(snapshot.ID),
 	}
 	row.SummaryText, row.SummaryFields = jobSummaryPresentation(snapshot.Summary)
 	if snapshot.ProgressUpdatedAt != nil {
@@ -997,11 +1013,32 @@ func jobSummaryLabel(key string) string {
 // The bar's label says what the Job is doing; the amount it counted leads the
 // stats line under it, formatted as every Job surface formats it.
 func jobRowProgress(snapshot jobs.Snapshot) *JobRowProgress {
+	return jobRowProgressAt(snapshot, time.Now())
+}
+
+func jobRowProgressAt(snapshot jobs.Snapshot, now time.Time) *JobRowProgress {
 	out := jobRowProgressBar(snapshot)
 	if out != nil {
-		out.Stats = jobRowStats(snapshot, time.Now())
+		out.Stats = jobRowStats(snapshot, now)
 	}
 	return out
+}
+
+func jobRowProgressSnapshotJSON(snapshot jobs.Snapshot, now time.Time) string {
+	if snapshot.State != jobs.StateRunning {
+		return ""
+	}
+	rate := snapshot.LiveRate(now)
+	eta, estimated := snapshot.ExpectedFinish(now)
+	encoded, err := json.Marshal(jobRowProgressSnapshot{
+		Phase: snapshot.Progress.Phase, Completed: snapshot.Progress.Completed, Total: snapshot.Progress.Total,
+		Unit: snapshot.Progress.Unit, Message: snapshot.Progress.Message,
+		Rate: rate, ETA: eta, ETAEstimated: estimated,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func jobRowProgressBar(snapshot jobs.Snapshot) *JobRowProgress {

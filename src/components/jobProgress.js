@@ -16,6 +16,62 @@ function finite(value) {
     return typeof value === 'number' && Number.isFinite(value);
 }
 
+
+function progressVersion(job) {
+    const lifecycle = Number(job?.version || 0);
+    const progress = Number(job?.progressVersion || 0);
+    return Math.max(Number.isFinite(lifecycle) ? lifecycle : 0, Number.isFinite(progress) ? progress : 0);
+}
+
+function progressInstant(raw) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(String(raw || ''));
+    if (!match) return null;
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction = '', zone] = match;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return null;
+    if (zone !== 'Z' && (Number(zone.slice(1, 3)) > 23 || Number(zone.slice(4, 6)) > 59)) return null;
+
+    const calendar = new Date(0);
+    calendar.setUTCFullYear(year, month - 1, day);
+    calendar.setUTCHours(hour, minute, second, 0);
+    if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day ||
+        calendar.getUTCHours() !== hour || calendar.getUTCMinutes() !== minute || calendar.getUTCSeconds() !== second) return null;
+
+    const milliseconds = Date.parse(`${yearText}-${monthText}-${dayText}T${hourText}:${minuteText}:${secondText}${zone}`);
+    if (!Number.isFinite(milliseconds) || milliseconds % 1000 !== 0) return null;
+    return { seconds: milliseconds / 1000, nanoseconds: Number(fraction.padEnd(9, '0')) };
+}
+
+/**
+ * Compares two Job progress snapshots, including the lifecycle version that
+ * produced each one. A higher version wins before considering executor clocks;
+ * for equal versions, valid RFC3339Nano instants are compared at nanosecond
+ * precision after normalizing their offsets. A valid timestamp outranks a
+ * missing or malformed one. Returns zero for equal valid instants and null when
+ * both timestamps are missing or malformed, leaving the caller to apply its
+ * source-specific tie rule.
+ */
+export function compareProgressSnapshotOrder(incoming, held) {
+    const incomingVersion = progressVersion(incoming);
+    const heldVersion = progressVersion(held);
+    if (incomingVersion !== heldVersion) return incomingVersion > heldVersion ? 1 : -1;
+
+    const incomingAt = progressInstant(incoming?.progress?.updatedAt);
+    const heldAt = progressInstant(held?.progress?.updatedAt);
+    if (!incomingAt && !heldAt) return null;
+    if (incomingAt && !heldAt) return 1;
+    if (!incomingAt && heldAt) return -1;
+    if (incomingAt.seconds !== heldAt.seconds) return incomingAt.seconds > heldAt.seconds ? 1 : -1;
+    if (incomingAt.nanoseconds !== heldAt.nanoseconds) return incomingAt.nanoseconds > heldAt.nanoseconds ? 1 : -1;
+    return 0;
+}
+
+
 function byteUnit(bytes) {
     let value = bytes;
     let unit = 0;
@@ -323,18 +379,20 @@ export function mergeFetchedProgress(next, previous) {
     if (!next || !previous || next.id !== previous.id || next === previous) return next;
     const incoming = next.progress || {};
     const held = previous.progress || {};
-    // A newer version is a newer execution or transition: its progress wins
-    // whatever its timestamp says, since each process stamps its own clock.
-    if (Number(next.version || 0) > Number(previous.version || 0)) {
-        return incoming.series || !held.series ? next : { ...next, progress: { ...incoming, series: held.series } };
-    }
-    const incomingAt = Date.parse(incoming.updatedAt || '');
-    const heldAt = Date.parse(held.updatedAt || '');
-    if (Number.isFinite(incomingAt) && Number.isFinite(heldAt) && incomingAt < heldAt) {
-        return { ...next, progress: held };
-    }
+    // A response at an older/equal/unknown ordering cannot replace progress the
+    // page already holds; a newer version or timestamp is authoritative.
+    const order = compareProgressSnapshotOrder(next, previous);
+    if (order === null || order <= 0) return keepHeldProgress(next, previous, held);
     if (!incoming.series && held.series) return { ...next, progress: { ...incoming, series: held.series } };
     return next;
+}
+
+function keepHeldProgress(next, previous, held) {
+    const merged = { ...next, progress: held };
+    const heldVersion = progressVersion(previous);
+    if (heldVersion > progressVersion({ version: next.version })) merged.progressVersion = heldVersion;
+    else delete merged.progressVersion;
+    return merged;
 }
 
 /**
@@ -344,7 +402,11 @@ export function mergeFetchedProgress(next, previous) {
  */
 export function applyProgressFrame(job, frame) {
     if (!job || !frame || job.id !== frame.jobId) return job;
-    if (Number(frame.version || 0) < Number(job.version || 0)) return job;
+    const order = compareProgressSnapshotOrder({ version: frame.version, progress: frame.progress }, job);
+    if (order !== null && order <= 0) return job;
+    // When both timestamps are absent/invalid, allow a same-version stream
+    // update through; version mismatches were already decided by the comparator.
+    const frameVersion = progressVersion({ version: frame.version });
     let previous = job.progress || {};
     // A change of unit ends the old rates, as the server's own series does;
     // without this the drawer would keep a bytes/s graph for a count of items.
@@ -393,14 +455,12 @@ export function applyProgressFrame(job, frame) {
             },
         };
     }
-    // The same version can still carry an older snapshot: the stream starts a
-    // little in the past, so a frame can arrive after a fetch that was newer.
-    const incomingAt = Date.parse(frame.progress?.updatedAt || '');
-    const currentAt = Date.parse(previous.updatedAt || '');
-    const sameVersion = Number(frame.version || 0) === Number(job.version || 0);
-    if (sameVersion && Number.isFinite(incomingAt) && Number.isFinite(currentAt) && incomingAt < currentAt) return job;
     const series = frame.point
         ? mergeLivePoint(previous.series, frame.point, frame.intervalMs)
         : previous.series;
-    return { ...job, progress: { ...frame.progress, series } };
+    const next = { ...job, progress: { ...frame.progress, series } };
+    const nextProgressVersion = Math.max(progressVersion(job), frameVersion);
+    if (nextProgressVersion > progressVersion({ version: job.version })) next.progressVersion = nextProgressVersion;
+    else delete next.progressVersion;
+    return next;
 }

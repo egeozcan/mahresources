@@ -8,7 +8,7 @@ import {
     jobStatsText, reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
 import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
-import { applyProgressFrame, formatDuration } from './jobProgress.js';
+import { applyProgressFrame, compareProgressSnapshotOrder, formatDuration, mergeFetchedProgress } from './jobProgress.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
 
 export const JOB_LIST_REFRESH_DEBOUNCE_MS = 500;
@@ -259,6 +259,30 @@ function cardEntity(card) {
     }
 }
 
+function cardProgressSnapshot(card) {
+    const block = card?.querySelector('[data-job-progress]');
+    if (!block?.dataset.progressSnapshot) return null;
+    try {
+        const progress = JSON.parse(block.dataset.progressSnapshot);
+        if (!progress || typeof progress !== 'object' || Array.isArray(progress)) return null;
+        return { ...progress, updatedAt: progress.updatedAt || block.dataset.progressUpdatedAt || '' };
+    } catch {
+        return null;
+    }
+}
+
+function hasClockableProgress(progress) {
+    return Number.isFinite(progress?.rate) || (typeof progress?.eta === 'string' && Number.isFinite(Date.parse(progress.eta)));
+}
+
+function applyCardProgressStats(card, job, now = Date.now()) {
+    const stats = card?.querySelector('[data-job-stats]');
+    if (!stats) return;
+    const text = jobStatsText(job, now);
+    stats.textContent = text;
+    stats.hidden = !text;
+}
+
 /**
  * The /jobs page component: one SSE connection that refreshes the server-rendered
  * list when Jobs change. History replayed before the stream catches up refreshes
@@ -296,6 +320,7 @@ export function jobList() {
         init() {
             this._liveRegion = createLiveRegion();
             localizeJobTimes(this.$root);
+            this.initializeProgressClock();
             this._refresher = createJobListRefresher({
                 onRowChanges: changes => this.announceChanges(changes),
                 onUnavailable: () => {
@@ -305,7 +330,7 @@ export function jobList() {
                     this.eventSource = null;
                     source?.close();
                 },
-                onRefreshed: () => this.reapplyProgress(),
+                onRefreshed: () => this.reconcileProgressCards(),
                 onFailed: () => { this.refreshFailed = true; },
                 onRecovered: () => { this.refreshFailed = false; },
             });
@@ -406,50 +431,63 @@ export function jobList() {
             const entity = cardEntity(card);
             if (!entity?.id) return;
             const held = this._progress.get(frame.jobId);
-            // A frame reported before what the card already shows, drawn by a
-            // refresh or by a later frame, would move its bar back.
-            const reportedAt = Date.parse(frame.progress?.updatedAt || '');
-            const drawnAt = Math.max(
-                Date.parse(card.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '') || 0,
-                Date.parse(held?.progress?.updatedAt || '') || 0,
-            );
-            if (Number.isFinite(reportedAt) && reportedAt < drawnAt) return;
-            const base = held && Number(held.version || 0) >= Number(entity.version || 0)
-                ? { ...held, state: entity.state }
-                : { ...entity, progress: {} };
+            const rendered = { ...entity, progress: cardProgressSnapshot(card) || {} };
+            const base = held && compareProgressSnapshotOrder(rendered, held) <= 0
+                ? { ...held, state: entity.state, title: entity.title || held.title }
+                : held ? mergeFetchedProgress(rendered, held) : rendered;
+            if (base !== held && base.progress) this._progress.set(frame.jobId, base);
             const next = applyProgressFrame(base, frame);
-            if (next === base) return;
+            if (next === base) {
+                this.keepProgressClock();
+                return;
+            }
             this._progress.set(frame.jobId, next);
             applyCardProgress(card, cardProgressView(next, Date.now()), next.title || entity.title || 'Job');
             this.keepProgressClock();
         },
 
-        // After a refresh, a card the server drew from older progress than a
-        // frame the page holds is drawn from the frame again, so the refresh
-        // does not move a bar back. A card whose Job left running, or whose
-        // drawing is as new as the frame, is the server's.
-        reapplyProgress() {
-            for (const [jobId, held] of this._progress) {
-                const card = cardFor(this.$root, jobId);
+        // Hydration and every server refresh use the same comparison: retained
+        // snapshots win ties/older copies, newer server snapshots replace them,
+        // and only running cards still rendered in this list remain tracked.
+        reconcileProgressCards() {
+            const previouslyHeld = this._progress;
+            const reconciled = new Map();
+            for (const card of this.$root?.querySelectorAll?.('[data-job-id]') || []) {
                 const entity = cardEntity(card);
-                const drawnAt = Date.parse(card?.querySelector('[data-job-progress]')?.dataset.progressUpdatedAt || '');
-                const heldAt = Date.parse(held.progress?.updatedAt || '');
-                if (!entity || entity.state !== 'running' || !(heldAt > drawnAt || Number.isNaN(drawnAt))) {
-                    this._progress.delete(jobId);
+                if (!entity?.id || entity.state !== 'running') continue;
+                const held = previouslyHeld.get(entity.id);
+                const progress = cardProgressSnapshot(card);
+                const rendered = { ...entity, progress: progress || {} };
+                if (!held) {
+                    if (progress) reconciled.set(entity.id, rendered);
                     continue;
                 }
-                const job = { ...held, state: entity.state, version: Math.max(Number(held.version || 0), Number(entity.version || 0)) };
-                this._progress.set(jobId, job);
-                applyCardProgress(card, cardProgressView(job, Date.now()), job.title || entity.title || 'Job');
+                const order = compareProgressSnapshotOrder(rendered, held);
+                if (order > 0) {
+                    if (progress) reconciled.set(entity.id, mergeFetchedProgress(rendered, held));
+                    continue;
+                }
+                const retained = { ...held, state: entity.state, title: entity.title || held.title };
+                reconciled.set(entity.id, retained);
+                applyCardProgress(card, cardProgressView(retained, Date.now()), retained.title || 'Job');
             }
+            this._progress = reconciled;
             this.keepProgressClock();
+        },
+
+        initializeProgressClock() {
+            this.reconcileProgressCards();
+        },
+
+        reapplyProgress() {
+            this.reconcileProgressCards();
         },
 
         // "about 31 s left" counts down between frames, and a speed nothing has
         // reported for a while goes, as in the drawer: once a second while a
         // running card is drawn from a frame.
         keepProgressClock() {
-            const running = [...this._progress.values()].some(job => job.state === 'running');
+            const running = [...this._progress.values()].some(job => job.state === 'running' && hasClockableProgress(job.progress));
             if (running && !this._progressClock) {
                 this._progressClock = setInterval(() => this.tickProgress(), 1000);
             } else if (!running && this._progressClock) {
@@ -466,7 +504,8 @@ export function jobList() {
                     this._progress.delete(jobId);
                     continue;
                 }
-                applyCardProgress(card, cardProgressView(job, now), job.title || 'Job');
+                if (!hasClockableProgress(job.progress)) continue;
+                applyCardProgressStats(card, job, now);
             }
             this.keepProgressClock();
         },
@@ -862,7 +901,8 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
         },
 
         // The range is whole days in the reader's zone: from the first day's
-        // start to the end of the last.
+        // start through the last nanosecond of the last day, as the API's upper
+        // bound is inclusive.
         async exportSummary() {
             // One export per press: a second while the first is on its way would
             // queue the same costly export twice.
@@ -871,12 +911,12 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
             this.exportError = '';
             this.exported = null;
             try {
-                const to = new Date(`${this.exportTo}T00:00`);
-                to.setDate(to.getDate() + 1);
+                const to = localDayEndInstant(this.exportTo);
+                if (!to) throw new Error('The summary export needs a valid end date.');
                 const response = await fetchImpl(`/v1/jobs/summary/export${this.exportQuery ? `?${this.exportQuery}` : ''}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                    body: JSON.stringify({ from: new Date(`${this.exportFrom}T00:00`).toISOString(), to: to.toISOString(), format: this.exportFormat }),
+                    body: JSON.stringify({ from: new Date(`${this.exportFrom}T00:00`).toISOString(), to, format: this.exportFormat }),
                 });
                 const job = (await answerOf(response, 'The summary export')).job || {};
                 this.exported = { url: `/job?id=${encodeURIComponent(job.id)}`, title: job.title || 'Job summary export' };
@@ -891,6 +931,18 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
 
 function pad(value, width = 2) {
     return String(value).padStart(width, '0');
+}
+
+/** The inclusive API bound for the last instant of a selected local calendar day. */
+export function localDayEndInstant(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+    const date = new Date(`${value}T00:00`);
+    if (Number.isNaN(date.getTime())) return '';
+    const localDate = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    if (localDate !== value) return '';
+    date.setDate(date.getDate() + 1);
+    date.setTime(date.getTime() - 1);
+    return date.toISOString().replace(/\.(\d{3})Z$/, '.$1999999Z');
 }
 
 function localInputValue(date, withSeconds) {

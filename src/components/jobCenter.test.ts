@@ -1192,6 +1192,49 @@ describe('Job detail live progress', () => {
         expect(center.sparkline(center.graphsFor(center.detail)[0])).toMatch(/^M/);
         expect(center._liveRegion.announce).not.toHaveBeenCalled();
     });
+
+    test('detail frames and refreshed snapshots use version-first nanosecond ordering', () => {
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const center = jobCenter();
+        center.detail = { id: 'job-precision', state: 'running', version: 3,
+            progress: { completed: 900, total: 1000, updatedAt: '2026-09-28T10:00:00.0009Z' } };
+        center.jobs = [center.detail];
+        center.connect();
+        const stream = center.eventSource as unknown as FakeEventSource;
+
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify({
+            jobId: 'job-precision', version: 4,
+            progress: { completed: 910, total: 1000, updatedAt: '2026-09-28T09:59:59.999999Z' },
+        }) });
+        expect(center.detail.progress.completed).toBe(910);
+
+        stream.listeners.get('job-progress')?.({ data: JSON.stringify({
+            jobId: 'job-precision', version: 3,
+            progress: { completed: 5, total: 1000, updatedAt: '2026-09-28T10:00:00.000999Z' },
+        }) });
+        expect(center.detail.progress.completed).toBe(910);
+
+        center.handleStreamMessage({ data: JSON.stringify({
+            job: { id: 'job-precision', state: 'running', version: 3,
+                progress: { completed: 20, total: 1000, updatedAt: '2026-09-28T10:00:00.000999Z' } },
+            deliverySequence: 1,
+        }) });
+        expect(center.jobs[0].progress.completed).toBe(910);
+
+        center.applyStreamSnapshot({ id: 'job-precision', state: 'running', version: 4,
+            progress: { completed: 950, total: 1000, updatedAt: '2026-09-28T09:59:59.999999001Z' } });
+        expect(center.detail.progress.completed).toBe(950);
+        center.applyStreamSnapshot({ id: 'job-precision', state: 'running', version: 4,
+            progress: { completed: 20, total: 1000, updatedAt: '2026-09-28T09:59:59.999999Z' } });
+        expect(center.detail.progress.completed).toBe(950);
+        center.destroy();
+    });
 });
 
 describe('Job Center templates', () => {
