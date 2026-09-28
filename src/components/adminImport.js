@@ -313,9 +313,11 @@ export function adminImport() {
         const detail = await resp.json();
         return this.ownsImport(generation) ? detail : null;
       };
+      // The API returns relatives newest-first by accepted instant, then Job ID.
+      // Preserve that order: RFC3339 permits fractional seconds of varying width,
+      // so comparing timestamp strings can put an older Job ahead of a newer one.
       const newest = (jobs) => (Array.isArray(jobs) ? jobs : [])
-        .filter(job => job?.kind === 'group-import-apply')
-        .sort((a, b) => String(b.acceptedAt).localeCompare(String(a.acceptedAt)))[0] || null;
+        .find(job => job?.kind === 'group-import-apply') || null;
       const parse = await read(parseJobId);
       if (!this.ownsImport(generation)) return null;
       let apply = newest(parse?.lineage?.children);

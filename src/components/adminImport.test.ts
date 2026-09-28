@@ -37,6 +37,32 @@ afterEach(() => {
 });
 
 describe('reopening an import an apply took', () => {
+  it('uses the server newest-first apply order for fractional times and equal-instant ties', async () => {
+    const laterAt = '2026-09-28T05:00:00.11Z';
+    const earlierAt = '2026-09-28T05:00:00.1Z';
+    expect(Date.parse(laterAt) - Date.parse(earlierAt)).toBe(10);
+    const fetchMock = serve({
+      '/v1/jobs/parse-1': { status: 200, body: { id: 'parse-1', lineage: { children: [
+        { id: 'apply-tie-z', kind: 'group-import-apply', acceptedAt: laterAt },
+        { id: 'apply-tie-a', kind: 'group-import-apply', acceptedAt: laterAt },
+        { id: 'apply-old', kind: 'group-import-apply', acceptedAt: earlierAt },
+      ] } } },
+      '/v1/jobs/apply-tie-z': { status: 200, body: { id: 'apply-tie-z', state: 'succeeded', lineage: { successors: [] } } },
+      '/v1/jobs/apply-tie-a': { status: 200, body: { id: 'apply-tie-a', state: 'failed', failure: { message: 'same-instant lower ID' }, lineage: { successors: [] } } },
+      '/v1/jobs/apply-old': { status: 200, body: { id: 'apply-old', state: 'failed', failure: { message: 'older apply failed' }, lineage: { successors: [] } } },
+      '/v1/imports/imp-1/result': { status: 200, body: report },
+    });
+    const c = adminImport();
+
+    await c.resumeApplied('imp-1', 'parse-1');
+
+    expect(c.applyOutcome).toBe('succeeded');
+    expect(c.error).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/v1/jobs/parse-1', '/v1/jobs/apply-tie-z', '/v1/imports/imp-1/result',
+    ]);
+  });
+
   it('shows the report as a success only when the apply this viewer can see succeeded', async () => {
     serve({
       '/v1/imports/imp-1/result': { status: 200, body: report },
