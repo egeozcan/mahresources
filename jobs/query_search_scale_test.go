@@ -162,7 +162,7 @@ func seedMillionSearchJobs(t *testing.T, db *gorm.DB, now time.Time) {
 	t.Helper()
 	const batchSize = 500
 	const columns = 14
-	// PostgreSQL's summary column is json, which a text parameter is not.
+	// PostgreSQL's summary column is jsonb, which a text parameter is not.
 	summaryValue := "?"
 	if db.Dialector.Name() == "postgres" {
 		summaryValue = "CAST(? AS json)"

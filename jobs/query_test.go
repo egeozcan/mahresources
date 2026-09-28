@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mahresources/models"
+	"mahresources/models/types"
 
 	"gorm.io/gorm"
 )
@@ -2692,6 +2693,22 @@ func testListSearchMatchesSummaryValuesNotItsSyntax(t *testing.T, deps Deps) {
 	escaped := accept("an escaped summary", `{"note":"fish \u0026 chips","quote":"say \"when\""}`)
 	requireIDs(t, "a value with an escaped character", search("fish & chips"), escaped.ID)
 	requireIDs(t, "a value with quotes", search(`"when"`), escaped.ID)
+
+	// A summary an earlier release stored as its writer spelled it, before
+	// summaries were stored as Go's encoder writes them: its escapes hide the
+	// characters they stand for from its text, and it is still found by them.
+	older := accept("an older summary", `{"note":"placeholder"}`)
+	spelledByAnother := `{"dish":"cr\u00e8me br\u00fbl\u00e9e","path":"a\/b","smile":"\ud83d\ude00 grin","amp":"x \u0026 y"}`
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", older.ID).
+		Update("summary", types.JSON(spelledByAnother)).Error; err != nil {
+		t.Fatalf("store a summary as an earlier release did: %v", err)
+	}
+	requireIDs(t, "an older summary's escaped letter", search("crème brûlée"), older.ID)
+	requireIDs(t, "an older summary's escaped slash", search("a/b"), older.ID)
+	requireIDs(t, "an older summary's escaped emoji", search("\U0001F600 grin"), older.ID)
+	if got := search("placeholder"); len(got) != 0 {
+		t.Errorf("search for the replaced summary's value matched %v, want nothing", got)
+	}
 }
 
 // TestASummaryIsStoredAsGosEncoderWritesIt pins canonicalSummary: escapes the

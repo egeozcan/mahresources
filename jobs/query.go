@@ -738,28 +738,44 @@ func applySearch(db *gorm.DB, term string) *gorm.DB {
 // its type and its value as SQL text (atom), and PostgreSQL's strict `$.**` path
 // yields every node once, whose text `#>> '{}'` is. A summary that is not valid
 // JSON has no values to match on SQLite, where json_tree would otherwise fail the
-// query; PostgreSQL's json column cannot hold one.
+// query; PostgreSQL's jsonb column cannot hold one.
 //
 // Walking a document costs several times what matching its text does, and a
 // search that finds one Job reads every row. So the walk only reads a summary
-// whose text holds the term, when that test is sound: every summary is stored as
-// Go's JSON encoder writes it (canonicalSummary), which writes a string value's
-// characters as they are unless it must escape them, so a term holding none of
-// those characters appears in the text of every summary holding it in a string.
-// A number is not: the engine renders it its own way (1e3 as 1000), so a term
-// that could be part of one is walked alone, as is a term with an escaped
-// character.
+// whose text could hold the term. A string value's characters appear in the
+// text as they are, except where they are escaped, so a term with a character
+// an escape must stand for (a quote, a backslash, a control character) or that
+// Go's encoder escapes (< > & U+2028 U+2029) is walked alone. So is a term that
+// could be part of a number, since a number is not written as the engine renders
+// it (1e3 reads as 1000). For any other term:
+//   - PostgreSQL stores the summary as jsonb and renders it anew, every other
+//     character as it is, whoever wrote it: its text holds the term whenever a
+//     value does.
+//   - SQLite keeps the text as written. Go's encoder writes no other escape, and
+//     every summary accepted now is stored as it writes it (canonicalSummary).
+//     An earlier release stored a summary as its writer spelled it, where `\/` or
+//     a `\u` escape may hide a character of the term, so a summary with either,
+//     beyond the three Go writes for < > &, is walked whatever its text holds.
 func summaryValueMatches(db *gorm.DB, term, pattern, operator, escape string) (string, []any) {
+	postgres := db.Dialector.Name() == "postgres"
 	walk := "EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(jobs.summary) THEN jobs.summary END) AS node" +
 		" WHERE node.type IN ('text', 'integer', 'real') AND node.atom " + operator + " ?" + escape + ")"
-	if db.Dialector.Name() == "postgres" {
+	if postgres {
 		walk = "EXISTS (SELECT 1 FROM jsonb_path_query(jobs.summary::jsonb, 'strict $.**') AS node(value)" +
 			" WHERE jsonb_typeof(node.value) IN ('string', 'number') AND (node.value #>> '{}') " + operator + " ?" + escape + ")"
 	}
 	if !termIsWrittenAsIs(term) || termCouldBeANumber(term) {
 		return walk, []any{pattern}
 	}
-	return "(COALESCE(CAST(jobs.summary AS TEXT), '') " + operator + " ?" + escape + " AND " + walk + ")", []any{pattern, pattern}
+	text := "COALESCE(CAST(jobs.summary AS TEXT), '')"
+	holds := text + " " + operator + " ?" + escape
+	if postgres {
+		return "(" + holds + " AND " + walk + ")", []any{pattern, pattern}
+	}
+	mayHide := "instr(" + text + ", ?) > 0 OR (instr(" + text + ", ?) > 0 AND " +
+		"instr(REPLACE(REPLACE(REPLACE(" + text + ", ?, ''), ?, ''), ?, ''), ?) > 0)"
+	return "((" + holds + " OR " + mayHide + ") AND " + walk + ")",
+		[]any{pattern, `\/`, `\u`, `\u0026`, `\u003c`, `\u003e`, `\u`, pattern}
 }
 
 // termCouldBeANumber reports whether a term is made only of what a number's
