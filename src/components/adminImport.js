@@ -19,10 +19,14 @@ export function adminImport() {
     selectedFile: null,
     uploading: false,
     jobId: null,
+    canonicalParseJobId: null,
     job: null,
     plan: null,
     error: null,
     eventSource: null,
+    // Every request and event callback belongs to the import that started it.
+    // Closing a stream does not stop fetches that the stream already started.
+    _importGeneration: 0,
 
     // Decision state — collected from interactive review controls
     decisions: freshDecisions(),
@@ -65,20 +69,27 @@ export function adminImport() {
     },
 
     destroy() {
-      if (this.eventSource) {
-        this.eventSource.close();
-        this.eventSource = null;
-      }
+      this._importGeneration++;
+      this._parentSearchGeneration++;
+      this.closeSSE();
       this.closeApplySSE();
+    },
+
+    ownsImport(generation) {
+      return generation === this._importGeneration;
     },
 
     // Forgets everything one import left on the page, so the next one (an
     // upload, or a handle to resume) starts from nothing: its review, its
     // decisions, its apply and its report.
     resetImport() {
+      this._importGeneration++;
+      this._parentSearchGeneration++;
       this.closeSSE();
       this.closeApplySSE();
+      this.uploading = false;
       this.jobId = null;
+      this.canonicalParseJobId = null;
       this.job = null;
       this.plan = null;
       this.error = null;
@@ -88,6 +99,11 @@ export function adminImport() {
       this.parentGroupName = '';
       this.parentActiveIndex = -1;
       this.flattenedItems = [];
+      this.mappingSearchResults = {};
+      this.danglingSearchResults = {};
+      this.danglingDestNames = {};
+      this.shellGroupSearchResults = {};
+      this.shellGroupDestNames = {};
       this.applying = false;
       this.applyJobId = null;
       this.applyJob = null;
@@ -101,15 +117,18 @@ export function adminImport() {
     async upload() {
       if (!this.selectedFile) return;
       this.resetImport();
+      const generation = this._importGeneration;
+      const file = this.selectedFile;
       this.uploading = true;
 
       try {
         const formData = new FormData();
-        formData.append('file', this.selectedFile);
+        formData.append('file', file);
         const resp = await fetch('/v1/groups/import/parse', {
           method: 'POST',
           body: formData,
         });
+        if (!this.ownsImport(generation)) return;
         if (!resp.ok) {
           // errorMessageFromResponse, not resp.text(): these endpoints answer JSON
           // for the errors a reader can actually provoke — a 403 from the CSRF
@@ -117,16 +136,20 @@ export function adminImport() {
           // text of that is a JSON blob shown verbatim in the UI. It also handles
           // the plain-text bodies these two endpoints still return, and falls back
           // to the status line for an HTML error document.
-          throw new Error(await errorMessageFromResponse(resp));
+          const message = await errorMessageFromResponse(resp);
+          if (!this.ownsImport(generation)) return;
+          throw new Error(message);
         }
         const data = await resp.json();
+        if (!this.ownsImport(generation)) return;
         this.jobId = data.jobId;
+        this.canonicalParseJobId = data.canonicalJobId || null;
         this.rememberHandle(data.jobId);
-        this.subscribeProgress(data.jobId);
+        this.subscribeProgress(data.jobId, generation, this.canonicalParseJobId);
       } catch (err) {
-        this.error = err.message;
+        if (this.ownsImport(generation)) this.error = err.message;
       } finally {
-        this.uploading = false;
+        if (this.ownsImport(generation)) this.uploading = false;
       }
     },
 
@@ -151,32 +174,31 @@ export function adminImport() {
      */
     async resume(handle) {
       this.resetImport();
+      const generation = this._importGeneration;
       this.jobId = handle;
       const encoded = encodeURIComponent(handle);
       try {
-        const planResp = await fetch(`/v1/imports/${encoded}/plan`);
-        if (planResp.ok) {
-          this.plan = await planResp.json();
-          this.initDecisionsFromPlan();
-          return;
-        }
-        if (planResp.status !== 404) {
-          throw new Error(await errorMessageFromResponse(planResp));
-        }
+        const planState = await this.loadPlan(handle, generation);
+        if (!this.ownsImport(generation) || planState === 'loaded') return;
         // No plan to review: the parse is still running, it failed, or an apply
         // took the plan (or the import's files were removed). The parse's own
         // record says which.
         const jobResp = await fetch(`/v1/jobs/get?id=${encoded}`);
+        if (!this.ownsImport(generation)) return;
         if (jobResp.status === 404) {
           this.jobId = null;
           this.resumeNotice = 'This import could not be found. Its files may have been removed; upload the archive again to import it.';
           return;
         }
         if (!jobResp.ok) {
-          throw new Error(await errorMessageFromResponse(jobResp));
+          const message = await errorMessageFromResponse(jobResp);
+          if (!this.ownsImport(generation)) return;
+          throw new Error(message);
         }
         const parse = await jobResp.json();
+        if (!this.ownsImport(generation)) return;
         this.job = parse;
+        this.canonicalParseJobId = parse.canonicalJobId || null;
         if (parse.canonicalJobId) {
           this.resumeJobURL = '/job?id=' + encodeURIComponent(parse.canonicalJobId);
         }
@@ -185,28 +207,76 @@ export function adminImport() {
           return;
         }
         if (parse.status !== 'completed') {
-          this.subscribeProgress(handle);
+          this.subscribeProgress(handle, generation);
           return;
         }
-        this.jobId = null;
-        await this.resumeApplied(handle, parse.canonicalJobId);
+        await this.reconcileParseCompletion(handle, parse.canonicalJobId, generation);
       } catch (err) {
-        this.error = err.message;
+        if (this.ownsImport(generation)) this.error = err.message;
       }
+    },
+
+    // Read and install a plan only while the request still belongs to the
+    // current import.  A terminal parse can publish its plan between reads.
+    async loadPlan(handle, generation) {
+      if (!this.ownsImport(generation)) return 'stale';
+      const resp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/plan`);
+      if (!this.ownsImport(generation)) return 'stale';
+      if (resp.status === 404) return 'missing';
+      if (!resp.ok) {
+        const message = await errorMessageFromResponse(resp);
+        if (!this.ownsImport(generation)) return 'stale';
+        throw new Error(message);
+      }
+      const plan = await resp.json();
+      if (!this.ownsImport(generation)) return 'stale';
+      this.plan = plan;
+      this.initDecisionsFromPlan();
+      return 'loaded';
+    },
+
+    // A successful parse can race with plan publication or with an apply that
+    // consumes the plan. Both resume and SSE completion use this one transition.
+    async reconcileParseCompletion(handle, parseJobId, generation) {
+      if (!this.ownsImport(generation)) return;
+      const planState = await this.loadPlan(handle, generation);
+      if (!this.ownsImport(generation) || planState === 'loaded') return;
+      if (!parseJobId) {
+        const parseResp = await fetch(`/v1/jobs/get?id=${encodeURIComponent(handle)}`);
+        if (!this.ownsImport(generation)) return;
+        if (!parseResp.ok) {
+          if (parseResp.status === 404) return this.resumeApplied(handle, null, generation);
+          const message = await errorMessageFromResponse(parseResp);
+          if (!this.ownsImport(generation)) return;
+          throw new Error(message);
+        }
+        const parse = await parseResp.json();
+        if (!this.ownsImport(generation)) return;
+        parseJobId = parse.canonicalJobId;
+      }
+      if (!this.ownsImport(generation)) return;
+      this.jobId = null;
+      await this.resumeApplied(handle, parseJobId, generation);
     },
 
     // Shows what became of an import whose plan an apply took: the apply's report,
     // and whether that apply succeeded, failed or is still running, read from the
     // newest apply the parse's Job lists (following its Retries).
-    async resumeApplied(handle, parseJobId) {
-      const apply = await this.latestApply(parseJobId);
+    async resumeApplied(handle, parseJobId, generation = this._importGeneration) {
+      if (!this.ownsImport(generation)) return;
+      const apply = await this.latestApply(parseJobId, generation);
+      if (!this.ownsImport(generation)) return;
       const resultResp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/result`);
+      if (!this.ownsImport(generation)) return;
       // Only a 404 means there is no report; any other failure is a read that
       // answered nothing, and says so rather than looking like a removed import.
       if (!resultResp.ok && resultResp.status !== 404) {
-        throw new Error('The import report could not be read: ' + await errorMessageFromResponse(resultResp));
+        const message = await errorMessageFromResponse(resultResp);
+        if (!this.ownsImport(generation)) return;
+        throw new Error('The import report could not be read: ' + message);
       }
       const result = resultResp.ok ? await resultResp.json() : null;
+      if (!this.ownsImport(generation)) return;
       const state = apply?.state || '';
       if (state === 'queued' || state === 'running' || state === 'scheduled' || state === 'paused' || state === 'blocked') {
         this.resumeNotice = 'This import is being applied. Follow it in the Jobs panel or on its Job page.';
@@ -226,20 +296,28 @@ export function adminImport() {
       this.applyResult = result;
     },
 
-    async latestApply(parseJobId) {
-      if (!parseJobId) return null;
+    async latestApply(parseJobId, generation = this._importGeneration) {
+      if (!this.ownsImport(generation) || !parseJobId) return null;
       // A 404 is a Job this viewer cannot see; any other failure is a read that
       // answered nothing, and is reported rather than read as invisibility.
       const read = async (id) => {
+        if (!this.ownsImport(generation)) return null;
         const resp = await fetch(`/v1/jobs/${encodeURIComponent(id)}`);
+        if (!this.ownsImport(generation)) return null;
         if (resp.status === 404) return null;
-        if (!resp.ok) throw new Error('The import\'s Jobs could not be read: ' + await errorMessageFromResponse(resp));
-        return resp.json();
+        if (!resp.ok) {
+          const message = await errorMessageFromResponse(resp);
+          if (!this.ownsImport(generation)) return null;
+          throw new Error('The import\'s Jobs could not be read: ' + message);
+        }
+        const detail = await resp.json();
+        return this.ownsImport(generation) ? detail : null;
       };
       const newest = (jobs) => (Array.isArray(jobs) ? jobs : [])
         .filter(job => job?.kind === 'group-import-apply')
         .sort((a, b) => String(b.acceptedAt).localeCompare(String(a.acceptedAt)))[0] || null;
       const parse = await read(parseJobId);
+      if (!this.ownsImport(generation)) return null;
       let apply = newest(parse?.lineage?.children);
       // A Retry of an apply is a new Job linked to it; the newest one is the one
       // whose outcome the report describes. An apply this viewer cannot see, or
@@ -248,6 +326,7 @@ export function adminImport() {
       // ends; the cap only guards a malformed answer.
       for (let hop = 0; apply && hop < 1000; hop++) {
         const detail = await read(apply.id);
+        if (!this.ownsImport(generation)) return null;
         if (!detail || detail.lineage?.retriedElsewhere) return null;
         const next = newest(detail.lineage?.successors);
         if (!next) return detail;
@@ -257,21 +336,22 @@ export function adminImport() {
     },
 
     // SSE subscription — matches existing adminExport.js pattern exactly
-    subscribeProgress(jobId) {
-      if (this.eventSource) {
-        this.eventSource.close();
-      }
-      this.eventSource = new EventSource('/v1/jobs/events');
+    subscribeProgress(jobId, generation = this._importGeneration, parseJobId = this.canonicalParseJobId) {
+      if (!this.ownsImport(generation)) return;
+      this.closeSSE();
+      const source = new EventSource('/v1/jobs/events');
+      this.eventSource = source;
 
       const handleJobPayload = (payload) => {
-        if (!payload.job || payload.job.id !== jobId) return;
+        if (!this.ownsImport(generation) || this.eventSource !== source || !payload.job || payload.job.id !== jobId) return;
         this.job = payload.job;
         if (payload.job.status === 'completed') {
-          this.onParseComplete(jobId);
-          this.closeSSE();
+          void this.onParseComplete(jobId, parseJobId || payload.job.canonicalJobId, generation)
+            .catch(err => { if (this.ownsImport(generation)) this.error = err.message; });
+          this.closeSSE(source);
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.error = payload.job.error || `Job ${payload.job.status}`;
-          this.closeSSE();
+          this.closeSSE(source);
         }
       };
 
@@ -282,7 +362,7 @@ export function adminImport() {
       };
 
       // init event: payload is {jobs: [...], actionJobs: [...]}
-      this.eventSource.addEventListener('init', (event) => {
+      source.addEventListener('init', (event) => {
         try {
           const payload = JSON.parse(event.data);
           const jobs = payload.jobs || [];
@@ -291,20 +371,13 @@ export function adminImport() {
         } catch (e) { /* ignore parse errors */ }
       });
 
-      this.eventSource.addEventListener('added', handler);
-      this.eventSource.addEventListener('updated', handler);
-      this.eventSource.addEventListener('removed', handler);
+      source.addEventListener('added', handler);
+      source.addEventListener('updated', handler);
+      source.addEventListener('removed', handler);
     },
 
-    async onParseComplete(jobId) {
-      try {
-        const resp = await fetch(`/v1/imports/${encodeURIComponent(jobId)}/plan`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        this.plan = await resp.json();
-        this.initDecisionsFromPlan();
-      } catch (err) {
-        this.error = 'Failed to load import plan: ' + err.message;
-      }
+    async onParseComplete(jobId, parseJobId, generation = this._importGeneration) {
+      await this.reconcileParseCompletion(jobId, parseJobId, generation);
     },
 
     // Pre-fill decisions from the plan's suggestions
@@ -371,11 +444,11 @@ export function adminImport() {
       flatten(this.plan.items || [], 0);
     },
 
-    closeSSE() {
-      if (this.eventSource) {
-        this.eventSource.close();
-        this.eventSource = null;
-      }
+    closeSSE(requestedSource = this.eventSource) {
+      const source = requestedSource;
+      if (!source) return;
+      source.close();
+      if (this.eventSource === source) this.eventSource = null;
     },
 
     // --- Mapping decision helpers ---
@@ -488,6 +561,7 @@ export function adminImport() {
 
     async searchMappingDest(entry, query) {
       if (!query) { this.mappingSearchResults[entry.decision_key] = []; return; }
+      const generation = this._importGeneration;
       // Determine search endpoint by mapping type context.
       // The entry lives in one of the plan.mappings arrays — search the
       // matching entity type. The plan's key tells us which.
@@ -508,13 +582,16 @@ export function adminImport() {
       }
       try {
         const res = await fetch(endpoint + '?name=' + encodeURIComponent(query) + '&maxResults=8');
+        if (!this.ownsImport(generation)) return;
         if (!res.ok) return;
         const data = await res.json();
+        if (!this.ownsImport(generation)) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.mappingSearchResults[entry.decision_key] = list.map(e => ({
           id: e.ID || e.id, name: e.Name || e.name,
         }));
       } catch (e) {
+        if (!this.ownsImport(generation)) return;
         this.mappingSearchResults[entry.decision_key] = [];
       }
     },
@@ -568,13 +645,17 @@ export function adminImport() {
       };
       const endpoint = kindToEndpoint[d.kind] || '/v1/groups';
       if (!query) { this.danglingSearchResults[d.id] = []; return; }
+      const generation = this._importGeneration;
       try {
         const res = await fetch(endpoint + '?name=' + encodeURIComponent(query) + '&maxResults=8');
+        if (!this.ownsImport(generation)) return;
         if (!res.ok) return;
         const data = await res.json();
+        if (!this.ownsImport(generation)) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.danglingSearchResults[d.id] = list.map(e => ({ id: e.ID || e.id, name: e.Name || e.name }));
       } catch (e) {
+        if (!this.ownsImport(generation)) return;
         this.danglingSearchResults[d.id] = [];
       }
     },
@@ -607,13 +688,17 @@ export function adminImport() {
 
     async searchShellDest(exportId, query) {
       if (!query) { this.shellGroupSearchResults[exportId] = []; return; }
+      const generation = this._importGeneration;
       try {
         const res = await fetch('/v1/groups?name=' + encodeURIComponent(query) + '&maxResults=8');
+        if (!this.ownsImport(generation)) return;
         if (!res.ok) return;
         const data = await res.json();
+        if (!this.ownsImport(generation)) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.shellGroupSearchResults[exportId] = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
       } catch (e) {
+        if (!this.ownsImport(generation)) return;
         this.shellGroupSearchResults[exportId] = [];
       }
     },
@@ -692,6 +777,7 @@ export function adminImport() {
      */
     async searchParentGroups() {
       const generation = ++this._parentSearchGeneration;
+      const importGeneration = this._importGeneration;
       if (!this.parentGroupQuery) {
         this.parentGroupResults = [];
         this.parentActiveIndex = -1;
@@ -699,15 +785,15 @@ export function adminImport() {
       }
       try {
         const res = await fetch('/v1/groups?name=' + encodeURIComponent(this.parentGroupQuery) + '&maxResults=10');
-        if (generation !== this._parentSearchGeneration) return;
+        if (generation !== this._parentSearchGeneration || !this.ownsImport(importGeneration)) return;
         if (!res.ok) return;
         const data = await res.json();
-        if (generation !== this._parentSearchGeneration) return;
+        if (generation !== this._parentSearchGeneration || !this.ownsImport(importGeneration)) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.parentGroupResults = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
         this.parentActiveIndex = -1;
       } catch (e) {
-        if (generation !== this._parentSearchGeneration) return;
+        if (generation !== this._parentSearchGeneration || !this.ownsImport(importGeneration)) return;
         this.parentGroupResults = [];
         this.parentActiveIndex = -1;
       }
@@ -761,6 +847,9 @@ export function adminImport() {
 
     async apply() {
       if (this.hasIncompleteDecisions() || this.applying) return;
+      const generation = this._importGeneration;
+      const handle = this.jobId;
+      const decisions = JSON.stringify(this.decisions);
       this.applying = true;
       this.applyResult = null;
       this.applyJob = null;
@@ -768,11 +857,12 @@ export function adminImport() {
       this.error = null;
 
       try {
-        const resp = await fetch(`/v1/imports/${encodeURIComponent(this.jobId)}/apply`, {
+        const resp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/apply`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.decisions),
+          body: decisions,
         });
+        if (!this.ownsImport(generation)) return;
         if (!resp.ok) {
           // errorMessageFromResponse, not resp.text(): these endpoints answer JSON
           // for the errors a reader can actually provoke — a 403 from the CSRF
@@ -780,36 +870,42 @@ export function adminImport() {
           // text of that is a JSON blob shown verbatim in the UI. It also handles
           // the plain-text bodies these two endpoints still return, and falls back
           // to the status line for an HTML error document.
-          throw new Error(await errorMessageFromResponse(resp));
+          const message = await errorMessageFromResponse(resp);
+          if (!this.ownsImport(generation)) return;
+          throw new Error(message);
         }
         const data = await resp.json();
+        if (!this.ownsImport(generation)) return;
         this.applyJobId = data.jobId;
-        this.subscribeApplyProgress(data.jobId);
+        this.subscribeApplyProgress(data.jobId, handle, generation);
       } catch (err) {
+        if (!this.ownsImport(generation)) return;
         this.error = err.message;
         this.applying = false;
       }
     },
 
-    subscribeApplyProgress(jobId) {
+    subscribeApplyProgress(jobId, importHandle = this.jobId, generation = this._importGeneration) {
+      if (!this.ownsImport(generation)) return;
       this.closeApplySSE();
-      this.applyEventSource = new EventSource('/v1/jobs/events');
+      const source = new EventSource('/v1/jobs/events');
+      this.applyEventSource = source;
 
       const handleJobPayload = (payload) => {
-        if (!payload.job || payload.job.id !== jobId) return;
+        if (!this.ownsImport(generation) || this.applyEventSource !== source || !payload.job || payload.job.id !== jobId) return;
         this.applyJob = payload.job;
         this.applyPhase = payload.job.phase || '';
         if (payload.job.status === 'completed') {
           this.applying = false;
           this.applyOutcome = 'succeeded';
-          this.fetchApplyResult();
-          this.closeApplySSE();
+          void this.fetchApplyResult(importHandle, generation);
+          this.closeApplySSE(source);
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.applying = false;
           this.applyOutcome = 'failed';
           this.error = payload.job.error || `Apply job ${payload.job.status}`;
-          this.fetchApplyResult(); // partial-failure may have result
-          this.closeApplySSE();
+          void this.fetchApplyResult(importHandle, generation); // partial-failure may have result
+          this.closeApplySSE(source);
         }
       };
 
@@ -819,7 +915,7 @@ export function adminImport() {
         } catch (e) { /* ignore parse errors */ }
       };
 
-      this.applyEventSource.addEventListener('init', (event) => {
+      source.addEventListener('init', (event) => {
         try {
           const payload = JSON.parse(event.data);
           const jobs = payload.jobs || [];
@@ -828,24 +924,27 @@ export function adminImport() {
         } catch (e) { /* ignore parse errors */ }
       });
 
-      this.applyEventSource.addEventListener('added', handler);
-      this.applyEventSource.addEventListener('updated', handler);
-      this.applyEventSource.addEventListener('removed', handler);
+      source.addEventListener('added', handler);
+      source.addEventListener('updated', handler);
+      source.addEventListener('removed', handler);
     },
 
-    async fetchApplyResult() {
+    async fetchApplyResult(importHandle = this.jobId, generation = this._importGeneration) {
+      if (!this.ownsImport(generation)) return;
       try {
-        const resp = await fetch(`/v1/imports/${encodeURIComponent(this.jobId)}/result`);
+        const resp = await fetch(`/v1/imports/${encodeURIComponent(importHandle)}/result`);
+        if (!this.ownsImport(generation)) return;
         if (!resp.ok) return; // 404 means no result yet
-        this.applyResult = await resp.json();
+        const result = await resp.json();
+        if (!this.ownsImport(generation)) return;
+        this.applyResult = result;
       } catch (e) { /* ignore */ }
     },
 
-    closeApplySSE() {
-      if (this.applyEventSource) {
-        this.applyEventSource.close();
-        this.applyEventSource = null;
-      }
+    closeApplySSE(requestedSource = this.applyEventSource) {
+      if (!requestedSource) return;
+      requestedSource.close();
+      if (this.applyEventSource === requestedSource) this.applyEventSource = null;
     },
 
     async cancelApply() {

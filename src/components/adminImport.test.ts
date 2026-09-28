@@ -19,6 +19,19 @@ function serve(routes: Routes) {
 const report = { created_groups: 1, created_group_ids: [7] };
 const parseDetail = (children: unknown[]) => ({ status: 200, body: { id: 'parse-1', lineage: { children } } });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+const plan = (name: string) => ({
+  source_instance_id: name,
+  mappings: {}, dangling_refs: [], items: [],
+  counts: { groups: 1, resources: 0, notes: 0, series: 0 },
+  conflicts: { guid_matches: 0, resource_guid_matches: 0, resource_hash_matches: 0 },
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -110,6 +123,142 @@ describe('a second import on the same page', () => {
     expect(c.resumeNotice).toBe('');
     expect(c.decisions.excluded_items).toEqual([]);
     expect(c.decisions.mapping_actions).toEqual({});
+  });
+
+  it('ignores a bookmarked import response after a new upload owns the page', async () => {
+    const oldPlan = deferred<Response>();
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/v1/imports/imp-a/plan') return oldPlan.promise;
+      if (url === '/v1/groups/import/parse') return new Response(JSON.stringify({ jobId: 'imp-b' }), { status: 202 });
+      if (url === '/v1/imports/imp-b/plan') return new Response(JSON.stringify(plan('archive B')));
+      throw new Error(`unexpected request ${init?.method || 'GET'} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
+    const c = adminImport();
+    c.selectedFile = new Blob(['archive B']) as never;
+
+    const restoringA = c.resume('imp-a');
+    await c.upload();
+    await c.onParseComplete('imp-b');
+    oldPlan.resolve(new Response(JSON.stringify(plan('archive A'))));
+    await restoringA;
+
+    expect(c.jobId).toBe('imp-b');
+    expect(c.plan?.source_instance_id).toBe('archive B');
+  });
+
+  it('ignores a reopened import report that arrives after reset', async () => {
+    const oldReport = deferred<Response>();
+    let reportReadStarted!: () => void;
+    const reportStarted = new Promise<void>(done => { reportReadStarted = done; });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/v1/jobs/parse-a') return new Response(JSON.stringify({ id: 'parse-a', lineage: { children: [] } }));
+      if (url === '/v1/imports/imp-a/result') { reportReadStarted(); return oldReport.promise; }
+      if (url === '/v1/groups/import/parse') return new Response(JSON.stringify({ jobId: 'imp-b' }), { status: 202 });
+      if (url === '/v1/imports/imp-b/plan') return new Response(JSON.stringify(plan('archive B')));
+      throw new Error(`unexpected request GET ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
+    const c = adminImport();
+    c.selectedFile = new Blob(['archive B']) as never;
+
+    const restoringA = c.resumeApplied('imp-a', 'parse-a');
+    await reportStarted;
+    await c.upload();
+    await c.onParseComplete('imp-b');
+    oldReport.resolve(new Response(JSON.stringify(report)));
+    await restoringA;
+
+    expect(c.jobId).toBe('imp-b');
+    expect(c.plan?.source_instance_id).toBe('archive B');
+    expect(c.applyResult).toBeNull();
+    expect(c.applyOutcome).toBe('');
+  });
+
+  it('rechecks the plan after a completed parse before resolving it as consumed', async () => {
+    let planReads = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/v1/imports/imp-transition/plan') {
+        planReads++;
+        return planReads === 1
+          ? new Response('{}', { status: 404 })
+          : new Response(JSON.stringify(plan('newly completed parse')));
+      }
+      if (url === '/v1/jobs/get?id=imp-transition') {
+        return new Response(JSON.stringify({ status: 'completed', canonicalJobId: 'parse-transition' }));
+      }
+      throw new Error(`unexpected request GET ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const c = adminImport();
+    await c.resume('imp-transition');
+
+    expect(planReads).toBe(2);
+    expect(c.jobId).toBe('imp-transition');
+    expect(c.plan?.source_instance_id).toBe('newly completed parse');
+    expect(c.resumeNotice).toBe('');
+  });
+
+  it('does not let an older apply acceptance install state after reset', async () => {
+    const oldApply = deferred<Response>();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/v1/imports/imp-a/apply') return oldApply.promise;
+      throw new Error(`unexpected request GET ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const c = adminImport();
+    c.jobId = 'imp-a';
+    c.plan = plan('archive A');
+
+    const applyingA = c.apply();
+    c.resetImport();
+    oldApply.resolve(new Response(JSON.stringify({ jobId: 'apply-a' }), { status: 202 }));
+    await applyingA;
+
+    expect(c.applyJobId).toBeNull();
+    expect(c.applying).toBe(false);
+  });
+
+  it('does not let a destination search repopulate keys after reset', async () => {
+    const oldSearch = deferred<Response>();
+    const entry = { decision_key: 'category:old', suggestion: 'create' };
+    vi.stubGlobal('fetch', vi.fn(async () => oldSearch.promise));
+    const c = adminImport();
+    c.plan = { ...plan('archive A'), mappings: { categories: [entry] } };
+
+    const searching = c.searchMappingDest(entry, 'old destination');
+    c.resetImport();
+    oldSearch.resolve(new Response(JSON.stringify([{ id: 7, name: 'Old destination' }])));
+    await searching;
+
+    expect(c.mappingSearchResults).toEqual({});
+  });
+
+  it('does not let a closed parse stream change or close the replacement stream', () => {
+    const sources: Array<{ listeners: Record<string, (event: { data: string }) => void>; closed: boolean }> = [];
+    vi.stubGlobal('EventSource', class {
+      listeners: Record<string, (event: { data: string }) => void> = {};
+      closed = false;
+      constructor() { sources.push(this); }
+      addEventListener(type: string, listener: (event: { data: string }) => void) { this.listeners[type] = listener; }
+      close() { this.closed = true; }
+      emit(type: string, job: unknown) { this.listeners[type]?.({ data: JSON.stringify({ job }) }); }
+    });
+    const c = adminImport();
+    c.subscribeProgress('imp-a');
+    const sourceA = sources[0];
+    c.resetImport();
+    c.jobId = 'imp-b';
+    c.subscribeProgress('imp-b');
+    const sourceB = sources[1];
+
+    sourceA.emit('updated', { id: 'imp-a', status: 'completed' });
+
+    expect(c.job).toBeNull();
+    expect(sourceB.closed).toBe(false);
   });
 });
 
