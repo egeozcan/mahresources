@@ -205,7 +205,7 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 
 	m.mu.Unlock()
 
-	go m.processGenericJob(job)
+	m.startGenericWorker(job)
 
 	return job, nil
 }

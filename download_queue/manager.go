@@ -776,6 +776,18 @@ func (dm *DownloadManager) startDownloadWorker(job *DownloadJob) {
 	}()
 }
 
+// startGenericWorker runs a generic job (an export, an import, a clustering run)
+// under the same drain. Shutdown cancels it like a download, and a run may still
+// be writing when its context ends; whatever closes the database afterwards
+// relies on the drain having waited for that write.
+func (dm *DownloadManager) startGenericWorker(job *DownloadJob) {
+	dm.workers.Add(1)
+	go func() {
+		defer dm.workers.Done()
+		dm.processGenericJob(job)
+	}()
+}
+
 func (dm *DownloadManager) processJob(job *DownloadJob) {
 
 	// The attempt this goroutine owns, and the context its result must be judged
@@ -1825,7 +1837,7 @@ func (dm *DownloadManager) lookup(jobID string) (*DownloadJob, error) {
 // construction and never reassigned, so it needs no lock.
 func (dm *DownloadManager) startWorker(job *DownloadJob) {
 	if job.runFn != nil {
-		go dm.processGenericJob(job)
+		dm.startGenericWorker(job)
 	} else {
 		dm.startDownloadWorker(job)
 	}

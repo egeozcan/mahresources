@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -405,5 +406,40 @@ func TestShutdownRecordsPausedDownloads(t *testing.T) {
 	assertStoppedByShutdown(t, records[0])
 	if len(records[0].Payload) == 0 {
 		t.Error("no payload stored: the row could not be retried after the restart")
+	}
+}
+
+// A generic job (an export, an import, a clustering run) is cancelled by a
+// shutdown like a download, and may still be writing when its context ends.
+// Whatever closes the database after Shutdown relies on the drain having waited
+// for it, exactly as it waits for a download's terminal write.
+func TestShutdownWaitsForAGenericJobToUnwind(t *testing.T) {
+	dm := createTestManager()
+	dm.done = make(chan struct{})
+	dm.cleanupTicker = time.NewTicker(time.Hour)
+
+	started := make(chan struct{})
+	var unwound atomic.Bool
+	_, err := dm.SubmitJob("test", "working", func(ctx context.Context, _ *DownloadJob, _ ProgressSink) error {
+		close(started)
+		<-ctx.Done()
+		// The write a run makes on its way out.
+		time.Sleep(200 * time.Millisecond)
+		unwound.Store(true)
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the generic job never started")
+	}
+
+	dm.Shutdown()
+
+	if !unwound.Load() {
+		t.Fatal("Shutdown returned while the generic job was still unwinding")
 	}
 }
