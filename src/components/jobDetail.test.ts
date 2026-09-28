@@ -182,6 +182,12 @@ describe('the Job page timeline', () => {
         id: `e-${from + i}`, sequence: from + i, type: 'progress', createdAt: '2026-09-26T12:00:00Z',
     }));
     const after = (url: string) => Number(new URL(url, 'http://x').searchParams.get('afterSequence') || 0);
+    function deferred<T>() {
+        let resolve!: (value: T) => void;
+        const promise = new Promise<T>(done => { resolve = done; });
+        return { promise, resolve };
+    }
+    const flushMicrotasks = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
     test('reads past the first page, so the event that explains the current state is shown', async () => {
         const center = page('job-t1', url => {
@@ -261,6 +267,85 @@ describe('the Job page timeline', () => {
         } finally {
             vi.unstubAllGlobals();
         }
+    });
+
+    test('coalesces wake-ups during a read and continues from the event it just received', async () => {
+        const firstPage = deferred<{ events: any[] }>();
+        let reads = 0;
+        let activeReads = 0;
+        let maxActiveReads = 0;
+        const cursors: number[] = [];
+        const center = page('job-t7', async url => {
+            if (!url.includes('/events')) return { id: 'job-t7', state: 'running', version: 1 };
+            cursors.push(after(url));
+            reads += 1;
+            activeReads += 1;
+            maxActiveReads = Math.max(maxActiveReads, activeReads);
+            const result = reads === 1 ? await firstPage.promise : { events: events(2, 3) };
+            activeReads -= 1;
+            return result;
+        });
+
+        const loading = center.load();
+        await flushMicrotasks();
+        expect(reads).toBe(1);
+        center.followTimeline();
+        center.followTimeline();
+        expect(reads).toBe(1);
+
+        firstPage.resolve({ events: events(1, 1) });
+        await loading;
+        expect(center.timeline.map((event: any) => event.sequence)).toEqual([1, 2, 3]);
+        expect(cursors).toEqual([0, 1]);
+        expect(reads).toBe(2);
+        expect(maxActiveReads).toBe(1);
+    });
+
+    test('reloads from the beginning and ignores a response from the replaced read', async () => {
+        const firstPage = deferred<{ events: any[]; nextSequence?: number }>();
+        let reads = 0;
+        const cursors: number[] = [];
+        const center = page('job-t8', url => {
+            if (!url.includes('/events')) return { id: 'job-t8', state: 'running', version: 1 };
+            cursors.push(after(url));
+            reads += 1;
+            return reads === 1 ? firstPage.promise : { events: events(1, 3) };
+        });
+
+        const firstLoad = center.load();
+        await flushMicrotasks();
+        expect(reads).toBe(1);
+        const replacementLoad = center.load();
+        await flushMicrotasks();
+        expect(reads).toBe(1);
+
+        firstPage.resolve({ events: events(1, 1), nextSequence: 1 });
+        await Promise.all([firstLoad, replacementLoad]);
+        expect(cursors).toEqual([0, 0]);
+        expect(center.timeline.map((event: any) => event.sequence)).toEqual([1, 2, 3]);
+        expect(center.timelineMore).toBe(false);
+    });
+
+    test('drops a pending event response and queued wake-up when the page is destroyed', async () => {
+        const firstPage = deferred<{ events: any[]; nextSequence?: number }>();
+        let reads = 0;
+        const center = page('job-t9', url => {
+            if (!url.includes('/events')) return { id: 'job-t9', state: 'running', version: 1 };
+            reads += 1;
+            return firstPage.promise;
+        });
+
+        const loading = center.load();
+        await flushMicrotasks();
+        expect(reads).toBe(1);
+        center.followTimeline();
+        center.destroy();
+        firstPage.resolve({ events: events(1, 1), nextSequence: 1 });
+        await loading;
+        await flushMicrotasks();
+
+        expect(center.timeline).toEqual([]);
+        expect(reads).toBe(1);
     });
 
     test('a timeline read that failed says so and reads again when asked', async () => {
