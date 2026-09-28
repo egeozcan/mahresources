@@ -43,6 +43,10 @@ These follow-ups were not assigned to a batch 4 lane and remain separate work.
   automatically highlighted autocomplete suggestion.
 - Audit nested Alpine components that assign fields undeclared in their data object:
   confirmAction, resourceUpload, mrqlBar, codeEditor, blockEditor and globalSearch.
+- Fence debounced Alpine input events when an import form is replaced. A delayed
+  search event created on import A can execute after import B mounts and capture
+  B's generation. The reviewer reproduced this on both batch 3 and batch 4; the
+  async response fences in this batch do not worsen it.
 - Reconcile a `jobs.Claim` whose post-commit snapshot read fails instead of dropping
   the accepted execution until lease expiry.
 - Fence export artifact deletion so a stalled retention delete cannot remove a
