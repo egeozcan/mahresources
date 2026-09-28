@@ -1,5 +1,19 @@
 import { errorMessageFromResponse } from '../index.js';
 
+// The decisions a review starts from, before its plan's suggestions are applied.
+function freshDecisions() {
+  return {
+    parent_group_id: null,
+    resource_collision_policy: 'skip',
+    guid_collision_policy: 'merge',
+    acknowledge_missing_hashes: false,
+    mapping_actions: {},    // keyed by source_export_id or source_key
+    dangling_actions: {},   // keyed by dangling ref id
+    excluded_items: [],     // export IDs unchecked in the item tree
+    shell_group_actions: {},
+  };
+}
+
 export function adminImport() {
   return {
     selectedFile: null,
@@ -11,16 +25,7 @@ export function adminImport() {
     eventSource: null,
 
     // Decision state — collected from interactive review controls
-    decisions: {
-      parent_group_id: null,
-      resource_collision_policy: 'skip',
-      guid_collision_policy: 'merge',
-      acknowledge_missing_hashes: false,
-      mapping_actions: {},    // keyed by source_export_id or source_key
-      dangling_actions: {},   // keyed by dangling ref id
-      excluded_items: [],     // export IDs unchecked in the item tree
-      shell_group_actions: {},
-    },
+    decisions: freshDecisions(),
 
     // UI helpers
     parentGroupQuery: '',
@@ -38,7 +43,26 @@ export function adminImport() {
     applyJob: null,
     applyPhase: '',
     applyResult: null,
+    // How the apply the report belongs to ended, as far as this viewer can tell:
+    // 'succeeded', 'failed', or 'unknown' when its Job cannot be read (another
+    // account applied the import, or its record is gone). An unknown outcome is
+    // never shown as a success: a partial apply writes a report too.
+    applyOutcome: '',
     applyEventSource: null,
+
+    // Set when /admin/import?job=<handle> names an import whose review cannot
+    // be shown any more: what happened to it, and the page of the Job that
+    // parsed it, where its apply and report are.
+    resumeNotice: '',
+    resumeJobURL: '',
+
+    init() {
+      // A parsed import is reviewed from its plan on the server, so the page can
+      // be left and come back to: the parse's Job links here with its handle,
+      // and an upload puts the handle in the address so a reload keeps it.
+      const handle = new URLSearchParams(window.location.search).get('job');
+      if (handle) void this.resume(handle);
+    },
 
     destroy() {
       if (this.eventSource) {
@@ -48,12 +72,36 @@ export function adminImport() {
       this.closeApplySSE();
     },
 
+    // Forgets everything one import left on the page, so the next one (an
+    // upload, or a handle to resume) starts from nothing: its review, its
+    // decisions, its apply and its report.
+    resetImport() {
+      this.closeSSE();
+      this.closeApplySSE();
+      this.jobId = null;
+      this.job = null;
+      this.plan = null;
+      this.error = null;
+      this.decisions = freshDecisions();
+      this.parentGroupQuery = '';
+      this.parentGroupResults = [];
+      this.parentGroupName = '';
+      this.parentActiveIndex = -1;
+      this.flattenedItems = [];
+      this.applying = false;
+      this.applyJobId = null;
+      this.applyJob = null;
+      this.applyPhase = '';
+      this.applyResult = null;
+      this.applyOutcome = '';
+      this.resumeNotice = '';
+      this.resumeJobURL = '';
+    },
+
     async upload() {
       if (!this.selectedFile) return;
+      this.resetImport();
       this.uploading = true;
-      this.error = null;
-      this.plan = null;
-      this.jobId = null;
 
       try {
         const formData = new FormData();
@@ -73,12 +121,139 @@ export function adminImport() {
         }
         const data = await resp.json();
         this.jobId = data.jobId;
+        this.rememberHandle(data.jobId);
         this.subscribeProgress(data.jobId);
       } catch (err) {
         this.error = err.message;
       } finally {
         this.uploading = false;
       }
+    },
+
+    // Puts the import's handle in the address without navigating, so a reload
+    // or a bookmark comes back to this import.
+    rememberHandle(handle) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('job', handle);
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+      } catch (_) { /* the address is a convenience; the import goes on without it */ }
+    },
+
+    /**
+     * Restores the import a handle names: its review while the plan is waiting,
+     * its parse while that is running, and otherwise the apply that took the plan
+     * (its report, the groups it created and how it ended).
+     *
+     * Every read here is authorized by the server for this viewer, and a handle
+     * the viewer may not see answers exactly as one that does not exist, so the
+     * page can tell nobody whether an import is there.
+     */
+    async resume(handle) {
+      this.resetImport();
+      this.jobId = handle;
+      const encoded = encodeURIComponent(handle);
+      try {
+        const planResp = await fetch(`/v1/imports/${encoded}/plan`);
+        if (planResp.ok) {
+          this.plan = await planResp.json();
+          this.initDecisionsFromPlan();
+          return;
+        }
+        if (planResp.status !== 404) {
+          throw new Error(await errorMessageFromResponse(planResp));
+        }
+        // No plan to review: the parse is still running, it failed, or an apply
+        // took the plan (or the import's files were removed). The parse's own
+        // record says which.
+        const jobResp = await fetch(`/v1/jobs/get?id=${encoded}`);
+        if (jobResp.status === 404) {
+          this.jobId = null;
+          this.resumeNotice = 'This import could not be found. Its files may have been removed; upload the archive again to import it.';
+          return;
+        }
+        if (!jobResp.ok) {
+          throw new Error(await errorMessageFromResponse(jobResp));
+        }
+        const parse = await jobResp.json();
+        this.job = parse;
+        if (parse.canonicalJobId) {
+          this.resumeJobURL = '/job?id=' + encodeURIComponent(parse.canonicalJobId);
+        }
+        if (parse.status === 'failed' || parse.status === 'cancelled') {
+          this.error = parse.error || `Job ${parse.status}`;
+          return;
+        }
+        if (parse.status !== 'completed') {
+          this.subscribeProgress(handle);
+          return;
+        }
+        this.jobId = null;
+        await this.resumeApplied(handle, parse.canonicalJobId);
+      } catch (err) {
+        this.error = err.message;
+      }
+    },
+
+    // Shows what became of an import whose plan an apply took: the apply's report,
+    // and whether that apply succeeded, failed or is still running, read from the
+    // newest apply the parse's Job lists (following its Retries).
+    async resumeApplied(handle, parseJobId) {
+      const apply = await this.latestApply(parseJobId);
+      const resultResp = await fetch(`/v1/imports/${encodeURIComponent(handle)}/result`);
+      // Only a 404 means there is no report; any other failure is a read that
+      // answered nothing, and says so rather than looking like a removed import.
+      if (!resultResp.ok && resultResp.status !== 404) {
+        throw new Error('The import report could not be read: ' + await errorMessageFromResponse(resultResp));
+      }
+      const result = resultResp.ok ? await resultResp.json() : null;
+      const state = apply?.state || '';
+      if (state === 'queued' || state === 'running' || state === 'scheduled' || state === 'paused' || state === 'blocked') {
+        this.resumeNotice = 'This import is being applied. Follow it in the Jobs panel or on its Job page.';
+        return;
+      }
+      const failed = state !== '' && state !== 'succeeded';
+      if (failed) {
+        this.error = apply?.failure?.message || `The apply ended ${state}.`;
+      }
+      if (!result) {
+        if (!failed) {
+          this.resumeNotice = 'This import has no review left to resume: it was applied, or its plan was removed. Its Job page shows what happened to it.';
+        }
+        return;
+      }
+      this.applyOutcome = state === 'succeeded' ? 'succeeded' : (failed ? 'failed' : 'unknown');
+      this.applyResult = result;
+    },
+
+    async latestApply(parseJobId) {
+      if (!parseJobId) return null;
+      // A 404 is a Job this viewer cannot see; any other failure is a read that
+      // answered nothing, and is reported rather than read as invisibility.
+      const read = async (id) => {
+        const resp = await fetch(`/v1/jobs/${encodeURIComponent(id)}`);
+        if (resp.status === 404) return null;
+        if (!resp.ok) throw new Error('The import\'s Jobs could not be read: ' + await errorMessageFromResponse(resp));
+        return resp.json();
+      };
+      const newest = (jobs) => (Array.isArray(jobs) ? jobs : [])
+        .filter(job => job?.kind === 'group-import-apply')
+        .sort((a, b) => String(b.acceptedAt).localeCompare(String(a.acceptedAt)))[0] || null;
+      const parse = await read(parseJobId);
+      let apply = newest(parse?.lineage?.children);
+      // A Retry of an apply is a new Job linked to it; the newest one is the one
+      // whose outcome the report describes. An apply this viewer cannot see, or
+      // one retried by an account it cannot see, has an outcome it cannot know,
+      // and answers null rather than a guess. Retry lineage is linear, so the walk
+      // ends; the cap only guards a malformed answer.
+      for (let hop = 0; apply && hop < 1000; hop++) {
+        const detail = await read(apply.id);
+        if (!detail || detail.lineage?.retriedElsewhere) return null;
+        const next = newest(detail.lineage?.successors);
+        if (!next) return detail;
+        apply = next;
+      }
+      return null;
     },
 
     // SSE subscription — matches existing adminExport.js pattern exactly
@@ -538,6 +713,26 @@ export function adminImport() {
       }
     },
 
+    // --- Conflict outcomes ---
+
+    // What the apply does with a resource whose content is already here, under the
+    // resource collision policy currently chosen.
+    resourceCollisionOutcome() {
+      return this.decisions.resource_collision_policy === 'duplicate'
+        ? 'will be imported as duplicate rows'
+        : 'will be skipped, keeping the existing resource';
+    },
+
+    // What the apply does with an entity whose GUID is already here, under the GUID
+    // policy currently chosen.
+    guidPolicyOutcome() {
+      switch (this.decisions.guid_collision_policy) {
+        case 'skip': return 'will be skipped, keeping the existing rows';
+        case 'replace': return 'will replace the existing rows';
+        default: return 'will be merged into the existing rows';
+      }
+    },
+
     // --- Utilities ---
 
     humanBytes(bytes) {
@@ -606,10 +801,12 @@ export function adminImport() {
         this.applyPhase = payload.job.phase || '';
         if (payload.job.status === 'completed') {
           this.applying = false;
+          this.applyOutcome = 'succeeded';
           this.fetchApplyResult();
           this.closeApplySSE();
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
           this.applying = false;
+          this.applyOutcome = 'failed';
           this.error = payload.job.error || `Apply job ${payload.job.status}`;
           this.fetchApplyResult(); // partial-failure may have result
           this.closeApplySSE();

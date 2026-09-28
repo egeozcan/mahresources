@@ -47,7 +47,14 @@
   </section>
 
   <!-- Error -->
-  <div x-show="error" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
+  <div x-show="error" role="alert" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
+
+  {# An import named by ?job= whose review is gone: what became of it, and the #}
+  {# Job page that records its apply. #}
+  <div x-show="resumeNotice" role="status" class="rounded-md bg-stone-50 border border-stone-200 p-4 text-sm text-stone-700" data-testid="import-resume-notice">
+    <p x-text="resumeNotice"></p>
+    <p x-show="resumeJobURL" class="mt-2"><a :href="resumeJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the import's Job</a></p>
+  </div>
 
   <!-- Review Section (shown after parse completes) -->
   <template x-if="plan">
@@ -68,8 +75,13 @@
           <dd x-text="plan.counts.notes"></dd>
           <dt class="text-stone-500">Series</dt>
           <dd x-text="plan.counts.series"></dd>
-          <dt class="text-stone-500">Hash collisions (will skip)</dt>
-          <dd x-text="plan.conflicts.resource_hash_matches"></dd>
+          {# Each count names the policy that decides it: a resource whose GUID #}
+          {# is already here is decided by the GUID policy before its content is #}
+          {# looked at, so it is not among the content matches. #}
+          <dt x-show="plan.conflicts.resource_guid_matches !== undefined" class="text-stone-500">Resources already here by GUID</dt>
+          <dd x-show="plan.conflicts.resource_guid_matches !== undefined" data-testid="import-summary-guid-resources"><span x-text="plan.conflicts.resource_guid_matches"></span><span x-text="plan.conflicts.resource_guid_matches > 0 ? ' (' + guidPolicyOutcome() + ')' : ''"></span></dd>
+          <dt class="text-stone-500">Resources whose content is already here</dt>
+          <dd data-testid="import-summary-hash-resources"><span x-text="plan.conflicts.resource_hash_matches"></span><span x-text="plan.conflicts.resource_hash_matches > 0 ? ' (' + resourceCollisionOutcome() + ')' : ''"></span></dd>
         </dl>
         <template x-if="plan && plan.conflicts && plan.conflicts.guid_matches > 0">
           <p class="text-sm text-amber-700">
@@ -147,7 +159,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-stone-700 mb-1" for="collision-policy">Resource Collision Policy</label>
-            <p class="text-xs text-stone-500 mb-2">When a resource with the same hash already exists on this instance.</p>
+            <p class="text-xs text-stone-500 mb-2">When a resource with the same content already exists on this instance and no resource here has the imported one's GUID.</p>
             <select id="collision-policy" x-model="decisions.resource_collision_policy"
                     class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
               <option value="skip">Skip (use existing)</option>
@@ -370,7 +382,7 @@
       </section>
 
       <!-- Apply Section -->
-      <section aria-label="Apply" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-apply">
+      <section x-show="!applyResult" aria-label="Apply" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-apply">
         <h2 class="text-sm font-medium font-mono text-stone-700">Apply Import</h2>
         <p x-show="!applyJobId && !applyResult" class="text-sm text-stone-500 mb-3">Review your decisions above, then apply.</p>
 
@@ -404,8 +416,18 @@
           </button>
         </div>
 
+      </section>
+    </div>
+  </template>
+
+  {# The apply's report: shown after an apply on this page, and when ?job= names an #}
+  {# import an apply has already taken, where there is no plan to review. #}
+  <template x-if="applyResult">
+    <section aria-label="Import result" class="border-t border-stone-200 pt-5 space-y-3">
+      <h2 class="text-sm font-medium font-mono text-stone-700">Import Result</h2>
+      <p x-show="resumeJobURL" class="text-sm"><a :href="resumeJobURL" class="text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800">Open the import's Job</a></p>
         <!-- Success result -->
-        <template x-if="applyResult && !error">
+        <template x-if="applyResult && !error && applyOutcome !== 'unknown'">
           <div class="space-y-3" data-testid="import-apply-result">
             <div class="flex items-center gap-2 text-emerald-700">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
@@ -465,7 +487,44 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="gid in applyResult.created_group_ids" :key="gid">
-                    <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'#' + gid"></a>
+                    <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'Group #' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- A report whose apply this viewer cannot see: never shown as a success -->
+        <template x-if="applyResult && !error && applyOutcome === 'unknown'">
+          <div class="space-y-3" data-testid="import-apply-unknown">
+            <p class="text-sm text-stone-700">An apply took this import's plan, but its outcome is not available to you: another account applied it, or its Job is no longer kept. The report it wrote is below; it may describe a partial import.</p>
+            <template x-if="applyResult.created_group_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="gid in applyResult.created_group_ids" :key="gid">
+                    <a :href="'/group?id=' + gid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Group #' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_resource_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Resources</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="rid in applyResult.created_resource_ids" :key="rid">
+                    <a :href="'/resource?id=' + rid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Resource #' + rid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_note_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Notes</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="nid in applyResult.created_note_ids" :key="nid">
+                    <a :href="'/note?id=' + nid" class="text-xs text-amber-800 underline hover:text-amber-900" x-text="'Note #' + nid"></a>
                   </template>
                 </div>
               </div>
@@ -486,7 +545,7 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Groups (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="gid in applyResult.created_group_ids" :key="gid">
-                    <a :href="'/group?id=' + gid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + gid"></a>
+                    <a :href="'/group?id=' + gid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Group #' + gid"></a>
                   </template>
                 </div>
               </div>
@@ -496,7 +555,7 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Resources (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="rid in applyResult.created_resource_ids" :key="rid">
-                    <a :href="'/resource?id=' + rid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + rid"></a>
+                    <a :href="'/resource?id=' + rid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Resource #' + rid"></a>
                   </template>
                 </div>
               </div>
@@ -506,15 +565,14 @@
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Notes (may need cleanup)</p>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="nid in applyResult.created_note_ids" :key="nid">
-                    <a :href="'/note?id=' + nid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + nid"></a>
+                    <a :href="'/note?id=' + nid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'Note #' + nid"></a>
                   </template>
                 </div>
               </div>
             </template>
           </div>
         </template>
-      </section>
-    </div>
+    </section>
   </template>
 </div>
 {% endblock %}

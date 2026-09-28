@@ -62,6 +62,16 @@ program output and links back to the Job. A command's outcome names such a page
 as `detail.location`, a path on the same site; the Job Center opens it after the
 command succeeds and ignores any other value.
 
+A Job's title names its subject, so Jobs of one Kind can be told apart: a
+download's file name or host, `Export of <group>` (with `and N more groups` when
+an export has several root groups), `Import of <file>` and `Apply import of <file>`
+with the name the archive was uploaded under, and `Clusters for <Resource
+Reduction>`. Each name is cut to 80 characters. A title is a snapshot taken when
+the Job is accepted: renaming or deleting the group later does not change it, and
+an owner who later loses access to the group still reads their own Job's title. A
+Job is visible only to its owner and to administrators, who could both read the
+name when the Job was accepted.
+
 Every Kind's running Jobs count against one deployment budget,
 `-max-job-concurrency`. A Job whose turn comes while the budget is full waits
 `queued` for a slot rather than failing. The exception is a scheduled
@@ -427,7 +437,11 @@ includes them.
 
 A succeeded download publishes the Resource it created as its `resource` entity
 output. Plugin actions that return a local Resource, Note, or Group redirect
-publish an entity output too. An entity output is offered, and opened, only
+publish an entity output too, and a succeeded import apply publishes the first
+group it created, a root of the import, as its `group` entity output. A
+succeeded import parse publishes a `review` entity output that opens
+`/admin/import?job={handle}` and is offered while the import's plan or its
+apply's report is on disk. An entity output is offered, and opened, only
 while the viewer can see the entity it names: once the entity is deleted or
 leaves the viewer's scope, the Job no longer lists it and its link disappears
 from every surface. The Jobs panel, the Job Center list, and the Job

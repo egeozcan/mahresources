@@ -888,12 +888,7 @@ func (tc *translateContext) translateSimilarTo(db *gorm.DB, expr *SimilarToExpr)
 		dist = tc.similarityThreshold
 	}
 
-	filter := fmt.Sprintf("COALESCE(rs.p_distance, rs.hamming_distance) <= %d", dist)
-	if tc.aHashThreshold > 0 {
-		// Secondary aHash filter, matching the sidebar: legacy pairs with
-		// NULL a_distance always pass.
-		filter += fmt.Sprintf(" AND (rs.a_distance IS NULL OR rs.a_distance <= %d)", tc.aHashThreshold)
-	}
+	filter := SimilarPairPredicate("rs", dist, tc.aHashThreshold)
 
 	sql := fmt.Sprintf(
 		"%s.id IN ("+
@@ -1897,9 +1892,9 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) (string, error) {
 	// Postgres last.
 	if len(f.Parts) == 1 && f.Parts[0].Value == "distance" && tc.similarTarget != nil && tc.entityType == EntityResource {
 		return fmt.Sprintf(
-			"COALESCE((SELECT MIN(COALESCE(rs.p_distance, rs.hamming_distance)) FROM resource_similarities rs "+
+			"COALESCE((SELECT MIN(%s) FROM resource_similarities rs "+
 				"WHERE (rs.resource_id1 = %d AND rs.resource_id2 = %s.id) OR (rs.resource_id2 = %d AND rs.resource_id1 = %s.id)), 255)",
-			tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName), nil
+			SimilarPairDistance("rs"), tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName), nil
 	}
 
 	// <relation>.count → correlated COUNT(*) subquery (valid in ORDER BY on

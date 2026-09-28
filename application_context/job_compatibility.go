@@ -309,7 +309,7 @@ func downloadRowFromEntry(entry *download_queue.DownloadJob, handle, canonicalJo
 	snap := entry.Snapshot()
 	snap.ID = handle
 	snap.CanonicalJobID = canonicalJobID
-	return snap
+	return legacyRowInUTC(snap)
 }
 
 // downloadRowFromJob projects a durable Job into the legacy row shape, for a download
@@ -351,7 +351,7 @@ func downloadRowFromJob(projected jobs.Snapshot, handle, source string) *downloa
 	if projected.Failure != nil {
 		row.Error = projected.Failure.Message
 	}
-	return row
+	return legacyRowInUTC(row)
 }
 
 // LegacyDownloadStatusStates answers the canonical states a legacy download
@@ -516,7 +516,7 @@ func (ctx *MahresourcesContext) ProjectDownloadQueue() ([]*download_queue.Downlo
 			continue
 		}
 		canonical := entry.CanonicalJobID
-		if canonical != "" {
+		if canonical != "" && queueBackedSource(entry.Source) {
 			// One question decides whether this entry may be published at all: does the
 			// handle still name *this* execution? After a Retry it does not — the
 			// ancestor's entry keeps its id while the id now belongs to the successor —
@@ -551,9 +551,42 @@ func (ctx *MahresourcesContext) ProjectDownloadQueue() ([]*download_queue.Downlo
 			continue
 		}
 		seenHandle[entry.ID] = true
-		rows = append(rows, entry.Snapshot())
+		rows = append(rows, legacyRowInUTC(entry.Snapshot()))
 	}
 	return rows, nil
+}
+
+// queueBackedSource reports whether a queue entry's source is one of the Kinds the
+// queue executes and publishes for, whose handles the legacy id spaces name. A
+// managed entry (a plugin command or command import) names its Job too, but runs
+// it through its own runtime and has no handle in those spaces; its row is the
+// entry's own.
+func queueBackedSource(source string) bool {
+	for _, candidate := range queueBackedHandleNamespaces {
+		if candidate.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+// legacyRowInUTC states a legacy row's times in UTC. A live entry stamps them with
+// the process's clock and a durable Job reads them from the database, so without
+// this one listing mixes offsets for the same instant.
+func legacyRowInUTC(row *download_queue.DownloadJob) *download_queue.DownloadJob {
+	if row == nil {
+		return nil
+	}
+	row.CreatedAt = row.CreatedAt.UTC()
+	if row.StartedAt != nil {
+		startedAt := row.StartedAt.UTC()
+		row.StartedAt = &startedAt
+	}
+	if row.CompletedAt != nil {
+		completedAt := row.CompletedAt.UTC()
+		row.CompletedAt = &completedAt
+	}
+	return row
 }
 
 // maxLegacyQueueRows bounds the durable half of one legacy queue listing. The in-memory

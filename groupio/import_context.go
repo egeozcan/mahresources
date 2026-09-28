@@ -134,17 +134,18 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 	// Resolve dangling references from the manifest
 	plan.DanglingRefs = resolveDanglingRefs(manifest.Dangling)
 
-	// Count hash conflicts
-	plan.Conflicts.ResourceHashMatches = ctx.countHashConflicts(collector.resources)
-
 	// Track manifest-only missing hashes
 	plan.ManifestOnlyMissingHashes = countMissingHashes(collector.resources)
 
 	// Build hierarchical item tree
 	plan.Items = buildItemTree(collector)
 
-	// Detect GUID matches for content entities
-	ctx.resolveGUIDMatches(plan, collector)
+	// Detect GUID matches for content entities, then count the hash conflicts
+	// among the resources no GUID claims: the apply decides a GUID match by the
+	// GUID policy before it looks at the hash, so counting those twice promised a
+	// skip the apply never makes.
+	guidMatchedResources := ctx.resolveGUIDMatches(plan, collector)
+	plan.Conflicts.ResourceHashMatches = ctx.countHashConflicts(collector.resources, guidMatchedResources)
 
 	if err := cancelCtx.Err(); err != nil {
 		return nil, err
@@ -801,8 +802,9 @@ func danglingFromName(d archive.DanglingRef) string {
 // entity's GUID against the local database. Matching items are annotated with
 // GUIDMatch/GUIDMatchID/GUIDMatchName, and the plan's GUIDMatches counter is
 // incremented. Resources are checked separately since they appear as counts in
-// the tree, not as direct item nodes.
-func (ctx *opCtx) resolveGUIDMatches(plan *ImportPlan, collector *importDataCollector) {
+// the tree, not as direct item nodes; the ones that match are counted in
+// ResourceGUIDMatches too, and returned by export id.
+func (ctx *opCtx) resolveGUIDMatches(plan *ImportPlan, collector *importDataCollector) map[string]bool {
 	var walk func(items []ImportPlanItem)
 	walk = func(items []ImportPlanItem) {
 		for i := range items {
@@ -835,22 +837,29 @@ func (ctx *opCtx) resolveGUIDMatches(plan *ImportPlan, collector *importDataColl
 	walk(plan.Items)
 
 	// Resources appear as counts in items, not as direct children. Check them separately.
-	for _, rp := range collector.resources {
+	matched := map[string]bool{}
+	for exportID, rp := range collector.resources {
 		if rp.GUID != "" {
 			var existing models.Resource
 			if err := ctx.db.Where("guid = ?", rp.GUID).First(&existing).Error; err == nil {
 				plan.Conflicts.GUIDMatches++
+				plan.Conflicts.ResourceGUIDMatches++
+				matched[exportID] = true
 			}
 		}
 	}
+	return matched
 }
 
 // --- Hash conflicts ---
 
-func (ctx *opCtx) countHashConflicts(resources map[string]*archive.ResourcePayload) int {
+// countHashConflicts counts the resources whose content already exists here and
+// whose GUID matched nothing, which are the ones the resource collision policy
+// decides.
+func (ctx *opCtx) countHashConflicts(resources map[string]*archive.ResourcePayload, guidMatched map[string]bool) int {
 	count := 0
-	for _, rp := range resources {
-		if rp.Hash == "" {
+	for exportID, rp := range resources {
+		if rp.Hash == "" || guidMatched[exportID] {
 			continue
 		}
 		var existing int64

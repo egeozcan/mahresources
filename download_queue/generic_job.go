@@ -61,6 +61,10 @@ type ManagedJobOptions struct {
 	Controls        JobControls
 	Cancel          func(reason string) error
 	AuthoritativeID string
+	// CanonicalJobID names the durable Job the managed work runs for, so the
+	// entry's row names it as every other row does. The entry publishes into that
+	// Job through its own runtime, never through the queue's publication.
+	CanonicalJobID string
 }
 
 // managedSink is the concrete ProgressSink. Holds a reference to the manager
@@ -244,6 +248,7 @@ func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn Managed
 		cancel:          cancel,
 		ownerUserID:     opts.OwnerUserID,
 		AuthoritativeID: opts.AuthoritativeID,
+		CanonicalJobID:  opts.CanonicalJobID,
 		managed:         true,
 		managedControls: opts.Controls,
 		managedCancel:   opts.Cancel,

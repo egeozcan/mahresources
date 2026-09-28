@@ -35,6 +35,11 @@ const (
 	// due set instead of being released unchanged. Otherwise the oldest colliding
 	// rows can occupy the sweep's fixed page forever and starve later due rows.
 	scheduledDownloadActiveURLDefer = time.Minute
+
+	// A row whose account (or that account's scope) could not be read moves out of
+	// the due set for the same reason, and is asked again on a later sweep: the
+	// read answered nothing about the account, so it is no reason to fail the row.
+	scheduledDownloadChecksUnansweredDefer = time.Minute
 )
 
 // ScheduledDownloadSubmitFunc is the queue-submission seam used by the scheduler
@@ -444,6 +449,16 @@ func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimTok
 // has since ended: a cancel of its Job, which cancels the row a sweep holds. The
 // sweep then has nothing left to record, and the rows behind it still fire.
 var errScheduledDownloadClaimLost = errors.New("the row no longer carries this submit claim")
+
+// deferUnansweredScheduledDownload puts back a claimed row whose account checks
+// could not be read, due again after scheduledDownloadChecksUnansweredDefer, and
+// leaves the operator a log entry that names the row it is about.
+func (ctx *MahresourcesContext) deferUnansweredScheduledDownload(id uint, claimToken string, actorID uint, readErr error, now time.Time) error {
+	ctx.Logger().Warning(models.LogActionSystem, "scheduled_download", &id, actorUnresolvedLogName,
+		fmt.Sprintf("could not check user %d, who scheduled download %d; it is asked again in %s: %v",
+			actorID, id, scheduledDownloadChecksUnansweredDefer, readErr), nil)
+	return ctx.DeferScheduledDownloadClaim(id, claimToken, now.Add(scheduledDownloadChecksUnansweredDefer), now)
+}
 
 // MarkScheduledDownloadFailed records a terminal refusal/failure and releases
 // the claim. Failed scheduled downloads are not retried forever by the tick.
@@ -885,12 +900,28 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, errors.New("scheduled download has no owner"), now)
 	}
 	actorID := *row.CreatedByUserId
-	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(actorID))
+	// The account is resolved the way a Job's dispatch resolves it: a deleted
+	// account is an answer, and so is one that may no longer write or reach the
+	// target, but a read that failed (the account's, its scope's or a target's)
+	// answered nothing, and failing the row on it would end a download over an
+	// outage. Such a row waits and is asked again.
+	scoped, err := ctx.dispatchBinding(actorID)
+	if errors.Is(err, errDispatchAccountDeleted) {
+		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim,
+			errors.New("the account that scheduled this download was deleted"), now)
+	}
+	if err != nil {
+		return false, ctx.deferUnansweredScheduledDownload(row.ID, claim, actorID, err, now)
+	}
 	if err := scoped.requireWriteRole("submit a scheduled download"); err != nil {
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, err, now)
 	}
-	if err := scoped.validateDownloadTargetsInScope(creator); err != nil {
-		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, err, now)
+	refusal, readErr := scoped.downloadTargetsScopeRefusal(creator)
+	if readErr != nil {
+		return false, ctx.deferUnansweredScheduledDownload(row.ID, claim, actorID, readErr, now)
+	}
+	if refusal != nil {
+		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, refusal, now)
 	}
 	if cfg.ActiveDownload != nil {
 		if _, active := cfg.ActiveDownload(creator.URL); active {

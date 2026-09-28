@@ -328,8 +328,13 @@ func printPlanSummaryToWriter(w io.Writer, plan *application_context.ImportPlan)
 	fmt.Fprintf(w, "  Notes:     %d\n", plan.Counts.Notes)
 	fmt.Fprintf(w, "  Series:    %d\n", plan.Counts.Series)
 	fmt.Fprintf(w, "  Blobs:     %d\n", plan.Counts.Blobs)
+	// Each count is decided by its own policy: a resource whose GUID is already
+	// here never reaches the content check.
+	if plan.Conflicts.ResourceGUIDMatches > 0 {
+		fmt.Fprintf(w, "  Resources already here by GUID: %d (--guid-collision-policy decides)\n", plan.Conflicts.ResourceGUIDMatches)
+	}
 	if plan.Conflicts.ResourceHashMatches > 0 {
-		fmt.Fprintf(w, "  Hash matches (skip): %d\n", plan.Conflicts.ResourceHashMatches)
+		fmt.Fprintf(w, "  Resources whose content is already here: %d (--on-resource-conflict decides)\n", plan.Conflicts.ResourceHashMatches)
 	}
 	if plan.ManifestOnlyMissingHashes > 0 {
 		fmt.Fprintf(w, "  WARNING: %d resources missing bytes\n", plan.ManifestOnlyMissingHashes)

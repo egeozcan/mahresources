@@ -44,6 +44,8 @@
     --color-green-800: oklch(44.8% 0.119 151.328);
     --color-green-900: oklch(39.3% 0.095 152.535);
     --color-emerald-50: oklch(97.9% 0.021 166.113);
+    --color-emerald-200: oklch(90.5% 0.093 164.15);
+    --color-emerald-400: oklch(76.5% 0.177 163.223);
     --color-emerald-600: oklch(59.6% 0.145 163.225);
     --color-emerald-700: oklch(50.8% 0.118 165.612);
     --color-emerald-900: oklch(37.8% 0.077 168.94);
@@ -2259,6 +2261,9 @@
   .border-amber-700 {
     border-color: var(--color-amber-700);
   }
+  .border-emerald-200 {
+    border-color: var(--color-emerald-200);
+  }
   .border-gray-200 {
     border-color: var(--color-gray-200);
   }
@@ -2934,6 +2939,9 @@
   .text-emerald-700 {
     color: var(--color-emerald-700);
   }
+  .text-emerald-900 {
+    color: var(--color-emerald-900);
+  }
   .text-gray-400 {
     color: var(--color-gray-400);
   }
@@ -3099,6 +3107,9 @@
   }
   .decoration-amber-400 {
     text-decoration-color: var(--color-amber-400);
+  }
+  .decoration-emerald-400 {
+    text-decoration-color: var(--color-emerald-400);
   }
   .decoration-indigo-300 {
     text-decoration-color: var(--color-indigo-300);
@@ -3955,6 +3966,13 @@
     &:hover {
       @media (hover: hover) {
         text-decoration-color: var(--color-amber-900);
+      }
+    }
+  }
+  .hover\:decoration-emerald-900 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-emerald-900);
       }
     }
   }

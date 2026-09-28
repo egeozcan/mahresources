@@ -129,7 +129,7 @@ Group-limited users and guests cannot import; every import route refuses them. E
 ### Workflow
 
 1. **Upload and parse** -- Upload the tar file to the server. A background job extracts the manifest and entity JSON, identifies hash collisions with existing resources, builds schema definition mappings, and produces a plan.
-2. **Review** -- The plan lists every entity that will be created, highlights resource hash conflicts, shows schema definition mapping suggestions, and flags dangling references. The web UI renders this as an interactive review screen; the CLI prints a summary.
+2. **Review** -- The plan lists every entity that will be created, counts the resources the GUID and resource collision policies each decide, shows schema definition mapping suggestions, and flags dangling references. The web UI renders this as an interactive review screen; the CLI prints a summary. The review is kept on the server with the plan, so it can be left and resumed: `/admin/import?job={handle}` restores it while the plan waits to be applied, and the upload puts that address in the browser's address bar. The parse's Job links there as **View import review**. Once an apply has taken the plan, the same address shows that apply's report, the groups it created and whether it succeeded, failed or is still running, with a link to the import's Job. When the viewer cannot see the apply's Job (an administrator applied the import, or the Job's record is gone), the page says the outcome is not available instead, because a partial apply writes a report too; the link from the Job goes away when the import's files are removed. The page reads everything through the import routes, so a viewer who may not see the import gets the same "could not be found" as for an address that names no import.
 3. **Decide** -- Supply decisions: resource collision policy, schema definition mappings, dangling reference handling, optional parent group, and any items to exclude.
 4. **Apply** -- A background job creates entities in dependency order (schema defs, then groups top-down, then resources, then notes), wiring up all cross-references by export ID.
 
@@ -143,11 +143,11 @@ Groups, notes, and resources each carry a stable GUID assigned on create and wri
 | `skip` | Leave the existing row untouched, including its many-to-many links |
 | `replace` | Replace the existing row's content from the archive payload |
 
-GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item and `guid_conflict` per schema mapping. The CLI flag is `--guid-collision-policy`.
+GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item, `guid_conflict` per schema mapping, and `conflicts.resource_guid_matches` for the resources this policy decides. The CLI flag is `--guid-collision-policy`.
 
 ### Resource Collision Policy
 
-When a resource in the archive has the same SHA1 hash as an existing resource on the destination:
+When a resource in the archive has the same SHA1 hash as an existing resource on the destination, and no resource there carries its GUID (a GUID match is decided by the GUID collision policy above, whatever the content). The plan counts these resources as `conflicts.resource_hash_matches`:
 
 | Policy | Behavior |
 |--------|----------|

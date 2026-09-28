@@ -116,6 +116,15 @@ func (ctx *MahresourcesContext) openableJobOutputs(items []jobOutputOf) ([]jobs.
 		}
 		var name named
 		if item.Output.Type == jobs.OutputTypeEntity {
+			// An import review is named by its parse's handle rather than an id, and
+			// is offered while the import's files are there (importReviewOutputOffered).
+			if review, isReview, err := ctx.importReviewOutputOffered(item.Snapshot.Kind, item.Output.Reference); isReview {
+				if err != nil {
+					return nil, nil, err
+				}
+				shown[i] = review
+				continue
+			}
 			page, id, err := jobEntityTarget(item.Output.Reference)
 			if err != nil {
 				// A reference the resolver refuses as malformed opens nothing.

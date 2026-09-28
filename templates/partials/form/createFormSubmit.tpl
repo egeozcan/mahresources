@@ -28,6 +28,9 @@
                 {# the control for that state; choosing files again starts over. #}
                 :disabled="phase === 'uploading' || phase === 'partial'"
                 :class="phase === 'uploading' || phase === 'partial' ? 'opacity-60 cursor-not-allowed' : ''"
+                {# aria-disabled, not disabled, while a background download is being #}
+                {# submitted: a disabled button drops the focus the Jobs panel returns to. #}
+                :aria-disabled="backgroundSubmitting ? 'true' : null"
                 {% endif %}
                 class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Save

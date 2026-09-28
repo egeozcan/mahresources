@@ -108,7 +108,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 			OwnerUserID: actorUserID,
 			ActorUserID: actorUserID,
 			Origin:      "api",
-			Title:       "Cluster a Resource Reduction",
+			Title:       reductionComputeJobTitle(reduction.Name),
 			Replay:      jobs.ReplayInput{Input: input},
 			LegacyRefs:  []jobs.LegacyRef{{Namespace: ReductionComputeHandleNamespace, Handle: legacyID}},
 		})

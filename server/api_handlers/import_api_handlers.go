@@ -119,7 +119,7 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 			return
 		}
 
-		file, _, err := r.FormFile("file")
+		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, "missing file field: "+err.Error(), http.StatusBadRequest)
 			return
@@ -165,7 +165,7 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 		// its final path before the Job's input names it.
 		importID := fmt.Sprintf("imp-%d", time.Now().UnixNano())
 		if submitter, ok := requestCtx.(importSubmitter); ok && submitter != nil {
-			submission := submitter.SubmitImportParse(importID, stagingPath, "api")
+			submission := submitter.SubmitImportParse(importID, stagingPath, header.Filename, "api")
 			if submission.Err != nil {
 				_ = fs.Remove(stagingPath)
 				http.Error(w, submission.Err.Error(), http.StatusServiceUnavailable)
@@ -193,7 +193,7 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 // *application_context.MahresourcesContext, not by test mocks) that accepts the
 // durable Job behind an import submission and dispatches it.
 type importSubmitter interface {
-	SubmitImportParse(handle, stagingTarPath, origin string) application_context.QueueJobSubmission
+	SubmitImportParse(handle, stagingTarPath, fileName, origin string) application_context.QueueJobSubmission
 	SubmitImportApply(parseHandle string, decisions *application_context.ImportDecisions, origin string) application_context.QueueJobSubmission
 }
 

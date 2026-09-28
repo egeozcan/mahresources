@@ -15,6 +15,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/models"
 )
 
 // This file is the group-export Kind adapter: the one place that knows how an
@@ -170,17 +171,47 @@ func exportFidelityWords(request *ExportRequest) []string {
 	return words
 }
 
-// exportJobTitle is the Job's own title: how many groups were asked for, never
-// which — a group name is a person's own data and a title is searchable text.
-func exportJobTitle(input json.RawMessage) string {
+// exportJobTitle is the Job's own title: the first root group's name, as the
+// submitter could read it at acceptance, and how many more roots there are. A
+// title may carry a group's name because the Job's readers, its owner and the
+// administrators, could all read that name when the Job was accepted; the title is
+// a snapshot, so a later rename or deletion does not reach it (job_titles.go).
+// With no name to use (the group could not be read) it says how many groups.
+func exportJobTitle(input json.RawMessage, firstRootName string) string {
 	request, err := exportRequestOf(input)
 	if err != nil {
 		return "Group export"
 	}
-	if len(request.RootGroupIDs) == 1 {
+	more := len(request.RootGroupIDs) - 1
+	name := jobTitleName(firstRootName)
+	switch {
+	case name == "" && more == 0:
 		return "Export of one group"
+	case name == "":
+		return fmt.Sprintf("Export of %d groups", len(request.RootGroupIDs))
+	case more == 0:
+		return boundedJobTitle("Export of " + name)
+	case more == 1:
+		return boundedJobTitle("Export of " + name + " and 1 more group")
+	default:
+		return boundedJobTitle(fmt.Sprintf("Export of %s and %d more groups", name, more))
 	}
-	return fmt.Sprintf("Export of %d groups", len(request.RootGroupIDs))
+}
+
+// exportFirstRootName reads the name of the first group an export asks for,
+// through this context's principal, so it names only a group the submitter can
+// read. A read that fails, or finds nothing, answers "" and the title counts
+// groups instead: the name is for telling Jobs apart, never a check.
+func (ctx *MahresourcesContext) exportFirstRootName(request *ExportRequest) string {
+	if request == nil || len(request.RootGroupIDs) == 0 {
+		return ""
+	}
+	var names []string
+	if err := ctx.db.Model(&models.Group{}).Where("id = ?", request.RootGroupIDs[0]).
+		Limit(1).Pluck("name", &names).Error; err != nil || len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }
 
 // exportArchivePath is where one execution's archive is staged.
@@ -974,7 +1005,7 @@ func (ctx *MahresourcesContext) SubmitGroupExport(request *ExportRequest, origin
 		OwnerUserID: owner,
 		ActorUserID: owner,
 		Origin:      origin,
-		Title:       exportJobTitle(input),
+		Title:       exportJobTitle(input, ctx.exportFirstRootName(request)),
 		Replay:      jobs.ReplayInput{Input: input},
 		LegacyRefs:  []jobs.LegacyRef{{Namespace: GroupExportHandleNamespace, Handle: legacyID}},
 	})

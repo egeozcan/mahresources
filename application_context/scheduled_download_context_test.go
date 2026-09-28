@@ -892,3 +892,79 @@ func TestScheduledDownloadIsInTheUserDeletionSweep(t *testing.T) {
 	}
 	t.Fatal("models.ScheduledDownload is not in stampedModels(), so deleting its owner leaves a deferred download able to fire as a deleted account")
 }
+
+// A read of the account a legacy row acts as that fails answers nothing about the
+// account, so the row waits for the next sweep rather than failing for good.
+func TestFireScheduledDownloadDefersALegacyRowWhoseAccountCannotBeRead(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ctx.Config.AuthEnabled = true
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+	failing := failReadsOf(t, ctx, "users")
+	failing.Store(true)
+
+	now := time.Now()
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             now,
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatal("submit was called for a row whose account could not be read")
+			return "", nil
+		},
+	})
+	failing.Store(false)
+	if err != nil {
+		t.Fatalf("fire due downloads: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("fired = %d, want 0", fired)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusPending {
+		t.Fatalf("status = %q (%q), want pending: an unread account refuses nothing", got.Status, got.LastError)
+	}
+	if got.ClaimToken != "" || got.ClaimedAt != nil {
+		t.Fatalf("deferred row kept a claim: token=%q claimedAt=%v", got.ClaimToken, got.ClaimedAt)
+	}
+	if !got.DueAt.After(now) {
+		t.Fatalf("due = %v, want after %v so the next sweep asks again later", got.DueAt, now)
+	}
+	if got.Attempts != 0 {
+		t.Fatalf("Attempts = %d, want 0 when nothing was submitted", got.Attempts)
+	}
+}
+
+// An account that was deleted is an answer: the row fails and says so.
+func TestFireScheduledDownloadFailsALegacyRowWhoseAccountWasDeleted(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ctx.Config.AuthEnabled = true
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+	if err := ctx.db.Delete(&models.User{}, ownerUser.ID).Error; err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now(),
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatal("submit was called for a row whose account was deleted")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire due downloads: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("fired = %d, want 0", fired)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusFailed {
+		t.Fatalf("status = %q, want failed", got.Status)
+	}
+	if !strings.Contains(got.LastError, "deleted") {
+		t.Fatalf("last error = %q, want it to say the account was deleted", got.LastError)
+	}
+}

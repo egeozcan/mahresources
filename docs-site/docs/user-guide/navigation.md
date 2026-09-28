@@ -213,7 +213,7 @@ Navigation and page layout share one breakpoint, 900px.
 | Shortcut | Context | Action |
 |----------|---------|--------|
 | Cmd/Ctrl + K | Any page | Open/close global search |
-| Cmd/Ctrl + Shift + D | Any page | Toggle Download Cockpit |
+| Cmd/Ctrl + Shift + D | Any page | Open or close the Jobs panel |
 | Cmd/Ctrl + V | Any page with upload context | Open paste upload modal (requires group/note detail page, or list filtered by owner) |
 | Escape | Any page | Close dialogs, dropdowns, modals, and inline editors |
 

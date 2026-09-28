@@ -16,6 +16,7 @@
 import { csrfToken } from '../utils/csrfToken.js';
 import { parseUploadError } from '../utils/uploadError.js';
 import { focusOn } from '../utils/focus.js';
+import { errorMessageFromResponse } from '../index.js';
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for unit tests)
@@ -108,6 +109,40 @@ export function isPermanentFailure(file) {
   return s >= 400 && s < 500;
 }
 
+/**
+ * The body of a background download: the form's text fields, url-encoded as the
+ * native post would send them. A file input's File is left out; the picker is
+ * ignored whenever a URL is given.
+ *
+ * @param {Iterable<[string, FormDataEntryValue]>} entries
+ * @returns {URLSearchParams}
+ */
+export function backgroundDownloadBody(entries) {
+  const body = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (typeof value === 'string') body.append(key, value);
+  }
+  return body;
+}
+
+/**
+ * What the form says once a background download is submitted: how many
+ * downloads were started, and each URL the server refused with its reason.
+ *
+ * @param {number} started
+ * @param {Array<{url?: string, reason?: string}>} refused
+ * @returns {{notice: string, refusals: string[]}}
+ */
+export function backgroundDownloadOutcome(started, refused) {
+  const notice = started === 1
+    ? 'Download started. Follow it in the Jobs panel.'
+    : `${started} downloads started. Follow them in the Jobs panel.`;
+  const refusals = (Array.isArray(refused) ? refused : [])
+    .map((entry) => [entry?.url, entry?.reason].filter(Boolean).join(': '))
+    .filter(Boolean);
+  return { notice, refusals };
+}
+
 // ---------------------------------------------------------------------------
 // Alpine component
 // ---------------------------------------------------------------------------
@@ -138,6 +173,13 @@ export function resourceUpload() {
     maxUploadSize: 0,
 
     cancelled: false,
+
+    // ----- background download state --------------------------------------
+    backgroundSubmitting: false,
+    backgroundNotice: '',
+    backgroundRefusals: [],
+    backgroundError: '',
+    backgroundJobIds: [],
 
     init() {
       // Captured here, not read from $el later. Alpine's $el resolves to the
@@ -256,6 +298,18 @@ export function resourceUpload() {
       if (event.defaultPrevented) return;
 
       const form = event.target;
+
+      // A background download is submitted from here and the page stays, so the
+      // reader sees it start: the Jobs panel opens on the new Jobs and the form
+      // says what was started. Navigating away instead landed on a list the new
+      // resource was not in yet, with nothing saying the download had begun, and
+      // a download that finished during the navigation was announced by no page.
+      if (this.url.trim() && this.background) {
+        event.preventDefault();
+        void this.submitInBackground(form, event.submitter || null);
+        return;
+      }
+
       const input = form.querySelector('input[type="file"][name="resource"]');
       const picked = [...(input?.files || [])];
 
@@ -299,6 +353,56 @@ export function resourceUpload() {
       this.cancelled = false;
 
       this.run(this.files.map((_, i) => i));
+    },
+
+    // ----- background download ------------------------------------------
+
+    async submitInBackground(form, submitter) {
+      if (this.backgroundSubmitting) return;
+      const action = form.getAttribute('action') || '/v1/resource/remote?background=true';
+      await this.postBackgroundDownload(action, backgroundDownloadBody(new FormData(form).entries()), submitter);
+    },
+
+    async postBackgroundDownload(action, body, submitter) {
+      this.backgroundSubmitting = true;
+      this.backgroundNotice = '';
+      this.backgroundRefusals = [];
+      this.backgroundError = '';
+      try {
+        const response = await fetch(action, {
+          method: 'POST',
+          // Without it the server answers the redirect the native post follows.
+          headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        if (!response.ok) {
+          this.backgroundError = await errorMessageFromResponse(response);
+          return;
+        }
+        const data = await response.json();
+        const rows = Array.isArray(data?.jobs) ? data.jobs : [];
+        const outcome = backgroundDownloadOutcome(rows.length, data?.refused);
+        this.backgroundNotice = outcome.notice;
+        this.backgroundRefusals = outcome.refusals;
+        // Cleared so a second Save does not start the same downloads again; the
+        // other fields stay for the next URL.
+        this.url = '';
+        this.backgroundJobIds = rows.map((row) => row?.canonicalJobId)
+          .filter((id, index, all) => typeof id === 'string' && id && all.indexOf(id) === index);
+        this.showBackgroundJobs(submitter);
+      } catch (err) {
+        this.backgroundError = err?.message || 'The download could not be started.';
+      } finally {
+        this.backgroundSubmitting = false;
+      }
+    },
+
+    // Opens the Jobs panel on the downloads this form started. Focus returns to
+    // the control that asked when the panel closes.
+    showBackgroundJobs(opener) {
+      window.dispatchEvent(new CustomEvent('jobs-panel-open', {
+        detail: { returnFocusTo: opener || null, jobIds: [...this.backgroundJobIds] },
+      }));
     },
 
     // ----- the pool -------------------------------------------------------
