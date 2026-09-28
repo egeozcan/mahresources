@@ -4,9 +4,14 @@
  * Covers: axe-core violations in the open modal, Escape-to-close, and tab
  * order through the canonical keyboard-only crop path (aspect → X → Y →
  * Width → Height → comment → Crop → Cancel).
+ *
+ * Reaching the crop dialog is two steps now — Image Actions…, then Crop — so
+ * every case here opens it through the shared helper rather than clicking
+ * `#crop-open-<id>`, which is not in the document until that popup is.
  */
 import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
+import { openCropDialog } from '../../helpers/image-actions';
 
 test.describe.serial('Image crop modal accessibility', () => {
   let resourceId: number;
@@ -37,9 +42,7 @@ test.describe.serial('Image crop modal accessibility', () => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     // axe-core needs the image to be loaded so it can evaluate alt text.
     await dialog.locator('img').first().waitFor({ state: 'visible' });
@@ -51,9 +54,7 @@ test.describe.serial('Image crop modal accessibility', () => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
@@ -63,9 +64,7 @@ test.describe.serial('Image crop modal accessibility', () => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     // Focus the aspect select explicitly so we have a deterministic starting
     // point (<dialog>.showModal() focuses the first tabbable element, but the

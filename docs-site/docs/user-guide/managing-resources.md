@@ -208,15 +208,15 @@ To remove a tag, click the **x** on the tag label.
 
 ## Image Operations
 
-Image resources have additional operations available in the sidebar:
+Image resources have their operations in the sidebar under **Image Actions**. Clicking **Image Actions…** opens a dialog with **Recalculate Dimensions**, **Rotate 90°**, and **Crop…**; **Crop…** opens the crop dialog from there.
 
 ### Rotate
 
-Rotate an image by a specified number of degrees. The UI provides a **Rotate 90 Degrees** button in the sidebar; the API accepts any integer angle:
+Rotate an image by a specified number of degrees. The UI provides a **Rotate 90°** button; the API accepts any integer angle:
 
 1. Navigate to the image resource
-2. In the sidebar, find **Rotate 90 Degrees**
-3. Click **Rotate**
+2. In the sidebar, click **Image Actions…**
+3. Click **Rotate 90°**
 
 Rotation creates a new version with the rotated content and clears cached thumbnails.
 
@@ -225,7 +225,7 @@ Rotation creates a new version with the rotated content and clears cached thumbn
 Crop an image to a rectangular region. Cropping is available for raster image files.
 
 1. Navigate to the image resource
-2. In the sidebar, find **Crop** and click **Crop…** to open the crop dialog
+2. In the sidebar, click **Image Actions…**, then **Crop…**, to open the crop dialog
 3. Under **Save as**, choose **New version** (the default) or **New resource**
 4. Drag on the image to select the crop area, or type exact pixel values for **X**, **Y**, **Width**, and **Height**
 5. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**
@@ -252,7 +252,7 @@ SVG and ICO files cannot be cropped -- re-upload them as PNG or JPEG first.
 If image dimensions appear incorrect:
 
 1. Navigate to the image resource
-2. In the sidebar, find **Update Dimensions**
+2. In the sidebar, click **Image Actions…**
 3. Click **Recalculate Dimensions**
 
 This re-reads the image file and updates the stored width/height values.

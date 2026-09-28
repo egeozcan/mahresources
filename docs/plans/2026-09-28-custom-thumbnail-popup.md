@@ -1,4 +1,4 @@
-# Custom Thumbnail: one button, and a popup (2026-09-28)
+# Sidebar popups: Custom Thumbnail, then Image Actions (2026-09-28)
 
 ## Goal
 
@@ -72,3 +72,53 @@ page"), which is the honest answer for a page that does not take pastes.
   the status line, not the image.
 - The outcome stays in the popup after a success rather than the popup closing
   under the reader, which is what `cropModal.tpl` does.
+
+## Follow-up: Image Actions (same day)
+
+The same shape was then applied to the other three image operations, which had
+been a sidebar group of three section headings and three buttons
+(**Update Dimensions** / **Recalculate Dimensions**, **Rotate 90 Degrees** /
+**Rotate**, **Crop** / **Crop…**). It is now one **Image Actions…** button and a
+popup holding **Recalculate Dimensions**, **Rotate 90°** and **Crop…**, each with
+a one-line statement of what it does — every line taken from the user guide,
+since the popup drops the three headings that used to carry the distinction.
+
+Two things this surfaced:
+
+- **The shared rules were about to be written twice.** `customThumbnail` had
+  open/close with the opener capture, the `modality.js` guard and the deferred
+  focus restore. Those three are easy to get subtly wrong and impossible to
+  notice when wrong, so they are now `src/components/sidebarPopup.js` and both
+  components spread it; `customThumbnail` overrides the `onOpen` hook to drop the
+  previous run's outcome. `open()` also now takes the opener from
+  `captureTrigger($event)` rather than from focus, which a mouse press does not
+  always set.
+- **Crop is a second dialog, and it is a native one.** It lives outside the
+  popup, so `modality.js` cannot be the mechanism that keeps the two apart — the
+  popup is closed and the crop dialog opened, a tick apart, because `x-trap` is
+  still armed at the end of that call and `showModal()` over an armed trap pulls
+  focus back into the popup behind it. The hand-off focuses the Image Actions
+  button first, so `<dialog>`'s own close-restore has somewhere real to return
+  to: the Crop… button it would otherwise restore to is inside the popup that
+  has just been removed.
+
+Moving the Crop… button inside an `x-if` also broke every spec that clicked
+`#crop-open-<id>` — six call sites, and the failure reads as a timeout rather
+than as the change that caused it. They go through
+`e2e/helpers/image-actions.ts::openCropDialog` now.
+
+### Verification (follow-up)
+
+- `src/components/imageActions.test.ts` — 10 tests. Removing the `focusOn`
+  before `showModal` fails two of them.
+- `e2e/tests/accessibility/18-a11y-image-actions-modal.spec.ts` — 6 passed:
+  closed sidebar shows one button, axe over the open popup, Escape + focus
+  return, the trap in both directions, the hand-off not stacking two dialogs,
+  and the crop dialog handing focus back to the Image Actions button.
+- `resource-crop` + `crop-zero-dims-banner` + `16-a11y-crop-modal` — 11 passed.
+- `tests/accessibility/` + `tests/lightbox/` + `custom-thumbnail` — 352 passed.
+  `npm run test:unit` 1869 · `go test --tags 'json1 fts5' ./...` clean ·
+  `./scripts/css-scan-test.sh` clean.
+- Measured the two sidebar buttons at 1400/1100/900/768/500/390px: no clipping
+  and no overflow at any of them, so the `…` in the label is the ellipsis
+  character and not truncation.

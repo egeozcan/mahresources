@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures/base.fixture';
 import { getWorkerBaseUrl } from '../../fixtures/base.fixture';
+import { openCropDialog } from '../../helpers/image-actions';
 import path from 'path';
 
 async function fetchVersionCount(request: any, resourceId: number): Promise<number> {
@@ -50,10 +51,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop happy-path ${testRunId}`, 'sample-image-9.png');
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     // Fill crop rectangle via numeric inputs (drag is brittle in Playwright).
     await dialog.locator(`#crop-x-${resourceId}`).fill('10');
@@ -80,9 +78,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop to new resource ${testRunId}`, 'sample-image-11.png');
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     await dialog.locator('[data-testid="crop-save-mode-resource"]').check();
     await dialog.locator(`#crop-x-${resourceId}`).fill('4');
@@ -133,8 +129,7 @@ test.describe.serial('Resource crop', () => {
     });
 
     const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await page.locator(`#crop-open-${resourceId}`).click();
-    await expect(dialog).toBeVisible();
+    await openCropDialog(page, resourceId);
     await dialog.locator('[data-testid="crop-save-mode-resource"]').check();
     await dialog.locator(`#crop-x-${resourceId}`).fill('0');
     await dialog.locator(`#crop-y-${resourceId}`).fill('0');
@@ -146,8 +141,7 @@ test.describe.serial('Resource crop', () => {
     await dialog.locator('button:has-text("Cancel")').click();
     await expect(dialog).not.toBeVisible();
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    await expect(dialog).toBeVisible();
+    await openCropDialog(page, resourceId);
     await dialog.locator(`#crop-x-${resourceId}`).fill('30');
     await dialog.locator(`#crop-y-${resourceId}`).fill('30');
     await dialog.locator(`#crop-w-${resourceId}`).fill('25');
@@ -172,9 +166,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop cancel ${testRunId}`, 'sample-image-37.png');
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     // Enter rect values, then cancel
     await dialog.locator(`#crop-x-${resourceId}`).fill('5');
@@ -194,9 +186,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop aspect ${testRunId}`, 'sample-image-39.png'); // 60×40
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     // Lock to 1:1 and request a rect whose naive clamp would crop the width
     // and height independently (producing a non-square rect).
@@ -226,9 +216,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop h-driver ${testRunId}`, 'sample-image-2.png');
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     await dialog.locator(`#crop-aspect-${resourceId}`).selectOption('1:1');
     await dialog.locator(`#crop-x-${resourceId}`).fill('0');
@@ -249,9 +237,7 @@ test.describe.serial('Resource crop', () => {
     const resourceId = await createCropResource(apiClient, `Crop invalid ${testRunId}`, 'sample-image-38.png');
     await resourcePage.gotoDisplay(resourceId);
 
-    await page.locator(`#crop-open-${resourceId}`).click();
-    const dialog = page.locator(`#crop-modal-${resourceId}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resourceId);
 
     await dialog.locator(`#crop-w-${resourceId}`).fill('0');
     await dialog.locator(`#crop-h-${resourceId}`).fill('10');

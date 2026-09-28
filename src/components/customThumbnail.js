@@ -16,8 +16,7 @@
 // a request is in flight, and dismissing the dialog must not cancel the
 // refresh. The status line is what is lost by closing early, not the image.
 
-import { focusedElement, restoreFocus } from '../utils/focus.js';
-import { blockingModal } from '../utils/modality.js';
+import { sidebarPopup } from './sidebarPopup.js';
 
 function refreshPreviewImages(resourceId) {
   const prefix = `/v1/resource/preview?id=${resourceId}`;
@@ -34,37 +33,16 @@ function refreshPreviewImages(resourceId) {
 
 export function customThumbnail({ resourceId }) {
   return {
+    ...sidebarPopup(),
     resourceId,
-    isOpen: false,
     isBusy: false,
     errorMessage: '',
     statusMessage: '',
-    // The sidebar button the reader pressed. Captured at open: by the time the
-    // popup closes, focus is on one of its own controls, which x-if has removed.
-    _opener: null,
 
-    open() {
-      if (this.isOpen) return;
-      // Two aria-modal dialogs open at once is a defect whichever way it paints:
-      // each arms its own x-trap, and the reader is held by one while looking at
-      // the other. Shared with every other overlay in the app, so this cannot
-      // become the rule that only one side enforces.
-      if (blockingModal(this.$root)) return;
-      this._opener = focusedElement();
-      // The last outcome described a dialog that no longer exists.
+    // The last outcome described a popup that no longer exists.
+    onOpen() {
       this.errorMessage = '';
       this.statusMessage = '';
-      this.isOpen = true;
-    },
-
-    close() {
-      const opener = this._opener;
-      this._opener = null;
-      this.isOpen = false;
-      // Deferred a tick, as pluginActionModal and massEditModal do: restoring
-      // synchronously happens while x-trap is still armed, which pulls focus
-      // straight back in before the x-if has torn the subtree down.
-      this.$nextTick(() => restoreFocus(opener));
     },
 
     triggerFilePick() {

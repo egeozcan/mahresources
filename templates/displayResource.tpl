@@ -349,7 +349,7 @@
     {# returns early while `isOpen` is false, so a closed popup is not involved.   #}
     <div class="sidebar-group" x-data='customThumbnail({"resourceId": {{ resource.ID }}})' @paste.window.capture="onPaste($event)">
         {% include "/partials/sideTitle.tpl" with title="Custom Thumbnail" %}
-        <button type="button" @click="open()" data-testid="custom-thumbnail-open"
+        <button type="button" @click="open($event)" data-testid="custom-thumbnail-open"
             class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Custom Thumbnail…
         </button>
@@ -411,25 +411,57 @@
     {% if sc.ImageOperations %}
     {# Gated on the raster allowlist, not isImage: isImage also matches SVG, so this group offered rotate/recalculate actions the server answered with a 500 (finding 86). #}
     {% if isRasterImage %}
-    <div class="sidebar-group">
-        {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
-        <form action="/v1/resource/recalculateDimensions?redirect={{ url|urlencode }}" method="post" class="mb-3">
-            <input type="hidden" name="id" value="{{ resource.ID }}">
-            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Recalculate Dimensions</button>
-        </form>
-        {% include "/partials/sideTitle.tpl" with title="Rotate 90 Degrees" %}
-        <form action="/v1/resources/rotate" method="post">
-            <input type="hidden" name="id" value="{{ resource.ID }}">
-            <input type="hidden" name="degrees" value="90">
-            <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Rotate</button>
-        </form>
-        {% include "/partials/sideTitle.tpl" with title="Crop" %}
-        <button
-            type="button"
-            id="crop-open-{{ resource.ID }}"
-            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
-            onclick="document.getElementById('crop-modal-{{ resource.ID }}').showModal()"
-        >Crop…</button>
+    {# One button, and a popup for what it does — the same shape as the Custom #}
+    {# Thumbnail group above, and on the same rules (see sidebarPopup.js).     #}
+    {# Crop is the one action that is not a form post: it opens the native     #}
+    {# <dialog> further down, so openCrop() hands the popup over to it rather #}
+    {# than stacking two aria-modal dialogs.                                   #}
+    <div class="sidebar-group" x-data='imageActions({"resourceId": {{ resource.ID }}})'>
+        {% include "/partials/sideTitle.tpl" with title="Image Actions" %}
+        <button type="button" @click="open($event)" data-testid="image-actions-open"
+            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+            Image Actions…
+        </button>
+        <template x-if="isOpen">
+            <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
+                <div class="plugin-action-modal" role="dialog" aria-modal="true"
+                     aria-labelledby="image-actions-title-{{ resource.ID }}"
+                     x-trap.noreturn.noscroll="isOpen">
+                    <header class="plugin-action-modal-header">
+                        <h3 class="plugin-action-modal-title" id="image-actions-title-{{ resource.ID }}">Image Actions</h3>
+                        <button type="button" @click="close()" class="plugin-action-modal-close" aria-label="Close">&times;</button>
+                    </header>
+                    <div class="px-5 pb-4 pt-3 space-y-1">
+                        {# Each action states what it does, because the popup drops the #}
+                        {# three section headings the sidebar had. Every line is from the #}
+                        {# user guide, not invented here.                                  #}
+                        <form action="/v1/resource/recalculateDimensions?redirect={{ url|urlencode }}" method="post">
+                            <input type="hidden" name="id" value="{{ resource.ID }}">
+                            <button type="submit" data-testid="image-actions-recalculate"
+                                class="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                                Recalculate Dimensions
+                            </button>
+                            <p class="text-xs text-stone-500 mt-1 mb-3">Re-reads the image file and updates the stored width and height.</p>
+                        </form>
+                        <form action="/v1/resources/rotate" method="post">
+                            <input type="hidden" name="id" value="{{ resource.ID }}">
+                            <input type="hidden" name="degrees" value="90">
+                            <button type="submit" data-testid="image-actions-rotate"
+                                class="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                                Rotate 90&#176;
+                            </button>
+                            <p class="text-xs text-stone-500 mt-1 mb-3">Creates a new version with the rotated content and clears cached thumbnails.</p>
+                        </form>
+                        <button type="button" @click="openCrop()" id="crop-open-{{ resource.ID }}"
+                            data-testid="image-actions-crop"
+                            class="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                            Crop&#8230;
+                        </button>
+                        <p class="text-xs text-stone-500 mt-1">Choose a region, then save it as a new version or as a resource of its own.</p>
+                    </div>
+                </div>
+            </div>
+        </template>
     </div>
     {% include "/partials/cropModal.tpl" with resource=resource %}
     {% endif %}

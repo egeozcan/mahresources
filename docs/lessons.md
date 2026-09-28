@@ -2192,3 +2192,11 @@ where the review's own record lives.
   does, and only for listeners registered *later* on the same node and phase. A
   capture-phase listener does not depend on registration order at all, so it is
   the one to reach for when ownership of a shared event is the point.
+
+## Image actions popup — 2026-09-28
+
+- A sidebar group that becomes a popup is not one component, it is two: the shared open/close rules (capture the opener at open, refuse over another painted dialog, restore focus a tick after close) were about to be written a second time, and the second copy is the one that drifts. They live in `sidebarPopup.js`; `customThumbnail` and `imageActions` spread it and override the `onOpen` hook.
+- The opener comes from `captureTrigger(event)`, not from `focusedElement()`. A mouse press does not focus a button in every browser, so `focusedElement()` there reports whatever was focused before — possibly nothing — and the reader is dropped on `<body>` when the popup closes.
+- Crop is a native `<dialog>` living outside the popup, so it cannot be stacked under `modality.js`'s guard: the popup is closed and the crop dialog opened, a tick apart (`x-trap` is still armed at the end of the call, and `showModal()` over an armed trap pulls focus back into the popup behind it).
+- The hand-off focuses the Image Actions button before `showModal()`. `<dialog>` restores focus on close to whatever was focused when it opened, and the Crop… button that opened it is inside the popup that has just been removed — without that line, walking away from a crop leaves the reader on `<body>`. The unit test fails if the line goes.
+- A control moving inside an `x-if` breaks every spec that clicks it, as a timeout rather than as anything that looks like the change. Six e2e call sites drove `#crop-open-<id>` directly; they now go through `e2e/helpers/image-actions.ts` so the two steps are written once.

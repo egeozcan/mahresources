@@ -9,6 +9,7 @@
  * decode failure.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { openCropDialog } from '../../helpers/image-actions';
 import path from 'path';
 
 test.describe('BH-008: crop modal surfaces decode failures', () => {
@@ -37,10 +38,7 @@ test.describe('BH-008: crop modal surfaces decode failures', () => {
     });
 
     await page.goto(`/resource?id=${resource.ID}`);
-    await page.locator(`#crop-open-${resource.ID}`).click();
-
-    const dialog = page.locator(`#crop-modal-${resource.ID}`);
-    await expect(dialog).toBeVisible();
+    const dialog = await openCropDialog(page, resource.ID);
 
     // Force the decode-failed state by dispatching 'error' on the <img>.
     // This mirrors what the browser does for a broken/corrupt file or a
