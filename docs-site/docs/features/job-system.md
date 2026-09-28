@@ -253,7 +253,8 @@ Job's page whose read failed offers **Try again** and a link to All jobs.
 
 Progress updates arrive over the live stream. They are not announced to screen readers; state changes are,
 once each, with the reason when a Job fails. The drawer announces the Jobs it
-follows, on every page; the Job Center and a Job's page announce only a Job the
+follows, on every page, including a Job its short lists leave out that the Job
+Center or a Job's page shows changing; those pages announce only a Job the
 drawer does not follow, such as another account's Job while an administrator's
 drawer shows **My jobs**. That includes a Job accepted and
 finished within a moment of each other, such as a download refused with a 404:

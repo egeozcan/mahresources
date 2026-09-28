@@ -206,7 +206,8 @@ describe('job list live refresh', () => {
         await vi.advanceTimersByTimeAsync(5);
 
         expect(onRowChanges).toHaveBeenCalledTimes(1);
-        expect(onRowChanges.mock.calls[0][0].map((job: { id: string }) => job.id)).toEqual(['a']);
+        expect(onRowChanges.mock.calls[0][0].map((change: any) => [change.previous.state, change.next.id, change.next.state]))
+            .toEqual([['running', 'a', 'failed']]);
         expect(stateChangeAnnouncement(onRowChanges.mock.calls[0][0])).toBe('Import failed.');
     });
 
@@ -228,22 +229,29 @@ describe('job list live refresh', () => {
         expect(stateChangeAnnouncement(stateChanges(before, after))).toBe('sunrise.png failed: HTTP 404 Not Found.');
     });
 
-    test('leaves a change the drawer announces to the drawer, and says the rest once', () => {
-        const stop = followJobAnnouncements(job => job.ownerUserId === 7);
+    test('hands its changes to the drawer and says the ones the drawer hands back', () => {
+        const heard: any[] = [];
+        const stop = followJobAnnouncements({
+            hear: (changes: any[]) => {
+                heard.push(...changes);
+                return changes.filter(change => change.next.ownerUserId !== 7);
+            },
+        });
         const list = jobList();
         const said: string[] = [];
         list._liveRegion = { announce: (text: string) => said.push(text), destroy() {} } as any;
-        list.announceChanges([
-            { id: 'mine', title: 'mine.bin', state: 'succeeded', ownerUserId: 7 },
-            { id: 'theirs', title: 'theirs.bin', state: 'failed', ownerUserId: 8, failure: { message: 'HTTP 403 Forbidden' } },
-        ]);
+        const mine = { previous: { id: 'mine', state: 'running', version: 2 }, next: { id: 'mine', title: 'mine.bin', state: 'succeeded', version: 3, ownerUserId: 7 } };
+        const theirs = {
+            previous: { id: 'theirs', state: 'running', version: 2 },
+            next: { id: 'theirs', title: 'theirs.bin', state: 'failed', version: 3, ownerUserId: 8, failure: { message: 'HTTP 403 Forbidden' } },
+        };
+        list.announceChanges([mine, theirs]);
+        expect(heard).toEqual([mine, theirs]);
         expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.']);
-        list.announceChanges([{ id: 'mine', title: 'mine.bin', state: 'cancelled', ownerUserId: 7 }]);
-        expect(said).toHaveLength(1);
         stop();
         // With no drawer on the page, the list says everything itself.
-        list.announceChanges([{ id: 'mine', title: 'mine.bin', state: 'cancelled', ownerUserId: 7 }]);
-        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.', 'mine.bin cancelled.']);
+        list.announceChanges([mine]);
+        expect(said).toEqual(['theirs.bin failed: HTTP 403 Forbidden.', 'mine.bin succeeded.']);
     });
 
     test('keeps a details element the reader opened open across the morph', () => {

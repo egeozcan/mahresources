@@ -17,6 +17,25 @@ async function startSlowFailingServer() {
   return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
 }
 
+// Holds every request until release() and then answers each with its own
+// bytes, so several downloads finish together.
+async function startHeldServer() {
+  const held: Array<() => void> = [];
+  const server = http.createServer((request, response) => {
+    held.push(() => {
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      response.end(`${request.url} ${Date.now()} ${Math.random()}`);
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    heldCount: () => held.length,
+    release: () => held.splice(0).forEach(answer => answer()),
+  };
+}
+
 async function csrfOf(page: Page): Promise<string> {
   const me = await page.request.get('/v1/auth/me');
   expect(me.ok()).toBe(true);
@@ -71,7 +90,8 @@ async function announcementsOf(page: Page, text: string) {
   return page.evaluate((wanted) => {
     const alpine = (window as any).Alpine;
     const drawer = alpine.$data(document.querySelector('[data-testid="job-panel-root"]'))?._liveRegion?.element;
-    const center = alpine.$data(document.querySelector('[data-testid="job-detail"]'))?._liveRegion?.element;
+    const view = document.querySelector('[data-testid="job-detail"]') || document.querySelector('[data-testid="job-center"]');
+    const center = view ? alpine.$data(view)?._liveRegion?.element : null;
     return ((window as any).__announced as { text: string; region: Element }[])
       .filter(entry => entry.text.includes(wanted))
       .map(entry => entry.region === drawer ? 'drawer' : entry.region === center ? 'page' : 'other');
@@ -125,6 +145,47 @@ test.describe('one announcement per Job state change', () => {
     } finally {
       await adminContext.close();
       server.close();
+    }
+  });
+
+  // The drawer's lists are capped, so the Job Center shows Jobs the drawer
+  // never reads. With its Finished group at one row, two downloads finishing
+  // together leave at least one of them out of it, and the list hands that
+  // change to the drawer, which says each once.
+  test('Jobs the drawer\'s capped lists leave out are heard once each on the Job Center', async ({ browser, baseURL, authSeed }) => {
+    const held = await startHeldServer();
+    const adminContext = await browser.newContext({ baseURL });
+    try {
+      const admin = await adminContext.newPage();
+      await recordAnnouncements(admin);
+      await admin.route(url => url.pathname === '/jobs', async route => {
+        const response = await route.fetch();
+        const body = (await response.text())
+          .replace(/(name="x-jobs-panel-finished-limit" content=")\d+/, (_, head) => `${head}1`);
+        await route.fulfill({ response, body });
+      });
+      await loginAs(admin, authSeed.admin);
+      const stamp = Date.now();
+      const files = [`capped-a-${stamp}.bin`, `capped-b-${stamp}.bin`];
+      const ids = [];
+      for (const file of files) ids.push(await submit(admin, `${held.base}/${file}`, authSeed.outsideGroupId));
+      await expect.poll(held.heldCount, { timeout: 20_000 }).toBe(2);
+
+      await admin.goto(`/jobs?search=${stamp}`);
+      const center = admin.getByTestId('job-center');
+      for (const id of ids) await expect(center.locator(`[data-job-id="${id}"]`)).toContainText('Running');
+      await expect.poll(() => admin.evaluate(() =>
+        (window as any).Alpine.$data(document.querySelector('[data-testid="job-panel-root"]'))?.streamCaughtUp === true)).toBe(true);
+
+      held.release();
+      for (const file of files) {
+        await expect.poll(() => announcementsOf(admin, `${file} succeeded`), { timeout: 20_000 }).toEqual(['drawer']);
+      }
+      await admin.waitForTimeout(3000);
+      for (const file of files) expect(await announcementsOf(admin, `${file} succeeded`)).toEqual(['drawer']);
+    } finally {
+      await adminContext.close();
+      held.server.close();
     }
   });
 });

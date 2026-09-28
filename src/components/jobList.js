@@ -7,7 +7,7 @@ import {
     lifecycleAnnouncement, nextStreamRetryDelay, progressAccessibleText, progressIndeterminate, progressText, progressValue,
     reloadAfterStreamReset, selectedBulkCommands, streamCursorSequence,
 } from './jobCenter.js';
-import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
+import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
 import { applyProgressFrame, formatDuration, formatRate, liveEtaText, liveRateText } from './jobProgress.js';
 import { terminalStates } from './jobStates.js';
 import { focusOn, keepFocusWithin } from '../utils/focus.js';
@@ -171,14 +171,15 @@ export function rowStates(container) {
 
 /**
  * The Jobs whose state a refresh changed, among those on the page both before and
- * after it. A row that appeared or left is a change of membership, which the
- * refreshed list itself shows; announcing it would repeat every filter's churn.
+ * after it, each as `{ previous, next }`. A row that appeared or left is a change
+ * of membership, which the refreshed list itself shows; announcing it would
+ * repeat every filter's churn.
  */
 export function stateChanges(before, after) {
     const changes = [];
     for (const [id, next] of after) {
         const previous = before.get(id);
-        if (previous && previous.state !== next.state) changes.push(next);
+        if (previous && previous.state !== next.state) changes.push({ previous, next });
     }
     return changes;
 }
@@ -188,7 +189,7 @@ export function stateChanges(before, after) {
 export function stateChangeAnnouncement(changes) {
     if (!changes.length) return '';
     if (changes.length > 3) return `${changes.length} jobs changed state.`;
-    return changes.map(job => lifecycleAnnouncement(job)).join(' ');
+    return changes.map(({ next }) => lifecycleAnnouncement(next)).join(' ');
 }
 
 const TERMINAL_STATES = new Set(terminalStates());
@@ -339,11 +340,12 @@ export function jobList() {
             window.removeEventListener('job-list-notice', this._onNotice);
         },
 
-        // The drawer announces the Jobs it follows, on this page as on every
-        // other; the list says only the changes it does not follow, such as
-        // another account's Job while an administrator's drawer lists their own.
+        // The drawer's ledger says the changes it follows, on this page as on
+        // every other, and has not already heard; the list says the ones it
+        // hands back, such as another account's Job while an administrator's
+        // drawer lists their own.
         announceChanges(changes) {
-            const message = stateChangeAnnouncement(changes.filter(job => !drawerAnnouncesJob(job)));
+            const message = stateChangeAnnouncement(tellDrawerOfJobs(changes));
             if (message) this._liveRegion?.announce(message);
         },
 

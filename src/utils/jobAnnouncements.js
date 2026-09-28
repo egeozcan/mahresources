@@ -1,27 +1,37 @@
 // Who says a Job's state change on a page. The Jobs drawer is on every page and
-// announces the Jobs it follows: every Job the viewer may see, or, when an
-// administrator's drawer lists only their own, those. A page's own Job view
-// (the Job Center list, a Job's page) announces a change only when the drawer
-// does not follow that Job, so each change is said once, by one region.
+// keeps the one record of what the reader has been told about each Job (its
+// ledger). A page's own Job view (the Job Center list, a Job's page) sees
+// changes on its cards that the drawer may never read, since the drawer's lists
+// are capped, so it hands each change to the drawer. The drawer says the ones it
+// follows unless its ledger has already heard them, and hands back the rest for
+// the page to say. Each change is then said once, by one region, whichever of
+// the two saw it first.
 
-let follows = null;
+let drawer = null;
 
 /**
- * Registers the drawer's answer to "do you announce this Job?". The returned
- * function takes it back, and does nothing once another answer replaced it.
+ * Registers the drawer: `hear(changes)` takes a page's changes, each
+ * `{ previous, next }` (the Job as the page showed it before and after), and
+ * returns the ones the drawer leaves to the page. The returned function takes
+ * the registration back, and does nothing once another replaced it.
  */
-export function followJobAnnouncements(predicate) {
-    follows = predicate;
+export function followJobAnnouncements(announcer) {
+    drawer = announcer;
     return () => {
-        if (follows === predicate) follows = null;
+        if (drawer === announcer) drawer = null;
     };
 }
 
-/** Whether the drawer announces this Job's changes, so a page must not. */
-export function drawerAnnouncesJob(job) {
+/**
+ * Hands a page's state changes to the drawer and returns the ones the page must
+ * say itself: all of them when no drawer is on the page, or when it fails.
+ */
+export function tellDrawerOfJobs(changes) {
+    if (!changes.length || typeof drawer?.hear !== 'function') return changes;
     try {
-        return typeof follows === 'function' && follows(job) === true;
+        const left = drawer.hear(changes);
+        return Array.isArray(left) ? left : changes;
     } catch {
-        return false;
+        return changes;
     }
 }

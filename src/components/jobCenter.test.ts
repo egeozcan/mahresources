@@ -654,23 +654,26 @@ describe('Job Center event stream catch-up boundary', () => {
         expect(center._liveRegion.announce).toHaveBeenLastCalledWith('Index rebuild cancelled.');
     });
 
-    test('a Job the drawer announces is not announced again by its page, and one it does not follow is, with its reason', () => {
+    test('hands its Job\'s change to the drawer, and says it, with its reason, only when the drawer hands it back', () => {
         const center = jobCenter();
-        center.jobs = [{ id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 }];
+        const running = { id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 };
+        center.jobs = [running];
         center._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
         const failed = {
             id: 'job', title: 'sunrise.png', kind: 'remote-download', state: 'failed', version: 3, ownerUserId: 8,
             failure: { code: 'http-404', message: 'HTTP 404 Not Found' },
         };
 
-        const stop = followJobAnnouncements(job => job.ownerUserId === 8);
+        const heard: any[] = [];
+        const stop = followJobAnnouncements({ hear: (changes: any[]) => { heard.push(...changes); return []; } });
         center.applyStreamSnapshot(failed, null, true);
+        expect(heard).toEqual([{ previous: running, next: failed }]);
         expect(center._liveRegion.announce).not.toHaveBeenCalled();
         stop();
 
-        // An administrator's drawer on My jobs does not follow another account's
-        // Job, so the page that shows it says its change.
-        const stopOwn = followJobAnnouncements(job => job.ownerUserId === 7);
+        // An administrator's drawer on My jobs hands another account's Job
+        // back, so the page that shows it says its change.
+        const stopOwn = followJobAnnouncements({ hear: (changes: any[]) => changes });
         center.jobs = [{ ...failed, state: 'running', version: 3 }];
         center.detail = null;
         center.details = {};

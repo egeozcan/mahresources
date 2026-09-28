@@ -1409,13 +1409,53 @@ export function jobPanel() {
             this.refresh();
         },
 
-        // The drawer announces the Jobs its stream follows, and tells the
-        // page's own Job views so (utils/jobAnnouncements.js), which then say
-        // only the others: one region per change. With My jobs chosen it follows
-        // the administrator's own Jobs; once its stream stopped, none.
+        // The page's own Job views hand the drawer the changes they see
+        // (utils/jobAnnouncements.js), so the drawer's ledger decides each one
+        // once, including a Job its capped lists never read.
         registerAnnouncements() {
-            this._stopAnnouncing = followJobAnnouncements(job => !this.streamStopped &&
-                (this.ownerScope !== 'me' || (job?.ownerUserId != null && Number(job.ownerUserId) === this._ownerViewer)));
+            this._stopAnnouncing = followJobAnnouncements({ hear: changes => this.hearFromPage(changes) });
+        },
+
+        // The Jobs this drawer announces: every Job its stream follows, which
+        // with My jobs chosen is the administrator's own; once its stream
+        // stopped, none.
+        followsJob(job) {
+            return !this.streamStopped &&
+                (this.ownerScope !== 'me' || (job?.ownerUserId != null && Number(job.ownerUserId) === this._ownerViewer));
+        },
+
+        // Changes a page saw on its own cards, heard as a read of this stream
+        // generation, and said through the ledger, so a change the drawer has
+        // already heard (from its stream or its own read) is not said again.
+        // A Job the drawer never read, one its capped lists leave out, is heard
+        // from the page's card before the change, as a read would have heard
+        // it. While the stream is still catching up nothing can be said here
+        // (hearJob), so the change is recorded, which keeps the drawer from
+        // saying it later, and left to the page with the Jobs it does not
+        // follow.
+        hearFromPage(changes) {
+            const left = [];
+            const spoken = [];
+            for (const change of changes) {
+                const { previous, next } = change || {};
+                if (!next?.id || !next.state || !this.followsJob(next)) {
+                    left.push(change);
+                    continue;
+                }
+                if (previous?.state && !this._heard.has(next.id) && !this.jobs.some(row => row.id === next.id)) {
+                    const version = Number(previous.version || 0);
+                    this._heard.set(next.id, {
+                        state: previous.state, version, stateSince: version, generation: this._streamGeneration, withheld: '',
+                    });
+                }
+                if (this.streamCaughtUp) this.hearFromRead(next, this._streamGeneration, spoken);
+                else {
+                    this.hearJob(next);
+                    left.push(change);
+                }
+            }
+            this.announceNews(spoken);
+            return left;
         },
 
         unregisterAnnouncements() {

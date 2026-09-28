@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import * as userSettings from '../userSettings.js';
 import { epochMicros, jobPanel, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
-import { drawerAnnouncesJob } from '../utils/jobAnnouncements.js';
+import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -4203,25 +4203,109 @@ describe('Job Center lifecycle event types', () => {
 });
 
 describe('which page region announces a Job', () => {
-    test('the drawer claims the Jobs it follows: every visible one, or an administrator\'s own on My jobs', () => {
-        const panel = jobPanel();
-        (panel as any).registerAnnouncements();
-        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(true);
-        expect(drawerAnnouncesJob({ id: 'b', ownerUserId: null })).toBe(true);
+    const running = { id: 'far', title: 'far.bin', kind: 'remote-download', state: 'running', version: 2, ownerUserId: 8 };
+    const succeeded = { ...running, state: 'succeeded', version: 4 };
 
+    function caughtUpPanel(spoken: string[] = []) {
+        const panel = jobPanel();
+        panel._liveRegion = liveRegion(spoken) as any;
+        panel.streamCaughtUp = true;
+        panel._streamGeneration = 1;
+        (panel as any).registerAnnouncements();
+        return panel;
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    // The drawer's lists are capped, so a page shows Jobs the drawer never
+    // reads. The page's card before the change stands for what the drawer
+    // heard, and the change is said once, whichever region saw it first.
+    test('a change to a Job the drawer\'s lists leave out is said once, by the drawer', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'far', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 30 }),
+            lastEventId: 'v2:30',
+        });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+
+        // The same change seen again, by the page's next refresh or the
+        // drawer's own read, is not news.
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        const again: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, again);
+        expect(again).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
+    test('a change the drawer has already said is not said again when the page hands it over', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        panel.jobs = [running];
+        panel.hearJob(running);
+        const news: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, news);
+        panel.announceNews(news);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+
+        expect(tellDrawerOfJobs([{ previous: running, next: succeeded }])).toEqual([]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['far.bin succeeded.']);
+        (panel as any).unregisterAnnouncements();
+    });
+
+    test('hands back what it does not follow, and what it cannot say yet', async () => {
+        vi.useFakeTimers();
+        const spoken: string[] = [];
+        const panel = caughtUpPanel(spoken);
+        const theirs = { previous: running, next: succeeded };
+        const mine = {
+            previous: { ...running, id: 'mine', title: 'mine.bin', ownerUserId: 7 },
+            next: { ...succeeded, id: 'mine', title: 'mine.bin', ownerUserId: 7 },
+        };
+        const nobodys = {
+            previous: { ...running, id: 'nobody', ownerUserId: null },
+            next: { ...succeeded, id: 'nobody', ownerUserId: null },
+        };
+
+        // An administrator's drawer on My jobs follows their own Jobs only.
         panel._ownerViewer = 7;
         panel.ownerScope = 'me';
-        expect(drawerAnnouncesJob({ id: 'mine', ownerUserId: 7 })).toBe(true);
-        expect(drawerAnnouncesJob({ id: 'theirs', ownerUserId: 8 })).toBe(false);
-        expect(drawerAnnouncesJob({ id: 'nobody\'s', ownerUserId: null })).toBe(false);
+        expect(tellDrawerOfJobs([theirs, mine, nobodys])).toEqual([theirs, nobodys]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['mine.bin succeeded.']);
+
+        // Still catching up, the drawer can say nothing: the page says the
+        // change, and the drawer records it so its live event is not news.
+        panel.ownerScope = '';
+        panel.streamCaughtUp = false;
+        expect(tellDrawerOfJobs([theirs])).toEqual([theirs]);
+        panel.streamCaughtUp = true;
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'far', jobVersion: 4, type: 'succeeded', sequence: 4, deliverySequence: 31 }),
+            lastEventId: 'v2:31',
+        });
+        const read: any[] = [];
+        panel.hearFromRead(succeeded, panel._streamGeneration, read);
+        expect(read).toEqual([]);
 
         // A drawer whose stream stopped says nothing about Jobs.
-        panel.ownerScope = '';
         panel.streamStopped = true;
-        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(false);
+        expect(tellDrawerOfJobs([mine])).toEqual([mine]);
+        panel.streamStopped = false;
 
         (panel as any).unregisterAnnouncements();
-        panel.streamStopped = false;
-        expect(drawerAnnouncesJob({ id: 'a', ownerUserId: 8 })).toBe(false);
+        expect(tellDrawerOfJobs([mine])).toEqual([mine]);
+        vi.advanceTimersByTime(100);
+        expect(spoken).toEqual(['mine.bin succeeded.']);
     });
 });
