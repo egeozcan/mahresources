@@ -120,7 +120,8 @@ test.describe('Job progress figures', () => {
       await page.goto('/jobs?state=cancelled&dismissed=false');
       const cancelled = card(page, id);
       await expect(cancelled).toBeVisible({ timeout: 10_000 });
-      await expect(cancelled.getByTestId('job-stats')).toHaveText(/^\d+(\.\d+)? (KB|MB)$/);
+      // Its amount with its unit, then the average over the time it ran.
+      await expect(cancelled.getByTestId('job-stats')).toHaveText(/^\d+(\.\d+)? (KB|MB) · average \d+(\.\d+)? (KB|MB)\/s$/);
       const bar = cancelled.getByRole('progressbar');
       await expect(bar).toHaveAttribute('aria-valuetext', /(KB|MB) processed; total unknown/);
       // An empty track: a full bar would read as done.
@@ -141,7 +142,9 @@ test.describe('Job progress figures', () => {
     // Scheduled most recently, starting last: state entry would list it first.
     const late = { ...base, id: 'figures-late', kind: 'deferred-download', state: 'scheduled', title: 'Starts later', stateEnteredAt: at(-2), scheduledFor: at(120) };
     const soon = { ...base, id: 'figures-soon', kind: 'deferred-download', state: 'scheduled', title: 'Starts soon', stateEnteredAt: at(-10), scheduledFor: at(30) };
-    const all = [blocked, running, late, soon];
+    const finished = { ...base, id: 'figures-finished', kind: 'group-export', state: 'succeeded', title: 'Finished export', stateEnteredAt: at(-3),
+      progress: { completed: 10, total: 10, unit: 'items', averageRate: 1 / 60, updatedAt: at(-3) } };
+    const all = [blocked, running, late, soon, finished];
     await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
       const states = new URL(route.request().url()).searchParams.getAll('state');
       return route.fulfill({ json: { jobs: all.filter(job => states.includes(job.state)), nextCursor: null } });
@@ -173,6 +176,11 @@ test.describe('Job progress figures', () => {
       .toEqual(['figures-running', 'figures-soon', 'figures-late']);
     await expect(drawer.locator('article[data-job-id="figures-soon"] [data-job-panel-kind]')).toHaveText('Scheduled download');
     await expect(drawer.locator('article[data-job-id="figures-running"] [data-job-panel-stats]')).toHaveText(/^3\.0 MB of 10\.0 MB/);
+    // A finished row has no bar, and still says its amount once and its average,
+    // per minute when it is too slow to show per second.
+    const finishedRow = drawer.locator('article[data-job-id="figures-finished"]');
+    await expect(finishedRow.locator('[data-job-panel-stats]')).toHaveText('10 items · average 1 items/min');
+    await expect(finishedRow.getByRole('progressbar')).toHaveCount(0);
   });
 
   test('bars and state pills stay visible in forced colours', async ({ page }) => {

@@ -340,3 +340,25 @@ func TestAnHLSDownloadMirrorsItsSegmentsNotThePlaylistSize(t *testing.T) {
 		t.Fatalf("mirrors saw the assembly %v and its result %v; want both", sawMux, sawAssembled)
 	}
 }
+
+// TestAnHLSReportArrivingLateDoesNotTakeProgressBack. Segment workers report as
+// they finish, so the report that counted segment 1 can arrive after the one
+// that counted segment 2. The later-arriving, older report must not lower the
+// count or the bytes received, which the Job's rate is measured from.
+func TestAnHLSReportArrivingLateDoesNotTakeProgressBack(t *testing.T) {
+	job := &DownloadJob{ID: "hls-order", Status: JobStatusDownloading, TotalSize: -1, ctx: context.Background()}
+	if !job.advanceStreamForRun(0, hls.PhaseSegments, 2, 10, 4096) {
+		t.Fatal("the attempt that owns the job could not report")
+	}
+	job.advanceStreamForRun(0, hls.PhaseSegments, 1, 10, 2048)
+	snap := job.Snapshot()
+	if snap.PhaseCount != 2 || snap.PhaseTotal != 10 || snap.Progress != 4096 || snap.TotalSize != -1 {
+		t.Fatalf("after a late report: %d of %d segments, %d bytes of %d; want 2 of 10 and 4096 bytes of unknown",
+			snap.PhaseCount, snap.PhaseTotal, snap.Progress, snap.TotalSize)
+	}
+	// A new phase starts its own count: the assembly reports every segment done.
+	job.advanceStreamForRun(0, hls.PhaseMuxing, 10, 10, 8192)
+	if snap := job.Snapshot(); snap.Phase != hls.PhaseMuxing || snap.PhaseCount != 10 || snap.Progress != 8192 {
+		t.Fatalf("the assembly reads %q %d of %d, %d bytes", snap.Phase, snap.PhaseCount, snap.PhaseTotal, snap.Progress)
+	}
+}

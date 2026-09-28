@@ -210,12 +210,7 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		changed = true
 	case nowMs-series.Points[count-1].At >= series.IntervalMs:
 		previous := series.Points[count-1]
-		// A Job that ends with nothing counted since the last point ended
-		// there; it did not slow to zero, so the closing point records no
-		// speed rather than a plunge.
-		if !final || !sameCount(previous.Completed, point.Completed) {
-			point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
-		}
+		point.Rate = pointRate(previous, point, max(stale, 3*series.IntervalMs))
 		series.Points = append(series.Points, point)
 		changed = true
 	case final:
@@ -226,6 +221,9 @@ func advanceSeries(series ProgressSeries, now time.Time, progress Progress, fina
 		}
 		series.Points[count-1] = point
 		changed = true
+	}
+	if final {
+		endAtLastMovement(series.Points)
 	}
 
 	for len(series.Points) > MaxSeriesPoints {
@@ -347,6 +345,20 @@ func mergePoints(a, b SeriesPoint) SeriesPoint {
 	return merged
 }
 
+// endAtLastMovement ends a finished series at the last speed it measured. The
+// points at its end that counted nothing since the one before are the Job no
+// longer counting before it ended, not a slowdown to zero, so their rates are
+// dropped and a graph ends where the work last moved rather than in a plunge.
+// A stall the Job moved on from is left as the zero it was.
+func endAtLastMovement(points []SeriesPoint) {
+	for i := len(points) - 1; i > 0; i-- {
+		if points[i].Completed == nil || points[i-1].Completed == nil || !sameCount(points[i].Completed, points[i-1].Completed) {
+			return
+		}
+		points[i].Rate = nil
+	}
+}
+
 // sameCount reports whether two points hold the same count, or neither holds one.
 func sameCount(a, b *float64) bool {
 	if a == nil || b == nil {
@@ -451,10 +463,12 @@ func decodeSeries(raw types.JSON) ProgressSeries {
 // AverageRate is what a Job that is not running reports in place of a speed:
 // the amount it counted per second of running. Time spent queued, paused or
 // blocked is left out, and work done before the first report is kept in: the
-// count starts from zero unless the Job's first report already carried one,
-// which is where a Job that picks up earlier work (a Continue) began. It is nil
-// while the Job runs, since the running time of the current stint is banked only
-// when it ends; nil when the Job counted nothing; and measured across the series
+// count a Job reports is its own work, counted from zero. (A Job that reports
+// counts carried over from earlier work, a Continue whose first report is "120
+// of 500", is averaged as though it did them; nothing on the Job says which of
+// its first count it did itself.) It is nil while the Job runs, since the
+// running time of the current stint is banked only when it ends; nil when the
+// Job counted nothing; and measured across the series
 // (ProgressSeries.AverageRate) when no running time was banked.
 func (s Snapshot) AverageRate() *float64 {
 	if s.State == StateRunning {
@@ -464,19 +478,11 @@ func (s Snapshot) AverageRate() *float64 {
 	if running <= 0 {
 		return s.ProgressSeries.AverageRate()
 	}
-	first, last := s.ProgressSeries.countedEnds()
-	if last == nil {
+	_, last := s.ProgressSeries.countedEnds()
+	if last == nil || *last.Completed <= 0 {
 		return nil
 	}
-	baseline := 0.0
-	if first == &s.ProgressSeries.Points[0] {
-		baseline = *first.Completed
-	}
-	counted := *last.Completed - baseline
-	if counted <= 0 {
-		return nil
-	}
-	rate := counted / running
+	rate := *last.Completed / running
 	return &rate
 }
 

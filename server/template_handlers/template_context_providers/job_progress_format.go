@@ -54,18 +54,36 @@ func formatJobEta(left time.Duration, estimated bool) string {
 	}
 }
 
+// formatJobRate is formatRate in jobProgress.js: a rate in its unit, per second,
+// or per minute or per hour when it is too slow to show per second.
 func formatJobRate(rate *float64, unit string) string {
 	if rate == nil || *rate < 0 || math.IsNaN(*rate) || math.IsInf(*rate, 0) || unit == "percent" {
 		return ""
 	}
+	value, per := *rate, "s"
+	if !jobRateShowsPerSecond(value, unit) {
+		value, per = value*60, "min"
+		if !jobRateShowsPerSecond(value, unit) {
+			value, per = value*60, "h"
+		}
+	}
 	switch unit {
 	case "bytes":
-		return formatJobBytes(*rate) + "/s"
+		return formatJobBytes(value) + "/" + per
 	case "":
-		return formatJobNumber(*rate) + "/s"
+		return formatJobNumber(value) + "/" + per
 	default:
-		return formatJobNumber(*rate) + " " + unit + "/s"
+		return formatJobNumber(value) + " " + unit + "/" + per
 	}
+}
+
+// jobRateShowsPerSecond is showsPerSecond in jobProgress.js: the smallest rate a
+// figure per second can show is a byte, or a tenth of a count.
+func jobRateShowsPerSecond(rate float64, unit string) bool {
+	if unit == "bytes" {
+		return rate == 0 || rate >= 1
+	}
+	return rate == 0 || rate >= 0.1
 }
 
 // formatJobAmount is formatAmount in jobProgress.js: "12.3 MB of 40 MB", "3 of

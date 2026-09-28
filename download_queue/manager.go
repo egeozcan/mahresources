@@ -1146,7 +1146,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			// Guarded by the attempt, like every other write about this job: a
 			// callback unwinding from an abandoned attempt must not relabel the
 			// one that replaced it.
-			if !job.setPhaseForRun(runID, phase, done, total) || !job.updateProgressForRun(runID, received, -1) {
+			if !job.advanceStreamForRun(runID, phase, done, total, received) {
 				return
 			}
 			// Throttled like the byte progress, and for the same reason: a

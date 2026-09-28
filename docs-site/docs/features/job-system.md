@@ -187,9 +187,10 @@ reload, a restart and the Job finishing:
   that did not go down, and a gap of at most 10 seconds or three intervals,
   whichever is longer. A pause or a restart therefore shows as a gap, not as a
   slow stretch.
-- The point that closes a finished Job's series records no rate when nothing
-  was counted since the point before it, so its speed graph ends at the last
-  measured speed rather than dropping to zero.
+- When a Job finishes, the points at the end of its series that counted
+  nothing since the point before record no rate, so its speed graph ends at the
+  last speed it measured rather than dropping to zero. A stall the Job moved on
+  from stays in the graph.
 
 The server derives two figures from the series:
 
@@ -202,20 +203,21 @@ The server derives two figures from the series:
 A Job that is not running reports its **average rate** (`averageRate` in the
 API) instead of a speed, and the drawer, the Job Center and a Job's page show
 it once the Job has ended: the amount it counted divided by the time it spent
-running. Time spent queued,
-paused or blocked is left out. The count starts from zero, so work done before
-the Job's first report is included, unless that first report already carried a
-count (a Continue that picks up at 120 of 500 did not do those 120 itself). A
-Job that counted nothing has no average. No speed is shown for a Job counting
-in `percent`.
+running. Time spent queued, paused or blocked is left out. The amount is taken
+as the Job's own work, counted from zero, so work done before its first report
+is included. Known limit: a Job that reports counts carried over from earlier
+work, such as a Continue whose first report is "120 of 500", is averaged as
+though it did them. A Job that counted nothing has no average. No speed is
+shown for a Job counting in `percent`.
 
 Every surface writes these figures the same way, on one line under the bar:
 the amount, then the speed and the time left while the Job runs, or its average
 once it has ended ("6.5 MB of 20.0 MB · 1.2 MB/s · about 12 s left"). An amount
 at least a tenth of its total is written in the total's unit ("0.97 MB of 1.0
 MB") and rounded down, so it never reads as the total before it is. A finished
-Job whose amount reached its total gives the amount once ("558 B"). An
-estimated time left under a second reads "almost done". The bar's own label
+Job whose amount reached its total gives the amount once ("558 B"). A speed
+too slow to show per second is given per minute or per hour ("1 shares/min").
+An estimated time left under a second reads "almost done". The bar's own label
 says what the Job is doing, and a succeeded Job's bar reads **Completed**.
 
 Who reports what:

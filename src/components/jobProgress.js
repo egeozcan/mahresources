@@ -90,12 +90,31 @@ export function formatQuantity(value, unit = '') {
     }
 }
 
-/** A rate per second in its unit, or '' where a speed says nothing (percent). */
+// The smallest rate a figure per second can show: a byte, or a tenth of a count.
+function showsPerSecond(rate, unit) {
+    return rate === 0 || rate >= (unit === 'bytes' ? 1 : 0.1);
+}
+
+/**
+ * A rate in its unit, or '' where a speed says nothing (percent). A rate too
+ * slow to show per second is shown per minute, or per hour, so one share a
+ * minute reads "1 shares/min" rather than "0 shares/s".
+ */
 export function formatRate(rate, unit = '') {
     if (!finite(rate) || rate < 0 || unit === 'percent') return '';
-    if (unit === 'bytes') return `${formatBytes(rate)}/s`;
-    if (unit === '') return `${formatNumber(rate)}/s`;
-    return `${formatNumber(rate)} ${unit}/s`;
+    let value = rate;
+    let per = 's';
+    if (!showsPerSecond(value, unit)) {
+        value *= 60;
+        per = 'min';
+        if (!showsPerSecond(value, unit)) {
+            value *= 60;
+            per = 'h';
+        }
+    }
+    if (unit === 'bytes') return `${formatBytes(value)}/${per}`;
+    if (unit === '') return `${formatNumber(value)}/${per}`;
+    return `${formatNumber(value)} ${unit}/${per}`;
 }
 
 // How long a speed stays true without a new report, matching the server's own

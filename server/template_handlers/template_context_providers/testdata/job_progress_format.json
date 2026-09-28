@@ -23,7 +23,13 @@
     { "rate": 4.5, "unit": "", "text": "4.5/s" },
     { "rate": 0.33, "unit": "shares", "text": "0.3 shares/s" },
     { "rate": 1234.4, "unit": "rows", "text": "1,234 rows/s" },
-    { "rate": 3, "unit": "percent", "text": "" }
+    { "rate": 3, "unit": "percent", "text": "" },
+    { "rate": 0.016666666666666666, "unit": "shares", "text": "1 shares/min" },
+    { "rate": 0.0005, "unit": "items", "text": "1.8 items/h" },
+    { "rate": 0.5, "unit": "bytes", "text": "30 B/min" },
+    { "rate": 0.05, "unit": "", "text": "3/min" },
+    { "rate": 0, "unit": "bytes", "text": "0 B/s" },
+    { "rate": 0, "unit": "items", "text": "0 items/s" }
   ],
   "etas": [
     { "seconds": 14, "estimated": true, "text": "about 14 s left" },

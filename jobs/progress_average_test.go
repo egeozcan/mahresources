@@ -22,17 +22,18 @@ func TestAFinishedJobAveragesItsCountOverItsRunningTime(t *testing.T) {
 	}
 }
 
-// A first report that already carried a count is where the Job began: a
-// Continue that picks up at 120 of 500 did not do those 120 itself.
-func TestAnAverageStartsFromTheCountTheFirstReportCarried(t *testing.T) {
+// A first report that already carries a count is the Job's own work, done
+// before it reported: a fresh plugin Job that says "1 of 3 shares" and then
+// finishes did that share, and is averaged over the time it ran.
+func TestAnAverageCountsTheFirstReportedCountAsTheJobsOwn(t *testing.T) {
 	var series ProgressSeries
-	series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(120), Total: int64Ptr(500), Unit: "items"}, false)
-	series, _ = advanceSeries(series, at(10), Progress{Completed: int64Ptr(500), Total: int64Ptr(500), Unit: "items"}, true)
+	series, _ = advanceSeries(series, at(3), Progress{Completed: int64Ptr(1), Total: int64Ptr(3), Unit: "shares"}, false)
+	series, _ = advanceSeries(series, at(3.5), Progress{Completed: int64Ptr(1), Total: int64Ptr(3), Unit: "shares"}, true)
 
-	snap := Snapshot{State: StateSucceeded, ProgressSeries: series, RunningDuration: 20 * time.Second}
+	snap := Snapshot{State: StateSucceeded, ProgressSeries: series, RunningDuration: 4 * time.Second}
 	avg := snap.AverageRate()
-	if avg == nil || math.Abs(*avg-380.0/20) > 1e-9 {
-		t.Fatalf("average rate = %v; want 380 items over 20 s", avg)
+	if avg == nil || math.Abs(*avg-0.25) > 1e-9 {
+		t.Fatalf("average rate = %v; want 1 share over 4 s", avg)
 	}
 }
 
@@ -79,34 +80,66 @@ func TestAnAverageWithoutRunningTimeFallsBackToTheSeries(t *testing.T) {
 	}
 }
 
-// The point that closes a finished Job's series records no speed when nothing
-// was counted since the one before it: the Job ended there, it did not slow to
-// zero, and a graph that plunged to 0 at the end would say it had.
-func TestAClosingPointWithNoNewCountRecordsNoSpeed(t *testing.T) {
-	var series ProgressSeries
-	series, _ = advanceSeries(series, at(0), Progress{Completed: int64Ptr(0), Total: int64Ptr(10), Unit: "chunks"}, false)
-	series, _ = advanceSeries(series, at(1), Progress{Completed: int64Ptr(3), Total: int64Ptr(10), Unit: "chunks"}, false)
-	series, _ = advanceSeries(series, at(2), Progress{Completed: int64Ptr(5), Total: int64Ptr(10), Unit: "chunks"}, false)
-	series, _ = advanceSeries(series, at(5), Progress{Completed: int64Ptr(5), Total: int64Ptr(10), Unit: "chunks"}, true)
+// A finished Job's series ends at the last speed it measured. The points at
+// its end that counted nothing since the one before are the Job no longer
+// counting before it ended, not a slowdown to zero, so they record no speed,
+// whichever way the closing point is placed: appended after an interval, or in
+// place of a point younger than one. A stall the Job moved on from stays zero.
+func TestAFinishedSeriesEndsAtItsLastMeasuredSpeed(t *testing.T) {
+	counts := func(series ProgressSeries, final float64, want []any) {
+		t.Helper()
+		if len(series.Points) != len(want) {
+			t.Fatalf("points = %+v; want %d", series.Points, len(want))
+		}
+		for i, point := range series.Points {
+			switch rate := want[i].(type) {
+			case nil:
+				if point.Rate != nil {
+					t.Fatalf("point %d rate = %v; want none", i, *point.Rate)
+				}
+			case float64:
+				if point.Rate == nil || *point.Rate != rate {
+					t.Fatalf("point %d rate = %v; want %v", i, point.Rate, rate)
+				}
+			}
+		}
+		if last := series.Points[len(series.Points)-1]; last.Completed == nil || *last.Completed != final {
+			t.Fatalf("closing point = %+v; want the final count %v", last, final)
+		}
+	}
+	chunks := func(n int64) Progress { return Progress{Completed: int64Ptr(n), Total: int64Ptr(10), Unit: "chunks"} }
 
-	last := series.Points[len(series.Points)-1]
-	if last.Completed == nil || *last.Completed != 5 {
-		t.Fatalf("closing point = %+v; want the final count", last)
-	}
-	if last.Rate != nil {
-		t.Fatalf("closing point rate = %v; want none for an end with nothing new counted", *last.Rate)
-	}
-	if previous := series.Points[len(series.Points)-2]; previous.Rate == nil || *previous.Rate != 2 {
-		t.Fatalf("last measured point = %+v; want its 2 chunks/s kept", previous)
-	}
+	// Appended: 0, 3, 5 counted, then nothing for three seconds before the end.
+	var appended ProgressSeries
+	appended, _ = advanceSeries(appended, at(0), chunks(0), false)
+	appended, _ = advanceSeries(appended, at(1), chunks(3), false)
+	appended, _ = advanceSeries(appended, at(2), chunks(5), false)
+	appended, _ = advanceSeries(appended, at(5), chunks(5), true)
+	counts(appended, 5, []any{nil, 3.0, 2.0, nil})
 
-	// A stall while the Job is still running is a real zero, and stays one.
+	// Reported again at the same count while running, then finished within the
+	// interval: the replaced tail is no plunge either.
+	var replaced ProgressSeries
+	replaced, _ = advanceSeries(replaced, at(0), chunks(0), false)
+	replaced, _ = advanceSeries(replaced, at(1), chunks(5), false)
+	replaced, _ = advanceSeries(replaced, at(2), chunks(5), false)
+	replaced, _ = advanceSeries(replaced, at(3), chunks(5), false)
+	replaced, _ = advanceSeries(replaced, at(3.4), chunks(5), true)
+	counts(replaced, 5, []any{nil, 5.0, nil, nil})
+
+	// A stall the Job moved on from is a real zero, and stays one.
+	var resumed ProgressSeries
+	resumed, _ = advanceSeries(resumed, at(0), chunks(2), false)
+	resumed, _ = advanceSeries(resumed, at(1), chunks(2), false)
+	resumed, _ = advanceSeries(resumed, at(2), chunks(4), false)
+	resumed, _ = advanceSeries(resumed, at(3), chunks(4), true)
+	counts(resumed, 4, []any{nil, 0.0, 2.0, nil})
+
+	// While the Job runs, a stall is drawn as the zero it is.
 	var running ProgressSeries
-	running, _ = advanceSeries(running, at(0), Progress{Completed: int64Ptr(2), Unit: "chunks"}, false)
-	running, _ = advanceSeries(running, at(1), Progress{Completed: int64Ptr(2), Unit: "chunks"}, false)
-	if stalled := running.Points[1]; stalled.Rate == nil || *stalled.Rate != 0 {
-		t.Fatalf("stalled point = %+v; want a rate of 0 while running", stalled)
-	}
+	running, _ = advanceSeries(running, at(0), chunks(2), false)
+	running, _ = advanceSeries(running, at(1), chunks(2), false)
+	counts(running, 2, []any{nil, 0.0})
 }
 
 // Through the Service: a Job finished by Finish reports the running-time
