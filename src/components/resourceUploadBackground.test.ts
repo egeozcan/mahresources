@@ -12,6 +12,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe('backgroundDownloadBody', () => {
   it('url-encodes the text fields and leaves a picked file out', () => {
     const body = backgroundDownloadBody([
@@ -83,6 +89,44 @@ describe('a background download submitted from the form', () => {
     expect(c.backgroundNotice).toBe('');
     expect(c.url).toBe('not a url');
     expect(opened).toEqual([]);
+  });
+
+  it('preserves a new URL entered while the submitted batch awaits acceptance', async () => {
+    const acceptance = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(async () => acceptance.promise));
+    const c = resourceUpload();
+    c.url = 'https://example.test/submitted-a.png';
+    const submittedURL = c.url;
+    const submitting = c.postBackgroundDownload(
+      '/v1/resource/remote?background=true',
+      new URLSearchParams({ URL: submittedURL }),
+      null,
+    );
+
+    c.url = 'https://example.test/next-b.png';
+    acceptance.resolve(new Response(JSON.stringify({ jobs: [{ id: 'q1', canonicalJobId: 'job-a' }] }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await submitting;
+
+    expect(c.url).toBe('https://example.test/next-b.png');
+    expect(c.backgroundNotice).toBe('Download started. Follow it in the Jobs panel.');
+    expect(c.backgroundJobIds).toEqual(['job-a']);
+  });
+
+  it('clears the submitted URL after acceptance when it is still unchanged', async () => {
+    vi.stubGlobal('fetch', answer(202, { jobs: [{ id: 'q1', canonicalJobId: 'job-a' }] }));
+    const c = resourceUpload();
+    c.url = 'https://example.test/submitted-a.png';
+
+    await c.postBackgroundDownload(
+      '/v1/resource/remote?background=true',
+      new URLSearchParams({ URL: c.url }),
+      null,
+    );
+
+    expect(c.url).toBe('');
   });
 
   it('is intercepted before the native post only when a URL is to be fetched in the background', () => {

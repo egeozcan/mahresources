@@ -60,7 +60,7 @@ Click **Compute Clusters** to run the clustering job. It groups the Extent into 
 
 Identical Clusters arrive checked because byte-identity is certain. Near-Identical Clusters arrive unchecked because perceptual matching is a judgement that can be wrong, so the friction sits where the risk is.
 
-A Near-Identical match is a stored pair that passes the same test the similar-resources list and MRQL `SIMILAR TO` apply: the perceptual distance threshold, and the aHash guard when `hash_ahash_threshold` is set. The hashes are computed from brightness alone, so two images that differ only in colour but share their pattern of light and dark (the same gradient in green and in blue, a photograph and a recoloured copy of it) can match. Check the thumbnails of each Cluster before checking it.
+A Near-Identical match is a stored pair that passes the same distance predicate and aHash guard used by the similar-resources list and MRQL `SIMILAR TO`. Their effective distance thresholds differ when the live `hash_similarity_threshold` is zero: the list and MRQL honor zero, while Resource Reduction falls back to the configured positive threshold, or 10. The hashes are computed from brightness alone, so two images that differ only in colour but share their pattern of light and dark (the same gradient in green and in blue, a photograph and a recoloured copy of it) can match. Check the thumbnails of each Cluster before checking it.
 
 The **matching mode** chooses which tiers a Reduction looks for:
 

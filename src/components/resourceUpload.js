@@ -364,6 +364,7 @@ export function resourceUpload() {
     },
 
     async postBackgroundDownload(action, body, submitter) {
+      const submittedURL = typeof body?.get === 'function' ? (body.get('URL') ?? '') : this.url;
       this.backgroundSubmitting = true;
       this.backgroundNotice = '';
       this.backgroundRefusals = [];
@@ -386,7 +387,7 @@ export function resourceUpload() {
         this.backgroundRefusals = outcome.refusals;
         // Cleared so a second Save does not start the same downloads again; the
         // other fields stay for the next URL.
-        this.url = '';
+        if (this.url === submittedURL) this.url = '';
         this.backgroundJobIds = rows.map((row) => row?.canonicalJobId)
           .filter((id, index, all) => typeof id === 'string' && id && all.indexOf(id) === index);
         this.showBackgroundJobs(submitter);

@@ -1,7 +1,10 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,6 +180,163 @@ func importConsumedPlanPathFor(handle, applyHandle string) string {
 // importResultPathFor is the report an apply writes.
 func importResultPathFor(handle string) string {
 	return filepath.Join("_imports", handle+".result.json")
+}
+
+// importResultProvenancePathFor is a private atomic publication record holding
+// both the flat report bytes and their canonical producer. The API reads the
+// pair together; external report shapes remain flat.
+func importResultProvenancePathFor(handle string) string {
+	return filepath.Join("_imports", handle+".result.provenance.json")
+}
+
+// importResultSnapshotPathFor is the immutable report artifact one Apply Job
+// publishes. The handle prefixes it so import cleanup and startup protection
+// continue to cover it with the rest of that import's staged files.
+func importResultSnapshotPathFor(handle, applyJobID string) string {
+	return filepath.Join("_imports", handle+"."+applyJobID+".result.json")
+}
+
+type importApplyReportProvenance struct {
+	ReportSHA256  string `json:"report_sha256"`
+	ProducerJobID string `json:"producer_job_id"`
+	// Report is repeated in the private publication record so the bytes served
+	// to readers and their producer are committed by one atomic rename. A digest
+	// beside the mutable flat alias alone cannot distinguish two Apply Jobs that
+	// happen to write identical report JSON.
+	Report json.RawMessage `json:"report"`
+}
+
+// ImportApplyReportOutcome is the safe, viewer-authorized outcome paired with
+// the report currently stored for one import. Unknown means its producer could
+// not be verified or is not visible to this caller.
+type ImportApplyReportOutcome struct {
+	State          string
+	FailureMessage string
+	Known          bool
+}
+
+func readImportApplyReportPublication(fs afero.Fs, handle string) ([]byte, string, bool) {
+	data, err := afero.ReadFile(fs, importResultProvenancePathFor(handle))
+	if err != nil {
+		return nil, "", false
+	}
+	var provenance importApplyReportProvenance
+	if err := json.Unmarshal(data, &provenance); err != nil || provenance.ProducerJobID == "" || len(provenance.Report) == 0 ||
+		strings.TrimSpace(provenance.ProducerJobID) != provenance.ProducerJobID {
+		return nil, "", false
+	}
+	if !json.Valid(provenance.Report) {
+		return nil, "", false
+	}
+	digest := sha256.Sum256(provenance.Report)
+	if provenance.ReportSHA256 != hex.EncodeToString(digest[:]) {
+		return nil, "", false
+	}
+	return append([]byte(nil), provenance.Report...), provenance.ProducerJobID, true
+}
+
+func writeImportReportFile(fs afero.Fs, path string, data []byte, mode os.FileMode) error {
+	if err := fs.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	temporary := path + ".tmp-" + download_queue.NewJobID()
+	if err := afero.WriteFile(fs, temporary, data, mode); err != nil {
+		return err
+	}
+	if err := fs.Rename(temporary, path); err != nil {
+		_ = fs.Remove(temporary)
+		return err
+	}
+	return nil
+}
+
+// writeImportReportSnapshot creates a per-Apply report once. Retrying the same
+// execution may observe its identical prior snapshot, but cannot replace it
+// with different bytes under the same canonical Job ID.
+func writeImportReportSnapshot(fs afero.Fs, path string, data []byte) error {
+	if err := fs.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	f, err := fs.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		if existing, readErr := afero.ReadFile(fs, path); readErr == nil && bytes.Equal(existing, data) {
+			return nil
+		}
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = fs.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = fs.Remove(path)
+		return err
+	}
+	return nil
+}
+
+// persistImportApplyReport writes the unchanged flat result and binds its exact
+// bytes to the canonical execution that produced them. Removing the old
+// publication before replacing the report makes every interruption fail
+// closed, even when two executions happen to produce identical JSON. A per-Job
+// snapshot keeps a later Apply from changing what this Job's report output opens.
+func (ctx *MahresourcesContext) persistImportApplyReport(handle, producerJobID string, result *ImportApplyResult) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	fs := ctx.GetDefaultFs()
+	provenancePath := importResultProvenancePathFor(handle)
+	// Do not let the old publication describe the mutable alias while this
+	// execution replaces it. Until the new record is committed, readers can show
+	// the flat report with an unknown outcome.
+	if err := fs.Remove(provenancePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove previous import report provenance: %w", err)
+	}
+	if err := writeImportReportFile(fs, importResultPathFor(handle), data, 0644); err != nil {
+		return fmt.Errorf("write import result: %w", err)
+	}
+	if producerJobID == "" {
+		return nil
+	}
+	if err := writeImportReportSnapshot(fs, importResultSnapshotPathFor(handle, producerJobID), data); err != nil {
+		return fmt.Errorf("write import result snapshot: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	provenance, err := json.Marshal(importApplyReportProvenance{
+		ReportSHA256: hex.EncodeToString(digest[:]), ProducerJobID: producerJobID, Report: data,
+	})
+	if err != nil {
+		return err
+	}
+	if err := replaceImportReportFile(fs, provenancePath, provenance, 0600); err != nil {
+		return fmt.Errorf("write import report provenance: %w", err)
+	}
+	return nil
+}
+
+// replaceImportReportFile publishes one complete record. Removing the target
+// just before rename leaves a brief fail-closed gap on filesystems whose Rename
+// does not replace an existing file; readers then fall back to the flat report
+// with an unknown outcome.
+func replaceImportReportFile(fs afero.Fs, path string, data []byte, mode os.FileMode) error {
+	if err := fs.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	temporary := path + ".tmp-" + download_queue.NewJobID()
+	if err := afero.WriteFile(fs, temporary, data, mode); err != nil {
+		return err
+	}
+	if err := fs.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = fs.Remove(temporary)
+		return err
+	}
+	if err := fs.Rename(temporary, path); err != nil {
+		_ = fs.Remove(temporary)
+		return err
+	}
+	return nil
 }
 
 // importParseJobInput is what a parse Job is accepted with: the staged upload it
@@ -985,7 +1145,7 @@ func (a *importApplyAdapter) start(bound *MahresourcesContext, execution jobs.Ex
 		opts,
 		handle,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
-		bound.buildImportApplyRunFn(input.ParseHandle, plan, &input.Decisions),
+		bound.buildImportApplyRunFn(input.ParseHandle, plan, &input.Decisions, execution.JobID),
 	)
 }
 
@@ -1034,8 +1194,10 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 	// The report goes first, and on every outcome: a partial apply's result is the
 	// only thing that names the rows it created, which is exactly what a failure
 	// leaves behind.
-	resultPath := importResultPathFor(input.ParseHandle)
-	if _, err := a.ctx.GetDefaultFs().Stat(resultPath); err == nil {
+	resultPath := importResultSnapshotPathFor(input.ParseHandle, execution.JobID)
+	var report []byte
+	if data, err := afero.ReadFile(a.ctx.GetDefaultFs(), resultPath); err == nil {
+		report = data
 		if publishErr := a.ctx.publishQueueReport(execution, jobImportResultOutput, "Import report", resultPath, false); publishErr != nil &&
 			!mirrorRefusalIsSilent(publishErr) {
 			// The report is optional to success, but this execution owns its publication
@@ -1047,7 +1209,7 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 	}
 	switch snap.Status {
 	case download_queue.JobStatusCompleted:
-		if groupID, ok := a.ctx.importCreatedGroup(resultPath); ok {
+		if groupID, ok := importCreatedGroup(report); ok {
 			reference, err := json.Marshal(map[string]uint{"groupId": groupID})
 			if err != nil {
 				return err
@@ -1076,11 +1238,7 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 // Groups are created top-down, so the first is a root of the import. A report that
 // cannot be read, or names no created group, links nothing; the link is a
 // convenience and its absence claims nothing about the apply.
-func (ctx *MahresourcesContext) importCreatedGroup(resultPath string) (uint, bool) {
-	data, err := afero.ReadFile(ctx.GetDefaultFs(), resultPath)
-	if err != nil {
-		return 0, false
-	}
+func importCreatedGroup(data []byte) (uint, bool) {
 	var result ImportApplyResult
 	if err := json.Unmarshal(data, &result); err != nil || len(result.CreatedGroupIDs) == 0 || result.CreatedGroupIDs[0] == 0 {
 		return 0, false
@@ -1303,9 +1461,9 @@ func (ctx *MahresourcesContext) runImportParseJob(jobCtx context.Context, j *dow
 }
 
 // buildImportApplyRunFn is the apply executor's body.
-func (ctx *MahresourcesContext) buildImportApplyRunFn(parseHandle, consumedPlanPath string, decisions *ImportDecisions) download_queue.JobRunFn {
+func (ctx *MahresourcesContext) buildImportApplyRunFn(parseHandle, consumedPlanPath string, decisions *ImportDecisions, producerJobID string) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
-		return ctx.runImportApplyJob(jobCtx, sink, parseHandle, consumedPlanPath, decisions)
+		return ctx.runImportApplyJob(jobCtx, sink, parseHandle, consumedPlanPath, decisions, producerJobID)
 	}
 }
 
@@ -1315,16 +1473,17 @@ func (ctx *MahresourcesContext) buildImportApplyRunFn(parseHandle, consumedPlanP
 // dispatch — so every `db.Create` inside ApplyImport inherits the acting-user
 // context and stamps CreatedByUserId. One binding covers every entity the import
 // creates.
-func (ctx *MahresourcesContext) runImportApplyJob(jobCtx context.Context, sink download_queue.ProgressSink, parseHandle, consumedPlanPath string, decisions *ImportDecisions) error {
+func (ctx *MahresourcesContext) runImportApplyJob(jobCtx context.Context, sink download_queue.ProgressSink, parseHandle, consumedPlanPath string, decisions *ImportDecisions, producerJobID string) error {
 	result, err := ctx.ApplyImport(jobCtx, parseHandle, consumedPlanPath, decisions, sink)
 
 	// The result is persisted even on failure: a partial-failure result lists the
 	// IDs it created for manual cleanup, and it is the report a Job publishes.
 	if result != nil {
-		resultPath := importResultPathFor(parseHandle)
-		if data, marshalErr := json.Marshal(result); marshalErr == nil {
-			_ = afero.WriteFile(ctx.GetDefaultFs(), resultPath, data, 0644)
+		if persistErr := ctx.persistImportApplyReport(parseHandle, producerJobID, result); persistErr == nil {
+			resultPath := importResultPathFor(parseHandle)
 			sink.SetResultPath(resultPath)
+		} else {
+			sink.AppendWarning("could not persist the import report")
 		}
 	}
 
@@ -1478,7 +1637,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 			return result
 		}
 		job, err := ctx.downloadManager.SubmitJobWithOptions(opts,
-			ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions))
+			ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions, ""))
 		if err != nil {
 			_ = ctx.GetDefaultFs().Rename(consumedPath, importPlanPathFor(parseHandle))
 			result.Err = err
@@ -1559,7 +1718,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: importPlanPathFor(parseHandle), Decisions: *decisions, FileName: fileName}
 	entry, err := ctx.submitQueueJob(opts, legacyID,
 		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
-		ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions))
+		ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions, admission.Execution.JobID))
 	if err != nil {
 		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
@@ -1625,6 +1784,89 @@ func (ctx *MahresourcesContext) ImportJobAuthorized(parseHandle string) (bool, b
 		return false, true
 	}
 	return true, true
+}
+
+// ReadImportApplyReport reads the report and its producer from one atomic
+// publication record when one exists. Legacy flat reports remain readable, but
+// they have no verified outcome. The producer is reauthorized and replayed on
+// this request-bound context; hidden, expired, forgotten, malformed, or
+// mismatched provenance is unknown, never an invitation to inspect the Job as
+// an administrator.
+func (ctx *MahresourcesContext) ReadImportApplyReport(parseHandle string, expectedProducerID string) ([]byte, ImportApplyReportOutcome, error) {
+	unknown := ImportApplyReportOutcome{State: "unknown"}
+	if ctx == nil || parseHandle == "" {
+		return nil, unknown, os.ErrNotExist
+	}
+	fs := ctx.GetDefaultFs()
+	report, producerID, ok := readImportApplyReportPublication(fs, parseHandle)
+	if !ok {
+		var err error
+		report, err = afero.ReadFile(fs, importResultPathFor(parseHandle))
+		if err != nil {
+			return nil, unknown, err
+		}
+		return report, unknown, nil
+	}
+	if expectedProducerID != "" && expectedProducerID != producerID {
+		return report, unknown, nil
+	}
+	if authorized, answered := ctx.ImportJobAuthorized(parseHandle); !answered || !authorized {
+		return report, unknown, nil
+	}
+	service := ctx.JobService()
+	if service == nil {
+		return report, unknown, nil
+	}
+	snapshot, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), producerID)
+	if err != nil {
+		if errors.Is(err, jobs.ErrNotFound) {
+			return report, unknown, nil
+		}
+		return report, unknown, err
+	}
+	if snapshot.Kind != JobKindGroupImportApply {
+		return report, unknown, nil
+	}
+	opened, err := service.OpenReplay(ctx.jobDeps(), ctx.jobAccess(), producerID)
+	if err != nil {
+		switch {
+		case errors.Is(err, jobs.ErrNotFound),
+			errors.Is(err, jobs.ErrReplayAbsent),
+			errors.Is(err, jobs.ErrReplayEnvelopeMissing),
+			errors.Is(err, jobs.ErrReplayKeyUnavailable),
+			errors.Is(err, jobs.ErrReplayCodecUnregistered),
+			errors.Is(err, jobs.ErrReplayCorrupt),
+			errors.Is(err, jobs.ErrReplayDecodeFailed),
+			errors.Is(err, jobs.ErrReplayExpired),
+			errors.Is(err, jobs.ErrReplayForgotten),
+			errors.Is(err, jobs.ErrReplayKeyRequired):
+			return report, unknown, nil
+		default:
+			return report, unknown, err
+		}
+	}
+	if opened.Kind != JobKindGroupImportApply {
+		return report, unknown, nil
+	}
+	input, err := importApplyInputOf(opened.Input)
+	if err != nil || input.ParseHandle != parseHandle || !importApplyPlanBelongsToHandle(input.Plan, parseHandle) {
+		return report, unknown, nil
+	}
+	result := ImportApplyReportOutcome{State: string(snapshot.State), Known: true}
+	if snapshot.Failure != nil {
+		result.FailureMessage = snapshot.Failure.Message
+	}
+	return report, result, nil
+}
+
+func importApplyPlanBelongsToHandle(planPath, parseHandle string) bool {
+	if planPath == importPlanPathFor(parseHandle) {
+		return true
+	}
+	name := filepath.Base(planPath)
+	return filepath.Dir(planPath) == "_imports" &&
+		strings.HasPrefix(name, parseHandle+".") &&
+		strings.HasSuffix(name, ".plan.applied.json")
 }
 
 // importWriteRefusal answers why one import execution may not run as the principal it

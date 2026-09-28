@@ -118,7 +118,8 @@ func newGroupImportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 			importBase := "/v1/imports/" + url.PathEscape(parseResp.JobID)
 
 			var applyResp struct {
-				JobID string `json:"jobId"`
+				JobID          string `json:"jobId"`
+				CanonicalJobID string `json:"canonicalJobId"`
 			}
 			if err := c.Post(importBase+"/apply", nil, &decisions, &applyResp); err != nil {
 				return fmt.Errorf("apply: %w", err)
@@ -126,32 +127,37 @@ func newGroupImportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 			fmt.Fprintf(cmd.ErrOrStderr(), "Apply job: %s\n", applyResp.JobID)
 
 			// ── Poll apply job ───────────────────────────────────────
-			applyJob, err := c.PollJob(applyResp.JobID, opts.PollInterval, opts.Timeout)
+			applyID := applyResp.CanonicalJobID
+			if applyID == "" {
+				applyID = applyResp.JobID
+			}
+			applyJob, err := c.PollJob(applyID, opts.PollInterval, opts.Timeout)
 			if err != nil {
 				return err
 			}
 
-			// ── Fetch result (best-effort) ───────────────────────────
-			var result application_context.ImportApplyResult
-			resultErr := c.Get(importBase+"/result", url.Values{}, &result)
+			// ── Fetch only a result the server binds to this Apply ─────
+			result, resultErr := fetchImportApplyResult(c, importBase+"/result", applyResp.CanonicalJobID)
 
 			if applyJob.Status != "completed" {
-				if resultErr == nil {
-					printPartialResult(cmd, &result)
+				if resultErr == nil && (result.ApplyOutcome == "failed" || result.ApplyOutcome == "cancelled") {
+					printPartialResult(cmd, &result.ImportApplyResult)
 				}
-				return fmt.Errorf("apply job %s ended with status %s: %s", applyResp.JobID, applyJob.Status, applyJob.Error)
+				return fmt.Errorf("apply job %s ended with status %s: %s", applyID, applyJob.Status, applyJob.Error)
 			}
 
 			// ── Success output ───────────────────────────────────────
-			if resultErr == nil {
+			if resultErr == nil && result.ApplyOutcome == "succeeded" {
 				if outOpts.JSON {
-					raw, _ := json.Marshal(result)
+					raw, _ := json.Marshal(result.ImportApplyResult)
 					output.PrintSingle(*outOpts, nil, raw)
 				} else {
-					printApplyResult(cmd, &result)
+					printApplyResult(cmd, &result.ImportApplyResult)
 				}
+			} else if resultErr == nil {
+				return fmt.Errorf("apply job %s completed, but its report outcome is %q", applyID, result.ApplyOutcome)
 			} else {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Import applied successfully (could not fetch result details).\n")
+				fmt.Fprintf(cmd.ErrOrStderr(), "Import applied successfully (could not verify its result report).\n")
 			}
 
 			return nil
@@ -170,6 +176,33 @@ func newGroupImportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 	cmd.Flags().StringVar(&opts.Decisions, "decisions", "", "Path to a decisions JSON file (overrides other flags)")
 
 	return cmd
+}
+
+type importApplyResultResponse struct {
+	application_context.ImportApplyResult
+	ApplyOutcome string `json:"apply_outcome"`
+	ApplyFailure string `json:"apply_failure,omitempty"`
+}
+
+// fetchImportApplyResult only returns report data when the server proves that
+// the current parse-handle report belongs to the canonical Apply the CLI waited
+// for. A newer Retry or fresh Apply may have replaced it while the CLI was
+// polling, so a plain handle read is not enough to label it partial or complete.
+func fetchImportApplyResult(c *client.Client, path, canonicalApplyID string) (*importApplyResultResponse, error) {
+	var result importApplyResultResponse
+	headers := map[string]string{}
+	if canonicalApplyID != "" {
+		headers["X-Expected-Import-Apply"] = canonicalApplyID
+	}
+	if err := c.GetWithHeaders(path, url.Values{}, &result, headers); err != nil {
+		return nil, err
+	}
+	switch result.ApplyOutcome {
+	case "succeeded", "failed", "cancelled":
+		return &result, nil
+	default:
+		return nil, fmt.Errorf("the import report could not be matched to this Apply job")
+	}
 }
 
 type importCmdOptions struct {

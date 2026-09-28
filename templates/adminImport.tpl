@@ -498,7 +498,7 @@
         <!-- A report whose apply this viewer cannot see: never shown as a success -->
         <template x-if="applyResult && !error && applyOutcome === 'unknown'">
           <div class="space-y-3" data-testid="import-apply-unknown">
-            <p class="text-sm text-stone-700">An apply took this import's plan, but its outcome is not available to you: another account applied it, or its Job is no longer kept. The report it wrote is below; it may describe a partial import.</p>
+            <p class="text-sm text-stone-700">The report is available, but its producing Apply could not be verified for this request. The report may describe a partial import.</p>
             <template x-if="applyResult.created_group_ids?.length > 0">
               <div>
                 <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
