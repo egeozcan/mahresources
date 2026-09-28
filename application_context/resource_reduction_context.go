@@ -360,13 +360,12 @@ func retryReductionWrite(attempt func() (*models.ResourceReduction, error)) (*mo
 
 // EffectiveReductionStatus reports what a Reduction's status actually reads as.
 //
-// A row still `computing` past its deadline is a failed one. Generic queue jobs
-// are not drained at shutdown — workers.Add exists only on the download path — so
-// a restart mid-clustering leaves the row saying `computing` with nothing left
-// alive to move it off. On a table that never expires that is a Reduction
-// stranded forever, and the deadline rather than the queue is what prevents it.
-// Deriving the answer at read time rather than sweeping for it means a Reduction
-// nobody opens costs nothing.
+// A row still computing past its deadline reads as failed. Generic queue jobs
+// take the shared five-second shutdown drain, but a process crash or a worker
+// that outlives the bounded drain can still leave persisted state without a
+// completed compute. On a table that never expires, the deadline makes that
+// Reduction recomputable. Deriving the answer at read time rather than sweeping
+// for it means a Reduction nobody opens costs nothing.
 func EffectiveReductionStatus(r *models.ResourceReduction) string {
 	if r == nil {
 		return ""
