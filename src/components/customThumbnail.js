@@ -1,13 +1,23 @@
 // Custom thumbnail Alpine component.
 //
-// Lives on the resource details page (templates/displayResource.tpl). Lets
-// the user upload an image to replace the auto-generated thumbnail or clear
-// custom/auto previews so the next request regenerates from source.
+// Lives on the resource details page (templates/displayResource.tpl), as a
+// sidebar button that opens a popup holding the upload and regenerate controls.
+// It used to be three controls in the sidebar itself, with a `@paste.window`
+// handler live on the whole page: an image pasted anywhere on the resource
+// replaced the thumbnail with nothing on screen saying so. A page-wide side
+// effect needs a visible owner, so the paste now belongs to the popup.
 //
 // After a successful upload or regenerate, mutate any <img> elements on the
 // page that point at /v1/resource/preview?id=<this-resource> so the browser
 // re-fetches them. We can't invalidate the HTTP cache from JS, so we change
 // the URL (cache key) by appending a fresh _t timestamp.
+//
+// `refreshPreviewImages` is module-level on purpose: `close()` is allowed while
+// a request is in flight, and dismissing the dialog must not cancel the
+// refresh. The status line is what is lost by closing early, not the image.
+
+import { focusedElement, restoreFocus } from '../utils/focus.js';
+import { blockingModal } from '../utils/modality.js';
 
 function refreshPreviewImages(resourceId) {
   const prefix = `/v1/resource/preview?id=${resourceId}`;
@@ -25,11 +35,40 @@ function refreshPreviewImages(resourceId) {
 export function customThumbnail({ resourceId }) {
   return {
     resourceId,
+    isOpen: false,
     isBusy: false,
     errorMessage: '',
     statusMessage: '',
+    // The sidebar button the reader pressed. Captured at open: by the time the
+    // popup closes, focus is on one of its own controls, which x-if has removed.
+    _opener: null,
+
+    open() {
+      if (this.isOpen) return;
+      // Two aria-modal dialogs open at once is a defect whichever way it paints:
+      // each arms its own x-trap, and the reader is held by one while looking at
+      // the other. Shared with every other overlay in the app, so this cannot
+      // become the rule that only one side enforces.
+      if (blockingModal(this.$root)) return;
+      this._opener = focusedElement();
+      // The last outcome described a dialog that no longer exists.
+      this.errorMessage = '';
+      this.statusMessage = '';
+      this.isOpen = true;
+    },
+
+    close() {
+      const opener = this._opener;
+      this._opener = null;
+      this.isOpen = false;
+      // Deferred a tick, as pluginActionModal and massEditModal do: restoring
+      // synchronously happens while x-trap is still armed, which pulls focus
+      // straight back in before the x-if has torn the subtree down.
+      this.$nextTick(() => restoreFocus(opener));
+    },
 
     triggerFilePick() {
+      if (this.isBusy) return;
       const input = this.$refs.fileInput;
       if (input) input.click();
     },
@@ -41,13 +80,32 @@ export function customThumbnail({ resourceId }) {
       event.target.value = '';
     },
 
+    /**
+     * A pasted image is this popup's, and only while it is open.
+     *
+     * Bound on `window` in the CAPTURE phase (see displayResource.tpl), because
+     * `setupPasteListener()` shares that target and would handle the same paste:
+     * its guard 2 — a file input is on the page and the clipboard has files —
+     * merges the clipboard into whichever input that is, which is the popup's
+     * own, and dispatches `change`, uploading the same bytes a second time.
+     * Which listener runs first is decided by registration order (Alpine binds
+     * `@paste.window` inside `Alpine.start()`, before `setupPasteListener()`),
+     * and a capture-phase listener does not depend on that: it reaches `window`
+     * before any bubble-phase listener on it, so `stopImmediatePropagation` is
+     * the one that makes the popup the single owner of its own paste.
+     *
+     * A clipboard with no image is none of our business and is left entirely
+     * alone, stop propagation included — that is still somebody else's paste.
+     */
     async onPaste(event) {
+      if (!this.isOpen) return;
       const items = (event.clipboardData && event.clipboardData.items) || [];
       for (const item of items) {
         if (item.kind === 'file' && item.type.startsWith('image/')) {
           const file = item.getAsFile();
           if (file) {
             event.preventDefault();
+            event.stopImmediatePropagation();
             await this.upload(file);
             return;
           }

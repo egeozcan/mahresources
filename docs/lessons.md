@@ -2168,3 +2168,21 @@ where the review's own record lives.
 - Destroy every component a test fixture creates before restoring globals or timers. A delayed response let an earlier drawer fixture schedule three reads inside a later test; controlled delays reproduced the leak on both master and the lane before fixture-owned cleanup removed it.
 - Compare SQLite timestamp text as normalized UTC seconds and exact fractional digits. Offsets, separators and fractional widths vary across valid driver layouts, and a Julian-day comparison loses sub-millisecond changes. Test equivalent instants and ordering across the full layout matrix and actual Go bindings.
 - Visible lineage proves which relatives a reader may see, not which Job produced the current report. Bind an import report to its producer before attaching an outcome; when that producer is missing or invisible, keep the outcome unknown.
+
+## Custom Thumbnail popup — 2026-09-28
+
+- `docs/todo.md` in this repo is the 2026-07-29 UI bug-hunt **ledger**, and
+  `internal/arch/findings_coverage_test.go` parses it. CLAUDE.md's "write the plan
+  to `docs/todo.md`" is a generic instruction that this repo's own history
+  contradicts: overwriting it fails two arch tests with "the ledger parse is
+  broken". Put the plan in `docs/plans/<date>-<slug>.md`.
+- A pongo2 `{# … #}` comment may not span lines. A multi-line one is not a
+  render error caught at startup — the templates are parsed on first render, so
+  the server answers every HTML request with a panic (`net::ERR_EMPTY_RESPONSE` in
+  e2e) and only the page that uses the template is affected. One comment per
+  line, the way the rest of `displayResource.tpl` does it.
+- Two `window` listeners for the same event are one event handled twice, and
+  `preventDefault()` does not separate them — only `stopImmediatePropagation()`
+  does, and only for listeners registered *later* on the same node and phase. A
+  capture-phase listener does not depend on registration order at all, so it is
+  the one to reach for when ownership of a shared event is the point.
