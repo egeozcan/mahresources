@@ -122,6 +122,10 @@ func TestInstantAfterComparesInstantsOnSQLite(t *testing.T) {
 		{"2026-01-12 12:00:00+00:00", "2026-01-12 14:00:00+02:00", false}, // the same instant
 		{"2026-01-12 12:00:00+00:00", "2026-01-12 13:00:00+02:00", false}, // an hour earlier, sorts later as text
 		{"2026-01-12 12:00:00+00:00", "2026-01-12 12:00:00.5+00:00", true},
+		// Within one millisecond, which julianday() cannot tell apart; the text
+		// still can when both carry the same offset.
+		{"2026-01-12 12:00:00.0001+00:00", "2026-01-12 12:00:00.0004+00:00", true},
+		{"2026-01-12 12:00:00.0004+00:00", "2026-01-12 12:00:00.0001+00:00", false},
 	}
 	var want []int
 	for i, row := range rows {
