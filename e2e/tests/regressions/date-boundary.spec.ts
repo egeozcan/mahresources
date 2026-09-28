@@ -12,7 +12,11 @@ import { ServerInfo, startServer, stopServer } from '../../fixtures/server-manag
 
 // Etc/GMT-14 is UTC+14, a day ahead of UTC from 10:00 UTC to midnight; Etc/GMT+12
 // is UTC-12, a day behind it from midnight to 12:00 UTC. The Etc names invert the
-// sign of the offset.
+// sign of the offset. The zone is chosen when the worker starts, and the chosen
+// zone's next midnight is at least two hours away then, so the dates below
+// cannot change under the test. No zone stays a day away across UTC midnight:
+// a run that straddles it still passes, it only stops telling the calendars
+// apart for the rest of that run.
 const zone = new Date().getUTCHours() >= 10 ? 'Etc/GMT-14' : 'Etc/GMT+12';
 
 const test = base.extend<{ apiClient: ApiClient }, { zonedServer: ServerInfo }>({

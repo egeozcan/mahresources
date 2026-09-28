@@ -302,6 +302,7 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
   let out: 'ignore' | number = 'ignore';
   if (logDir) {
     args.push('-db-slow-query-threshold=500ms');
+    fs.mkdirSync(logDir, { recursive: true });
     out = fs.openSync(path.join(logDir, `server-${port}.log`), 'a');
   }
   const proc = spawn(SERVER_BINARY, args, {
