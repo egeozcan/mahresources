@@ -147,3 +147,67 @@ Routed to batch 4:
 - An `owner=me` stream re-reads other accounts' events on every poll.
 - The drawer orders scheduled Jobs by when they were scheduled, not by when they start, and does not show why a Job is blocked.
 - Between local midnight and UTC midnight, the Project Management overdue test and the CLI timeline doctests fail on master: dates are compared across the two calendars.
+
+### Batch 4 (merged 2026-09-28)
+
+The five lanes have completed their final independent reviews. Batch 4 fixes 27
+of its 28 original issues; K4 is documented. The cumulative disposition is 92
+fixed and two documented, A11 and K4. Implementation agents used `gpt-6-luna` at `max`, and
+review subagents used `gpt-6-sol` at `xhigh`, as requested. Counts below are P0
+plus P1 per full-scope review round; one zero ends the lane's review loop.
+
+| Lane | Outcome | Review rounds |
+|---|---|---|
+| b4-list | J1: safe filename titles and decoded summary-value search. J2: labelled summary fields. J9: filters survive Back, trimmed search, Origin checkboxes and honest auth-off filters. J10: summary figures and export, with the inclusive final local day ending at its last nanosecond. U9/U14: per-card selection and named bulk Cancel/Retry results. U10: folding navbar. L7: live cards own clocks and accept progress by lifecycle version and full timestamp precision. X5: one announcement ledger. X8: motion-safe bars. The routed owner Retry notification and hidden-event cursor advancement also pass. | 8, 2, 2, 1, 0; final round 5 at `0eb34029` |
+| b4-detail | J4: Times and durations. J5/X7: named export downloads with their extensions and accessible output labels. J8: real 404s and recoverable bad filters. X9: distinct page titles and one h1. X10: narrow/short drawer reflow. X11/X12: honest landmarks and visible modal refusals. U11 and L7: related-Job labels and a live paged timeline. A local test-only follow-up commits the already-passing reload, coalescing and teardown guards. | 5, 3, 1, 0; final round 4 at `014fccc5`, test follow-up `b80cf46e` |
+| b4-numbers | N1: shared Go/JS amount, speed and ETA cases. N2: continuous HLS counts and freshness from actual media-body reads, carrying their source time through throttling. N3: honest units/averages and graphs that retain measured movement through final replacement and compaction, while decreasing counts remain hard gaps. N4: one readable vocabulary and state-colour table, forced-colour bars, relative drawer ages, blocked reasons and scheduled ordering. Internal sampling metadata stays outside public projections. | 2, 4, 1, 2, 2, 0; final round 6 at `cfcec370` |
+| b4-kinds | K1: authorized import review and producer-bound apply outcomes, with one generation owning delayed responses. K2: subject titles for exports, Reductions and import files. K3: review counts match apply. K4: luminance-only similarity is an explicit limit, with Near-Identical unchecked by default. K5: background download stays on the form, names the accepted Job and opens the drawer. Compatibility queue/verb fixes also pass. Local P2/P3 follow-ups preserve accepted failure notices on report-read faults and put primitive outcome types in contracts. | 1, 2, 2, 2, 1, 0; final round 6 at `a8b9fcb3`, local follow-ups `2e558d23` |
+| b4-flakes | Exact SQLite instant comparisons cover emitted timestamp notations and nanoseconds. Project Management uses the local calendar, and PostgreSQL note dates no longer drift on save. Queue followers drain before database cleanup; an already-held Pause is confirmed from its durable Job. Expired command drains preserve historical claimed ownership for process-group recovery. Fixture-owned drawer cleanup prevents later tests receiving an earlier panel's reads. Long resource-card names wrap on mobile. | 2, 2, 1, 0, 0; final round 5 at `f007c51f` |
+
+The later review findings were repaired at shared boundaries. An incoming detail
+snapshot must own its own progress-version marker; spreading a held client row
+into it borrowed the newer marker and let an older read rewind progress. The
+drawer now uses the shared snapshot merger before progress comparison. A nil
+graph rate must distinguish an endpoint with no new measurement from a hard gap;
+compaction carries prior movement only through the former. A count decrease from
+the replaced point overrides a plausible positive penultimate-to-final rate.
+Actual HLS Cancel, durable pause/resume, old-row decoding and public-wire privacy
+are covered, along with the independent 102-subcase sampler matrix.
+
+The shutdown defect was attributed before repair: a 300-iteration caller ledger
+caught an Interrupted row while its original owned parent and descendant were
+alive. Recovery could no longer find it. A deterministic real-process regression
+then forced callback settlement after the bounded drain expired. Historical
+claim ownership and a post-wait deadline check keep that row recoverable until
+group death is proved. The unchanged original timeout test subsequently passed
+300 of 300, alongside focused repetitions, race checks and final broad gates.
+
+Integration preserves the earlier five-lane conflict resolutions, both `jobName`
+and `mergeJobSnapshot` in the drawer import collision, and master `73137714`'s
+Custom Thumbnail popup. Generated assets were rebuilt JS, then CSS, then Go; the
+CSS scan and OpenAPI regeneration pass. The tested production merge is
+`67bb52f31e6600f463eb46047cbfe498d64b7241`. Test-only `ff897d59` updates two stale
+browser locators to filename titles and readable Kind labels, retaining the raw
+`plugin-action` query assertion and all form/focus/Back checks. Those 26 focused
+browser cases pass.
+
+Merged full Go, PostgreSQL Go, 1,859 JavaScript tests, builds and all three explicit
+merge invariants pass: an old detail read cannot undo Pin; the timeline says
+“Retried”; and an actual PostgreSQL clustering fixture uses the L6 Reduction's
+title and drains its followers. The full browser/CLI rerun passes 2,367 tests,
+five skipped, with no retries. The PostgreSQL browser/CLI suite passes 2,368
+tests, four skipped, also with no retries. Both saved browser verdicts are
+`passed` with `failedTests=[]`. Master is fast-forwarded from `73137714` to the
+closure commit carrying this record; the tested production and browser commits
+above identify the gate inputs independently of the documentation commit.
+
+All final reviews and gate provenance are retained in
+[the verification record](2026-09-28-jobs-qa-verification.md). Earlier browser
+retries, the calendar-modal/blocks/compare observations and one admission-test
+failure whose causes were not reproduced remain unproved observations. A later
+passing suite does not establish their cause. The verification record also
+preserves accepted limits and unassigned follow-ups, including colour-aware
+similarity/backfill, million-row summary-search indexing and export deletion
+fencing. The original Claude artifact still requires sign-in; an updated local
+HTML report is saved in [the QA report](2026-09-28-jobs-qa-report.html). Remote
+republication is not claimed.

@@ -1,4 +1,6 @@
-# b4-kinds implementation report: round 6 ready for review
+# b4-kinds implementation history and completed local follow-ups
+
+Archive note: the earlier ready-for-review sections below preserve their historical checkpoints. The final Sol xhigh review is zero-blocking at `a8b9fcb3`; its cheap local P2/P3 follow-ups are closed at `2e558d23`, as recorded in the final section. Named lane probes and logs are in `/private/tmp/claude-501/-Users-egecan-Code-mahresources/e6836352-7b72-44a7-9489-ddcee80f38af/scratchpad/lanes/b4-kinds-tmp/resume-20260928`, outside the retired worktree. The coordinator's actual-producer/fault matrix is in the sibling `b4-integration-tmp/resume-20260928/kinds-cheap-root-producer-faults.log`. The copied Markdown reports are durable summaries, not the raw evidence directories.
 
 Branch `jobs-qa/b4-kinds`, base `bdafcb51d5fc4348877ca468338b29d4c1fa0170`, clean HEAD `a8b9fcb3620ec544f999af1cd96002cfe7e3b3ce` (`Regenerate OpenAPI import result documentation`). The complete lane has 21 commits / 63 changed files across K1–K5 and routed follow-ups. This implementation worker started no broad suites, browser sessions, merge, push or reviewer process; root owns the broad gates and will dispatch independent Sol xhigh review after they are green.
 

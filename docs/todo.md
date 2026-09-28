@@ -13900,13 +13900,21 @@ five of five runs in isolation and does not touch downloads.
 
 ## Jobs QA remediation, batch 4 completion — 2026-09-28
 
-- [ ] Complete the pending lane gates on their committed HEADs.
-- [ ] Finish all five lane review loops using Luna max agents and independent Sol xhigh reviews.
-- [ ] Merge final lane commits, including the remaining Kinds regression test, and rebuild JS, CSS and Go.
-- [ ] Verify clustering titles on Postgres, retried timeline wording and a Pin surviving an older detail read.
-- [ ] Pass the merged JavaScript, Go, Postgres Go, browser and Postgres browser gates.
-- [ ] Record results and lessons, fast-forward master, retire the completed lane worktrees and handoff folder, and update the QA report artifact.
+- [x] Complete the pending lane gates on their committed HEADs.
+- [x] Finish all five lane review loops using Luna max agents and independent Sol xhigh reviews.
+- [x] Merge final lane commits, including the remaining Kinds regression test, and rebuild JS, CSS and Go.
+- [x] Verify clustering titles on Postgres, retried timeline wording and a Pin surviving an older detail read.
+- [x] Pass the merged JavaScript, Go, Postgres Go, browser and Postgres browser gates.
+- [x] Record results and lessons, fast-forward master, retire the six completed batch-4 worktrees and handoff, and save the updated QA report locally.
 
 ### Review
 
-Completion is in progress. Detailed evidence will be recorded in the batch 4 results after the final reviews and merged gates.
+All five full-scope lane reviews end with zero P0/P1 findings. Final merged gates
+pass: 1,859 JavaScript tests; full Go and Postgres Go; 2,367 browser/CLI tests and
+2,368 Postgres browser/CLI tests, both with no retries. The 94-issue sweep has 92
+fixes and two documented limits, A11 and K4. Results, exact tested commits,
+accepted limits and unassigned follow-ups are in
+[the verification record](plans/2026-09-28-jobs-qa-verification.md) and
+[the batch results](plans/2026-09-26-jobs-qa-remediation.md). The updated
+[QA report](plans/2026-09-28-jobs-qa-report.html) is local; remote Claude
+republication still requires sign-in and is not claimed complete.

@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jobs System QA Sweep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  :root {
+    --bg: #f7f6f4;
+    --surface: #ffffff;
+    --ink: #1c1917;
+    --muted: #57534e;
+    --faint: #78716c;
+    --rule: #e2dfdb;
+    --rule-strong: #c9c4be;
+    --accent: #92400e;
+    --accent-soft: #fdf3e3;
+    --p1: #b91c1c;
+    --p1-soft: #fdecec;
+    --p2: #a16207;
+    --p2-soft: #fdf6e0;
+    --p3: #57534e;
+    --p3-soft: #efedea;
+    --ok: #166534;
+    --ok-soft: #e8f3eb;
+    --next: #1d4ed8;
+    --next-soft: #e8eefc;
+    --focus: #b45309;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #171412; --surface: #211d1a; --ink: #f2efec; --muted: #b8b1aa; --faint: #948c85;
+      --rule: #37312c; --rule-strong: #4d4640; --accent: #f0a04b; --accent-soft: #33250f;
+      --p1: #f28b82; --p1-soft: #3a1917; --p2: #f2c14e; --p2-soft: #332811; --p3: #b8b1aa; --p3-soft: #2b2622;
+      --ok: #7fd49a; --ok-soft: #16301f; --next: #93b4f5; --next-soft: #1b2438; --focus: #f0a04b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #171412; --surface: #211d1a; --ink: #f2efec; --muted: #b8b1aa; --faint: #948c85;
+    --rule: #37312c; --rule-strong: #4d4640; --accent: #f0a04b; --accent-soft: #33250f;
+    --p1: #f28b82; --p1-soft: #3a1917; --p2: #f2c14e; --p2-soft: #332811; --p3: #b8b1aa; --p3-soft: #2b2622;
+    --ok: #7fd49a; --ok-soft: #16301f; --next: #93b4f5; --next-soft: #1b2438; --focus: #f0a04b;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 64px; display: grid; gap: 44px; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  h1 { font-family: var(--mono); font-weight: 600; font-size: 30px; letter-spacing: -0.01em; line-height: 1.2; }
+  h2 { font-family: var(--mono); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
+  p { margin: 0; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  .lede { color: var(--muted); max-width: 68ch; }
+  header.top { display: grid; gap: 14px; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: 0.02em; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+
+  /* severity tally */
+  .tally { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--rule-strong); background: var(--surface); }
+  .tally > div { padding: 14px 16px; border-right: 1px solid var(--rule); display: grid; gap: 2px; }
+  .tally > div:last-child { border-right: 0; }
+  .tally .n { font-family: var(--mono); font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .tally .l { font-size: 12px; color: var(--muted); }
+  .tally .p1 .n { color: var(--p1); } .tally .p2 .n { color: var(--p2); } .tally .p3 .n { color: var(--p3); }
+  .bar { display: flex; height: 6px; margin-top: -1px; }
+  .bar span { display: block; height: 100%; }
+  @media (max-width: 640px) { .tally { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tally > div:nth-child(2) { border-right: 0; } .tally > div:nth-child(-n+2) { border-bottom: 1px solid var(--rule); } }
+
+  section { display: grid; gap: 16px; }
+  .note { font-size: 13px; color: var(--muted); max-width: 72ch; }
+
+  /* issue rows: thick severity edge, square corners where it touches */
+  .issue { background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--p3); border-radius: 0 4px 4px 0; padding: 14px 16px; display: grid; gap: 8px; }
+  .issue.s1 { border-left-color: var(--p1); }
+  .issue.s2 { border-left-color: var(--p2); }
+  .issue .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+  .sev { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.04em; }
+  .sev.s1 { color: var(--p1); background: var(--p1-soft); }
+  .sev.s2 { color: var(--p2); background: var(--p2-soft); }
+  .sev.s3 { color: var(--p3); background: var(--p3-soft); }
+  .iid { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .area { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .issue h3 { font-size: 15.5px; font-weight: 600; line-height: 1.4; flex-basis: 100%; }
+  .issue .d { color: var(--ink); max-width: 80ch; }
+  .issue .c { font-family: var(--mono); font-size: 12.5px; color: var(--muted); background: var(--bg); border: 1px solid var(--rule); padding: 6px 8px; overflow-wrap: anywhere; }
+  .issue .c::before { content: "Likely cause  "; font-family: var(--sans); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
+  .src { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--faint); }
+  .chip { font-family: var(--mono); font-size: 11.5px; color: var(--muted); border: 1px solid var(--rule-strong); padding: 0 5px; border-radius: 3px; }
+  .verified { font-family: var(--mono); font-size: 11.5px; color: var(--ok); border: 1px solid currentColor; padding: 0 5px; border-radius: 3px; }
+  .list { display: grid; gap: 10px; }
+
+  /* filters */
+  .filters { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 12px 14px; background: var(--surface); border: 1px solid var(--rule); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
+  .seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 4px; overflow: hidden; }
+  .seg button { font: 500 12.5px var(--mono); background: transparent; color: var(--muted); border: 0; border-right: 1px solid var(--rule-strong); padding: 6px 10px; cursor: pointer; min-height: 32px; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .filters label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .filters select, .filters input { font: 14px var(--sans); color: var(--ink); background: var(--bg); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 5px 8px; min-height: 32px; }
+  .filters input { width: 16rem; max-width: 100%; }
+  .count { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 20px; text-align: center; border: 1px dashed var(--rule-strong); }
+
+  /* lanes table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 500; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+
+  .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+  ul.plain li { max-width: 72ch; }
+  footer { font-size: 12.5px; color: var(--faint); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 6px; }
+  footer code { overflow-wrap: anywhere; }
+  /* remediation status */
+  .st { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.03em; border: 1px solid transparent; white-space: nowrap; }
+  .st.done { color: var(--ok); background: var(--ok-soft); }
+  .st.merging { color: var(--ok); border-color: currentColor; }
+  .st.next { color: var(--next); background: var(--next-soft); }
+  .st.later { color: var(--muted); border-color: var(--rule-strong); }
+  .st.doc { color: var(--muted); background: var(--p3-soft); }
+  .issue .head .st { margin-left: auto; }
+  .fix { font-size: 13px; color: var(--muted); border-top: 1px dashed var(--rule); padding-top: 8px; max-width: 80ch; }
+  .fix b { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-right: 6px; }
+  .status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--rule-strong); background: var(--surface); }
+  .status > div { padding: 12px 14px; border-right: 1px solid var(--rule); display: grid; gap: 2px; }
+  .status > div:last-child { border-right: 0; }
+  .status .n { font-family: var(--mono); font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .status .l { font-size: 12px; color: var(--muted); }
+  .status .done .n, .status .merging .n { color: var(--ok); } .status .next .n { color: var(--next); } .status .later .n, .status .doc .n { color: var(--muted); }
+  .sbar { display: flex; height: 8px; margin-top: -1px; background: var(--rule); }
+  .sbar span { display: block; height: 100%; }
+  .sbar .merging { background: repeating-linear-gradient(135deg, var(--ok) 0 4px, transparent 4px 7px); }
+  @media (max-width: 760px) { .status { grid-template-columns: repeat(2, minmax(0, 1fr)); } .status > div { border-bottom: 1px solid var(--rule); } .status > div:nth-child(2n) { border-right: 0; } }
+  .batchstate { white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="meta"><span>mahresources</span><span>swept on master fbfb7572</span><span>2026-09-26</span><span>8 lanes, playwright-cli</span><span>remediation status 2026-09-28</span></div>
+    <h1>Jobs System QA Sweep</h1>
+    <p class="lede">Eight agents each drove their own seeded instance of the jobs system for about an hour: the Jobs drawer, the Job Center at <code>/jobs</code>, job detail pages, every job Kind, the API and live streams, the <code>mr</code> CLI, legacy download routes, restarts, and multi-user access. Their <span id="rawCount">191</span> findings are merged here into <span id="uniqCount"></span> distinct issues. All but two were reproduced at least twice by the lane that found them; the ones marked <span class="verified">re-checked</span> I reproduced again myself.</p>
+    <div>
+      <div class="tally" id="tally"></div>
+      <div class="bar" id="bar" aria-hidden="true"></div>
+    </div>
+  </header>
+
+  <section aria-labelledby="h-fixes">
+    <h2 id="h-fixes">Remediation</h2>
+    <p class="lede">The four remediation batches are complete. Batch 4 used Luna max implementation agents and independent Sol xhigh review subagents; every lane ended with a review containing no P0 or P1 finding. The final merged tree passed the Go, JavaScript, browser, CLI and PostgreSQL suites. Of 94 issues, 92 are fixed and two (A11 and K4) are documented limits.</p>
+    <div>
+      <div class="status" id="stTally"></div>
+      <div class="sbar" id="stBar" aria-hidden="true"></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col">Batch</th><th scope="col">Lanes and issues</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1</td><td>The eight P1s. <span class="mono">b1-access</span> A1, A2 · <span class="mono">b1-deferred</span> S1, S2, S5, S6, S7 · <span class="mono">b1-capacity</span> C1, C2 · <span class="mono">b1-a11y</span> X1, X2 · <span class="mono">b1-flakes</span> the recurring test flakes</td><td class="batchstate"><span class="st done">on master</span></td></tr>
+          <tr><td class="mono">2</td><td>Lifecycle, access and API. <span class="mono">b2-downloads</span> R1, R6, U8, W1&#8211;W3 · <span class="mono">b2-plugin-runtime</span> C3&#8211;C5, R2&#8211;R4, S4 · <span class="mono">b2-commands</span> C6, R5, R7 · <span class="mono">b2-access</span> A3&#8211;A12 · <span class="mono">b2-cli-api</span> Y1&#8211;Y4, L8, L10, J6 · <span class="mono">b2-sqlite-tx</span> SQLite write transactions</td><td class="batchstate"><span class="st done">on master</span></td></tr>
+          <tr><td class="mono">3</td><td>Live updates and the drawer. <span class="mono">b3-stream</span> L1&#8211;L6, L9 · <span class="mono">b3-drawer-ux</span> U3&#8211;U7, U12, U13, X3, X4, X6 · <span class="mono">b3-states</span> U1, S3, J3, J7 · <span class="mono">b3-flakes</span> the recurring test flakes</td><td class="batchstate"><span class="st done">on master</span></td></tr>
+          <tr><td class="mono">4</td><td>Job Center, detail, numbers and Kinds. <span class="mono">b4-list</span> J1, J2, J9, J10, U9, U10, U14, L7, X5, X8 · <span class="mono">b4-detail</span> J4, J5, J8, X7, X9&#8211;X12, U11 · <span class="mono">b4-numbers</span> N1&#8211;N4 · <span class="mono">b4-kinds</span> K1&#8211;K5 · <span class="mono">b4-flakes</span> date boundaries and shutdown regressions</td><td class="batchstate"><span class="st done">on master</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cols">
+      <div>
+        <h3 class="area" style="margin-bottom:8px">Fixed beyond the list</h3>
+        <ul class="plain">
+          <li>Batch 1: once retention had deleted any Job a source mapping named, every later start of a retired database was refused. A missing mapped Job is now classified once, everywhere.</li>
+          <li>Batch 2: SQLite write transactions now take the writer lock at <code>BEGIN</code>. At 8 concurrent requests, group creates refused with "database is locked" went from 570&#8211;589 per 1,000 to none, and upload lock errors from 166&#8211;178 per 1,000 to 0 in 4,400.</li>
+          <li>Batch 2: an older Job whose account had been deleted ran with no permission check at all. It was found while proving that three race findings fail closed.</li>
+          <li>Batch 2: showing a plugin's own error text on its Job could have leaked a password setting. Review caught it before it reached master; password settings are now redacted everywhere on the Job plane and in the host's plugin log lines.</li>
+          <li>Batch 3: the long-running inline tag editor flake was a product bug. The Jobs drawer told every page to refresh its resource lists for downloads that had finished before the page loaded, which closed an open editor about a second after load (37 of 40 probe runs). Lists now refresh only for downloads that finish after the page was rendered.</li>
+          <li>Batch 3: a Job whose account was deleted just after it was picked up ended blocked, offering a Resume that could never work. It now fails, as it does when the account was already gone.</li>
+          <li>Batch 4: timeline buckets compare instants, Project Management dates use the local calendar, PostgreSQL note dates no longer drift on each save, and queue work drains before its database closes. A pause already held by the follower is confirmed from its durable Job; an expired command drain keeps owned process groups recoverable.</li>
+          <li>Ephemeral databases were never removed from <code>/tmp</code> (12,223 files, 21 GB on the test machine). They now live in a private directory and are swept once their owner exits.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="area" style="margin-bottom:8px">Accepted limits</h3>
+        <ul class="plain">
+          <li>Near-duplicate image hashes ignore colour. Near-Identical is unchecked by default; a colour-aware signature requires separate schema and backfill work.</li>
+          <li>Summary-value searches over one million Jobs can take about one second on SQLite and three seconds on PostgreSQL.</li>
+          <li>The drawer’s capped reads can miss the soonest scheduled Job above 50 active Jobs, or a resource refresh for a download outside its Finished read.</li>
+          <li>A few races between an administrator deleting an account or changing a scope and a Job starting. Each fails closed; the Job shows a less precise reason.</li>
+          <li>Older Jobs whose account was deleted before this release. The upgrade notes give the query and the procedure, and migration readiness now lists them for review.</li>
+          <li>Plugin secret redaction knows current setting values only, so revoke a key after rotating it. A plugin's own page or API output is not redacted.</li>
+          <li>Two server processes whose clocks differ can miss, or add, one resource-list refresh around a page load.</li>
+          <li>During a rolling upgrade, pausing a download that an older process is running reads "Pausing" until the transfer ends. Cancel still works.</li>
+          <li>A filesystem delete that stalls during retention can remove a re-run's new export. A tab can miss a database restore once new events pass its position.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-first">
+    <h2 id="h-first">Fix first</h2>
+    <p class="note">P1 means broken, a security or data problem, or a task that cannot be done. Two are access-control leaks, two stop the server from restarting or run scheduled work at the wrong time, two starve or kill background work when job capacity runs out, and two lock screen-reader and high-contrast users out of what the drawer says and where focus is. All eight are fixed on master (batch 1).</p>
+    <div class="list" id="p1list"></div>
+  </section>
+
+  <section aria-labelledby="h-all">
+    <h2 id="h-all">All issues</h2>
+    <div class="filters" role="group" aria-label="Filter issues">
+      <div class="seg" role="group" aria-label="Severity">
+        <button type="button" id="sev-all" data-sev="all" aria-pressed="true">All</button>
+        <button type="button" id="sev-1" data-sev="1" aria-pressed="false">P1</button>
+        <button type="button" id="sev-2" data-sev="2" aria-pressed="false">P2</button>
+        <button type="button" id="sev-3" data-sev="3" aria-pressed="false">P3</button>
+      </div>
+      <label for="stSel">Status <select id="stSel"></select></label>
+      <label for="areaSel">Area <select id="areaSel"></select></label>
+      <label for="q">Search <input id="q" type="search" placeholder="title, file, lane id (L5-9)" autocomplete="off"></label>
+      <span class="count" id="shown" aria-live="polite"></span>
+    </div>
+    <div class="list" id="alllist"></div>
+  </section>
+
+  <section aria-labelledby="h-lanes">
+    <h2 id="h-lanes">Lanes</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col">Lane</th><th scope="col">Covered</th><th scope="col" class="num">P1</th><th scope="col" class="num">P2</th><th scope="col" class="num">P3</th></tr></thead>
+        <tbody id="lanes"></tbody>
+      </table>
+    </div>
+    <p class="note">Lane counts are what each lane recorded before merging. The same defect often appears in several lanes (a paused download showing as "Blocked" was found by six), which is why the merged list is shorter.</p>
+  </section>
+
+  <section aria-labelledby="h-held">
+    <h2 id="h-held">What held up, and what this setup could not reach</h2>
+    <div class="cols">
+      <div>
+        <h3 class="area" style="margin-bottom:8px">Checked and fine</h3>
+        <ul class="plain">
+          <li>No markup injection on any surface: plugin labels, progress messages and units carrying <code>&lt;script&gt;</code> and <code>onerror</code> rendered as text in the drawer, <code>/jobs</code>, detail pages, plugin pages, <code>/logs</code> and the admin overview.</li>
+          <li>Per-role visibility of jobs, events, outputs, summaries, summary exports and the CLI; badge counts and hand-typed owner or kind filters never widen it.</li>
+          <li>Another user's job id and a nonexistent id get identical 404s on every canonical and legacy route, so there is no existence oracle. Other users' export and summary files are refused.</li>
+          <li>CSRF enforced on the 13 job endpoints tried; the v2 live stream closes or re-filters when access changes.</li>
+          <li>Long-running jobs are announced once with their failure reason, progress is not chattered, and reconnects are announced once each way.</li>
+          <li>axe (WCAG 2.2 AA) on the drawer, <code>/jobs</code> and detail pages: no contrast failures; no horizontal scroll at 320 to 1440 px; the drawer opens in 56 to 98 ms with up to 80 rows.</li>
+          <li>Retry leaves the source job untouched and links the successor; canonical ids stay immutable while the legacy handle follows the retry leaf.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="area" style="margin-bottom:8px">Original sweep: not covered, or caused by the test setup</h3>
+        <ul class="plain">
+          <li>Real screen readers (semantics were checked through Chromium's accessibility tree and a live-region log), Safari and Firefox, Postgres, multi-process deployments, and session expiry by TTL.</li>
+          <li>Setup artefact: the demo heartbeat schedule called <code>os.time()</code>, which the plugin sandbox does not provide, so it failed every 2 minutes until 14:55. Those failed rows are noise; the "cancelled on every tick" behaviour it exposed is real (see the schedules issue).</li>
+          <li>Setup artefact: the start script first waited only 10 s for the old server to exit, so one restart briefly ran two processes on one database. Findings from that overlap were discarded.</li>
+          <li>Partly setup: in-memory files with a persistent database made plugin commands unusable after a restart. Kept as an issue because the documented default for that combination is what breaks.</li>
+          <li>All downloads came from one local host, which exaggerates how alike their titles look, but the title rule itself is the issue.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Full write-ups, steps and screenshots per lane are on the machine that ran the sweep, in <code>/private/tmp/claude-501/-Users-egecan-Code-mahresources/32d96ce5-64a1-4b24-bce9-85290b618df8/scratchpad/jobs-qa/findings/</code> as <code>l1.md</code> to <code>l8.md</code>, with evidence folders beside them. Lane ids in each issue (for example <span class="mono">L5-9</span>) point at those entries.</p>
+    <p>File and line references come from reading the code during the sweep, which changed nothing. The remediation plan, each batch's results and known limits are in <code>docs/plans/2026-09-26-jobs-qa-remediation.md</code>; final review and gate evidence and unassigned follow-ups are in <code>docs/plans/2026-09-28-jobs-qa-verification.md</code>.</p>
+  </footer>
+</div>
+
+<script>
+const AREAS = {
+  access: 'Access & security',
+  sched: 'Scheduling & deferred downloads',
+  capacity: 'Capacity & plugins',
+  recovery: 'Restart & recovery',
+  live: 'Live updates & load',
+  ux: 'Drawer & command UX',
+  a11y: 'Accessibility',
+  center: 'Job Center & detail',
+  numbers: 'Progress & numbers',
+  downloads: 'Downloads & failure reasons',
+  kinds: 'Exports, imports & reductions',
+  cli: 'CLI & API'
+};
+
+const ISSUES = [
+  // Access & security
+  { id: 'A1', s: 1, a: 'access', v: true, t: 'Legacy job event streams keep sending job data after logout, disable or demotion',
+    d: '/v1/jobs/events (without version=2) and /v1/download/events read the account once when the stream opens. A disabled admin, and an admin demoted to a scoped guest, kept receiving other users\' new downloads with full URLs. Re-checked: a disabled account got 401 on its own requests while its open stream delivered another user\'s download URL 5 times. The v2 stream handles this correctly; /admin/export and /admin/import still use the legacy one.',
+    c: 'server/api_handlers/download_queue_handlers.go GetDownloadEventsHandler (~857): principal captured once and reused for every frame; needs the per-tick re-resolution the canonical stream does',
+    src: ['L7-4'] },
+  { id: 'A2', s: 1, a: 'access', v: true, t: 'A scoped user\'s download of bytes that already exist outside their scope writes to that resource and reports success',
+    d: 'The job says "Succeeded / Created resource", attaches the user\'s group to a resource in a group they cannot see, and the resource link is a 404 for them. Whether a new file appears also tells them whether given bytes exist elsewhere in the library. Re-checked on the auth instance: resource owned by "Video clips" gained the scoped user\'s "Archive" group.',
+    c: 'The different-owner hash-collision branch (mergeIntoExistingResource) returns the existing resource with a nil error; neither it nor the download Kind checks that resource against the caller\'s scope',
+    src: ['L7-6'] },
+  { id: 'A3', s: 2, a: 'access', t: 'Plugin-action jobs show every owner, guests included, the server\'s hostname, boot-session UUID and process id',
+    d: 'The runtime identity sits in the public, searchable job summary: GET /v1/jobs, the detail Summary block and the raw JSON on /jobs cards. The boot UUID is the command runtime\'s own, which CLAUDE.md says never enters Lua or administrator views. A guest searching for the hostname found their jobs by it.',
+    c: 'application_context/job_plugin_action_adapter.go:189 and :212 copy CurrentRuntimeIdentity() into pluginActionSummary.Runtime; only the sealed replay input needs it',
+    src: ['L7-15', 'L4-1', 'L5-25', 'L6-24'] },
+  { id: 'A4', s: 2, a: 'access', t: 'Retry after losing the target group\'s scope is accepted, then silently blocks',
+    d: 'The new job goes Blocked (scope-refused) with no reason shown; Resume is offered and blocks again. The legacy retry route refuses the same request up front with a clear message.',
+    c: 'Canonical retry leaves the scope check to dispatch; the advertised retry and resume commands do not recheck the target scope',
+    src: ['L7-1'] },
+  { id: 'A5', s: 2, a: 'access', t: 'A guest is offered Dismiss, Pin, Unpin, Pin visible lineage and Forget, and every one is refused with 403',
+    c: 'requiredCapability treats every POST under /v1/jobs/ as capWrite, while the Kind command computation offers preference and forget commands to any viewer',
+    src: ['L7-12'] },
+  { id: 'A6', s: 2, a: 'access', t: 'When an admin retries someone else\'s failed job, the owner loses Retry for good and is not told why',
+    d: 'The owner\'s "not retried" filter still lists the job. The legacy history retry route returns the hidden successor\'s id to the owner.',
+    c: 'Retry eligibility checks "has any retry successor" without the viewer filter that lineage and filters use',
+    src: ['L7-7'] },
+  { id: 'A7', s: 2, a: 'access', t: '"View created resource" stays offered after the viewer loses access or the resource is deleted, and opens a raw JSON 404',
+    c: 'Artifact outputs are re-authorized when the detail is built; entity outputs only when opened',
+    src: ['L7-2'] },
+  { id: 'A8', s: 2, a: 'access', t: 'Admins cannot tell whose job is whose, and their drawer counts every account\'s failures as their own',
+    d: 'Rows and the drawer show no owner, the detail page shows a bare user number, and the Owner and Actor filters need numeric ids. An admin\'s Needs attention badge counted 42 failures from all accounts, with no way to narrow it.',
+    src: ['L7-3', 'L7-10'] },
+  { id: 'A9', s: 2, a: 'access', t: 'A deleted user\'s jobs lose every trace of their owner, and their scheduled downloads block at the due time',
+    d: 'Resume is offered on those blocked downloads and cannot work. The delete dialog says nothing about running or scheduled work.',
+    c: 'The deletion sweep NULLs owner and actor with no marker; the deferred Kind parks an ownerless job as blocked instead of finishing it',
+    src: ['L7-8'] },
+  { id: 'A10', s: 3, a: 'access', t: 'A download still running when its owner is deleted stamps the deleted id as the new resource\'s creator',
+    src: ['L7-9'] },
+  { id: 'A11', s: 3, a: 'access', t: 'The v2 stream\'s global delivery sequence lets each user see how much job activity other accounts generate',
+    d: 'No other user\'s job ids or content leak, only the volume.', src: ['L7-11'] },
+  { id: 'A12', s: 3, a: 'access', t: 'A plain GET to /logout ends the session, so any cross-site link can sign a person out',
+    d: 'Outside the jobs system; found while testing logout. It also leaves an open drawer stuck (see the live-stream issue).', src: ['L7-14'] },
+
+  // Scheduling & deferred
+  { id: 'S1', s: 1, a: 'sched', t: 'Once any deferred download comes due, the server cannot restart on its own database',
+    d: 'Boot exits with "Job Center cutover blocked ... source-retirement-hash-mismatch/scheduled-download". Any deferred row whose due time passes triggers it: fired start_at and delay rows alike, and even a row that was cancelled, because the scheduler still marks a cancelled row submitted when it comes due. A pending or cancelled row that is not yet due does not block. Five lanes hit it, after graceful restarts and kill -9. Only one row is re-armed per boot, lowest id first, so each further due row blocks the next boot again.',
+    c: 'application_context/job_migration.go:1043 hashRetiredScheduledDownload hashes {ID, PluginName, JobID, URL, Payload}; JobID is empty when the row is scrubbed at creation and written when it comes due (recomputed: fired rows match post_scrub_hash only with JobID empty). due_at is not in the hash, so the UTC text of S2 is a separate bug. rearmOneRestoredSource (job_migration_readiness.go ~395) then quarantines the row and main.go:721 aborts startup',
+    src: ['L8-4', 'L8-25', 'L1-6', 'L2-20', 'L6-21'] },
+  { id: 'S2', s: 1, a: 'sched', v: true, t: 'A deferred download given start_at runs at the next scheduler tick, not at its time',
+    d: 'start_at is stored as UTC text ("...+00:00") while delay rows and the scheduler\'s clock use local-offset text, and SQLite compares the text. At UTC+2 a download set for 90 minutes out ran after 28 seconds; west of UTC it would run hours late. delay waits correctly.',
+    c: 'plugin_system/download_api.go:227 (.UTC()) stores a different text form than the delay path; compare as times or store one form',
+    src: ['L6-1', 'L8-13', 'L2-20', 'L1-6'] },
+  { id: 'S3', s: 2, a: 'sched', t: 'Scheduled jobs never say when they will run, and look like work in progress',
+    d: 'The drawer, /jobs and the detail page show "Working / In progress" with a pulsing bar. scheduledFor is in the API but on no surface. /downloads (now /jobs?kind=remote-download) leaves deferred downloads out entirely.',
+    c: 'job_template_context.go jobIsActive treats scheduled as active, so jobRowProgressBar draws an indeterminate "Working" bar; displayJob.tpl has no scheduledFor field',
+    src: ['L1-4', 'L2-21', 'L4-4', 'L5-15', 'L6-2', 'L4-27'] },
+  { id: 'S4', s: 2, a: 'sched', t: 'A schedule run that cannot start records a new Cancelled job on every 30-second tick',
+    d: '"Run now" says Started; the occurrence\'s timeline says started, then not-started; the schedule row still reads "never run". While job capacity was full, 17 cancelled heartbeat rows in 8 minutes pushed every real finished job out of the drawer.',
+    c: 'runScheduledOccurrenceJob accepts and claims the occurrence job (job_plugin_action_adapter.go :1754, :1771) before RunScheduleForHost tries the VM and a slot; on ran=false (:561-569) it is withdrawn as cancelled, contradicting errJobDidNotStart\'s own rule that "never started" is not an outcome a job records',
+    src: ['L6-23', 'L4-14', 'L2-16', 'L8-10', 'L4-23'] },
+  { id: 'S5', s: 2, a: 'sched', t: 'Cancelling a scheduled download\'s job leaves the plugin\'s row pending; at the due time it turns "submitted" and names the cancelled job',
+    d: 'No download runs, but the row now carries a job id, which blocks the next restart (S1).',
+    c: 'The Job-side cancel for StateScheduled (job_download_adapter.go) never calls CancelScheduledDownload; scheduled_download_context.go:542 treats "job already moved on" as success',
+    src: ['L6-3', 'L8-25'] },
+  { id: 'S6', s: 2, a: 'sched', t: 'Deferred mah.download.submit fails with "database is locked" while downloads are running',
+    d: '10 of 25, then 8 of 25 deferred submits failed under concurrent download traffic; three of eight instances hit it while seeding. With no downloads running, 12 parallel submits all succeeded.',
+    c: 'The transaction reads first (legacyJobInputsRetiredOn, JobWriterEpochMinimum) and writes second; in WAL that promotion returns SQLITE_BUSY_SNAPSHOT, which skips busy_timeout. Make the first statement a write, as AddResource now does',
+    src: ['L8-11'] },
+  { id: 'S7', s: 3, a: 'sched', t: 'Retry on a cancelled scheduled download runs it immediately and silently drops its schedule',
+    src: ['L2-23'] },
+
+  // Capacity & plugins
+  { id: 'C1', s: 1, a: 'capacity', v: true, t: 'Plugin actions that are only waiting for their plugin hold job capacity and starve everything else',
+    d: 'An accepted action is claimed, shows "Running... \u00b7 In progress", and takes a global capacity slot and one of three process-wide action slots before it waits for the plugin\'s VM lock. 34 queued quick actions took all 32 slots; a 500-byte download then waited about two minutes, and another plugin\'s idle job sat for two and a half. A 50-resource bulk action shows 50 identical rows, 16 of them "Running", although the plugin runs one at a time.',
+    c: 'executeAsyncJobWithin takes the actionSemaphore and reports Started before work() runs; plugin_system/action_jobs.go:20 maxConcurrentActions = 3 is shared by every plugin',
+    src: ['L8-8', 'L6-18', 'L4-20'] },
+  { id: 'C2', s: 1, a: 'capacity', v: true, t: 'With job capacity full, a plugin command is accepted (202) and then fails permanently',
+    d: 'The run fails with "was not claimable", which the job shows only as "the plugin command did not complete successfully \u00b7 Class: internal". mah.start_job raises instead of queueing. Registered actions correctly wait.',
+    c: 'claimPluginCommandJob calls JobService().Claim, which returns claimed=false on ErrCapacityExhausted (jobs/dispatch.go:147); SubmitCommandJob turns that into an error and Dispatcher.startCommand records RunStatusFailed',
+    src: ['L6-22', 'L8-9'] },
+  { id: 'C3', s: 2, a: 'capacity', v: true, t: 'A failed plugin action never shows the plugin\'s own reason',
+    d: 'mah.job_fail text and Lua errors become "the plugin\'s handler failed" on every surface, and the real text reaches only the server\'s stdout, not /logs. The success path does keep the plugin\'s message, and the plugin-actions docs say the reason is kept.',
+    c: 'job_plugin_action_adapter.go:1329-1342 logs the text and publishes an empty outcome; :1514-1520 writes the constant. The comment at :124-130 says this is deliberate, so either the docs or the code has to change',
+    src: ['L4-13', 'L5-3', 'L6-17'] },
+  { id: 'C4', s: 2, a: 'capacity', t: 'Running or queued plugin actions offer no Cancel',
+    d: 'A long-scan that runs for minutes advertises only Pin and Pin visible lineage, and an action that has not started, only waiting for its plugin, cannot be withdrawn either. The 50 rows of a bulk run cannot be stopped. The code does this on purpose, but the plugin-actions docs do not say so.',
+    src: ['L2-24', 'L4-20'] },
+  { id: 'C5', s: 2, a: 'capacity', t: 'Disabling a plugin mid-action leaves its handler running; after re-enabling, two handlers of one plugin run at once',
+    d: 'An action queued before the disable later fails as "the plugin\'s handler failed".', src: ['L6-26'] },
+  { id: 'C6', s: 2, a: 'capacity', t: 'A failed plugin command\'s exit code, timeout or output is only on an admin page the job does not link to, and "Inspect command history" does nothing visible',
+    d: 'The button answers "command history reference resolved" and stays put; the run id it returns is dropped.',
+    c: 'jobCenter.runCommand handles only successorId and shows outcome.message; detail.runId is ignored',
+    src: ['L6-20', 'L2-14', 'L5-18', 'L6-19'] },
+
+  // Restart & recovery
+  { id: 'R1', s: 2, a: 'recovery', v: true, t: 'A graceful restart marks running downloads Cancelled with no reason, while a crash resumes them',
+    d: 'Nobody cancelled them. They are filed under Finished with Retry offered and no reason, so they read as a person\'s cancel and drop out of view.',
+    c: 'DownloadManager.Shutdown calls job.Cancel(), the same call a user cancel makes (download_queue/manager.go:1825); the adapter maps it to StateCancelled with no reason',
+    src: ['L8-5', 'L1-9', 'L2-25'] },
+  { id: 'R2', s: 2, a: 'recovery', v: true, t: 'Shutdown records one event three ways, and can take minutes',
+    d: 'After one graceful restart: running downloads became Cancelled (offering Retry, no reason); a paused download stayed Blocked; actions only waiting for their plugin became Failed with "the plugin\'s handler failed" although no handler ran; running actions and commands became Interrupted with no reason. Neither the failed nor the interrupted action offers Retry, and the real cause ("plugin is no longer available") is only in the server log. The web server stops answering the moment SIGTERM arrives, but the process stays alive until every running action finishes: 15 s to 3 minutes across 11 restarts, each time exactly the running action\'s remaining time, with the drawer on "Reconnecting" throughout. Under systemd\'s default 90 s stop timeout the process would be killed mid-drain and lose the outcome it was waiting for.',
+    c: 'A waiting action: LockVM returns nil after revoke, and "plugin is no longer available" is not errJobDidNotStart, so settleActionJob reports Failed; reportLostCallbacks races it with CallbackLost (interrupted), both Finish at the same version, and the first commit wins. The drain is unbounded in practice: Close waits for each plugin VM\'s running handler in turn, up to 5 minutes each (measured 16 s, 36 s, 2 min 20 s)',
+    src: ['L8-6', 'L1-21', 'L1-22', 'L2-25', 'L5 (observed)'] },
+  { id: 'R3', s: 2, a: 'recovery', t: 'A plugin action that completed during shutdown was then recorded "interrupted"',
+    d: 'It wrote output-published, and 0.35 to 1.4 ms later shutdown recorded it interrupted with no failure, logging "could not settle job ...; retaining its outcome ... job version conflict". A job that did its work reads as if it did not. Reproduced 5 times across three lanes; in L1\'s runs it happened only when another action was queued behind the finishing one (2 of 3 such runs, 0 without).',
+    c: 'settleActionJob runs after the VM unlock and hostSettled is set only after the report returns, so Close reaches reportLostCallbacks while Completed is still publishing the output, and the interrupt usually commits first',
+    src: ['L8-26', 'L1-22', 'L5 (observed)'] },
+  { id: 'R4', s: 2, a: 'recovery', t: 'After a restart, jobs look Running with frozen progress for about two minutes, then turn Interrupted or Blocked with no reason',
+    d: 'The Cancel offered on a stuck plugin command cannot act. The download-queue docs on restart behaviour do not match what happens.', src: ['L2-22'] },
+  { id: 'R5', s: 2, a: 'recovery', t: 'With -memory-fs and a persistent database, plugin commands are refused forever after the first restart',
+    d: 'The default staging root is a new temp directory per process, but the database fence stays bound to the first one. /logs promises an automatic retry that can never succeed. Pinning -plugin-command-staging-path avoids it.',
+    c: 'application_context/plugin_command_runtime_fence.go:79', src: ['L8-7'] },
+  { id: 'R6', s: 2, a: 'recovery', t: 'A download stopped by the overall time limit is reported as "download cancelled"',
+    c: 'download_queue/progress.go:142, 194, 283, 317 return "download cancelled" for any context end; the overall deadline (manager.go:1148-1150) is not told apart',
+    src: ['L5-26'] },
+  { id: 'R7', s: 3, a: 'recovery', t: 'After a crash, every plugin command is refused for five minutes although the orphaned process exits within seconds, and the refusal is a 400',
+    src: ['L8-24'] },
+
+  // Live updates & load
+  { id: 'L1', s: 2, a: 'live', t: 'Every page load replays the entire job event history over the live stream',
+    d: '789 events on a freshly wiped instance after an hour of use, and it grows without bound. The drawer does not need the replay.',
+    c: 'The drawer never passes a cursor on its first connection, and the endpoint treats "no cursor" as "from the beginning"',
+    src: ['L1-3'] },
+  { id: 'L2', s: 2, a: 'live', t: 'Every lifecycle event re-fetches the detail of every visible row, in every tab, drawer open or closed',
+    d: 'One tab made 1,352 requests while 22 downloads finished over 4.5 minutes; a single page load makes about 200 /v1/jobs/{id} requests.',
+    c: 'List responses carry no commands, and the refresh re-reads every row rather than only rows whose version changed; it runs from init() on every page',
+    src: ['L1-5', 'L8-15'] },
+  { id: 'L3', s: 2, a: 'live', t: 'One HTTP error on the live stream leaves the drawer on "Reconnecting" forever',
+    d: 'After a proxy error, sign-out in another tab, or a disabled account, the stream is closed and never reopens, even after signing back in, and every control answers "authentication required" until a reload.',
+    c: 'jobPanel.js dropStream() sets "reconnecting" on every error and never checks readyState === EventSource.CLOSED; the browser does not reconnect after a non-200 answer',
+    src: ['L1-7', 'L7-5'] },
+  { id: 'L4', s: 2, a: 'live', t: 'When a list read fails or is slow, the drawer says "No visible jobs yet" with zero badges and never retries',
+    d: 'It also throws away the lists it did load when the stream is down. Reopening the drawer does not retry. The Job Center keeps a stale page under "Live updates connected".',
+    c: 'Cancelling in-flight refreshes (right for announcements) also drops the rows; nothing schedules a retry',
+    src: ['L1-8', 'L8-14', 'L1-10', 'L8-16'] },
+  { id: 'L5', s: 2, a: 'live', t: 'A job you watch finish can vanish from the drawer, and a job failing now can be missing from Needs attention',
+    d: 'Groups keep the newest N jobs by acceptance time, so a long job that finishes after N newer ones drops out of Finished, and a fresh failure of an old job is not among the 50 kept. The /resources list also misses its refresh.',
+    c: 'jobs/query.go:259 orders every list by accepted_at DESC and boundedPanelJobs sorts by acceptedAt; open-work groups want the time the job entered its state',
+    src: ['L1-1', 'L1-19'] },
+  { id: 'L6', s: 2, a: 'live', t: 'Needs attention and Active silently stop at 50 rows, and the badge shows the capped number',
+    d: 'With 87 failures the badge said 50; after a bulk run 13 transfers that were downloading did not appear. Only Finished has a "Showing the newest" note.',
+    src: ['L1-17', 'L4-10'] },
+  { id: 'L7', s: 2, a: 'live', t: 'On /jobs, running rows freeze; on the detail page the timeline is not live and stops at 100 events',
+    d: 'Progress, speed and time left on /jobs move only when some other job changes state. The detail timeline showed only "accepted" after the job finished, has no paging past 100 events, and the header kept the old phase after the job finished.',
+    c: 'src/components/jobList.js:223-247 never listens for job-progress; jobCenter.js:481 fetches /events?limit=100 once and ignores nextSequence; the live merge keeps detail.phase when the terminal snapshot omits it',
+    src: ['L5-9', 'L2-4', 'L5-11', 'L5-10', 'L4-22'] },
+  { id: 'L8', s: 2, a: 'live', t: 'The canonical stream sends a job\'s started event before its accepted event for about a third of jobs',
+    c: 'jobs/service.go:1502-1504 orders same-timestamp events by created_at, id; the UUIDv7 tie-break bits are random',
+    src: ['L8-1'] },
+  { id: 'L9', s: 3, a: 'live', t: 'Dismissing in one tab leaves the row in every other open tab until some job changes state', src: ['L1-12'] },
+  { id: 'L10', s: 3, a: 'live', t: 'A stream cursor beyond the database\'s head is accepted silently, so a tab that outlives a restore or wipe hears nothing', src: ['L8-19'] },
+
+  // Drawer & command UX
+  { id: 'U1', s: 2, a: 'ux', t: 'A paused download shows as "Blocked" under Needs attention, and nothing in the UI can pause',
+    d: 'A user pause is stored as state blocked, phase paused, so it gets a red danger pill on /jobs, a warning triangle in the drawer, no reason, and no hint that Resume starts over. The "paused" state filter and /downloads?Status=paused never match it. Pin and Unpin are both advertised, which makes the "Available command: Unpin" filter list every job.',
+    c: 'application_context/job_download_adapter.go:778-802 transitions a held download to StateBlocked; server/legacy_job_compatibility.go:44-50 maps legacy paused to canonical paused',
+    src: ['L1-18', 'L2-17', 'L3-6', 'L4-3', 'L5-2', 'L8-3'] },
+  { id: 'U2', s: 2, a: 'ux', t: 'The Cancel confirmation has two buttons, both labelled "Cancel"',
+    d: 'One backs out, the other stops the download. Same in the drawer, the detail page, scheduled downloads and plugin commands.',
+    c: 'jobPanel.js:960 passes confirmLabel: commandLabel(command) and keeps the store\'s default cancelLabel "Cancel" (confirmDialog.js)',
+    src: ['L1-11', 'L2-1', 'L3-4', 'L6-4', 'L7-13'] },
+  { id: 'U3', s: 2, a: 'ux', t: 'Controls go stale after a command, and pressing one says only "job command failed"',
+    d: 'After Forget, Resume, a retry from another tab, or a Cancel that lost to completion, both surfaces keep buttons the job no longer offers. With no busy state, a double-click turns a successful Resume into an error.',
+    c: 'Command answers carry a job snapshot without commands; writeJobCommandError replaces refusals with fixed text and jobCenter.js fetchJSON reads payload.error instead of the result message',
+    src: ['L2-8', 'L5-29', 'L2-10'] },
+  { id: 'U4', s: 2, a: 'ux', t: 'Dismiss cannot be undone, and "Dismiss finished" dismisses every finished job without asking',
+    d: 'One click dismissed 67 jobs while the drawer showed 10. A dismissed job\'s own page neither says it is dismissed nor stops offering Dismiss. A single Dismiss asks for confirmation; dismissing 38 at once does not.',
+    c: 'The dismiss command is advertised regardless of the viewer\'s preference, and there is no undismiss command',
+    src: ['L2-9', 'L5-16', 'L1-13', 'L2-19', 'L3-19'] },
+  { id: 'U5', s: 2, a: 'ux', t: 'Retry or Continue in the drawer navigates the whole page to the new job, discarding unsaved work',
+    d: 'An unsaved note was lost this way.', src: ['L2-3'] },
+  { id: 'U6', s: 2, a: 'ux', t: 'Starting an action opens the drawer at the top of the failures, thousands of pixels above the job just started',
+    src: ['L4-11', 'L6-25'] },
+  { id: 'U7', s: 2, a: 'ux', t: 'A failure that a later Retry fixed stays in Needs attention and the header count, with nothing saying it was retried',
+    src: ['L2-18'] },
+  { id: 'U8', s: 2, a: 'ux', t: 'Retrying a download whose URL is downloading right now creates a job that sits Blocked with no reason and no release',
+    d: 'The docs say such a retry is refused.', src: ['L2-15'] },
+  { id: 'U9', s: 2, a: 'ux', t: 'Bulk commands on /jobs act on jobs no longer shown, and Cancel and Retry are never offered in bulk',
+    c: 'A card\'s destroy() does not run for every card removed by the list refresh, so selectedIds is never pruned',
+    src: ['L2-11', 'L2-12'] },
+  { id: 'U10', s: 2, a: 'ux', t: 'Between about 1024 and 1120 px wide, the header pushes the Jobs badges and the settings gear off-screen',
+    d: 'They are clipped and cannot be scrolled to.', src: ['L4-12'] },
+  { id: 'U11', s: 3, a: 'ux', t: 'Lineage lists bare, identical titles with no relation, state or time, so a retry chain is unreadable', src: ['L2-5', 'L5-24'] },
+  { id: 'U12', s: 3, a: 'ux', t: 'The notice box keeps raw server words ("cancelling", "queued to start again") after the row shows the result',
+    d: 'It survives closing and reopening the drawer and never names the job. The detail page reads "Cancelled \u00b7 cancelling".', src: ['L1-14', 'L3-7', 'L2-7'] },
+  { id: 'U13', s: 3, a: 'ux', t: 'Confirmation and styling are inconsistent across commands',
+    d: 'Pin asks, Unpin does not; Pin\'s confirm button is styled as destructive while "Forget replay input" looks harmless.', src: ['L2-6', 'L3-19', 'L4-26'] },
+  { id: 'U14', s: 3, a: 'ux', t: 'Bulk results name jobs by UUID and command key ("1 of 1 job: pin."), and selection says "item"', src: ['L2-13', 'L3-9'] },
+
+  // Accessibility
+  { id: 'X1', s: 1, a: 'a11y', t: 'Jobs that finish within about two seconds are never announced to screen readers',
+    d: 'That covers the most common failures (404, 403, 500, DNS, duplicate) and instant successes, with the drawer open or closed.',
+    c: 'Lifecycle frames carry no job snapshot, so the refresh that follows is the first sight of a job already terminal, and hearJob records a first sight without speaking it',
+    src: ['L3-3'] },
+  { id: 'X2', s: 1, a: 'a11y', t: 'In forced-colors (Windows High Contrast) mode no Jobs control shows focus',
+    d: 'The header button, the drawer, the confirmation dialog and the /jobs bulk bar.',
+    c: 'Tailwind v4\'s outline-none is outline-style: none (public/tailwind.css:4176) and forced colors drop the ring box-shadow; outline-hidden is the drop-in fix',
+    src: ['L3-14'] },
+  { id: 'X3', s: 2, a: 'a11y', t: 'Focus is thrown away when the focused row changes or after a command',
+    d: 'In the drawer, focus jumps to Close after Cancel or Resume, or when the row the reader is on finishes or fails. On /jobs and the detail page, Pin, Unpin, Dismiss and Cancel drop focus to <body>.',
+    c: 'keepFocusOnRow acts once, right after the HTTP answer; the visible change arrives later over the stream and nothing restores focus then',
+    src: ['L1-20', 'L2-2', 'L3-5', 'L3-8', 'L2-7'] },
+  { id: 'X4', s: 2, a: 'a11y', t: 'Closing a drawer opened with Ctrl/Cmd+Shift+D returns focus to the Jobs button, not to the field you were typing in',
+    c: 'handleShortcut passes the keydown event; captureTrigger returns event.currentTarget, which is document, so the focusedElement() fallback never runs',
+    src: ['L1-15', 'L3-2'] },
+  { id: 'X5', s: 2, a: 'a11y', t: 'On /jobs and the detail page every state change is announced twice, by two page-level live regions',
+    d: 'The /jobs copy also drops the failure reason.', src: ['L3-11'] },
+  { id: 'X6', s: 2, a: 'a11y', t: 'Shift+Tab hides the focused control behind a sticky heading (SC 2.4.11)',
+    d: 'Fully behind the drawer\'s group heading; 64 to 98 percent under the site header on /jobs.',
+    c: 'No scroll-padding-top on the drawer\'s scroll container or on html',
+    src: ['L3-1', 'L3-12'] },
+  { id: 'X7', s: 2, a: 'a11y', t: 'Output links show "Open output" but are named "Open Exported archive" (SC 2.5.3)', src: ['L3-21', 'L6-10'] },
+  { id: 'X8', s: 3, a: 'a11y', t: 'Under reduced motion, /jobs and /downloads cards still pulse their indeterminate bar',
+    c: 'The server-rendered card uses animate-pulse without the motion-safe: variant the other surfaces use', src: ['L3-13'] },
+  { id: 'X9', s: 3, a: 'a11y', t: 'Every detail page has the same document title and two h1 headings, so Retry lands on a page that sounds identical', src: ['L3-17', 'L5-20'] },
+  { id: 'X10', s: 3, a: 'a11y', t: 'At 400% zoom the drawer leaves 57 px for the list; at 320 px titles and metric labels are cut off with no way to read them', src: ['L3-18', 'L4-25'] },
+  { id: 'X11', s: 3, a: 'a11y', t: 'Semantics polish: duplicate landmarks inside the drawer, an aria-label on a plain div, "Advertised controls" jargon, screen-reader text shown to everyone', src: ['L3-16'] },
+  { id: 'X12', s: 3, a: 'a11y', t: 'The Jobs shortcut inside global search is refused with a spoken-only message from a region outside that dialog', src: ['L3-20'] },
+
+  // Job Center & detail
+  { id: 'J1', s: 2, a: 'center', t: 'Downloads cannot be told apart or found',
+    d: 'Every title is "Download from <host>", and no surface shows the file or path. Search matches the summary\'s JSON text instead: a lone " matches every job and "scheme" every download, but no URL or file name is found, so the legacy /downloads?URL= link always returns nothing. Screen readers hear the same name on every row.',
+    c: 'Titles are reduced to scheme and host on purpose (download-queue.md), a rule written for the query string; jobs/query.go:599-617 searches CAST(summary AS TEXT); server/legacy_job_compatibility.go:57-59 maps URL to search',
+    src: ['L4-8', 'L5-1', 'L3-15'] },
+  { id: 'J2', s: 2, a: 'center', t: '/jobs cards print each job\'s summary as raw JSON',
+    d: 'It is the tallest block on most cards, breaks mid-token, and shows notation such as targets:["owner:1"].',
+    c: 'job_template_context.go jobSummaryText (~584) falls back to json.Compact for any non-string summary', src: ['L4-1', 'L5-25'] },
+  { id: 'J3', s: 2, a: 'center', t: 'A failed job\'s detail page says "Progress: Working" over an empty bar',
+    c: 'displayJob.tpl:48 renders the section for any progress object and jobCenter.js progressText defaults to "Working"', src: ['L3-10', 'L4-15', 'L5-4'] },
+  { id: 'J4', s: 2, a: 'center', t: 'The detail page shows no accepted, started or finished time, no duration and no expiry',
+    d: 'Elsewhere, times use a different format on each surface, none relative, and the drawer shows none.', c: 'templates/displayJob.tpl:30-46 renders three fields', src: ['L5-5', 'L4-18', 'L5-30'] },
+  { id: 'J5', s: 2, a: 'center', t: 'Job outputs download without a file extension, and the drawer has no download for a finished export',
+    d: 'Every group export saves as "Exported archive" and every summary export as "Job summary export". The drawer offers "Export again" but not the archive; only the detail page links it, as "Open output".',
+    c: 'application_context/job_output_access.go:290-307 safeJobOutputFilename uses the display label; jobCenter.js resultOutput returns only entity outputs',
+    src: ['L5-12', 'L6-8', 'L6-9', 'L4-17'] },
+  { id: 'J6', s: 3, a: 'center', t: '/jobs and /v1/jobs read dismissed differently; the page\'s "Any" is a 400 in the API',
+    d: 'Without the parameter, the page lists undismissed jobs and the API lists all.', src: ['L5-33'] },
+  { id: 'J7', s: 3, a: 'center', t: '"Finished" means four states on /jobs and two in the drawer, whose "(10)" is the capped row count', src: ['L5-34'] },
+  { id: 'J8', s: 3, a: 'center', t: 'Error pages give no way back',
+    d: 'A bad filter in the URL gives "Error 400" with an internal message and no filter form; an unknown or malformed job id gives "job not found" with HTTP 200; an id containing a slash shows a routing error.', src: ['L5-21', 'L5-17'] },
+  { id: 'J9', s: 3, a: 'center', t: 'Filter details',
+    d: 'Back shows the previous page\'s checkboxes; a leading or trailing space in search matches nothing; the Origin filter is a free-text box for an exact value; with auth off, Owner and Actor are set on some jobs only; /downloads same-day date ranges list nothing.',
+    src: ['L5-7', 'L5-8', 'L5-28', 'L5-23', 'L5-27'] },
+  { id: 'J10', s: 3, a: 'center', t: 'Summaries: no summary figures or summary export in the Job Center, exports do not record their filter, and window=91d gets a misleading error',
+    src: ['L5-31', 'L5-13', 'L5-22'] },
+
+  // Progress & numbers
+  { id: 'N1', s: 2, a: 'numbers', t: 'Progress numbers are raw or mislabelled on /jobs and the detail page',
+    d: '/jobs shows "8051532 / 20971520 bytes" where the drawer says "6.5 MB of 20.0 MB"; similarity counts read "11 B of 11 B"; finished exports show "10 B of 5.0 KB" beside "Completed"; stopped jobs with no known total draw a full bar next to a unitless number; an unknown-size download shows no amount received.',
+    c: 'job_template_context.go jobRowProgressBar and jobCenter.js:365 print raw counts instead of jobProgress.js formatAmount; job_queue_bridge.go:984 labels any byte counter "bytes"; :958 projects the export estimate as the total',
+    src: ['L4-2', 'L4-5', 'L4-6', 'L6-14', 'L4-7', 'L5-14', 'L5-6'] },
+  { id: 'N2', s: 2, a: 'numbers', t: 'HLS downloads finish as "0 B of 673 B" and lose their segment history',
+    d: 'While the video is assembled the bar drops from 93 percent back to 0. No speed, time left or graph while running.',
+    c: 'downloadJobProgress (job_download_adapter.go ~866) tests TotalSize before PhaseTotal, so the playlist\'s Content-Length flips the unit to bytes and each unit flip resets the series',
+    src: ['L1-2', 'L4-21', 'L5-19', 'L6-5'] },
+  { id: 'N3', s: 3, a: 'numbers', t: 'Stats wording: "about under 1 s left", "1003 KB of 1.0 MB", "average 0 shares/s", a speed graph that ends in a plunge to 0',
+    c: 'jobs/progress_series.go:92-107 averages from the first point with an amount rather than the job\'s start', src: ['L1-16', 'L4-24', 'L5-32', 'L6-28'] },
+  { id: 'N4', s: 3, a: 'numbers', t: 'Pills, kind names and command wording are system vocabulary and differ by surface',
+    d: 'Kinds read "remote-download", "plugin-command"; commands read "Pin visible lineage", "Forget replay input"; fields read "Origin: api", "Class: internal".', src: ['L4-19', 'L4-26'] },
+
+  // Downloads & failure reasons
+  { id: 'W1', s: 2, a: 'downloads', t: 'A downloaded resource is named from the raw URL tail, query string and escapes included',
+    d: 'Examples: "Caf%C3%A9%20%E2%98%95%20terrace.png?w=96&h=64", "l6-cd-2?kb=64&cd=Report%20Final.pdf", and one named just "mp4". The server\'s Content-Disposition filename and the redirect target\'s name are ignored.',
+    c: 'download_queue/manager.go:1252 fileName = path.Base(job.URL) on the raw string; resource_upload_context.go:384 does the same for the foreground path; nothing reads Content-Disposition',
+    src: ['L4-9', 'L6-6'] },
+  { id: 'W2', s: 2, a: 'downloads', t: 'Every download failure except a duplicate is classed "internal", and deterministic failures still offer Retry',
+    d: '404, 429, DNS errors, timeouts and private-address blocks are all internal, so the failure breakdown cannot separate them. A duplicate or a blocked private address offers Retry and fails the same way again (a 403 is a closer call, since changing the User-Agent setting can fix it). Every failed import parse reads "the archive could not be read" and offers a Retry that fails identically; the clear error for an unknown schema_version is lost.',
+    c: 'importParseAdapter.publishOutcome maps every failure to one fixed jobs.Failure and drops snap.Error',
+    src: ['L8-20', 'L4-16', 'L6-7', 'L6-11', 'L2-26'] },
+  { id: 'W3', s: 3, a: 'downloads', t: 'The legacy download history silently loses rows under write contention and for every fired deferred download', src: ['L8-12'] },
+
+  // Exports, imports & reductions
+  { id: 'K1', s: 2, a: 'kinds', t: 'After a successful import parse there is no way back to the review step except staying on /admin/import', src: ['L6-12'] },
+  { id: 'K2', s: 2, a: 'kinds', t: 'Export, import, reduction and maintenance jobs have fixed titles that never name their subject', d: 'Every export reads "Export of one group".', src: ['L6-13'] },
+  { id: 'K3', s: 3, a: 'kinds', t: 'Import review says 8 collisions "will skip"; the apply then reports 0 skipped and 8 merged', src: ['L6-15'] },
+  { id: 'K4', s: 3, a: 'kinds', t: 'A Resource Reduction proposes deleting visibly different images as "Near-Identical"', src: ['L6-16'] },
+  { id: 'K5', s: 3, a: 'kinds', t: '"Download in background" lands on /resources with no confirmation, and its label names a "download cockpit" that no longer exists', src: ['L6-27'] },
+
+  // CLI & API
+  { id: 'Y1', s: 2, a: 'cli', t: 'mr job cancel, pause, resume and retry answer 404 for the ids that mr jobs list prints',
+    d: 'Their help examples filter on .status, which that output does not have, so they select nothing.',
+    c: 'The singular verbs post id=<arg> to the legacy /v1/jobs/{cancel,pause,resume,retry} routes, which resolve only legacy handles', src: ['L8-2'] },
+  { id: 'Y2', s: 2, a: 'cli', t: 'mr job submit --urls splits a URL at its commas, and the server accepts the fragments as downloads', src: ['L8-22'] },
+  { id: 'Y3', s: 2, a: 'cli', t: 'mr job command and bulk-command print the generated idempotency key only on success',
+    d: 'After a network failure, the one case where the docs say to reuse it, the key is not shown.', src: ['L8-17'] },
+  { id: 'Y4', s: 3, a: 'cli', t: 'CLI and API polish',
+    d: 'mr jobs timeline help is wrong about its page and limit; mr jobs list --quiet writes a hint to stdout and ignores --page; assorted error texts and limits.', src: ['L8-18', 'L8-23', 'L8-21'] }
+];
+
+const ST = {
+  done: 'Fixed on master', doc: 'Documented'
+};
+const STATUS = {};
+const put = (ids, st) => ids.split(' ').forEach(id => { STATUS[id] = st; });
+put('A1 A2 S1 S2 S5 S6 S7 C1 C2 X1 X2', 'done');
+put('R1 R6 U8 W1 W2 W3 C3 C4 C5 R2 R3 R4 S4 C6 R5 R7 A3 A4 A5 A6 A7 A8 A9 A10 A12 Y1 Y2 Y3 Y4 L8 L10 J6 U2', 'done');
+put('A11', 'doc');
+put('L1 L2 L3 L4 L5 L6 L9 U3 U4 U5 U6 U7 U12 U13 X3 X4 X6 U1 S3 J3 J7', 'done');
+put('J1 J2 J9 J10 U9 U10 U14 L7 X5 X8 J4 J5 J8 X7 X9 X10 X11 X12 U11 N1 N2 N3 N4 K1 K2 K3 K5', 'done');
+put('K4', 'doc');
+const NOTE = {
+  J1: "Downloads have safe decoded file titles, and search matches decoded summary values instead of JSON syntax. A URL segment without a short alphanumeric extension keeps the host title.",
+  J2: "Summary values appear as labelled fields on cards instead of raw JSON.",
+  J9: "Filters survive Back navigation, search is trimmed, Origin uses checkboxes, and owner/actor filters disappear when authentication is off.",
+  J10: "The summary panel and its JSON export share the current filters. Whole-day export ranges end at the last nanosecond of the local final day.",
+  U9: "Bulk selection has separate Alpine data for each card. Bulk Cancel and Retry are available; Cancel confirms the selected count and deferred Download now remains a single-Job action.",
+  U10: "The navbar measures its links against the available room and folds them behind the menu button before the Jobs badges or settings gear clip.",
+  U14: "Selection and bulk results use Job names and readable command labels.",
+  L7: "Running cards receive live progress and acquire clocks when they enter the list. Updates order by lifecycle version and full timestamp precision. The detail timeline follows and pages events.",
+  X5: "One shared announcement ledger prevents the Job pages and drawer from speaking each change twice.",
+  X8: "Indeterminate card bars animate only when the viewer allows motion.",
+  J4: "The Job page has a Times section with accepted, started, finished, duration and expiry information.",
+  J5: "Finished export outputs retain their file extensions and offer named download links.",
+  J8: "Unknown Jobs return a real 404; an invalid list filter keeps the filter form visible.",
+  X7: "Output links name their entity or file, and their accessible name starts with the visible words.",
+  X9: "Job pages have distinct titles and one primary heading.",
+  X10: "The drawer reflows at 400% zoom and a 320-pixel viewport.",
+  X11: "Duplicate landmarks and invalid semantics are removed; Job actions replaces Advertised controls.",
+  X12: "A blocked Jobs shortcut shows a visible refusal inside the active modal.",
+  U11: "Lineage entries name their relation to the current Job.",
+  N1: "Go and JavaScript share a case table for amounts, rates and ETA, including stopped unknown totals and verified export sizes.",
+  N2: "HLS keeps its segment count across video, audio and assembly. Media segment-body reads keep speed and time left fresh; playlist, init-map and key bytes do not. Stale estimates expire when media activity stops.",
+  N3: "Amounts use honest units and rounding; averages use banked running time. Graphs preserve measured movement through assembly, pause or cancellation with no new count, while decreasing counts remain gaps between attempts.",
+  N4: "Kinds, origins, failure types and command labels use readable shared vocabulary. Each state has one colour across surfaces, and bars remain visible in forced colours.",
+  K1: "A parsed import can be reopened through an authorized Job link. Reports bind to their producing apply; an invisible or missing producer leaves the outcome unknown. Async reads cannot replace another import’s plan or outcome.",
+  K2: "Titles identify the export group, reduction or import file using a bounded snapshot of its name.",
+  K3: "Import review counts match the actual apply behavior.",
+  K4: "Documented limit: pHash, dHash and aHash compare luminance and ignore colour. Hue-only differences can match; Near-Identical starts unchecked. A colour signature and backfill are separate follow-up work.",
+  K5: "Download in background stays on the form, opens the Jobs panel and identifies the submitted Job.",
+  S7: 'Simplified: Retry of a deferred download offers "Download now" with a confirmation; the schedule is not reopened.',
+  U2: 'Fixed in batch 2 by b2-plugin-runtime: the back-out button reads "Go back". Verified on every surface in batch 3.',
+  U1: 'A person\'s pause is now the real paused state. It reaches the process running the transfer, reads "Pausing" until that process holds it, and survives the loss of that process.',
+  U7: 'A failure somebody has retried leaves Needs attention. A read-only account is not told of a retry it cannot see, so it still sees that failure there.',
+  U13: 'Only a command that stops work or cannot be undone asks first. Dismiss, Pin and their inverses run at once, and a dismissal can be undone.',
+  L1: 'The stream can start at its head, so a page load replays nothing: 2,091 events and 504 KB before, on a 600-Job instance.',
+  L2: 'The drawer reads details only while it is open, and only for rows that changed. A page load with the drawer closed went from 6 list and 120 detail requests to 3 and 0.',
+  L5: 'Lists order by when each Job entered its state, one indexed seek per state. Group reads at 1M Jobs on SQLite went from 16-307 ms to under 1.3 ms.',
+  A10: 'The submitter is checked again after the transfer: a deleted, disabled or demoted account gets no resource, and the Job fails as submitter-refused.',
+  A11: 'Documented, not changed: the gap between two sequences a viewer receives counts events on Jobs they cannot see, and names no Job or account.',
+  L10: 'A cursor above the highest sequence ever issued resets the stream. The Job pages reload; the drawer stops with a notice and a Reload button, so unsaved work elsewhere is kept.',
+  J6: 'The value any is accepted on every surface, and /jobs writes its dismissed=false default into its address.',
+  U8: 'A download whose URL is busy now waits queued, holding no capacity, until the other transfer ends.',
+  W2: 'Every failure carries a code and a class. Retry is withheld only when the stored input can never be valid.'
+};
+const LANES = [
+  ['L1', 'Live drawer behaviour: progress, badges, two tabs, reconnects, restarts', 0, 14, 7],
+  ['L2', 'Every command on every surface, races, lineage, bulk, restarts', 0, 19, 6],
+  ['L3', 'Accessibility: keyboard, focus, announcements, axe, reflow', 2, 10, 9],
+  ['L4', 'Layout at five widths, extreme content, injection, volume', 0, 13, 14],
+  ['L5', 'Job Center filters, pagination, detail pages, outputs, summary', 0, 13, 21],
+  ['L6', 'Each job Kind end to end: exports, imports, actions, schedules, commands, HLS', 3, 16, 8],
+  ['L7', 'Auth on: per-role visibility, permissions, streams, oracles', 2, 9, 4],
+  ['L8', 'API validation, live streams, CLI, legacy routes, restarts, contention', 2, 16, 8]
+];
+
+const $ = (s) => document.querySelector(s);
+function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+
+function card(i) {
+  const art = el('article', 'issue s' + i.s);
+  art.setAttribute('aria-labelledby', 't-' + i.id);
+  const head = el('div', 'head');
+  head.append(el('span', 'sev s' + i.s, 'P' + i.s), el('span', 'iid', i.id), el('span', 'area', AREAS[i.a]), el('span', 'st ' + STATUS[i.id], ST[STATUS[i.id]]));
+  const h = el('h3', null, i.t); h.id = 't-' + i.id; head.append(h);
+  art.append(head);
+  if (i.d) art.append(el('p', 'd', i.d));
+  if (i.c) art.append(el('p', 'c', i.c));
+  const src = el('div', 'src');
+  src.append(el('span', null, 'Found in'));
+  i.src.forEach(s => src.append(el('span', 'chip', s)));
+  if (i.v) src.append(el('span', 'verified', 're-checked'));
+  art.append(src);
+  if (NOTE[i.id]) { const f = el('p', 'fix'); f.append(el('b', null, 'Resolution'), document.createTextNode(NOTE[i.id])); art.append(f); }
+  return art;
+}
+
+// counts
+const bySev = { 1: 0, 2: 0, 3: 0 };
+ISSUES.forEach(i => bySev[i.s]++);
+$('#uniqCount').textContent = ISSUES.length;
+const tally = $('#tally');
+[['', ISSUES.length, 'distinct issues'], ['p1', bySev[1], 'P1  fix first'], ['p2', bySev[2], 'P2  wrong or confusing'], ['p3', bySev[3], 'P3  polish']].forEach(([cls, n, l]) => {
+  const d = el('div', cls); d.append(el('span', 'n', String(n)), el('span', 'l', l)); tally.append(d);
+});
+const bar = $('#bar');
+[[1, 'var(--p1)'], [2, 'var(--p2)'], [3, 'var(--p3)']].forEach(([s, c]) => { const sp = el('span'); sp.style.width = (bySev[s] / ISSUES.length * 100) + '%'; sp.style.background = c; bar.append(sp); });
+
+// remediation status
+const byStatus = {}; Object.keys(ST).forEach(k => { byStatus[k] = 0; });
+ISSUES.forEach(i => { byStatus[STATUS[i.id]]++; });
+const stTally = $('#stTally');
+Object.keys(ST).forEach(k => { const d = el('div', k); d.append(el('span', 'n', String(byStatus[k])), el('span', 'l', ST[k])); stTally.append(d); });
+const stBar = $('#stBar');
+[['done', 'var(--ok)'], ['doc', 'var(--muted)']].forEach(([k, c]) => {
+  const sp = el('span', k); sp.style.width = (byStatus[k] / ISSUES.length * 100) + '%'; if (c) sp.style.background = c; stBar.append(sp);
+});
+
+// P1 list
+const p1 = $('#p1list');
+ISSUES.filter(i => i.s === 1).forEach(i => p1.append(card(i)));
+
+// lanes
+const tb = $('#lanes');
+LANES.forEach(([l, what, a, b, c]) => {
+  const tr = el('tr');
+  tr.append(el('td', 'mono', l), el('td', null, what), el('td', 'num', String(a)), el('td', 'num', String(b)), el('td', 'num', String(c)));
+  tb.append(tr);
+});
+const tot = LANES.reduce((s, r) => s + r[2] + r[3] + r[4], 0);
+$('#rawCount').textContent = tot;
+
+// filters
+const stSel = $('#stSel');
+stSel.append(new Option('Any status', 'all'));
+Object.entries(ST).forEach(([k, v]) => stSel.append(new Option(v + ' (' + byStatus[k] + ')', k)));
+const areaSel = $('#areaSel');
+areaSel.append(new Option('All areas', 'all'));
+Object.entries(AREAS).forEach(([k, v]) => { const n = ISSUES.filter(i => i.a === k).length; areaSel.append(new Option(v + ' (' + n + ')', k)); });
+let sev = 'all';
+function load() { try { const s = JSON.parse(localStorage.getItem('jobsqa-filters') || '{}'); if (s.sev) sev = s.sev; if (s.area && AREAS[s.area]) areaSel.value = s.area; if (s.st && ST[s.st]) stSel.value = s.st; } catch (e) {} }
+function save() { try { localStorage.setItem('jobsqa-filters', JSON.stringify({ sev, area: areaSel.value, st: stSel.value })); } catch (e) {} }
+function render() {
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sev === sev)));
+  const q = $('#q').value.trim().toLowerCase();
+  const list = $('#alllist'); list.textContent = '';
+  const shown = ISSUES.filter(i => (sev === 'all' || String(i.s) === sev) && (areaSel.value === 'all' || i.a === areaSel.value) &&
+    (stSel.value === 'all' || STATUS[i.id] === stSel.value) &&
+    (!q || [i.id, i.t, i.d || '', i.c || '', i.src.join(' '), AREAS[i.a], ST[STATUS[i.id]], NOTE[i.id] || ''].join(' ').toLowerCase().includes(q)))
+    .sort((x, y) => x.s - y.s);
+  shown.forEach(i => list.append(card(i)));
+  if (!shown.length) list.append(el('p', 'empty', 'No issues match these filters.'));
+  $('#shown').textContent = shown.length + ' of ' + ISSUES.length + ' shown';
+  save();
+}
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { sev = b.dataset.sev; render(); }));
+areaSel.addEventListener('change', render);
+stSel.addEventListener('change', render);
+$('#q').addEventListener('input', render);
+load();
+render();
+</script>
+
+</html>

@@ -108,14 +108,15 @@ and MRQL while Resource Reduction falls back to a positive configured value or
 ## Completion record
 
 The resumed reviews use the full original lane scope, not just the preceding
-round's findings. The table below is a progress checkpoint; it will be replaced
-with the final reviewed commits and merged gates before completion.
+round's findings. Every lane completed its final substantial review with zero blockers within
+the eight-round cap. Final merged gates also pass. The original 94-issue sweep
+now has 92 fixes and two documented limits, A11 and K4.
 
-| Lane | P0/P1 findings by round so far | Current disposition |
+| Lane | P0/P1 findings by round | Final disposition |
 | --- | --- | --- |
 | List | 8, 2, 2, 1, 0 | Round 5 clean at `0eb34029`. Independent full review, actual direct/opened-queue probes, cache/preference matrix, API/clock/calendar checks and all fresh lane gates pass. Browser/CLI: 2,337 tests, no retries. |
 | Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
-| Numbers | 2, 4, 1, 2, 2 | Round 5's replacement and compaction findings are repaired at `d8e2804a`; the additional pre-review decreasing-count/Activity-ending hard-gap guard is closed at `cfcec370`. Original movement, real Cancel and append/replacement restart probes all pass. Fresh full Go, JavaScript and build pass; PostgreSQL Go, browser and full round 6 remain pending. |
+| Numbers | 2, 4, 1, 2, 2, 0 | Round 6 clean at `cfcec370`. Final replacement and neutral-endpoint compaction preserve real movement; decreases stay hard gaps. The original real Cancel and restart probes, independent 102-subcase matrix and every fresh lane gate pass. Browser/CLI: 2,320 tests, no retries. |
 | Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`. Local follow-ups closed at `2e558d23` and merged: report-read notices preserve an accepted failed/cancelled Job, primitive report outcomes live in contracts, and a test comment describes its scenario. Focused tests, build and coordinator producer/fault probes pass. |
 | Flakes | 2, 2, 1, 0, 0 | Round 5 clean at `f007c51f`, including independent forced shutdown-selection red/green and timestamp probes. All final lane gates pass, with 2,318 browser/CLI tests and no retries. |
 
@@ -138,12 +139,13 @@ are evidence for the diagnosis, not substitutes for final broad gates.
 Earlier browser retries remain observations unless their causes were reproduced.
 The five lightbox/schema retries on the pre-pause Flakes head are not claimed fixed
 by the subsequent no-retry suite. The mobile Resources width retry matches the
-card-meta overflow class repaired by Flakes; the final merged gate and the existing
-long-name regression must verify the combined result. The independent inherited
+card-meta overflow class repaired by Flakes. The explicit 390 px long-name guard
+passed on the final merged production tree; the complete merged browser gates
+also pass as recorded below. The independent inherited
 drawer test leak was attributed with delayed owner traces on both master and List,
 then repaired by fixture-owned cleanup in Flakes.
 
-The final List browser run also had one passing retry in Project Management's
+The earlier List round-4 browser run also had one passing retry in Project Management's
 paginated-column focus test. It failed during setup, before the focus assertions,
 when POST `/v1/plugins/project-management/api/task/create` timed out after ten
 seconds. Its cause remains unproved; it is not labelled a baseline failure or a
@@ -155,3 +157,57 @@ was 411 px at a 390 px viewport. Its cause remains unproved. Screenshot, video
 and error context were copied outside the worktree before another run could
 overwrite them. This result precedes the additional hard-restart guard and is
 not used as its final gate.
+
+The earlier `TestAClaimStuckOnTheDatabaseGivesUpItsAttempt` admission failure
+remains an observation with unproved cause, despite isolated controls and later
+whole-suite passes. It is not labelled a baseline failure.
+
+## Final merged gates and archive
+
+The production merge is `67bb52f31e6600f463eb46047cbfe498d64b7241`.
+Documentation checkpoint `67cc4372` and browser-test-only `ff897d59` add no
+production change. The latter repairs stale assertions for the filename title
+and readable Kind label while preserving canonical query-value, form, focus and
+Back checks. All five final lane heads are merged, including Detail `b80cf46e`
+and Kinds `2e558d23`; master `73137714`'s Custom Thumbnail popup is preserved.
+
+| Gate | Final result |
+|---|---|
+| Full Go, json1/fts5, count=1 | EXIT 0 |
+| PostgreSQL Go: mrql, API tests, application_context and jobs, count=1 | EXIT 0 |
+| Whole JavaScript | 107 files, 1,859 tests passed, EXIT 0 |
+| JS, then CSS, CSS scan, Go build | Each EXIT 0 |
+| OpenAPI regeneration | EXIT 0, no generated YAML diff |
+| Held detail read released after Pin | New pinned state and Unpin command retained, EXIT 0 |
+| Retried timeline wording | 10 selected tests passed, EXIT 0 |
+| Actual PostgreSQL clustering title and follower drain | Correct L6 title and success, EXIT 0 |
+| Corrected Jobs browser specs | 26 passed, EXIT 0 |
+| Full browser/CLI | 2,367 passed, five skipped, no retries, EXIT 0 |
+| PostgreSQL browser/CLI | 2,368 passed, four skipped, no retries, EXIT 0 |
+| Explicit long owner/category at 390 px | Passed in both final browser runs |
+
+Both saved browser verdicts say `passed` with `failedTests=[]`. See
+[merged gate evidence](2026-09-28-jobs-qa-verification/merged-gates.md) for commands,
+tested commits, excerpts, log provenance and the initial stale-assertion failure.
+The final reviews are [List](2026-09-28-jobs-qa-verification/b4-list-r5.md),
+[Detail](2026-09-28-jobs-qa-verification/b4-detail-r4.md),
+[Numbers](2026-09-28-jobs-qa-verification/b4-numbers-r6.md),
+[Kinds](2026-09-28-jobs-qa-verification/b4-kinds-r6.md), and
+[Flakes](2026-09-28-jobs-qa-verification/b4-flakes-r5.md). Detail's cheap follow-up
+is test-only; Kinds' closed local findings are preserved in
+[its implementation history](2026-09-28-jobs-qa-verification/b4-kinds-local-followups.md).
+The Flakes fourth round was zero before the separately routed shutdown repair;
+the fifth full review verifies that later production change.
+
+The six batch-4 checkouts and temporary handoff are retired after master is
+fast-forwarded. Their branch references remain. Raw scratch probes, gate logs and
+failed-run artifacts remain in each sibling `b4-*-tmp/resume-20260928` directory,
+outside the removed checkouts; the summaries and full final reviews above are
+committed durable records. These raw scratch files are not a reboot-safe archive.
+
+The updated standalone [94-issue QA report](2026-09-28-jobs-qa-report.html) is stored
+locally. A fresh check of the original Claude artifact on 2026-09-28 still showed
+Sign in, and no publisher connector was available. Remote republication remains
+an external follow-up requiring authenticated access; this record does not claim
+it happened. The master closure preserves both the original issue descriptions
+and the final fix/documentation disposition.
