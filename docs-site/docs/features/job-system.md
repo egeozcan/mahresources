@@ -254,7 +254,10 @@ Commands print `::mah-progress` lines; see
 ### The Jobs drawer
 
 The **Jobs** button in the header, or Control/Command + Shift + D, opens the
-Jobs drawer on the right. It groups Jobs into **Needs attention**, **Active and
+Jobs drawer on the right. Pressed inside another dialog, such as search, the
+shortcut does not open the drawer over it; that dialog shows and announces
+"Close this dialog first to open Jobs." at the bottom of the screen for ten
+seconds. It groups Jobs into **Needs attention**, **Active and
 scheduled** and **Finished**. A running Job shows its progress bar, the amount
 completed, its speed, the time left, its metrics and a graph for its speed and
 for each graphed metric. A finished Job shows its average speed.
@@ -316,6 +319,11 @@ announced by name if the drawer reads it later.
 The Job's own page shows the same figures with larger graphs. The `/jobs` list
 shows the same line under each Job's bar.
 
+Titles and figure labels wrap rather than end in an ellipsis, and below 640 px
+wide each Job's figures take one column. On a viewport less than 480 px tall,
+such as a desktop at 400% zoom, the whole drawer scrolls as one, so its header
+and footer do not leave the list less than a row.
+
 **Needs attention** lists only failures nobody has retried or continued
 (`noInboundRelationship=retry-of`). Once a Job is retried, the retry is the row
 to watch, and a retry that fails is listed there in its own right. Known
@@ -368,6 +376,44 @@ with a notice linking to it. On the Job's page and in the
 `/jobs` bulk bar, focus moves to the command that replaced the one pressed, else
 to the first command left; when a command empties the bulk selection, focus
 moves to **Select All**.
+
+### The Job page
+
+`/job?id=<id>` shows one Job. The page's title names the Job, its state and the
+last eight letters and digits of its id, for example "cat.jpg (Failed) - Job
+456789ab", and follows the state as it changes, so open tabs, the browser
+history and the page a Retry opens each say which Job they are, two failed
+attempts of one download included. The page's one heading is the Job's title, or its Kind when it has none.
+An id that names no Job you can see answers 404, with a link back to the Job
+Center; a legacy id from the download queue or a plugin action opens the Job it
+currently names.
+
+**Times** lists when the Job was accepted, scheduled for, started, last resumed
+and finished, each with how long ago it was or how far off; how long it spent queued, running, paused
+and blocked, counting the state it is in now; and, once it has finished, the
+date its history is kept until (the retention window of the state it ended in,
+counted from the finish). A pin keeps the history past that date; a file output
+keeps its own expiry. Times are in your browser's time zone, which the section
+names, and are written as on the `/jobs` cards: `2026-09-26 14:17:03`.
+
+**Related jobs** lists each linked Job with how it is related, its state, when
+it was accepted, and the end of its id beside its title. **Earlier runs** holds the Job this one retried ("Retry
+of"), continued ("Continuation of") or repeated ("Repeat of"); **Later runs**
+holds its own Retry, Continue or Repeat ("Retried as", "Continued as",
+"Repeated as"); **Part of** and **Stages** hold its parent and child stages.
+
+**Timeline** lists the Job's events oldest first, each named by its type in
+words ("Output published"), and adds new ones as the live stream reports them.
+It reads up to 1,000 events at a time; a Job with more says so and offers
+**Show later events**. A read that fails says so and offers **Try again**.
+
+Each output link says what it does: **View** an entity and **Download** a
+file, followed by the output's name, and **Open report**, **Open log** or
+**Open link** for the rest, whose accessible names add the output's name after
+those words. A file downloads under its label, the time it was published (UTC),
+the end of its Job's id and its own extension, such as
+`exported-archive-20260926-124207-456789ab.tar.gz` or
+`job-summary-export-20260926-124207-456789ab.csv`.
 
 ## CLI
 
@@ -464,7 +510,7 @@ includes them.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/jobs` | Filtered, cursor-paginated visible Jobs |
-| `GET` | `/v1/jobs/{id}` | Job detail, current commands, outputs, and lineage |
+| `GET` | `/v1/jobs/{id}` | Job detail, current commands, outputs, and lineage; each related Job carries the `relation` that links it (`retry-of`, `repeat-of` or `parent-child`) |
 | `GET` | `/v1/jobs/{id}/events` | Ordered timeline; `afterSequence` resumes a page |
 | `GET` | `/v1/jobs/{id}/outputs?key={key}` | Reauthorize and open a typed output |
 | `GET` | `/v1/jobs/events?version=2` | Canonical resumable Job SSE, with live `job-progress` frames |
@@ -483,7 +529,9 @@ apply's report is on disk. An entity output is offered, and opened, only
 while the viewer can see the entity it names: once the entity is deleted or
 leaves the viewer's scope, the Job no longer lists it and its link disappears
 from every surface. The Jobs panel, the Job Center list, and the Job
-detail page link a succeeded Job's available entity output. For plugin actions
+detail page link a succeeded Job's available entity output. A succeeded Job
+that published no entity but a file, such as a group or summary export, offers
+the file there instead (**Download exported archive**) until it expires. For plugin actions
 they also show a direct “View result” link for older summary outputs that
 stored the same safe redirect before entity outputs were published. Job detail
 still offers “View JSON result” for the stored summary. A summary whose redirect

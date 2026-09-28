@@ -52,6 +52,8 @@ var entitySurfaces = map[string]entitySurface{
 	"relationTypes":    {"relation type", "/relationTypes", "Relation types"},
 	"templatePartial":  {"template partial", "/templatePartials", "Template partials"},
 	"templatePartials": {"template partial", "/templatePartials", "Template partials"},
+	"job":              {"job", "/jobs?dismissed=false", "Job Center"},
+	"jobs":             {"job", "/jobs?dismissed=false", "Job Center"},
 	"log":              {"log entry", "/logs", "Logs"},
 	"logs":             {"log entry", "/logs", "Logs"},
 	// A series has a detail page but no index page (finding 111), so the reader

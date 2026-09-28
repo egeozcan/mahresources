@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/server/jobview"
 	"mahresources/server/template_handlers/template_entities"
 )
@@ -45,15 +48,110 @@ func TestJobCenterTemplateContext(t *testing.T) {
 	}
 }
 
-func TestJobDetailTemplateContext(t *testing.T) {
-	request := httptest.NewRequest("GET", "http://example.test/job?id=job-123", nil)
-	context := JobDetailContextProvider(nil)(request)
+type fakeJobDetailReader struct {
+	jobs    map[string]jobs.Snapshot
+	handles map[string]string
+	readErr error
+}
 
-	if got := context["pageTitle"]; got != "Job detail" {
-		t.Fatalf("pageTitle = %v, want Job detail", got)
+func (f *fakeJobDetailReader) GetJob(jobID string) (jobs.Snapshot, error) {
+	if f.readErr != nil {
+		return jobs.Snapshot{}, f.readErr
+	}
+	snapshot, ok := f.jobs[jobID]
+	if !ok {
+		return jobs.Snapshot{}, fmt.Errorf("jobs: get: %w", jobs.ErrNotFound)
+	}
+	return snapshot, nil
+}
+
+func (f *fakeJobDetailReader) JobIDForLegacyHandle(handle string) (string, error) {
+	return f.handles[handle], nil
+}
+
+func renderJobDetail(reader JobDetailReader, target string) map[string]any {
+	return jobDetailContextProvider(reader)(httptest.NewRequest(http.MethodGet, target, nil))
+}
+
+// A Job's page is titled by the Job, its state and the end of its id, so two open
+// Job tabs, the history, and a Retry's landing page each say which Job they are,
+// even for two failed attempts of one download; the page's one h1 is the Job's
+// title.
+func TestAJobPageIsTitledByItsJob(t *testing.T) {
+	reader := &fakeJobDetailReader{jobs: map[string]jobs.Snapshot{
+		"job-1": {ID: "job-1", Kind: "remote-download", Title: "Download from example.test", State: jobs.StateFailed},
+		"job-2": {ID: "job-2", Kind: "group-export", State: jobs.StateRunning, ControlIntent: jobs.ControlIntentPause},
+	}}
+	context := renderJobDetail(reader, "/job?id=job-1")
+	if got := context["pageTitle"]; got != "Download from example.test (Failed) - Job job1" {
+		t.Fatalf("pageTitle = %v", got)
+	}
+	if got := context["headingTitle"]; got != "Download from example.test" {
+		t.Fatalf("headingTitle = %v", got)
 	}
 	if got := context["hideSidebar"]; got != true {
 		t.Fatalf("hideSidebar = %v, want true", got)
+	}
+	if _, failed := context["_statusCode"]; failed {
+		t.Fatalf("a visible Job's page answered %v", context["_statusCode"])
+	}
+	// A Job with no title is named by its Kind, as every other surface names it.
+	context = renderJobDetail(reader, "/job?id=job-2")
+	if got := context["pageTitle"]; got != "group-export (Pausing) - Job job2" {
+		t.Fatalf("pageTitle = %v", got)
+	}
+}
+
+// A Job that does not exist, or that the viewer may not see, is a 404 page with
+// a way back to the Job Center, whatever the id looks like.
+func TestAnUnknownJobIsANotFoundPageWithAWayBack(t *testing.T) {
+	reader := &fakeJobDetailReader{}
+	for _, target := range []string{
+		"/job?id=01a0ffff-0000-7000-8000-000000000000",
+		"/job?id=not-a-uuid",
+		"/job?id=a%2Fb",
+		"/job?id=%3Cscript%3E",
+	} {
+		context := renderJobDetail(reader, target)
+		if context["_statusCode"] != http.StatusNotFound {
+			t.Fatalf("%s answered %v, want 404", target, context["_statusCode"])
+		}
+		if got := context["errorMessage"]; got != "That job doesn't exist, or it has been deleted." {
+			t.Fatalf("%s says %q", target, got)
+		}
+		recovery, _ := context["errorRecovery"].([]RecoveryLink)
+		if len(recovery) == 0 || recovery[0] != (RecoveryLink{Name: "Back to Job Center", Url: "/jobs?dismissed=false"}) {
+			t.Fatalf("%s offers %v, want a way back to the Job Center first", target, recovery)
+		}
+	}
+	context := renderJobDetail(reader, "/job")
+	if context["_statusCode"] != http.StatusBadRequest {
+		t.Fatalf("a Job page with no id answered %v, want 400", context["_statusCode"])
+	}
+}
+
+// A legacy handle names the Job its lineage currently ends in, so its page is
+// that Job's.
+func TestALegacyHandleOpensTheJobItNames(t *testing.T) {
+	reader := &fakeJobDetailReader{
+		jobs:    map[string]jobs.Snapshot{"01a0-canonical": {ID: "01a0-canonical", Kind: "remote-download", State: jobs.StateSucceeded}},
+		handles: map[string]string{"5ccbf2199da9ae9f": "01a0-canonical"},
+	}
+	context := renderJobDetail(reader, "/job?id=5ccbf2199da9ae9f")
+	if got := context["_redirect"]; got != "/job?id=01a0-canonical" {
+		t.Fatalf("_redirect = %v, want the canonical Job's page", got)
+	}
+}
+
+// A read that failed proves nothing about the Job: the page renders and reads
+// it itself, where a failure offers Try again.
+func TestAJobPageWhoseReadFailedStillRenders(t *testing.T) {
+	context := renderJobDetail(&fakeJobDetailReader{readErr: fmt.Errorf("database is locked")}, "/job?id=job-1")
+	if _, failed := context["_statusCode"]; failed {
+		t.Fatalf("a failed read answered %v", context["_statusCode"])
+	}
+	if got := context["pageTitle"]; got != "Job" {
+		t.Fatalf("pageTitle = %v, want the generic title", got)
 	}
 }
 
@@ -264,26 +362,89 @@ func TestJobListPaginatesByKeyset(t *testing.T) {
 	}
 }
 
+// A filter the page cannot use answers 400 with the Job Center itself: the
+// filter form, so the reader can correct or clear it, and the problem said in
+// the list's place rather than on an error page with no way back.
 func TestJobListRefusesAnUnreadableFilter(t *testing.T) {
-	ctx := renderJobList(t, &fakeJobListReader{}, "/jobs?ownerId=nobody&dismissed=false")
-	if ctx["_statusCode"] != http.StatusBadRequest {
-		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
-	}
-	if _, ok := ctx["jobFilter"]; !ok {
-		t.Fatal("the refused page must still render the filter form so the reader can fix it")
+	for _, target := range []string{
+		"/jobs?ownerId=nobody&dismissed=false",
+		"/jobs?cursor=garbage&dismissed=false",
+		"/jobs?before=garbage&dismissed=false",
+	} {
+		ctx := renderJobList(t, &fakeJobListReader{}, target)
+		if ctx["_statusCode"] != http.StatusBadRequest || ctx["_statusKeepsPage"] != true {
+			t.Fatalf("%s: status = %v, keeps page = %v; want 400 on the page itself", target, ctx["_statusCode"], ctx["_statusKeepsPage"])
+		}
+		if _, ok := ctx["jobFilter"]; !ok {
+			t.Fatalf("%s: the refused page must still render the filter form so the reader can fix it", target)
+		}
+		if ctx["jobListError"] == nil || ctx["jobListError"] == "" {
+			t.Fatalf("%s: the page does not say what is wrong", target)
+		}
+		if _, errorPage := ctx["errorMessage"]; errorPage {
+			t.Fatalf("%s: the refusal is an error page, not the Job Center", target)
+		}
+		if got := ctx["pageTitle"]; got != "Job Center" {
+			t.Fatalf("%s: pageTitle = %v", target, got)
+		}
 	}
 }
 
 // A filter the service refuses reads on the page as the API reads it: the
-// problem in the reader's terms, without the service's internal wrapping.
+// problem in the reader's terms, without the service's internal wrapping. A
+// read that failed for another reason is still an error page.
 func TestJobListRefusalNamesOnlyTheFilterProblem(t *testing.T) {
 	refused := fmt.Errorf("jobs: list: %w", fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus"))
 	ctx := renderJobList(t, &fakeJobListReader{listErr: refused}, "/jobs?state=bogus&dismissed=false")
-	if ctx["_statusCode"] != http.StatusBadRequest {
-		t.Fatalf("status = %v, want 400", ctx["_statusCode"])
+	if ctx["_statusCode"] != http.StatusBadRequest || ctx["_statusKeepsPage"] != true {
+		t.Fatalf("status = %v, keeps page = %v", ctx["_statusCode"], ctx["_statusKeepsPage"])
 	}
-	if got := ctx["errorMessage"]; got != `invalid filter: unknown state "bogus"` {
-		t.Fatalf("errorMessage = %q", got)
+	if got := ctx["jobListError"]; got != `unknown state "bogus"` {
+		t.Fatalf("jobListError = %q", got)
+	}
+	failed := renderJobList(t, &fakeJobListReader{listErr: fmt.Errorf("database is locked")}, "/jobs?dismissed=false")
+	if failed["_statusCode"] != http.StatusInternalServerError || failed["_statusKeepsPage"] == true {
+		t.Fatalf("a failed read answered %v, keeps page = %v; want the 500 error page", failed["_statusCode"], failed["_statusKeepsPage"])
+	}
+}
+
+// fakeAdminJobListReader is a list reader that can also name accounts, as the
+// application context can for an administrator.
+type fakeAdminJobListReader struct {
+	fakeJobListReader
+}
+
+func (f *fakeAdminJobListReader) JobAccountLabels(ids []uint) (map[uint]string, error) {
+	return map[uint]string{}, nil
+}
+
+func (f *fakeAdminJobListReader) JobAccountOptions() ([]application_context.JobAccountOption, error) {
+	return []application_context.JobAccountOption{{ID: 7, Label: "Alice (alice)"}}, nil
+}
+
+// An administrator correcting a refused filter keeps every other choice the
+// address made: the Owner and Actor selects are drawn as on a listed page, so
+// submitting the corrected form does not quietly drop owner=me and list other
+// accounts' Jobs.
+func TestARefusedFilterKeepsAnAdministratorsOwnerChoice(t *testing.T) {
+	for _, c := range []struct{ target, owner string }{
+		{"/jobs?state=bogus&owner=me&dismissed=false", "me"},
+		{"/jobs?state=bogus&owner=deleted&dismissed=false", "deleted"},
+		{"/jobs?cursor=garbage&owner=7&actorId=7&dismissed=false", "7"},
+	} {
+		reader := &fakeAdminJobListReader{fakeJobListReader{listErr: fmt.Errorf("%w: unknown state %q", jobs.ErrInvalidFilter, "bogus")}}
+		request := httptest.NewRequest(http.MethodGet, c.target, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), &auth.Principal{UserID: 1, Role: models.RoleAdmin}))
+		ctx := jobListContextProvider(reader)(request)
+		if ctx["_statusCode"] != http.StatusBadRequest {
+			t.Fatalf("%s answered %v, want 400", c.target, ctx["_statusCode"])
+		}
+		if ctx["jobOwnerOptions"] == nil || ctx["jobActorOptions"] == nil {
+			t.Fatalf("%s drew no Owner and Actor selects on the refused page", c.target)
+		}
+		if form := ctx["jobFilter"].(JobFilterForm); form.Owner != c.owner {
+			t.Fatalf("%s shows the Owner select as %q, want %q", c.target, form.Owner, c.owner)
+		}
 	}
 }
 

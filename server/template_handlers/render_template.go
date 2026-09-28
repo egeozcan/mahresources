@@ -67,6 +67,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				// Internal/rendering fields (should not leak to JSON consumers)
 				"_pluginManager":      true,
 				"_statusCode":         true,
+				"_statusKeepsPage":    true,
 				"_appContext":         true, // BH-P05: contains full MahresourcesConfig (DbDsn, FfmpegPath, FileSavePath, AltFileSystems, ...)
 				"_requestContext":     true, // BH-P05: nested Go request context
 				"_pluginAccess":       true, // a closure over the request principal; never serialisable
@@ -95,12 +96,16 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		if statusCode, ok := context["_statusCode"].(int); ok && statusCode != http.StatusOK {
 			writer.WriteHeader(statusCode)
 			// Render the error template instead of the entity template to avoid
-			// panics from templates that access nil entity variables.
-			errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
-			if err := errorTpl.ExecuteWriter(context, writer); err != nil {
-				http.Error(writer, err.Error(), http.StatusInternalServerError)
+			// panics from templates that access nil entity variables. A provider
+			// whose page is itself the answer (a list refusing its filter, which
+			// keeps the form to correct it) says so with _statusKeepsPage.
+			if keepsPage, _ := context["_statusKeepsPage"].(bool); !keepsPage {
+				errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
+				if err := errorTpl.ExecuteWriter(context, writer); err != nil {
+					http.Error(writer, err.Error(), http.StatusInternalServerError)
+				}
+				return
 			}
-			return
 		}
 		if err := template.ExecuteWriter(context, writer); err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)

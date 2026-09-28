@@ -46,6 +46,8 @@ func NewSchemaGenerator() *SchemaGenerator {
 			// Tag doesn't need special handling, uses defaults
 			// GroupRelationType partial is minimal
 			"GroupRelationType": {"ID", "Name"},
+			// A related Job names itself and how it is related
+			"JobLineageEntryResponse": {"ID", "Relation"},
 		},
 	}
 }
@@ -340,13 +342,7 @@ func (g *SchemaGenerator) generatePartialSchema(t reflect.Type, partialName stri
 		includeSet[f] = true
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-
-		if !field.IsExported() {
-			continue
-		}
-
+	for _, field := range partialCandidateFields(t) {
 		// Use struct field name for config lookup, JSON name for schema property
 		structFieldName := field.Name
 		jsonName := getFieldName(field)
@@ -380,6 +376,23 @@ func (g *SchemaGenerator) generatePartialSchema(t reflect.Type, partialName stri
 	}
 
 	g.Schemas[partialName] = openapi3.NewSchemaRef("", schema)
+}
+
+// partialCandidateFields lists a struct's exported fields with an embedded
+// struct's fields in its place, since JSON encodes those as the object's own.
+func partialCandidateFields(t reflect.Type) []reflect.StructField {
+	fields := make([]reflect.StructField, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Anonymous && field.Type.Kind() == reflect.Struct && field.Tag.Get("json") == "" {
+			fields = append(fields, partialCandidateFields(field.Type)...)
+			continue
+		}
+		if field.IsExported() {
+			fields = append(fields, field)
+		}
+	}
+	return fields
 }
 
 func (g *SchemaGenerator) generateFieldSchema(t reflect.Type) *openapi3.SchemaRef {

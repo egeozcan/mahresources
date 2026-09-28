@@ -203,18 +203,31 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 			return pongo2.Context{"_redirect": target}
 		}
 		base["jobKindOptions"] = jobKindOptions(reader.VisibleJobKinds(), jobFilterForm(query).Kinds)
+		// An administrator's Owner and Actor selects are drawn before the filter
+		// is read, so a page refusing its filter still offers them with the
+		// address's choices, and correcting the filter keeps them.
+		accounts, _ := reader.(JobAccountReader)
+		viewer := auth.PrincipalFromContext(request.Context())
+		if accounts != nil && viewer.IsAdmin() {
+			options, err := accounts.JobAccountOptions()
+			if err != nil {
+				return addJobListError(err, base)
+			}
+			base["jobOwnerOptions"] = jobAccountSelectOptions(options, jobOwnerChoice(query))
+			base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
+		}
 
 		filter, err := jobListFilter(query)
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 		after, err := jobview.DecodeCursor(query.Get("cursor"))
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 		before, err := jobview.DecodeCursor(query.Get("before"))
 		if err != nil {
-			return addMessageErrContext(err.Error(), http.StatusBadRequest, base)
+			return refuseJobListFilter(err, base)
 		}
 
 		var page jobs.Page
@@ -235,17 +248,9 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		for _, snapshot := range page.Jobs {
 			rows = append(rows, jobRow(reader, snapshot))
 		}
-		if accounts, ok := reader.(JobAccountReader); ok {
-			if viewer := auth.PrincipalFromContext(request.Context()); viewer.IsAdmin() {
-				if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
-					return addJobListError(err, base)
-				}
-				options, err := accounts.JobAccountOptions()
-				if err != nil {
-					return addJobListError(err, base)
-				}
-				base["jobOwnerOptions"] = jobAccountSelectOptions(options, jobOwnerChoice(query))
-				base["jobActorOptions"] = jobAccountSelectOptions(options, query.Get("actorId"))
+		if accounts != nil && viewer.IsAdmin() {
+			if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
+				return addJobListError(err, base)
 			}
 		}
 		base["jobs"] = rows
@@ -448,9 +453,32 @@ func withoutEmptyValues(values url.Values) url.Values {
 func addJobListError(err error, ctx pongo2.Context) pongo2.Context {
 	if errors.Is(err, jobs.ErrInvalidFilter) || errors.Is(err, jobs.ErrInvalidCursor) ||
 		errors.Is(err, jobs.ErrInvalidPage) || errors.Is(err, jobs.ErrInvalidCommand) {
-		return addMessageErrContext(jobview.RequestErrorMessage(err), http.StatusBadRequest, ctx)
+		return refuseJobListFilter(err, ctx)
 	}
 	return addErrContext(err, ctx)
+}
+
+// refuseJobListFilter answers a filter the page cannot use, from a hand-edited
+// address or a stale bookmark, with the Job Center itself: status 400, the
+// filter form, and the problem in the list's place (listJobs.tpl), so the reader
+// can correct or clear it. An error page would drop the form and offer only a
+// way out of the Job Center.
+func refuseJobListFilter(err error, ctx pongo2.Context) pongo2.Context {
+	return ctx.Update(pongo2.Context{
+		"jobListError":     jobListErrorText(err),
+		"_statusCode":      http.StatusBadRequest,
+		"_statusKeepsPage": true,
+	})
+}
+
+// jobListErrorText is the problem as the page says it after "This filter cannot
+// be used:": the API's message without the category the page already names.
+func jobListErrorText(err error) string {
+	message := jobview.RequestErrorMessage(err)
+	for _, sentinel := range []error{jobs.ErrInvalidFilter, jobs.ErrInvalidCursor, jobs.ErrInvalidPage, jobs.ErrInvalidCommand} {
+		message = strings.TrimPrefix(message, strings.TrimPrefix(sentinel.Error(), "jobs: ")+": ")
+	}
+	return message
 }
 
 func jobFilterForm(query url.Values) JobFilterForm {
@@ -832,12 +860,86 @@ func joinNonEmpty(separator string, parts ...string) string {
 	return strings.Join(kept, separator)
 }
 
-func JobDetailContextProvider(_ *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+// JobDetailReader is what the Job page reads before it renders, as the viewer:
+// the Job, for the page's title and heading, and the Job a legacy id names.
+type JobDetailReader interface {
+	GetJob(jobID string) (jobs.Snapshot, error)
+	JobIDForLegacyHandle(handle string) (string, error)
+}
+
+var _ JobDetailReader = (*application_context.MahresourcesContext)(nil)
+
+// JobDetailContextProvider renders /job. The page reads the Job, its timeline
+// and outputs itself and follows it live; the server reads it once more so the
+// document title and the page's one heading name the Job, and so a Job that
+// does not exist, or that the viewer may not see, is a 404 page with a way back.
+func JobDetailContextProvider(ctx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	var reader JobDetailReader
+	if ctx != nil {
+		reader = ctx
+	}
+	return jobDetailContextProvider(reader)
+}
+
+func jobDetailContextProvider(reader JobDetailReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
-			"pageTitle":               "Job detail",
+		base := pongo2.Context{
+			"pageTitle":               "Job",
 			"hideSidebar":             true,
 			"jobCenterCutoverEnabled": JobCenterCutoverEnabled,
 		}.Update(StaticTemplateCtx(request))
+		if reader == nil {
+			return base
+		}
+		id := strings.TrimSpace(request.URL.Query().Get("id"))
+		if id == "" {
+			return addMessageErrContext("A job ID is required.", http.StatusBadRequest, base)
+		}
+		snapshot, err := reader.GetJob(id)
+		if errors.Is(err, jobs.ErrNotFound) {
+			// An old link or a script may still name a Job by the id the legacy
+			// routes gave it; that id names the Job its lineage ends in now.
+			canonical, handleErr := reader.JobIDForLegacyHandle(id)
+			if handleErr == nil && canonical != "" && canonical != id {
+				return pongo2.Context{"_redirect": "/job?id=" + url.QueryEscape(canonical)}
+			}
+			if handleErr == nil {
+				return addMessageErrContext("That job doesn't exist, or it has been deleted.", http.StatusNotFound, base)
+			}
+			err = handleErr
+		}
+		if err != nil {
+			// A read that failed says nothing about the Job: the page reads it
+			// itself, and offers Try again if that read fails too.
+			return base
+		}
+		heading := jobHeading(snapshot)
+		base["pageTitle"] = jobDocumentTitle(heading, jobStateLabel(snapshot), jobs.ShortID(snapshot.ID))
+		base["headingTitle"] = heading
+		return base
 	}
+}
+
+// jobHeading names a Job as every surface does: its title, else its Kind, else
+// its id.
+func jobHeading(snapshot jobs.Snapshot) string {
+	for _, name := range []string{snapshot.Title, snapshot.Kind, snapshot.ID} {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "Job"
+}
+
+// jobDocumentTitle is the Job page's title before the site name: the Job, its
+// state and the end of its id, so two Job tabs, the history, and the page a
+// Retry opens each say which Job they are, attempts of one download included.
+// src/components/jobCenter.js jobDocumentTitle keeps it current as the state
+// changes.
+func jobDocumentTitle(heading, stateLabel, shortID string) string {
+	title := fmt.Sprintf("%s (%s) - Job", heading, stateLabel)
+	if shortID != "" {
+		title += " " + shortID
+	}
+	return title
 }

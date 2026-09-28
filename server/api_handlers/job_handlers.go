@@ -79,14 +79,22 @@ type JobOutputResponse struct {
 }
 
 type JobLineageResponse struct {
-	Ancestors  []JobSnapshotResponse `json:"ancestors"`
-	Successors []JobSnapshotResponse `json:"successors"`
-	Parents    []JobSnapshotResponse `json:"parents"`
-	Children   []JobSnapshotResponse `json:"children"`
+	Ancestors  []JobLineageEntryResponse `json:"ancestors"`
+	Successors []JobLineageEntryResponse `json:"successors"`
+	Parents    []JobLineageEntryResponse `json:"parents"`
+	Children   []JobLineageEntryResponse `json:"children"`
 	// RetriedElsewhere reports a Retry or Continue successor the caller cannot
 	// see, which is why the Job no longer offers Retry. The successor stays hidden,
 	// and a caller who cannot write is never told.
 	RetriedElsewhere bool `json:"retriedElsewhere,omitempty"`
+}
+
+// JobLineageEntryResponse is one related Job and the link that relates it:
+// retry-of (a Retry, or a Continue of a partial success), repeat-of, or
+// parent-child.
+type JobLineageEntryResponse struct {
+	JobSnapshotResponse
+	Relation jobs.LinkType `json:"relation,omitempty"`
 }
 
 type JobDetailResponse struct {
@@ -205,16 +213,28 @@ func jobOutputResponse(jobID, jobKind string, output jobs.Output) JobOutputRespo
 }
 
 func jobLineageResponse(lineage jobs.Lineage) JobLineageResponse {
-	convert := func(snapshots []jobs.Snapshot) []JobSnapshotResponse {
-		out := make([]JobSnapshotResponse, 0, len(snapshots))
-		for _, snapshot := range snapshots {
-			out = append(out, jobSnapshotResponse(snapshot))
+	convert := func(snapshots []jobs.Snapshot, relation func(int) jobs.LinkType) []JobLineageEntryResponse {
+		out := make([]JobLineageEntryResponse, 0, len(snapshots))
+		for i, snapshot := range snapshots {
+			out = append(out, JobLineageEntryResponse{
+				JobSnapshotResponse: jobSnapshotResponse(snapshot),
+				Relation:            relation(i),
+			})
 		}
 		return out
 	}
+	linkAt := func(links []jobs.LinkType) func(int) jobs.LinkType {
+		return func(i int) jobs.LinkType {
+			if i < len(links) {
+				return links[i]
+			}
+			return ""
+		}
+	}
+	parentChild := func(int) jobs.LinkType { return jobs.LinkParentChild }
 	return JobLineageResponse{
-		Ancestors: convert(lineage.Ancestors), Successors: convert(lineage.Successors),
-		Parents: convert(lineage.Parents), Children: convert(lineage.Children),
+		Ancestors: convert(lineage.Ancestors, linkAt(lineage.AncestorLinks)), Successors: convert(lineage.Successors, linkAt(lineage.SuccessorLinks)),
+		Parents: convert(lineage.Parents, parentChild), Children: convert(lineage.Children, parentChild),
 		RetriedElsewhere: lineage.RetriedElsewhere,
 	}
 }

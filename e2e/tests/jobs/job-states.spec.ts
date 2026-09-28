@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { test, expect } from '../../fixtures/base.fixture';
+import { gotoMockedJobPage } from '../../helpers/job-page';
 
 // What each Job surface says a Job is doing: the drawer, the Job page and the /jobs
 // card read one state table, so a paused download is paused everywhere, scheduled
@@ -61,7 +62,7 @@ test.describe('Job states on every surface', () => {
       const drawer = page.getByRole('dialog', { name: 'Jobs' });
       const row = drawer.locator(`article[data-job-id="${id}"]`);
       await expect(row).toBeVisible({ timeout: 10_000 });
-      await row.getByRole('group', { name: 'Advertised controls' }).getByRole('button', { name: 'Pause', exact: true }).click();
+      await row.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Pause', exact: true }).click();
       // What Resume will do is said before the pause, where the choice is made.
       const confirmation = page.getByRole('alertdialog');
       await expect(confirmation).toContainText('Resume starts it again from the beginning');
@@ -120,15 +121,15 @@ test.describe('Job states on every surface', () => {
     await page.keyboard.press('Control+Shift+D');
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const row = drawer.locator(`article[data-job-id="${id}"]`);
-    await row.getByRole('group', { name: 'Advertised controls' }).getByRole('button', { name: 'Pause', exact: true }).click();
+    await row.getByRole('group', { name: 'Job actions' }).getByRole('button', { name: 'Pause', exact: true }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pause', exact: true }).click();
     await expect(row).toContainText('Pausing');
     await expect(row).not.toContainText('Paused');
     await expect(drawer.locator('[data-job-panel-notice]')).toContainText('Pause requested');
 
-    await page.goto(`/job?id=${id}`);
+    await gotoMockedJobPage(page, id);
     const detail = page.getByTestId('job-detail');
-    await expect(detail.getByRole('heading', { level: 1 })).toHaveText('Held elsewhere');
+    await expect(page).toHaveTitle(/^Held elsewhere \(Pausing\) - Job [0-9a-z]+ - /);
     await expect(detail).toContainText('Pausing');
     await expect(detail).not.toContainText('Paused');
   });
@@ -175,7 +176,7 @@ test.describe('Job states on every surface', () => {
       await expect(row).not.toContainText('In progress');
     }
 
-    await page.goto('/job?id=states-scheduled');
+    await gotoMockedJobPage(page, 'states-scheduled');
     const detail = page.getByTestId('job-detail');
     await expect(detail.locator('[data-job-scheduled-for]')).toHaveText(/^Starts .+ \(in 4[45] min\)$/);
     await expect(detail.getByRole('heading', { name: 'Progress' })).toHaveCount(0);

@@ -262,6 +262,50 @@ func TestJobDetailReturnsVersionBoundCommandsAndSafeOutputLinks(t *testing.T) {
 	}
 }
 
+// TestJobDetailSaysHowEachRelatedJobIsRelated: the detail's lineage names the
+// link beside each relative, so a page can say "Retry of" rather than list a
+// chain of identical titles.
+func TestJobDetailSaysHowEachRelatedJobIsRelated(t *testing.T) {
+	job := jobs.Snapshot{ID: "job-3", Kind: "remote-download", State: jobs.StateSucceeded, Version: 2}
+	ctx := &jobDetailContextStub{
+		snapshot: job,
+		lineage: jobs.Lineage{
+			Job:            job,
+			Ancestors:      []jobs.Snapshot{{ID: "job-2", Kind: "remote-download", State: jobs.StateFailed}},
+			AncestorLinks:  []jobs.LinkType{jobs.LinkRetryOf},
+			Successors:     []jobs.Snapshot{{ID: "job-4", Kind: "remote-download", State: jobs.StateSucceeded}},
+			SuccessorLinks: []jobs.LinkType{jobs.LinkRepeatOf},
+			Children:       []jobs.Snapshot{{ID: "job-5", Kind: "group-import-apply", State: jobs.StateQueued}},
+		},
+	}
+	recorder := httptest.NewRecorder()
+	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-3", nil), map[string]string{"id": "job-3"})
+	GetJobDetailHandler(ctx)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Lineage struct {
+			Ancestors  []map[string]any `json:"ancestors"`
+			Successors []map[string]any `json:"successors"`
+			Children   []map[string]any `json:"children"`
+		} `json:"lineage"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Lineage.Ancestors) != 1 || response.Lineage.Ancestors[0]["relation"] != "retry-of" ||
+		response.Lineage.Ancestors[0]["id"] != "job-2" || response.Lineage.Ancestors[0]["state"] != "failed" {
+		t.Fatalf("ancestors = %v, want job-2 related by retry-of with its state", response.Lineage.Ancestors)
+	}
+	if len(response.Lineage.Successors) != 1 || response.Lineage.Successors[0]["relation"] != "repeat-of" {
+		t.Fatalf("successors = %v, want job-4 related by repeat-of", response.Lineage.Successors)
+	}
+	if len(response.Lineage.Children) != 1 || response.Lineage.Children[0]["relation"] != "parent-child" {
+		t.Fatalf("children = %v, want job-5 related by parent-child", response.Lineage.Children)
+	}
+}
+
 func TestJobDetailExposesOnlyStrictEntityDestinationsForPluginActionResultSummaries(t *testing.T) {
 	tests := []struct {
 		name         string

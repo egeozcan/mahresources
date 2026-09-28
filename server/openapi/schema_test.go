@@ -341,6 +341,27 @@ func TestGeneratePartialSchema_CustomFields(t *testing.T) {
 	}
 }
 
+type EmbeddingStruct struct {
+	SimpleStruct
+	Relation string `json:"relation"`
+}
+
+// An embedded struct's fields are the object's own in JSON, so a partial schema
+// picks them as it picks any other field.
+func TestGeneratePartialSchema_EmbeddedFields(t *testing.T) {
+	g := NewSchemaGenerator()
+	g.PartialFields["EmbeddingStruct"] = []string{"ID", "Relation"}
+	g.generatePartialSchema(reflect.TypeOf(EmbeddingStruct{}), "EmbeddingStructPartial")
+
+	props := g.Schemas["EmbeddingStructPartial"].Value.Properties
+	if props["id"] == nil || props["relation"] == nil {
+		t.Fatalf("partial properties = %v, want id from the embedded struct and relation", props)
+	}
+	if props["name"] != nil || props["SimpleStruct"] != nil {
+		t.Fatalf("partial properties = %v, want only the configured fields", props)
+	}
+}
+
 func TestPointerTypes(t *testing.T) {
 	g := NewSchemaGenerator()
 

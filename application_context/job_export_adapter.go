@@ -335,7 +335,7 @@ func (a *groupExportAdapter) OpenJobOutput(_ context.Context, request JobOutputO
 	}
 	closeOnError = false
 	return contracts.JobOutputContent{
-		Body: file, ContentType: contentType, Filename: safeJobOutputFilename(request.Output.Label, path),
+		Body: file, ContentType: contentType, Filename: jobOutputFilename(request.Output, path),
 	}, nil
 }
 

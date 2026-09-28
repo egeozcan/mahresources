@@ -1368,6 +1368,7 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 			// FromJobID is the successor, so an outgoing retry/repeat link names
 			// an ancestor of this Job.
 			lineage.Ancestors = append(lineage.Ancestors, link.other)
+			lineage.AncestorLinks = append(lineage.AncestorLinks, LinkType(link.row.Type))
 		case string(LinkParentChild):
 			lineage.Children = append(lineage.Children, link.other)
 		}
@@ -1377,6 +1378,7 @@ func (s *Service) Lineage(deps Deps, access Access, jobID string) (Lineage, erro
 		switch link.row.Type {
 		case string(LinkRetryOf), string(LinkRepeatOf):
 			lineage.Successors = append(lineage.Successors, link.other)
+			lineage.SuccessorLinks = append(lineage.SuccessorLinks, LinkType(link.row.Type))
 			if link.row.Type == string(LinkRetryOf) {
 				visibleRetries++
 			}

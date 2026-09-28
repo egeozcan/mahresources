@@ -417,7 +417,7 @@ test.describe('Job Center', () => {
 
     await expect(page).toHaveURL(new RegExp(`/job\\?id=${canonicalId}$`));
     const detail = page.getByTestId('job-detail');
-    await expect(detail.getByRole('heading', { name: original!.title!, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: original!.title!, exact: true })).toBeVisible();
     await expect(detail.getByRole('heading', { name: 'Job context' })).toBeVisible();
     await expect(detail.getByRole('heading', { name: 'Outputs' })).toBeVisible();
     await expect(detail.getByRole('heading', { name: 'Timeline' })).toBeVisible();
@@ -432,7 +432,7 @@ test.describe('Job Center', () => {
 
     const successor = await readJob(request, successorId!);
     expect(successor?.lineage?.ancestors?.some(job => job.id === canonicalId)).toBe(true);
-    await expect(page.getByTestId('job-detail').getByRole('heading', { name: original!.title!, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: original!.title!, exact: true })).toBeVisible();
   });
 
   test('Has not been retried lists the failed jobs nobody retried, and Has been the ones somebody did', async ({ page, request }) => {

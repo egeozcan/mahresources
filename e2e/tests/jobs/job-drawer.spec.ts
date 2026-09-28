@@ -254,7 +254,7 @@ test.describe('Jobs drawer', () => {
     await page.keyboard.press('Control+Shift+D');
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const row = drawer.locator(`article[data-job-id="${id}"]`);
-    const controls = row.getByRole('group', { name: 'Advertised controls' });
+    const controls = row.getByRole('group', { name: 'Job actions' });
     // The counts the trigger describes are said inside the modal too, zeroes included.
     await expect(drawer).toHaveAccessibleDescription('Showing 0 active or scheduled jobs and 1 needing attention');
 
@@ -337,7 +337,7 @@ test.describe('Jobs drawer', () => {
     await page.keyboard.press('Control+Shift+D');
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const row = drawer.locator(`article[data-job-id="${id}"]`);
-    const controls = row.getByRole('group', { name: 'Advertised controls' });
+    const controls = row.getByRole('group', { name: 'Job actions' });
     await controls.locator('summary', { hasText: 'More' }).click();
     const unpin = controls.getByRole('button', { name: 'Unpin', exact: true });
     await unpin.focus();

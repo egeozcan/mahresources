@@ -985,25 +985,32 @@ components:
                 message:
                     type: string
             type: object
+        JobLineageEntryResponsePartial:
+            properties:
+                id:
+                    type: string
+                relation:
+                    type: string
+            type: object
         JobLineageResponse:
             properties:
                 ancestors:
                     items:
-                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                        $ref: '#/components/schemas/JobLineageEntryResponsePartial'
                     type: array
                 children:
                     items:
-                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                        $ref: '#/components/schemas/JobLineageEntryResponsePartial'
                     type: array
                 parents:
                     items:
-                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                        $ref: '#/components/schemas/JobLineageEntryResponsePartial'
                     type: array
                 retriedElsewhere:
                     type: boolean
                 successors:
                     items:
-                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                        $ref: '#/components/schemas/JobLineageEntryResponsePartial'
                     type: array
             type: object
         JobListResponse:

@@ -1904,6 +1904,74 @@ func TestLineageNamesOnlyVisibleRelatives(t *testing.T) {
 	}
 }
 
+// TestLineageSaysHowEachRelativeIsRelated: a retry chain lists Jobs of one title,
+// so each listed relative carries the link that relates it — a Retry and a
+// Repeat read differently, even of the same Job — and a hidden relative's link
+// is not named either.
+func TestLineageSaysHowEachRelativeIsRelated(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 6, 11, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	accept := func(title string, class VisibilityClass) Snapshot {
+		clock = clock.Add(time.Minute)
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	earlier := accept("download", "")
+	hidden := accept("download", VisibilityAdmin)
+	job := accept("download", "")
+	for _, link := range []LinkRequest{
+		// Two links between one pair: each listed entry names its own.
+		{Type: LinkRetryOf, FromJobID: job.ID, ToJobID: earlier.ID},
+		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: earlier.ID},
+		{Type: LinkRepeatOf, FromJobID: job.ID, ToJobID: hidden.ID},
+	} {
+		if err := svc.Link(deps, link); err != nil {
+			t.Fatalf("link %+v: %v", link, err)
+		}
+	}
+
+	lineage, err := svc.Lineage(deps, Access{UserID: 7}, job.ID)
+	if err != nil {
+		t.Fatalf("Lineage: %v", err)
+	}
+	requireIDs(t, "ancestors", idsOf(lineage.Ancestors), earlier.ID, earlier.ID)
+	if len(lineage.AncestorLinks) != len(lineage.Ancestors) {
+		t.Fatalf("%d ancestor links for %d ancestors", len(lineage.AncestorLinks), len(lineage.Ancestors))
+	}
+	links := map[LinkType]bool{}
+	for i, link := range lineage.AncestorLinks {
+		if lineage.Ancestors[i].ID != earlier.ID {
+			t.Fatalf("ancestor %d is %s", i, lineage.Ancestors[i].ID)
+		}
+		links[link] = true
+	}
+	if !links[LinkRetryOf] || !links[LinkRepeatOf] {
+		t.Fatalf("the two links to one Job read as %v, want a retry-of and a repeat-of", lineage.AncestorLinks)
+	}
+
+	successor, err := svc.Lineage(deps, Access{UserID: 7}, earlier.ID)
+	if err != nil {
+		t.Fatalf("Lineage of the earlier Job: %v", err)
+	}
+	if len(successor.SuccessorLinks) != 2 || len(successor.Successors) != 2 {
+		t.Fatalf("successors %v with links %v, want the Job twice, once per link", idsOf(successor.Successors), successor.SuccessorLinks)
+	}
+	admin, err := svc.Lineage(deps, Access{UserID: 1, Administrator: true}, job.ID)
+	if err != nil {
+		t.Fatalf("Lineage as an administrator: %v", err)
+	}
+	for i, ancestor := range admin.Ancestors {
+		if ancestor.ID == hidden.ID && admin.AncestorLinks[i] != LinkRepeatOf {
+			t.Fatalf("the repeated Job is related by %q, want %q", admin.AncestorLinks[i], LinkRepeatOf)
+		}
+	}
+}
+
 func idsOf(snapshots []Snapshot) []string {
 	ids := make([]string, 0, len(snapshots))
 	for _, snap := range snapshots {

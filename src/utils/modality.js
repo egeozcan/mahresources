@@ -57,3 +57,52 @@ export function blockingModal(ignoreWithin = null) {
     }
     return null;
 }
+
+/**
+ * Tells a reader inside `modal` why what they asked for did not open over it,
+ * shown and spoken inside that dialog.
+ *
+ * A live region outside an `aria-modal` dialog may go unheard while the dialog is
+ * open, and a refusal that is only spoken leaves a sighted keyboard user with a
+ * shortcut that simply did nothing. The notice is a status region at the end of
+ * the dialog's markup, drawn at the bottom of the viewport (index.css
+ * .modal-refusal) so it is seen however the dialog is scrolled. It is emptied and written a moment later, so the region exists
+ * before its words change and the same refusal twice is heard twice. It leaves
+ * when focus leaves the dialog for somewhere else on the page, as it does when
+ * the dialog closes, and otherwise once it has been read (REFUSAL_SHOWN_MS): a
+ * dialog that is hidden rather than removed would show it again when it next
+ * opens.
+ */
+const REFUSAL_SHOWN_MS = 10000;
+
+export function refuseOverModal(modal, message) {
+    if (typeof modal?.querySelector !== 'function' || typeof document?.createElement !== 'function') return;
+    let notice = modal.querySelector(':scope > [data-modal-refusal]');
+    if (!notice) {
+        notice = document.createElement('p');
+        notice.setAttribute('data-modal-refusal', '');
+        notice.setAttribute('role', 'status');
+        notice.className = 'modal-refusal';
+        modal.append(notice);
+        // Focus lost to nowhere (a click on the dialog's own background) is
+        // not leaving it; focus handed to the page outside is.
+        const leave = event => {
+            if (!event.relatedTarget || modal.contains(event.relatedTarget)) return;
+            modal.removeEventListener('focusout', leave);
+            clearTimeout(notice._refusalTimer);
+            notice.remove();
+        };
+        modal.addEventListener('focusout', leave);
+        notice._refusalLeave = leave;
+    }
+    clearTimeout(notice._refusalTimer);
+    notice.textContent = '';
+    notice._refusalTimer = setTimeout(() => {
+        if (!notice.isConnected) return;
+        notice.textContent = message;
+        notice._refusalTimer = setTimeout(() => {
+            modal.removeEventListener('focusout', notice._refusalLeave);
+            notice.remove();
+        }, REFUSAL_SHOWN_MS);
+    }, 50);
+}

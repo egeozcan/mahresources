@@ -1,7 +1,7 @@
 import { abortableFetch } from '../index.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { captureTrigger, focusedElement, restoreFocus } from '../utils/focus.js';
-import { blockingModal } from '../utils/modality.js';
+import { blockingModal, refuseOverModal } from '../utils/modality.js';
 
 // Client-side search cache with TTL
 const searchCache = new Map();
@@ -205,7 +205,7 @@ export function globalSearch() {
                 // dialog and armed a second x-trap over the first.
                 const blocker = blockingModal();
                 if (blocker) {
-                    this.announce('A dialog is already open, so search was not opened. Close it, then press Command or Control and K.');
+                    refuseOverModal(blocker, 'Close this dialog first to open search.');
                     return;
                 }
                 // Read before the flip: once the x-if mounts and the $nextTick

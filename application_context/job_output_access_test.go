@@ -139,7 +139,7 @@ func TestOpenJobOutputRechecksJobAndOutputAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner could not open output: %v", err)
 	}
-	if content.Filename != "artifact" {
+	if !strings.HasPrefix(content.Filename, "artifact-") || !strings.HasSuffix(content.Filename, ".tar") {
 		t.Fatalf("opened output metadata = %#v", content)
 	}
 	body, err := io.ReadAll(content.Body)

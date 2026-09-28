@@ -5,6 +5,13 @@
 {% endblock %}
 
 {% block body %}
+{% if jobListError %}
+{# A filter from the address the page cannot use: the form stays in the sidebar to correct it, and nothing follows a list that was not read. #}
+<div class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800" data-testid="job-center" data-job-list-error>
+    <p role="alert">This filter cannot be used: {{ jobListError }}.</p>
+    <p class="mt-1">Change it in the Filter form, or <a href="/jobs?dismissed=false" class="rounded font-medium text-red-900 underline decoration-red-300 underline-offset-2 hover:decoration-red-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">clear all filters</a>.</p>
+</div>
+{% else %}
 <div x-data="jobList()" data-testid="job-center">
     <p class="mb-2 text-xs text-stone-600" role="status" aria-live="polite" data-testid="job-live-status">
         <span x-text="connectionText">Live updates need JavaScript; reload for new jobs.</span>
@@ -26,6 +33,7 @@
     {% endfor %}
     </section>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block sidebar %}

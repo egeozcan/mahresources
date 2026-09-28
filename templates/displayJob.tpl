@@ -1,7 +1,8 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<div x-data="jobCenter()" data-testid="job-detail" class="mx-auto max-w-5xl space-y-5">
+{# The page's one h1 is the layout's, naming the Job (job_template_context.go); this keeps the document title's state current. #}
+<div x-data="jobCenter()" x-effect="syncDocumentTitle()" data-site-title="{{ title }}" data-testid="job-detail" class="mx-auto max-w-5xl space-y-5">
     <p x-show="loading" x-cloak role="status" class="py-6 text-sm text-stone-600">Loading job…</p>
     {# A failed read offers a way on: read again, or go back to the list. #}
     <div x-show="error" x-cloak class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800" data-job-detail-error>
@@ -15,8 +16,7 @@
         <div class="space-y-6">
             <header class="flex flex-wrap items-start justify-between gap-3 border-b border-stone-300 pb-4">
                 <div class="min-w-0">
-                    <a href="/jobs" class="text-sm text-amber-900 underline decoration-amber-300 underline-offset-2">All jobs</a>
-                    <h1 class="mt-2 break-words text-2xl font-semibold text-stone-900" x-text="detail.title || detail.kind || detail.id"></h1>
+                    <a href="/jobs?dismissed=false" class="text-sm text-amber-900 underline decoration-amber-300 underline-offset-2">All jobs</a>
                     <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
                         {# The tone's colour is the one every Job surface gives it (job-tone--* in public/index.css); the label says it in words. #}
                         <span class="rounded-full border px-2 py-0.5 text-xs font-medium" data-job-state :class="'job-tone--' + stateTone(detail)" x-text="stateLabel(detail)"></span>
@@ -28,7 +28,7 @@
                     </div>
                     <p x-show="scheduledText(detail)" x-cloak class="mt-2 text-sm text-stone-800" data-job-scheduled-for x-text="scheduledText(detail)"></p>
                 </div>
-                <div class="flex flex-wrap gap-2" role="group" aria-label="Advertised job commands">
+                <div class="flex flex-wrap gap-2" role="group" aria-label="Job actions" data-job-commands>
                     {# aria-disabled, not disabled, while a command runs: a disabled button drops the focus it holds. #}
                     <template x-for="command in commandsFor(detail)" :key="command.key">
                         <button type="button" @click="runCommand(detail, command)" :data-command-key="command.key" :aria-disabled="commandBusy ? 'true' : null"
@@ -54,11 +54,31 @@
                         <dt class="text-xs text-stone-500">Started from</dt>
                         <dd class="break-words text-stone-800" x-text="originText(detail)"></dd>
                     </div>
-                    <div x-show="detail.scheduledFor" x-cloak>
-                        <dt class="text-xs text-stone-500">Scheduled for</dt>
-                        <dd class="text-stone-800"><time :datetime="detail.scheduledFor" x-text="detail.scheduledFor ? new Date(detail.scheduledFor).toLocaleString() : ''"></time></dd>
-                    </div>
                 </dl>
+            </section>
+
+            {# When the Job was accepted, ran and finished, how long it spent in each state, and how long its history is kept. #}
+            <section aria-labelledby="job-times-heading" class="rounded border border-stone-200 bg-white p-4" data-job-times>
+                <h2 id="job-times-heading" class="font-mono text-sm font-semibold text-stone-800">Times</h2>
+                <p class="mt-1 text-xs text-stone-600" x-text="timeZoneText"></p>
+                <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+                    <template x-for="row in timeRows(detail)" :key="row.key">
+                        <div :data-job-time="row.key">
+                            <dt class="text-xs text-stone-500" x-text="row.label"></dt>
+                            <dd class="text-stone-800">
+                                <time class="tabular-nums" :datetime="row.at" x-text="row.text"></time>
+                                <span class="text-stone-600" x-text="'(' + row.relative + ')'"></span>
+                            </dd>
+                        </div>
+                    </template>
+                    <template x-for="row in durationRows(detail)" :key="row.key">
+                        <div :data-job-duration="row.key">
+                            <dt class="text-xs text-stone-500" x-text="row.label"></dt>
+                            <dd class="tabular-nums text-stone-800" x-text="row.text"></dd>
+                        </div>
+                    </template>
+                </dl>
+                <p x-show="detail.pinned && detail.expiresAt" x-cloak class="mt-2 text-xs text-stone-600" data-job-pin-retention>Your pin keeps this job's history past that date. Its files keep their own expiry.</p>
             </section>
 
             <p x-show="noticeText" x-cloak data-job-notice class="rounded border border-stone-200 bg-white p-3 text-sm text-stone-800" x-text="noticeText"></p>
@@ -118,7 +138,7 @@
             <section aria-labelledby="job-outputs-heading" class="rounded border border-stone-200 bg-white p-4">
                 <div class="flex items-center justify-between gap-2">
                     <h2 id="job-outputs-heading" class="font-mono text-sm font-semibold text-stone-800">Outputs</h2>
-                    <span class="text-xs text-stone-500" x-text="`${advertisedOutputs(detail).length} available records`"></span>
+                    <span class="text-xs text-stone-500" x-text="outputCountText(detail)"></span>
                 </div>
                 <ul class="mt-3 divide-y divide-stone-200">
                     <template x-for="output in advertisedOutputs(detail)" :key="output.key">
@@ -126,7 +146,7 @@
                             <div class="min-w-0">
                                 <p class="break-words text-sm font-medium text-stone-800" x-text="output.label || output.key"></p>
                                 <p class="mt-0.5 text-xs text-stone-500"><span x-text="output.type"></span><span> · </span><span x-text="output.availability"></span></p>
-                                <time x-show="output.expiresAt" class="mt-0.5 block text-xs text-stone-500" :datetime="output.expiresAt" x-text="output.expiresAt ? 'Expires ' + new Date(output.expiresAt).toLocaleString() : ''"></time>
+                                <p x-show="output.expiresAt" class="mt-0.5 text-xs text-stone-500">Expires <time class="tabular-nums" :datetime="output.expiresAt" x-text="timeText(output.expiresAt)"></time> <span x-text="'(' + relativeText(output.expiresAt) + ')'"></span></p>
                             </div>
                             <template x-if="outputLinkURL(output, advertisedOutputs(detail)) && output.availability === 'available'">
                                 <a :href="outputLinkURL(output, advertisedOutputs(detail))" :aria-label="outputLinkAccessibleLabel(output, advertisedOutputs(detail))" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900" x-text="outputLinkLabel(output, advertisedOutputs(detail))"></a>
@@ -143,35 +163,39 @@
 
             <section x-show="detail.lineage" x-cloak aria-labelledby="job-lineage-heading" class="rounded border border-stone-200 bg-white p-4">
                 <h2 id="job-lineage-heading" class="font-mono text-sm font-semibold text-stone-800">Related jobs</h2>
+                {# A retry chain is Jobs of one title, so each entry says how it is related, its state and when it was accepted. #}
                 <div class="mt-3 grid gap-4 sm:grid-cols-2">
-                    <template x-for="relation in ['ancestors', 'successors', 'parents', 'children']" :key="relation">
-                        <div x-show="detail.lineage?.[relation]?.length">
-                            <h3 class="text-xs font-mono uppercase tracking-wide text-stone-500" x-text="relation"></h3>
-                            <ul class="mt-1 space-y-1">
-                                <template x-for="related in (detail.lineage?.[relation] || [])" :key="related.id">
-                                    <li><a :href="detailURL(related)" class="text-sm text-amber-900 underline decoration-amber-300 underline-offset-2" x-text="related.title || related.kind || related.id"></a></li>
+                    <template x-for="group in lineageGroups(detail)" :key="group.key">
+                        <div :data-job-lineage="group.key">
+                            <h3 class="text-xs font-semibold text-stone-600" x-text="group.heading"></h3>
+                            <ul class="mt-1 space-y-2">
+                                <template x-for="related in group.entries" :key="related.key">
+                                    <li class="text-sm text-stone-800">
+                                        <span x-show="related.relation" x-text="related.relation + ' '"></span><a :href="detailURL(related)" class="break-words text-amber-900 underline decoration-amber-300 underline-offset-2"><span x-text="related.name"></span> <span class="font-mono text-xs" x-text="related.short"></span></a>
+                                        <span class="block text-xs text-stone-600"><span x-text="related.state"></span><template x-if="related.accepted"><span> · accepted <time class="tabular-nums" :datetime="related.acceptedAt" x-text="related.accepted"></time></span></template></span>
+                                    </li>
                                 </template>
                             </ul>
                         </div>
                     </template>
                 </div>
                 <p x-show="detail.lineage?.retriedElsewhere" x-cloak class="mt-2 text-sm text-stone-700" data-job-retried-elsewhere>Another account has retried this job, so it cannot be retried again. That retry is not visible to you.</p>
-                <p x-show="!detail.lineage?.retriedElsewhere && !['ancestors', 'successors', 'parents', 'children'].some(key => detail.lineage?.[key]?.length)" class="mt-2 text-sm text-stone-500">No visible related jobs.</p>
+                <p x-show="!detail.lineage?.retriedElsewhere && lineageGroups(detail).length === 0" class="mt-2 text-sm text-stone-500">No visible related jobs.</p>
             </section>
 
             <section aria-labelledby="job-timeline-heading" class="rounded border border-stone-200 bg-white p-4">
-                <div class="flex items-baseline justify-between gap-2">
-                    <h2 id="job-timeline-heading" class="font-mono text-sm font-semibold text-stone-800">Timeline</h2>
-                    <span class="text-xs text-stone-500">Earlier events are not announced again.</span>
+                <h2 id="job-timeline-heading" class="font-mono text-sm font-semibold text-stone-800">Timeline</h2>
+                <div x-show="timelineError" x-cloak class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-stone-700" data-job-timeline-error>
+                    <p x-text="'The timeline could not be read: ' + timelineError"></p>
+                    <button type="button" @click="retryTimeline()" class="inline-flex min-h-6 items-center rounded font-medium text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Try again</button>
                 </div>
-                <p x-show="timelineError" class="mt-2 text-sm text-stone-600" x-text="timelineError"></p>
                 <section x-show="warningEvents().length" x-cloak aria-labelledby="job-warnings-heading" class="mt-3 rounded border border-amber-300 bg-amber-50 p-3">
                     <h3 id="job-warnings-heading" class="font-mono text-sm font-semibold text-amber-950">Warnings</h3>
                     <ul class="mt-2 space-y-2">
                         <template x-for="event in warningEvents()" :key="event.id || event.sequence">
                             <li class="break-words text-sm text-amber-950">
                                 <span class="font-medium" x-text="event.type === 'events-truncated' ? 'Earlier event history omitted' : 'Warning'"></span>
-                                <time x-show="event.createdAt" class="ml-1 text-xs text-amber-900" :datetime="event.createdAt" x-text="event.createdAt ? new Date(event.createdAt).toLocaleString() : ''"></time>
+                                <time x-show="event.createdAt" class="ml-1 text-xs tabular-nums text-amber-900" :datetime="event.createdAt" x-text="timeText(event.createdAt)"></time>
                                 <pre x-show="event.detail" class="mt-1 whitespace-pre-wrap break-words text-xs text-amber-950" x-text="typeof event.detail === 'string' ? event.detail : JSON.stringify(event.detail)"></pre>
                             </li>
                         </template>
@@ -181,13 +205,18 @@
                     <template x-for="event in timeline" :key="event.id || event.sequence">
                         <li class="relative">
                             <span aria-hidden="true" class="absolute -left-[1.33rem] top-1 h-2 w-2 rounded-full border border-stone-600 bg-white"></span>
-                            <p class="text-sm font-medium text-stone-800" x-text="event.type"></p>
-                            <time class="text-xs text-stone-500" :datetime="event.createdAt" x-text="event.createdAt ? new Date(event.createdAt).toLocaleString() : ''"></time>
+                            <p class="text-sm font-medium text-stone-800" x-text="timelineEventLabel(event)"></p>
+                            <time class="text-xs tabular-nums text-stone-500" :datetime="event.createdAt" x-text="timeText(event.createdAt)"></time>
                             <pre x-show="event.detail" class="mt-1 whitespace-pre-wrap break-words text-xs text-stone-600" x-text="typeof event.detail === 'string' ? event.detail : JSON.stringify(event.detail)"></pre>
                         </li>
                     </template>
                     <li x-show="timeline.length === 0" class="text-sm text-stone-500">No timeline events are available.</li>
                 </ol>
+                {# A Job with more events than one read brings reads on when asked; the latest events are the ones after these. #}
+                <div x-show="timelineMore" x-cloak class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-stone-700" data-job-timeline-more>
+                    <p>This job has more events than are shown.</p>
+                    <button type="button" @click="loadLaterEvents()" class="inline-flex min-h-6 items-center rounded font-medium text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700">Show later events</button>
+                </div>
             </section>
         </div>
     </template>

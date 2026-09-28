@@ -2,7 +2,7 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { announcePreferenceCommand, openJobPreferenceChannel, preferenceCommand } from '../utils/jobPreferenceChannel.js';
 import * as userSettings from '../userSettings.js';
 import { captureTrigger, focusedElement, focusFirstIn, focusOn, restoreFocus } from '../utils/focus.js';
-import { blockingModal, isRendered } from '../utils/modality.js';
+import { blockingModal, isRendered, refuseOverModal } from '../utils/modality.js';
 import {
     EVENT_SOURCE_CLOSED,
     advertisedCommands,
@@ -219,6 +219,8 @@ export function panelCountsText({
 }
 
 // What the drawer says, and shows in place of its list, once its stream reset.
+// What the Jobs shortcut says inside another dialog it will not open over.
+const JOBS_REFUSED_OVER_DIALOG = 'Close this dialog first to open Jobs.';
 const STREAM_STOPPED_NOTICE = "Job updates stopped because this server's database was restored or replaced. Reload the page to see current jobs.";
 
 function streamStoppedError() {
@@ -619,8 +621,9 @@ export function jobPanel() {
         openFromEvent(detail = null) {
             const reveal = Array.isArray(detail?.jobIds) ? detail.jobIds.filter(id => typeof id === 'string' && id) : [];
             if (!this.isOpen) {
-                if (this.blockingModal()) {
-                    this.announceNotice('A dialog is open. Close it before opening Jobs.');
+                const blocker = this.blockingModal();
+                if (blocker) {
+                    refuseOverModal(blocker, JOBS_REFUSED_OVER_DIALOG);
                     return;
                 }
                 const requested = detail?.returnFocusTo;
@@ -681,8 +684,9 @@ export function jobPanel() {
         },
 
         toggle(event = null) {
-            if (!this.isOpen && this.blockingModal()) {
-                this.announceNotice('A dialog is open. Close it before opening Jobs.');
+            const blocker = this.isOpen ? null : this.blockingModal();
+            if (blocker) {
+                refuseOverModal(blocker, JOBS_REFUSED_OVER_DIALOG);
                 return;
             }
             if (!this.isOpen) this._lastTrigger = captureTrigger(event) ?? focusedElement() ?? this._trigger;
