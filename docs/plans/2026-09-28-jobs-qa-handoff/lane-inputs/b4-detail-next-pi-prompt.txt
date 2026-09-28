@@ -1,0 +1,79 @@
+You are reviewing one lane of a remediation batch in the mahresources repository (Go + Pongo2 templates + Alpine.js). The working directory is that lane's git worktree. Review `git diff bdafcb51..HEAD` (base bdafcb51). Read CLAUDE.md first for house rules (layering, the db handle travels per call, accessibility matters a great deal, docs must match the code, deployments with millions of rows).
+
+Commits under review (`git log --oneline bdafcb51..HEAD`):
+014fccc5 Remove a dialog's shortcut refusal when focus leaves the dialog
+4196976a Read the timeline once the stream is live, list each link of a pair, and name event types
+3f983fe6 Keep an administrator's Owner and Actor choices on a refused Job Center filter
+742b1e2d Keep a dialog's shortcut refusal on screen however the dialog is scrolled
+b16d225c Tell attempts of one Job apart by the end of their ids, and name each link's own relation
+0802b4cb Remove a dialog's shortcut refusal once it has been read
+159e0f9c Answer a Job Center filter it cannot use with the Job Center, not an error page
+2ddb0214 Say inside a dialog why a shortcut did not open over it, and show focus in search
+f7bedfc2 Name the Job page by its Job, show when it ran, and link a finished export's file
+ada9602e Say how each related Job is related in a Job's lineage
+94e7d628 Save a Job's file output under its label, time and extension
+
+Issues this lane fixes (from a QA sweep of the Jobs system):
+- J4: the Job detail page (/job?id=) showed no accepted/started/finished time, no duration and no expiry; times used a different format on each surface. Scope here: the detail page shows those in the /jobs cards' format (YYYY-MM-DD HH:MM[:SS], reader's zone, zone named). Drawer row ages belong to another lane.
+- J5: Job file outputs downloaded without an extension ("Exported archive", "Job summary export"), and the drawer/list offered no download for a finished export.
+- J8: error pages gave no way back: a bad /jobs filter in the URL gave an "Error 400" page with an internal message and no filter form; an unknown or malformed /job?id= gave "job not found" with HTTP 200; an id containing a slash showed an API routing error.
+- X7: output links showed "Open output" but were named "Open Exported archive" (WCAG 2.5.3 Label in Name).
+- X9: every detail page had the same document title ("Job detail") and two h1 headings, so Retry landed on a page that sounded identical.
+- X10: at 400% zoom (320x180) the Jobs drawer left 57 px for its list; at 320 px titles and metric labels were truncated with no way to read them.
+- X11: drawer semantics: duplicate banner/contentinfo landmarks from header/footer inside the dialog, an aria-label on a role-less div, "Advertised controls"/"Advertised job commands" jargon, a visible screen-reader note "Earlier events are not announced again." on the detail timeline.
+- X12: Ctrl/Cmd+Shift+D inside global search was refused with a message spoken only from a live region outside that aria-modal dialog (nothing visible). The same class existed the other way round (Ctrl/Cmd+K inside the drawer); both now use one helper.
+- U11: "Related jobs" listed bare, identical titles with no relation, state or time, so a retry chain was unreadable.
+- L7 (detail half): the detail timeline was not live, stopped at 100 events (fetched /events?limit=100 once, ignored nextSequence), and the header kept the old phase after the Job finished.
+- Follow-up: the global search input had no focus indicator in normal mode.
+
+Design decisions made in the lane (challenge them if you think they are wrong):
+- /job now reads the Job server-side as the viewer (job_template_context.go jobDetailContextProvider) for the document title "<title> (<State>) - Job" and the page's single h1 (the layout's title.tpl h1 via headingTitle). Not found -> 404 error page with "Back to Job Center"; a legacy queue/plugin-action handle -> redirect to the canonical Job; any other read error -> the page renders and the client reads (it offers Try again). The client keeps document.title current (x-effect syncDocumentTitle).
+- E2E specs that mock the Job API for invented ids now open the page through e2e/helpers/job-page.ts gotoMockedJobPage, which serves a real placeholder Job's page markup at the mocked id's address.
+- File output names: slug(label)-<UTC publish time>.<stored extension, compound .tar.gz kept>.
+- A succeeded Job with no entity output but an available, unexpired artifact output offers it as its result ("Download <label>") on the /jobs card (server/jobview/result.go ResultLinkFor) and the drawer (src/components/jobCenter.js resultOutput): one rule on both sides.
+- The lineage API entries carry `relation` (retry-of, repeat-of, parent-child) from jobs.Lineage.Relations.
+- The timeline reads pages of 200 up to 1,000 events per read, then offers "Show later events"; stream events for this Job read what follows the last held event, one read at a time.
+- /jobs with an unusable filter answers 400 with the page itself (RenderTemplate honours _statusKeepsPage) and an inline error block; the live list component is not rendered then.
+- refuseOverModal (src/utils/modality.js) writes a visible role=status notice at the end of the blocking dialog, removed 10 s after it appears.
+
+Round 1 of this review found five P1s and one P2. How each was handled (review the fixes, and rebut with new evidence rather than repeat a point):
+- X9 retry pages identical: the document title now ends in the Job id's last eight letters and digits ("<title> (<State>) - Job 456789ab", jobs.ShortID / shortJobId, pinned by the same cases on both sides). Declined in part: the h1 stays the Job's title alone; the id (in full), state and lineage are directly below it in the page header, and an id in every heading would make every Job heading end in hex for a case (two attempts in the same state) the title already separates.
+- J5 same-second file names: file names now carry the short Job id: exported-archive-20260926-124207-456789ab.tar.gz.
+- U11 relation keyed by relative id: jobs.Lineage now carries AncestorLinks/SuccessorLinks index for index; parents/children are parent-child; test with a pair linked twice.
+- U11 same-minute identical links: lineage entries show acceptance to the second, and the link text includes the short id (so its accessible name is unique).
+- X12 refusal off-screen at 320x180: .modal-refusal is position: fixed at the viewport bottom, still inside the dialog's DOM; E2E asserts its box is inside a 320x180 viewport.
+- P2 generic h1 after a recovered server read: syncDocumentTitle also names the Job in the layout heading when it differs.
+
+Round 2 found three P1s and one P2, all fixed:
+- A timeline event published between the page's timeline read and the stream reaching its head: markStreamCaughtUp now calls followTimeline (serialized through readTimeline); vitest drives that ordering.
+- Lineage entries keyed by id alone collapsed a pair linked twice: entries carry key = id + ":" + relation; vitest and a mocked E2E with the same Job linked by retry-of and repeat-of.
+- A refused /jobs filter dropped an administrator's Owner/Actor selects: they are drawn before the filter is read; provider test with owner=me, owner=deleted and owner=7.
+- P2 timeline read failures had no recovery: the error says so with a Try again button (retryTimeline), and a failed live read sets it too.
+Also added in this round (a coordinator request): timelineEventLabel names every event type in words ("output-published" -> "Output published"), with "Event" for an empty type.
+
+Round 3 found one P1 and one P2:
+- P2 (fixed): the shortcut refusal outlived a quick close and reopen of a dialog that is hidden rather than removed. It now also leaves when focus moves from the dialog to the page outside; vitest drives it. (The Jobs drawer and the search dialog are both x-if, so their notices already went with their markup on close.)
+
+## Previously declined, with evidence
+- "P1: Job page titles can still be identical because the short id keeps eight hex characters" (jobs/short_id.go, jobCenter.js shortJobId). Declined as P1. Two titles collide only for two Jobs with the same title, the same state and the same last 32 random bits of their UUIDv7 ids. The title exists so a person can tell apart the Job pages they have open or just visited (typically a retry chain of a few attempts); for any two given Jobs the chance is 1 in 4.3 billion, and the birthday figure over 77,000 same-title Jobs describes no set of pages anyone has open. By the rubric's consequence test it is at most P2 (confusing but survivable, with a workaround: the full id is printed in the page header under the heading). The full 36-character id in every document title would be read aloud on every page load by screen readers and truncated away in tab strips, which costs every reader for a case that does not arise. If you still see a P1 here, give a scenario a real user reaches, not a population statistic.
+
+Review for:
+(a) whether each listed issue is really fixed at its root;
+(b) correctness, security, concurrency and data defects the change introduces (for example: the server-side read and its error classification, the legacy-handle redirect and what it reveals, the timeline read serialization and generation fence, reactive re-render costs, the filename sanitization, HTML/attribute escaping, the render path with _statusKeepsPage);
+(c) regressions elsewhere, missing tests, accessibility regressions (focus, landmarks, live regions, names, reflow, forced colors), and docs (docs-site/docs/features/job-system.md, docs-site/docs/user-guide/managing-resources.md, CLAUDE.md) that now disagree with the code.
+Push back rather than validate. Verify claims against the code before reporting them.
+
+For each listed issue, list what you read and what you ran to check it, so a clean answer carries its evidence.
+
+Rubric, verbatim:
+
+> Tag every finding P0, P1, P2 or P3, by consequence, not by how likely the interleaving is.
+> P0 = data loss or corruption, a security or access-control hole, a crash or a server that cannot
+> start, or work that runs twice or is lost for good. P1 = broken: a listed issue that is not
+> actually fixed at its root, a regression of existing behaviour, a user-facing path that fails or
+> gives a wrong result, or an accessibility barrier that blocks a task. P2 = wrong or confusing but
+> survivable: a workaround exists, it occurs only under an injected infrastructure fault (a stalled
+> or failing DB call), missing or weak tests, or docs that disagree with the code. P3 = polish:
+> wording, style, naming, or a pre-existing problem this change neither causes nor worsens.
+> For each finding give file:line, a concrete failing scenario, and a suggested fix. End your
+> answer with exactly one line: `BLOCKING COUNT: N`, where N is the number of P0 and P1 findings.
