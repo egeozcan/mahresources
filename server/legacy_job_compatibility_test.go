@@ -119,8 +119,9 @@ func TestALegacyURLFilterSearchesForTheFileTheURLNames(t *testing.T) {
 		"http://127.0.0.1:18900/status/404/missing-photo.jpg?sig=secret": "missing-photo.jpg",
 		"https://files.example.test/Caf%C3%A9%20terrace.png":             "Café terrace.png",
 		"https://files.example.test/":                                    "files.example.test",
-		"missing-photo":                                                  "missing-photo",
-		"example.test/a b":                                               "example.test/a b",
+		"https://files.example.test/download/9f2c4a":                     "files.example.test",
+		"missing-photo":    "missing-photo",
+		"example.test/a b": "example.test/a b",
 	} {
 		parsed, err := url.Parse(legacyDownloadsLocation(url.Values{"URL": {typed}}))
 		if err != nil {

@@ -500,10 +500,17 @@ test.describe('Job Center', () => {
     await waitForJobState(request, id, 'failed');
     expect((await readJob(request, id))?.title).toBe(file);
 
-    for (const typed of [url, file]) {
+    // One titled by a name its submitter chose is found by its URL's file too.
+    const namedFile = `legacy-named-${stamp}.bin`;
+    const named = await request.post('/v1/download/submit', { data: { URL: `${DEAD_URL}archive/${namedFile}`, FileName: `Chosen name ${stamp}` } });
+    expect(named.status(), await named.text()).toBe(202);
+    const namedId = (await named.json()).jobs?.[0]?.canonicalJobId as string;
+    await waitForJobState(request, namedId, 'failed');
+
+    for (const [typed, found] of [[url, id], [file, id], [`${DEAD_URL}archive/${namedFile}`, namedId]]) {
       await page.goto(`/downloads?URL=${encodeURIComponent(typed)}`);
       await expect(page).toHaveURL(/\/jobs\?/);
-      await expect(page.locator(`[data-job-id="${id}"]`)).toBeVisible();
+      await expect(page.locator(`[data-job-id="${found}"]`)).toBeVisible();
     }
   });
 

@@ -3,7 +3,6 @@ package server
 import (
 	"net/http"
 	"net/url"
-	"path"
 	"slices"
 	"strings"
 	"time"
@@ -78,17 +77,17 @@ func legacyDownloadsLocation(values url.Values) string {
 }
 
 // legacyDownloadSearchTerm carries a legacy URL filter to a Job Center search.
-// A Job keeps no URL, only its title and its summary's host, so a whole URL is
-// searched for by what it is titled by: the decoded last segment of its path,
-// or its host when the path names none. Anything else, the part of a URL the
-// legacy box was usually given, is searched for as typed.
+// A Job keeps no URL, only its summary's host and the file its path names
+// (application_context.DownloadFileNameInURL), so a whole URL is searched for by
+// that file, or by its host when its path names none. Anything else, the part
+// of a URL the legacy box was usually given, is searched for as typed.
 func legacyDownloadSearchTerm(value string) string {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return value
 	}
-	if segment := path.Base(strings.TrimRight(parsed.Path, "/")); segment != "." && segment != "/" && segment != "" {
-		return segment
+	if file := application_context.DownloadFileNameInURL(value); file != "" {
+		return file
 	}
 	return parsed.Host
 }

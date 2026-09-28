@@ -193,11 +193,14 @@ states:
 | `paused` | Paused by user (can be resumed) |
 
 A download's Job is titled with the file name the submission chose, or else
-the last segment of the URL's path, decoded (`sunrise.png` for
-`https://example.com/photos/sunrise.png?sig=...`), or else "Download from"
-and the host when the path names no file. The query and fragment never reach
-the title. An old `/downloads?URL=` link opens the Job Center searching for
-the file the URL names, or its host, since a Job keeps no URL.
+the file the URL's path names: its last segment, decoded, when that segment has
+an extension (`sunrise.png` for `https://example.com/photos/sunrise.png?sig=...`).
+Otherwise it reads "Download from" and the host. The query, the fragment and a
+path segment without an extension, where a link usually keeps its token, never
+reach the title. The Job's summary keeps the URL's file beside a chosen name, so
+a search for the file finds the download whatever it is titled. An old
+`/downloads?URL=` link opens the Job Center searching for the file the URL
+names, or its host, since a Job keeps no URL.
 
 A page that lists resources reads its lists again when the Jobs drawer sees a
 download succeed after the page was rendered, so the new resource appears

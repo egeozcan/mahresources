@@ -1797,9 +1797,11 @@ func countRowsForHandle(rows []*download_queue.DownloadJob, handle string) int {
 }
 
 // TestADownloadIsTitledByTheFileItFetches pins a download Job's title: the name
-// the submission chose, else the decoded last segment of the URL's path, which
-// is the file a person recognises, and only when the path names none the host.
-// The query and fragment, where a signed link keeps its token, never reach it.
+// the submission chose, else the file the URL's path names (a last segment with
+// an extension), which a person recognises, and when the path names none the
+// host. The query, the fragment and a segment that names no file, where a link
+// keeps its token, never reach it; the summary keeps the URL's file beside a
+// chosen name.
 func TestADownloadIsTitledByTheFileItFetches(t *testing.T) {
 	for _, tc := range []struct {
 		url, fileName, want string
@@ -1811,6 +1813,10 @@ func TestADownloadIsTitledByTheFileItFetches(t *testing.T) {
 		{url: "http://files.example.test/", want: "Download from files.example.test"},
 		{url: "http://files.example.test?token=secret", want: "Download from files.example.test"},
 		{url: "http://files.example.test/a/b.bin", fileName: "chosen.bin", want: "chosen.bin"},
+		{url: "http://files.example.test/download/secret9f2c4a", want: "Download from files.example.test"},
+		{url: "http://files.example.test/share/secret9f2c4a.", want: "Download from files.example.test"},
+		{url: "http://files.example.test/t/.secret", want: "Download from files.example.test"},
+		{url: "http://files.example.test/t/archive.tar.gz", want: "archive.tar.gz"},
 	} {
 		input, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: tc.url, FileName: tc.fileName}, "")
 		if err != nil {
@@ -1820,7 +1826,17 @@ func TestADownloadIsTitledByTheFileItFetches(t *testing.T) {
 			t.Errorf("title of %s = %q, want %q", tc.url, got, tc.want)
 		}
 		if strings.Contains(downloadJobTitle(input), "secret") {
-			t.Errorf("title of %s carries the query", tc.url)
+			t.Errorf("title of %s carries a part of the URL that names no file", tc.url)
 		}
+		if summary, err := sanitizeDownloadInput(input); err != nil || strings.Contains(string(summary), "secret") {
+			t.Errorf("summary of %s = %s, %v; it carries a part of the URL that names no file", tc.url, summary, err)
+		}
+	}
+	chosen, err := remoteDownloadInputJSON(&query_models.ResourceFromRemoteCreator{URL: "https://cdn.example.test/files/photo.jpg", FileName: "Vacation portrait"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := sanitizeDownloadInput(chosen); err != nil || !strings.Contains(string(summary), `"file":"photo.jpg"`) {
+		t.Fatalf("a download titled by its chosen name keeps its URL's file in its summary: %s, %v", summary, err)
 	}
 }

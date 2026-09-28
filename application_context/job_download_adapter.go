@@ -108,12 +108,17 @@ func downloadJobCodec() jobs.ReplayCodec {
 // downloadSummary is the bounded, searchable half of a download's input: what a
 // reader may see about it without ever seeing the input itself.
 //
-// The URL is reduced to its scheme and host — never its query, its userinfo or its
-// fragment, which is where a signed link's token lives — and the headers are
-// omitted entirely, because they are the one field that can carry a credential.
+// The URL is reduced to its scheme, its host and the file its path names — never
+// its query, its userinfo, its fragment or any other part of its path, which is
+// where a signed link's token lives — and the headers are omitted entirely,
+// because they are the one field that can carry a credential.
 type downloadSummary struct {
-	Scheme  string   `json:"scheme,omitempty"`
-	Host    string   `json:"host,omitempty"`
+	Scheme string `json:"scheme,omitempty"`
+	Host   string `json:"host,omitempty"`
+	// File is the file the URL's path names (DownloadFileNameInURL), kept
+	// beside a chosen Name so a search for the URL's file finds the download
+	// whatever it was titled.
+	File    string   `json:"file,omitempty"`
 	Name    string   `json:"name,omitempty"`
 	Plugin  string   `json:"plugin,omitempty"`
 	Targets []string `json:"targets,omitempty"`
@@ -164,6 +169,7 @@ func downloadSummaryOf(input json.RawMessage) (downloadSummary, error) {
 		summary.Scheme = parsed.Scheme
 		summary.Host = parsed.Host
 	}
+	summary.File = DownloadFileNameInURL(decoded.Creator.URL)
 	if decoded.Creator.OwnerId != 0 {
 		summary.Targets = append(summary.Targets, fmt.Sprintf("owner:%d", decoded.Creator.OwnerId))
 	}
@@ -180,11 +186,12 @@ func downloadSummaryOf(input json.RawMessage) (downloadSummary, error) {
 }
 
 // downloadJobTitle is the Job's own title: the file name the submission chose,
-// else the decoded last segment of the URL's path, which is the file a person
-// recognises and what the created resource is named after, else the URL's host.
-// Never the query or the fragment, where a signed link keeps its token: a title
-// is searchable text. The title is a bounded projection; the replay input keeps
-// the complete URL and file name for execution and retry.
+// else the file the URL's path names, which a person recognises and which the
+// created resource is named after, else the URL's host. Never the query, the
+// fragment or a path segment that names no file, where a link keeps its token:
+// a title is searchable text that outlives the sealed input. The title is a
+// bounded projection; the replay input keeps the complete URL and file name for
+// execution and retry.
 func downloadJobTitle(input json.RawMessage) string {
 	summary, err := downloadSummaryOf(input)
 	if err != nil {
@@ -193,37 +200,41 @@ func downloadJobTitle(input json.RawMessage) string {
 	title := "Download"
 	if summary.Name != "" {
 		title = summary.Name
-	} else if segment := downloadURLFileSegment(input); segment != "" {
-		title = segment
+	} else if summary.File != "" {
+		title = summary.File
 	} else if summary.Host != "" {
 		title = "Download from " + summary.Host
 	}
 	return truncateDownloadJobTitle(title)
 }
 
-// downloadURLFileSegment is the last segment of a download's URL path, decoded,
-// with control characters made spaces and invalid UTF-8 dropped, or "" when the
-// path names no segment.
-func downloadURLFileSegment(input json.RawMessage) string {
-	var decoded downloadJobInput
-	if err := json.Unmarshal(input, &decoded); err != nil || decoded.Creator == nil {
-		return ""
-	}
-	parsed, err := url.Parse(strings.TrimSpace(decoded.Creator.URL))
+// DownloadFileNameInURL is the file a download URL's path names: its last
+// segment, decoded, when that segment is a file name, a name with an extension
+// (sunrise.png). A segment without one is more often an identifier or a token
+// (/download/9f2c…), which must not become searchable text, so it names no
+// file. Control characters become spaces and invalid UTF-8 is dropped.
+func DownloadFileNameInURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		return ""
 	}
 	segment := path.Base(strings.TrimRight(parsed.Path, "/"))
-	if segment == "." || segment == "/" {
-		return ""
-	}
-	segment = strings.Map(func(r rune) rune {
+	segment = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
 		}
 		return r
-	}, strings.ToValidUTF8(segment, ""))
-	return strings.TrimSpace(segment)
+	}, strings.ToValidUTF8(segment, "")))
+	extension := path.Ext(segment)
+	if len(extension) < 2 || len(extension) > 11 || len(segment) == len(extension) {
+		return ""
+	}
+	for _, r := range extension[1:] {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return ""
+		}
+	}
+	return segment
 }
 
 func truncateDownloadJobTitle(title string) string {
