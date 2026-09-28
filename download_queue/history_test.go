@@ -443,3 +443,29 @@ func TestShutdownWaitsForAGenericJobToUnwind(t *testing.T) {
 		t.Fatal("Shutdown returned while the generic job was still unwinding")
 	}
 }
+
+// A job asked for once Shutdown has begun is registered but never started:
+// the drain has decided what it waits for, and a worker it did not count
+// would run past it.
+func TestAJobSubmittedDuringShutdownIsNotStarted(t *testing.T) {
+	dm := createTestManager()
+	dm.done = make(chan struct{})
+	dm.cleanupTicker = time.NewTicker(time.Hour)
+	dm.Shutdown()
+
+	var ran atomic.Bool
+	job, err := dm.SubmitJob("test", "working", func(ctx context.Context, _ *DownloadJob, _ ProgressSink) error {
+		ran.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if ran.Load() {
+		t.Fatal("a job submitted after Shutdown ran")
+	}
+	if status := job.GetStatus(); status != JobStatusPending {
+		t.Fatalf("the job is %s, want it left pending", status)
+	}
+}

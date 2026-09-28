@@ -681,11 +681,12 @@ func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.Reso
 	// ordering and the snapshot had to be fixed together.
 	dm.notifyJob("added", job)
 
-	dm.mu.Unlock()
-
 	// The go statement happens-before the goroutine's execution, so ownerUserID (set
-	// above) is visible to the worker.
+	// above) is visible to the worker. Started under the registry lock, which is what
+	// orders it against Shutdown's drain (registerWorker).
 	dm.startDownloadWorker(job)
+
+	dm.mu.Unlock()
 
 	return job, nil
 }
@@ -767,9 +768,12 @@ func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemo
 // The counter is incremented here, before the goroutine exists, so Shutdown
 // cannot miss a worker that has been decided on but not yet scheduled. Wrapping
 // rather than counting inside processJob keeps the tests that drive processJob
-// directly working — and keeps the pairing visible in one place.
+// directly working — and keeps the pairing visible in one place. Must be called
+// with dm.mu held (read or write); see registerWorker.
 func (dm *DownloadManager) startDownloadWorker(job *DownloadJob) {
-	dm.workers.Add(1)
+	if !dm.registerWorker() {
+		return
+	}
 	go func() {
 		defer dm.workers.Done()
 		dm.processJob(job)
@@ -779,13 +783,30 @@ func (dm *DownloadManager) startDownloadWorker(job *DownloadJob) {
 // startGenericWorker runs a generic job (an export, an import, a clustering run)
 // under the same drain. Shutdown cancels it like a download, and a run may still
 // be writing when its context ends; whatever closes the database afterwards
-// relies on the drain having waited for that write.
+// relies on the drain having waited for that write. Must be called with dm.mu
+// held (read or write); see registerWorker.
 func (dm *DownloadManager) startGenericWorker(job *DownloadJob) {
-	dm.workers.Add(1)
+	if !dm.registerWorker() {
+		return
+	}
 	go func() {
 		defer dm.workers.Done()
 		dm.processGenericJob(job)
 	}()
+}
+
+// registerWorker counts a worker about to start, or refuses once Shutdown has
+// begun. Called with dm.mu held, read or write: Shutdown closes done before it
+// takes the write lock and waits for the workers after releasing it, so a worker counted here is one
+// the drain waits for, and one asked for later is never started. Its entry stays
+// pending, and a durable Job it publishes into is left for the next process to
+// settle, as the shutdown leaves every other.
+func (dm *DownloadManager) registerWorker() bool {
+	if dm.ShuttingDown() {
+		return false
+	}
+	dm.workers.Add(1)
+	return true
 }
 
 func (dm *DownloadManager) processJob(job *DownloadJob) {
@@ -1834,7 +1855,8 @@ func (dm *DownloadManager) lookup(jobID string) (*DownloadJob, error) {
 }
 
 // startWorker dispatches a job to the processor its kind needs. runFn is set at
-// construction and never reassigned, so it needs no lock.
+// construction and never reassigned, so reading it needs no lock; the caller
+// holds dm.mu (read or write) for registerWorker's sake.
 func (dm *DownloadManager) startWorker(job *DownloadJob) {
 	if job.runFn != nil {
 		dm.startGenericWorker(job)
