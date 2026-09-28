@@ -3,11 +3,30 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as userSettings from '../userSettings.js';
-import { epochMicros, jobPanel, panelActiveOrder, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
+import { epochMicros, jobPanel as createJobPanel, panelActiveOrder, panelBadgeText, panelCounts, panelCommandConfirmation, panelCommandSplit, panelCountsText, panelFinishedLimit, panelFocusSuccessorKeys, panelGroupJobsURL, panelGroups, panelLifecycleEvents, panelRenderedAt, panelStateTone } from './jobPanel.js';
 import { preferenceCommandJobIDs } from '../utils/jobPreferenceChannel.js';
 import { tellDrawerOfJobs } from '../utils/jobAnnouncements.js';
 
-afterEach(() => vi.unstubAllGlobals());
+const fixturePanels = new Set<ReturnType<typeof createJobPanel>>();
+
+function jobPanel() {
+    const panel = createJobPanel();
+    fixturePanels.add(panel);
+    return panel;
+}
+
+function destroyFixturePanels() {
+    for (const panel of fixturePanels) {
+        if (!(panel as any)._destroyed) panel.destroy();
+    }
+    fixturePanels.clear();
+}
+
+afterEach(() => {
+    destroyFixturePanels();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+});
 
 // A page region with createLiveRegion's own 50 ms delay: announce replaces a
 // message still waiting, pending reports it, and it is spoken (pushed to
@@ -28,6 +47,23 @@ function liveRegion(spoken: string[] = []) {
 }
 
 describe('Job Center panel', () => {
+    test('fixture teardown cancels a prior panel refresh before its delayed request', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.requestJSON = vi.fn(async () => ({ jobs: [] })) as any;
+        panel.schedulePanelRefresh();
+        expect(panel._panelRefreshTimer).not.toBeNull();
+
+        // This is the same cleanup the afterEach hook runs. Advancing the
+        // earlier fixture's timer afterwards must not reach its reader.
+        destroyFixturePanels();
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(panel._destroyed).toBe(true);
+        expect(panel.requestJSON).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
     test('counts the undismissed rows shown, including older actionable jobs', async () => {
         const olderActive = {
             id: 'older-active', state: 'running', version: 1,
@@ -1124,10 +1160,6 @@ describe('Job Center panel accessibility hooks', () => {
             body: { appendChild: vi.fn() },
         });
         vi.stubGlobal('window', { location: { href: '/jobs' }, addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    });
-
-    afterEach(() => {
-        vi.unstubAllGlobals();
     });
 
     test('does not announce the initial timeline snapshot as new work', () => {

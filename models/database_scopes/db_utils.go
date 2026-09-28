@@ -354,25 +354,50 @@ func InstantRange(column string, start, end time.Time) func(db *gorm.DB) *gorm.D
 // InstantAfter is a scope keeping the rows whose later column holds a later
 // instant than their earlier one.
 //
-// On SQLite the two columns are text in whatever offset each was written in, so
-// a row created at 01:05 +02:00 and updated five minutes later in UTC (23:10
-// +00:00) compared as updated before it was created. julianday() compares the
-// instants. julianday() resolves milliseconds, and a write a few microseconds
-// after a create is an update too, so within one millisecond the text decides,
-// but only between two values ending in the same offset: the text of one instant
-// written in two offsets differs by hours, and within one offset it orders the
-// fractional seconds exactly. The scope adds no range of its own, so it rides on
-// one that already bounds the scan, InstantRange's for one; PostgreSQL compares
-// instants already.
+// SQLite stores timestamps as text in the offset, separator and precision used
+// when each value was written. Compare a fixed-width key made from the UTC whole
+// second and the fractional nanoseconds, so equivalent instants have the same
+// key and sub-millisecond writes keep their order. Numeric legacy values retain
+// SQLite's existing native comparison. The scope adds no range of its own, so
+// it rides on one that already bounds the scan, InstantRange's for one;
+// PostgreSQL compares timestamptz values natively.
 func InstantAfter(later, earlier string) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		if db.Config.Dialector.Name() != "sqlite" {
 			return db.Where(later + " > " + earlier)
 		}
-		l, e := "julianday("+later+")", "julianday("+earlier+")"
-		return db.Where("(" + l + " > " + e + " OR (" + l + " = " + e +
-			" AND substr(" + later + ", -6) = substr(" + earlier + ", -6) AND " + later + " > " + earlier + "))")
+		return db.Where(
+			"(((typeof(" + later + ") <> 'text' OR typeof(" + earlier + ") <> 'text') AND " + later + " > " + earlier + ") OR " +
+				"(typeof(" + later + ") = 'text' AND typeof(" + earlier + ") = 'text' AND " +
+				sqliteInstantOrderKey(later) + " > " + sqliteInstantOrderKey(earlier) + "))",
+		)
 	}
+}
+
+const sqliteInstantEpochBias = 1_000_000_000_000
+
+// sqliteInstantOrderKey returns a lexically sortable key for the text formats
+// the SQLite driver reads: a signed UTC whole second plus up to nine fractional
+// digits, with an epoch bias that keeps years 0000 through 9999 nonnegative.
+// SQLite's date functions round fractional input to milliseconds, so extract
+// the nanoseconds separately with integer arithmetic and remove the numeric
+// offset from the wall second.
+func sqliteInstantOrderKey(column string) string {
+	wallSecond := "CAST(strftime('%s', substr(" + column + ", 1, 19)) AS INTEGER)"
+	offsetSign := "(CASE WHEN substr(" + column + ", -6, 1) = '+' AND substr(" + column +
+		", -3, 1) = ':' THEN 1 WHEN substr(" + column + ", -6, 1) = '-' AND substr(" + column +
+		", -3, 1) = ':' THEN -1 ELSE 0 END)"
+	offsetSeconds := "(" + offsetSign + " * (CAST(substr(" + column + ", -5, 2) AS INTEGER) * 3600 + " +
+		"CAST(substr(" + column + ", -2, 2) AS INTEGER) * 60))"
+	fractionText := "CASE WHEN substr(" + column + ", -1, 1) = 'Z' THEN substr(" + column +
+		", 21, length(" + column + ") - 21) WHEN " + offsetSign + " <> 0 THEN substr(" + column +
+		", 21, length(" + column + ") - 26) ELSE substr(" + column + ", 21) END"
+	fractionDigits := "substr((" + fractionText + ") || '000000000', 1, 9)"
+	fractionalNanos := "(CASE WHEN substr(" + column + ", 20, 1) IN ('.', ',') THEN " +
+		"CAST(" + fractionDigits + " AS INTEGER) ELSE 0 END)"
+	return "(CASE WHEN strftime('%s', substr(" + column + ", 1, 19)) IS NULL THEN NULL ELSE " +
+		"printf('%013d%09d', " + wallSecond + " - " + offsetSeconds + " + " +
+		fmt.Sprint(sqliteInstantEpochBias) + ", " + fractionalNanos + ") END)"
 }
 
 // sqliteJulianFormat writes a bound julianday() reads as UTC: no offset, and the

@@ -1151,25 +1151,30 @@ func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.Co
 		if !found {
 			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
 		}
+		// The execution can deliver this same durable intent before the foreground
+		// command reaches the queue. A Paused entry is only a settled queue state;
+		// the hold is confirmed for this command when its durable Job says Paused.
+		if entry.GetStatus() == download_queue.JobStatusPaused {
+			return a.pauseCommandOutcome(execution.JobID), nil
+		}
 		if err := a.ctx.downloadManager.Pause(entry.ID); err != nil {
 			var conflict *download_queue.StateConflictError
 			if errors.As(err, &conflict) {
+				if conflict.Status == download_queue.JobStatusPaused {
+					// The execution's pause may have won after the status read above.
+					// Read the authoritative held answer just as for a queue entry
+					// already Paused when this command began.
+					return a.pauseCommandOutcome(execution.JobID), nil
+				}
 				// Saving or already ended: the request stands until the Job leaves
-				// running, which it is about to.
+				// running, which it is about to. Other queue statuses are not a
+				// confirmed hold.
 				return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded,
 					Message: "Pause requested, but the download is already finishing."}, nil
 			}
 			return jobs.CommandOutcome{}, err
 		}
-		// The Job is paused once the attempt this stopped has exited, which is
-		// normally at once; a file being saved when the pause landed can take
-		// longer, or complete the download instead. Only a Job that reached paused
-		// within jobDownloadPauseAnswerWait is reported paused, and the request
-		// stands otherwise.
-		if a.awaitDownloadPaused(execution.JobID) {
-			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPausedMessage}, nil
-		}
-		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: jobDownloadPauseRequestedMessage}, nil
+		return a.pauseCommandOutcome(execution.JobID), nil
 
 	case jobs.CommandResume:
 		// A hold is released by queueing the Job, never by starting a worker from
@@ -1225,6 +1230,17 @@ const jobDownloadPauseConfirmation = "Pause this download? The bytes received so
 // jobDownloadPauseAnswerWait bounds how long a Pause answered in the process
 // running the transfer waits to say "Paused" rather than "Pause requested".
 const jobDownloadPauseAnswerWait = 2 * time.Second
+
+// pauseCommandOutcome reports a pause as confirmed only when the durable Job says
+// it is paused. The queue's Paused status can precede publication of the held
+// answer, because the execution that received the intent may have held it first.
+func (a *downloadJobAdapter) pauseCommandOutcome(jobID string) jobs.CommandOutcome {
+	message := jobDownloadPauseRequestedMessage
+	if a.awaitDownloadPaused(jobID) {
+		message = jobDownloadPausedMessage
+	}
+	return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: message}
+}
 
 // awaitDownloadPaused reports whether a Job reaches paused within
 // jobDownloadPauseAnswerWait. A read that fails is not an answer, and reads as not

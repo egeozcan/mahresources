@@ -15,11 +15,9 @@ import (
 // ReductionComputeDeadline is how long a clustering job may hold a Reduction at
 // `computing` before the row reads as failed and becomes recomputable.
 //
-// Generic queue jobs are not drained at shutdown — workers.Add exists only on the
-// download path — so a restart mid-clustering leaves the row saying `computing`
-// with nothing alive to move it off, on a table that never expires. The deadline
-// is what prevents a Reduction being stranded there forever, and it is cheaper
-// and safer than teaching the download queue to drain every generic job.
+// Generic queue jobs take the shared five-second shutdown drain. The deadline
+// still recovers a Reduction left computing after a process crash or a worker
+// that outlives that bounded drain, on a table that never expires.
 //
 // A run that legitimately outlives it is not damaged: it still writes its plan,
 // because the write is conditional on the row still naming *this* job. A second
