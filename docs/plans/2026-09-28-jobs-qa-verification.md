@@ -113,11 +113,11 @@ with the final reviewed commits and merged gates before completion.
 
 | Lane | P0/P1 findings by round so far | Current disposition |
 | --- | --- | --- |
-| List | 8, 2, 2 | All final lane gates pass at `d9a788a6`; full round 4 active. |
+| List | 8, 2, 2, 1 | All lane gates pass at `d9a788a6`, but round 4 reproduces a fetched snapshot inheriting a newer client progress marker before comparison; general snapshot ownership repair in progress. |
 | Detail | 5, 3, 1, 0 | Round 4 clean at `014fccc5`. Test-only `b80cf46e` closes the P2 timeline concurrency guard with 23 focused tests passing. |
 | Numbers | 2, 4, 1, 2, 2 | Round 5 at `f443eb7c` confirms media-source freshness repairs, but finds measured graph movement lost at final replacement and compaction; general preservation repair in progress. |
-| Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`; cheap local report-read notice and standards findings are being closed. |
-| Flakes | 2, 2, 1, 0 | All final gates pass at `f007c51f`, including 2,318 browser/CLI tests with no retries; the new shutdown ownership repair still requires round 5. |
+| Kinds | 1, 2, 2, 2, 1, 0 | Round 6 clean at `a8b9fcb3`. Local follow-ups closed at `2e558d23` and merged: report-read notices preserve an accepted failed/cancelled Job, primitive report outcomes live in contracts, and a test comment describes its scenario. Focused tests, build and coordinator producer/fault probes pass. |
+| Flakes | 2, 2, 1, 0 | All final gates pass at `f007c51f`, including 2,318 browser/CLI tests with no retries; full round 5 on the shutdown ownership repair is in progress. |
 
 List's whole-Go runs exposed the inherited shutdown defect twice. Passing isolated
 20-run and package three-run controls did not explain it. A temporary caller ledger
