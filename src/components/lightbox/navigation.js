@@ -380,7 +380,7 @@ export const navigationMethods = {
 
     this.currentIndex = safeIndex;
     this.isOpen = true;
-    this.loading = true;
+    this._armMediaLoad();
 
     // WS4 finding 74. There used to be a pre-emptive
     //   document.activeElement.blur()
@@ -620,7 +620,7 @@ export const navigationMethods = {
 
     if (this.currentIndex < this.items.length - 1) {
       this.currentIndex++;
-      this.loading = true;
+      this._armMediaLoad();
       this.announcePosition();
       this.scheduleMediaCheck();
       this._preloadUpcoming();
@@ -629,7 +629,7 @@ export const navigationMethods = {
       const loaded = await this.loadNextPage();
       if (this.currentIndex < this.items.length - 1) {
         this.currentIndex++;
-        this.loading = true;
+        this._armMediaLoad();
         // Combine the "loaded more" status with the position so the shared (single-slot)
         // live region does not clobber the page-load message with the position (BH: M9).
         this.announcePosition(loaded > 0 ? `Loaded ${loaded} more items. ` : '');
@@ -648,7 +648,7 @@ export const navigationMethods = {
 
     if (this.currentIndex > 0) {
       this.currentIndex--;
-      this.loading = true;
+      this._armMediaLoad();
       this.announcePosition();
       this.scheduleMediaCheck();
       this._preloadUpcoming();
@@ -657,7 +657,7 @@ export const navigationMethods = {
       const prevItemCount = await this.loadPrevPage();
       if (prevItemCount > 0) {
         this.currentIndex = prevItemCount - 1;
-        this.loading = true;
+        this._armMediaLoad();
         // Combine the load status with the position so it isn't clobbered (BH: M9).
         this.announcePosition(`Loaded ${prevItemCount} previous items. `);
         this.scheduleMediaCheck();
@@ -927,6 +927,17 @@ export const navigationMethods = {
   hasMediaError() {
     const item = this.getCurrentItem();
     return !!item && this.mediaErrorId === item.id;
+  },
+
+  // Arm the media spinner for the item now on screen, unless that item is the one already
+  // known to have failed. "This item is showing" is not the same question as "this item is
+  // loading", and the media element is reused across opening and closing the viewer: when the
+  // same item is reopened its URL is unchanged, so no request goes out and no @load or @error
+  // ever arrives to clear the flag. Arming there left the spinner turning on top of the
+  // "Could not load ..." message for good (repro: close and reopen on a deleted file).
+  // Navigating away and back does change the URL, so it still re-requests and still retries.
+  _armMediaLoad() {
+    this.loading = !this.hasMediaError();
   },
 
   // The URL a media element is actually showing, as an absolute URL. <object> carries it on

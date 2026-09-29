@@ -470,7 +470,7 @@ export const editPanelMethods = {
       // A different bitmap is coming: zoom and pan are clamped against the one that was on
       // screen, so drop them and show the spinner until the new one loads.
       this.resetZoom();
-      this.loading = true;
+      this._armMediaLoad();
       this.scheduleMediaCheck();
     }
     return true;
