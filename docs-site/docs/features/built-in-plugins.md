@@ -5,11 +5,11 @@ title: Built-in Plugins
 
 # Built-in Plugins
 
-Mahresources ships with seven plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
+Mahresources ships with eight plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
 The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation is available on each plugin's documentation page after enabling: shortcode pages render their supplied examples, while documented note-block pages show their defaults, validation schemas, filters, and a safe view-mode preview whenever the block can render without live data.
 
-All seven ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
+All eight ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
 
 | Plugin | Declared capabilities | Network |
 |--------|-----------------------|---------|
@@ -20,6 +20,7 @@ All seven ship an `api_version = 1` manifest, and enabling one is your consent t
 | example-plugin | `hooks`, `inject`, `pages` | none |
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
 | project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule` | none |
+| ketchup | `db:read`, `pages`, `inject`, `actions` | none |
 
 fal-ai is the only one that reaches the network.
 
@@ -192,6 +193,27 @@ Because it needs two categories and a note type, the plugin provisions them in
 an explicit **Set up** step (admin only) rather than in `init()`. See
 [Project Management](./project-management.md) for the full story, the settings
 and the known limits.
+
+## ketchup
+
+Draw new images and edit existing ones in [Ketchup](https://github.com/egeozcan/ketchup), a browser drawing app with brushes, shapes, text, stamps, layers, crop and transforms. The editor runs in your browser on the plugin's **edit** page (`/plugins/ketchup/edit`), and saves back to the library as you:
+
+| Starting point | Where | Saving |
+|----------------|-------|--------|
+| **Edit in Ketchup** | Sidebar of a PNG, JPEG, WebP or BMP resource, and the card menu on resource lists | **Save as new version** uploads the edit as a new version of the resource. **Save as new resource** files it as a separate resource, named after the original with "(edited)" and owned by the same group, instead. Tags, notes and other groups are not copied. |
+| **New image in this group** | Sidebar of a group | **Save to library** creates a resource owned by the group. |
+| **New Image** | Plugins menu | **Save to library** creates a resource with no owner. |
+
+After a new image is first saved, the page switches to editing that resource, so saving again adds a version. Ctrl/Cmd+S saves too.
+
+- **What is saved** is the flattened image: every visible layer, at the image's own size. Layers, history and stamps last only for the editing session; closing the page with unsaved changes asks first.
+- **Formats** stay as they were: a PNG or WebP keeps its transparency, a JPEG is saved as a JPEG (quality 0.92), and a BMP is saved as a PNG because browsers cannot encode BMP. A browser that cannot encode WebP (Safari) saves a WebP edit as PNG. GIFs are not offered, since only their first frame would survive.
+- **Duplicates.** Creating a resource (**Save to library**, **Save as new resource**) from bytes that are already the current file of a resource you can see is refused as a duplicate, with a link to the resource that has them, when you save with no group, or when that resource's owner is your group or it is already linked to your group. Otherwise mahresources links that resource to your group instead, and the editor says so and stays on your drawing rather than switching to that resource. A new resource saved from an unchanged image is the usual way to meet this. New versions are not checked for duplicates.
+- **Access.** Loading and saving go through the ordinary resource API as the signed-in user, so the plugin needs no write capability and reaches nothing the user could not. A group-limited account can use the editor only once an operator allows it for this plugin on `/plugins/manage`. An account that can only read (a guest) can open the editor, and is told that it cannot save.
+
+Settings: **New image width** and **New image height** (default 1200 × 800 pixels) size a new drawing.
+
+The editor itself is Ketchup's embeddable build, committed as `plugins/ketchup/public/ketchup.js` so the plugin needs no internet access. Its first line names the Ketchup commit it was built from. To update it, run `./scripts/update-ketchup.sh <ref>` with a Ketchup branch, tag or commit: it builds that ref from a clean clone and writes the stamped result to the plugin and to its copy in `e2e/test-plugins/ketchup`.
 
 ## Enabling a Plugin
 
