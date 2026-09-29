@@ -157,11 +157,13 @@ async function save({ asCopy = false } = {}) {
             setStatus(`Saved as version ${version?.versionNumber ?? ''}.`.replace(' .', '.'));
         } else if (resource && asCopy) {
             const { resource: created, blob, existing } = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
-            app.markSaved(blob);
             if (existing) {
+                // The edit lives in that other resource, not in the one open here,
+                // so this one keeps reading as unsaved.
                 reportExisting(created);
                 return;
             }
+            app.markSaved(blob);
             showEditing(created);
             setStatus(`Saved as a new resource; you are now editing ${created.name}.`, {
                 link: { href: `/resource?id=${created.id}`, label: 'Open it' },

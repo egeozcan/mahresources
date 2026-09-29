@@ -175,8 +175,11 @@ test.describe('ketchup plugin', () => {
 
   test('says so, and keeps drawing new, when a new image is already in another group', async ({ page, apiClient }) => {
     const category = await apiClient.createCategory(`Ketchup dup cat ${Date.now()}`);
-    const first = await apiClient.createGroup({ name: `Ketchup first ${Date.now()}`, categoryId: category.ID });
-    const second = await apiClient.createGroup({ name: `Ketchup second ${Date.now()}`, categoryId: category.ID });
+    // Names of one length, so both titles lay out alike and the document gets
+    // the same zoom: the same screen stroke must make the same pixels.
+    const stamp = Date.now();
+    const first = await apiClient.createGroup({ name: `Ketchup dupA ${stamp}`, categoryId: category.ID });
+    const second = await apiClient.createGroup({ name: `Ketchup dupB ${stamp}`, categoryId: category.ID });
     // Placed at random, so no other drawing, and no retry of this test, has these bytes.
     const dy = -28 + Math.floor(Math.random() * 9);
     const dx = -150 + Math.floor(Math.random() * 301);
