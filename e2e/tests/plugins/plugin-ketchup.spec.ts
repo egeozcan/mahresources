@@ -157,7 +157,7 @@ test.describe('ketchup plugin', () => {
     expect(copy.ContentType).toBe('image/jpeg');
   });
 
-  test('links a duplicate to the resource that already holds the bytes', async ({ page }) => {
+  test('refuses a copy whose bytes the library already holds', async ({ page }) => {
     await page.goto('/resources');
     const id = await uploadCanvasImage(page, 'image/png', `Ketchup duplicate ${Date.now()}`);
 
@@ -196,7 +196,7 @@ test.describe('ketchup plugin', () => {
     await drawStroke(page, dy, dx);
     await page.getByRole('button', { name: 'Save to library' }).click();
     await expect(page.locator('.ketchup-status')).toContainText('already in the library');
-    await expect(page.locator('.ketchup-status').getByRole('link', { name: 'Open it' })).toHaveAttribute('href', `/resource?id=${id}`);
+    await expect(page.locator('.ketchup-status').getByRole('link', { name: /^Open / })).toHaveAttribute('href', `/resource?id=${id}`);
     // Still a new drawing in the second group, not an edit of the first group's resource.
     await expect(page).toHaveURL(new RegExp(`/plugins/ketchup/edit\\?owner=${second.ID}$`));
     await expect(page.getByRole('button', { name: 'Save to library' })).toBeVisible();

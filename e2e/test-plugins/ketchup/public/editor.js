@@ -136,7 +136,7 @@ async function createResource(name, ownerId) {
 // someone else's: say so, and keep editing what was being edited.
 function reportExisting(r) {
     setStatus(`This exact image is already in the library as ${r.name || `resource ${r.id}`}, so it was linked to the group instead of saved twice.`, {
-        link: { href: `/resource?id=${r.id}`, label: 'Open it' },
+        link: { href: `/resource?id=${r.id}`, label: `Open ${r.name || `resource ${r.id}`}` },
     });
 }
 
@@ -166,7 +166,7 @@ async function save({ asCopy = false } = {}) {
             app.markSaved(blob);
             showEditing(created);
             setStatus(`Saved as a new resource; you are now editing ${created.name}.`, {
-                link: { href: `/resource?id=${created.id}`, label: 'Open it' },
+                link: { href: `/resource?id=${created.id}`, label: `Open ${created.name}` },
             });
         } else {
             const name = nameInput.value.trim() || defaultName();
@@ -178,7 +178,7 @@ async function save({ asCopy = false } = {}) {
             }
             showEditing(created);
             setStatus('Saved to the library. Saving again adds a new version.', {
-                link: { href: `/resource?id=${created.id}`, label: 'Open it' },
+                link: { href: `/resource?id=${created.id}`, label: `Open ${created.name}` },
             });
         }
     } catch (err) {

@@ -42,7 +42,10 @@ fi
 # Stamp once, then copy, so the two files cannot differ and a failure midway
 # leaves the committed ones untouched.
 STAMPED="$WORK/ketchup.stamped.js"
-{ echo "/*! ketchup $SHA ($REF) from $REPO, built by scripts/update-ketchup.sh with node $(node --version) */"; cat "$BUILT"; } > "$STAMPED"
+# A */ in the ref or URL would end the comment early.
+SAFE_REF=${REF//\*\//*_/}
+SAFE_REPO=${REPO//\*\//*_/}
+{ echo "/*! ketchup $SHA ($SAFE_REF) from $SAFE_REPO, built by scripts/update-ketchup.sh with node $(node --version) */"; cat "$BUILT"; } > "$STAMPED"
 for target in plugins/ketchup/public/ketchup.js e2e/test-plugins/ketchup/public/ketchup.js; do
   cp "$STAMPED" "$target"
 done
