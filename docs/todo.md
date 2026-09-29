@@ -13918,3 +13918,24 @@ accepted limits and unassigned follow-ups are in
 [the batch results](plans/2026-09-26-jobs-qa-remediation.md). The updated
 [QA report](plans/2026-09-28-jobs-qa-report.html) is local; remote Claude
 republication still requires sign-in and is not claimed complete.
+
+## CI repair — 2026-09-28
+
+- [x] Reproduce the Staticcheck, CLI documentation freshness, and MDX build failures.
+- [x] Fix the reported Go diagnostics while preserving the PostgreSQL test helper.
+- [x] Regenerate the CLI reference and repair the MDX syntax.
+- [x] Verify Staticcheck, documentation generation/build, and relevant Go tests.
+
+### Review
+
+The CI failures came from unused Jobs helpers and Go lint violations, an
+unregenerated group-import CLI reference, and literal angle brackets parsed as
+JSX in the Job System documentation. Removed the unused helpers, preserved the
+PostgreSQL-only replay assertion in its tagged test file, and retained the
+deliberately malformed URL fixture with a scoped lint annotation.
+
+Passed `staticcheck ./...`, `go test --tags 'json1 fts5' ./...`, the PostgreSQL
+MRQL/API suites, and the PostgreSQL replay-envelope lifecycle test. CLI docs
+lint reports zero warnings; generated CLI docs match the committed reference
+with this change applied, the generated skill reference is unchanged, and the
+Docusaurus production build succeeds.

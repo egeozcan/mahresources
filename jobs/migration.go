@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -113,7 +114,7 @@ func (s *Service) ImportLegacy(deps Deps, legacy LegacyImport) (Snapshot, error)
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		txDeps := importDeps
 		txDeps.DB = tx
-		created, _, err := s.accept(nil, txDeps, acceptance, nil)
+		created, _, err := s.accept(context.Background(), txDeps, acceptance, nil)
 		if err != nil {
 			return err
 		}

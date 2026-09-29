@@ -46,7 +46,7 @@ func NewService() *Service {
 // it — and opens one of its own when it does not. Execution begins after
 // commit; acceptance never claims work that is already running.
 func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
-	stored, _, err := s.accept(nil, deps, acceptance, nil)
+	stored, _, err := s.accept(context.Background(), deps, acceptance, nil)
 	return stored, err
 }
 

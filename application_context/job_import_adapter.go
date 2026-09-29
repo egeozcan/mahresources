@@ -1367,22 +1367,6 @@ func (a *importApplyAdapter) RevalidateCommand(_ context.Context, commandContext
 	return archiveAvailable && planAvailable, nil
 }
 
-// inputOf opens one Job's sealed input as this Kind reads it, on the caller's own
-// handle. An input this process cannot open answers an error, and every caller
-// treats that as "nothing can be promised about a re-run" rather than as a failure
-// to answer.
-func (a *importApplyAdapter) inputOf(deps jobs.Deps, jobID string) (*importApplyJobInput, error) {
-	service := a.ctx.JobService()
-	if service == nil {
-		return nil, errors.New("this context has no job control plane installed")
-	}
-	opened, err := service.OpenReplay(deps, jobs.Access{Administrator: true}, jobID)
-	if err != nil {
-		return nil, err
-	}
-	return importApplyInputOf(opened.Input)
-}
-
 func (a *importApplyAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return jobs.CommandOutcome{}, errors.New("the download queue is not available")

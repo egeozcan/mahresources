@@ -514,7 +514,7 @@ func sortedCountKeys(values map[string]int64) []string {
 // SubmitJobSummaryExport accepts one durable, owner-visible long-range analysis.
 func (ctx *MahresourcesContext) SubmitJobSummaryExport(filter jobs.Filter, from, to time.Time, format, origin string) (jobs.Snapshot, error) {
 	if ctx == nil {
-		return jobs.Snapshot{}, errors.New("Job summary export context is unavailable")
+		return jobs.Snapshot{}, errors.New("job summary export context is unavailable")
 	}
 	if err := ctx.requireWriteRole("export a Job summary"); err != nil {
 		return jobs.Snapshot{}, err

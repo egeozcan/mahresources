@@ -37,8 +37,7 @@ type closureStart struct {
 
 func (h *recordingHostJobs) StartClosureJob(request ClosureJobRequest) (*HostJobRef, error) {
 	h.mu.Lock()
-	h.starts = append(h.starts, closureStart{request.PluginName, request.Label, request.ActorUserID,
-		request.ParentJobID, request.JobEventDispatch})
+	h.starts = append(h.starts, closureStart(request))
 	h.mu.Unlock()
 	if h.startErr != nil {
 		return nil, h.startErr

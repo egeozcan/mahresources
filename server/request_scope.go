@@ -93,7 +93,7 @@ func (ctx *currentJobEventsContext) current() (*application_context.Mahresources
 	if ctx.appCtx.AuthEnabled() {
 		principal, _, _ = resolvePrincipal(ctx.appCtx, ctx.request)
 		if principal == nil {
-			return nil, errors.New("Job event stream authentication is no longer valid")
+			return nil, errors.New("job event stream authentication is no longer valid")
 		}
 	}
 	ctx.mu.Lock()

@@ -153,15 +153,6 @@ func (a *testAdapter) dispatchedCount() int {
 	return len(a.dispatched)
 }
 
-func (a *testAdapter) lastDispatch() Execution {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if len(a.dispatched) == 0 {
-		return Execution{}
-	}
-	return a.dispatched[len(a.dispatched)-1]
-}
-
 func (a *testAdapter) reconciledCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

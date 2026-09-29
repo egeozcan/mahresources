@@ -258,23 +258,6 @@ func GetDownloadQueueHandler(ctx DownloadQueueProjector) func(writer http.Respon
 	}
 }
 
-// jobMutationDenied reports whether a job control action (cancel/pause/resume/
-// retry) on jobID must be refused because the job exists but is not visible to
-// the caller. When the job is unknown it returns false so the manager call can
-// surface its own not-found error. A denied mutation is reported as 404 (not
-// 403) so job IDs cannot be enumerated, matching GetDownloadJobHandler.
-func jobMutationDenied(ctx DownloadQueueReader, r *http.Request, jobID string) bool {
-	dm := ctx.DownloadManager()
-	if dm == nil {
-		return false
-	}
-	job, ok := dm.GetJob(jobID)
-	if !ok {
-		return false
-	}
-	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
-}
-
 // statusCodeForJobError maps a download-manager refusal to an HTTP status.
 //
 // UI bug hunt 2026-07-29, finding 2: the cancel handler mapped *every* manager
@@ -375,9 +358,9 @@ func legacyJobReference(projection download_queue.DownloadProjection) *jobs.Lega
 // restartScopeDeniedForJob re-validates a stored download Job's sealed submission
 // against the principal replaying it.
 //
-// It is the canonical twin of restartScopeDenied: a Job's payload is sealed rather
-// than held in memory, so the check has to open it — and an input that cannot be
-// opened is a refusal rather than a reason to run the replay unchecked.
+// A Job's payload is sealed rather than held in memory, so the check has to open
+// it — and an input that cannot be opened is a refusal rather than a reason to
+// run the replay unchecked.
 func restartScopeDeniedForJob(ctx DownloadJobControl, request *http.Request, canonicalJobID string) error {
 	creator, err := ctx.DownloadRestartPayload(canonicalJobID)
 	if err != nil {
@@ -500,27 +483,6 @@ func legacyIdempotencyKey(key, jobID, command string) string {
 		return key
 	}
 	return legacyCommandKey(jobID, command)
-}
-
-// restartScopeDenied re-checks a job's stored payload against the principal
-// restarting it, and returns the refusal to answer with (nil when allowed).
-//
-// Retry and Resume both hand the original creator back to the worker, which is
-// the same replay the /downloads retry path re-validates: ownership is
-// not scope, and a user whose confinement changed after submitting — or whose
-// scope group moved in the tree — must not be able to press a button and have the
-// old targets honoured. A job with no stored creator (every generic job: exports,
-// imports, plugin actions) has no download targets to check.
-func restartScopeDenied(ctx DownloadSubmitter, request *http.Request, jobID string) error {
-	dm := ctx.DownloadManager()
-	if dm == nil {
-		return nil
-	}
-	job, ok := dm.GetJob(jobID)
-	if !ok {
-		return nil
-	}
-	return restartScopeDeniedForCreator(ctx, request, job.CreatorCopy())
 }
 
 // restartScopeDeniedForCreator is the one scope re-validation a replay takes, from

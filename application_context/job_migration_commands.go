@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -1169,8 +1168,4 @@ func (ctx *MahresourcesContext) quarantinePluginCommandImport(row models.PluginC
 	}
 	return ctx.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source_kind"}, {Name: "source_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"status", "blocker_code", "source_hash", "updated_at"})}).Create(&mapping).Error
-}
-
-func commandMappingID(kind string, sourceID string) string {
-	return kind + ":" + strconv.Quote(sourceID)
 }

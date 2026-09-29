@@ -134,7 +134,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 	return snapshot.allowed[pluginName]
 }
 
-// pluginAllowsScopedPrincipalsOn answers PluginAllowsScopedPrincipals on a caller's own
+// pluginScopedAccessOn answers PluginAllowsScopedPrincipals on a caller's own
 // handle, without loading or publishing the process-wide snapshot.
 //
 // The command path asks this question *inside a transaction*: the recheck that decides
@@ -149,13 +149,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 // Fail-closed on an unreadable row, exactly like the cached form: the caller is deciding
 // whether plugin code may run for a confined principal, and "I could not find out" must
 // not resolve to yes.
-func (ctx *MahresourcesContext) pluginAllowsScopedPrincipalsOn(db *gorm.DB, pluginName string) bool {
-	allowed, _ := ctx.pluginScopedAccessOn(db, pluginName)
-	return allowed
-}
-
-// pluginScopedAccessOn is pluginAllowsScopedPrincipalsOn that also reports a read
-// that failed. A plugin with no state row is an answer (never enabled, so not
+// A plugin with no state row is an answer (never enabled, so not
 // allowed); any other failed read answers not allowed with the read's error.
 func (ctx *MahresourcesContext) pluginScopedAccessOn(db *gorm.DB, pluginName string) (bool, error) {
 	if ctx == nil || pluginName == "" {

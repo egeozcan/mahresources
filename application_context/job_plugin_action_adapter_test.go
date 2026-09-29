@@ -995,19 +995,6 @@ func claimJobForTestAs(t *testing.T, ctx *MahresourcesContext, jobID, claimant s
 	}
 }
 
-// claimJobForTest claims one Job the way a runtime does, so a lease exists for
-// reconciliation to expire.
-func claimJobForTest(t *testing.T, ctx *MahresourcesContext, jobID string) {
-	t.Helper()
-	_, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
-		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
-		JobID: jobID, Claimant: "plugin-action-test",
-	})
-	if err != nil || !claimed {
-		t.Fatalf("claim %s: claimed=%v err=%v", jobID, claimed, err)
-	}
-}
-
 // expireAndReconcile runs one reconciliation pass with a clock far enough ahead
 // that every claim in the test has expired.
 func expireAndReconcile(t *testing.T, ctx *MahresourcesContext) {

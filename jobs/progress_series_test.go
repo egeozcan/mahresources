@@ -234,12 +234,10 @@ func TestHLSActivityRetainsNewCountMeasuredAtAssembly(t *testing.T) {
 	job := seededExecution(t, deps, StateRunning, "claim-hls-assembly-count")
 	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-hls-assembly-count"}
 	total := int64(4)
-	var snap Snapshot
 	for second := int64(0); second < 15; second++ {
 		clock = at(float64(second))
 		completed := int64(0)
-		var err error
-		snap, err = svc.UpdateProgress(deps, ref, Progress{
+		_, err := svc.UpdateProgress(deps, ref, Progress{
 			Phase: "downloading segments", Completed: &completed, Total: &total,
 			Unit: "items", Activity: second > 0,
 		})
@@ -249,8 +247,7 @@ func TestHLSActivityRetainsNewCountMeasuredAtAssembly(t *testing.T) {
 	}
 	clock = at(15)
 	completed := int64(4)
-	var err error
-	snap, err = svc.UpdateProgress(deps, ref, Progress{
+	snap, err := svc.UpdateProgress(deps, ref, Progress{
 		Phase: "downloading segments", Message: "assembling video",
 		Completed: &completed, Total: &total, Unit: "items",
 	})

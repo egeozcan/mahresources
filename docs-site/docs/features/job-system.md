@@ -239,7 +239,7 @@ MB") and rounded down, while the total is rounded to nearest. With coarse
 rounding, close figures can display the same ("1.0 MB of 1.0 MB"). A finished
 Job whose amount reached its total gives the amount once ("558 B"). A speed
 too slow to show per second is given per minute or per hour ("1 shares/min");
-one too small for the hourly figure is bounded ("<0.1 items/h", "<1 B/h").
+one too small for the hourly figure is bounded (`<0.1 items/h`, `<1 B/h`).
 An estimated time left under a second reads "almost done". The bar's own label
 says what the Job is doing, and a succeeded Job's bar reads **Completed**.
 
@@ -382,13 +382,13 @@ that page as a link. The Job's own page opens both directly. A notice names its
 Job; one for a request, such as "Cancel requested for ...", stays until the Job
 leaves the state it was in when the command was sent, and closing the drawer
 clears it. A request the executor has already carried out by the time the
-answer or the read after it arrives is said as its result ("<Job> cancelled.")
+answer or the read after it arrives is said as its result (`<Job> cancelled.`)
 instead. After every command, and after
 a refusal of a Job that still exists, the Job's controls are read again, so a
 control the Job no longer offers disappears. A refusal names the command and
-the Job and says why: a Kind's refusal in its own words ("Retry refused for
-<Job>: <reason>"), and the service's own in terms of the Job ("Cancel is no
-longer offered for <Job>, which is now succeeded."). While a command runs, the
+the Job and says why: a Kind's refusal in its own words (`Retry refused for
+<Job>: <reason>`), and the service's own in terms of the Job (`Cancel is no
+longer offered for <Job>, which is now succeeded.`). While a command runs, the
 Job's controls take no second press.
 
 When a row changes group while the keyboard is on it, or a command replaces the

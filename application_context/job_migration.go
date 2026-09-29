@@ -85,15 +85,6 @@ func legacyJobInputsRetiredOn(db *gorm.DB) (bool, error) {
 	return epoch >= models.JobWriterEpochRetiredPlaintext, nil
 }
 
-func (ctx *MahresourcesContext) recordDualPublishedDownloadHistory(row models.DownloadHistoryEntry, scrubbed bool, now time.Time) error {
-	if ctx == nil || ctx.db == nil || ctx.JobService() == nil {
-		return nil
-	}
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		return ctx.recordDualPublishedDownloadHistoryTx(tx, row, scrubbed, now)
-	})
-}
-
 // recordDualPublishedDownloadHistoryTx maps one history row to the Job its legacy
 // handle names now.
 //
@@ -112,12 +103,6 @@ func (ctx *MahresourcesContext) recordDualPublishedDownloadHistoryTx(tx *gorm.DB
 	}
 	return ctx.recordDualPublishedSourceTx(tx, jobMigrationDownloadHistory, strconv.FormatUint(uint64(row.ID), 10), handle.JobID,
 		hashDownloadHistory(row), hashRetiredDownloadHistory(row), scrubbed, now)
-}
-
-func (ctx *MahresourcesContext) recordDualPublishedScheduledDownload(row models.ScheduledDownload, scrubbed bool, now time.Time) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		return ctx.recordDualPublishedScheduledDownloadTx(tx, row, scrubbed, now)
-	})
 }
 
 func (ctx *MahresourcesContext) recordDualPublishedScheduledDownloadTx(tx *gorm.DB, row models.ScheduledDownload, scrubbed bool, now time.Time) error {
@@ -1600,14 +1585,6 @@ func (ctx *MahresourcesContext) verifyScheduledDownloadBatch(cursor string, limi
 		return true, mappings[len(mappings)-1].SourceID, nil
 	}
 	return false, "", nil
-}
-
-func (ctx *MahresourcesContext) hasUnmappedDownloadHistory() (bool, error) {
-	var unmapped int64
-	err := ctx.db.Model(&models.DownloadHistoryEntry{}).
-		Where("NOT EXISTS (SELECT 1 FROM job_source_mappings WHERE job_source_mappings.source_kind = ? AND job_source_mappings.source_id = CAST(download_history_entries.id AS TEXT))", jobMigrationDownloadHistory).
-		Count(&unmapped).Error
-	return unmapped > 0, err
 }
 
 func (ctx *MahresourcesContext) hasUnmappedJobMigrationSources() (bool, error) {

@@ -9,12 +9,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/download_queue"
-	"mahresources/server/template_handlers/template_context_providers"
 )
-
-// The redirect and the new page use the same release gate. A partial flip would
-// redirect /downloads to a page that the router has not mounted yet.
-const canonicalJobUICutoverComplete = template_context_providers.JobCenterCutoverEnabled
 
 const (
 	legacyJobDeprecation = "@1790121600"

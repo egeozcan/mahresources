@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -587,13 +586,6 @@ func listRowsStatement(t *testing.T, svc *Service, deps Deps, access Access, fil
 		statement = dry.Find(&[]models.Job{}).Statement
 	}
 	return statement.SQL.String(), statement.Vars
-}
-
-var planIndexName = regexp.MustCompile(`USING (COVERING )?INDEX \S+`)
-
-// planShape is a plan with its index names removed.
-func planShape(plan string) string {
-	return planIndexName.ReplaceAllString(plan, "USING INDEX")
 }
 
 // TestJobFilterIndexesAreIdempotent is the startup step run a second time, as

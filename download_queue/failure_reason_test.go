@@ -16,6 +16,7 @@ import (
 // transfer's error text can carry a URL, one per source that produces one.
 func TestFailureReasonKeepsTheReasonAndNoURLBeyondItsOrigin(t *testing.T) {
 	const submitted = "https://cdn.example.com/Bob's/secret-path.mp4?signature=do-not-store"
+	//lint:ignore SA1007 The malformed escape exercises redaction of URL parse errors.
 	_, relativeErr := url.Parse("/secret%GG-path?signature=do-not-store")
 	if relativeErr == nil {
 		t.Fatal("the fixture reference parsed")

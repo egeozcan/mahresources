@@ -2452,8 +2452,11 @@ func waitWithin(wg *sync.WaitGroup, limit time.Duration) bool {
 	}
 }
 
-// closeState closes a plugin's LState exactly once, and only if this caller
-// owns the teardown.
+// closeStateBy closes a plugin's LState exactly once, and only if this caller
+// owns the teardown. It waits for the VM's lock no later than deadline, and
+// reports false, leaving the state revoked but open, when something still holds
+// the lock then. Nothing can enter a revoked state, and the process that owns it
+// is exiting.
 //
 // The vmLocks entry is the ownership token. LockVM acquires the lock and then
 // re-checks that the entry is still there, so of two teardowns racing, the
@@ -2469,38 +2472,6 @@ func waitWithin(wg *sync.WaitGroup, limit time.Duration) bool {
 //
 // pm.mu must NOT be held: LockVM takes pm.mu.RLock while holding the VM lock,
 // so the reverse order would deadlock.
-func closeState(pm *PluginManager, state *lua.LState) {
-	// The claim every teardown path uses: remove the entry under pm.mu — which
-	// is both the revocation and the ownership claim — and close only if this
-	// caller is the one that removed it.
-	//
-	// One protocol, shared with DisablePlugin and with a failed load: revoke
-	// under pm.mu — which is both the revocation and the claim — and close only
-	// if this caller is the one that removed the entry. Earlier versions of
-	// these paths claimed in opposite orders (lock-then-delete here,
-	// delete-then-lock there), which interleaves into a double close, and each
-	// grew its own copy until the live disable path had drifted away from the
-	// rule entirely.
-	pm.mu.Lock()
-	mu, owned := pm.revokeLocked(state)
-	pm.mu.Unlock()
-	if !owned {
-		return
-	}
-
-	if mu != nil {
-		mu.Lock()
-		state.Close()
-		mu.Unlock()
-		return
-	}
-	state.Close()
-}
-
-// closeStateBy is closeState for a shutdown: it waits for the VM's lock no
-// later than deadline, and reports false, leaving the state revoked but open,
-// when something still holds the lock then. Nothing can enter a revoked state,
-// and the process that owns it is exiting.
 func closeStateBy(pm *PluginManager, state *lua.LState, deadline time.Time) bool {
 	pm.mu.Lock()
 	mu, owned := pm.revokeLocked(state)
@@ -3026,7 +2997,7 @@ func (pm *PluginManager) Close() {
 	// state has been locked, revoked and closed is there no Lua left running and
 	// no way to start any. Clearing a draining mark whose worker will delete it
 	// again is harmless, and no worker can be executing a callback here: it
-	// would have had to hold a VM lock that closeState has already taken.
+	// would have had to hold a VM lock that closeStateBy has already taken.
 	pm.httpMu.Lock()
 	pm.httpPending = make(map[*lua.LState][]httpCallback)
 	pm.httpDraining = make(map[*lua.LState]bool)
@@ -3074,7 +3045,7 @@ func (pm *PluginManager) Close() {
 	// so they go with everything else rather than outliving the manager.
 	pm.pluginSettings = make(map[string]map[string]any)
 	pm.apiEndpoints = make(map[string]map[string]*APIEndpoint)
-	// vmLocks is deliberately left alone. closeState removes each entry as it
+	// vmLocks is deliberately left alone. closeStateBy removes each entry as it
 	// closes that state, and a load still running here needs its entry to be
 	// able to close its own VM afterwards. Registration is already refused once
 	// closed is set, so a surviving entry grants nothing.

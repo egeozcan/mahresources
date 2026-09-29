@@ -267,7 +267,7 @@ func runAdvertisedJobControl(c *client.Client, jobID string, verb jobControlVerb
 	}
 	advertised, found := findCLIJobCommand(job, verb.action)
 	if !found {
-		return nil, fmt.Errorf("Job %s does not offer %s", jobID, verb.action)
+		return nil, fmt.Errorf("job %s does not offer %s", jobID, verb.action)
 	}
 	endpoint, err := validateCLIJobCommandEndpoint(advertised.Endpoint, job.ID, advertised.Key)
 	if err != nil {
@@ -643,14 +643,14 @@ func newJobCommandCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			advertised, found := findCLIJobCommand(job, args[1])
 			explicitKey := strings.TrimSpace(idempotencyKey) != ""
 			if !found && !explicitKey {
-				return fmt.Errorf("Job %s does not advertise command %q", args[0], args[1])
+				return fmt.Errorf("job %s does not advertise command %q", args[0], args[1])
 			}
 			if found && (advertised.Destructive || advertised.Confirmation != "") && !confirmed {
 				return fmt.Errorf("command %q requires --confirm: %s", advertised.Key, advertised.Confirmation)
 			}
 			currentAdvertisement := found && advertised.JobVersion != 0 && advertised.JobVersion == job.Version
 			if found && !currentAdvertisement && !explicitKey {
-				return fmt.Errorf("Job command advertisement is stale; read the Job again")
+				return fmt.Errorf("job command advertisement is stale; read the Job again")
 			}
 			key, err := commandIdempotencyKey(idempotencyKey)
 			if err != nil {
@@ -711,7 +711,7 @@ func newJobBulkCommandCmd(c *client.Client, opts *output.Options) *cobra.Command
 					continue
 				}
 				if advertised.JobVersion == 0 || advertised.JobVersion != job.Version {
-					return fmt.Errorf("Job %s command advertisement is stale; read the Job again", id)
+					return fmt.Errorf("job %s command advertisement is stale; read the Job again", id)
 				}
 				destructive = destructive || advertised.Destructive
 				if confirmation == "" {
@@ -752,7 +752,7 @@ func getCLIJobDetail(c *client.Client, jobID string) (cliJobDetail, error) {
 		return cliJobDetail{}, fmt.Errorf("decode Job detail: %w", err)
 	}
 	if detail.ID != jobID {
-		return cliJobDetail{}, fmt.Errorf("Job detail returned identity %q for %q", detail.ID, jobID)
+		return cliJobDetail{}, fmt.Errorf("job detail returned identity %q for %q", detail.ID, jobID)
 	}
 	return detail, nil
 }

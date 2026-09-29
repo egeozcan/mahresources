@@ -29,14 +29,14 @@ var jobCenterCutoverKinds = []jobs.CommandFilterKind{
 
 func validateJobCenterCutover(service *jobs.Service, readiness application_context.JobMigrationReadiness) error {
 	if !readiness.Ready || readiness.WriterEpoch < models.JobWriterEpochRetiredPlaintext || readiness.Phase != models.JobMigrationPhaseComplete {
-		return fmt.Errorf("Job Center cutover blocked: migration phase %s, writer epoch %d, blockers %v",
+		return fmt.Errorf("job center cutover blocked: migration phase %s, writer epoch %d, blockers %v",
 			readiness.Phase, readiness.WriterEpoch, readiness.Blockers)
 	}
 	if service == nil {
-		return errors.New("Job Center cutover blocked: control plane is unavailable")
+		return errors.New("job center cutover blocked: control plane is unavailable")
 	}
 	if err := service.ValidateCommandFilterCoverage(jobCenterCutoverKinds); err != nil {
-		return fmt.Errorf("Job Center cutover blocked: %w", err)
+		return fmt.Errorf("job center cutover blocked: %w", err)
 	}
 	return nil
 }

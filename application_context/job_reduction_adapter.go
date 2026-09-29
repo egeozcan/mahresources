@@ -462,16 +462,12 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 	return commands, nil
 }
 
-// reductionComputable answers whether the row one Job names can be clustered again:
+// reductionComputableOn answers whether the row one Job names can be clustered again:
 // it is there, and it is not already computing or already computed. A row whose
 // compute deadline has passed reads as failed, which is exactly the state this
 // mechanism exists to make recomputable.
-func (ctx *MahresourcesContext) reductionComputable(reductionID uint) bool {
-	return ctx.reductionComputableOn(ctx.jobDeps(), reductionID)
-}
-
-// reductionComputableOn is reductionComputable on a caller's own handle, for the
-// advertisement the command plane re-asks inside its transaction.
+// It uses the caller's own handle for the advertisement the command plane
+// re-asks inside its transaction.
 func (ctx *MahresourcesContext) reductionComputableOn(deps jobs.Deps, reductionID uint) bool {
 	if ctx == nil || deps.DB == nil || reductionID == 0 {
 		return false

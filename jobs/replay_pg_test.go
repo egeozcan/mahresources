@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // TestReplayEnvelopeLifecycleOnPostgresPG runs the envelope's whole life against
@@ -114,5 +116,31 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	}
 	if envelope := replayEnvelopeRow(t, deps, withoutMappingSchema.ID); envelope.PurgedAt != nil || len(envelope.Ciphertext) == 0 {
 		t.Fatalf("missing mapping schema did not roll back canonical purge: %+v", envelope)
+	}
+}
+
+func assertUnmappedReplaySourcesIntact(t *testing.T, db *gorm.DB, ids replaySourceIDs) {
+	t.Helper()
+	var download models.DownloadHistoryEntry
+	if err := db.First(&download, ids.download).Error; err != nil || len(download.Payload) == 0 || download.URL == "" {
+		t.Fatalf("unmapped download source changed during rejected purge: %+v, %v", download, err)
+	}
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
+		t.Fatalf("unmapped scheduled source changed during rejected purge: %+v, %v", scheduled, err)
+	}
+	if ids.fallbackScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.fallbackScheduled, "unmapped fallback scheduled source changed during rejected purge")
+	}
+	if ids.shadowedScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.shadowedScheduled, "unmapped shadowed scheduled source changed during rejected purge")
+	}
+	var run models.PluginCommandRun
+	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON == "" || run.InputsJSON == "" {
+		t.Fatalf("unmapped command source changed during rejected purge: %+v, %v", run, err)
+	}
+	var commandImport models.PluginCommandImport
+	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON == "" {
+		t.Fatalf("unmapped import source changed during rejected purge: %+v, %v", commandImport, err)
 	}
 }

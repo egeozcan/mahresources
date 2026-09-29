@@ -401,7 +401,7 @@ func assertLegacyReplaySerialization(t *testing.T, ctx, adminCtx *MahresourcesCo
 		ExpectedVersion: failedSuccessor.Version, Actor: access, LegacyRef: ref,
 	}
 	go func() {
-		result := jobs.CommandResult{}
+		var result jobs.CommandResult
 		replayed := true
 		var err error
 		if executeCommand {

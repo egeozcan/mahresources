@@ -41,11 +41,11 @@ func (ctx *MahresourcesContext) recordDualPublishedReduction(row models.Resource
 	}
 	var handle models.JobLegacyHandle
 	if err := ctx.db.Where("namespace = ? AND handle = ?", ReductionComputeHandleNamespace, row.ComputeJobID).First(&handle).Error; err != nil {
-		return errors.New("Resource Reduction canonical handle is unavailable")
+		return errors.New("resource reduction canonical handle is unavailable")
 	}
 	retired, err := ctx.legacyJobInputsRetired()
 	if err != nil {
-		return fmt.Errorf("Resource Reduction writer epoch cannot be read: %w", err)
+		return fmt.Errorf("resource reduction writer epoch cannot be read: %w", err)
 	}
 	return ctx.recordDualPublishedSource(jobMigrationReduction, strconv.FormatUint(uint64(row.ID), 10), handle.JobID,
 		hashReductionExecution(row), retired, now)
@@ -56,13 +56,13 @@ func (ctx *MahresourcesContext) copyReductionsBatch(cursor string, limit int, no
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			return false, cursor, errors.New("Resource Reduction migration cursor is invalid")
+			return false, cursor, errors.New("resource reduction migration cursor is invalid")
 		}
 		after = parsed
 	}
 	var rows []models.ResourceReduction
 	if err := ctx.db.Where("id > ?", after).Order("id ASC").Limit(limit).Find(&rows).Error; err != nil {
-		return false, cursor, errors.New("Resource Reduction source scan failed")
+		return false, cursor, errors.New("resource reduction source scan failed")
 	}
 	for _, row := range rows {
 		if !provableReductionExecution(row) {
@@ -71,10 +71,10 @@ func (ctx *MahresourcesContext) copyReductionsBatch(cursor string, limit int, no
 		if err := ctx.copyReduction(row, now); err != nil {
 			var blocker *jobMigrationBlockerError
 			if !errors.As(err, &blocker) {
-				return false, strconv.FormatUint(uint64(row.ID), 10), errors.New("Resource Reduction copy failed; details are redacted")
+				return false, strconv.FormatUint(uint64(row.ID), 10), errors.New("resource reduction copy failed; details are redacted")
 			}
 			if err := ctx.quarantineReduction(row, blocker.code, now); err != nil {
-				return false, strconv.FormatUint(uint64(row.ID), 10), errors.New("Resource Reduction quarantine could not be persisted")
+				return false, strconv.FormatUint(uint64(row.ID), 10), errors.New("resource reduction quarantine could not be persisted")
 			}
 			if err := ctx.recordSafeSourceBlocker(blocker, now); err != nil {
 				return false, strconv.FormatUint(uint64(row.ID), 10), err
@@ -100,7 +100,7 @@ func (ctx *MahresourcesContext) copyReduction(row models.ResourceReduction, now 
 			return nil
 		}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.New("Resource Reduction mapping lookup failed")
+		return errors.New("resource reduction mapping lookup failed")
 	}
 	hash := hashReductionExecution(row)
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -121,7 +121,7 @@ func (ctx *MahresourcesContext) copyReduction(row models.ResourceReduction, now 
 				SourceHash: hash, Status: models.JobSourceMappingCopied, Origin: models.JobSourceOriginBackfilled,
 				CopiedAt: now, CreatedAt: now, UpdatedAt: now}
 		} else {
-			return errors.New("Resource Reduction mapping lookup failed")
+			return errors.New("resource reduction mapping lookup failed")
 		}
 		jobID, err := findPluginCommandJob(tx, ReductionComputeHandleNamespace, row.ComputeJobID, "")
 		if err == nil {
@@ -129,7 +129,7 @@ func (ctx *MahresourcesContext) copyReduction(row models.ResourceReduction, now 
 			return tx.Save(&mapping).Error
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Resource Reduction canonical handle lookup failed")
+			return errors.New("resource reduction canonical handle lookup failed")
 		}
 		// ResourceReduction.CreatedAt is the domain object's creation time, not
 		// the acceptance time of its compute run. A ready row without a canonical
@@ -188,12 +188,12 @@ func (ctx *MahresourcesContext) verifyReductionsBatch(cursor string, limit int, 
 	}
 	var mappings []models.JobSourceMapping
 	if err := query.Find(&mappings).Error; err != nil {
-		return false, cursor, errors.New("Resource Reduction mappings could not be read")
+		return false, cursor, errors.New("resource reduction mappings could not be read")
 	}
 	for _, mapping := range mappings {
 		id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
 		if err != nil {
-			return false, cursor, errors.New("Resource Reduction mapping id is invalid")
+			return false, cursor, errors.New("resource reduction mapping id is invalid")
 		}
 		var row models.ResourceReduction
 		if err := ctx.db.First(&row, uint(id)).Error; err != nil || !provableReductionExecution(row) {
@@ -203,7 +203,7 @@ func (ctx *MahresourcesContext) verifyReductionsBatch(cursor string, limit int, 
 			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "Resource Reduction execution proof changed")
 		}
 		if expired, err := expireMappingOfGoneJob(ctx.db, &mapping, now); err != nil {
-			return false, mapping.SourceID, errors.New("Resource Reduction mapping could not be expired")
+			return false, mapping.SourceID, errors.New("resource reduction mapping could not be expired")
 		} else if expired {
 			continue
 		}
@@ -212,7 +212,7 @@ func (ctx *MahresourcesContext) verifyReductionsBatch(cursor string, limit int, 
 		}
 		mapping.Status, mapping.VerifiedAt, mapping.UpdatedAt = models.JobSourceMappingVerified, &now, now
 		if err := ctx.db.Save(&mapping).Error; err != nil {
-			return false, mapping.SourceID, errors.New("Resource Reduction verification marker could not be stored")
+			return false, mapping.SourceID, errors.New("resource reduction verification marker could not be stored")
 		}
 	}
 	if len(mappings) == limit {
@@ -229,16 +229,16 @@ func (ctx *MahresourcesContext) scrubReductionMappingsBatch(cursor string, limit
 	}
 	var mappings []models.JobSourceMapping
 	if err := query.Find(&mappings).Error; err != nil {
-		return false, cursor, errors.New("Resource Reduction scrub mappings could not be read")
+		return false, cursor, errors.New("resource reduction scrub mappings could not be read")
 	}
 	for _, mapping := range mappings {
 		id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
 		if err != nil {
-			return false, cursor, errors.New("Resource Reduction mapping id is invalid")
+			return false, cursor, errors.New("resource reduction mapping id is invalid")
 		}
 		var row models.ResourceReduction
 		if err := ctx.db.First(&row, uint(id)).Error; err != nil {
-			return false, mapping.SourceID, errors.New("Resource Reduction disappeared before retirement marker")
+			return false, mapping.SourceID, errors.New("resource reduction disappeared before retirement marker")
 		}
 		postHash := hashReductionExecution(row)
 		if mapping.Status != models.JobSourceMappingPurged && mapping.SourceHash != postHash {
@@ -250,7 +250,7 @@ func (ctx *MahresourcesContext) scrubReductionMappingsBatch(cursor string, limit
 		}
 		mapping.ScrubbedAt, mapping.PostScrubHash, mapping.UpdatedAt = &at, postHash, now
 		if err := ctx.db.Save(&mapping).Error; err != nil {
-			return false, mapping.SourceID, errors.New("Resource Reduction retirement marker could not be stored")
+			return false, mapping.SourceID, errors.New("resource reduction retirement marker could not be stored")
 		}
 	}
 	if len(mappings) == limit {

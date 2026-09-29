@@ -201,7 +201,8 @@ func ValidateInputs(declaration Declaration, supplied map[string]string) ([]Inpu
 		}
 	}
 	sort.Strings(undeclared)
-	for _, name := range undeclared {
+	if len(undeclared) > 0 {
+		name := undeclared[0]
 		// Grammar before declared-ness: a name that is not a plain file name
 		// could never have been declared, and its own message says what is
 		// wrong with it rather than calling it undeclared.
