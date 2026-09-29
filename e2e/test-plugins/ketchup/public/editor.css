@@ -1,0 +1,131 @@
+/* The editor page: a bar of host controls above Ketchup, which fills the rest
+   of the viewport under the app header. */
+.ketchup-host {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    /* editor.js sets the exact height; this is the no-measurement fallback. */
+    height: calc(100dvh - 10rem);
+    min-height: 28rem;
+}
+
+.ketchup-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+}
+
+.ketchup-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.ketchup-name-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.875rem;
+}
+
+.ketchup-name-label[hidden] {
+    display: none;
+}
+
+.ketchup-name {
+    border: 1px solid #a8a29e;
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    min-width: 16rem;
+}
+
+.ketchup-status {
+    flex: 1 1 12rem;
+    margin: 0;
+    font-size: 0.875rem;
+    color: #44403c;
+}
+
+.ketchup-status a {
+    text-decoration: underline;
+}
+
+.ketchup-status--error {
+    color: #b91c1c;
+}
+
+.ketchup-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.ketchup-back {
+    font-size: 0.875rem;
+    text-decoration: underline;
+}
+
+.ketchup-back[hidden],
+.ketchup-save-copy[hidden] {
+    display: none;
+}
+
+.ketchup-save,
+.ketchup-save-copy {
+    border-radius: 0.25rem;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.ketchup-save {
+    background: #b45309;
+    color: #fff;
+}
+
+.ketchup-save:hover:not(:disabled) {
+    background: #92400e;
+}
+
+.ketchup-save-copy {
+    border: 1px solid #a8a29e;
+    background: #fff;
+    color: #1c1917;
+}
+
+.ketchup-save:disabled,
+.ketchup-save-copy:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.ketchup-save:focus-visible,
+.ketchup-save-copy:focus-visible,
+.ketchup-back:focus-visible,
+.ketchup-name:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.ketchup-dirty {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #92400e;
+    background: #fef3c7;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.5rem;
+}
+
+.ketchup-dirty[hidden] {
+    display: none;
+}
+
+.ketchup-app {
+    /* No display here: drawing-app lays itself out as a flex column, and a
+       page rule would beat its :host style. */
+    flex: 1;
+    min-height: 0;
+    border: 1px solid #44403c;
+}
