@@ -33,9 +33,18 @@ SHA=$(git -C "$WORK" rev-parse HEAD)
 
 (cd "$WORK" && npm ci --no-audit --no-fund --loglevel=error && npm run -s build:lib)
 
-HEADER="/*! ketchup $SHA ($REF) from $REPO, built by scripts/update-ketchup.sh */"
+BUILT="$WORK/dist-lib/ketchup.js"
+if [ ! -s "$BUILT" ]; then
+  echo "build:lib did not produce dist-lib/ketchup.js" >&2
+  exit 1
+fi
+
+# Stamp once, then copy, so the two files cannot differ and a failure midway
+# leaves the committed ones untouched.
+STAMPED="$WORK/ketchup.stamped.js"
+{ echo "/*! ketchup $SHA ($REF) from $REPO, built by scripts/update-ketchup.sh with node $(node --version) */"; cat "$BUILT"; } > "$STAMPED"
 for target in plugins/ketchup/public/ketchup.js e2e/test-plugins/ketchup/public/ketchup.js; do
-  { echo "$HEADER"; cat "$WORK/dist-lib/ketchup.js"; } > "$target"
+  cp "$STAMPED" "$target"
 done
 
 echo "ketchup.js updated to $SHA"

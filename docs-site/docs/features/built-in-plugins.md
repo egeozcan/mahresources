@@ -200,16 +200,16 @@ Draw new images and edit existing ones in [Ketchup](https://github.com/egeozcan/
 
 | Starting point | Where | Saving |
 |----------------|-------|--------|
-| **Edit in Ketchup** | Sidebar of a PNG, JPEG, WebP or BMP resource, and the card menu on resource lists | **Save as new version** uploads the edit as a new version of the resource. **Save as new resource** files it as a separate resource named "(edited)" in the same group instead. |
+| **Edit in Ketchup** | Sidebar of a PNG, JPEG, WebP or BMP resource, and the card menu on resource lists | **Save as new version** uploads the edit as a new version of the resource. **Save as new resource** files it as a separate resource, named after the original with "(edited)" and owned by the same group, instead. Tags, notes and other groups are not copied. |
 | **New image in this group** | Sidebar of a group | **Save to library** creates a resource owned by the group. |
 | **New Image** | Plugins menu | **Save to library** creates a resource with no owner. |
 
 After a new image is first saved, the page switches to editing that resource, so saving again adds a version. Ctrl/Cmd+S saves too.
 
 - **What is saved** is the flattened image: every visible layer, at the image's own size. Layers, history and stamps last only for the editing session; closing the page with unsaved changes asks first.
-- **Formats** stay as they were: a PNG or WebP keeps its transparency, a JPEG is saved as a JPEG (quality 0.92), and a BMP is saved as a PNG because browsers cannot encode BMP. GIFs are not offered, since only their first frame would survive.
+- **Formats** stay as they were: a PNG or WebP keeps its transparency, a JPEG is saved as a JPEG (quality 0.92), and a BMP is saved as a PNG because browsers cannot encode BMP. A browser that cannot encode WebP (Safari) saves a WebP edit as PNG. GIFs are not offered, since only their first frame would survive.
 - **Duplicates.** Saving bytes the library already holds is refused as a duplicate, with a link to the resource that has them. A new resource saved from an unchanged image is the usual way to meet this.
-- **Access.** Loading and saving go through the ordinary resource API as the signed-in user, so the plugin needs no write capability and reaches nothing the user could not. A group-limited account can use the editor only once an operator allows it for this plugin on `/plugins/manage`.
+- **Access.** Loading and saving go through the ordinary resource API as the signed-in user, so the plugin needs no write capability and reaches nothing the user could not. A group-limited account can use the editor only once an operator allows it for this plugin on `/plugins/manage`. An account that can only read (a guest) can open the editor, and is told that it cannot save.
 
 Settings: **New image width** and **New image height** (default 1200 × 800 pixels) size a new drawing.
 

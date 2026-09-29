@@ -22,6 +22,9 @@ const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'web
 let resource = config.mode === 'edit' ? config.resource : null;
 let saveType = config.saveType || 'image/png';
 let saving = false;
+// Nothing is saved until the image (or blank page) is on the canvas: before
+// that, the editor holds a placeholder that would overwrite the resource.
+let loaded = false;
 
 function setStatus(message, { error = false, link = null } = {}) {
     statusEl.replaceChildren(message);
@@ -57,9 +60,15 @@ async function postForm(url, form) {
     return data;
 }
 
-function fileName(name) {
-    const base = (name || 'drawing').trim().replace(/[\\/:*?"<>|]+/g, '_') || 'drawing';
-    return `${base}.${EXTENSIONS[saveType] || 'png'}`;
+// A resource name often carries its file's extension; the saved file gets the
+// extension of what was actually encoded instead.
+function withoutExtension(name) {
+    return (name || '').replace(/\.(png|jpe?g|webp|bmp)$/i, '');
+}
+
+function fileName(name, type) {
+    const base = withoutExtension(name).trim().replace(/[\\/:*?"<>|]+/g, '_') || 'drawing';
+    return `${base}.${EXTENSIONS[type] || 'png'}`;
 }
 
 function defaultName() {
@@ -96,6 +105,8 @@ function showNew() {
     saveButton.textContent = 'Save to library';
 }
 
+// A browser that cannot encode the requested type (Safari and WebP) hands back
+// PNG, so callers name the file after `blob.type`, not after what was asked for.
 async function exportImage() {
     return app.exportImage(saveType === 'image/png' ? { type: saveType } : { type: saveType, quality: 0.92 });
 }
@@ -103,7 +114,7 @@ async function exportImage() {
 async function createResource(name, ownerId) {
     const blob = await exportImage();
     const form = new FormData();
-    form.append('resource', blob, fileName(name));
+    form.append('resource', blob, fileName(name, blob.type));
     form.append('Name', name);
     if (ownerId) form.append('OwnerId', String(ownerId));
     const created = await postForm('/v1/resource', form);
@@ -112,7 +123,7 @@ async function createResource(name, ownerId) {
 }
 
 async function save({ asCopy = false } = {}) {
-    if (saving) return;
+    if (saving || !loaded) return;
     saving = true;
     saveButton.disabled = true;
     saveCopyButton.disabled = true;
@@ -121,13 +132,13 @@ async function save({ asCopy = false } = {}) {
         if (resource && !asCopy) {
             const blob = await exportImage();
             const form = new FormData();
-            form.append('file', blob, fileName(resource.name));
+            form.append('file', blob, fileName(resource.name, blob.type));
             form.append('comment', 'Edited in Ketchup');
             const version = await postForm(`/v1/resource/versions?resourceId=${resource.id}`, form);
             app.markSaved();
             setStatus(`Saved as version ${version?.versionNumber ?? ''}.`.replace(' .', '.'));
         } else if (resource && asCopy) {
-            const created = await createResource(`${resource.name || 'Drawing'} (edited)`, resource.ownerId);
+            const created = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
             app.markSaved();
             showEditing(created);
             setStatus(`Saved as a new resource; you are now editing ${created.name}.`, {
@@ -144,7 +155,7 @@ async function save({ asCopy = false } = {}) {
         }
     } catch (err) {
         // A duplicate names the resource that already holds these exact bytes.
-        const existing = err.details?.find?.((d) => d.resourceId)?.resourceId;
+        const existing = err.details?.find?.((d) => d.existingResourceId)?.existingResourceId;
         setStatus(`Not saved: ${err.message}`, {
             error: true,
             link: existing ? { href: `/resource?id=${existing}`, label: 'Open the existing resource' } : null,
@@ -156,9 +167,23 @@ async function save({ asCopy = false } = {}) {
     }
 }
 
+// Whether the signed-in account may save at all. A guest, or an account an
+// operator made read-only, may still open the editor, so it is told up front
+// rather than after drawing.
+async function canWrite() {
+    try {
+        const resp = await fetch('/v1/auth/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        if (!resp.ok) return true;
+        return (await resp.json()).canWrite !== false;
+    } catch {
+        // Unknown: let the save itself answer.
+        return true;
+    }
+}
+
 async function start() {
     if (config.mode === 'edit') showEditing(resource); else showNew();
-    await app.whenReady();
+    const [writable] = await Promise.all([canWrite(), app.whenReady()]);
     if (config.mode === 'edit') {
         setStatus('Loading image…');
         const resp = await fetch(config.fileUrl, { credentials: 'same-origin' });
@@ -168,8 +193,14 @@ async function start() {
     } else {
         await app.newDocument(config.width, config.height, { name: nameInput.value });
     }
-    saveButton.disabled = false;
     app.focus();
+    if (!writable) {
+        setStatus('Your account can view images but not save them.');
+        return;
+    }
+    loaded = true;
+    saveButton.disabled = false;
+    saveCopyButton.disabled = false;
 }
 
 // Fill the viewport below the page header, whatever the header's height.

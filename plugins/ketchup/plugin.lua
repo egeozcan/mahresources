@@ -8,9 +8,9 @@
 -- new drawing creates a resource. The Lua side only renders the page and the
 -- ways into it, so it holds no write capability of its own.
 --
--- public/ketchup.js is Ketchup's embeddable build (`npm run build:lib` in the
--- ketchup repository, which writes dist-lib/ketchup.js). Replace it to update
--- the editor.
+-- public/ketchup.js is Ketchup's embeddable build, stamped on its first line
+-- with the Ketchup commit it came from. Update it with
+-- scripts/update-ketchup.sh <ref>.
 
 plugin = {
     api_version = 1,
@@ -55,9 +55,12 @@ local function new_url(owner_id)
     return "/plugins/ketchup/edit"
 end
 
+-- Ids arrive as query strings: decimal digits only, so "0x10" and "1e3" are
+-- not ids, and small enough to stay exact.
 local function positive_int(value)
+    if type(value) == "string" and not value:match("^%d+$") then return nil end
     local n = tonumber(value)
-    if n == nil or n ~= n or n < 1 or n ~= math.floor(n) then return nil end
+    if n == nil or n ~= n or n < 1 or n ~= math.floor(n) or n > 2^53 then return nil end
     return n
 end
 
@@ -90,7 +93,7 @@ local function render_editor(config)
         .. '<p class="ketchup-status" role="status" aria-live="polite"></p>'
         .. '<div class="ketchup-actions">'
         .. '<a class="ketchup-back" hidden></a>'
-        .. '<button type="button" class="ketchup-save-copy" hidden>Save as new resource</button>'
+        .. '<button type="button" class="ketchup-save-copy" hidden disabled>Save as new resource</button>'
         .. '<button type="button" class="ketchup-save" disabled>Save</button>'
         .. '</div></div>'
         .. '<drawing-app class="ketchup-app" embedded tabindex="0" aria-label="Image editor"></drawing-app>'
@@ -100,7 +103,10 @@ local function render_editor(config)
 end
 
 local function edit_page(id)
-    local resource = mah.db.get_resource(id)
+    local resource, err = mah.db.get_resource(id)
+    if err then
+        return notice("Resource could not be read", mah.html_escape(err))
+    end
     if not resource then
         return notice("Resource not found", "There is no resource " .. tostring(id) .. " you can open.")
     end
@@ -128,7 +134,10 @@ end
 local function new_page(owner_id)
     local owner = nil
     if owner_id then
-        local group = mah.db.get_group(owner_id)
+        local group, err = mah.db.get_group(owner_id)
+        if err then
+            return notice("Group could not be read", mah.html_escape(err))
+        end
         if not group then
             return notice("Group not found", "There is no group " .. tostring(owner_id) .. " you can add to.")
         end

@@ -14,7 +14,8 @@ import (
 )
 
 // ketchupQuerier serves the resources and groups the ketchup plugin's page and
-// sidebar look up.
+// sidebar look up. Like the real adapter, a missing entity is (nil, nil); id
+// 500 stands for a read that failed.
 type ketchupQuerier struct {
 	mockQuerier
 }
@@ -27,15 +28,20 @@ func (q *ketchupQuerier) GetResourceData(id uint) (map[string]any, error) {
 		return map[string]any{"id": float64(8), "name": "anim.gif", "content_type": "image/gif"}, nil
 	case 9:
 		return map[string]any{"id": float64(9), "name": "photo.bmp", "content_type": "image/bmp", "hash": "def"}, nil
+	case 500:
+		return nil, fmt.Errorf("database is down")
 	}
-	return nil, fmt.Errorf("not found")
+	return nil, nil
 }
 
 func (q *ketchupQuerier) GetGroupData(id uint) (map[string]any, error) {
-	if id == 3 {
+	switch id {
+	case 3:
 		return map[string]any{"id": float64(3), "name": "Sketches"}, nil
+	case 500:
+		return nil, fmt.Errorf("database is down")
 	}
-	return nil, fmt.Errorf("not found")
+	return nil, nil
 }
 
 func ketchupPlugin(t *testing.T) *PluginManager {
@@ -122,8 +128,14 @@ func TestKetchupRefusesWhatItCannotEdit(t *testing.T) {
 		{map[string]any{"id": "404"}, "Resource not found"},
 		{map[string]any{"id": "abc"}, "Invalid resource id"},
 		{map[string]any{"id": "-1"}, "Invalid resource id"},
+		{map[string]any{"id": "0x10"}, "Invalid resource id"},
+		{map[string]any{"id": "1e3"}, "Invalid resource id"},
+		{map[string]any{"id": "99999999999999999999"}, "Invalid resource id"},
+		// A failed read is not reported as a missing resource.
+		{map[string]any{"id": "500"}, "Resource could not be read"},
 		{map[string]any{"owner": "404"}, "Group not found"},
 		{map[string]any{"owner": "x"}, "Invalid group id"},
+		{map[string]any{"owner": "500"}, "Group could not be read"},
 	} {
 		html := ketchupPage(t, pm, tc.query)
 		if !strings.Contains(html, tc.want) || strings.Contains(html, "<drawing-app") {

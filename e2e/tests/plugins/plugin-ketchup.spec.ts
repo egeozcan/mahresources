@@ -156,6 +156,40 @@ test.describe('ketchup plugin', () => {
     expect(copy.ContentType).toBe('image/jpeg');
   });
 
+  test('links a duplicate to the resource that already holds the bytes', async ({ page }) => {
+    await page.goto('/resources');
+    const id = await uploadCanvasImage(page, 'image/png', `Ketchup duplicate ${Date.now()}`);
+
+    await page.goto(`/plugins/ketchup/edit?id=${id}`);
+    await waitForEditor(page);
+    await drawStroke(page);
+    await page.getByRole('button', { name: 'Save as new version' }).click();
+    await expect(page.locator('.ketchup-status')).toContainText('Saved as version 2');
+
+    // Unchanged since that version, so a copy would be the same bytes.
+    await page.getByRole('button', { name: 'Save as new resource' }).click();
+    await expect(page.locator('.ketchup-status')).toContainText('Not saved');
+    await expect(page.getByRole('link', { name: 'Open the existing resource' })).toHaveAttribute('href', `/resource?id=${id}`);
+  });
+
+  test('never saves when the image did not load', async ({ page }) => {
+    await page.goto('/resources');
+    const id = await uploadCanvasImage(page, 'image/png', `Ketchup unloadable ${Date.now()}`);
+    await page.route('**/v1/resource/view**', (route) => route.fulfill({ status: 500, body: 'boom' }));
+    const uploads: string[] = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploads.push(r.url()); });
+
+    await page.goto(`/plugins/ketchup/edit?id=${id}`);
+    await expect(page.locator('.ketchup-status')).toContainText('could not be loaded');
+    await expect(page.locator('.ketchup-save')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save as new resource' })).toBeDisabled();
+
+    await page.locator('drawing-app').focus();
+    await page.keyboard.press('Control+s');
+    await page.waitForTimeout(500);
+    expect(uploads).toEqual([]);
+  });
+
   test('refuses a resource it cannot edit', async ({ page }) => {
     await page.goto('/plugins/ketchup/edit?id=999999999');
     await expect(page.getByRole('alert')).toContainText('Resource not found');
