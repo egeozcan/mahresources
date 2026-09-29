@@ -57,6 +57,11 @@ async function postForm(url, form) {
         err.details = data?.details;
         throw err;
     }
+    // A proxy in front of the server can answer an expired session with a
+    // redirect to its login page, which reads as a 200. That is not a save.
+    if (resp.redirected || data === null) {
+        throw new Error('The server did not confirm the save; sign in again and retry');
+    }
     return data;
 }
 
@@ -119,7 +124,7 @@ async function createResource(name, ownerId) {
     if (ownerId) form.append('OwnerId', String(ownerId));
     const created = await postForm('/v1/resource', form);
     const r = Array.isArray(created) ? created[0] : created;
-    return { id: r.ID, name: r.Name, ownerId: r.OwnerId || 0 };
+    return { resource: { id: r.ID, name: r.Name, ownerId: r.OwnerId || 0 }, blob };
 }
 
 async function save({ asCopy = false } = {}) {
@@ -135,19 +140,19 @@ async function save({ asCopy = false } = {}) {
             form.append('file', blob, fileName(resource.name, blob.type));
             form.append('comment', 'Edited in Ketchup');
             const version = await postForm(`/v1/resource/versions?resourceId=${resource.id}`, form);
-            app.markSaved();
+            app.markSaved(blob);
             setStatus(`Saved as version ${version?.versionNumber ?? ''}.`.replace(' .', '.'));
         } else if (resource && asCopy) {
-            const created = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
-            app.markSaved();
+            const { resource: created, blob } = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
+            app.markSaved(blob);
             showEditing(created);
             setStatus(`Saved as a new resource; you are now editing ${created.name}.`, {
                 link: { href: `/resource?id=${created.id}`, label: 'Open it' },
             });
         } else {
             const name = nameInput.value.trim() || defaultName();
-            const created = await createResource(name, config.owner?.id);
-            app.markSaved();
+            const { resource: created, blob } = await createResource(name, config.owner?.id);
+            app.markSaved(blob);
             showEditing(created);
             setStatus('Saved to the library. Saving again adds a new version.', {
                 link: { href: `/resource?id=${created.id}`, label: 'Open it' },

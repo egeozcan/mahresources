@@ -73,7 +73,7 @@ end
 
 local function notice(title, body)
     return '<div class="bg-amber-50 border border-amber-200 rounded p-4" role="alert">'
-        .. '<h1 class="font-semibold mb-1">' .. mah.html_escape(title) .. '</h1>'
+        .. '<h2 class="font-semibold mb-1">' .. mah.html_escape(title) .. '</h2>'
         .. '<p>' .. body .. '</p></div>'
 end
 
