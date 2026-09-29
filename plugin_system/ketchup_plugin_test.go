@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -230,5 +231,18 @@ func TestKetchupE2EFixtureMatchesTheBundledPlugin(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The bundle is vendored, so its first line has to say which ketchup it is.
+// Only scripts/update-ketchup.sh writes that line; a hand-copied build lacks it.
+func TestKetchupBundleNamesTheCommitItWasBuiltFrom(t *testing.T) {
+	bundle, err := os.ReadFile(filepath.Join("..", "plugins", "ketchup", "public", "ketchup.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := bytes.Cut(bundle, []byte("\n"))
+	if !regexp.MustCompile(`^/\*! ketchup [0-9a-f]{40} \(`).Match(first) {
+		t.Errorf("ketchup.js does not start with the commit stamp; rebuild it with scripts/update-ketchup.sh, got %q", first)
 	}
 }

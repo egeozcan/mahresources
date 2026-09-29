@@ -1,3 +1,4 @@
+/*! ketchup 884e1863124eb66bf189903c8d81d1fe363d14e3 (claude/ketchup-plugin-u5j6e6) from https://github.com/egeozcan/ketchup.git, built by scripts/update-ketchup.sh */
 /**
  * @license
  * Copyright 2019 Google LLC

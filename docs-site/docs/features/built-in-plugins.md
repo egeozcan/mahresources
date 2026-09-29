@@ -213,7 +213,7 @@ After a new image is first saved, the page switches to editing that resource, so
 
 Settings: **New image width** and **New image height** (default 1200 × 800 pixels) size a new drawing.
 
-The editor itself is Ketchup's embeddable build, `plugins/ketchup/public/ketchup.js`. To update it, run `npm run build:lib` in the Ketchup repository and copy `dist-lib/ketchup.js` over it (and over its copy in `e2e/test-plugins/ketchup`).
+The editor itself is Ketchup's embeddable build, committed as `plugins/ketchup/public/ketchup.js` so the plugin needs no internet access. Its first line names the Ketchup commit it was built from. To update it, run `./scripts/update-ketchup.sh <ref>` with a Ketchup branch, tag or commit: it builds that ref from a clean clone and writes the stamped result to the plugin and to its copy in `e2e/test-plugins/ketchup`.
 
 ## Enabling a Plugin
 
