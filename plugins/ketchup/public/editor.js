@@ -116,6 +116,10 @@ async function exportImage() {
     return app.exportImage(saveType === 'image/png' ? { type: saveType } : { type: saveType, quality: 0.92 });
 }
 
+// Resolves to the resource holding the saved bytes. `existing` is true when
+// the library already had those exact bytes under another owner: the server
+// then links the requested owner to that resource and answers with it rather
+// than creating one, which is told apart by the owner it answers with.
 async function createResource(name, ownerId) {
     const blob = await exportImage();
     const form = new FormData();
@@ -124,7 +128,16 @@ async function createResource(name, ownerId) {
     if (ownerId) form.append('OwnerId', String(ownerId));
     const created = await postForm('/v1/resource', form);
     const r = Array.isArray(created) ? created[0] : created;
-    return { resource: { id: r.ID, name: r.Name, ownerId: r.OwnerId || 0 }, blob };
+    const resource = { id: r.ID, name: r.Name, ownerId: r.OwnerId || 0 };
+    return { resource, blob, existing: resource.ownerId !== (ownerId || 0) };
+}
+
+// The bytes are in the library, so the drawing is saved, but the resource is
+// someone else's: say so, and keep editing what was being edited.
+function reportExisting(r) {
+    setStatus(`This exact image is already in the library as ${r.name || `resource ${r.id}`}, so it was linked to the group instead of saved twice.`, {
+        link: { href: `/resource?id=${r.id}`, label: 'Open it' },
+    });
 }
 
 async function save({ asCopy = false } = {}) {
@@ -143,16 +156,24 @@ async function save({ asCopy = false } = {}) {
             app.markSaved(blob);
             setStatus(`Saved as version ${version?.versionNumber ?? ''}.`.replace(' .', '.'));
         } else if (resource && asCopy) {
-            const { resource: created, blob } = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
+            const { resource: created, blob, existing } = await createResource(`${withoutExtension(resource.name) || 'Drawing'} (edited)`, resource.ownerId);
             app.markSaved(blob);
+            if (existing) {
+                reportExisting(created);
+                return;
+            }
             showEditing(created);
             setStatus(`Saved as a new resource; you are now editing ${created.name}.`, {
                 link: { href: `/resource?id=${created.id}`, label: 'Open it' },
             });
         } else {
             const name = nameInput.value.trim() || defaultName();
-            const { resource: created, blob } = await createResource(name, config.owner?.id);
+            const { resource: created, blob, existing } = await createResource(name, config.owner?.id);
             app.markSaved(blob);
+            if (existing) {
+                reportExisting(created);
+                return;
+            }
             showEditing(created);
             setStatus('Saved to the library. Saving again adds a new version.', {
                 link: { href: `/resource?id=${created.id}`, label: 'Open it' },

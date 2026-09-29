@@ -14,12 +14,13 @@ async function waitForEditor(page: Page) {
 
 /**
  * Drag a stroke across the middle of the document, `offset` pixels below its
- * center. The document is centered in the canvas, and the test images are
- * small, so the stroke stays within 30px of that center.
+ * center (and `dx` right of it). The document is centered in the canvas, and
+ * the uploaded test images are small, so strokes on them stay within 30px of
+ * that center.
  */
-async function drawStroke(page: Page, offset = 0) {
+async function drawStroke(page: Page, offset = 0, dx = 0) {
   const box = (await page.locator('drawing-app drawing-canvas').boundingBox())!;
-  const x = box.x + box.width / 2;
+  const x = box.x + box.width / 2 + dx;
   const y = box.y + box.height / 2 + offset;
   await page.mouse.move(x - 30, y - 6);
   await page.mouse.down();
@@ -170,6 +171,33 @@ test.describe('ketchup plugin', () => {
     await page.getByRole('button', { name: 'Save as new resource' }).click();
     await expect(page.locator('.ketchup-status')).toContainText('Not saved');
     await expect(page.getByRole('link', { name: 'Open the existing resource' })).toHaveAttribute('href', `/resource?id=${id}`);
+  });
+
+  test('says so, and keeps drawing new, when a new image is already in another group', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Ketchup dup cat ${Date.now()}`);
+    const first = await apiClient.createGroup({ name: `Ketchup first ${Date.now()}`, categoryId: category.ID });
+    const second = await apiClient.createGroup({ name: `Ketchup second ${Date.now()}`, categoryId: category.ID });
+    // Placed at random, so no other drawing, and no retry of this test, has these bytes.
+    const dy = -28 + Math.floor(Math.random() * 9);
+    const dx = -150 + Math.floor(Math.random() * 301);
+
+    await page.goto(`/plugins/ketchup/edit?owner=${first.ID}`);
+    await waitForEditor(page);
+    await drawStroke(page, dy, dx);
+    await page.getByRole('button', { name: 'Save to library' }).click();
+    await expect(page.locator('.ketchup-status')).toContainText('Saved to the library');
+    const id = Number(new URL(page.url()).searchParams.get('id'));
+
+    await page.goto(`/plugins/ketchup/edit?owner=${second.ID}`);
+    await waitForEditor(page);
+    await drawStroke(page, dy, dx);
+    await page.getByRole('button', { name: 'Save to library' }).click();
+    await expect(page.locator('.ketchup-status')).toContainText('already in the library');
+    await expect(page.locator('.ketchup-status').getByRole('link', { name: 'Open it' })).toHaveAttribute('href', `/resource?id=${id}`);
+    // Still a new drawing in the second group, not an edit of the first group's resource.
+    await expect(page).toHaveURL(new RegExp(`/plugins/ketchup/edit\\?owner=${second.ID}$`));
+    await expect(page.getByRole('button', { name: 'Save to library' })).toBeVisible();
+    await expect(page.getByText('Unsaved changes')).toBeHidden();
   });
 
   test('never saves when the image did not load', async ({ page }) => {
