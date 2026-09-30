@@ -2267,3 +2267,7 @@ where the review's own record lives.
   "Added X"; a silent rollback tells a screen-reader user a change happened and never
   that it was undone. The rollback is the half that is easy to forget because the
   visual state is already correct.
+
+## A generator reverted the AGENTS.md rename — 2026-09-30
+
+- Running `./docs/plans/generate-index.sh` to index a new plan rewrote the README's root link from `AGENTS.md` back to `CLAUDE.md`. The rename commit had edited the generated `docs/plans/README.md` by hand and left the generator hardcoding the old name, so the first regeneration undid it. Two rules follow. When you rename or move something a generated file mentions, change the generator, not only its output. And after running any generator, read its whole diff before staging: a line you did not intend to change is the generator disagreeing with a hand edit, and the fix belongs in the generator.

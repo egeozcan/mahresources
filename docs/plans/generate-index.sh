@@ -52,7 +52,7 @@ OUT=docs/plans/README.md
   echo "Design and implementation notes, one pair per feature. They are a historical"
   echo "record of intent, not living documentation — when a plan and the code disagree,"
   echo "the code wins. For how the system is actually put together see"
-  echo "[../architecture/](../architecture/) and the root [CLAUDE.md](../../CLAUDE.md)."
+  echo "[../architecture/](../architecture/) and the root [AGENTS.md](../../AGENTS.md)."
   echo
   echo "## Conventions"
   echo

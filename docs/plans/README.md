@@ -3,7 +3,7 @@
 Design and implementation notes, one pair per feature. They are a historical
 record of intent, not living documentation — when a plan and the code disagree,
 the code wins. For how the system is actually put together see
-[../architecture/](../architecture/) and the root [CLAUDE.md](../../AGENTS.md).
+[../architecture/](../architecture/) and the root [AGENTS.md](../../AGENTS.md).
 
 ## Conventions
 
@@ -33,6 +33,11 @@ the code wins. For how the system is actually put together see
 - [2026-09-08-mrql-generic-list-view-design.md](2026-09-08-mrql-generic-list-view-design.md)
 - [2026-09-10-version-thumbnails-and-viewer-version-panel.md](2026-09-10-version-thumbnails-and-viewer-version-panel.md)
 - [2026-09-24-job-center-standard-list.md](2026-09-24-job-center-standard-list.md)
+- [2026-09-25-jobs-drawer-live-stats.md](2026-09-25-jobs-drawer-live-stats.md)
+- [2026-09-26-jobs-qa-remediation.md](2026-09-26-jobs-qa-remediation.md)
+- [2026-09-28-custom-thumbnail-popup.md](2026-09-28-custom-thumbnail-popup.md)
+- [2026-09-28-jobs-qa-verification.md](2026-09-28-jobs-qa-verification.md)
+- [2026-09-30-pm-rollup-refresh-on-write.md](2026-09-30-pm-rollup-refresh-on-write.md)
 
 ## Archive
 
