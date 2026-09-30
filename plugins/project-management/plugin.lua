@@ -1429,11 +1429,160 @@ local function register_pm_block_types(tax)
     pm_block_types_registered = true
 end
 
--- All write entry points share these handlers, including host actions.
+-- ---------------------------------------------------------------------------
+-- Rollups
+-- ---------------------------------------------------------------------------
+
+local function group_container(group, tax)
+    if group.category_id == tax.epic_category_id or group.category == TAXONOMY.epic_category then
+        return {owner_epic=true,epic_id=group.id,project_id=group.owner_id or 0}
+    end
+    return {owner_epic=false,project_id=group.id}
+end
+
+-- The rollup fields a task write can change. Subtask counts change only through
+-- block state edits, which no hook reports, so only the sweep computes them.
+local function status_rollup(container, tax, cfg)
+    local counts, cerr = status_counts(container,nil,tax)
+    if not counts then error(cerr) end
+    local not_done = string.format("meta.status != %q",cfg.done_status)
+    if cfg.default_status ~= cfg.done_status then not_done = '(' .. not_done .. ' OR meta.status IS EMPTY)' end
+    local overdue, oerr = status_counts(container,{not_done,'endDate < NOW()'},tax)
+    if not overdue then error(oerr) end
+    local next_tasks, nerr = mrql_flat_tasks(container,{not_done,'endDate IS NOT NULL'},{limit=1,order_by='endDate ASC'})
+    if nerr then error(nerr) end
+    local next_due = ""
+    if next_tasks and next_tasks[1] then
+        local note, err = mah.db.get_note(next_tasks[1].id)
+        if not note then error(err or "Task disappeared during rollup") end
+        next_due = note.end_date or ""
+    end
+    local done = counts[cfg.done_status] or 0
+    return {pm_counts=counts, pm_done=done, pm_open=counts.total - done, pm_overdue=overdue.total, pm_next_due=next_due}
+end
+
+local function subtask_rollup(container, tax)
+    local subtasks, checked, cursor = 0, 0, 0
+    while true do
+        local notes, err = mah.db.query_notes({note_type_id=tax.task_type_id,include_blocks=true,limit=100,
+            mrql=task_scope_clause(container) .. ' AND id > ' .. cursor,sort_by={'id asc'}})
+        if not notes then error(err) end
+        for _, note in ipairs(notes) do
+            cursor = math.max(cursor,note.id)
+            for _, block in ipairs(note.blocks or {}) do
+                if block.type == 'plugin:project-management:subtasks' then
+                    local done = {}
+                    for _, id in ipairs(block.state.checked or {}) do done[id]=true end
+                    for _, row in ipairs(block.content.items or {}) do
+                        subtasks=subtasks+1
+                        if done[row.id] then checked=checked+1 end
+                    end
+                end
+            end
+        end
+        if #notes < 100 then break end
+    end
+    return {pm_subtasks=subtasks, pm_subtasks_done=checked}
+end
+
+-- store_rollup writes a group's status rollup, plus `extra`, when a value
+-- changed. The counts are read before the transaction: MRQL runs on the
+-- executor's own connection, which a one-connection pool cannot hand out while
+-- the transaction holds it. Refreshes still store in the order they read,
+-- because each one reads and stores inside a single hold of this plugin's VM.
+local function store_rollup(group, tax, cfg, extra)
+    local rollup = merge(extra, status_rollup(group_container(group,tax),tax,cfg))
+    -- Serialize the read-modify-write with other plugin rollup writers.
+    local ok, txerr = mah.db.transaction(function()
+        mah.kv.set('rollup:' .. group.id,'1')
+        local current, err = mah.db.get_group(group.id)
+        if not current then error(err or "Group disappeared during rollup") end
+        local meta = meta_object(current.meta)
+        if not meta then error("Group metadata is not an object") end
+        -- An unchanged group is not rewritten, so pm_rollup_at records
+        -- the last change rather than the last sweep.
+        local changed = false
+        for key, value in pairs(rollup) do
+            if not same_value(meta[key], value) then changed = true end
+            meta[key] = value
+        end
+        if changed then
+            meta.pm_rollup_at = mah.util.now_iso()
+            local saved, err = mah.db.patch_group(group.id,{meta=meta_string(meta)})
+            if not saved then error(err) end
+        end
+    end)
+    if not ok then error(txerr) end
+end
+
+-- rollup_groups lists the PM groups whose counts include a task owned by
+-- owner_id: the owner when it is an epic (an epic counts only the tasks it owns)
+-- and every project on the owner chain (a project counts its whole subtree, see
+-- task_scope_clause). A group the caller cannot read ends the walk; a failed
+-- read raises, so the refresh reports it.
+local function rollup_groups(owner_id, tax)
+    local groups, seen, id = {}, {}, owner_id
+    while id and id > 0 and not seen[id] do
+        seen[id] = true
+        local group, err = mah.db.get_group(id)
+        if err then error(err) end
+        if not group then break end
+        if group.category_id == tax.project_category_id
+            or (id == owner_id and group.category_id == tax.epic_category_id) then
+            groups[#groups + 1] = group
+        end
+        id = group.owner_id
+    end
+    return groups
+end
+
+-- Owners whose rollups a write changed. A handler touches them once its
+-- transaction has committed, and the outermost entry point refreshes them in the
+-- same VM hold, so no other request can take or add entries in between.
+local touched_owners = {}
+
+local function touch_rollup(owner_id)
+    if owner_id and owner_id > 0 then touched_owners[owner_id] = true end
+end
+
+-- refresh_touched_rollups recomputes the status rollup of every group the
+-- touched owners count toward. A failure is logged, never raised: the write that
+-- asked for it has committed, and the sweep repairs the value.
+local function refresh_touched_rollups()
+    local owners = touched_owners
+    touched_owners = {}
+    if next(owners) == nil then return end
+    local ok, err = pcall(function()
+        local tax = cached_taxonomy()
+        if not tax then return end
+        local cfg, refreshed = resolved_config(), {}
+        for owner_id in pairs(owners) do
+            for _, group in ipairs(rollup_groups(owner_id, tax)) do
+                if not refreshed[group.id] then
+                    refreshed[group.id] = true
+                    local stored, serr = pcall(store_rollup, group, tax, cfg)
+                    if not stored then
+                        mah.log("warning", "project-management: rollup refresh failed for group " .. group.id .. ": " .. tostring(serr))
+                    end
+                end
+            end
+        end
+    end)
+    if not ok then
+        mah.log("warning", "project-management: rollup refresh failed: " .. tostring(err))
+    end
+end
+
+-- All write entry points share these handlers, including host actions. The
+-- HTTP route refreshes the rollups its handler touched. call_task runs the bare
+-- handler, so a caller that holds a transaction refreshes once it commits.
 local task_handlers = {}
 local function register_task_api(name, handler)
     task_handlers[name] = handler
-    mah.api("POST", "api/task/" .. name, handler)
+    mah.api("POST", "api/task/" .. name, function(ctx)
+        handler(ctx)
+        refresh_touched_rollups()
+    end)
 end
 
 local function full_task(id)
@@ -1474,6 +1623,7 @@ local function register_pm_actions(tax)
                 local body = merge(ctx.params or {}, {id=ctx.entity_id})
                 if spec.id == "pm-clear-due" then body.due = "" end
                 call_task("update",body)
+                refresh_touched_rollups()
                 return {success=true,message="Task updated"}
             end})
     end
@@ -1481,6 +1631,7 @@ local function register_pm_actions(tax)
     mah.action({id="pm-new-task",label="New task",entity="group",placement={"detail","card"},filters=filters,
         params={{name="name",type="text",label="Task name",required=true}}, handler=function(ctx)
             local task = call_task("create",{owner_id=ctx.entity_id,name=ctx.params.name})
+            refresh_touched_rollups()
             return {success=true,redirect="/note?id=" .. task.id}
         end})
     mah.action({id="pm-open-board",label="Open board",entity="group",placement={"detail"},filters=filters,
@@ -1513,13 +1664,6 @@ local function render_task_controls(ctx)
     return rendered
 end
 
-local function group_container(group, tax)
-    if group.category_id == tax.epic_category_id or group.category == TAXONOMY.epic_category then
-        return {owner_epic=true,epic_id=group.id,project_id=group.owner_id or 0}
-    end
-    return {owner_epic=false,project_id=group.id}
-end
-
 local function render_mini_board(ctx)
     local tax = cached_taxonomy()
     if not tax or ctx.entity_type ~= "group" then return "" end
@@ -1544,9 +1688,10 @@ local function render_mini_board(ctx)
     return '<div class="pm-mini-board" data-testid="pm-mini-board">' .. table.concat(columns) .. '</div>'
 end
 
--- Cached counters are presentation data. A complete periodic reconciliation
--- also covers deletions, bulk edits and skipped after-hooks. Dirty hints never
--- decide whether a group is eligible for repair.
+-- Cached counters are presentation data. Writes refresh the status fields as
+-- they happen (refresh_touched_rollups); this complete reconciliation also covers
+-- what no hook reports: subtask checks, mass edits, due dates passing and
+-- skipped after-hooks.
 local function reconcile_rollups()
     local tax = cached_taxonomy()
     if not tax then return end
@@ -1555,69 +1700,16 @@ local function reconcile_rollups()
         local groups, err = list_groups(category)
         if err then error(err) end
         for _, group in ipairs(groups or {}) do
-            local container = group_container(group,tax)
-            local counts, cerr = status_counts(container,nil,tax)
-            if not counts then error(cerr) end
-            local not_done = string.format("meta.status != %q",cfg.done_status)
-            if cfg.default_status ~= cfg.done_status then not_done = '(' .. not_done .. ' OR meta.status IS EMPTY)' end
-            local overdue, oerr = status_counts(container,{not_done,'endDate < NOW()'},tax)
-            if not overdue then error(oerr) end
-            local next_tasks, nerr = mrql_flat_tasks(container,{not_done,'endDate IS NOT NULL'},{limit=1,order_by='endDate ASC'})
-            if nerr then error(nerr) end
-            local next_due = ""
-            if next_tasks and next_tasks[1] then
-                local note, err = mah.db.get_note(next_tasks[1].id)
-                if not note then error(err or "Task disappeared during rollup") end
-                next_due = note.end_date or ""
-            end
-            local subtasks, checked, cursor = 0, 0, 0
-            while true do
-                local notes, err = mah.db.query_notes({note_type_id=tax.task_type_id,include_blocks=true,limit=100,
-                    mrql=task_scope_clause(container) .. ' AND id > ' .. cursor,sort_by={'id asc'}})
-                if not notes then error(err) end
-                for _, note in ipairs(notes) do
-                    cursor = math.max(cursor,note.id)
-                    for _, block in ipairs(note.blocks or {}) do
-                        if block.type == 'plugin:project-management:subtasks' then
-                            local done = {}
-                            for _, id in ipairs(block.state.checked or {}) do done[id]=true end
-                            for _, row in ipairs(block.content.items or {}) do
-                                subtasks=subtasks+1
-                                if done[row.id] then checked=checked+1 end
-                            end
-                        end
-                    end
-                end
-                if #notes < 100 then break end
-            end
-            -- Serialize the read-modify-write with other plugin rollup writers.
-            local ok, txerr = mah.db.transaction(function()
-                mah.kv.set('rollup:' .. group.id,'1')
-                local current, err = mah.db.get_group(group.id)
-                if not current then error(err or "Group disappeared during rollup") end
-                local meta = meta_object(current.meta)
-                if not meta then error("Group metadata is not an object") end
-                local done = counts[cfg.done_status] or 0
-                local rollup = {pm_counts=counts, pm_subtasks=subtasks, pm_subtasks_done=checked,
-                    pm_done=done, pm_open=counts.total - done, pm_overdue=overdue.total, pm_next_due=next_due}
-                -- An unchanged group is not rewritten, so pm_rollup_at records
-                -- the last change rather than the last sweep.
-                local changed = false
-                for key, value in pairs(rollup) do
-                    if not same_value(meta[key], value) then changed = true end
-                    meta[key] = value
-                end
-                if changed then
-                    meta.pm_rollup_at = mah.util.now_iso()
-                    local saved, err = mah.db.patch_group(group.id,{meta=meta_string(meta)})
-                    if not saved then error(err) end
-                end
-            end)
-            if not ok then error(txerr) end
+            store_rollup(group,tax,cfg,subtask_rollup(group_container(group,tax),tax))
         end
     end
     mah.kv.set('pm_rollup_last',mah.util.now_iso())
 end
+
+-- A before-hook and its after-hook are two VM holds, so another request can
+-- refresh in between. A before-hook therefore keeps the prior owner per entity
+-- instead of touching it, and the matching after-hook takes it.
+local prior_owners = {}
 
 local function register_pm_hooks()
     local function stamp(data)
@@ -1631,14 +1723,63 @@ local function register_pm_hooks()
         return data
     end
     mah.on('before_note_create',stamp)
-    mah.on('before_note_update',stamp)
+    mah.on('before_note_update',function(data)
+        -- The stored type, not the incoming one: a task whose type is cleared
+        -- still leaves its owner's counts.
+        local tax = cached_taxonomy()
+        if tax and (data.id or 0) > 0 then
+            local stored, err = mah.db.get_note(data.id)
+            if err then mah.log("warning", "project-management: rollup refresh failed: reading note " .. data.id .. ": " .. tostring(err)) end
+            if stored and stored.note_type_id == tax.task_type_id then
+                prior_owners['note:' .. data.id] = stored.owner_id
+            end
+        end
+        return stamp(data)
+    end)
     for _, event in ipairs({'after_note_create','after_note_update','after_note_delete'}) do
         mah.on(event,function(data)
             local tax = cached_taxonomy()
-            if tax and data.note_type_id == tax.task_type_id then mah.kv.set('pm_rollup_dirty',true) end
+            if not tax then return end
+            local key = 'note:' .. tostring(data.id)
+            touch_rollup(prior_owners[key])
+            prior_owners[key] = nil
+            if data.note_type_id == tax.task_type_id then touch_rollup(data.owner_id) end
+            refresh_touched_rollups()
         end)
     end
-    mah.schedule({id='rollup',every='10m',overlap='skip',handler=reconcile_rollups})
+    mah.on('before_group_update',function(data)
+        local tax = cached_taxonomy()
+        if tax and (data.id or 0) > 0 then
+            local stored, err = mah.db.get_group(data.id)
+            if err then mah.log("warning", "project-management: rollup refresh failed: reading group " .. data.id .. ": " .. tostring(err)) end
+            if stored and (stored.owner_id or 0) ~= (data.owner_id or 0) then
+                prior_owners['group:' .. data.id] = stored.owner_id or 0
+            end
+        end
+        return data
+    end)
+    mah.on('after_group_update',function(data)
+        local tax = cached_taxonomy()
+        if not tax then return end
+        local key = 'group:' .. tostring(data.id)
+        if prior_owners[key] then
+            touch_rollup(prior_owners[key])
+            touch_rollup(data.owner_id)
+            prior_owners[key] = nil
+        end
+        -- UpdateGroup saves the whole Meta it was given, so an edit form loaded
+        -- before a task write would put back the counts it showed.
+        if data.category_id == tax.project_category_id or data.category_id == tax.epic_category_id then
+            touch_rollup(data.id)
+        end
+        refresh_touched_rollups()
+    end)
+    mah.on('after_group_delete',function(data)
+        if not cached_taxonomy() then return end
+        touch_rollup(data.owner_id)
+        refresh_touched_rollups()
+    end)
+    mah.schedule({id='rollup',every='6h',overlap='skip',handler=reconcile_rollups})
 end
 
 -- ---------------------------------------------------------------------------
@@ -1975,6 +2116,8 @@ function init()
             promoted = call_task('create',{owner_id=parent.owner_id,name=item.label})
             mah.kv.set(key,promoted.id)
         end)
+        -- The create's counts are only readable once this transaction commits.
+        refresh_touched_rollups()
         if not ok then api_error(ctx,400,tostring(txerr)) return end
         ctx.json(promoted)
     end)
@@ -2461,6 +2604,7 @@ function init()
             return true, nil, attempt_result
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
+        touch_rollup(owner_id)
         ctx.json(full_task(created.id))
     end)
 
@@ -2669,6 +2813,8 @@ function init()
             return true, nil, attempt_result
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
+        touch_rollup(pre.owner_id)
+        touch_rollup(updated.owner_id)
         ctx.json(full_task(updated.id))
     end)
 
@@ -2872,6 +3018,7 @@ function init()
             return true, nil, attempt_updated
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
+        touch_rollup(updated.owner_id)
         ctx.json(full_task(updated.id))
     end)
 

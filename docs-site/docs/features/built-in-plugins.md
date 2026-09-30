@@ -185,7 +185,7 @@ plain notes — searchable, mass-edit-able and group-export-able. The provisione
 taxonomies also carry native detail, summary, hover, list and MRQL templates,
 and PM Task notes gain **Acceptance criteria**, **Status update**, **Subtasks**,
 **Dependencies** and **Time log** blocks. Native pages support task edits and bulk
-actions; project pages include mini boards backed by scheduled rollups. Version
+actions; project pages include mini boards whose column counts come from stored rollups once a group has one. Version
 1.1.0 requires an administrator to re-enable the plugin for its new grants, then
 run Set up to upgrade bundled presentation defaults.
 

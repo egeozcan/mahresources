@@ -302,24 +302,64 @@ appear in the host's **Plugins** dropdown. Existing `?view=` links still work.
 
 ## Status defaults and rollups
 
-Before native task creates and updates, a pure hook stamps a missing or empty
-status with `default_status`. It never allocates an order key; the first explicit
-PM move does that under the existing ordering locks.
+Before native task creates and updates, a hook stamps a missing or empty status
+with `default_status` and writes nothing else. It never allocates an order key;
+the first explicit PM move does that under the existing ordering locks.
 
-The `rollup` schedule runs every **10 minutes**, skipping overlap. It writes
-`pm_open`, `pm_done`, `pm_overdue`, `pm_next_due`, `pm_counts`, `pm_subtasks`,
-`pm_subtasks_done` and `pm_rollup_at` into project/epic metadata, preserving other
-keys. A group whose values have not changed since the last run is not rewritten, so
-`pm_rollup_at` is the time its rollup last changed, not the time of the last run. Card summaries read these values without per-card MRQL queries. Mini-board
-counts and progress use the stored counts, falling back to a query before the
-first rollup. Run the schedule manually from plugin management for an immediate
-reconciliation.
+Rollups live in project and epic metadata: `pm_open`, `pm_done`, `pm_overdue`,
+`pm_next_due`, `pm_counts`, `pm_subtasks`, `pm_subtasks_done` and `pm_rollup_at`,
+with the group's other keys preserved. Card summaries read these values without
+per-card MRQL queries. Mini-board counts and progress use the stored counts,
+falling back to a query before the first rollup. A group whose values have not
+changed is not rewritten, so `pm_rollup_at` is the time its rollup last changed.
 
-The schedule performs a complete reconciliation, including batched subtask
-reads. This deliberately covers missed after-hooks, native mass edits, block
-state edits and deleted tasks even when no dirty marker survives. It costs more
-than a timestamp-only sweep on large installations; counts may lag by ten
-minutes. Group and task scans use keyset pagination rather than capped offsets.
+Writes keep the counts current. After each write below, the plugin recomputes
+`pm_open`, `pm_done`, `pm_overdue`, `pm_next_due` and `pm_counts` for the task's
+epic, when an epic owns it, and for every PM Project whose subtree contains it.
+When a write changes the owner of a task or of a group, the groups above the
+previous owner are recomputed too.
+
+- A task create, update or move made through the plugin: its views, the task
+  controls on task, project and epic pages, its actions, or subtask promotion.
+- A native note create, update or delete of a PM Task, including a change of owner
+  and a change of type away from PM Task.
+- A native change of owner, or a delete, of a group inside a project.
+- A native edit of a PM Project or PM Epic group. Saving the group's form writes
+  its whole metadata back, including the counts the form loaded, so the plugin
+  recomputes them after the save.
+
+A refresh that fails does not fail the write. The plugin logs a warning at
+`/logs`, and the next reconciliation repairs the counts.
+
+The `rollup` schedule runs every **6 hours**, skipping overlap. It performs a
+complete reconciliation, including batched subtask reads, and covers what the
+writes above do not:
+
+- Subtask counts, which only the schedule computes. Checking a subtask edits
+  block state, which fires no hook.
+- The overdue count, which changes when a due date passes.
+- Native mass edits, which fire no per-entity hook.
+- A group merge, which moves the losers' tasks to the winner without a hook for
+  the winner, and a group import, which fires no hooks.
+- A direct metadata edit through `/v1/note/editMeta`, which fires no hook. The
+  bundled templates render task status read-only, so this comes from an API
+  client or from a template that makes `status` editable.
+- A change to the `statuses`, `default_status` or `done_status` settings.
+- Groups the acting user cannot read, such as a project above a confined user's
+  subtree.
+- Writes whose hook never reaches the plugin: a write made while the plugin is
+  already running further up the same call chain, and a write made from another
+  plugin's code whose after-hook is dropped after waiting 5 seconds for this
+  plugin (see
+  [When a Hook's Plugin Is Busy](./plugin-hooks.md#when-a-hooks-plugin-is-busy)).
+- Two overlapping native edits of one task or group that both change its owner.
+- Two processes sharing one database that refresh the same group at once. Each
+  reads its counts before taking the group's lock, so the older result can be
+  stored last.
+
+Run the schedule manually from plugin management for an immediate
+reconciliation. Group and task scans use keyset pagination rather than capped
+offsets.
 
 ## Known limits
 

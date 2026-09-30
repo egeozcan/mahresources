@@ -919,6 +919,56 @@ test('rollup reconciles native changes and mini-board counts match stats',async 
   } finally { await apiClient.deleteBlock(block.id); }
 });
 
+test('task writes refresh project and epic rollups without a sweep',async ({page,request,baseURL,apiClient}) => {
+  // The sweep runs every six hours, so each write must leave the counts current.
+  const groupJson = async (id: number) => await (await request.get(`${baseURL}/v1/group?id=${id}`)).json();
+  const expectCurrent = async (step: string, kind: 'project'|'epic', id: number) => {
+    const stats = await pluginRequest(request,'get',`/api/stats?${kind}=${id}`,undefined,baseURL);
+    expect((await groupJson(id)).Meta.pm_counts,`${step}: ${kind} ${id}`).toEqual(stats.body.by_status);
+  };
+  const created: number[] = [];
+  try {
+    const task = await pluginRequest(request,'post','/api/task/create',{owner_id:pm.epicFrontend,name:'Rollup refresh'},baseURL);
+    expect(task.status).toBe(200); created.push(task.body.id);
+    await expectCurrent('PM create','epic',pm.epicFrontend);
+    await expectCurrent('PM create','project',pm.projectId);
+
+    expect((await pluginRequest(request,'post','/api/task/update',{id:task.body.id,owner_id:pm.epicBackend},baseURL)).status).toBe(200);
+    await expectCurrent('PM owner change, old epic','epic',pm.epicFrontend);
+    await expectCurrent('PM owner change, new epic','epic',pm.epicBackend);
+    await expectCurrent('PM owner change','project',pm.projectId);
+
+    expect((await pluginRequest(request,'post','/api/task/move',{id:task.body.id,status:'done'},baseURL)).status).toBe(200);
+    await expectCurrent('PM move','epic',pm.epicBackend);
+    await expectCurrent('PM move','project',pm.projectId);
+
+    const native = await apiClient.createNote({name:'Native rollup task',ownerId:pm.epicBackend,noteTypeId:pm.taskType});
+    created.push(native.ID);
+    await expectCurrent('native create','epic',pm.epicBackend);
+    await expectCurrent('native create','project',pm.projectId);
+
+    await apiClient.deleteNote(native.ID); created.pop();
+    await expectCurrent('native delete','epic',pm.epicBackend);
+    await expectCurrent('native delete','project',pm.projectId);
+
+    // An edit form loaded before a task write saves the counts it was shown.
+    const stale = await groupJson(pm.projectId);
+    const direct = await pluginRequest(request,'post','/api/task/create',{owner_id:pm.projectId,name:'Written while the form was open'},baseURL);
+    expect(direct.status).toBe(200); created.push(direct.body.id);
+    const saved = await request.post(`${baseURL}/v1/group`,{form:{ID:String(pm.projectId),name:stale.Name,categoryId:String(pm.projectCategory),Meta:JSON.stringify(stale.Meta)}});
+    expect(saved.ok(),await saved.text()).toBe(true);
+    await expectCurrent('project saved with stale meta','project',pm.projectId);
+
+    const stats = await pluginRequest(request,'get',`/api/stats?project=${pm.projectId}`,undefined,baseURL);
+    await page.goto(`/group?id=${pm.projectId}`);
+    for (const status of ['backlog','todo','in_progress','blocked','done']) {
+      await expect(page.locator(`.pm-mini-column[data-status="${status}"] .pm-mini-count`)).toHaveText(String(stats.body.by_status[status] || 0));
+    }
+  } finally {
+    for (const id of created) await apiClient.deleteNote(id).catch(() => {});
+  }
+});
+
 
 test('moving to a paginated column keeps focus with bounded reads and correct later pages', async ({page,request,baseURL,apiClient}) => {
   test.setTimeout(60000);
