@@ -9,8 +9,8 @@ import (
 // `overlap = "allow"` buys queueing, not parallelism: two runs of one plugin
 // still serialize on its VM lock, and the point of advancing the row at dispatch
 // rather than at completion is that an overrunning run does not cause the next
-// to be skipped. That sentence is in CLAUDE.md, and it is only true if the next
-// run *waits* for the VM.
+// to be skipped. That sentence is in docs/architecture/plugin-schedules.md, and
+// it is only true if the next run *waits* for the VM.
 //
 // The bound that TestRunScheduleGivesUpWhenTheVMStaysBusy demands exists to
 // protect a database claim held across the wait. Under "allow" there is no such

@@ -412,7 +412,8 @@ func TestHashLookupFailureIsNotTreatedAsNewContent(t *testing.T) {
 // one database hold two idlocks, and Resource.Hash carries a plain index rather
 // than a unique one, so nothing at the database level would stop them both
 // inserting. That was equally true before this change and is recorded in
-// CLAUDE.md; it is a property of the design, not of this test.
+// docs/architecture/bulk-resource-uploads.md; it is a property of the design,
+// not of this test.
 func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
 	ctx := newWALTestContext(t, 0)
 

@@ -12,7 +12,7 @@ import (
 )
 
 // The helper that answers "may this request run that plugin's actions" is named
-// far from the file that declares it: in CLAUDE.md, in the commit that
+// far from the file that declares it: in docs/architecture/, in the commit that
 // introduced it, and in this package's tests. Prose compiles whatever it says,
 // so a name that no declaration answers to costs nothing at build time and costs
 // a maintainer a search through two packages for code that is not there. This

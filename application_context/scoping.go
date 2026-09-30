@@ -617,11 +617,12 @@ func statementTable(db *gorm.DB) string {
 // server/ — and it is recorded rather than fixed here.
 //
 // Only the three operations are covered, and the reasons for the exclusions are
-// recorded in CLAUDE.md and docs/todo.md rather than argued here — deliberately,
-// because an earlier version of this comment justified the exclusions in terms
-// those documents contradict. In particular a group's own category change and
-// its deletion DO reach edges whose far endpoint is outside the subtree; they
-// are listed there as known open, not as safe.
+// recorded in docs/architecture/authentication-and-roles.md and docs/todo.md
+// rather than argued here — deliberately, because an earlier version of this
+// comment justified the exclusions in terms those documents contradict. In
+// particular a group's own category change and its deletion DO reach edges
+// whose far endpoint is outside the subtree; they are listed there as known
+// open, not as safe.
 var ErrGlobalCascadeScoped = errors.New("not available to a group-limited principal: this operation cascades to rows outside any subtree")
 
 // globalCascadeTable names the tables whose DELETE reaches rows in every

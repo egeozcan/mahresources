@@ -67,7 +67,8 @@ func TestCredentialRedactionIsCaseInsensitive(t *testing.T) {
 // added to the app without someone deciding whether a plugin may see it.
 func TestRedactionCoversThisAppsCredentialSurface(t *testing.T) {
 	// Bearer token (the mr CLI), session cookie (the browser), and the
-	// per-session synchronizer token. See CLAUDE.md, "Authentication & roles".
+	// per-session synchronizer token. See
+	// docs/architecture/authentication-and-roles.md.
 	for _, name := range []string{"authorization", "cookie", "x-csrf-token"} {
 		if !credentialHeaders[name] {
 			t.Errorf("%s is one of this app's credentials but is not withheld from plugins", name)

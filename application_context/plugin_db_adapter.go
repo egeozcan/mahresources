@@ -166,7 +166,8 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 // specific statements. Merge's degenerate self-edge sweep was the third and now
 // carries the filter when the merge is scoped. The general case — a confined
 // caller performing any admin-only taxonomy write — is closed by the role
-// capability guard in role_capability.go. See CLAUDE.md.
+// capability guard in role_capability.go. See
+// docs/architecture/authentication-and-roles.md.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }

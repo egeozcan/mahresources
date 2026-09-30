@@ -257,8 +257,8 @@ var errScheduleVMBusy = fmt.Errorf(
 // Under "allow" the dispatcher has already advanced next_due_at and released the
 // claim before this is reached, so there is nothing left to lose — and bounding
 // the wait there costs the policy its meaning. "allow" buys queueing: a run that
-// finds the VM held by the previous one is supposed to wait for it, and CLAUDE.md
-// says so ("an overrunning run does not cause the next to be skipped"). Giving up
+// finds the VM held by the previous one is supposed to wait for it, and
+// docs/architecture/plugin-schedules.md says so ("an overrunning run does not cause the next to be skipped"). Giving up
 // instead does not defer that interval, it drops it, because the row has moved on
 // and no later tick will find it due.
 //

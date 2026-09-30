@@ -9,7 +9,7 @@ import (
 // *this* application, and are therefore never handed to a plugin.
 //
 // The list is exactly this app's own credential surface, as described in
-// CLAUDE.md's auth section: a Bearer token, the session cookie, and the
+// docs/architecture/authentication-and-roles.md: a Bearer token, the session cookie, and the
 // per-session CSRF token. proxy-authorization is included because it
 // authenticates to an intermediary the operator controls and a plugin has no
 // business replaying it either.
