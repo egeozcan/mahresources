@@ -286,8 +286,6 @@ npm run report         # View HTML test report
 - File system abstraction via Afero supports multiple storage locations
 - Run `npm run build-js` after modifying files in `src/` to rebuild the bundle
 - Keep in mind that some deployments of this software deal with millions of resources
-- Tests need to be fixed, regardless of what broke it. 
-  - It may be a good idea to run tests before you start to see if there are any failing and fix them beforehand.
 
 ## CLI Documentation
 
@@ -322,65 +320,59 @@ The five canonical triage roles, each label string equal to its name. See
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See
 `docs/agents/domain.md`.
 
-## Workflow Orchestration
+## How to work
 
-### 1. Plan Node Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
+These are rules, not suggestions, and they apply to every task. A model writes plausible code fast and is slow to notice that plausible is not the same as correct, so the discipline has to come from the process around the code.
 
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One tack per subagent for focused execution
+### Read before you write
 
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `docs/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
+Read the files you are about to change, in full, and copy the patterns they already use. Check what the project already has before reaching for something new: every entity picker is built on `src/selector/`, remote-resource downloads go through `hostfetch/`, and image work uses `disintegration/imaging` and `anthonynsimon/bild`. When you cannot find a pattern to follow, ask instead of guessing.
 
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
+### Think before you code
 
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes - don't over-engineer
-- Challenge your own work before presenting it
+State your assumptions and name the tradeoffs. "Limit this to the user" means three different things here: their Group subtree, their role, or the rows they created (`CreatedByUserId`). Say which one you picked. When the requirement itself is unclear, stop and ask. Plausible code written to fill the gap is the code that passes a casual review and fails when it matters.
 
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests - then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
+### Plan and define done
 
-## Task Management
+Write the success criterion before the code. "Scope the new endpoint" becomes "a guest confined to one subtree sees nothing outside it on the list, the single read, search and the `.json` route, with a test for each". Enter plan mode for any task with three or more steps or an architectural decision. The plan spells out the behavior and edge cases until nothing in it is ambiguous, covers how you will verify the work as well as what you will build, and goes to the user for review before you build, so a wrong approach is caught early. Plans go in `docs/plans/YYYY-MM-DD-<slug>.md` (then run `./docs/plans/generate-index.sh`), never `docs/todo.md`, which is a findings ledger that `internal/arch/findings_coverage_test.go` parses. Tick the plan's items as you finish them and end it with a review section. When something goes sideways, stop and re-plan.
 
-1. **Plan First**: Write plan to `docs/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `docs/todo.md`
-6. **Capture Lessons**: Update `docs/lessons.md` after corrections
+### Simplicity
 
-## Core Principles
+Write the minimum code that solves the problem in front of you now, not every future version of it. Let code repeat twice before you abstract it, write branches only for states the code can reach, and hardcode a value until there is a real reason to make it a flag. The test: anything abstracted only "in case we need to" is over-built. Simple still means elegant. For a non-trivial change, pause and ask whether there is a cleaner way, and when a fix feels hacky, rebuild it the way you would knowing everything you know now.
 
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+### Surgical changes
 
-## Methodology
+Keep the diff as small as the task allows. Match the surrounding style and change only the lines the task needs; a reformatting pass buries the three lines that matter inside three hundred that do not. The test: every changed line is justified by the task. A line that is there "while I was in there" gets reverted.
 
-Use TDD (red/green/refactor) as much as it makes sense. Adding integration tests and running them before starting and after the work is complete is very important.
+### Verification
 
+Testing is the gap between code that works and code you think works. Work red/green/refactor where it fits: for a bug, write the test that fails on it, watch it go red, then fix the cause; for a feature, first write the test at the level that proves the behavior, usually integration or E2E. Test behavior that can break, not that a struct literal holds its fields. Something hard to test is information about the design, not permission to skip the test. For a code change, run the suites before you start, so you know what was already failing, and again when you finish. A failing test is yours to fix, whatever broke it. A task is done when you have shown it working: the suites in Testing above, the logs, and a behavior diff against `master` where one matters. The bar is whether a staff engineer would approve it.
 
-### Project Management integration rules
+### Debugging
+
+Investigate; guessing only moves the bug. Read the whole error and stack trace, reproduce the problem before you change anything, and change one thing at a time. Fix the root cause. An unexpected `nil` or empty result is a question to answer, and a guard that hides it sends the bug somewhere quieter. Given a bug report, a failing test or a red CI job, start from the logs and the failure and fix it without asking to be walked through it.
+
+### Dependencies
+
+Every dependency is permanent code you do not control. Before adding a Go module or an npm package, check whether the standard library, the browser, or something already in `go.mod` or `package.json` does the job (`crypto/sha256` or `net/url` over a module). When you do add one, say why in the commit message, so the choice is visible instead of arriving quietly in the manifest.
+
+### Communication
+
+Say what you did and why, at each step, not only the diff. Flag a concern even when you did exactly what was asked. Be precise about uncertainty: "I have not run this against Postgres" tells the reader what to verify; "this should work" does not.
+
+### Subagents
+
+Use subagents liberally to keep the main context clean: research, exploration and parallel analysis, one task per subagent. For a hard problem, spend more compute through them.
+
+### Lessons
+
+After any correction from the user, add the pattern to `docs/lessons.md` as a rule that prevents the same mistake. Read the relevant lessons at the start of a session.
+
+### Failure modes
+
+Four patterns recur often enough to name. The *Kitchen Sink* restructures half the codebase along the way. The *Wrong Abstraction* generalizes before the code has repeated. The *Optimistic Path* handles the unscoped admin and ignores the 500, the subtree-confined guest and the Postgres race. The *Runaway Refactor* is a fix that cascades across files. When you catch yourself in one, stop and re-plan rather than push through.
+
+## Project Management integration rules
 
 - Keep host enablers generic: no PM taxonomy names in server or application context.
 - Prefer `[meta editable=true]` for schema-backed fields. PM controls own only status/order, dates and ownership semantics.
