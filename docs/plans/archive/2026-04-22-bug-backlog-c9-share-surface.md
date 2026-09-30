@@ -493,7 +493,7 @@ Add to `CLAUDE.md` config table:
 git add application_context/context.go cmd/ server/template_handlers/ templates/ \
   public/dist/ public/tailwind.css \
   server/api_tests/share_url_public_url_test.go \
-  CLAUDE.md
+  AGENTS.md
 git commit -m "fix(share): BH-033 — SHARE_PUBLIC_URL config replaces bind-address fallback
 
 New config SHARE_PUBLIC_URL / flag --share-public-url. When set, share

@@ -1085,7 +1085,7 @@ Search for and remove any references to the old CLI tool.
 **Step 3: Commit**
 
 ```bash
-git add CLAUDE.md
+git add AGENTS.md
 git commit -m "docs: update CLAUDE.md with hash worker configuration"
 ```
 

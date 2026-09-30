@@ -545,7 +545,7 @@ Expected: all checks pass and generated committed assets are either unchanged or
 - [x] **Step 4: Commit**
 
 ```bash
-git add CLAUDE.md docs-site/docs/features/plugin-lua-api.md docs-site/docs/configuration/advanced.md docs/todo.md docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md public/tailwind.css public/dist
+git add AGENTS.md docs-site/docs/features/plugin-lua-api.md docs-site/docs/configuration/advanced.md docs/todo.md docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md public/tailwind.css public/dist
 git commit -m "docs: record plugin command runtime remediation"
 ```
 

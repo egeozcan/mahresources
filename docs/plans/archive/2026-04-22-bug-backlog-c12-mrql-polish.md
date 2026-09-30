@@ -510,7 +510,7 @@ git add application_context/mrql_context.go application_context/context.go \
   src/components/mrqlEditor.js templates/ public/dist/ public/tailwind.css \
   server/api_tests/mrql_default_limit_test.go \
   e2e/tests/c12-bh013-mrql-default-limit-banner.spec.ts \
-  CLAUDE.md
+  AGENTS.md
 git commit -m "feat(mrql): BH-013 — configurable default LIMIT + banner when applied
 
 Replaces the hardcoded defaultMRQLLimit = 1000 with a config-backed value.

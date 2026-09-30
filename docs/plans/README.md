@@ -3,7 +3,7 @@
 Design and implementation notes, one pair per feature. They are a historical
 record of intent, not living documentation — when a plan and the code disagree,
 the code wins. For how the system is actually put together see
-[../architecture/](../architecture/) and the root [CLAUDE.md](../../CLAUDE.md).
+[../architecture/](../architecture/) and the root [CLAUDE.md](../../AGENTS.md).
 
 ## Conventions
 

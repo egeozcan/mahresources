@@ -1001,7 +1001,7 @@ Add configuration rows and state that per-run quota must cover temporary merge p
 go test --tags 'json1 fts5' ./application_context ./... -run 'PluginCommandLifecycle|PluginCommandConfig|RuntimeSettingRegistry' -count=1
 go build --tags 'json1 fts5' ./...
 git diff --check
-git add main.go application_context/context.go application_context/*plugin_command*lifecycle* CLAUDE.md
+git add main.go application_context/context.go application_context/*plugin_command*lifecycle* AGENTS.md
 git commit -m "feat: configure and recover plugin command staging"
 ```
 
@@ -1125,7 +1125,7 @@ Add a `docs/todo.md` review naming commands, counts, platform-specific gaps and 
 ```bash
 git status --short
 git diff --check
-git add docs-site cmd/mr/commands/plugins_help CLAUDE.md docs/todo.md plugin_system/command_integration_test.go server/api_tests/plugin_command_integration_test.go public/dist openapi.yaml
+git add docs-site cmd/mr/commands/plugins_help AGENTS.md docs/todo.md plugin_system/command_integration_test.go server/api_tests/plugin_command_integration_test.go public/dist openapi.yaml
 git commit -m "docs: complete plugin command host integration"
 ```
 

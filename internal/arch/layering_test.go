@@ -1,7 +1,7 @@
 // Package arch holds architecture tests: rules about how packages may depend on
 // each other, enforced by the test suite rather than by convention.
 //
-// CLAUDE.md describes the intended layering as
+// AGENTS.md describes the intended layering as
 //
 //	server/ (HTTP) -> application_context/ (business logic) -> models/ (GORM)
 //

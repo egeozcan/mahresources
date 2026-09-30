@@ -216,7 +216,7 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
       // With one connection every request that touches SQLite serialises against
       // every other request on this worker's server, including the background
       // reads a page render fans out over — so a page under contention does not
-      // slow down gracefully, it queues. CLAUDE.md has recommended 2 for the E2E
+      // slow down gracefully, it queues. AGENTS.md has recommended 2 for the E2E
       // harness since before this file existed; the 1 here was never argued for.
       //
       // Raising `navigationTimeout` instead was considered and rejected: it would

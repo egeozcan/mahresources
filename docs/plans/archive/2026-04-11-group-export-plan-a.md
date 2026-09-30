@@ -2105,7 +2105,7 @@ Expected: all PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add download_queue/manager.go application_context/context.go main.go CLAUDE.md
+git add download_queue/manager.go application_context/context.go main.go AGENTS.md
 git commit -m "feat(download_queue): configurable concurrency and export retention"
 ```
 
@@ -5488,7 +5488,7 @@ If any test fails, do not commit. Diagnose and fix root causes per CLAUDE.md gui
 - [ ] **Step 6: Commit the regen + any final touches**
 
 ```bash
-git add openapi.yaml README.md CLAUDE.md
+git add openapi.yaml README.md AGENTS.md
 git commit -m "docs(export): regenerate OpenAPI and document new flags"
 ```
 

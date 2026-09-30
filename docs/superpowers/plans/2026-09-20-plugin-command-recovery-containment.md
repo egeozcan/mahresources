@@ -863,7 +863,7 @@ Update `docs/todo.md` with task commits, RED/GREEN commands, aggregate results, 
 - [ ] **Step 8: Commit documentation and generated assets**
 
 ```bash
-git add CLAUDE.md docs-site/docs/configuration/advanced.md \
+git add AGENTS.md docs-site/docs/configuration/advanced.md \
   docs-site/docs/features/plugin-lua-api.md \
   docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md \
   docs/todo.md docs/lessons.md public/tailwind.css

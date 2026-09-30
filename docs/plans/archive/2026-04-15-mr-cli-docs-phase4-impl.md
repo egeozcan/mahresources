@@ -300,7 +300,7 @@ Expected: exit 0, `[SUCCESS] Generated static files` near the end. If the build 
 
 Run:
 ```bash
-git add CLAUDE.md docs-site/docs/guides/export-import-guide.md README.md
+git add AGENTS.md docs-site/docs/guides/export-import-guide.md README.md
 git status --short
 ```
 
@@ -311,7 +311,7 @@ Then:
 git commit -m "$(cat <<'EOF'
 docs: add CLI docs workflow note, fix stray CLI links
 
-Adds a short "CLI Documentation" section to CLAUDE.md telling future
+Adds a short "CLI Documentation" section to AGENTS.md telling future
 contributors to update the corresponding <group>_help/*.md file when
 they touch cmd/mr/commands/; retargets the stale link in
 export-import-guide.md to deep-link at mr group export / mr group

@@ -1608,7 +1608,7 @@ Expected: both commands PASS.
 Run:
 
 ```bash
-git add CLAUDE.md docs-site/docs/features/mrql.md docs-site/docs/configuration openapi.yaml
+git add AGENTS.md docs-site/docs/features/mrql.md docs-site/docs/configuration openapi.yaml
 git commit -m "docs(mrql): document natural-language generation"
 ```
 

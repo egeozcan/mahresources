@@ -599,7 +599,7 @@ git add application_context/context.go cmd/ \
   server/api_handlers/version_api_handlers.go \
   server/routes.go \
   server/api_tests/upload_size_limit_test.go \
-  CLAUDE.md
+  AGENTS.md
 git commit -m "feat(uploads): BH-034 — bound resource + version upload sizes
 
 Previously both /v1/resource and /v1/resource/versions called

@@ -414,7 +414,7 @@ Closes BH-023.
 
 ## Changes
 
-- **Manifest (forward-compat, no schema_version bump):** `archive/manifest.go` adds `ResourcePayload.StorageLocation` as optional JSON field. Unknown keys are silently ignored per CLAUDE.md contract, so older readers remain compatible.
+- **Manifest (forward-compat, no schema_version bump):** `archive/manifest.go` adds `ResourcePayload.StorageLocation` as optional JSON field. Unknown keys are silently ignored per AGENTS.md contract, so older readers remain compatible.
 - **Exporter:** populates `storage_location` from `resource.StorageLocation` when non-empty.
 - **Importer:** restores `StorageLocation` when present, defaults to empty (= default filesystem) when absent.
 - **Multipart API:** `ResourceCreator` gains `PathName` field; `AddResource` validates it against `config.AltFileSystems` and sets `resource.StorageLocation`.
@@ -431,7 +431,7 @@ Closes BH-023.
 
 ## Contract note
 
-Manifest change is additive and optional. Per CLAUDE.md's "unknown top-level keys silently ignored" rule, this is forward-compatible with `schema_version: 1`. No version bump.
+Manifest change is additive and optional. Per AGENTS.md's "unknown top-level keys silently ignored" rule, this is forward-compatible with `schema_version: 1`. No version bump.
 
 ## Bug-hunt-log update
 
