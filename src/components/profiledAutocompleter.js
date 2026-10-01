@@ -259,8 +259,8 @@ export function tagEditorSelector(arguments_) {
                 // Close the list only when the field is not being typed in: nothing reopens it
                 // until the field is focused again, so closing under the cursor left typing
                 // with no results.
-                if (navigated) {
-                    const input = this._refEl?.('autocompleter');
+                const input = this._refEl?.('autocompleter');
+                if (navigated && (input?.value || this._core?.getSnapshot().query)) {
                     this._clearInput?.({ notify: false });
                     this._core?.dispatch({ type: 'set-query', query: '' });
                     if (!input || document.activeElement !== input) {

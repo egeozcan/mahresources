@@ -305,7 +305,7 @@ export const quickTagPanelMethods = {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const now = focusedElement();
         if (!this.isOpen || !this.quickTagPanelOpen || (now && now !== toggle)) return;
-        if (pointer) focusOn(document.querySelector('[role="dialog"][aria-modal="true"]'));
+        if (pointer) focusOn(toggle.closest('[role="dialog"][aria-modal="true"]'));
         else focusFirstIn(document.querySelector('[data-quick-tag-panel]'));
       }));
     }
