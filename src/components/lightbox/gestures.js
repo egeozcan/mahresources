@@ -62,9 +62,13 @@ export const gestureMethods = {
   },
 
   handleTouchStart(event) {
-    // Ignore touches that start within the edit panel
-    if (event.target.closest('[data-edit-panel]')) {
+    // Ignore touches that start on a surface with its own gestures: the side panels (a
+    // sideways scroll in the full-screen mobile tags panel changed the image underneath),
+    // the zoom popover's slider (dragging it panned the image), and the video, whose native
+    // seek bar cannot be told apart from the frame (scrubbing it changed the item).
+    if (event.target.closest('[data-edit-panel], [data-quick-tag-panel], #zoom-preset-popover, video')) {
       this.touchStartX = null;
+      this.touchStartY = null;
       return;
     }
 
@@ -184,6 +188,7 @@ export const gestureMethods = {
         }
       }
 
+      const startZoom = this.pinchStartZoom;
       this.pinchStartDistance = null;
       this.pinchStartZoom = null;
       this.pinchStartCenterX = null;
@@ -199,7 +204,9 @@ export const gestureMethods = {
       // measure against a pre-pinch coordinate (BH: M5).
       this.touchStartX = null;
       this.touchStartY = null;
-      this.announceZoom();
+      // Only a gesture that changed the zoom has anything to say; announcing after a
+      // two-finger swipe overwrote the position message next()/prev() had just made.
+      if (this.zoomLevel !== startZoom) this.announceZoom();
       return;
     }
 
@@ -347,6 +354,8 @@ export const gestureMethods = {
   },
 
   handleMouseDown(event) {
+    // Primary button only: a right-click (context menu) drag must not pan or navigate.
+    if (event.button !== 0) return;
     if (this.isVideo(this.getCurrentItem()?.contentType)) return;
     if (event.target.closest('button')) return;
     if (event.target.closest('[data-edit-panel]')) return;
@@ -409,7 +418,9 @@ export const gestureMethods = {
       const threshold = 0.3;
       const minDistance = 30;
 
-      if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY)) {
+      // The whole drag must be mostly horizontal too: the last mousemove's velocity alone let
+      // a long vertical drag that ended in a small sideways flick change the item.
+      if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY) && Math.abs(dx) > Math.abs(dy)) {
         if ((speed > threshold || distance > minDistance) && !this._navDebounce) {
           this._navDebounce = true;
           setTimeout(() => { this._navDebounce = false; }, 300);

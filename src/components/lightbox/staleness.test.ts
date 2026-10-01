@@ -14,6 +14,7 @@ vi.mock('../../userSettings.js', () => ({
 import { editPanelMethods, editPanelState } from './editPanel.js';
 import { quickTagPanelMethods, quickTagPanelState } from './quickTagPanel.js';
 import { navigationMethods, navigationState } from './navigation.js';
+import { cropPanelMethods } from './cropPanel.js';
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -51,6 +52,7 @@ function makeStore(items: any[] = []) {
     _detailsGen: new Map(),
     _detailsWrites: new Map(),
     _detailsInFlight: new Set(),
+    _tagWriteChains: new Map(),
     _suggestedCache: new Map(),
     _preloadedUrls: new Set(),
     _preloadedImages: [],
@@ -432,5 +434,94 @@ describe('suggestions follow tag writes', () => {
       expect(store._suggestedCache.has(1)).toBe(false);
       expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
     } finally { post.mockRestore(); }
+  });
+});
+
+describe('lightbox review fixes', () => {
+  it('sends a remove only after the add of the same tag on the same resource settles', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const add = deferred<any>();
+    const urls: string[] = [];
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      urls.push(url);
+      return url.includes('addTags') ? add.promise : Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const adding = store.saveTagAddition(seedTag);
+      const removing = store.saveTagRemoval(seedTag);
+      await Promise.resolve();
+      await Promise.resolve();
+      // The remove must not overtake the add: the server applies them in arrival order.
+      expect(urls).toEqual(['/v1/resources/addTags']);
+      add.resolve({ ok: true });
+      await adding;
+      await removing;
+      expect(urls).toEqual(['/v1/resources/addTags', '/v1/resources/removeTags']);
+    } finally { post.mockRestore(); }
+  });
+
+  it('still saves a tag on the next image while the same tag is in flight for the previous one', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] }, 2: { ID: 2, Tags: [] } });
+    const first = deferred<any>();
+    const bodies: string[] = [];
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((_url: string, init: any) => {
+      bodies.push(init.body.get('ID'));
+      return bodies.length === 1 ? first.promise : Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const onFirst = store.saveTagAddition(seedTag);
+      store.currentIndex = 1;
+      await store.saveTagAddition(seedTag);
+      expect(bodies).toEqual(['1', '2']);
+      first.resolve({ ok: true });
+      await onFirst;
+    } finally { post.mockRestore(); }
+  });
+
+  it('drops the previous image\'s suggestions before the navigation fetch resolves', () => {
+    const store = taggingStore();
+    fetchMock.abortableFetch.mockReturnValue({ abort: vi.fn(), ready: new Promise(() => {}) });
+    store.currentIndex = 1;
+    store.onResourceChange();
+    // Synchronously: Shift+digit in this window must not apply image 1's chips to image 2.
+    expect(store.suggestedTags).toEqual([]);
+  });
+
+  it('does not let a details prefetch that resolves after close() repopulate the cache', async () => {
+    const store = makeStore([item(1), item(2)]);
+    store.quickTagPanelOpen = true;
+    const pending = deferred<any>();
+    fetchMock.abortableFetch.mockReturnValue({ abort: vi.fn(), ready: pending.promise });
+    store._preloadDetailsUpcoming();
+    store.quickTagPanelOpen = false;
+    store.close();
+    pending.resolve(jsonResponse({ resource: { ID: 2, Name: 'image 2', Tags: [] } }));
+    await vi.waitFor(() => expect(store._detailsInFlight.size).toBe(0));
+    expect(store.detailsCache.has(2)).toBe(false);
+  });
+
+  it('keeps the video playing and the zoom when there is nowhere to go', async () => {
+    const store = makeStore([item(1), item(2)]);
+    store.currentIndex = 1;
+    await store.next();
+    store.currentIndex = 0;
+    await store.prev();
+    expect(store.pauseCurrentVideo).not.toHaveBeenCalled();
+    expect(store.resetZoom).not.toHaveBeenCalled();
+  });
+
+  it('clears the rotate spinner when the follow-up refresh fails', async () => {
+    const store = { ...makeStore([item(1)]), ...cropPanelMethods, isHistoricalVersion: () => false };
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) =>
+      Promise.resolve(url.startsWith('/resource.json') ? { ok: false, status: 500 } : { ok: true })) as any);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await store.rotateCurrent(90);
+      expect(store.loading).toBe(false);
+      expect(store.rotating).toBe(false);
+      expect(store.announce).toHaveBeenLastCalledWith('Image rotated, but the viewer could not show the new version');
+    } finally { post.mockRestore(); error.mockRestore(); }
   });
 });

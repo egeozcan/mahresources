@@ -136,8 +136,14 @@ export const cropPanelMethods = {
         return;
       }
 
-      await this.refreshCurrentItem(targetId);
-      this.announce('Image rotated');
+      if (await this.refreshCurrentItem(targetId)) {
+        this.announce('Image rotated');
+      } else {
+        // The rotate landed but no new bitmap is coming, so @load will never clear the
+        // spinner it armed above.
+        if (this.getCurrentItem()?.id === targetId) this.loading = false;
+        this.announce('Image rotated, but the viewer could not show the new version');
+      }
     } catch (err) {
       if (this.getCurrentItem()?.id === targetId) this.loading = false;
       console.error('Failed to rotate image:', err);
@@ -150,9 +156,9 @@ export const cropPanelMethods = {
   // Re-fetch a resource's metadata after an in-place edit (crop/rotate) and
   // update its lightbox item so the new version's image is displayed. The id is
   // captured by the caller before any await so a mid-flight navigation cannot
-  // misdirect the update onto a different resource.
+  // misdirect the update onto a different resource. Returns whether the item was re-pointed.
   async refreshCurrentItem(targetId) {
-    if (!targetId) return;
+    if (!targetId) return false;
 
     // A crop or rotate rewrites the hash, dimensions and content type, so any details GET
     // in flight for this resource now describes the pre-edit version. Without this fence it
@@ -171,14 +177,14 @@ export const cropPanelMethods = {
     } catch (err) {
       console.error('Failed to refresh resource after edit:', err);
       this._endDetailsWrite(targetId);
-      return;
+      return false;
     }
 
     const r = data.resource ?? data;
     const idx = this.items.findIndex(i => i.id === targetId);
     if (idx === -1) {
       this._endDetailsWrite(targetId);
-      return; // resource navigated away and dropped from the list
+      return false; // resource navigated away and dropped from the list
     }
 
     // Re-point the item at the new version. forceMedia: the edit produced a new file even in
@@ -207,5 +213,6 @@ export const cropPanelMethods = {
     // Closed only now, after the cache and panel have been updated, so no read can slip
     // between the fetch returning and the commit landing.
     this._endDetailsWrite(targetId);
+    return true;
   },
 };

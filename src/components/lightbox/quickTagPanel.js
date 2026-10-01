@@ -1,6 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
+import { focusOn } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -311,8 +312,20 @@ export const quickTagPanelMethods = {
     this.editingSlotIndex = null;
     this.expandedSlotIndex = null;
     this._cancelLongPress();
+    // The "Edit Tags" toggle is x-show'd on !quickTagPanelOpen. When focus was inside the
+    // panel, hand it back there (as closeEditPanel does) instead of dropping it on <body>.
+    const panel = document.querySelector('[data-quick-tag-panel]');
+    const hadFocus = !!panel?.contains(document.activeElement);
     this.quickTagPanelOpen = false;
-    // Drop suggestions so a reopen never flashes the previous image's chips.
+    if (hadFocus) {
+      // Two frames: x-show reveals the toggle in a frame of its own, queued after this one.
+      requestAnimationFrame(() => requestAnimationFrame(() =>
+        focusOn(document.querySelector('button[title="Edit tags"]'))));
+    }
+    // Drop suggestions so a reopen never flashes the previous image's chips, and drop any
+    // response still in flight, which would otherwise repaint them after the close.
+    ++this._suggestedReq;
+    this.suggestedTagsLoading = false;
     this.suggestedTags = [];
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());

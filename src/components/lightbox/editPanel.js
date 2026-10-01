@@ -44,8 +44,8 @@ export const editPanelState = {
   // still-pending read is holding.
   _detailsSeq: 0,
 
-  // Tag editing
-  _savingTagIds: new Set(),
+  // Tag editing: the tail of each `resourceId:tagId` write chain (see _serializeTagWrite)
+  _tagWriteChains: new Map(),
 
   // Track if changes were made that require refreshing the page content
   needsRefreshOnClose: false,
@@ -182,7 +182,9 @@ export const editPanelMethods = {
     // to it rather than letting the removed panel drop the reader on <body>.
     const toggle = document.querySelector('button[title="Resource info"]');
     this.editPanelOpen = false;
-    if (toggle) requestAnimationFrame(() => focusOn(toggle));
+    // Two frames: x-show reveals the toggle in a frame of its own, queued after this one, so a
+    // single frame tried to focus a still-hidden button and focus fell to <body>.
+    if (toggle) requestAnimationFrame(() => requestAnimationFrame(() => focusOn(toggle)));
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
 
@@ -496,6 +498,16 @@ export const editPanelMethods = {
     // still holds the previous image here, which is exactly what R should repeat.
     this._snapshotCarryForward();
 
+    // The suggestion row and its Shift+digit keys act on whatever image is current, so the
+    // previous image's chips must go before the await below, not after it: for a whole
+    // round-trip they offered A's suggestions as one-tap writes onto B. The request token
+    // drops any response still in flight for the previous image.
+    if (this.quickTagPanelOpen) {
+      ++this._suggestedReq;
+      this.suggestedTagsLoading = false;
+      this.suggestedTags = [];
+    }
+
     // Do NOT blank resourceDetails or evict the incoming resource's cache here.
     // Blanking would throw away the previous image's snapshot that _snapshotCarryForward
     // and the decision poll still need, and evicting the entry we are about to need forces
@@ -624,11 +636,40 @@ export const editPanelMethods = {
     };
   },
 
+  // Writes for one tag on one resource reach the server in the order the reader made them.
+  // The profile discards a superseded operation's result, but it cannot recall a request the
+  // server may already have applied: an add followed quickly by a remove used to race, and
+  // the row kept a tag the panel showed as gone. Mirrors tagAssociationFromUrls.
+  _serializeTagWrite(resourceId, tagId, run) {
+    const key = `${resourceId}:${tagId}`;
+    const previous = this._tagWriteChains.get(key) ?? Promise.resolve();
+    const next = previous.then(run);
+    // A swallowed tail, so one failed write cannot poison the writes queued behind it.
+    const tail = next.catch(() => undefined);
+    this._tagWriteChains.set(key, tail);
+    tail.then(() => {
+      if (this._tagWriteChains.get(key) === tail) this._tagWriteChains.delete(key);
+    });
+    return next;
+  },
+
+  _postTagWrite(url, resourceId, tagId) {
+    return this._serializeTagWrite(resourceId, tagId, () => {
+      const formData = new FormData();
+      formData.append('ID', resourceId);
+      formData.append('EditedId', tagId);
+      return fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Accept': 'application/json' }
+      });
+    });
+  },
+
   async saveTagAddition(tag) {
     const resourceId = this.getCurrentItem()?.id;
-    if (!resourceId || this._savingTagIds.has(tag.ID)) return;
+    if (!resourceId) return;
 
-    this._savingTagIds.add(tag.ID);
     const writeGeneration = this._beginTagWrite(resourceId, [tag], 'add');
 
     // Only mutate/cache the live details when they belong to the current resource. During a
@@ -646,15 +687,7 @@ export const editPanelMethods = {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('ID', resourceId);
-      formData.append('EditedId', tag.ID);
-
-      const response = await fetch('/v1/resources/addTags', {
-        method: 'POST',
-        body: formData,
-        headers: { 'Accept': 'application/json' }
-      });
+      const response = await this._postTagWrite('/v1/resources/addTags', resourceId, tag.ID);
 
       if (!response.ok) {
         throw new Error(`Failed to add tag: ${response.status}`);
@@ -681,7 +714,6 @@ export const editPanelMethods = {
       this.announce('Failed to add tag');
       throw err;
     } finally {
-      this._savingTagIds.delete(tag.ID);
       this._endDetailsWrite(resourceId);
     }
   },
@@ -703,15 +735,7 @@ export const editPanelMethods = {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('ID', resourceId);
-      formData.append('EditedId', tag.ID);
-
-      const response = await fetch('/v1/resources/removeTags', {
-        method: 'POST',
-        body: formData,
-        headers: { 'Accept': 'application/json' }
-      });
+      const response = await this._postTagWrite('/v1/resources/removeTags', resourceId, tag.ID);
 
       if (!response.ok) {
         throw new Error(`Failed to remove tag: ${response.status}`);
