@@ -326,10 +326,22 @@ describe('profiled autocompleter bridge', () => {
         selector.syncEntityTags(10, []);
         expect(input.value).toBe('fo');
 
-        // Navigating to another entity clears it and closes its results.
+        // Navigating to another entity clears it, in the core too, and closes its results.
         selector.syncEntityTags(11, []);
         expect(input.value).toBe('');
+        expect(selector._core.getSnapshot().query).toBe('');
         expect(selector._core.getSnapshot().isOpen).toBe(false);
+
+        // While the field is being typed in, the list stays open, so the next keystroke
+        // still shows results.
+        (document as unknown as { activeElement: unknown }).activeElement = input;
+        input.value = 'su';
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'su' });
+        selector.syncEntityTags(12, []);
+        expect(input.value).toBe('');
+        expect(selector._core.getSnapshot().query).toBe('');
+        expect(selector._core.getSnapshot().isOpen).toBe(true);
         selector.destroy();
     });
 

@@ -270,6 +270,42 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
   });
 
+  test('after paging from the tag search, typing still shows results', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    const start = (await store(page)).currentIndex;
+    // The editor survives a navigation only when the next image's details are already
+    // cached (otherwise it is rebuilt), and that is the path where its list could be left shut.
+    // Visiting the next image and coming back caches it.
+    await page.keyboard.press('PageDown');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
+    await page.keyboard.press('PageUp');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start);
+    await expect.poll(() => page.evaluate(() => {
+      const s = (window as any).Alpine.store('lightbox');
+      return s.detailsCache.has(s.items[s.currentIndex + 1]?.id);
+    })).toBe(true);
+
+    const field = page.locator('[data-quick-tag-panel] [data-tag-editor-input]');
+    await field.fill('Lightbox');
+    await expect(field).toBeFocused();
+    await page.keyboard.press('PageDown');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
+
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('');
+    await page.keyboard.type(`keys-${testRunId}`);
+    await expect(page.locator('#lightbox-tag-listbox [role="option"]', { hasText: `keys-${testRunId}` })).toBeVisible();
+  });
+
+  test('opening the tags panel from the keyboard moves focus into it', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    const toggle = lightbox.locator('button[title="Edit tags"]');
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('button[aria-label="Close edit tags panel"]')).toBeFocused();
+  });
+
   test('Space after opening the tags panel by click still moves to the next image', async ({ page }) => {
     const lightbox = await openLightbox(page);
     await lightbox.locator('button[title="Edit tags"]').click();

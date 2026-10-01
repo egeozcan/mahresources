@@ -298,7 +298,7 @@
         <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
         <button
             x-show="!$store.lightbox.quickTagPanelOpen"
-            @click.stop="$store.lightbox.openQuickTagPanel()"
+            @click.stop="$store.lightbox.openQuickTagPanel($event)"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Edit tags"
         >

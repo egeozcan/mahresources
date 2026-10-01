@@ -1,7 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
-import { focusOn, focusedElement } from '../../utils/focus.js';
+import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -289,23 +289,24 @@ export const quickTagPanelMethods = {
 
   // ==================== Open / Close ====================
 
-  openQuickTagPanel() {
+  openQuickTagPanel(event) {
     // Responsive exclusivity: close edit panel on narrow viewports
     if (window.innerWidth < 1024 && this.editPanelOpen) {
       this.closeEditPanel();
     }
-    // The "Edit Tags" toggle hides as the panel opens. If it had focus, park focus on the
-    // viewer itself rather than leave it on <body>. Not on the panel's first control, as
-    // openEditPanel does: that is the Close button, and Space or Enter pressed to move on
-    // after tagging would activate it and close the panel. Two frames, so x-show has run,
-    // and only while focus is still lost.
+    // The "Edit Tags" toggle hides as the panel opens. If it had focus, move focus on rather
+    // than leave it on <body>; two frames, so x-show has run, and only while still lost.
+    // Activated from the keyboard, focus goes into the panel, as openEditPanel does. Clicked
+    // (event.detail > 0), it parks on the viewer instead: the panel's first control is its
+    // Close button, and Space or Enter pressed to move on after mouse tagging would close it.
     const toggle = document.querySelector('button[title="Edit tags"]');
     if (toggle && document.activeElement === toggle) {
+      const pointer = (event?.detail ?? 0) > 0;
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const now = focusedElement();
-        if (this.isOpen && this.quickTagPanelOpen && (!now || now === toggle)) {
-          focusOn(document.querySelector('[role="dialog"][aria-modal="true"]'));
-        }
+        if (!this.isOpen || !this.quickTagPanelOpen || (now && now !== toggle)) return;
+        if (pointer) focusOn(document.querySelector('[role="dialog"][aria-modal="true"]'));
+        else focusFirstIn(document.querySelector('[data-quick-tag-panel]'));
       }));
     }
     this.quickTagPanelOpen = true;
