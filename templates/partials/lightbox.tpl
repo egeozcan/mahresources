@@ -1,14 +1,16 @@
 <div
     x-data="{
-        canNavigate() {
+        canNavigate(allowOnVideo = false) {
             // The crop overlay owns the keyboard while open — block viewer navigation.
             if (this.$store.lightbox.cropOpen) return false;
             // Allow navigation unless focus is on a field, or on a video, whose native
-            // controls seek with the arrow keys.
+            // controls seek with the arrow keys. PageUp/PageDown pass allowOnVideo: the
+            // controls do not use them, so they stay a way to move on from a playing video.
             const activeEl = document.activeElement;
             if (!activeEl) return true;
             if (activeEl.isContentEditable) return false;
-            return !['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'].includes(activeEl.tagName);
+            if (activeEl.tagName === 'VIDEO') return allowOnVideo;
+            return !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
         },
         canShortcut() {
             // For Space/Enter, which ACTIVATE the focused control: bail when focus is on a
@@ -56,8 +58,8 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     {# canNavigate, like the arrows: PageUp/PageDown scroll a textarea, and navigating #}
     {# from inside the Description field threw the edit away.                         #}
-    @keydown.page-up.window="$store.lightbox.isOpen && canNavigate() && ($event.preventDefault(), $store.lightbox.prev())"
-    @keydown.page-down.window="$store.lightbox.isOpen && canNavigate() && ($event.preventDefault(), $store.lightbox.next())"
+    @keydown.page-up.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.prev())"
+    @keydown.page-down.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.space.window="$store.lightbox.isOpen && canShortcut() && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
     @keydown.h.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && $store.lightbox.toggleVersionPanel()"
@@ -516,10 +518,13 @@
                             data-tag-editor-input
                             type="text"
                             x-bind="inputEvents"
-                            {# Same guard as the shared autocompleter: false until the "Add X?" #}
-                            {# confirmation has been shown, then '' on the way back, so leaving #}
-                            {# it puts focus back here instead of dropping it on <body>.         #}
-                            x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
+                            {# Same guard as the shared autocompleter: false until the "Add X?"  #}
+                            {# confirmation has been shown, then '' on the way back, so leaving  #}
+                            {# it puts focus back here instead of dropping it on <body>. Only    #}
+                            {# while focus is lost: a tag change from elsewhere (a quick slot,   #}
+                            {# navigation) also ends the confirmation, and must not pull focus   #}
+                            {# off the control the user is on and into this text field.          #}
+                            x-init="setTimeout(() => { const a = document.activeElement; addModeForTag !== false && (!a || a === document.body) && $el.focus(); }, 1)"
                             class="w-full min-w-0 px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Search or add tags..."
                             aria-label="Search or add tags"

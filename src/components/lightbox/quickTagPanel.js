@@ -1,7 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
-import { focusOn } from '../../utils/focus.js';
+import { focusOn, focusedElement } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -319,8 +319,11 @@ export const quickTagPanelMethods = {
     this.quickTagPanelOpen = false;
     if (hadFocus) {
       // Two frames: x-show reveals the toggle in a frame of its own, queued after this one.
-      requestAnimationFrame(() => requestAnimationFrame(() =>
-        focusOn(document.querySelector('button[title="Edit tags"]'))));
+      // Only if focus is still lost by then, so a focus move made meanwhile is not taken back.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const now = focusedElement();
+        if (!now || panel.contains(now)) focusOn(document.querySelector('button[title="Edit tags"]'));
+      }));
     }
     // Drop suggestions so a reopen never flashes the previous image's chips, and drop any
     // response still in flight, which would otherwise repaint them after the close.

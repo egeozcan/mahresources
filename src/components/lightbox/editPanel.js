@@ -1,7 +1,7 @@
 import { abortableFetch } from '../../index.js';
 import { morphAndReinitChangedComponents } from '../../utils/shortcodeElementMorph.js';
 import { findListContainer, LIST_CONTAINER_SELECTOR } from '../../utils/listContainer.js';
-import { focusFirstIn, focusOn } from '../../utils/focus.js';
+import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
 
 /**
  * Edit panel state/methods for the lightbox store.
@@ -181,10 +181,19 @@ export const editPanelMethods = {
     // while the panel is open and reappears as the panel goes. Hand focus back
     // to it rather than letting the removed panel drop the reader on <body>.
     const toggle = document.querySelector('button[title="Resource info"]');
+    const panel = document.querySelector('[data-edit-panel]');
+    const hadFocus = !!panel?.contains(document.activeElement);
     this.editPanelOpen = false;
     // Two frames: x-show reveals the toggle in a frame of its own, queued after this one, so a
-    // single frame tried to focus a still-hidden button and focus fell to <body>.
-    if (toggle) requestAnimationFrame(() => requestAnimationFrame(() => focusOn(toggle)));
+    // single frame tried to focus a still-hidden button and focus fell to <body>. Only when
+    // focus was in the panel and is still lost by then: opening the Tags panel closes this one
+    // on narrow viewports, and must not have its own focus move taken back.
+    if (toggle && hadFocus) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const now = focusedElement();
+        if (!now || panel.contains(now)) focusOn(toggle);
+      }));
+    }
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
 

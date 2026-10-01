@@ -13,6 +13,7 @@ test.describe('Lightbox keyboard and focus fixes', () => {
   let categoryId: number;
   let ownerGroupId: number;
   const createdResourceIds: number[] = [];
+  let videoId: number;
   const testRunId = Date.now();
 
   test.beforeAll(async ({ apiClient }) => {
@@ -28,6 +29,16 @@ test.describe('Lightbox keyboard and focus fixes', () => {
       categoryId,
     });
     ownerGroupId = ownerGroup.ID;
+
+    // Created first, so it is the oldest and sits last in the newest-first list the other
+    // tests open from.
+    const video = await apiClient.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-video.mp4'),
+      name: `Lightbox Keys Video - ${testRunId}`,
+      ownerId: ownerGroupId,
+    });
+    videoId = video.ID;
+    createdResourceIds.push(videoId);
 
     const imageFiles = [
       path.join(__dirname, '../../test-assets/sample-image-13.png'),
@@ -217,5 +228,33 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await expect(popover).toBeHidden();
     expect((await store(page)).isOpen).toBe(true);
     await expect(zoomButton).toBeFocused();
+  });
+
+  test('opening the tags panel on a narrow viewport keeps focus off the Info toggle', async ({ page }) => {
+    // Under 1024px the two panels are exclusive: opening Tags closes Info, whose focus
+    // restore used to land on the "Resource info" toggle after the Tags panel had opened.
+    await page.setViewportSize({ width: 900, height: 900 });
+    const lightbox = await openLightbox(page);
+    await openInfoPanel(page, lightbox);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    await expect(page.locator('[data-quick-tag-panel]')).toBeVisible();
+    await page.waitForTimeout(200);
+    await expect(lightbox.locator('button[title="Resource info"]')).not.toBeFocused();
+  });
+
+  test('PageUp moves on from a focused video; the arrows are left to the video', async ({ page }) => {
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+    await page.locator(`[data-lightbox-item][data-resource-id="${videoId}"]`).click();
+    const video = page.locator(`${LIGHTBOX} video`);
+    await expect(video).toBeAttached();
+    await video.focus();
+    const start = (await store(page)).currentIndex;
+
+    await page.keyboard.press('ArrowLeft');
+    expect((await store(page)).currentIndex).toBe(start);
+
+    await page.keyboard.press('PageUp');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start - 1);
   });
 });

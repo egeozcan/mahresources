@@ -576,6 +576,9 @@ export const navigationMethods = {
     // (`items`/`loadedPages` are reassigned wholesale by every open() path, so they do not
     // leak across sessions; they only grow within a single uninterrupted paging session — BH: L7.)
     this._preloadedUrls.clear();
+    // A prefetch still out belongs to this session and will be dropped when it lands; it must
+    // not stop the next session from warming the same item.
+    this._detailsInFlight?.clear();
     this._preloadedImages = [];
 
     // Detail and suggestion snapshots describe a moment in time, and the next session can be

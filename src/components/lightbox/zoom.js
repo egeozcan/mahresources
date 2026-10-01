@@ -150,7 +150,8 @@ export const zoomMethods = {
       updateReadout();
 
       slider.addEventListener('keydown', (e) => {
-        e.stopPropagation();
+        // Escape goes on to the popover's own handler, which closes it and refocuses the trigger.
+        if (e.key !== 'Escape') e.stopPropagation();
       });
       slider.addEventListener('input', (e) => {
         e.stopPropagation();
@@ -186,6 +187,8 @@ export const zoomMethods = {
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         self.setNativeZoom(preset.nativePct);
+        // The preset closes the popover and takes the focused button with it.
+        btn.focus();
       });
       p.appendChild(item);
     }

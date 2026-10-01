@@ -47,11 +47,22 @@ export const gestureState = {
 // Below this the pointer barely moved, so the click really is a click.
 const DRAG_CLICK_SUPPRESSION_PX = 5;
 
+// Height of the band at the bottom of a video taken to be its native control bar.
+const VIDEO_CONTROLS_BAND_PX = 48;
+
 export const gestureMethods = {
   getPinchDistance(touches) {
     const dx = touches[0].clientX - touches[1].clientX;
     const dy = touches[0].clientY - touches[1].clientY;
     return Math.sqrt(dx * dx + dy * dy);
+  },
+
+  // The native controls are not in the DOM, so the bottom band of the video stands in for them.
+  _touchOnVideoControls(event) {
+    const video = event.target.closest?.('video');
+    if (!video || !event.touches?.length) return false;
+    const rect = video.getBoundingClientRect();
+    return event.touches[0].clientY > rect.bottom - VIDEO_CONTROLS_BAND_PX;
   },
 
   getPinchCenter(touches) {
@@ -64,9 +75,10 @@ export const gestureMethods = {
   handleTouchStart(event) {
     // Ignore touches that start on a surface with its own gestures: the side panels (a
     // sideways scroll in the full-screen mobile tags panel changed the image underneath),
-    // the zoom popover's slider (dragging it panned the image), and the video, whose native
-    // seek bar cannot be told apart from the frame (scrubbing it changed the item).
-    if (event.target.closest('[data-edit-panel], [data-quick-tag-panel], #zoom-preset-popover, video')) {
+    // the zoom popover's slider (dragging it panned the image), and a video's native control
+    // bar, where scrubbing the seek bar changed the item. The rest of the video still swipes.
+    if (event.target.closest('[data-edit-panel], [data-quick-tag-panel], #zoom-preset-popover') ||
+        this._touchOnVideoControls(event)) {
       this.touchStartX = null;
       this.touchStartY = null;
       return;
