@@ -510,6 +510,12 @@ describe('lightbox review fixes', () => {
     await store.prev();
     expect(store.pauseCurrentVideo).not.toHaveBeenCalled();
     expect(store.resetZoom).not.toHaveBeenCalled();
+
+    // And they still happen when the index does move.
+    await store.next();
+    expect(store.currentIndex).toBe(1);
+    expect(store.pauseCurrentVideo).toHaveBeenCalledTimes(1);
+    expect(store.resetZoom).toHaveBeenCalledTimes(1);
   });
 
   it('clears the rotate spinner when the follow-up refresh fails', async () => {

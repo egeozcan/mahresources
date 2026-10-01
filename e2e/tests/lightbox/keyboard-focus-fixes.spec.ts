@@ -58,7 +58,7 @@ test.describe('Lightbox keyboard and focus fixes', () => {
   });
 
   async function openLightbox(page: Page) {
-    await page.goto(`/resources?OwnerId=${ownerGroupId}&sort=ID`);
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
     await page.locator('[data-lightbox-item]').first().click();
     const lightbox = page.locator(LIGHTBOX);
@@ -76,6 +76,9 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await lightbox.locator('button[title="Resource info"]').click();
     const name = page.locator('#lightbox-edit-name');
     await expect(name).toHaveValue(/Lightbox Keys Image \d/);
+    // openEditPanel moves focus to its close button a frame after the details land; wait for
+    // it, or that move can steal focus from the field a test is about to type into.
+    await expect(page.getByRole('button', { name: 'Close info panel' })).toBeFocused();
     const id: number = await page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem().id);
     return { name, id };
   }
@@ -100,14 +103,12 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     const original = await name.inputValue();
     const renamed = `${original} renamed`;
 
-    const toggled = await page.evaluate(() => {
+    await page.evaluate(() => {
       const s = (window as any).Alpine.store('lightbox');
       (window as any).__fullscreenToggles = 0;
       const orig = s.toggleFullscreen;
       s.toggleFullscreen = function () { (window as any).__fullscreenToggles++; return orig.call(this); };
-      return 0;
     });
-    expect(toggled).toBe(0);
 
     await name.fill(renamed);
     await name.press('Enter');
@@ -143,7 +144,8 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await expect(input).toBeVisible();
 
     // Enter on the active "Create" row creates outright; the confirmation is the core's
-    // request-create-confirmation state, so enter it the way the adapter's unit tests do.
+    // request-create-confirmation state, so enter it the way the adapter's unit tests do
+    // (selectorFieldAdapter.test.ts). If that command is renamed, this fails loudly here.
     await input.evaluate((el, label) => {
       (window as any).Alpine.$data(el)._core.dispatch({ type: 'request-create-confirmation', label });
     }, `brand-new-tag-${testRunId}`);
@@ -196,5 +198,24 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     expect((await store(page)).isOpen).toBe(true);
     await expect(zoomButton).toBeFocused();
     await expect(zoomButton).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('Escape straight after opening the zoom popover closes only the popover', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await page.waitForFunction(() => {
+      const img = document.querySelector('[role="dialog"] img') as HTMLImageElement | null;
+      return img && img.complete && img.naturalWidth > 0 && img.clientWidth > 0;
+    });
+    const zoomButton = lightbox.locator('button[title="Choose zoom level"]');
+    await zoomButton.click();
+    const popover = page.locator('#zoom-preset-popover');
+    await expect(popover).toBeVisible();
+
+    // Focus is wherever opening put it (the slider when there is one).
+    await page.keyboard.press('Escape');
+
+    await expect(popover).toBeHidden();
+    expect((await store(page)).isOpen).toBe(true);
+    await expect(zoomButton).toBeFocused();
   });
 });
