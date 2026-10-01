@@ -243,6 +243,12 @@ export function tagEditorSelector(arguments_) {
             if (entityKey !== this._syncedEntityKey) {
                 this._browseConfirmation?.destroy();
                 this._browseConfirmation = null;
+                // A real navigation (not the first adoption): a query typed for the previous
+                // entity left its results open, filtered against that entity's tags. Clear it.
+                if (this._syncedEntityKey !== undefined) {
+                    this._clearInput?.();
+                    this._core?.dispatch({ type: 'close' });
+                }
                 this._syncedEntityKey = entityKey;
                 // Through the profile's own selector, so the navigation invalidates every
                 // in-flight association write rather than only the keys that moved.

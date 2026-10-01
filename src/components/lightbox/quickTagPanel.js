@@ -1,7 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
-import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
+import { focusOn, focusedElement } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -294,14 +294,18 @@ export const quickTagPanelMethods = {
     if (window.innerWidth < 1024 && this.editPanelOpen) {
       this.closeEditPanel();
     }
-    // The "Edit Tags" toggle hides as the panel opens. If it had focus, move focus into the
-    // panel (as openEditPanel does) rather than leave it on <body>; two frames, so x-show has
-    // revealed the panel, and only while focus is still lost.
+    // The "Edit Tags" toggle hides as the panel opens. If it had focus, park focus on the
+    // viewer itself rather than leave it on <body>. Not on the panel's first control, as
+    // openEditPanel does: that is the Close button, and Space or Enter pressed to move on
+    // after tagging would activate it and close the panel. Two frames, so x-show has run,
+    // and only while focus is still lost.
     const toggle = document.querySelector('button[title="Edit tags"]');
     if (toggle && document.activeElement === toggle) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const now = focusedElement();
-        if (!now || now === toggle) focusFirstIn(document.querySelector('[data-quick-tag-panel]'));
+        if (this.isOpen && this.quickTagPanelOpen && (!now || now === toggle)) {
+          focusOn(document.querySelector('[role="dialog"][aria-modal="true"]'));
+        }
       }));
     }
     this.quickTagPanelOpen = true;

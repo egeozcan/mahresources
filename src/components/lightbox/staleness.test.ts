@@ -504,6 +504,26 @@ describe('lightbox review fixes', () => {
     expect(store.detailsCache.has(2)).toBe(false);
   });
 
+  it('lets the next session warm an item a stale prefetch is still out for, and keeps its marker', async () => {
+    const store = makeStore([item(1), item(2)]);
+    store.quickTagPanelOpen = true;
+    const stale = deferred<any>();
+    fetchMock.abortableFetch.mockReturnValueOnce({ abort: vi.fn(), ready: stale.promise });
+    store._preloadDetailsUpcoming();
+    store.close();
+
+    // Reopened: the same item is warmed again rather than skipped as "in flight".
+    store.quickTagPanelOpen = true;
+    fetchMock.abortableFetch.mockReturnValueOnce({ abort: vi.fn(), ready: new Promise(() => {}) });
+    store._preloadDetailsUpcoming();
+    expect(fetchMock.abortableFetch).toHaveBeenCalledTimes(2);
+
+    // The stale one landing must not clear the new session's marker.
+    stale.resolve(jsonResponse({ resource: { ID: 2, Name: 'image 2', Tags: [] } }));
+    await new Promise(r => setTimeout(r, 0));
+    expect(store._detailsInFlight.has(2)).toBe(true);
+  });
+
   it('keeps the video playing and the zoom when there is nowhere to go', async () => {
     const store = makeStore([item(1), item(2)]);
     store.currentIndex = 1;

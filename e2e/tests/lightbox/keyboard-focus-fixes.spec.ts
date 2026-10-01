@@ -238,8 +238,8 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await openInfoPanel(page, lightbox);
     await lightbox.locator('button[title="Edit tags"]').click();
     await expect(page.locator('[data-quick-tag-panel]')).toBeVisible();
-    // Focus moves into the opened panel, not back to the Info toggle (or <body>).
-    await expect(page.locator('button[aria-label="Close edit tags panel"]')).toBeFocused();
+    // Focus stays in the viewer, not back on the Info toggle (or <body>).
+    await expect(lightbox).toBeFocused();
     await expect(lightbox.locator('button[title="Resource info"]')).not.toBeFocused();
   });
 
@@ -263,9 +263,20 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     const lightbox = await openLightbox(page);
     await lightbox.locator('button[title="Edit tags"]').click();
     const input = page.locator('[data-quick-tag-panel] [data-tag-editor-input]');
-    await input.focus();
+    await input.fill('Lightbox');
+    await expect(input).toBeFocused();
     const start = (await store(page)).currentIndex;
     await page.keyboard.press('PageDown');
     await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
+  });
+
+  test('Space after opening the tags panel by click still moves to the next image', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    await expect(lightbox).toBeFocused();
+    const start = (await store(page)).currentIndex;
+    await page.keyboard.press('Space');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
+    await expect(page.locator('[data-quick-tag-panel]')).toBeVisible();
   });
 });
