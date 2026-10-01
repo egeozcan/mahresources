@@ -1,15 +1,17 @@
 <div
     x-data="{
-        canNavigate(allowOnVideo = false) {
+        canNavigate(paging = false) {
             // The crop overlay owns the keyboard while open — block viewer navigation.
             if (this.$store.lightbox.cropOpen) return false;
             // Allow navigation unless focus is on a field, or on a video, whose native
-            // controls seek with the arrow keys. PageUp/PageDown pass allowOnVideo: the
-            // controls do not use them, so they stay a way to move on from a playing video.
+            // controls seek with the arrow keys. PageUp/PageDown (paging) are not used by the
+            // video controls or the tag search, so they stay a way to move on from both; the
+            // Name and Description fields still block them, since navigating drops the edit.
             const activeEl = document.activeElement;
             if (!activeEl) return true;
             if (activeEl.isContentEditable) return false;
-            if (activeEl.tagName === 'VIDEO') return allowOnVideo;
+            if (activeEl.tagName === 'VIDEO') return paging;
+            if (paging && activeEl.matches('[data-tag-editor-input]')) return true;
             return !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
         },
         canShortcut() {

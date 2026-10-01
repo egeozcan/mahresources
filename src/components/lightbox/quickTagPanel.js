@@ -1,7 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
-import { focusOn, focusedElement } from '../../utils/focus.js';
+import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -293,6 +293,16 @@ export const quickTagPanelMethods = {
     // Responsive exclusivity: close edit panel on narrow viewports
     if (window.innerWidth < 1024 && this.editPanelOpen) {
       this.closeEditPanel();
+    }
+    // The "Edit Tags" toggle hides as the panel opens. If it had focus, move focus into the
+    // panel (as openEditPanel does) rather than leave it on <body>; two frames, so x-show has
+    // revealed the panel, and only while focus is still lost.
+    const toggle = document.querySelector('button[title="Edit tags"]');
+    if (toggle && document.activeElement === toggle) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const now = focusedElement();
+        if (!now || now === toggle) focusFirstIn(document.querySelector('[data-quick-tag-panel]'));
+      }));
     }
     this.quickTagPanelOpen = true;
     this.announce('Edit tags panel opened');

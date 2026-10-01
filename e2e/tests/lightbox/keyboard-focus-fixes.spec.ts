@@ -238,7 +238,8 @@ test.describe('Lightbox keyboard and focus fixes', () => {
     await openInfoPanel(page, lightbox);
     await lightbox.locator('button[title="Edit tags"]').click();
     await expect(page.locator('[data-quick-tag-panel]')).toBeVisible();
-    await page.waitForTimeout(200);
+    // Focus moves into the opened panel, not back to the Info toggle (or <body>).
+    await expect(page.locator('button[aria-label="Close edit tags panel"]')).toBeFocused();
     await expect(lightbox.locator('button[title="Resource info"]')).not.toBeFocused();
   });
 
@@ -256,5 +257,15 @@ test.describe('Lightbox keyboard and focus fixes', () => {
 
     await page.keyboard.press('PageUp');
     await expect.poll(async () => (await store(page)).currentIndex).toBe(start - 1);
+  });
+
+  test('PageDown pages from the tag search input', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    const input = page.locator('[data-quick-tag-panel] [data-tag-editor-input]');
+    await input.focus();
+    const start = (await store(page)).currentIndex;
+    await page.keyboard.press('PageDown');
+    await expect.poll(async () => (await store(page)).currentIndex).toBe(start + 1);
   });
 });
