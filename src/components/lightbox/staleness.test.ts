@@ -498,7 +498,9 @@ describe('lightbox review fixes', () => {
     store.quickTagPanelOpen = false;
     store.close();
     pending.resolve(jsonResponse({ resource: { ID: 2, Name: 'image 2', Tags: [] } }));
-    await vi.waitFor(() => expect(store._detailsInFlight.size).toBe(0));
+    // Let the whole .then chain run; close() already emptied _detailsInFlight, so waiting on it
+    // would not wait at all.
+    await new Promise(r => setTimeout(r, 0));
     expect(store.detailsCache.has(2)).toBe(false);
   });
 
@@ -527,6 +529,7 @@ describe('lightbox review fixes', () => {
       await store.rotateCurrent(90);
       expect(store.loading).toBe(false);
       expect(store.rotating).toBe(false);
+      expect(store.needsRefreshOnClose).toBe(true);
       expect(store.announce).toHaveBeenLastCalledWith('Image rotated, but the viewer could not show the new version');
     } finally { post.mockRestore(); error.mockRestore(); }
   });

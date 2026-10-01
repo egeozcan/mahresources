@@ -142,6 +142,8 @@ export const cropPanelMethods = {
         // The rotate landed but no new bitmap is coming, so @load will never clear the
         // spinner it armed above.
         if (this.getCurrentItem()?.id === targetId) this.loading = false;
+        // The file did change, so the gallery thumbnail behind the viewer is stale either way.
+        this.needsRefreshOnClose = true;
         this.announce('Image rotated, but the viewer could not show the new version');
       }
     } catch (err) {

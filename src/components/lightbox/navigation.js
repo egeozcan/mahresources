@@ -487,7 +487,8 @@ export const navigationMethods = {
           this._cacheVersions?.(item.id, data.versions);
         })
         .catch(() => { /* background prefetch: a real navigation will refetch on demand */ })
-        .finally(() => this._detailsInFlight.delete(item.id));
+        // close() cleared the set; a stale prefetch must not delete the next session's marker.
+        .finally(() => { if (session === this._session) this._detailsInFlight.delete(item.id); });
     }
   },
 
