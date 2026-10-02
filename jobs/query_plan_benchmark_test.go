@@ -224,7 +224,7 @@ func runMillionJobQueryPlanEvidence(t *testing.T, engine string, deps Deps) {
 	// Job table without changing the seeded fixture's states.
 	capture.reset()
 	started = time.Now()
-	claimCandidate, found, err := nextClaimable(deps.DB, "download", 1, "", nil, now)
+	claimCandidate, found, err := nextClaimable(deps.DB, "download", 1, "", nil, nil, now)
 	claimElapsed := time.Since(started)
 	if err != nil {
 		t.Fatalf("claim candidate: %v", err)

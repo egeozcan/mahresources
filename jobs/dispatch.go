@@ -116,7 +116,7 @@ func (s *Service) claimWaiting(ctx context.Context, deps Deps, request ClaimRequ
 	}
 
 	now := deps.now()
-	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, request.ExcludeJobIDs, now)
+	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, request.ExcludeJobIDs, request.PassOver, now)
 	if err != nil {
 		return Execution{}, err
 	}
@@ -298,15 +298,15 @@ func strictestCapacityLimit(a, b int) int {
 // already knows which Job it is running — a host-side executor that materialized
 // it a moment ago — takes it under a claim rather than taking whatever happens to
 // be oldest.
-func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, exclude []string, now time.Time) (models.Job, bool, error) {
+func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, exclude []string, passOver func() []string, now time.Time) (models.Job, bool, error) {
 	query := waitingJobs(db, kind, version, now)
 	if jobID != "" {
 		// Predicated on the Kind as well the id: a claim that named a Job of
 		// another Kind would hand it to an adapter that does not own its input
 		// shape, and the caller here is the one place a job id arrives untyped.
 		query = query.Where("jobs.id = ?", jobID)
-	} else if len(exclude) > 0 {
-		return firstNotPassedOver(query, exclude)
+	} else if len(exclude) > 0 || passOver != nil {
+		return firstNotPassedOver(query, exclude, passOver)
 	}
 	var job models.Job
 	err := query.Order("accepted_at, jobs.id").First(&job).Error
@@ -327,10 +327,17 @@ const claimScanPage = 200
 // here rather than bound into the query, so there is no limit on how many a Kind
 // may name: a list capped to fit a query would leave the Jobs past the cap to be
 // claimed and handed back on every pass, ahead of the work behind them.
-func firstNotPassedOver(query *gorm.DB, exclude []string) (models.Job, bool, error) {
+//
+// With nothing to skip before the read, the first read takes one row: the oldest
+// Job is almost always the answer, and PassOver rarely names it.
+func firstNotPassedOver(query *gorm.DB, exclude []string, passOver func() []string) (models.Job, bool, error) {
 	skip := make(map[string]struct{}, len(exclude))
 	for _, id := range exclude {
 		skip[id] = struct{}{}
+	}
+	limit := claimScanPage
+	if len(exclude) == 0 {
+		limit = 1
 	}
 	var after Cursor
 	for {
@@ -339,19 +346,34 @@ func firstNotPassedOver(query *gorm.DB, exclude []string) (models.Job, bool, err
 			page = continueBefore(page, after)
 		}
 		var rows []models.Job
-		if err := page.Order("accepted_at, jobs.id").Limit(claimScanPage).Find(&rows).Error; err != nil {
+		if err := page.Order("accepted_at, jobs.id").Limit(limit).Find(&rows).Error; err != nil {
 			return models.Job{}, false, fmt.Errorf("jobs: select claimable job: %w", err)
 		}
+		// PassOver is asked after this page was read (see ClaimRequest.PassOver),
+		// and only once a row is about to be answered: the list can be long, and a
+		// page with nothing to answer needs no fresher copy of it.
+		asked := passOver == nil
 		for _, row := range rows {
-			if _, passed := skip[row.ID]; !passed {
-				return row, true, nil
+			if _, passed := skip[row.ID]; passed {
+				continue
 			}
+			if !asked {
+				asked = true
+				for _, id := range passOver() {
+					skip[id] = struct{}{}
+				}
+				if _, passed := skip[row.ID]; passed {
+					continue
+				}
+			}
+			return row, true, nil
 		}
-		if len(rows) < claimScanPage {
+		if len(rows) < limit {
 			return models.Job{}, false, nil
 		}
 		last := rows[len(rows)-1]
 		after = Cursor{AcceptedAt: last.AcceptedAt, ID: last.ID}
+		limit = claimScanPage
 	}
 }
 

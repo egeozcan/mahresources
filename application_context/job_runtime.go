@@ -307,14 +307,16 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
 			// Asked before every claim rather than once per pass: an execution this
 			// pass started can hand its Job back and name it here before the next
-			// claim, and a list read once would claim it again at once.
-			passOver := r.claimPassOver(registration)
+			// claim, and a list read once would claim it again at once. Asked again
+			// after the claim reads the waiting Jobs (PassOver), because the hand-back
+			// can also land between this read and that one.
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:          registration.Definition.Kind,
 				KindVersion:   registration.Definition.KindVersion,
 				Claimant:      r.claimant,
 				Capacity:      r.capacityBudget(),
-				ExcludeJobIDs: passOver,
+				ExcludeJobIDs: r.claimPassOver(registration),
+				PassOver:      func() []string { return r.claimPassOver(registration) },
 			})
 			if err != nil {
 				log.Printf("job runtime: claiming %s v%d work failed: %v",

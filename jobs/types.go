@@ -1605,6 +1605,12 @@ type ClaimRequest struct {
 	// work its Kind knows cannot start yet, left waiting rather than claimed only
 	// to be handed back. It never widens a claim, and a JobID claim ignores it.
 	ExcludeJobIDs []string
+	// PassOver, when set, names more Jobs to pass over, and is asked after the
+	// waiting Jobs are read rather than before: a Job that an execution handed
+	// back to the queue and named between a caller's read of the list and this
+	// claim's read is then still passed over, because the hand-back that made it
+	// visible as waiting came after it was named.
+	PassOver func() []string
 	// JobID names one specific waiting Job to claim instead of the next one, or
 	// is empty for the ordinary "next of this Kind" claim.
 	//
