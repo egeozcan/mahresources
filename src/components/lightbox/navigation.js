@@ -47,6 +47,10 @@ export const navigationState = {
   // would read as Back and close the new viewer.
   _historyBackPending: false,
   _historyPushDeferred: false,
+  // The current marker was written over an entry a previous page load left behind. Going
+  // back from it can cross into that older document (a full reload in some browsers), so
+  // close() strips the marker in place instead.
+  _historyReused: false,
 
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
@@ -516,7 +520,8 @@ export const navigationMethods = {
     this._historyToken = `${Date.now()}:${Math.random()}`;
     try {
       const state = history.state;
-      if (state?.mahLightbox) {
+      this._historyReused = !!state?.mahLightbox;
+      if (this._historyReused) {
         history.replaceState({ ...state, mahLightbox: this._historyToken }, '');
         return;
       }
@@ -553,10 +558,25 @@ export const navigationMethods = {
   _popHistoryEntry() {
     const token = this._historyToken;
     this._historyToken = null;
-    if (token && history.state?.mahLightbox === token) {
-      this._historyBackPending = true;
-      history.back();
+    if (!token || history.state?.mahLightbox !== token) return;
+    if (this._historyReused) {
+      const { mahLightbox, ...rest } = history.state;
+      history.replaceState(rest, '');
+      return;
     }
+    this._historyBackPending = true;
+    history.back();
+    // A traversal that never reaches this document (throttled, or nothing to go back to)
+    // must not leave every later open() waiting for it.
+    clearTimeout(this._historyBackTimer);
+    this._historyBackTimer = setTimeout(() => {
+      if (!this._historyBackPending) return;
+      this._historyBackPending = false;
+      if (this._historyPushDeferred) {
+        this._historyPushDeferred = false;
+        if (this.isOpen) this._pushHistoryEntry();
+      }
+    }, 1000);
   },
 
   close() {

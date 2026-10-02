@@ -723,6 +723,26 @@ describe('browser history', () => {
     expect(store.isOpen).toBe(false);
   });
 
+  it('stops waiting for a Back traversal that never arrives', () => {
+    vi.useFakeTimers();
+    try {
+      const store = makeStore([item(1)]);
+      store._preloadUpcoming = vi.fn();
+      store.open(0);
+      const first = state.mahLightbox;
+      store.close();
+      store.open(0);
+      expect(history.pushState).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1000);
+      expect(store._historyBackPending).toBe(false);
+      // Still on the old entry (the traversal never happened), so it is reused for this viewer.
+      expect(state.mahLightbox).not.toBe(first);
+      state = { page: 'own' };
+      store._onHistoryPop();
+      expect(store.isOpen).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('reuses a marker entry a previous page load left behind instead of stacking another', () => {
     const store = makeStore([item(1)]);
     store._preloadUpcoming = vi.fn();
@@ -730,8 +750,12 @@ describe('browser history', () => {
     store.open(0);
     expect(history.pushState).not.toHaveBeenCalled();
     expect(state).toEqual({ page: 'own', mahLightbox: expect.not.stringMatching(/^left-by-reload$/) });
+    // Going back from it could reload the page; the marker is stripped in place instead.
     store.close();
-    expect(back).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+    expect(state).toEqual({ page: 'own' });
+    store.open(0);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
   });
 
   it('pushes one entry on open and closes on Back without going back again', () => {

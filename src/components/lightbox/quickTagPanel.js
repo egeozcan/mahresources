@@ -686,8 +686,8 @@ export const quickTagPanelMethods = {
         : ` ${action === 'add' ? 'to' : 'from'} ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
       const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
       this._setWriteError('tags', currentId, message, session, resourceId);
-      // The same words a sighted user reads, not a vaguer summary.
-      this.announce(message);
+      // The same words a sighted user reads, not a vaguer summary; not into a later session.
+      if (session === this._session) this.announce(message);
       return false;
     } finally {
       this._endDetailsWrite(resourceId);

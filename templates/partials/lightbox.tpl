@@ -56,8 +56,10 @@
     {# close()'s own restore. close() owns that decision now.                 #}
     x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.entityPicker.isOpen"
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
-    @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
-    @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
+    {# Alt/Cmd + arrow is the browser's Back/Forward, which closes the viewer; Alpine's #}
+    {# single-key listeners fire through those modifiers, so skip them here.            #}
+    @keydown.arrow-left.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.prev()"
+    @keydown.arrow-right.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.next()"
     {# canNavigate, like the arrows: PageUp/PageDown scroll a textarea, and navigating #}
     {# from inside the Description field threw the edit away.                         #}
     @keydown.page-up.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.prev())"
