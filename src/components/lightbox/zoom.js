@@ -17,6 +17,9 @@ export const zoomState = {
   imageRect: null,
   containerRect: null,
 
+  // Mirrors the zoom preset popover's open state for the trigger's aria-expanded
+  zoomPresetsOpen: false,
+
   // Track when to disable CSS transitions for smooth real-time interaction
   animationsDisabled: false,
   animationTimeout: null,
@@ -95,6 +98,17 @@ export const zoomMethods = {
 
     const self = this;
     p.innerHTML = '';
+    // Property handlers, not addEventListener: the popover element outlives every open.
+    p.ontoggle = (e) => { self.zoomPresetsOpen = e.newState === 'open'; };
+    // Escape closes only the popover. Without this it bubbled to the viewer's window
+    // handler and closed the whole lightbox.
+    p.onkeydown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      p.hidePopover();
+      btn.focus();
+    };
     Object.assign(p.style, {
       background: 'rgba(0,0,0,0.8)',
       backdropFilter: 'blur(8px)',
@@ -136,7 +150,8 @@ export const zoomMethods = {
       updateReadout();
 
       slider.addEventListener('keydown', (e) => {
-        e.stopPropagation();
+        // Escape goes on to the popover's own handler, which closes it and refocuses the trigger.
+        if (e.key !== 'Escape') e.stopPropagation();
       });
       slider.addEventListener('input', (e) => {
         e.stopPropagation();
@@ -172,6 +187,8 @@ export const zoomMethods = {
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         self.setNativeZoom(preset.nativePct);
+        // The preset closes the popover and takes the focused button with it.
+        btn.focus();
       });
       p.appendChild(item);
     }
@@ -185,6 +202,8 @@ export const zoomMethods = {
     p.style.top = (rect.top - popRect.height - 4) + 'px';
     p.style.bottom = 'auto';
     p.style.right = 'auto';
+    // Move focus in, so a keyboard user can reach the controls they just opened.
+    p.querySelector('input, button')?.focus();
   },
 
   announceZoom() {

@@ -239,8 +239,8 @@ Navigation and page layout share one breakpoint, 900px.
 
 | Shortcut | Action |
 |----------|--------|
-| Arrow Left / Arrow Right | Previous/next image |
-| Page Up / Page Down | Previous/next image |
+| Arrow Left / Arrow Right | Previous/next image (while a video has focus, they seek it instead) |
+| Page Up / Page Down | Previous/next image, also from a focused video or the tag search |
 | Space | Next image |
 | Enter | Toggle fullscreen |
 | E or F2 | Toggle info panel |

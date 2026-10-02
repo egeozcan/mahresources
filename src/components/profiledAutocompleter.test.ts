@@ -308,6 +308,43 @@ describe('profiled autocompleter bridge', () => {
         selector.destroy();
     });
 
+    test('tag editor syncEntityTags drops a query typed for the previous entity', () => {
+        const selector = mount(tagEditorSelector({
+            usage: 'resource',
+            selected: [],
+            association: { add: vi.fn(() => Promise.resolve()), remove: vi.fn(() => Promise.resolve()) },
+        }) as ProfiledSelector);
+        const input = { value: '', dispatchEvent: vi.fn() };
+        selector.$refs.autocompleter = input as unknown as HTMLElement;
+
+        selector.syncEntityTags(10, []);
+        input.value = 'fo';
+        selector._core.dispatch({ type: 'open' });
+        expect(selector._core.getSnapshot().isOpen).toBe(true);
+
+        // Re-syncing the same entity leaves the query alone.
+        selector.syncEntityTags(10, []);
+        expect(input.value).toBe('fo');
+
+        // Navigating to another entity clears it, in the core too, and closes its results.
+        selector.syncEntityTags(11, []);
+        expect(input.value).toBe('');
+        expect(selector._core.getSnapshot().query).toBe('');
+        expect(selector._core.getSnapshot().isOpen).toBe(false);
+
+        // While the field is being typed in, the list stays open, so the next keystroke
+        // still shows results.
+        (document as unknown as { activeElement: unknown }).activeElement = input;
+        input.value = 'su';
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'su' });
+        selector.syncEntityTags(12, []);
+        expect(input.value).toBe('');
+        expect(selector._core.getSnapshot().query).toBe('');
+        expect(selector._core.getSnapshot().isOpen).toBe(true);
+        selector.destroy();
+    });
+
     test('association writes for one tag are serialized so the last transition wins', async () => {
         const alpha = { ID: 1, Name: 'Alpha' };
         const calls: string[] = [];

@@ -243,6 +243,7 @@ export function tagEditorSelector(arguments_) {
             if (entityKey !== this._syncedEntityKey) {
                 this._browseConfirmation?.destroy();
                 this._browseConfirmation = null;
+                const navigated = this._syncedEntityKey !== undefined;
                 this._syncedEntityKey = entityKey;
                 // Through the profile's own selector, so the navigation invalidates every
                 // in-flight association write rather than only the keys that moved.
@@ -252,6 +253,20 @@ export function tagEditorSelector(arguments_) {
                     reason: 'reset',
                     silent: true,
                 });
+                // A real navigation (not the first adoption): a query typed for the previous
+                // entity left its results up, filtered against that entity's tags. Clear the
+                // query in the field and the core alike, after the new selection is in place.
+                // Close the list only when the field is not being typed in: nothing reopens it
+                // until the field is focused again, so closing under the cursor left typing
+                // with no results.
+                const input = this._refEl?.('autocompleter');
+                if (navigated && (input?.value || this._core?.getSnapshot().query)) {
+                    this._clearInput?.({ notify: false });
+                    this._core?.dispatch({ type: 'set-query', query: '' });
+                    if (!input || document.activeElement !== input) {
+                        this._core?.dispatch({ type: 'close' });
+                    }
+                }
                 return;
             }
             profile.syncAssociations(values.map(mapTagOption));

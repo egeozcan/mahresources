@@ -10,6 +10,8 @@ import { findListContainer } from '../../utils/listContainer.js';
 export const navigationState = {
   // Core state
   isOpen: false,
+  // Bumped by close(), so background work started in one viewing session cannot land in the next
+  _session: 0,
   currentIndex: 0,
   items: [],
   loading: false,
@@ -457,11 +459,15 @@ export const navigationMethods = {
 
       this._detailsInFlight.add(item.id);
       const generation = this._detailsGeneration(item.id);
+      const session = this._session;
       const { ready } = abortableFetch(`/resource.json?id=${item.id}`);
       ready
         .then(response => (response.ok ? response.json() : null))
         .then(data => {
           if (!data) return;
+          // close() cleared the cache so the next session never paints old details; a
+          // prefetch that resolves after it must not put them back.
+          if (session !== this._session) return;
           // A write to this resource landed while the prefetch was in flight, so this
           // response predates it. Caching it would quietly put the pre-write tags back, and
           // the panel would show the user's change undoing itself when they navigate here.
@@ -481,7 +487,8 @@ export const navigationMethods = {
           this._cacheVersions?.(item.id, data.versions);
         })
         .catch(() => { /* background prefetch: a real navigation will refetch on demand */ })
-        .finally(() => this._detailsInFlight.delete(item.id));
+        // close() cleared the set; a stale prefetch must not delete the next session's marker.
+        .finally(() => { if (session === this._session) this._detailsInFlight.delete(item.id); });
     }
   },
 
@@ -570,6 +577,9 @@ export const navigationMethods = {
     // (`items`/`loadedPages` are reassigned wholesale by every open() path, so they do not
     // leak across sessions; they only grow within a single uninterrupted paging session — BH: L7.)
     this._preloadedUrls.clear();
+    // A prefetch still out belongs to this session and will be dropped when it lands; it must
+    // not stop the next session from warming the same item.
+    this._detailsInFlight?.clear();
     this._preloadedImages = [];
 
     // Detail and suggestion snapshots describe a moment in time, and the next session can be
@@ -579,6 +589,7 @@ export const navigationMethods = {
     // The write-generation maps are deliberately left alone: a write may still be in flight,
     // and clearing its generation is what would let its stale in-flight GET commit.
     this.detailsCache.clear();
+    this._session++;
     // Versions can be the only open panel, so neither side-panel close path necessarily
     // cleared this snapshot. A later session must not mistake its old Current for today's.
     this.resourceDetails = null;
@@ -615,27 +626,14 @@ export const navigationMethods = {
   async next() {
     if (this.pageLoading) return;
 
-    this.pauseCurrentVideo();
-    this.resetZoom();
-
     if (this.currentIndex < this.items.length - 1) {
-      this.currentIndex++;
-      this._armMediaLoad();
-      this.announcePosition();
-      this.scheduleMediaCheck();
-      this._preloadUpcoming();
-      this.onResourceChange();
+      this._stepTo(this.currentIndex + 1);
     } else if (this.hasNextPage) {
       const loaded = await this.loadNextPage();
       if (this.currentIndex < this.items.length - 1) {
-        this.currentIndex++;
-        this._armMediaLoad();
         // Combine the "loaded more" status with the position so the shared (single-slot)
         // live region does not clobber the page-load message with the position (BH: M9).
-        this.announcePosition(loaded > 0 ? `Loaded ${loaded} more items. ` : '');
-        this.scheduleMediaCheck();
-        this._preloadUpcoming();
-        this.onResourceChange();
+        this._stepTo(this.currentIndex + 1, loaded > 0 ? `Loaded ${loaded} more items. ` : '');
       }
     }
   },
@@ -643,28 +641,29 @@ export const navigationMethods = {
   async prev() {
     if (this.pageLoading) return;
 
-    this.pauseCurrentVideo();
-    this.resetZoom();
-
     if (this.currentIndex > 0) {
-      this.currentIndex--;
-      this._armMediaLoad();
-      this.announcePosition();
-      this.scheduleMediaCheck();
-      this._preloadUpcoming();
-      this.onResourceChange();
+      this._stepTo(this.currentIndex - 1);
     } else if (this.hasPrevPage) {
       const prevItemCount = await this.loadPrevPage();
       if (prevItemCount > 0) {
-        this.currentIndex = prevItemCount - 1;
-        this._armMediaLoad();
         // Combine the load status with the position so it isn't clobbered (BH: M9).
-        this.announcePosition(`Loaded ${prevItemCount} previous items. `);
-        this.scheduleMediaCheck();
-        this._preloadUpcoming();
-        this.onResourceChange();
+        this._stepTo(prevItemCount - 1, `Loaded ${prevItemCount} previous items. `);
       }
     }
+  },
+
+  // Pausing and un-zooming happen here, once the index really moves. next()/prev() used to do
+  // both up front, so ArrowRight on the last item (or a failed page load) stopped the video
+  // and threw away the zoom while the viewer stayed where it was.
+  _stepTo(index, announcePrefix = '') {
+    this.pauseCurrentVideo();
+    this.resetZoom();
+    this.currentIndex = index;
+    this._armMediaLoad();
+    this.announcePosition(announcePrefix);
+    this.scheduleMediaCheck();
+    this._preloadUpcoming();
+    this.onResourceChange();
   },
 
   _capturePaginationContext() {

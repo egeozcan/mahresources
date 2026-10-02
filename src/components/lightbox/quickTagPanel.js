@@ -1,6 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
+import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
 import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
@@ -288,10 +289,25 @@ export const quickTagPanelMethods = {
 
   // ==================== Open / Close ====================
 
-  openQuickTagPanel() {
+  openQuickTagPanel(event) {
     // Responsive exclusivity: close edit panel on narrow viewports
     if (window.innerWidth < 1024 && this.editPanelOpen) {
       this.closeEditPanel();
+    }
+    // The "Edit Tags" toggle hides as the panel opens. If it had focus, move focus on rather
+    // than leave it on <body>; two frames, so x-show has run, and only while still lost.
+    // Activated from the keyboard, focus goes into the panel, as openEditPanel does. Clicked
+    // (event.detail > 0), it parks on the viewer instead: the panel's first control is its
+    // Close button, and Space or Enter pressed to move on after mouse tagging would close it.
+    const toggle = document.querySelector('button[title="Edit tags"]');
+    if (toggle && document.activeElement === toggle) {
+      const pointer = (event?.detail ?? 0) > 0;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const now = focusedElement();
+        if (!this.isOpen || !this.quickTagPanelOpen || (now && now !== toggle)) return;
+        if (pointer) focusOn(toggle.closest('[role="dialog"][aria-modal="true"]'));
+        else focusFirstIn(document.querySelector('[data-quick-tag-panel]'));
+      }));
     }
     this.quickTagPanelOpen = true;
     this.announce('Edit tags panel opened');
@@ -311,8 +327,23 @@ export const quickTagPanelMethods = {
     this.editingSlotIndex = null;
     this.expandedSlotIndex = null;
     this._cancelLongPress();
+    // The "Edit Tags" toggle is x-show'd on !quickTagPanelOpen. When focus was inside the
+    // panel, hand it back there (as closeEditPanel does) instead of dropping it on <body>.
+    const panel = document.querySelector('[data-quick-tag-panel]');
+    const hadFocus = !!panel?.contains(document.activeElement);
     this.quickTagPanelOpen = false;
-    // Drop suggestions so a reopen never flashes the previous image's chips.
+    if (hadFocus) {
+      // Two frames: x-show reveals the toggle in a frame of its own, queued after this one.
+      // Only if focus is still lost by then, so a focus move made meanwhile is not taken back.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const now = focusedElement();
+        if (!now || panel.contains(now)) focusOn(document.querySelector('button[title="Edit tags"]'));
+      }));
+    }
+    // Drop suggestions so a reopen never flashes the previous image's chips, and drop any
+    // response still in flight, which would otherwise repaint them after the close.
+    ++this._suggestedReq;
+    this.suggestedTagsLoading = false;
     this.suggestedTags = [];
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());

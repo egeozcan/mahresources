@@ -47,11 +47,22 @@ export const gestureState = {
 // Below this the pointer barely moved, so the click really is a click.
 const DRAG_CLICK_SUPPRESSION_PX = 5;
 
+// Height of the band at the bottom of a video taken to be its native control bar.
+const VIDEO_CONTROLS_BAND_PX = 48;
+
 export const gestureMethods = {
   getPinchDistance(touches) {
     const dx = touches[0].clientX - touches[1].clientX;
     const dy = touches[0].clientY - touches[1].clientY;
     return Math.sqrt(dx * dx + dy * dy);
+  },
+
+  // The native controls are not in the DOM, so the bottom band of the video stands in for them.
+  _touchOnVideoControls(event) {
+    const video = event.target.closest?.('video');
+    if (!video || !event.touches?.length) return false;
+    const rect = video.getBoundingClientRect();
+    return event.touches[0].clientY > rect.bottom - VIDEO_CONTROLS_BAND_PX;
   },
 
   getPinchCenter(touches) {
@@ -62,9 +73,14 @@ export const gestureMethods = {
   },
 
   handleTouchStart(event) {
-    // Ignore touches that start within the edit panel
-    if (event.target.closest('[data-edit-panel]')) {
+    // Ignore touches that start on a surface with its own gestures: the side panels (a
+    // sideways scroll in the full-screen mobile tags panel changed the image underneath),
+    // the zoom popover's slider (dragging it panned the image), and a video's native control
+    // bar, where scrubbing the seek bar changed the item. The rest of the video still swipes.
+    if (event.target.closest('[data-edit-panel], [data-quick-tag-panel], #zoom-preset-popover') ||
+        this._touchOnVideoControls(event)) {
       this.touchStartX = null;
+      this.touchStartY = null;
       return;
     }
 
@@ -184,6 +200,7 @@ export const gestureMethods = {
         }
       }
 
+      const startZoom = this.pinchStartZoom;
       this.pinchStartDistance = null;
       this.pinchStartZoom = null;
       this.pinchStartCenterX = null;
@@ -199,7 +216,9 @@ export const gestureMethods = {
       // measure against a pre-pinch coordinate (BH: M5).
       this.touchStartX = null;
       this.touchStartY = null;
-      this.announceZoom();
+      // Only a gesture that changed the zoom has anything to say; announcing after a
+      // two-finger swipe overwrote the position message next()/prev() had just made.
+      if (this.zoomLevel !== startZoom) this.announceZoom();
       return;
     }
 
@@ -347,6 +366,8 @@ export const gestureMethods = {
   },
 
   handleMouseDown(event) {
+    // Primary button only: a right-click (context menu) drag must not pan or navigate.
+    if (event.button !== 0) return;
     if (this.isVideo(this.getCurrentItem()?.contentType)) return;
     if (event.target.closest('button')) return;
     if (event.target.closest('[data-edit-panel]')) return;
@@ -409,7 +430,9 @@ export const gestureMethods = {
       const threshold = 0.3;
       const minDistance = 30;
 
-      if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY)) {
+      // The whole drag must be mostly horizontal too: the last mousemove's velocity alone let
+      // a long vertical drag that ended in a small sideways flick change the item.
+      if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY) && Math.abs(dx) > Math.abs(dy)) {
         if ((speed > threshold || distance > minDistance) && !this._navDebounce) {
           this._navDebounce = true;
           setTimeout(() => { this._navDebounce = false; }, 300);

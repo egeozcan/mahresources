@@ -1,11 +1,18 @@
 <div
     x-data="{
-        canNavigate() {
+        canNavigate(paging = false) {
             // The crop overlay owns the keyboard while open — block viewer navigation.
             if (this.$store.lightbox.cropOpen) return false;
-            // Allow navigation unless focus is on an input, textarea, or select
+            // Allow navigation unless focus is on a field, or on a video, whose native
+            // controls seek with the arrow keys. PageUp/PageDown (paging) are not used by the
+            // video controls or the tag search, so they stay a way to move on from both; the
+            // Name and Description fields still block them, since navigating drops the edit.
             const activeEl = document.activeElement;
-            return !activeEl || !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
+            if (!activeEl) return true;
+            if (activeEl.isContentEditable) return false;
+            if (activeEl.tagName === 'VIDEO') return paging;
+            if (paging && activeEl.matches('[data-tag-editor-input]')) return true;
+            return !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
         },
         canShortcut() {
             // For Space/Enter, which ACTIVATE the focused control: bail when focus is on a
@@ -16,6 +23,8 @@
             if (!el) return true;
             if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'VIDEO'].includes(el.tagName)) return false;
             if (el.isContentEditable) return false;
+            // A focused link: Enter follows it, and must not also toggle fullscreen.
+            if (el.closest && el.closest('a[href]')) return false;
             if (el.closest && el.closest('[data-quick-tag-panel], [data-edit-panel]')) return false;
             return true;
         },
@@ -49,8 +58,10 @@
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
-    @keydown.page-up.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && ($event.preventDefault(), $store.lightbox.prev())"
-    @keydown.page-down.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && ($event.preventDefault(), $store.lightbox.next())"
+    {# canNavigate, like the arrows: PageUp/PageDown scroll a textarea, and navigating #}
+    {# from inside the Description field threw the edit away.                         #}
+    @keydown.page-up.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.prev())"
+    @keydown.page-down.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.space.window="$store.lightbox.isOpen && canShortcut() && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
     @keydown.h.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && $store.lightbox.toggleVersionPanel()"
@@ -287,7 +298,7 @@
         <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
         <button
             x-show="!$store.lightbox.quickTagPanelOpen"
-            @click.stop="$store.lightbox.openQuickTagPanel()"
+            @click.stop="$store.lightbox.openQuickTagPanel($event)"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Edit tags"
         >
@@ -327,6 +338,9 @@
                 class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50"
                 x-text="$store.lightbox.nativeZoomPercent()"
                 title="Choose zoom level"
+                :aria-label="'Zoom level ' + $store.lightbox.nativeZoomPercent() + ', choose zoom level'"
+                aria-controls="zoom-preset-popover"
+                :aria-expanded="$store.lightbox.zoomPresetsOpen ? 'true' : 'false'"
             ></button>
         </div>
 
@@ -506,6 +520,13 @@
                             data-tag-editor-input
                             type="text"
                             x-bind="inputEvents"
+                            {# Same guard as the shared autocompleter: false until the "Add X?"  #}
+                            {# confirmation has been shown, then '' on the way back, so leaving  #}
+                            {# it puts focus back here instead of dropping it on <body>. Only    #}
+                            {# while focus is lost: a tag change from elsewhere (a quick slot,   #}
+                            {# navigation) also ends the confirmation, and must not pull focus   #}
+                            {# off the control the user is on and into this text field.          #}
+                            x-init="setTimeout(() => { const a = document.activeElement; addModeForTag !== false && (!a || a === document.body) && $el.focus(); }, 1)"
                             class="w-full min-w-0 px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Search or add tags..."
                             aria-label="Search or add tags"
@@ -573,7 +594,8 @@
                             class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"
                             x-text="'Add ' + addModeForTag + '?'"
                             x-init="setTimeout(() => $el.focus(), 1)"
-                            @keydown.escape.prevent="exitAdd"
+                            {# .stop: the window Escape handler would otherwise close the whole viewer. #}
+                            @keydown.escape.prevent.stop="exitAdd"
                             @keydown.enter.prevent.stop="addVal"
                             @click="addVal"
                         ></button>
@@ -581,7 +603,7 @@
                             type="button"
                             class="border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600 py-2 px-3"
                             @click="exitAdd"
-                            @keydown.escape.prevent="exitAdd"
+                            @keydown.escape.prevent.stop="exitAdd"
                         >Cancel</button>
                     </div>
                 </template>
@@ -974,8 +996,11 @@
                             id="lightbox-edit-name"
                             :value="$store.lightbox.displayDetails()?.Name || ''"
                             @blur="$store.lightbox.updateName($event.target.value)"
-                            @keydown.enter="$event.target.blur()"
-                            @keydown.escape.stop="$event.target.blur()"
+                            {# .stop: blurring hands focus to the body, where the window Enter #}
+                            {# handler would toggle fullscreen. Escape reverts, then blurs, so #}
+                            {# the blur's save sees no change.                                 #}
+                            @keydown.enter.stop.prevent="$event.target.blur()"
+                            @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Name || ''; $event.target.blur()"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
                         >
@@ -988,7 +1013,7 @@
                             id="lightbox-edit-description"
                             :value="$store.lightbox.displayDetails()?.Description || ''"
                             @blur="$store.lightbox.updateDescription($event.target.value)"
-                            @keydown.escape.stop="$event.target.blur()"
+                            @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Description || ''; $event.target.blur()"
                             rows="4"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."
