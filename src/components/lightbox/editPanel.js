@@ -74,6 +74,10 @@ export const editPanelMethods = {
   // the next one. `seq` is the write's _writeSeq.
   _setWriteError(field, resourceId, message, session, seq, targetId = resourceId, tagIds = null) {
     if (session !== this._session || this._isSuperseded(field, targetId, seq, tagIds)) return;
+    // Nor replace the failure of a write that started later: rename to A, then to B, and when
+    // both fail the message is about B, the name the reader last typed.
+    const existing = this.writeErrors[field];
+    if (existing?.targetId === targetId && existing.seq > seq) return;
     this.writeErrors[field] = { resourceId, targetId, message, tagIds, seq };
   },
 
@@ -81,12 +85,13 @@ export const editPanelMethods = {
   // that failed) has already gone through, so this one's failure lost nothing: rename to A,
   // then to B, and B saving first leaves B in place, which A's message would call lost.
   _isSuperseded(field, resourceId, seq, tagIds = null) {
-    return this._writeKeys(field, resourceId, tagIds).every(key => this._writeSucceeded?.get(key) > seq);
+    const keys = this._writeKeys(field, resourceId, tagIds);
+    return keys.length > 0 && keys.every(key => this._writeSucceeded?.get(key) > seq);
   },
 
   // Tags count one by one: saving Y says nothing about the X that failed.
   _writeKeys(field, resourceId, tagIds) {
-    return field === 'tags' ? tagIds.map(id => `tags:${resourceId}:${id}`) : [`${field}:${resourceId}`];
+    return field === 'tags' ? (tagIds ?? []).map(id => `tags:${resourceId}:${id}`) : [`${field}:${resourceId}`];
   },
 
   // Called by every write that succeeds, which it records for _isSuperseded.
@@ -309,17 +314,20 @@ export const editPanelMethods = {
       try {
         do {
           this._pageRefreshAgain = false;
-          // MRQL refreshes by re-running its query, which rebuilds every card: the thumbnail
-          // close() gave focus back to goes, and the reader is left on <body>. Put them on the
-          // same resource's new thumbnail once it renders, unless they have moved on since, or
-          // on the list when the edit took the resource out of the results.
-          const thumbnail = focusedElement()?.closest('[data-lightbox-item]');
+          // MRQL refreshes by re-running its query, which rebuilds the whole list: whatever had
+          // focus in it goes (the thumbnail close() gave focus back to, a title link, the list
+          // itself), and the reader is left on <body>. Once it renders, put them on the same
+          // resource's new thumbnail if they were on one and it is still listed, otherwise on
+          // the list, unless they have moved on since.
+          const focused = focusedElement();
+          const inList = findListContainer(document)?.contains(focused) ? focused : null;
           await this._refreshPageContentOnce();
-          if (!thumbnail) continue;
+          if (!inList) continue;
           await new Promise(resolve => requestAnimationFrame(resolve));
-          if (focusedElement() || thumbnail.isConnected) continue;
+          if (focusedElement() || inList.isConnected) continue;
           const list = findListContainer(document);
-          restoreFocus(list?.querySelector(`[data-lightbox-item][data-resource-id="${thumbnail.dataset.resourceId}"]`),
+          const id = inList.closest('[data-lightbox-item]')?.dataset.resourceId;
+          restoreFocus(id && list?.querySelector(`[data-lightbox-item][data-resource-id="${id}"]`),
             list ?? document.querySelector('main'));
         } while (this._pageRefreshAgain);
       } finally {
@@ -678,6 +686,9 @@ export const editPanelMethods = {
       this.announce('Name updated');
     } catch (err) {
       console.error('Failed to update name:', err);
+      // A rename that started later has already saved. Rolling back would put a name on screen
+      // the server no longer has, and with no panel open nothing would refetch to correct it.
+      if (this._isSuperseded('name', resourceId, seq)) return;
       details.Name = oldName;
       if (item) {
         item.name = oldName;
@@ -687,7 +698,7 @@ export const editPanelMethods = {
       const message = `Could not save the name "${newName}". The previous name is back.`;
       this._setWriteError('name', resourceId, message, session, seq);
       // The words on screen: after Enter, focus has left the field the message describes.
-      if (!this._isSuperseded('name', resourceId, seq)) this.announce(message);
+      this.announce(message);
     } finally {
       this._endDetailsWrite(resourceId);
     }
@@ -728,11 +739,12 @@ export const editPanelMethods = {
       this.announce('Description updated');
     } catch (err) {
       console.error('Failed to update description:', err);
+      if (this._isSuperseded('description', resourceId, seq)) return;
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
       const message = 'Could not save the description. The previous text is back.';
       this._setWriteError('description', resourceId, message, session, seq);
-      if (!this._isSuperseded('description', resourceId, seq)) this.announce(message);
+      this.announce(message);
     } finally {
       this._endDetailsWrite(resourceId);
     }

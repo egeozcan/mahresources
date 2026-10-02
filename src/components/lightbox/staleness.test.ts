@@ -920,6 +920,52 @@ describe('visible write errors', () => {
       expect(store.writeError('tags')).toBe('Could not add tag related. Try again.');
     } finally { error.mockRestore(); }
   });
+
+  it.each([
+    ['name', 'updateName', (store: any) => [store.items[0].name, store.detailsCache.get(1)?.Name]],
+    ['description', 'updateDescription', (store: any) => [store.resourceDetails.Description, store.detailsCache.get(1)?.Description]],
+  ])('leaves a newer saved %s in place when an older save fails after it', async (_field, method, shown) => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store[method]('A');
+      const savingB = store[method]('B');
+      // No panel open, so nothing would refetch to correct a rolled-back value.
+      store.quickTagPanelOpen = false;
+      newer.resolve({ ok: true });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(shown(store)).toEqual(['B', 'B']);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('keeps a newer save\'s failure when an older one fails after it', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'image 1', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store.updateName('A');
+      const savingB = store.updateName('B');
+      newer.resolve({ ok: false, status: 500 });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(store.writeError('name')).toBe('Could not save the name "B". The previous name is back.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('never counts a write with no keys as superseded', () => {
+    const store = makeStore([item(1)]);
+    expect(store._isSuperseded('tags', 1, 1, [])).toBe(false);
+    expect(store._isSuperseded('tags', 1, 1, null)).toBe(false);
+  });
 });
 
 describe('page refresh', () => {
@@ -955,6 +1001,7 @@ describe('page refresh', () => {
     thumbnail.closest = () => thumbnail;
     const list: any = {
       isConnected: true,
+      contains: () => true,
       querySelector: () => null,
       querySelectorAll: () => [],
       matches: () => false,
@@ -968,6 +1015,32 @@ describe('page refresh', () => {
     store._listSelection = { refresh: async () => { thumbnail.isConnected = false; doc.activeElement = doc.body; } };
     await store.refreshPageContent();
     expect(doc.activeElement).toBe(list);
+  });
+
+  it('parks focus on the rebuilt list when it was on something else in the old one', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { callback(); return 0; };
+    const doc = (globalThis as any).document;
+    // A card's title link: in the list, but not a thumbnail.
+    const link: any = { isConnected: true, closest: () => null };
+    const oldList: any = { contains: (el: any) => el === link };
+    const newList: any = {
+      isConnected: true,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      matches: () => false,
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+      focus: () => { doc.activeElement = newList; },
+    };
+    let list = oldList;
+    doc.activeElement = link;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    // MRQL re-runs its query: the whole list is rebuilt and focus falls to <body>.
+    store._listSelection = { refresh: async () => { link.isConnected = false; list = newList; doc.activeElement = doc.body; } };
+    await store.refreshPageContent();
+    expect(doc.activeElement).toBe(newList);
   });
 });
 

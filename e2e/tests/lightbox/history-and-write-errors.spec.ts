@@ -260,5 +260,9 @@ test.describe('Lightbox history and visible write errors', () => {
     await expect(viewerError).toBeVisible();
     await expect(viewerError).toHaveText(message);
     await expect(error).toBeHidden();
+    // The button that opens the Tags panel points at it.
+    await expect(viewerError).toHaveAttribute('id', 'lightbox-tag-viewer-error');
+    await expect(lightbox.locator('button[title="Edit tags"]'))
+      .toHaveAttribute('aria-describedby', 'lightbox-tag-viewer-error');
   });
 });
