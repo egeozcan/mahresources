@@ -56,8 +56,10 @@
     {# close()'s own restore. close() owns that decision now.                 #}
     x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.entityPicker.isOpen"
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
-    @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
-    @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
+    {# Alt/Cmd + arrow is the browser's Back/Forward, which closes the viewer; Alpine's #}
+    {# single-key listeners fire through those modifiers, so skip them here.            #}
+    @keydown.arrow-left.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.prev()"
+    @keydown.arrow-right.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.next()"
     {# canNavigate, like the arrows: PageUp/PageDown scroll a textarea, and navigating #}
     {# from inside the Description field threw the edit away.                         #}
     @keydown.page-up.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.prev())"
@@ -293,6 +295,12 @@
         </button>
     </div>
 
+    <!-- A failed tag write (an Undo, or a batch still retrying when the panel closed) while the
+         Tags panel, which shows these itself, is closed. Not a live region: the store already
+         announced it. -->
+    <p id="lightbox-tag-viewer-error" data-write-error="tags-viewer" x-show="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags')" x-cloak
+       class="px-4 pt-2 text-sm text-red-300 text-center z-20" x-text="$store.lightbox.writeError('tags')"></p>
+
     <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
     <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
         <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
@@ -301,6 +309,7 @@
             @click.stop="$store.lightbox.openQuickTagPanel($event)"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Edit tags"
+            :aria-describedby="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags') ? 'lightbox-tag-viewer-error' : null"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
@@ -467,6 +476,7 @@
                     @click="$store.lightbox.repeatPreviousTags()"
                     class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Repeat previous image's tags"
+                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                     title="Apply the previous image's tags to this one"
                 >
                     <span>Repeat</span>
@@ -476,6 +486,7 @@
                     @click="$store.lightbox.undoLastTagAction()"
                     class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Undo last tag change"
+                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                     title="Undo the last tag change"
                 >
                     <span>Undo</span>
@@ -666,6 +677,7 @@
                                     @click="$store.lightbox.applySuggestedTag(tag)"
                                     class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-800 hover:bg-amber-700 border border-stone-700 hover:border-amber-600 text-stone-200 hover:text-white text-sm rounded-full font-mono transition-colors focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                                     :aria-label="'Apply suggested tag ' + tag.Name"
+                                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                                 >
                                     <span x-text="tag.Name"></span>
                                     <kbd x-show="sIdx < 8" class="text-[10px] opacity-60" x-text="'⇧' + (sIdx + 1)"></kbd>
@@ -675,6 +687,11 @@
                     </ul>
                 </div>
             </template>
+
+            <!-- Failed quick-slot, suggestion, repeat or undo write. Not a live region: the
+                 store already announced it. -->
+            <p id="lightbox-tag-write-error" data-write-error="tags" x-show="$store.lightbox.writeError('tags')" x-cloak
+               class="text-sm text-red-400" x-text="$store.lightbox.writeError('tags')"></p>
 
             <!-- Divider -->
             <div class="border-t border-stone-700"></div>
@@ -813,6 +830,7 @@
                                     class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                                     :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
                                     :aria-description="tags.length > 1 ? 'Hold to expand individual tags' : null"
+                                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                                 >
                                     <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                     <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>
@@ -897,6 +915,7 @@
                           @click="$store.lightbox.toggleExpandedTag(idx)"
                           class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                           :aria-label="(isOn ? 'Remove ' : 'Add ') + tagName()"
+                          :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                         >
                           <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                           <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagName()"></span>
@@ -1001,9 +1020,13 @@
                             {# the blur's save sees no change.                                 #}
                             @keydown.enter.stop.prevent="$event.target.blur()"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Name || ''; $event.target.blur()"
+                            :aria-describedby="$store.lightbox.writeError('name') ? 'lightbox-edit-name-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
                         >
+                        {# Not a live region: the store already announced the failure. #}
+                        <p id="lightbox-edit-name-error" data-write-error="name" x-show="$store.lightbox.writeError('name')" x-cloak
+                           class="mt-1.5 text-sm text-red-400" x-text="$store.lightbox.writeError('name')"></p>
                     </div>
 
                     <!-- Description field (inline editable) -->
@@ -1015,9 +1038,12 @@
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Description || ''; $event.target.blur()"
                             rows="4"
+                            :aria-describedby="$store.lightbox.writeError('description') ? 'lightbox-edit-description-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."
                         ></textarea>
+                        <p id="lightbox-edit-description-error" data-write-error="description" x-show="$store.lightbox.writeError('description')" x-cloak
+                           class="mt-1.5 text-sm text-red-400" x-text="$store.lightbox.writeError('description')"></p>
                     </div>
 
                     <!-- Details section -->

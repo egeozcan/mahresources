@@ -63,6 +63,7 @@ export function mrqlEditor() {
       this._actionRefreshTimer = setTimeout(refresh, 100);
     },
     connectSelections() {
+      if (typeof window === 'undefined') return;
       const snapshot = this.executedQuery;
       for (const type of ['resource','note','group']) {
         const selection = window.Alpine?.store('selection:mrql-' + type);
@@ -483,8 +484,13 @@ export function mrqlEditor() {
         this.loadSavedQueryById(savedId);
       }
 
-      // Handle back/forward navigation
+      // Handle back/forward navigation. Entries that share the URL (the media viewer pushes
+      // one while it is open, and Back closes it) change nothing here, and re-running the
+      // query for them would rebuild the results under the reader.
+      this._historySearch = window.location.search;
       this._popstateHandler = () => {
+        if (window.location.search === this._historySearch) return;
+        this._historySearch = window.location.search;
         const q = new URLSearchParams(window.location.search).get('q');
         if (q) {
           this.setQuery(q);
@@ -813,6 +819,13 @@ export function mrqlEditor() {
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
         this.addToHistory(query);
 
+        // Rebind the selections' refresh to this result now, not only on the tick below.
+        // Alpine runs $nextTick a macrotask later, and a refresh asked for in between (the
+        // lightbox's trailing page refresh) would reach the handler bound to the query this
+        // run replaced, which refuses it. The tick still reaches a selection store that the
+        // new cards create as they render.
+        this.connectSelections();
+
         // Re-collect lightbox items once the result cards have rendered, so
         // clicking a default-card thumbnail opens the lightbox.
         this.$nextTick(() => {
@@ -827,6 +840,7 @@ export function mrqlEditor() {
             const url = new URL(window.location);
             url.searchParams.set('q', query);
             window.history.pushState({ q: query }, '', url);
+            this._historySearch = window.location.search;
           }
         }
       } catch (err) {

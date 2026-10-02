@@ -84,6 +84,119 @@ test.describe('MRQL default resource card lightbox', () => {
     await expect(lightbox).toBeHidden();
   });
 
+  test('browser Back closes the lightbox without re-running the query', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnails = mrql.resultsSection.locator('[data-lightbox-item]');
+    await expect(thumbnails).toHaveCount(2);
+    const urlBefore = page.url();
+    await thumbnails.first().click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+
+    const reruns: string[] = [];
+    page.on('request', request => {
+      if (request.url().includes('/v1/mrql?')) reruns.push(request.url());
+    });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    expect(page.url()).toBe(urlBefore);
+    await expect(thumbnails).toHaveCount(2);
+    // A re-run would start after the popstate handler's own awaits; give it the chance.
+    await page.waitForTimeout(300);
+    expect(reruns).toEqual([]);
+  });
+
+  test('a Name edit saved by Back keeps focus on the refreshed thumbnail', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+    const renamed = `${original} renamed`;
+    await name.fill(renamed);
+
+    // Hold the save until close() has given focus back to the thumbnail, so the refresh it
+    // starts re-runs the query, and rebuilds that card, after the reader is on it.
+    await page.route('**/v1/resource/editName**', async route => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await route.continue();
+    });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    await expect(mrql.resultsSection.locator(`[data-lightbox-item][data-resource-id="${resourceId}"]`)).toBeFocused();
+
+    await page.unroute('**/v1/resource/editName**');
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
+  test('a save that lands while close() refreshes the results still shows on the card', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+
+    // Saved while the viewer is open, so close() refreshes the results itself.
+    await name.fill(`${original} one`);
+    await name.press('Enter');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').needsRefreshOnClose))
+      .toBe(true);
+
+    // close()'s refresh is slow, and the save Back makes lands while it is still running.
+    await page.route('**/v1/mrql?render=list', async route => {
+      const response = await route.fetch();
+      await new Promise(resolve => setTimeout(resolve, 800));
+      await route.fulfill({ response });
+    });
+    await page.route('**/v1/resource/editName**', async route => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await route.continue();
+    });
+    const renamed = `${original} two`;
+    await name.fill(renamed);
+    await page.evaluate(() => { (window as any).__sameDocument = true; });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    expect(await page.evaluate(() => (window as any).__sameDocument)).toBe(true);
+
+    await page.unroute('**/v1/mrql?render=list');
+    await page.unroute('**/v1/resource/editName**');
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
   test('lightbox navigates between multiple MRQL results', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

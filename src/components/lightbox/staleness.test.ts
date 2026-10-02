@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.hoisted(() => ({
   abortableFetch: vi.fn(),
@@ -53,6 +53,7 @@ function makeStore(items: any[] = []) {
     _detailsWrites: new Map(),
     _detailsInFlight: new Set(),
     _tagWriteChains: new Map(),
+    writeErrors: { name: null, description: null, tags: null },
     _suggestedCache: new Map(),
     _preloadedUrls: new Set(),
     _preloadedImages: [],
@@ -552,5 +553,650 @@ describe('lightbox review fixes', () => {
       expect(store.needsRefreshOnClose).toBe(true);
       expect(store.announce).toHaveBeenLastCalledWith('Image rotated, but the viewer could not show the new version');
     } finally { post.mockRestore(); error.mockRestore(); }
+  });
+});
+
+describe('batch tag writes share the per-tag chain', () => {
+  it.each([
+    ['quick slot', async (store: any) => {
+      store.quickSlots[0][0] = [{ id: seedTag.ID, name: seedTag.Name }];
+      await store.toggleTabTag(0);
+    }],
+    ['suggestion', (store: any) => store.applySuggestedTag(seedTag)],
+  ])('holds a %s add until the tag editor\'s remove of the same tag settles', async (_name, write) => {
+    const store = taggingStore();
+    store.resourceDetails.Tags = [seedTag];
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const remove = deferred<any>();
+    const urls: string[] = [];
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      urls.push(url);
+      return url.includes('removeTags') ? remove.promise : Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const removing = store.saveTagRemoval(seedTag);
+      const adding = write(store);
+      await new Promise(r => setTimeout(r, 0));
+      // The add must not overtake the remove: the server applies them in arrival order.
+      expect(urls).toEqual(['/v1/resources/removeTags']);
+      remove.resolve({ ok: true });
+      await removing;
+      await adding;
+      expect(urls).toEqual(['/v1/resources/removeTags', '/v1/resources/addTags']);
+    } finally { post.mockRestore(); }
+  });
+
+  it('holds a tag-editor remove until every retry of a batch add has finished', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const urls: string[] = [];
+    let addAttempts = 0;
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      urls.push(url);
+      if (url.includes('addTags') && ++addAttempts === 1) return Promise.resolve({ ok: false, status: 503 });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const adding = store._batchToggleTags([seedTag, relatedTag], 'add');
+      const removing = store.saveTagRemoval(relatedTag);
+      await adding;
+      await removing;
+      expect(urls).toEqual(['/v1/resources/addTags', '/v1/resources/addTags', '/v1/resources/removeTags']);
+      expect(store._tagWriteChains.size).toBe(0);
+    } finally { post.mockRestore(); }
+  });
+});
+
+describe('visible write errors', () => {
+  it('shows a failed name save on its own image only, and clears it after a later save', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 500 } as Response);
+    try {
+      await store.updateName('renamed');
+      expect(store.resourceDetails.Name).toBe('image 1');
+      expect(store.writeError('name')).toBe('Could not save the name "renamed". The previous name is back.');
+      // Said in the same words: after Enter, focus has left the field the message describes.
+      expect(store.announce).toHaveBeenCalledWith('Could not save the name "renamed". The previous name is back.');
+      store.currentIndex = 1;
+      expect(store.writeError('name')).toBe('');
+      store.currentIndex = 0;
+      post.mockResolvedValueOnce({ ok: true } as Response);
+      await store.updateName('renamed');
+      expect(store.writeError('name')).toBe('');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a failed description save', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 500 } as Response);
+    try {
+      await store.updateDescription('new text');
+      expect(store.writeError('description')).toBe('Could not save the description. The previous text is back.');
+      expect(store.announce).toHaveBeenCalledWith('Could not save the description. The previous text is back.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a failed quick-slot write, and a failed undo on the image the user is on', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      store.quickSlots[0][0] = [{ id: seedTag.ID, name: seedTag.Name }];
+      await store.toggleTabTag(0);
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+
+      store._undoRing.push({ resourceId: 1, tags: [seedTag, relatedTag], action: 'add', name: 'image 1' });
+      store.currentIndex = 1;
+      await store.undoLastTagAction();
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related from image 1. Try again.');
+      expect(store.announce).toHaveBeenLastCalledWith('Undo failed. Could not remove tags seed, related from image 1. Try again.');
+
+      post.mockResolvedValue({ ok: true } as Response);
+      // A success on another image says nothing about the failed write...
+      store.items.push(item(3));
+      await store._batchToggleTags([relatedTag], 'add', { targetResourceId: 3, fromUndo: true });
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related from image 1. Try again.');
+      // ...but retrying it on the image the message is about does.
+      await store.undoLastTagAction();
+      expect(store.writeError('tags')).toBe('');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('forgets write errors when the viewer closes', async () => {
+    const store = taggingStore();
+    store._setWriteError('name', 1, 'failed', store._session);
+    store.close();
+    expect(store.writeError('name')).toBe('');
+    expect(store.writeErrors.name).toBe(null);
+  });
+
+  it('does not carry a failure that lands after close() into the next session', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const saving = store.updateName('renamed');
+      store.close();
+      response.resolve({ ok: false, status: 500 });
+      await saving;
+      expect(store.writeErrors.name).toBe(null);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it.each([
+    ['its gallery is unchanged', () => {}],
+    ['a standalone viewer gave the page its own gallery back', (store: any) => { store._itemsBeforeStandalone = [item(2)]; }],
+  ])('announces a batch failure that lands after close(), naming its image, when %s', async (_name, setup) => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const adding = store._batchToggleTags([seedTag], 'add');
+      setup(store);
+      store.close();
+      response.resolve({ ok: false, status: 400 });
+      await adding;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not add tag seed to image 1. Try again.');
+      expect(store.writeErrors.tags).toBe(null);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not talk over a failed undo that lands after close()', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      const undoing = store.undoLastTagAction();
+      store.close();
+      response.resolve({ ok: false, status: 400 });
+      await undoing;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not remove tag seed from image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it.each([
+    ['name', (store: any) => store.updateName('renamed')],
+    ['description', (store: any) => store.updateDescription('new text')],
+    ['tag add', (store: any) => store.saveTagAddition(seedTag)],
+    ['tag remove', (store: any) => store.saveTagRemoval(seedTag)],
+    ['batch tag', (store: any) => store._batchToggleTags([seedTag], 'add')],
+  ])('refreshes the page behind the viewer when a %s write lands after close()', async (_name, write) => {
+    const store = taggingStore();
+    store.editPanelOpen = true;
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const writing = write(store);
+      store.close();
+      expect(store.refreshPageContent).not.toHaveBeenCalled();
+      response.resolve({ ok: true });
+      await writing;
+      expect(store.refreshPageContent).toHaveBeenCalledTimes(1);
+      // Nor left set for the next session to act on.
+      expect(store.needsRefreshOnClose).toBe(false);
+    } finally { post.mockRestore(); }
+  });
+
+  it('does not let a save from a closed session clear a failure in the next one', async () => {
+    const store = taggingStore();
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const saving = store.updateName('renamed');
+      store.close();
+      store._setWriteError('name', 1, 'failed in the next session', store._session);
+      response.resolve({ ok: true });
+      await saving;
+      expect(store.writeError('name')).toBe('failed in the next session');
+    } finally { post.mockRestore(); }
+  });
+
+  it('keeps a tag failure until a later write on its image touches a tag that failed', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] }, 2: { ID: 2, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      await store._batchToggleTags([seedTag], 'add');
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      post.mockResolvedValue({ ok: true } as Response);
+      // Other tags on the same image say nothing about seed...
+      await store._batchToggleTags([relatedTag], 'add');
+      await store.saveTagAddition({ ID: 8, Name: 'other' });
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      // ...a write that touches seed does.
+      await store.saveTagAddition(seedTag);
+      expect(store.writeError('tags')).toBe('');
+
+      // An undo failure about image 1, shown on image 2, outlasts a success on image 2.
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      store.currentIndex = 1;
+      post.mockResolvedValue({ ok: false, status: 400 } as Response);
+      await store.undoLastTagAction();
+      post.mockResolvedValue({ ok: true } as Response);
+      await store._batchToggleTags([seedTag], 'add');
+      expect(store.writeError('tags')).toBe('Could not remove tag seed from image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it.each([
+    ['name', 'updateName', 'Could not save the name "B". The previous name is back.'],
+    ['description', 'updateDescription', 'Could not save the description. The previous text is back.'],
+  ])('does not let an older %s save clear a newer one\'s failure', async (field, method, message) => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'image 1', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store[method]('A');
+      const savingB = store[method]('B');
+      newer.resolve({ ok: false, status: 500 });
+      await savingB;
+      expect(store.writeError(field)).toBe(message);
+      older.resolve({ ok: true });
+      await savingA;
+      expect(store.writeError(field)).toBe(message);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not let an older tag write clear a newer one\'s failure', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    // The per-tag chain already orders two writes of one tag; stubbing it out pins the rule itself.
+    store._postTagsWithRetry = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const first = store._batchToggleTags([seedTag], 'add');
+      const second = store._batchToggleTags([seedTag], 'add');
+      newer.resolve({ ok: false, status: 400 });
+      await second;
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      older.resolve({ ok: true });
+      await first;
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+    } finally { error.mockRestore(); }
+  });
+
+  it('does not announce a failed undo from a closed session with the next session\'s error', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      const undoing = store.undoLastTagAction();
+      store.close();
+      store._setWriteError('tags', 1, 'The next session\'s own failure.', store._session, ++store._writeSeq, 1, [relatedTag.ID]);
+      response.resolve({ ok: false, status: 400 });
+      await undoing;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not remove tag seed from image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('names an undo\'s image from its entry when the viewer no longer lists it', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      store._undoRing.push({ resourceId: 9, tags: [seedTag], action: 'add', name: 'image 9' });
+      await store.undoLastTagAction();
+      expect(store.writeError('tags')).toBe('Could not remove tag seed from image 9. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a tag failure on the image it was about too, where the user goes back to retry', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] }, 2: { ID: 2, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const adding = store._batchToggleTags([seedTag], 'add');
+      store.currentIndex = 1;
+      response.resolve({ ok: false, status: 400 });
+      await adding;
+      expect(store.writeError('tags')).toBe('Could not add tag seed to image 1. Try again.');
+      store.currentIndex = 0;
+      expect(store.writeError('tags')).toBe('Could not add tag seed to image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not post an older name save\'s failure over a newer save that went through', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'B', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store.updateName('A');
+      const savingB = store.updateName('B');
+      newer.resolve({ ok: true });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(store.writeError('name')).toBe('');
+      expect(store.announce).not.toHaveBeenCalledWith(expect.stringContaining('Could not save the name "A"'));
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not post an older tag write\'s failure over a newer write of that tag, only of that tag', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const writes = [deferred<any>(), deferred<any>(), deferred<any>(), deferred<any>()];
+    // The per-tag chain already orders two writes of one tag; stubbing it out pins the rule itself.
+    store._postTagsWithRetry = vi.fn()
+      .mockReturnValueOnce(writes[0].promise).mockReturnValueOnce(writes[1].promise)
+      .mockReturnValueOnce(writes[2].promise).mockReturnValueOnce(writes[3].promise);
+    try {
+      const olderSeed = store._batchToggleTags([seedTag], 'add');
+      const newerSeed = store._batchToggleTags([seedTag], 'add');
+      writes[1].resolve({ ok: true });
+      await newerSeed;
+      writes[0].resolve({ ok: false, status: 400 });
+      await olderSeed;
+      expect(store.writeError('tags')).toBe('');
+
+      // A later success on another tag says nothing about this one.
+      const olderRelated = store._batchToggleTags([relatedTag], 'add');
+      const newerOther = store._batchToggleTags([{ ID: 8, Name: 'other' }], 'add');
+      writes[3].resolve({ ok: true });
+      await newerOther;
+      writes[2].resolve({ ok: false, status: 400 });
+      await olderRelated;
+      expect(store.writeError('tags')).toBe('Could not add tag related. Try again.');
+    } finally { error.mockRestore(); }
+  });
+
+  it.each([
+    ['name', 'updateName', (store: any) => [store.items[0].name, store.detailsCache.get(1)?.Name]],
+    ['description', 'updateDescription', (store: any) => [store.resourceDetails.Description, store.detailsCache.get(1)?.Description]],
+  ])('leaves a newer saved %s in place when an older save fails after it', async (_field, method, shown) => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store[method]('A');
+      const savingB = store[method]('B');
+      // No panel open, so nothing would refetch to correct a rolled-back value.
+      store.quickTagPanelOpen = false;
+      newer.resolve({ ok: true });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(shown(store)).toEqual(['B', 'B']);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('keeps a newer save\'s failure when an older one fails after it', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'image 1', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store.updateName('A');
+      const savingB = store.updateName('B');
+      newer.resolve({ ok: false, status: 500 });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(store.writeError('name')).toBe('Could not save the name "B". The previous name is back.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('never counts a write with no keys as superseded', () => {
+    const store = makeStore([item(1)]);
+    expect(store._isSuperseded('tags', 1, 1, [])).toBe(false);
+    expect(store._isSuperseded('tags', 1, 1, null)).toBe(false);
+  });
+});
+
+describe('page refresh', () => {
+  it('runs one refresh at a time, with one trailing run for every call made meanwhile', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    const runs = [deferred<void>(), deferred<void>()];
+    let started = 0;
+    store._listSelection = { refresh: vi.fn(() => runs[started++]?.promise) };
+    const first = store.refreshPageContent();
+    const second = store.refreshPageContent();
+    const third = store.refreshPageContent();
+    expect(store._listSelection.refresh).toHaveBeenCalledTimes(1);
+
+    let secondSettled = false;
+    second.then(() => { secondSettled = true; });
+    runs[0].resolve();
+    await vi.waitFor(() => expect(store._listSelection.refresh).toHaveBeenCalledTimes(2));
+    // A caller made during the first run waits for the run that covers it.
+    expect(secondSettled).toBe(false);
+    runs[1].resolve();
+    await Promise.all([first, second, third]);
+    expect(secondSettled).toBe(true);
+    expect(store._listSelection.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('parks focus on the list when the refreshed list no longer has the focused thumbnail', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { callback(); return 0; };
+    const doc = (globalThis as any).document;
+    const thumbnail: any = { isConnected: true, dataset: { resourceId: '1' } };
+    thumbnail.closest = () => thumbnail;
+    const list: any = {
+      isConnected: true,
+      contains: () => true,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      matches: () => false,
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+      focus: () => { doc.activeElement = list; },
+    };
+    doc.activeElement = thumbnail;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    // The edit took the resource out of the results: its card is gone and nothing replaces it.
+    store._listSelection = { refresh: async () => { thumbnail.isConnected = false; doc.activeElement = doc.body; } };
+    await store.refreshPageContent();
+    expect(doc.activeElement).toBe(list);
+  });
+
+  it('parks focus on the rebuilt list when it was on something else in the old one', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { callback(); return 0; };
+    const doc = (globalThis as any).document;
+    // A card's title link: in the list, but not a thumbnail.
+    const link: any = { isConnected: true, closest: () => null };
+    const oldList: any = { contains: (el: any) => el === link };
+    const newList: any = {
+      isConnected: true,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      matches: () => false,
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+      focus: () => { doc.activeElement = newList; },
+    };
+    let list = oldList;
+    doc.activeElement = link;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    // MRQL re-runs its query: the whole list is rebuilt and focus falls to <body>.
+    store._listSelection = { refresh: async () => { link.isConnected = false; list = newList; doc.activeElement = doc.body; } };
+    await store.refreshPageContent();
+    expect(doc.activeElement).toBe(newList);
+  });
+});
+
+describe('browser history', () => {
+  let state: any;
+  let back: any;
+
+  beforeEach(() => {
+    state = { page: 'own' };
+    back = vi.fn();
+    (globalThis as any).history = {
+      get state() { return state; },
+      pushState: vi.fn((next: any) => { state = next; }),
+      replaceState: vi.fn((next: any) => { state = next; }),
+      back,
+    };
+  });
+
+  afterEach(() => { delete (globalThis as any).history; });
+
+  it('defers the push of a viewer reopened before close()\'s Back has landed', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    const marker = state;
+    store.close();
+    store.open(0);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    // The traversal close() asked for lands now: it must not close the new viewer.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(true);
+    expect(history.pushState).toHaveBeenCalledTimes(2);
+    expect(state.mahLightbox).not.toBe(marker.mahLightbox);
+
+    // And the new entry behaves like any other.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+  });
+
+  it('stops waiting for a Back traversal that never arrives', () => {
+    vi.useFakeTimers();
+    try {
+      const store = makeStore([item(1)]);
+      store._preloadUpcoming = vi.fn();
+      store.open(0);
+      const first = state.mahLightbox;
+      store.close();
+      store.open(0);
+      expect(history.pushState).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1000);
+      expect(store._historyBackPending).toBe(false);
+      // Still on the old entry (the traversal never happened), so it is reused for this viewer.
+      expect(state.mahLightbox).not.toBe(first);
+      state = { page: 'own' };
+      store._onHistoryPop();
+      expect(store.isOpen).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reuses a marker entry a previous page load left behind instead of stacking another', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = { page: 'own', mahLightbox: 'left-by-reload' };
+    store.open(0);
+    expect(history.pushState).not.toHaveBeenCalled();
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.not.stringMatching(/^left-by-reload$/) });
+    // Going back from it could reload the page; the marker is stripped in place instead.
+    store.close();
+    expect(back).not.toHaveBeenCalled();
+    expect(state).toEqual({ page: 'own' });
+    store.open(0);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+  });
+
+  it('pushes one entry on open and closes on Back without going back again', () => {
+    const store = makeStore([item(1), item(2)]);
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    store.open(1);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.any(String) });
+
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('drops its entry when closed from the viewer', () => {
+    const store = makeStore([item(1)]);
+    store.open(0);
+    store.close();
+    expect(back).toHaveBeenCalledTimes(1);
+    // The pop that history.back() fires arrives after close and changes nothing.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+  });
+
+  it('keeps a non-object page state intact under its marker', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = 'page-string';
+    store.open(0);
+    expect(state).toEqual({ mahLightbox: expect.any(String), previousState: 'page-string' });
+  });
+
+  it('marks a page with no state of its own with the marker alone', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = null;
+    store.open(0);
+    expect(state).toEqual({ mahLightbox: expect.any(String) });
+  });
+
+  it('closes the entity picker a quick slot opened, so it is not left over the page', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    const picker = { isOpen: true, close: vi.fn() };
+    (globalThis as any).window.Alpine = { store: (name: string) => (name === 'entityPicker' ? picker : undefined) };
+    store.open(0);
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(picker.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves a Name edit in progress before Back drops the details', async () => {
+    const store = taggingStore();
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    store.resourceDetails = { ID: 1, Name: 'image 1', Tags: [] };
+    const saves: string[] = [];
+    const input = {
+      tagName: 'INPUT',
+      closest: (sel: string) => (sel === '[data-edit-panel]' ? {} : null),
+      blur: () => { saves.push('blur'); store.updateName('typed'); },
+    };
+    (globalThis as any).document.activeElement = input;
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+    try {
+      state = { page: 'own' };
+      store._onHistoryPop();
+      expect(saves).toEqual(['blur']);
+      expect(post).toHaveBeenCalledWith('/v1/resource/editName?id=1', expect.anything());
+    } finally { post.mockRestore(); }
+  });
+
+  it('leaves history alone when another entry was pushed on top of its own', () => {
+    const store = makeStore([item(1)]);
+    store.open(0);
+    state = { q: 'other' };
+    store.close();
+    expect(back).not.toHaveBeenCalled();
   });
 });

@@ -253,6 +253,7 @@ Navigation and page layout share one breakpoint, 900px.
 | U or Cmd/Ctrl + Z | Undo the last tag change |
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
+| Browser Back (button, Alt + Left, Cmd + [, mouse back button, phone back gesture) | Close lightbox and stay on the page |
 
 ### @-Mention Autocomplete
 

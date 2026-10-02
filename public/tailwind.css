@@ -2987,6 +2987,9 @@
   .text-purple-700 {
     color: var(--color-purple-700);
   }
+  .text-red-300 {
+    color: var(--color-red-300);
+  }
   .text-red-400 {
     color: var(--color-red-400);
   }

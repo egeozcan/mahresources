@@ -39,6 +39,19 @@ export const navigationState = {
   // Reference to trigger element for focus restoration
   triggerElement: null,
 
+  // Marker of the history entry open() pushed, so browser Back closes the viewer instead of
+  // leaving the page. Null while no entry of ours is on the stack.
+  _historyToken: null,
+  // close() has called history.back() and its popstate has not arrived yet. An open() in
+  // that window defers its push (_historyPushDeferred) until it has, or the late popstate
+  // would read as Back and close the new viewer.
+  _historyBackPending: false,
+  _historyPushDeferred: false,
+  // The current marker was written over an entry a previous page load left behind. Going
+  // back from it can cross into that older document (a full reload in some browsers), so
+  // close() strips the marker in place instead.
+  _historyReused: false,
+
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
   _itemsBeforeStandalone: null,
@@ -381,6 +394,12 @@ export const navigationMethods = {
     document.body.style.overscrollBehaviorX = 'none';
 
     this.currentIndex = safeIndex;
+    // Only the first open() of a session pushes. Should open() run on an already-open viewer,
+    // a second entry would make Back need two presses to leave it.
+    if (!this.isOpen) {
+      if (this._historyBackPending) this._historyPushDeferred = true;
+      else this._pushHistoryEntry();
+    }
     this.isOpen = true;
     this._armMediaLoad();
 
@@ -492,7 +511,84 @@ export const navigationMethods = {
     }
   },
 
+  // Same URL, so nothing reloads and a bookmarked or shared link is unchanged; the marker
+  // rides on the page's own state so a component that stored something there keeps it.
+  // An entry that already carries a marker is one a closed viewer left behind (the page was
+  // reloaded, or left through a link inside the viewer, with the viewer open): reuse it rather
+  // than stacking another entry Back would have to step through.
+  _pushHistoryEntry() {
+    this._historyToken = `${Date.now()}:${Math.random()}`;
+    try {
+      // No state of its own (the usual case) is an empty one, not a value to keep aside.
+      const state = history.state ?? {};
+      this._historyReused = !!state?.mahLightbox;
+      if (this._historyReused) {
+        history.replaceState({ ...state, mahLightbox: this._historyToken }, '');
+        return;
+      }
+      const plain = state && Object.getPrototypeOf(state) === Object.prototype;
+      history.pushState(plain ? { ...state, mahLightbox: this._historyToken }
+        : { mahLightbox: this._historyToken, previousState: state }, '');
+    } catch {
+      this._historyToken = null;
+    }
+  },
+
+  // Back (or Forward) moved off our entry while the viewer is open: close without touching
+  // history again, since the browser already popped it.
+  _onHistoryPop() {
+    if (this._historyBackPending) {
+      // The traversal close() asked for: nothing to close. Now it is safe to push for a
+      // viewer opened in the meantime.
+      this._historyBackPending = false;
+      if (this._historyPushDeferred) {
+        this._historyPushDeferred = false;
+        if (this.isOpen) this._pushHistoryEntry();
+      }
+      return;
+    }
+    if (!this.isOpen || !this._historyToken) return;
+    if (history.state?.mahLightbox === this._historyToken) return;
+    this._historyToken = null;
+    this.close();
+  },
+
+  // Closed from the viewer itself (Escape, the close button, a click beside the image): drop
+  // the entry open() pushed, so the next Back leaves the page as the user expects. Skipped
+  // when something else has pushed on top of ours since, because going back would undo that.
+  _popHistoryEntry() {
+    const token = this._historyToken;
+    this._historyToken = null;
+    if (!token || history.state?.mahLightbox !== token) return;
+    if (this._historyReused) {
+      const { mahLightbox, ...rest } = history.state;
+      history.replaceState(rest, '');
+      return;
+    }
+    this._historyBackPending = true;
+    history.back();
+    // A traversal that never reaches this document (throttled, or nothing to go back to)
+    // must not leave every later open() waiting for it.
+    clearTimeout(this._historyBackTimer);
+    this._historyBackTimer = setTimeout(() => {
+      if (!this._historyBackPending) return;
+      this._historyBackPending = false;
+      if (this._historyPushDeferred) {
+        this._historyPushDeferred = false;
+        if (this.isOpen) this._pushHistoryEntry();
+      }
+    }, 1000);
+  },
+
   close() {
+    // Back closes without moving focus, so a Name or Description edit would only blur once
+    // the panel is gone, after the details its save reads have been dropped. Blurring now
+    // saves it the way the close button's own focus change does.
+    const active = document.activeElement;
+    if (active?.closest?.('[data-edit-panel]') && ['INPUT', 'TEXTAREA'].includes(active.tagName)) {
+      active.blur();
+    }
+    this._popHistoryEntry();
     this.resetDisplayedVersion?.(false);
     this.versionPanelOpen = false;
     this.versionsCache?.clear();
@@ -510,6 +606,11 @@ export const navigationMethods = {
       }
       this.isFullscreen = false;
     }
+
+    // Back reaches here with the entity picker a quick slot opened still up (Escape cannot:
+    // the picker takes it). Left open, it would sit over the page with nothing to confirm into.
+    const picker = window.Alpine?.store('entityPicker');
+    if (picker?.isOpen) picker.close();
 
     if (this.editPanelOpen) {
       this.closeEditPanel();
@@ -594,6 +695,7 @@ export const navigationMethods = {
     // cleared this snapshot. A later session must not mistake its old Current for today's.
     this.resourceDetails = null;
     this._suggestedCache.clear();
+    this.writeErrors = { name: null, description: null, tags: null };
 
     // A bare .focus() is silently a no-op on a detached node, and the thumbnail
     // that opened the viewer is often gone by now — an in-place crop or rotate

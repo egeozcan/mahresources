@@ -84,6 +84,10 @@ export function registerLightboxStore(Alpine) {
       };
       document.addEventListener('visibilitychange', this._handleDetailsRevalidate);
       window.addEventListener('focus', this._handleDetailsRevalidate);
+
+      // Browser Back closes the viewer (open() pushes a history entry for it).
+      this._handlePopState = () => this._onHistoryPop();
+      window.addEventListener('popstate', this._handlePopState);
     },
 
     destroy() {
@@ -101,6 +105,9 @@ export function registerLightboxStore(Alpine) {
       if (this._handleDetailsRevalidate) {
         document.removeEventListener('visibilitychange', this._handleDetailsRevalidate);
         window.removeEventListener('focus', this._handleDetailsRevalidate);
+      }
+      if (this._handlePopState) {
+        window.removeEventListener('popstate', this._handlePopState);
       }
       if (this._resizeDebounce) {
         clearTimeout(this._resizeDebounce);
