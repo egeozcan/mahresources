@@ -197,6 +197,86 @@ test.describe('MRQL default resource card lightbox', () => {
     }, { id: resourceId, value: original });
   });
 
+  test('a Name edit saved by Back with no delay keeps focus on the refreshed thumbnail', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+    const renamed = `${original} fast`;
+    await name.fill(renamed);
+
+    // The save and the re-run it starts can both land before close() returns focus.
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    await expect(mrql.resultsSection.locator(`[data-lightbox-item][data-resource-id="${resourceId}"]`)).toBeFocused();
+
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
+  test('a save that lands after closing keeps the cards selected since', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const resources = page.locator('[data-selection-scope="mrql-resource"]');
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+    const renamed = `${original} late`;
+    await name.fill(renamed);
+
+    // Hold the save Back makes until the reader has selected cards on the page.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/v1/resource/editName**', async route => {
+      await held;
+      await route.continue();
+    });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    const checkboxes = resources.locator('.card-checkbox');
+    await expect(checkboxes).toHaveCount(2);
+    await checkboxes.nth(0).check();
+    await checkboxes.nth(1).check();
+    const selected = () => page.evaluate(() => (window as any).Alpine.store('selection:mrql-resource').selectedIds.size);
+    expect(await selected()).toBe(2);
+
+    release();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    await expect.poll(selected).toBe(2);
+    await expect(resources.locator('.card-checkbox')).toHaveCount(2);
+    for (const box of await resources.locator('.card-checkbox').all()) await expect(box).toBeChecked();
+
+    await page.unroute('**/v1/resource/editName**');
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
   test('lightbox navigates between multiple MRQL results', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

@@ -1,5 +1,5 @@
 import { abortableFetch } from '../../index.js';
-import { captureTrigger, restoreFocus } from '../../utils/focus.js';
+import { captureTrigger, focusedElement, restoreFocus } from '../../utils/focus.js';
 import { selectionForElement } from '../bulkSelection.js';
 import { findListContainer } from '../../utils/listContainer.js';
 
@@ -51,6 +51,10 @@ export const navigationState = {
   // back from it can cross into that older document (a full reload in some browsers), so
   // close() strips the marker in place instead.
   _historyReused: false,
+  // Set while Forward reopens the viewer: the token of the entry open() takes over.
+  _historyAdopt: null,
+  // The scoped or sourced gallery the last session was opened from, if any.
+  _historyGallery: null,
 
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
@@ -397,8 +401,11 @@ export const navigationMethods = {
     // Only the first open() of a session pushes. Should open() run on an already-open viewer,
     // a second entry would make Back need two presses to leave it.
     if (!this.isOpen) {
-      if (this._historyBackPending) this._historyPushDeferred = true;
+      if (this._historyAdopt) this._adoptHistoryEntry(this._historyAdopt);
+      else if (this._historyBackPending) this._historyPushDeferred = true;
       else this._pushHistoryEntry();
+    } else {
+      this._stampHistoryItem();
     }
     this.isOpen = true;
     this._armMediaLoad();
@@ -524,14 +531,59 @@ export const navigationMethods = {
       this._historyReused = !!state?.mahLightbox;
       if (this._historyReused) {
         history.replaceState({ ...state, mahLightbox: this._historyToken }, '');
-        return;
+      } else {
+        const plain = state && Object.getPrototypeOf(state) === Object.prototype;
+        history.pushState(plain ? { ...state, mahLightbox: this._historyToken }
+          : { mahLightbox: this._historyToken, previousState: state }, '');
       }
-      const plain = state && Object.getPrototypeOf(state) === Object.prototype;
-      history.pushState(plain ? { ...state, mahLightbox: this._historyToken }
-        : { mahLightbox: this._historyToken, previousState: state }, '');
     } catch {
       this._historyToken = null;
     }
+    this._stampHistoryItem();
+  },
+
+  // Forward onto an entry a closed viewer left ahead of the page: take it over rather than
+  // push another, so Back closes this session too.
+  _adoptHistoryEntry(token) {
+    this._historyToken = token;
+    this._historyReused = false;
+    this._stampHistoryItem();
+  },
+
+  // Records the image on screen in our entry while it is the current one, so Forward back onto
+  // it (after Back or Escape) can reopen on that image. Kept current as the reader steps,
+  // because Back leaves the entry before close() runs.
+  _stampHistoryItem() {
+    const id = this.getCurrentItem()?.id;
+    if (!this._historyToken || id == null) return;
+    try {
+      if (history.state?.mahLightbox !== this._historyToken || history.state.mahLightboxItem === id) return;
+      history.replaceState({ ...history.state, mahLightboxItem: id }, '');
+    } catch { /* history unavailable: Forward then steps back off the entry */ }
+  },
+
+  // Reopen as a click on the image's thumbnail would, so its gallery (scope, source container,
+  // standalone) is rebuilt the same way. With no such thumbnail on the page (deleted, filtered
+  // out, paged past inside the viewer) there is nothing to show, so step back off the entry
+  // rather than leave Forward on a page that looks unchanged.
+  _reopenFromHistory(state) {
+    const id = state.mahLightboxItem;
+    const selector = `[data-lightbox-item][data-resource-id="${id}"]`;
+    // The gallery the session was opened from first: a resource listed twice (a Group's own
+    // and related resources) would otherwise reopen among the other gallery's neighbours.
+    const gallery = this._historyGallery?.isConnected ? this._historyGallery : null;
+    const thumbnail = id == null ? null
+      : gallery?.querySelector(selector) ?? findListContainer(document)?.querySelector(selector) ?? document.querySelector(selector);
+    const contentType = thumbnail?.dataset.contentType ?? '';
+    if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
+      this._historyAdopt = state.mahLightbox;
+      try {
+        this.openFromClick({ currentTarget: thumbnail, preventDefault() {} }, id, contentType);
+      } finally {
+        this._historyAdopt = null;
+      }
+    }
+    if (!this.isOpen) this._goBackOffEntry();
   },
 
   // Back (or Forward) moved off our entry while the viewer is open: close without touching
@@ -547,7 +599,11 @@ export const navigationMethods = {
       }
       return;
     }
-    if (!this.isOpen || !this._historyToken) return;
+    if (!this.isOpen) {
+      if (history.state?.mahLightbox) this._reopenFromHistory(history.state);
+      return;
+    }
+    if (!this._historyToken) return;
     if (history.state?.mahLightbox === this._historyToken) return;
     this._historyToken = null;
     this.close();
@@ -561,10 +617,14 @@ export const navigationMethods = {
     this._historyToken = null;
     if (!token || history.state?.mahLightbox !== token) return;
     if (this._historyReused) {
-      const { mahLightbox, ...rest } = history.state;
+      const { mahLightbox, mahLightboxItem, ...rest } = history.state;
       history.replaceState(rest, '');
       return;
     }
+    this._goBackOffEntry();
+  },
+
+  _goBackOffEntry() {
     this._historyBackPending = true;
     history.back();
     // A traversal that never reaches this document (throttled, or nothing to go back to)
@@ -695,7 +755,7 @@ export const navigationMethods = {
     // cleared this snapshot. A later session must not mistake its old Current for today's.
     this.resourceDetails = null;
     this._suggestedCache.clear();
-    this.writeErrors = { name: null, description: null, tags: null };
+    this.writeErrors = { name: {}, description: {}, tags: {} };
 
     // A bare .focus() is silently a no-op on a detached node, and the thumbnail
     // that opened the viewer is often gone by now — an in-place crop or rotate
@@ -708,13 +768,14 @@ export const navigationMethods = {
     // guard pulls focus straight back in and the reader ends on <body> when the
     // subtree finally goes. Measured settling on BODY for 1.6s before this.
     // Two frames, because the trap releases on its own timer.
+    // Where Forward looks first to reopen this session (see _reopenFromHistory).
+    this._historyGallery = this.triggerElement?.closest?.('[data-lightbox-scope], [data-lightbox-source]') ?? null;
     if (this.triggerElement) {
       const trigger = this.triggerElement;
       this.triggerElement = null;
+      const session = this._session;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          restoreFocus(trigger, findListContainer(document) ?? document.querySelector('main'));
-        });
+        requestAnimationFrame(() => this._returnFocus(trigger, session));
       });
     }
 
@@ -723,6 +784,24 @@ export const navigationMethods = {
     requestAnimationFrame(() => {
       window.scrollTo(0, savedY);
     });
+  },
+
+  // A refresh can be rebuilding the list by now: a save Back made lands within these frames on
+  // a fast server, and MRQL's re-run tears the cards down at once. That refresh started while
+  // focus was on <body>, so it will not put it back itself. Wait for it, then put the reader on
+  // the same resource's new thumbnail, unless they have moved somewhere since. A session the
+  // reader has reopened (and perhaps closed) since owns focus instead.
+  async _returnFocus(trigger, session) {
+    const current = () => session === this._session && !this.isOpen;
+    if (!current()) return;
+    if (!this._pageRefresh) {
+      this._refocusInList(trigger);
+      return;
+    }
+    if (trigger.isConnected) restoreFocus(trigger);
+    await this._pageRefresh;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (current() && !focusedElement()) this._refocusInList(trigger);
   },
 
   async next() {
@@ -761,6 +840,7 @@ export const navigationMethods = {
     this.pauseCurrentVideo();
     this.resetZoom();
     this.currentIndex = index;
+    this._stampHistoryItem();
     this._armMediaLoad();
     this.announcePosition(announcePrefix);
     this.scheduleMediaCheck();

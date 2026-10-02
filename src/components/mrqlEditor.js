@@ -27,6 +27,8 @@ export function mrqlEditor() {
     result: null,
     executedQuery: null,
     displayPage: 1,
+    // Selected ids a refresh will put back once its cards register (see execute).
+    _keptSelection: null,
     bucketOffsets: {1:0},
     bucketItemOffsets: {1:0},
     sortOrder: '',
@@ -44,6 +46,22 @@ export function mrqlEditor() {
     resetSelections() {
       if (typeof window === 'undefined') return;
       for (const type of ['resource','note','group']) window.Alpine?.store('selection:mrql-' + type)?.reset?.();
+    },
+    selectedIdsByType() {
+      const kept = {};
+      for (const type of ['resource','note','group']) {
+        const ids = window.Alpine?.store('selection:mrql-' + type)?.selectedIds;
+        if (ids?.size) kept[type] = [...ids];
+      }
+      return kept;
+    },
+    mergeSelections(a, b) {
+      const merged = {...(a || {})};
+      for (const [type, ids] of Object.entries(b)) merged[type] = [...new Set([...(merged[type] || []), ...ids])];
+      return merged;
+    },
+    restoreSelections(kept) {
+      for (const [type, ids] of Object.entries(kept)) window.Alpine?.store('selection:mrql-' + type)?.restoreSelection?.(ids);
     },
     refreshForCompletedAction(job) {
       if (!this.executedQuery || !this.executedEntityTypes?.includes(job?.entityType)) return;
@@ -73,7 +91,9 @@ export function mrqlEditor() {
           // A mutation can finish after the reader has started another Run or
           // page request. Its old callback must never abort that newer request.
           if (this.executedQuery !== snapshot || this.executing) return;
-          return this.execute({pushState:false, snapshot, displayPage:this.displayPage});
+          // A refresh (the media viewer's, after a save that landed once it closed) must not
+          // take away cards the reader has selected since.
+          return this.execute({pushState:false, snapshot, displayPage:this.displayPage, preserveSelection:true});
         };
       }
     },
@@ -714,6 +734,7 @@ export function mrqlEditor() {
       if (!preserveExecution) {
         this.executedQuery = null;
         this.executedEntityTypes = [];
+        this._keptSelection = null;
         clearTimeout(this._actionRefreshTimer);
       }
     },
@@ -760,7 +781,7 @@ export function mrqlEditor() {
       this.scheduleValidation();
     },
 
-    async execute({ pushState = true, snapshot = null, displayPage = 1, reuseResult = false } = {}) {
+    async execute({ pushState = true, snapshot = null, displayPage = 1, reuseResult = false, preserveSelection = false } = {}) {
       const query = snapshot?.query || this.getQuery().trim();
       const params = snapshot?.params || this.paramsPayload();
       if (!query) return;
@@ -777,6 +798,10 @@ export function mrqlEditor() {
       this._executeController = controller;
       this.executing = true;
       this.error = '';
+      // Read before clearResult() resets the stores; put back once the new cards register.
+      // A refresh that replaces one whose cards have not registered yet carries its ids on,
+      // since the stores are empty by now. Any other run starts from no selection.
+      this._keptSelection = preserveSelection ? this.mergeSelections(this._keptSelection, this.selectedIdsByType()) : null;
       // BH-013: clears the banner state at the start of each request too.
       this.clearResult({ preserveExecution: snapshot !== null && snapshot === this.executedQuery });
       // Findings 23/46: an Explain of a different query must not survive this
@@ -831,6 +856,11 @@ export function mrqlEditor() {
         this.$nextTick(() => {
           window.Alpine?.store('lightbox')?.initFromDOM();
           this.connectSelections();
+          // Only the run that is still current: a newer Run or page has replaced these cards.
+          if (requestId === this._executeRequestId && this._keptSelection) {
+            this.restoreSelections(this._keptSelection);
+            this._keptSelection = null;
+          }
         });
 
         // Update URL so back/forward works (skip if already the same query)

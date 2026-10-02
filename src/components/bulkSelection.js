@@ -102,6 +102,17 @@ export function createBulkSelection(scope = null) {
       this.activeEditor = null;
     },
 
+    // Put back a selection a re-render dropped (MRQL rebuilds every card when it refreshes),
+    // for the ids that are still listed. Not a reader's action, so nothing is announced and
+    // the shift-range anchor stays put.
+    restoreSelection(ids) {
+      for (const id of ids) {
+        if (!this.options[id]) continue;
+        this.selectedIds.add(id);
+        this.syncCheckboxes(id, true);
+      }
+    },
+
     selectedEntities() {
       return [...this.selectedIds].map(id => this.options[id]?.entity).filter(Boolean);
     },

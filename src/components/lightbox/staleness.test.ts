@@ -53,7 +53,7 @@ function makeStore(items: any[] = []) {
     _detailsWrites: new Map(),
     _detailsInFlight: new Set(),
     _tagWriteChains: new Map(),
-    writeErrors: { name: null, description: null, tags: null },
+    writeErrors: { name: {}, description: {}, tags: {} },
     _suggestedCache: new Map(),
     _preloadedUrls: new Set(),
     _preloadedImages: [],
@@ -627,6 +627,56 @@ describe('visible write errors', () => {
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 
+  it('keeps a failure on each image: one on image 2 does not replace image 1\'s', async () => {
+    const store = taggingStore();
+    store._setWriteError('name', 1, 'failed on 1', store._session, ++store._writeSeq);
+    store._setWriteError('name', 2, 'failed on 2', store._session, ++store._writeSeq);
+    expect(store.writeError('name')).toBe('failed on 1');
+    store.currentIndex = 1;
+    expect(store.writeError('name')).toBe('failed on 2');
+    // A later success on image 1 clears its message only.
+    store.currentIndex = 0;
+    store._clearWriteError('name', 1, store._session, ++store._writeSeq);
+    expect(store.writeError('name')).toBe('');
+    store.currentIndex = 1;
+    expect(store.writeError('name')).toBe('failed on 2');
+  });
+
+  it('shows the newest failure when two on different images both concern this one', () => {
+    const store = taggingStore();
+    store.items.push(item(3));
+    // An undo for image 3 failed while the user was on image 1, then a quick slot on image 1.
+    store._setWriteError('tags', 1, 'undo for 3 failed', store._session, ++store._writeSeq, 3, [seedTag.ID]);
+    store._setWriteError('tags', 1, 'slot on 1 failed', store._session, ++store._writeSeq, 1, [seedTag.ID]);
+    expect(store.writeError('tags')).toBe('slot on 1 failed');
+    store.currentIndex = 2;
+    expect(store.writeError('tags')).toBe('undo for 3 failed');
+  });
+
+  it('keeps a tag failure until every tag it names has been saved', () => {
+    const store = taggingStore();
+    store._setWriteError('tags', 1, 'could not add seed, related', store._session, ++store._writeSeq, 1, [seedTag.ID, relatedTag.ID]);
+    store._clearWriteError('tags', 1, store._session, ++store._writeSeq, [seedTag.ID]);
+    expect(store.writeError('tags')).toBe('could not add seed, related');
+    store._clearWriteError('tags', 1, store._session, ++store._writeSeq, [relatedTag.ID]);
+    expect(store.writeError('tags')).toBe('');
+  });
+
+  it('dismisses the tag failures shown on this image and keeps the others', () => {
+    const store = taggingStore();
+    store.items.push(item(3));
+    store._setWriteError('tags', 1, 'undo for 3 failed', store._session, ++store._writeSeq, 3, [seedTag.ID]);
+    store._setWriteError('tags', 1, 'slot on 1 failed', store._session, ++store._writeSeq, 1, [seedTag.ID]);
+    store._setWriteError('tags', 2, 'slot on 2 failed', store._session, ++store._writeSeq, 2, [seedTag.ID]);
+    store.dismissWriteError('tags');
+    // Both concerned image 1, so neither shows there any more, nor on image 3.
+    expect(store.writeError('tags')).toBe('');
+    store.currentIndex = 2;
+    expect(store.writeError('tags')).toBe('');
+    store.currentIndex = 1;
+    expect(store.writeError('tags')).toBe('slot on 2 failed');
+  });
+
   it('shows a failed description save', async () => {
     const store = taggingStore();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -670,7 +720,7 @@ describe('visible write errors', () => {
     store._setWriteError('name', 1, 'failed', store._session);
     store.close();
     expect(store.writeError('name')).toBe('');
-    expect(store.writeErrors.name).toBe(null);
+    expect(store.writeErrors.name).toEqual({});
   });
 
   it('does not carry a failure that lands after close() into the next session', async () => {
@@ -683,7 +733,7 @@ describe('visible write errors', () => {
       store.close();
       response.resolve({ ok: false, status: 500 });
       await saving;
-      expect(store.writeErrors.name).toBe(null);
+      expect(store.writeErrors.name).toEqual({});
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 
@@ -702,7 +752,7 @@ describe('visible write errors', () => {
       response.resolve({ ok: false, status: 400 });
       await adding;
       expect(store.announce).toHaveBeenLastCalledWith('Could not add tag seed to image 1. Try again.');
-      expect(store.writeErrors.tags).toBe(null);
+      expect(store.writeErrors.tags).toEqual({});
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 
@@ -1044,6 +1094,114 @@ describe('page refresh', () => {
   });
 });
 
+describe('focus after close', () => {
+  it('lands on the rebuilt thumbnail when a save\'s refresh beat close()\'s focus return', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    const frames: Array<() => void> = [];
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { frames.push(callback); return 0; };
+    const flushFrames = () => { while (frames.length) frames.shift()!(); };
+    const doc = (globalThis as any).document;
+    const focusable = (el: any) => Object.assign(el, {
+      matches: () => true, setAttribute: vi.fn(), removeAttribute: vi.fn(), focus: () => { doc.activeElement = el; },
+    });
+    const oldThumb: any = focusable({ isConnected: true, dataset: { resourceId: '1' } });
+    oldThumb.closest = () => oldThumb;
+    const newThumb: any = focusable({ isConnected: true, dataset: { resourceId: '1' } });
+    newThumb.closest = () => newThumb;
+    const emptyList: any = focusable({ isConnected: true, contains: () => false, querySelector: () => null, querySelectorAll: () => [] });
+    const newList: any = focusable({
+      isConnected: true,
+      contains: (el: any) => el === newThumb,
+      querySelector: (selector: string) => (selector.includes('data-resource-id="1"') ? newThumb : null),
+      querySelectorAll: () => [],
+    });
+    let list = emptyList;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    doc.activeElement = doc.body;
+    store.isOpen = true;
+    store.triggerElement = oldThumb;
+
+    // Back saved the Name, and on a fast server the save landed and started MRQL's re-run,
+    // which tore the cards down, before close()'s two-frame focus return came round.
+    let finishRun!: () => void;
+    store._listSelection = {
+      refresh: () => {
+        oldThumb.isConnected = false;
+        return new Promise<void>(resolve => { finishRun = () => { list = newList; resolve(); }; });
+      },
+    };
+    const refreshing = store.refreshPageContent();
+    store.close();
+    flushFrames();
+    flushFrames();
+    finishRun();
+    await refreshing;
+    await Promise.resolve();
+    flushFrames();
+    await Promise.resolve();
+    flushFrames();
+    expect(doc.activeElement).toBe(newThumb);
+  });
+});
+
+describe('focus after close, superseded', () => {
+  it('drops the focus return of a session the reader has reopened and closed since', async () => {
+    const store = makeStore([item(1), item(2)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    store._preloadUpcoming = vi.fn();
+    const frames: Array<() => void> = [];
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { frames.push(callback); return 0; };
+    const flushFrames = () => { while (frames.length) frames.shift()!(); };
+    const doc = (globalThis as any).document;
+    const thumb = (id: number) => {
+      const el: any = { isConnected: true, dataset: { resourceId: String(id) }, matches: () => true,
+        setAttribute: vi.fn(), removeAttribute: vi.fn(), focus: () => { doc.activeElement = el; } };
+      el.closest = () => el;
+      return el;
+    };
+    const a = thumb(1);
+    const b = thumb(2);
+    // MRQL's re-run tears every card down at once and renders new ones when it lands.
+    const rebuilt: Record<string, any> = { 1: thumb(1), 2: thumb(2) };
+    let list: any = null;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    doc.activeElement = doc.body;
+    let finishRun!: () => void;
+    store._listSelection = {
+      refresh: () => {
+        a.isConnected = false;
+        b.isConnected = false;
+        return new Promise<void>(resolve => {
+          finishRun = () => {
+            list = { isConnected: true, contains: () => false, querySelectorAll: () => [],
+              querySelector: (selector: string) => rebuilt[selector.match(/data-resource-id="(\d+)"/)?.[1] ?? ''] ?? null };
+            resolve();
+          };
+        });
+      },
+    };
+    const refreshing = store.refreshPageContent();
+
+    store.triggerElement = a;
+    store.isOpen = true;
+    store.close();
+    flushFrames(); flushFrames();
+    store.triggerElement = b;
+    store.open(1);
+    store.close();
+    flushFrames(); flushFrames();
+    finishRun();
+    await refreshing;
+    await Promise.resolve();
+    flushFrames();
+    await Promise.resolve();
+    flushFrames();
+    // B is the session the reader closed last.
+    expect(doc.activeElement).toBe(rebuilt[2]);
+  });
+});
+
 describe('browser history', () => {
   let state: any;
   let back: any;
@@ -1109,7 +1267,7 @@ describe('browser history', () => {
     state = { page: 'own', mahLightbox: 'left-by-reload' };
     store.open(0);
     expect(history.pushState).not.toHaveBeenCalled();
-    expect(state).toEqual({ page: 'own', mahLightbox: expect.not.stringMatching(/^left-by-reload$/) });
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.not.stringMatching(/^left-by-reload$/), mahLightboxItem: 1 });
     // Going back from it could reload the page; the marker is stripped in place instead.
     store.close();
     expect(back).not.toHaveBeenCalled();
@@ -1124,12 +1282,110 @@ describe('browser history', () => {
     store.open(0);
     store.open(1);
     expect(history.pushState).toHaveBeenCalledTimes(1);
-    expect(state).toEqual({ page: 'own', mahLightbox: expect.any(String) });
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.any(String), mahLightboxItem: 2 });
 
     state = { page: 'own' };
     store._onHistoryPop();
     expect(store.isOpen).toBe(false);
     expect(back).not.toHaveBeenCalled();
+  });
+
+  // Forward lands on the entry a closed viewer left ahead of the page.
+  function thumbnailsFor(ids: number[]) {
+    const thumbs = new Map(ids.map(id => [id, { dataset: { resourceId: String(id), contentType: 'image/png' }, closest: () => null, nodeType: 1 }]));
+    (globalThis as any).document.querySelector = (selector: string) => {
+      const match = selector.match(/data-resource-id="(\d+)"/);
+      return match ? thumbs.get(Number(match[1])) ?? null : null;
+    };
+    return thumbs;
+  }
+
+  it('records the image on screen in its entry as the reader steps', () => {
+    const store = makeStore([item(1), item(2)]);
+    store._preloadUpcoming = vi.fn();
+    store.onResourceChange = vi.fn();
+    store.open(0);
+    expect(state.mahLightboxItem).toBe(1);
+    store._stepTo(1);
+    expect(state.mahLightboxItem).toBe(2);
+    expect(state.page).toBe('own');
+  });
+
+  it.each([
+    ['Back', (store: any) => { state = { page: 'own' }; store._onHistoryPop(); }],
+    ['Escape', (store: any) => { store.close(); state = { page: 'own' }; store._onHistoryPop(); }],
+  ])('reopens on Forward after %s, on the image it was closed on, without a new entry', (_name, closeIt) => {
+    const store = makeStore([item(1), item(2)]);
+    store._preloadUpcoming = vi.fn();
+    store.onResourceChange = vi.fn();
+    const thumbs = thumbnailsFor([1, 2]);
+    store.open(0);
+    store._stepTo(1);
+    const marker = state;
+    closeIt(store);
+    expect(store.isOpen).toBe(false);
+    back.mockClear();
+
+    state = marker;
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(true);
+    expect(store.getCurrentItem().id).toBe(2);
+    expect(store.triggerElement).toBe(thumbs.get(2));
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+
+    // Back closes it again like any other session.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('reopens in the gallery the session was opened from when the image is listed twice', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    const thumbs = thumbnailsFor([1]);
+    // The same resource in a second gallery (a Group's related resources) further down.
+    const related: any = { dataset: { resourceId: '1', contentType: 'image/png' }, nodeType: 1, closest: () => null, querySelector: () => null };
+    const relatedGallery = {
+      isConnected: true,
+      querySelector: () => related,
+      querySelectorAll: () => [related],
+      dataset: { lightboxSource: '/resources', lightboxParamName: 'Groups', lightboxParamValue: '5' },
+    };
+    (globalThis as any).window.location = { origin: 'http://localhost' };
+    related.closest = (selector: string) => (selector.includes('data-lightbox-source') ? relatedGallery : null);
+    store.triggerElement = related;
+    store.open(0);
+    const marker = state;
+    state = { page: 'own' };
+    store._onHistoryPop();
+
+    state = marker;
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(true);
+    expect(store.triggerElement).toBe(related);
+    expect(store.triggerElement).not.toBe(thumbs.get(1));
+  });
+
+  it('steps back off the entry when its image is no longer on the page', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    thumbnailsFor([]);
+    store.open(0);
+    const marker = state;
+    state = { page: 'own' };
+    store._onHistoryPop();
+
+    state = marker;
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(back).toHaveBeenCalledTimes(1);
+    // That traversal's own popstate changes nothing.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(back).toHaveBeenCalledTimes(1);
   });
 
   it('drops its entry when closed from the viewer', () => {
@@ -1148,7 +1404,7 @@ describe('browser history', () => {
     store._preloadUpcoming = vi.fn();
     state = 'page-string';
     store.open(0);
-    expect(state).toEqual({ mahLightbox: expect.any(String), previousState: 'page-string' });
+    expect(state).toEqual({ mahLightbox: expect.any(String), mahLightboxItem: 1, previousState: 'page-string' });
   });
 
   it('marks a page with no state of its own with the marker alone', () => {
@@ -1156,7 +1412,7 @@ describe('browser history', () => {
     store._preloadUpcoming = vi.fn();
     state = null;
     store.open(0);
-    expect(state).toEqual({ mahLightbox: expect.any(String) });
+    expect(state).toEqual({ mahLightbox: expect.any(String), mahLightboxItem: 1 });
   });
 
   it('closes the entity picker a quick slot opened, so it is not left over the page', () => {

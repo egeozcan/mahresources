@@ -38,6 +38,7 @@ the code wins. For how the system is actually put together see
 - [2026-09-28-custom-thumbnail-popup.md](2026-09-28-custom-thumbnail-popup.md)
 - [2026-09-28-jobs-qa-verification.md](2026-09-28-jobs-qa-verification.md)
 - [2026-09-30-pm-rollup-refresh-on-write.md](2026-09-30-pm-rollup-refresh-on-write.md)
+- [2026-10-02-lightbox-history-and-error-followups.md](2026-10-02-lightbox-history-and-error-followups.md)
 
 ## Archive
 

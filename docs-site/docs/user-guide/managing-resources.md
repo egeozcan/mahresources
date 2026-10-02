@@ -173,6 +173,7 @@ In expanded mode:
 | **B** | Switch to RECENT tab (or exit expanded mode) |
 | **Escape** | Exit expanded mode, or close lightbox |
 | **Browser Back** | Close lightbox and stay on the page |
+| **Browser Forward** | Reopen the lightbox on the image it was closed on |
 :::
 
 ## Editing Resources

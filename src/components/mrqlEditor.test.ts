@@ -140,6 +140,81 @@ describe('mrqlEditor request lifecycle', () => {
   });
 });
 
+describe('refresh keeps the bulk selection', () => {
+  function editorWithRealSelection() {
+    const options: Record<number, unknown> = {};
+    const selection: any = {
+      selectedIds: new Set<number>(),
+      options,
+      reset: vi.fn(() => { selection.selectedIds.clear(); for (const id in options) delete options[id]; }),
+      restoreSelection: vi.fn((ids: number[]) => { for (const id of ids) if (options[id]) selection.selectedIds.add(id); }),
+      refresh: null,
+    };
+    vi.stubGlobal('window', { Alpine: { store: (name: string) => name === 'selection:mrql-note' ? selection : null } });
+    const editor = mrqlEditor() as any;
+    // The result cards register as they render, before the tick's callback runs.
+    editor.$nextTick = (callback: () => void) => {
+      for (const note of editor.result?.notes ?? []) options[note.ID] = { itemId: note.ID };
+      callback();
+    };
+    editor.executedQuery = { query: 'type = note', params: {} };
+    editor.executedEntityTypes = ['note'];
+    editor.connectSelections();
+    return { editor, selection };
+  }
+
+  it('re-selects the cards still listed after the selection store asks for a refresh', async () => {
+    const { selection } = editorWithRealSelection();
+    selection.selectedIds = new Set([1, 2]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ notes: [{ ID: 1 }, { ID: 3 }] }) }));
+    await selection.refresh();
+    expect([...selection.selectedIds]).toEqual([1]);
+  });
+
+  it('keeps the selection across a second refresh asked for before the first one\'s tick', async () => {
+    const { editor, selection } = editorWithRealSelection();
+    const ticks: Array<() => void> = [];
+    // Alpine runs $nextTick in a macrotask: the lightbox's trailing refresh starts before it.
+    editor.$nextTick = (callback: () => void) => ticks.push(() => {
+      for (const note of editor.result?.notes ?? []) selection.options[note.ID] = { itemId: note.ID };
+      callback();
+    });
+    selection.selectedIds = new Set([1, 2]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ notes: [{ ID: 1 }, { ID: 2 }] }) }));
+    await selection.refresh();
+    await selection.refresh();
+    for (const tick of ticks) tick();
+    expect([...selection.selectedIds].sort()).toEqual([1, 2]);
+  });
+
+  it('does not put a refresh\'s selection back into the results of a newer Run', async () => {
+    const { editor, selection } = editorWithRealSelection();
+    const ticks: Array<() => void> = [];
+    editor.$nextTick = (callback: () => void) => ticks.push(() => {
+      for (const note of editor.result?.notes ?? []) selection.options[note.ID] = { itemId: note.ID };
+      callback();
+    });
+    editor.getQuery = () => 'type = note AND name ~ "a"';
+    editor.paramsPayload = () => ({});
+    selection.selectedIds = new Set([1]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ notes: [{ ID: 1 }] }) }));
+    await selection.refresh();
+    await editor.execute({ pushState: false });
+    for (const tick of ticks) tick();
+    expect(selection.selectedIds.size).toBe(0);
+  });
+
+  it('still clears the selection when the reader runs a query', async () => {
+    const { editor, selection } = editorWithRealSelection();
+    selection.selectedIds = new Set([1]);
+    editor.getQuery = () => 'type = note';
+    editor.paramsPayload = () => ({});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ notes: [{ ID: 1 }] }) }));
+    await editor.execute({ pushState: false });
+    expect(selection.selectedIds.size).toBe(0);
+  });
+});
+
 describe('background action completion', () => {
   it('collects another action completion after a refresh of the same snapshot finishes', async () => {
     vi.useFakeTimers();

@@ -50,10 +50,10 @@ export const editPanelState = {
   // Track if changes were made that require refreshing the page content
   needsRefreshOnClose: false,
 
-  // The last failed write per field, as { resourceId, message }. The live region alone is
-  // gone the moment it is spoken, and a sighted user saw a typed name silently snap back.
-  // Read through writeError(), which shows a message only on the image it belongs to.
-  writeErrors: { name: null, description: null, tags: null },
+  // The last failed write per field and image, keyed by the id of the image the write was for.
+  // The live region alone is gone the moment it is spoken, and a sighted user saw a typed name
+  // silently snap back. Read through writeError(), which shows a message only on its image.
+  writeErrors: { name: {}, description: {}, tags: {} },
   // Drawn by every name, description and tag write as it starts, so a failure records which
   // write it was and an older save that lands later cannot clear it (see _clearWriteError).
   _writeSeq: 0,
@@ -62,10 +62,25 @@ export const editPanelState = {
 export const editPanelMethods = {
   // Shown on the image the user was on when it failed and on the image the write was for: a
   // failure that lands after they moved on names that image, and they go back there to retry.
+  // Two can concern one image (an undo for another image failed while the user was on it,
+  // then a write of its own); the newer one shows.
   writeError(field) {
-    const error = this.writeErrors[field];
     const currentId = this.getCurrentItem()?.id;
-    return error && (error.resourceId === currentId || error.targetId === currentId) ? error.message : '';
+    let shown = null;
+    for (const error of Object.values(this.writeErrors[field])) {
+      if ((error.resourceId === currentId || error.targetId === currentId) && !(shown?.seq > error.seq)) shown = error;
+    }
+    return shown?.message ?? '';
+  },
+
+  // The reader has read the message: drop every failure shown on this image, which also stops
+  // it showing on the other image a failure names. The dismiss button hides with the message,
+  // so focus moves to `focusTarget` rather than falling to <body>.
+  dismissWriteError(field, focusTarget = null) {
+    const currentId = this.getCurrentItem()?.id;
+    this.writeErrors[field] = Object.fromEntries(Object.entries(this.writeErrors[field])
+      .filter(([, error]) => error.resourceId !== currentId && error.targetId !== currentId));
+    focusOn(focusTarget);
   },
 
   // `resourceId` is the image the message shows on; `targetId` the one the failed write was
@@ -76,9 +91,8 @@ export const editPanelMethods = {
     if (session !== this._session || this._isSuperseded(field, targetId, seq, tagIds)) return;
     // Nor replace the failure of a write that started later: rename to A, then to B, and when
     // both fail the message is about B, the name the reader last typed.
-    const existing = this.writeErrors[field];
-    if (existing?.targetId === targetId && existing.seq > seq) return;
-    this.writeErrors[field] = { resourceId, targetId, message, tagIds, seq };
+    if (this.writeErrors[field][targetId]?.seq > seq) return;
+    this.writeErrors[field] = { ...this.writeErrors[field], [targetId]: { resourceId, targetId, message, tagIds, seq } };
   },
 
   // A write that started later on the same field of the same image (for tags, on every tag
@@ -97,18 +111,26 @@ export const editPanelMethods = {
   // Called by every write that succeeds, which it records for _isSuperseded.
   // Only a later success in the same session, on the image the failed write was for, replaces
   // its message; a success elsewhere says nothing about it. Later means started later: rename
-  // to A, then to B, and A's save landing after B failed has not saved B. A tag failure also
-  // needs the success to touch one of its tags: adding Y says nothing about the X that failed.
+  // to A, then to B, and A's save landing after B failed has not saved B. A tag failure clears
+  // once successes have covered every tag it names: adding Y says nothing about a failed X.
   _clearWriteError(field, resourceId, session, seq, tagIds = []) {
     // Lazily allocated per store, like _suggestedDirty, so stores do not share one Map.
     this._writeSucceeded ??= new Map();
     for (const key of this._writeKeys(field, resourceId, tagIds)) {
       if (!(this._writeSucceeded.get(key) > seq)) this._writeSucceeded.set(key, seq);
     }
-    const error = this.writeErrors[field];
-    if (session !== this._session || error?.targetId !== resourceId || seq <= error.seq) return;
-    if (error.tagIds && !tagIds.some(id => error.tagIds.includes(id))) return;
-    this.writeErrors[field] = null;
+    const error = this.writeErrors[field][resourceId];
+    if (session !== this._session || !error || seq <= error.seq) return;
+    // Saving X after X and Y failed leaves Y unsaved, so the message stays until Y is saved too.
+    const unsaved = error.tagIds?.filter(id => !tagIds.includes(id));
+    if (unsaved?.length) {
+      if (unsaved.length < error.tagIds.length) {
+        this.writeErrors[field] = { ...this.writeErrors[field], [resourceId]: { ...error, tagIds: unsaved } };
+      }
+      return;
+    }
+    const { [resourceId]: _cleared, ...rest } = this.writeErrors[field];
+    this.writeErrors[field] = rest;
   },
 
   // A write that lands after close() (a Name edit saved by Back, a tag write still out) has
@@ -325,16 +347,22 @@ export const editPanelMethods = {
           if (!inList) continue;
           await new Promise(resolve => requestAnimationFrame(resolve));
           if (focusedElement() || inList.isConnected) continue;
-          const list = findListContainer(document);
-          const id = inList.closest('[data-lightbox-item]')?.dataset.resourceId;
-          restoreFocus(id && list?.querySelector(`[data-lightbox-item][data-resource-id="${id}"]`),
-            list ?? document.querySelector('main'));
+          this._refocusInList(inList);
         } while (this._pageRefreshAgain);
       } finally {
         this._pageRefresh = null;
       }
     })();
     return this._pageRefresh;
+  },
+
+  // Put focus back on `el`, or, when a refresh has rebuilt the list it was in, on the same
+  // resource's new thumbnail if it was on one and that is still listed, else the list, else <main>.
+  _refocusInList(el) {
+    const list = findListContainer(document);
+    const id = el.closest?.('[data-lightbox-item]')?.dataset.resourceId;
+    restoreFocus(el.isConnected ? el : id && list?.querySelector(`[data-lightbox-item][data-resource-id="${id}"]`),
+      list ?? document.querySelector('main'));
   },
 
   async _refreshPageContentOnce() {

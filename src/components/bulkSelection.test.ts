@@ -211,3 +211,17 @@ describe('selection announcements', () => {
         expect(announce).toHaveBeenCalledWith('1 item selected');
     });
 });
+
+describe('restoreSelection', () => {
+    test('re-selects the listed ids quietly and skips ids no longer listed', () => {
+        const store = makeStore();
+        store.announce = vi.fn();
+        store.registerOption(card(1));
+        store.registerOption(card(2));
+        store.restoreSelection([1, 3]);
+        expect([...store.selectedIds]).toEqual([1]);
+        expect(store.announce).not.toHaveBeenCalled();
+        // Not a click: the shift-range anchor stays where the reader left it.
+        expect(store.lastSelected).toBe(null);
+    });
+});

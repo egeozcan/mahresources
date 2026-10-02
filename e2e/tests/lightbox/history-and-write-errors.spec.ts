@@ -265,4 +265,134 @@ test.describe('Lightbox history and visible write errors', () => {
     await expect(lightbox.locator('button[title="Edit tags"]'))
       .toHaveAttribute('aria-describedby', 'lightbox-tag-viewer-error');
   });
+
+  const currentId = (page: Page) =>
+    page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem()?.id);
+
+  test('Forward after Back reopens the viewer on the image it was on', async ({ page }) => {
+    await page.goto('/notes');
+    const lightbox = await openLightbox(page);
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').currentIndex)).toBe(1);
+    const second = await currentId(page);
+    const listPage = page.url();
+
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await page.goForward();
+    await expect(lightbox).toBeVisible();
+    expect(await currentId(page)).toBe(second);
+    expect(page.url()).toBe(listPage);
+
+    // Reopened on its own entry: Back closes it, and the next Back leaves the page.
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(page.locator(`[data-lightbox-item][data-resource-id="${second}"]`)).toBeFocused();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/notes/);
+  });
+
+  test('Forward after Escape reopens the viewer', async ({ page }) => {
+    await page.goto('/notes');
+    const lightbox = await openLightbox(page);
+    const first = await currentId(page);
+    await page.keyboard.press('Escape');
+    await expect(lightbox).toBeHidden();
+    await expect.poll(() => page.evaluate(() => history.state?.mahLightbox ?? null)).toBe(null);
+
+    await page.goForward();
+    await expect(lightbox).toBeVisible();
+    expect(await currentId(page)).toBe(first);
+    await page.keyboard.press('Escape');
+    await expect(lightbox).toBeHidden();
+    await expect.poll(() => page.evaluate(() => history.state?.mahLightbox ?? null)).toBe(null);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/notes/);
+  });
+
+  test('Forward skips the entry when its image is no longer on the page', async ({ page }) => {
+    await page.goto('/notes');
+    const lightbox = await openLightbox(page);
+    const first = await currentId(page);
+    const listPage = page.url();
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => history.state?.mahLightbox ?? null)).toBe(null);
+    await page.evaluate(id => {
+      document.querySelectorAll(`[data-lightbox-item][data-resource-id="${id}"]`).forEach(el => el.remove());
+    }, first);
+
+    await page.goForward();
+    // It steps straight back off the entry: still the list, viewer closed, no marker.
+    await expect.poll(() => page.evaluate(() => history.state?.mahLightbox ?? null)).toBe(null);
+    await expect(lightbox).toBeHidden();
+    expect(page.url()).toBe(listPage);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/notes/);
+  });
+
+  test('a failed save on one image keeps the failure shown on another', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    const nameError = page.locator('#lightbox-edit-name-error');
+    await expect(name).toHaveValue(/Lightbox History Image \d/);
+    await page.route('**/v1/resource/editName**', route => route.fulfill({ status: 500, body: '{}' }));
+
+    await name.fill('Lost on the first');
+    await name.press('Enter');
+    await expect(nameError).toHaveText('Could not save the name "Lost on the first". The previous name is back.');
+
+    const second = await page.evaluate(() => (window as any).Alpine.store('lightbox').items[1].id);
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').resourceDetails?.ID)).toBe(second);
+    await expect(nameError).toBeHidden();
+    await name.fill('Lost on the second');
+    await name.press('Enter');
+    await expect(nameError).toHaveText('Could not save the name "Lost on the second". The previous name is back.');
+
+    await page.keyboard.press('ArrowLeft');
+    await expect(nameError).toHaveText('Could not save the name "Lost on the first". The previous name is back.');
+    await page.unroute('**/v1/resource/editName**');
+  });
+
+  test('a tag error can be dismissed in the Tags panel and in the viewer', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    const panel = page.locator('[data-quick-tag-panel]');
+    await expect(panel.getByRole('button', { name: `Remove tag ${tagName}` })).toBeVisible();
+    // The second image, where Repeat copies the first one's tag (see the quick-tag test).
+    const second = await page.evaluate(async () => {
+      const s = (window as any).Alpine.store('lightbox');
+      s.currentIndex = 1;
+      await s.onResourceChange();
+      return s.items[1].id;
+    });
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').resourceDetails?.ID))
+      .toBe(second);
+
+    await page.route('**/v1/resources/addTags', route => route.fulfill({ status: 500, body: '{}' }));
+    const repeat = panel.getByRole('button', { name: "Repeat previous image's tags" });
+    const error = panel.locator('[data-write-error="tags"]');
+    await repeat.click();
+    await expect(error).toBeVisible();
+    await panel.getByRole('button', { name: 'Dismiss tag error' }).click();
+    await expect(error).toBeHidden();
+    await expect(repeat).not.toHaveAttribute('aria-describedby', /.+/);
+    await expect(panel.locator('[data-tag-editor-input]')).toBeFocused();
+
+    // In the viewer, with the panel closed.
+    await repeat.click();
+    await expect(error).toBeVisible();
+    await panel.getByRole('button', { name: 'Close edit tags panel' }).click();
+    const viewerError = lightbox.locator('[data-write-error="tags-viewer"]');
+    const editTags = lightbox.locator('button[title="Edit tags"]');
+    await expect(viewerError).toBeVisible();
+    await expect(panel).toBeHidden();
+    await lightbox.locator('[data-dismiss-write-error="tags-viewer"]').click();
+    await expect(viewerError).toBeHidden();
+    await expect(editTags).not.toHaveAttribute('aria-describedby', /.+/);
+    await expect(editTags).toBeFocused();
+    await page.unroute('**/v1/resources/addTags');
+  });
 });

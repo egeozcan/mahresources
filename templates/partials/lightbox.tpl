@@ -297,9 +297,16 @@
 
     <!-- A failed tag write (an Undo, or a batch still retrying when the panel closed) while the
          Tags panel, which shows these itself, is closed. Not a live region: the store already
-         announced it. -->
-    <p id="lightbox-tag-viewer-error" data-write-error="tags-viewer" x-show="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags')" x-cloak
-       class="px-4 pt-2 text-sm text-red-300 text-center z-20" x-text="$store.lightbox.writeError('tags')"></p>
+         announced it. Dismiss hands focus to the Edit tags button below. -->
+    <div x-show="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags')" x-cloak
+         class="flex items-center justify-center gap-2 px-4 pt-2 z-20">
+        <p id="lightbox-tag-viewer-error" data-write-error="tags-viewer"
+           class="text-sm text-red-300 text-center" x-text="$store.lightbox.writeError('tags')"></p>
+        <button type="button" data-dismiss-write-error="tags-viewer"
+                @click="$store.lightbox.dismissWriteError('tags', $el.closest('[role=dialog]')?.querySelector('[data-edit-tags-toggle]'))"
+                class="shrink-0 px-2 py-0.5 rounded text-xs text-white bg-white/10 hover:bg-white/20 focus:outline-hidden focus:ring-2 focus:ring-white/50"
+                aria-label="Dismiss tag error">Dismiss</button>
+    </div>
 
     <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
     <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
@@ -307,6 +314,7 @@
         <button
             x-show="!$store.lightbox.quickTagPanelOpen"
             @click.stop="$store.lightbox.openQuickTagPanel($event)"
+            data-edit-tags-toggle
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-hidden focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Edit tags"
             :aria-describedby="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags') ? 'lightbox-tag-viewer-error' : null"
@@ -689,9 +697,16 @@
             </template>
 
             <!-- Failed quick-slot, suggestion, repeat or undo write. Not a live region: the
-                 store already announced it. -->
-            <p id="lightbox-tag-write-error" data-write-error="tags" x-show="$store.lightbox.writeError('tags')" x-cloak
-               class="text-sm text-red-400" x-text="$store.lightbox.writeError('tags')"></p>
+                 store already announced it. Dismiss hands focus to the tag search, or to the
+                 panel while the "Add tag?" confirmation has replaced it. -->
+            <div x-show="$store.lightbox.writeError('tags')" x-cloak class="flex items-start gap-2">
+                <p id="lightbox-tag-write-error" data-write-error="tags"
+                   class="flex-1 text-sm text-red-400" x-text="$store.lightbox.writeError('tags')"></p>
+                <button type="button" data-dismiss-write-error="tags"
+                        @click="$store.lightbox.dismissWriteError('tags', $el.closest('[data-quick-tag-panel]')?.querySelector('[data-tag-editor-input]') ?? $el.closest('[data-quick-tag-panel]'))"
+                        class="shrink-0 px-2 py-0.5 rounded text-xs text-stone-200 bg-stone-800 hover:bg-stone-700 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
+                        aria-label="Dismiss tag error">Dismiss</button>
+            </div>
 
             <!-- Divider -->
             <div class="border-t border-stone-700"></div>

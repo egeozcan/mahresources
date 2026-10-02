@@ -254,6 +254,9 @@ Navigation and page layout share one breakpoint, 900px.
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
 | Browser Back (button, Alt + Left, Cmd + [, mouse back button, phone back gesture) | Close lightbox and stay on the page |
+| Browser Forward, after the lightbox was closed | Reopen the lightbox on the image it was closed on, if that image is still on the page |
+
+Opening the lightbox adds a history entry, as running an MRQL query does, so any pages ahead of the current one in the browser's Forward history are dropped.
 
 ### @-Mention Autocomplete
 
