@@ -114,6 +114,51 @@ test.describe('Lightbox history and visible write errors', () => {
     await expect(page).toHaveURL(/\/notes/);
   });
 
+  test('a Name edit saved by Back shows on the list card without a reload', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    const resourceId = await page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem().id);
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/Lightbox History Image \d/);
+    const original = await name.inputValue();
+    const renamed = `${original} saved by Back`;
+    await name.fill(renamed);
+    await expect(name).toBeFocused();
+
+    await page.evaluate(() => { (window as any).__sameDocument = true; });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(page.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    expect(await page.evaluate(() => (window as any).__sameDocument)).toBe(true);
+
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
+  test('Back with the entity picker open closes the picker as well', async ({ page }) => {
+    const lightbox = await openLightbox(page);
+    await lightbox.locator('button[title="Edit tags"]').click();
+    const panel = page.locator('[data-quick-tag-panel]');
+    await expect(panel).toBeVisible();
+    // Edit a quick slot without saving anything into it.
+    await page.evaluate(() => {
+      const s = (window as any).Alpine.store('lightbox');
+      s.activeTab = 0;
+      s.editingSlotIndex = 0;
+    });
+    await panel.locator('div:has(> input[aria-label="Add tag to slot 1"]) > [data-entity-browse]').click();
+    const picker = page.locator('[role="dialog"][aria-labelledby="entity-picker-title"]');
+    await expect(picker).toBeVisible();
+
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(picker).toBeHidden();
+    await expect(page.locator('[data-lightbox-item]').first()).toBeFocused();
+  });
+
   test('a failed name or description save is shown under its field', async ({ page }) => {
     const lightbox = await openLightbox(page);
     await lightbox.locator('button[title="Resource info"]').click();
@@ -164,23 +209,51 @@ test.describe('Lightbox history and visible write errors', () => {
     const panel = page.locator('[data-quick-tag-panel]');
     await expect(panel.getByRole('button', { name: `Remove tag ${tagName}` })).toBeVisible();
 
-    await page.keyboard.press('PageDown');
-    await expect(panel.getByRole('button', { name: `Remove tag ${tagName}` })).toBeHidden();
+    // Navigate through the store and wait for the new image's details, as Repeat does
+    // (its own wait is bounded, and key presses under parallel load can outrun it).
+    const showImage = async (index: number) => {
+      const id = await page.evaluate(async (i) => {
+        const s = (window as any).Alpine.store('lightbox');
+        s.currentIndex = i;
+        await s.onResourceChange();
+        return s.items[i].id;
+      }, index);
+      await expect
+        .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').resourceDetails?.ID))
+        .toBe(id);
+    };
+    await showImage(1);
 
     await page.route('**/v1/resources/addTags', route => route.fulfill({ status: 500, body: '{}' }));
     await panel.getByRole('button', { name: "Repeat previous image's tags" }).click();
+    const message = `Could not add tag ${tagName}. Try again.`;
     const error = panel.locator('[data-write-error="tags"]');
-    await expect(error).toHaveText(`Could not add tag ${tagName}. Try again.`);
+    const viewerError = lightbox.locator('[data-write-error="tags-viewer"]');
+    await expect(error).toBeVisible();
+    await expect(error).toHaveText(message);
+    await expect(viewerError).toBeHidden();
     await expect(panel.getByRole('button', { name: "Repeat previous image's tags" }))
+      .toHaveAttribute('aria-describedby', 'lightbox-tag-write-error');
+    // A quick slot names the message too (set in the page only, so nothing is saved).
+    await page.evaluate(({ id, name }) => {
+      const s = (window as any).Alpine.store('lightbox');
+      s.activeTab = 0;
+      s.quickSlots[0][0] = [{ id, name }];
+      s.quickSlots = [...s.quickSlots];
+    }, { id: tagId, name: tagName });
+    await expect(panel.getByRole('button', { name: `Add ${tagName}` }))
       .toHaveAttribute('aria-describedby', 'lightbox-tag-write-error');
 
     // Only on the image it belongs to.
-    await page.keyboard.press('PageUp');
+    await showImage(0);
     await expect(error).toBeHidden();
 
     // With the panel closed, the viewer itself shows the message.
-    await page.keyboard.press('PageDown');
+    await showImage(1);
+    await expect(error).toBeVisible();
     await panel.getByRole('button', { name: 'Close edit tags panel' }).click();
-    await expect(lightbox.locator('[data-write-error="tags-viewer"]')).toHaveText(`Could not add tag ${tagName}. Try again.`);
+    await expect(viewerError).toBeVisible();
+    await expect(viewerError).toHaveText(message);
+    await expect(error).toBeHidden();
   });
 });

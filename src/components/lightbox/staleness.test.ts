@@ -649,6 +649,7 @@ describe('visible write errors', () => {
       store.currentIndex = 1;
       await store.undoLastTagAction();
       expect(store.writeError('tags')).toBe('Could not remove tags seed, related from image 1. Try again.');
+      expect(store.announce).toHaveBeenLastCalledWith('Undo failed. Could not remove tags seed, related from image 1. Try again.');
 
       post.mockResolvedValue({ ok: true } as Response);
       // A success on another image says nothing about the failed write...
@@ -680,6 +681,105 @@ describe('visible write errors', () => {
       response.resolve({ ok: false, status: 500 });
       await saving;
       expect(store.writeErrors.name).toBe(null);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it.each([
+    ['its gallery is unchanged', () => {}],
+    ['a standalone viewer gave the page its own gallery back', (store: any) => { store._itemsBeforeStandalone = [item(2)]; }],
+  ])('announces a batch failure that lands after close(), naming its image, when %s', async (_name, setup) => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const adding = store._batchToggleTags([seedTag], 'add');
+      setup(store);
+      store.close();
+      response.resolve({ ok: false, status: 400 });
+      await adding;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not add tag seed to image 1. Try again.');
+      expect(store.writeErrors.tags).toBe(null);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not talk over a failed undo that lands after close()', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      const undoing = store.undoLastTagAction();
+      store.close();
+      response.resolve({ ok: false, status: 400 });
+      await undoing;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not remove tag seed from image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it.each([
+    ['name', (store: any) => store.updateName('renamed')],
+    ['description', (store: any) => store.updateDescription('new text')],
+    ['tag add', (store: any) => store.saveTagAddition(seedTag)],
+    ['tag remove', (store: any) => store.saveTagRemoval(seedTag)],
+    ['batch tag', (store: any) => store._batchToggleTags([seedTag], 'add')],
+  ])('refreshes the page behind the viewer when a %s write lands after close()', async (_name, write) => {
+    const store = taggingStore();
+    store.editPanelOpen = true;
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const writing = write(store);
+      store.close();
+      expect(store.refreshPageContent).not.toHaveBeenCalled();
+      response.resolve({ ok: true });
+      await writing;
+      expect(store.refreshPageContent).toHaveBeenCalledTimes(1);
+      // Nor left set for the next session to act on.
+      expect(store.needsRefreshOnClose).toBe(false);
+    } finally { post.mockRestore(); }
+  });
+
+  it('does not let a save from a closed session clear a failure in the next one', async () => {
+    const store = taggingStore();
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const saving = store.updateName('renamed');
+      store.close();
+      store._setWriteError('name', 1, 'failed in the next session', store._session);
+      response.resolve({ ok: true });
+      await saving;
+      expect(store.writeError('name')).toBe('failed in the next session');
+    } finally { post.mockRestore(); }
+  });
+
+  it('keeps a tag failure until a later write on its image touches a tag that failed', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] }, 2: { ID: 2, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      await store._batchToggleTags([seedTag], 'add');
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      post.mockResolvedValue({ ok: true } as Response);
+      // Other tags on the same image say nothing about seed...
+      await store._batchToggleTags([relatedTag], 'add');
+      await store.saveTagAddition({ ID: 8, Name: 'other' });
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      // ...a write that touches seed does.
+      await store.saveTagAddition(seedTag);
+      expect(store.writeError('tags')).toBe('');
+
+      // An undo failure about image 1, shown on image 2, outlasts a success on image 2.
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      store.currentIndex = 1;
+      post.mockResolvedValue({ ok: false, status: 400 } as Response);
+      await store.undoLastTagAction();
+      post.mockResolvedValue({ ok: true } as Response);
+      await store._batchToggleTags([seedTag], 'add');
+      expect(store.writeError('tags')).toBe('Could not remove tag seed from image 1. Try again.');
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 });
@@ -789,6 +889,26 @@ describe('browser history', () => {
     state = 'page-string';
     store.open(0);
     expect(state).toEqual({ mahLightbox: expect.any(String), previousState: 'page-string' });
+  });
+
+  it('marks a page with no state of its own with the marker alone', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = null;
+    store.open(0);
+    expect(state).toEqual({ mahLightbox: expect.any(String) });
+  });
+
+  it('closes the entity picker a quick slot opened, so it is not left over the page', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    const picker = { isOpen: true, close: vi.fn() };
+    (globalThis as any).window.Alpine = { store: (name: string) => (name === 'entityPicker' ? picker : undefined) };
+    store.open(0);
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(picker.close).toHaveBeenCalledTimes(1);
   });
 
   it('saves a Name edit in progress before Back drops the details', async () => {

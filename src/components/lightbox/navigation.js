@@ -519,7 +519,8 @@ export const navigationMethods = {
   _pushHistoryEntry() {
     this._historyToken = `${Date.now()}:${Math.random()}`;
     try {
-      const state = history.state;
+      // No state of its own (the usual case) is an empty one, not a value to keep aside.
+      const state = history.state ?? {};
       this._historyReused = !!state?.mahLightbox;
       if (this._historyReused) {
         history.replaceState({ ...state, mahLightbox: this._historyToken }, '');
@@ -552,9 +553,9 @@ export const navigationMethods = {
     this.close();
   },
 
-  // Closed from the viewer itself (Escape, the close button, a swipe): drop the entry open()
-  // pushed, so the next Back leaves the page as the user expects. Skipped when something
-  // else has pushed on top of ours since, because going back would undo that instead.
+  // Closed from the viewer itself (Escape, the close button, a click beside the image): drop
+  // the entry open() pushed, so the next Back leaves the page as the user expects. Skipped
+  // when something else has pushed on top of ours since, because going back would undo that.
   _popHistoryEntry() {
     const token = this._historyToken;
     this._historyToken = null;
@@ -605,6 +606,11 @@ export const navigationMethods = {
       }
       this.isFullscreen = false;
     }
+
+    // Back reaches here with the entity picker a quick slot opened still up (Escape cannot:
+    // the picker takes it). Left open, it would sit over the page with nothing to confirm into.
+    const picker = window.Alpine?.store('entityPicker');
+    if (picker?.isOpen) picker.close();
 
     if (this.editPanelOpen) {
       this.closeEditPanel();

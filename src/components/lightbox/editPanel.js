@@ -63,20 +63,30 @@ export const editPanelMethods = {
   },
 
   // `resourceId` is the image the message shows on; `targetId` the one the failed write was
-  // for, when they differ. `session` is the viewing session the write started in; a failure
-  // landing after close() must not show up in the next one.
-  _setWriteError(field, resourceId, message, session, targetId = resourceId) {
+  // for, when they differ; `tagIds` the tags a failed tag write was changing. `session` is the
+  // viewing session the write started in; a failure landing after close() must not show up in
+  // the next one.
+  _setWriteError(field, resourceId, message, session, targetId = resourceId, tagIds = null) {
     if (session !== this._session) return;
-    this.writeErrors[field] = { resourceId, targetId, message };
+    this.writeErrors[field] = { resourceId, targetId, message, tagIds };
   },
 
-  // Only a later success on the image the message shows on, or the one it is about,
-  // replaces it; a success elsewhere says nothing about the write that failed.
-  _clearWriteError(field, resourceId) {
+  // Only a later success in the same session, on the image the failed write was for, replaces
+  // its message; a success elsewhere says nothing about it. A tag failure also needs the
+  // success to touch one of its tags: adding Y says nothing about the X that failed.
+  _clearWriteError(field, resourceId, session, tagIds = []) {
     const error = this.writeErrors[field];
-    if (error && (error.resourceId === resourceId || error.targetId === resourceId)) {
-      this.writeErrors[field] = null;
-    }
+    if (session !== this._session || error?.targetId !== resourceId) return;
+    if (error.tagIds && !tagIds.some(id => error.tagIds.includes(id))) return;
+    this.writeErrors[field] = null;
+  },
+
+  // A write that lands after close() (a Name edit saved by Back, a tag write still out) has
+  // missed the refresh close() makes, so it refreshes the page now rather than leave the flag
+  // set on a closed viewer for the next session to act on.
+  _refreshOnClose(session) {
+    if (session === this._session) this.needsRefreshOnClose = true;
+    else this.refreshPageContent();
   },
 
   _queueSuggestedRefresh(resourceId) {
@@ -604,8 +614,8 @@ export const editPanelMethods = {
       }
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
-      this.needsRefreshOnClose = true;
-      this._clearWriteError('name', resourceId);
+      this._refreshOnClose(session);
+      this._clearWriteError('name', resourceId, session);
       this.announce('Name updated');
     } catch (err) {
       console.error('Failed to update name:', err);
@@ -651,8 +661,8 @@ export const editPanelMethods = {
       }
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
-      this.needsRefreshOnClose = true;
-      this._clearWriteError('description', resourceId);
+      this._refreshOnClose(session);
+      this._clearWriteError('description', resourceId, session);
       this.announce('Description updated');
     } catch (err) {
       console.error('Failed to update description:', err);
@@ -717,6 +727,7 @@ export const editPanelMethods = {
     if (!resourceId) return;
 
     const writeGeneration = this._beginTagWrite(resourceId, [tag], 'add');
+    const session = this._session;
 
     // Only mutate/cache the live details when they belong to the current resource. During a
     // cache-miss load window resourceDetails still describes the previous image, so caching
@@ -743,8 +754,8 @@ export const editPanelMethods = {
       // resourceDetails still described the previous image: there is no trustworthy snapshot
       // to cache, so _settleDetailsCache drops the entry and a later view refetches.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
-      this.needsRefreshOnClose = true;
-      this._clearWriteError('tags', resourceId);
+      this._refreshOnClose(session);
+      this._clearWriteError('tags', resourceId, session, [tag.ID]);
       this.announce(`Added tag: ${tag.Name}`);
 
       // Record as recent tag (skips if in a quick-add slot)
@@ -770,6 +781,7 @@ export const editPanelMethods = {
     if (!resourceId) return;
 
     const writeGeneration = this._beginTagWrite(resourceId, [tag], 'remove');
+    const session = this._session;
 
     // Only mutate/cache the live details when they belong to the current resource — a
     // cache-miss load window otherwise misdirects this onto the previous image (BH: H5).
@@ -791,8 +803,8 @@ export const editPanelMethods = {
       // Null `details` (a cache-miss load window) has no trustworthy snapshot to cache, so
       // _settleDetailsCache drops the entry and a later view refetches the authoritative set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
-      this.needsRefreshOnClose = true;
-      this._clearWriteError('tags', resourceId);
+      this._refreshOnClose(session);
+      this._clearWriteError('tags', resourceId, session, [tag.ID]);
       this.announce(`Removed tag: ${tag.Name}`);
     } catch (err) {
       console.error('Failed to remove tag:', err);

@@ -676,6 +676,7 @@
                                     @click="$store.lightbox.applySuggestedTag(tag)"
                                     class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-800 hover:bg-amber-700 border border-stone-700 hover:border-amber-600 text-stone-200 hover:text-white text-sm rounded-full font-mono transition-colors focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                                     :aria-label="'Apply suggested tag ' + tag.Name"
+                                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                                 >
                                     <span x-text="tag.Name"></span>
                                     <kbd x-show="sIdx < 8" class="text-[10px] opacity-60" x-text="'⇧' + (sIdx + 1)"></kbd>
@@ -828,6 +829,7 @@
                                     class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                                     :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
                                     :aria-description="tags.length > 1 ? 'Hold to expand individual tags' : null"
+                                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                                 >
                                     <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                     <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>

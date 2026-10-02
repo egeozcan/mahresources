@@ -601,6 +601,9 @@ export const quickTagPanelMethods = {
     // the panel nor the background prefetch may commit it on top of the change.
     const writeGeneration = this._beginTagWrite(resourceId, tags, action);
     const session = this._session;
+    // Named now: by the time a failure lands, close() may have given `items` back to a page
+    // gallery that does not list this image.
+    const targetName = this.items.find(i => i.id === resourceId)?.name;
 
     // Only mutate the live resourceDetails optimistically when it actually describes the
     // target resource. A non-current target (cross-image undo), a write that lands after the
@@ -639,8 +642,8 @@ export const quickTagPanelMethods = {
       // leaves no trustworthy snapshot, so _settleDetailsCache drops the entry instead and a
       // later view of that resource refetches the authoritative tag set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
-      this.needsRefreshOnClose = true;
-      this._clearWriteError('tags', resourceId);
+      this._refreshOnClose(session);
+      this._clearWriteError('tags', resourceId, session, tags.map(t => t.ID));
 
       // Record an undo-ring entry for every non-undo batch write (Item 6).
       if (!fromUndo) {
@@ -679,15 +682,16 @@ export const quickTagPanelMethods = {
       }
       this.detailsCache.delete(resourceId);
       // Shown on the image the user is looking at when it fails, which for an undo can be a
-      // different one than the write targeted, so the message names that image.
+      // different one than the write targeted, so the message names that image. So does one
+      // that lands after close(), which only the announcement below carries.
       const names = tags.map(t => t.Name).join(', ');
       const currentId = this.getCurrentItem()?.id;
-      const where = currentId === resourceId ? ''
-        : ` ${action === 'add' ? 'to' : 'from'} ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
+      const where = session === this._session && currentId === resourceId ? ''
+        : ` ${action === 'add' ? 'to' : 'from'} ${targetName || 'another image'}`;
       const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
-      this._setWriteError('tags', currentId, message, session, resourceId);
-      // The same words a sighted user reads, not a vaguer summary; not into a later session.
-      if (session === this._session) this.announce(message);
+      this._setWriteError('tags', currentId, message, session, resourceId, tags.map(t => t.ID));
+      // The same words a sighted user reads, not a vaguer summary.
+      this.announce(message);
       return false;
     } finally {
       this._endDetailsWrite(resourceId);
@@ -793,7 +797,10 @@ export const quickTagPanelMethods = {
     } else {
       // Restore the entry so a transient failure can be retried.
       this._undoRing.push(entry);
-      this.announce(`Undo failed. ${this.writeError('tags')}`);
+      // Nothing is shown once close() has ended the session, and _batchToggleTags then
+      // announced the failure naming its image; a bare "Undo failed" would replace that.
+      const shown = this.writeError('tags');
+      if (shown) this.announce(`Undo failed. ${shown}`);
     }
   },
 
