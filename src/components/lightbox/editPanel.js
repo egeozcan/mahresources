@@ -49,9 +49,29 @@ export const editPanelState = {
 
   // Track if changes were made that require refreshing the page content
   needsRefreshOnClose: false,
+
+  // The last failed write per field, as { resourceId, message }. The live region alone is
+  // gone the moment it is spoken, and a sighted user saw a typed name silently snap back.
+  // Read through writeError(), which shows a message only on the image it belongs to.
+  writeErrors: { name: null, description: null, tags: null },
 };
 
 export const editPanelMethods = {
+  writeError(field) {
+    const error = this.writeErrors[field];
+    return error && error.resourceId === this.getCurrentItem()?.id ? error.message : '';
+  },
+
+  _setWriteError(field, resourceId, message) {
+    this.writeErrors[field] = { resourceId, message };
+  },
+
+  // Only a later outcome on the same resource replaces an error; a success elsewhere says
+  // nothing about the write that failed.
+  _clearWriteError(field, resourceId) {
+    if (this.writeErrors[field]?.resourceId === resourceId) this.writeErrors[field] = null;
+  },
+
   _queueSuggestedRefresh(resourceId) {
     this._suggestedDirty ??= new Set();
     this._suggestedDirty.add(resourceId);
@@ -577,6 +597,7 @@ export const editPanelMethods = {
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this.needsRefreshOnClose = true;
+      this._clearWriteError('name', resourceId);
       this.announce('Name updated');
     } catch (err) {
       console.error('Failed to update name:', err);
@@ -586,6 +607,7 @@ export const editPanelMethods = {
       }
       // The cached copy for this resource is now uncertain — drop it so a later view refetches.
       this.detailsCache.delete(resourceId);
+      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`);
       this.announce('Failed to update name');
     } finally {
       this._endDetailsWrite(resourceId);
@@ -621,11 +643,13 @@ export const editPanelMethods = {
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this.needsRefreshOnClose = true;
+      this._clearWriteError('description', resourceId);
       this.announce('Description updated');
     } catch (err) {
       console.error('Failed to update description:', err);
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
+      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.');
       this.announce('Failed to update description');
     } finally {
       this._endDetailsWrite(resourceId);
@@ -649,21 +673,25 @@ export const editPanelMethods = {
   // The profile discards a superseded operation's result, but it cannot recall a request the
   // server may already have applied: an add followed quickly by a remove used to race, and
   // the row kept a tag the panel showed as gone. Mirrors tagAssociationFromUrls.
-  _serializeTagWrite(resourceId, tagId, run) {
-    const key = `${resourceId}:${tagId}`;
-    const previous = this._tagWriteChains.get(key) ?? Promise.resolve();
+  // A batch write (quick slot, suggestion, carry-forward, undo) names several tags in one
+  // request, so it waits for every chain it touches and becomes the tail of each of them.
+  _serializeTagWrite(resourceId, tagIds, run) {
+    const keys = tagIds.map(tagId => `${resourceId}:${tagId}`);
+    const previous = Promise.all(keys.map(key => this._tagWriteChains.get(key)));
     const next = previous.then(run);
     // A swallowed tail, so one failed write cannot poison the writes queued behind it.
     const tail = next.catch(() => undefined);
-    this._tagWriteChains.set(key, tail);
+    for (const key of keys) this._tagWriteChains.set(key, tail);
     tail.then(() => {
-      if (this._tagWriteChains.get(key) === tail) this._tagWriteChains.delete(key);
+      for (const key of keys) {
+        if (this._tagWriteChains.get(key) === tail) this._tagWriteChains.delete(key);
+      }
     });
     return next;
   },
 
   _postTagWrite(url, resourceId, tagId) {
-    return this._serializeTagWrite(resourceId, tagId, () => {
+    return this._serializeTagWrite(resourceId, [tagId], () => {
       const formData = new FormData();
       formData.append('ID', resourceId);
       formData.append('EditedId', tagId);

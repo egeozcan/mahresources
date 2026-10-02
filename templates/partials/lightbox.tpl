@@ -676,6 +676,11 @@
                 </div>
             </template>
 
+            <!-- Failed quick-slot, suggestion, repeat or undo write. Not a live region: the
+                 store already announced it. -->
+            <p data-write-error="tags" x-show="$store.lightbox.writeError('tags')" x-cloak
+               class="text-sm text-red-400" x-text="$store.lightbox.writeError('tags')"></p>
+
             <!-- Divider -->
             <div class="border-t border-stone-700"></div>
 
@@ -1001,9 +1006,14 @@
                             {# the blur's save sees no change.                                 #}
                             @keydown.enter.stop.prevent="$event.target.blur()"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Name || ''; $event.target.blur()"
+                            :aria-invalid="$store.lightbox.writeError('name') ? 'true' : null"
+                            :aria-describedby="$store.lightbox.writeError('name') ? 'lightbox-edit-name-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
                         >
+                        {# Not a live region: the store already announced the failure. #}
+                        <p id="lightbox-edit-name-error" data-write-error="name" x-show="$store.lightbox.writeError('name')" x-cloak
+                           class="mt-1.5 text-sm text-red-400" x-text="$store.lightbox.writeError('name')"></p>
                     </div>
 
                     <!-- Description field (inline editable) -->
@@ -1015,9 +1025,13 @@
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Description || ''; $event.target.blur()"
                             rows="4"
+                            :aria-invalid="$store.lightbox.writeError('description') ? 'true' : null"
+                            :aria-describedby="$store.lightbox.writeError('description') ? 'lightbox-edit-description-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."
                         ></textarea>
+                        <p id="lightbox-edit-description-error" data-write-error="description" x-show="$store.lightbox.writeError('description')" x-cloak
+                           class="mt-1.5 text-sm text-red-400" x-text="$store.lightbox.writeError('description')"></p>
                     </div>
 
                     <!-- Details section -->

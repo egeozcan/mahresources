@@ -84,6 +84,30 @@ test.describe('MRQL default resource card lightbox', () => {
     await expect(lightbox).toBeHidden();
   });
 
+  test('browser Back closes the lightbox without re-running the query', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnails = mrql.resultsSection.locator('[data-lightbox-item]');
+    await expect(thumbnails).toHaveCount(2);
+    const urlBefore = page.url();
+    await thumbnails.first().click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+
+    const reruns: string[] = [];
+    page.on('request', request => {
+      if (request.url().includes('/v1/mrql?')) reruns.push(request.url());
+    });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    expect(page.url()).toBe(urlBefore);
+    await expect(thumbnails).toHaveCount(2);
+    expect(reruns).toEqual([]);
+  });
+
   test('lightbox navigates between multiple MRQL results', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

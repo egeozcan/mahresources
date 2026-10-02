@@ -53,6 +53,7 @@ function makeStore(items: any[] = []) {
     _detailsWrites: new Map(),
     _detailsInFlight: new Set(),
     _tagWriteChains: new Map(),
+    writeErrors: { name: null, description: null, tags: null },
     _suggestedCache: new Map(),
     _preloadedUrls: new Set(),
     _preloadedImages: [],
@@ -552,5 +553,165 @@ describe('lightbox review fixes', () => {
       expect(store.needsRefreshOnClose).toBe(true);
       expect(store.announce).toHaveBeenLastCalledWith('Image rotated, but the viewer could not show the new version');
     } finally { post.mockRestore(); error.mockRestore(); }
+  });
+});
+
+describe('batch tag writes share the per-tag chain', () => {
+  it.each([
+    ['quick slot', async (store: any) => {
+      store.quickSlots[0][0] = [{ id: seedTag.ID, name: seedTag.Name }];
+      await store.toggleTabTag(0);
+    }],
+    ['suggestion', (store: any) => store.applySuggestedTag(seedTag)],
+  ])('holds a %s add until the tag editor\'s remove of the same tag settles', async (_name, write) => {
+    const store = taggingStore();
+    store.resourceDetails.Tags = [seedTag];
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const remove = deferred<any>();
+    const urls: string[] = [];
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      urls.push(url);
+      return url.includes('removeTags') ? remove.promise : Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const removing = store.saveTagRemoval(seedTag);
+      const adding = write(store);
+      await new Promise(r => setTimeout(r, 0));
+      // The add must not overtake the remove: the server applies them in arrival order.
+      expect(urls).toEqual(['/v1/resources/removeTags']);
+      remove.resolve({ ok: true });
+      await removing;
+      await adding;
+      expect(urls).toEqual(['/v1/resources/removeTags', '/v1/resources/addTags']);
+    } finally { post.mockRestore(); }
+  });
+
+  it('holds a tag-editor remove until every retry of a batch add has finished', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const urls: string[] = [];
+    let addAttempts = 0;
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      urls.push(url);
+      if (url.includes('addTags') && ++addAttempts === 1) return Promise.resolve({ ok: false, status: 503 });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    try {
+      const adding = store._batchToggleTags([seedTag, relatedTag], 'add');
+      const removing = store.saveTagRemoval(relatedTag);
+      await adding;
+      await removing;
+      expect(urls).toEqual(['/v1/resources/addTags', '/v1/resources/addTags', '/v1/resources/removeTags']);
+      expect(store._tagWriteChains.size).toBe(0);
+    } finally { post.mockRestore(); }
+  });
+});
+
+describe('visible write errors', () => {
+  it('shows a failed name save on its own image only, and clears it after a later save', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 500 } as Response);
+    try {
+      await store.updateName('renamed');
+      expect(store.resourceDetails.Name).toBe('image 1');
+      expect(store.writeError('name')).toBe('Could not save the name "renamed". The previous name is back.');
+      store.currentIndex = 1;
+      expect(store.writeError('name')).toBe('');
+      store.currentIndex = 0;
+      post.mockResolvedValueOnce({ ok: true } as Response);
+      await store.updateName('renamed');
+      expect(store.writeError('name')).toBe('');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a failed description save', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 500 } as Response);
+    try {
+      await store.updateDescription('new text');
+      expect(store.writeError('description')).toBe('Could not save the description. The previous text is back.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a failed quick-slot write, and a failed undo on the image the user is on', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      store.quickSlots[0][0] = [{ id: seedTag.ID, name: seedTag.Name }];
+      await store.toggleTabTag(0);
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+
+      store._undoRing.push({ resourceId: 1, tags: [seedTag, relatedTag], action: 'add', name: 'image 1' });
+      store.currentIndex = 1;
+      await store.undoLastTagAction();
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
+
+      post.mockResolvedValue({ ok: true } as Response);
+      await store.undoLastTagAction();
+      // A success on image 1 says nothing about what is shown on image 2.
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
+      await store._batchToggleTags([relatedTag], 'add');
+      expect(store.writeError('tags')).toBe('');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('forgets write errors when the viewer closes', async () => {
+    const store = taggingStore();
+    store._setWriteError('name', 1, 'failed');
+    store.close();
+    expect(store.writeError('name')).toBe('');
+    expect(store.writeErrors.name).toBe(null);
+  });
+});
+
+describe('browser history', () => {
+  let state: any;
+  let back: any;
+
+  beforeEach(() => {
+    state = { page: 'own' };
+    back = vi.fn();
+    (globalThis as any).history = {
+      get state() { return state; },
+      pushState: vi.fn((next: any) => { state = next; }),
+      back,
+    };
+  });
+
+  it('pushes one entry on open and closes on Back without going back again', () => {
+    const store = makeStore([item(1), item(2)]);
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    store.open(1);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.any(String) });
+
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('drops its entry when closed from the viewer', () => {
+    const store = makeStore([item(1)]);
+    store.open(0);
+    store.close();
+    expect(back).toHaveBeenCalledTimes(1);
+    // The pop that history.back() fires arrives after close and changes nothing.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+  });
+
+  it('leaves history alone when another entry was pushed on top of its own', () => {
+    const store = makeStore([item(1)]);
+    store.open(0);
+    state = { q: 'other' };
+    store.close();
+    expect(back).not.toHaveBeenCalled();
   });
 });

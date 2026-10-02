@@ -550,7 +550,14 @@ export const quickTagPanelMethods = {
   // Response (whose .ok the caller checks). A 4xx is returned immediately (a client error
   // won't fix itself); only 5xx and network throws are retried, since the operation is
   // idempotent. Backoff is short and capped so the optimistic UI is not left hanging.
-  async _postTagsWithRetry(endpoint, resourceId, tags, attempts = 3) {
+  // The whole retry loop runs inside the per-tag write chain (see _serializeTagWrite), so a
+  // later write to any of these tags waits for the last attempt rather than overtaking it.
+  _postTagsWithRetry(endpoint, resourceId, tags, attempts = 3) {
+    return this._serializeTagWrite(resourceId, tags.map(tag => tag.ID),
+      () => this._postTagsAttempts(endpoint, resourceId, tags, attempts));
+  },
+
+  async _postTagsAttempts(endpoint, resourceId, tags, attempts) {
     let lastErr = null;
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) {
@@ -632,6 +639,7 @@ export const quickTagPanelMethods = {
       // later view of that resource refetches the authoritative tag set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
+      this._clearWriteError('tags', resourceId);
 
       // Record an undo-ring entry for every non-undo batch write (Item 6).
       if (!fromUndo) {
@@ -669,6 +677,14 @@ export const quickTagPanelMethods = {
         }
       }
       this.detailsCache.delete(resourceId);
+      // Shown on the image the user is looking at when it fails, which for an undo can be a
+      // different one than the write targeted, so the message names that image.
+      const names = tags.map(t => t.Name).join(', ');
+      const currentId = this.getCurrentItem()?.id;
+      const where = currentId === resourceId ? ''
+        : ` on ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
+      this._setWriteError('tags', currentId,
+        `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`);
       this.announce(`Failed to ${action} tags`);
       return false;
     } finally {

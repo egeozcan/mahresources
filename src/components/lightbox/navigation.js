@@ -39,6 +39,10 @@ export const navigationState = {
   // Reference to trigger element for focus restoration
   triggerElement: null,
 
+  // Marker of the history entry open() pushed, so browser Back closes the viewer instead of
+  // leaving the page. Null while no entry of ours is on the stack.
+  _historyToken: null,
+
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
   _itemsBeforeStandalone: null,
@@ -381,6 +385,9 @@ export const navigationMethods = {
     document.body.style.overscrollBehaviorX = 'none';
 
     this.currentIndex = safeIndex;
+    // Only the first open() of a session pushes. Should open() run on an already-open viewer,
+    // a second entry would make Back need two presses to leave it.
+    if (!this.isOpen) this._pushHistoryEntry();
     this.isOpen = true;
     this._armMediaLoad();
 
@@ -492,7 +499,37 @@ export const navigationMethods = {
     }
   },
 
+  // Same URL, so nothing reloads and a bookmarked or shared link is unchanged; the marker
+  // rides on the page's own state so a component that stored something there keeps it.
+  _pushHistoryEntry() {
+    this._historyToken = `${Date.now()}:${Math.random()}`;
+    try {
+      history.pushState({ ...(history.state || {}), mahLightbox: this._historyToken }, '');
+    } catch {
+      this._historyToken = null;
+    }
+  },
+
+  // Back (or Forward) moved off our entry while the viewer is open: close without touching
+  // history again, since the browser already popped it.
+  _onHistoryPop() {
+    if (!this.isOpen || !this._historyToken) return;
+    if (history.state?.mahLightbox === this._historyToken) return;
+    this._historyToken = null;
+    this.close();
+  },
+
+  // Closed from the viewer itself (Escape, the close button, a swipe): drop the entry open()
+  // pushed, so the next Back leaves the page as the user expects. Skipped when something
+  // else has pushed on top of ours since, because going back would undo that instead.
+  _popHistoryEntry() {
+    const token = this._historyToken;
+    this._historyToken = null;
+    if (token && history.state?.mahLightbox === token) history.back();
+  },
+
   close() {
+    this._popHistoryEntry();
     this.resetDisplayedVersion?.(false);
     this.versionPanelOpen = false;
     this.versionsCache?.clear();
@@ -594,6 +631,7 @@ export const navigationMethods = {
     // cleared this snapshot. A later session must not mistake its old Current for today's.
     this.resourceDetails = null;
     this._suggestedCache.clear();
+    this.writeErrors = { name: null, description: null, tags: null };
 
     // A bare .focus() is silently a no-op on a detached node, and the thumbnail
     // that opened the viewer is often gone by now — an in-place crop or rotate

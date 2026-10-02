@@ -483,8 +483,13 @@ export function mrqlEditor() {
         this.loadSavedQueryById(savedId);
       }
 
-      // Handle back/forward navigation
+      // Handle back/forward navigation. Entries that share the URL (the media viewer pushes
+      // one while it is open, and Back closes it) change nothing here, and re-running the
+      // query for them would rebuild the results under the reader.
+      this._historySearch = window.location.search;
       this._popstateHandler = () => {
+        if (window.location.search === this._historySearch) return;
+        this._historySearch = window.location.search;
         const q = new URLSearchParams(window.location.search).get('q');
         if (q) {
           this.setQuery(q);
@@ -827,6 +832,7 @@ export function mrqlEditor() {
             const url = new URL(window.location);
             url.searchParams.set('q', query);
             window.history.pushState({ q: query }, '', url);
+            this._historySearch = window.location.search;
           }
         }
       } catch (err) {
