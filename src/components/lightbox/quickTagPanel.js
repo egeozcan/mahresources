@@ -600,6 +600,7 @@ export const quickTagPanelMethods = {
     // Any details GET in flight across this write describes the pre-write tags, so neither
     // the panel nor the background prefetch may commit it on top of the change.
     const writeGeneration = this._beginTagWrite(resourceId, tags, action);
+    const session = this._session;
 
     // Only mutate the live resourceDetails optimistically when it actually describes the
     // target resource. A non-current target (cross-image undo), a write that lands after the
@@ -684,7 +685,7 @@ export const quickTagPanelMethods = {
       const where = currentId === resourceId ? ''
         : ` on ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
       this._setWriteError('tags', currentId,
-        `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`);
+        `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`, session, resourceId);
       this.announce(`Failed to ${action} tags`);
       return false;
     } finally {

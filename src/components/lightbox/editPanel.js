@@ -62,14 +62,21 @@ export const editPanelMethods = {
     return error && error.resourceId === this.getCurrentItem()?.id ? error.message : '';
   },
 
-  _setWriteError(field, resourceId, message) {
-    this.writeErrors[field] = { resourceId, message };
+  // `resourceId` is the image the message shows on; `targetId` the one the failed write was
+  // for, when they differ. `session` is the viewing session the write started in; a failure
+  // landing after close() must not show up in the next one.
+  _setWriteError(field, resourceId, message, session, targetId = resourceId) {
+    if (session !== this._session) return;
+    this.writeErrors[field] = { resourceId, targetId, message };
   },
 
-  // Only a later outcome on the same resource replaces an error; a success elsewhere says
-  // nothing about the write that failed.
+  // Only a later success on the image the message shows on, or the one it is about,
+  // replaces it; a success elsewhere says nothing about the write that failed.
   _clearWriteError(field, resourceId) {
-    if (this.writeErrors[field]?.resourceId === resourceId) this.writeErrors[field] = null;
+    const error = this.writeErrors[field];
+    if (error && (error.resourceId === resourceId || error.targetId === resourceId)) {
+      this.writeErrors[field] = null;
+    }
   },
 
   _queueSuggestedRefresh(resourceId) {
@@ -576,6 +583,7 @@ export const editPanelMethods = {
     if (newName === oldName) return;
 
     const writeGeneration = this._beginDetailsWrite(resourceId);
+    const session = this._session;
     details.Name = newName;
     if (item) {
       item.name = newName;
@@ -607,7 +615,7 @@ export const editPanelMethods = {
       }
       // The cached copy for this resource is now uncertain — drop it so a later view refetches.
       this.detailsCache.delete(resourceId);
-      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`);
+      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`, session);
       this.announce('Failed to update name');
     } finally {
       this._endDetailsWrite(resourceId);
@@ -625,6 +633,7 @@ export const editPanelMethods = {
     if (newDescription === oldDescription) return;
 
     const writeGeneration = this._beginDetailsWrite(resourceId);
+    const session = this._session;
     details.Description = newDescription;
 
     try {
@@ -649,7 +658,7 @@ export const editPanelMethods = {
       console.error('Failed to update description:', err);
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
-      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.');
+      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.', session);
       this.announce('Failed to update description');
     } finally {
       this._endDetailsWrite(resourceId);

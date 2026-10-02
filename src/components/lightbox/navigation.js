@@ -504,7 +504,10 @@ export const navigationMethods = {
   _pushHistoryEntry() {
     this._historyToken = `${Date.now()}:${Math.random()}`;
     try {
-      history.pushState({ ...(history.state || {}), mahLightbox: this._historyToken }, '');
+      const state = history.state;
+      const plain = state && Object.getPrototypeOf(state) === Object.prototype;
+      history.pushState(plain ? { ...state, mahLightbox: this._historyToken }
+        : { mahLightbox: this._historyToken, previousState: state }, '');
     } catch {
       this._historyToken = null;
     }
@@ -529,6 +532,13 @@ export const navigationMethods = {
   },
 
   close() {
+    // Back closes without moving focus, so a Name or Description edit would only blur once
+    // the panel is gone, after the details its save reads have been dropped. Blurring now
+    // saves it the way the close button's own focus change does.
+    const active = document.activeElement;
+    if (active?.closest?.('[data-edit-panel]') && ['INPUT', 'TEXTAREA'].includes(active.tagName)) {
+      active.blur();
+    }
     this._popHistoryEntry();
     this.resetDisplayedVersion?.(false);
     this.versionPanelOpen = false;

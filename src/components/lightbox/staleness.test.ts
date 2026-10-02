@@ -651,20 +651,36 @@ describe('visible write errors', () => {
       expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
 
       post.mockResolvedValue({ ok: true } as Response);
-      await store.undoLastTagAction();
-      // A success on image 1 says nothing about what is shown on image 2.
+      // A success on another image says nothing about the failed write...
+      store.items.push(item(3));
+      await store._batchToggleTags([relatedTag], 'add', { targetResourceId: 3, fromUndo: true });
       expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
-      await store._batchToggleTags([relatedTag], 'add');
+      // ...but retrying it on the image the message is about does.
+      await store.undoLastTagAction();
       expect(store.writeError('tags')).toBe('');
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 
   it('forgets write errors when the viewer closes', async () => {
     const store = taggingStore();
-    store._setWriteError('name', 1, 'failed');
+    store._setWriteError('name', 1, 'failed', store._session);
     store.close();
     expect(store.writeError('name')).toBe('');
     expect(store.writeErrors.name).toBe(null);
+  });
+
+  it('does not carry a failure that lands after close() into the next session', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const saving = store.updateName('renamed');
+      store.close();
+      response.resolve({ ok: false, status: 500 });
+      await saving;
+      expect(store.writeErrors.name).toBe(null);
+    } finally { post.mockRestore(); error.mockRestore(); }
   });
 });
 
@@ -705,6 +721,35 @@ describe('browser history', () => {
     state = { page: 'own' };
     store._onHistoryPop();
     expect(store.isOpen).toBe(false);
+  });
+
+  it('keeps a non-object page state intact under its marker', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = 'page-string';
+    store.open(0);
+    expect(state).toEqual({ mahLightbox: expect.any(String), previousState: 'page-string' });
+  });
+
+  it('saves a Name edit in progress before Back drops the details', async () => {
+    const store = taggingStore();
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    store.resourceDetails = { ID: 1, Name: 'image 1', Tags: [] };
+    const saves: string[] = [];
+    const input = {
+      tagName: 'INPUT',
+      closest: (sel: string) => (sel === '[data-edit-panel]' ? {} : null),
+      blur: () => { saves.push('blur'); store.updateName('typed'); },
+    };
+    (globalThis as any).document.activeElement = input;
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+    try {
+      state = { page: 'own' };
+      store._onHistoryPop();
+      expect(saves).toEqual(['blur']);
+      expect(post).toHaveBeenCalledWith('/v1/resource/editName?id=1', expect.anything());
+    } finally { post.mockRestore(); }
   });
 
   it('leaves history alone when another entry was pushed on top of its own', () => {
