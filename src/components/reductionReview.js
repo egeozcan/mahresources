@@ -294,9 +294,11 @@ export function registerReductionReviewStore(Alpine) {
       // Adopt the server's verdict on which page is current: an out-of-range
       // page was redirected to the last valid one, and the URL must match what
       // is rendered. replaceState so nothing unloads — the apply report and the
-      // reviewer's scroll survive.
+      // reviewer's scroll survive. The entry's state is kept: the media viewer's
+      // marker may be on it, and without that marker closing the viewer would leave
+      // its entry behind for Back to step through.
       if (adopted.pathname + adopted.search !== window.location.pathname + window.location.search) {
-        history.replaceState(null, '', adopted.pathname + adopted.search);
+        history.replaceState(history.state, '', adopted.pathname + adopted.search);
       }
     },
   });

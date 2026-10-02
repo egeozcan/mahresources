@@ -616,6 +616,8 @@ describe('visible write errors', () => {
       await store.updateName('renamed');
       expect(store.resourceDetails.Name).toBe('image 1');
       expect(store.writeError('name')).toBe('Could not save the name "renamed". The previous name is back.');
+      // Said in the same words: after Enter, focus has left the field the message describes.
+      expect(store.announce).toHaveBeenCalledWith('Could not save the name "renamed". The previous name is back.');
       store.currentIndex = 1;
       expect(store.writeError('name')).toBe('');
       store.currentIndex = 0;
@@ -632,6 +634,7 @@ describe('visible write errors', () => {
     try {
       await store.updateDescription('new text');
       expect(store.writeError('description')).toBe('Could not save the description. The previous text is back.');
+      expect(store.announce).toHaveBeenCalledWith('Could not save the description. The previous text is back.');
     } finally { post.mockRestore(); error.mockRestore(); }
   });
 
@@ -834,7 +837,7 @@ describe('visible write errors', () => {
       store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
       const undoing = store.undoLastTagAction();
       store.close();
-      store._setWriteError('tags', 1, 'The next session\'s own failure.', store._session);
+      store._setWriteError('tags', 1, 'The next session\'s own failure.', store._session, ++store._writeSeq, 1, [relatedTag.ID]);
       response.resolve({ ok: false, status: 400 });
       await undoing;
       expect(store.announce).toHaveBeenLastCalledWith('Could not remove tag seed from image 1. Try again.');
@@ -851,6 +854,71 @@ describe('visible write errors', () => {
       await store.undoLastTagAction();
       expect(store.writeError('tags')).toBe('Could not remove tag seed from image 9. Try again.');
     } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('shows a tag failure on the image it was about too, where the user goes back to retry', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] }, 2: { ID: 2, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      const adding = store._batchToggleTags([seedTag], 'add');
+      store.currentIndex = 1;
+      response.resolve({ ok: false, status: 400 });
+      await adding;
+      expect(store.writeError('tags')).toBe('Could not add tag seed to image 1. Try again.');
+      store.currentIndex = 0;
+      expect(store.writeError('tags')).toBe('Could not add tag seed to image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not post an older name save\'s failure over a newer save that went through', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'B', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store.updateName('A');
+      const savingB = store.updateName('B');
+      newer.resolve({ ok: true });
+      await savingB;
+      older.resolve({ ok: false, status: 500 });
+      await savingA;
+      expect(store.writeError('name')).toBe('');
+      expect(store.announce).not.toHaveBeenCalledWith(expect.stringContaining('Could not save the name "A"'));
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not post an older tag write\'s failure over a newer write of that tag, only of that tag', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const writes = [deferred<any>(), deferred<any>(), deferred<any>(), deferred<any>()];
+    // The per-tag chain already orders two writes of one tag; stubbing it out pins the rule itself.
+    store._postTagsWithRetry = vi.fn()
+      .mockReturnValueOnce(writes[0].promise).mockReturnValueOnce(writes[1].promise)
+      .mockReturnValueOnce(writes[2].promise).mockReturnValueOnce(writes[3].promise);
+    try {
+      const olderSeed = store._batchToggleTags([seedTag], 'add');
+      const newerSeed = store._batchToggleTags([seedTag], 'add');
+      writes[1].resolve({ ok: true });
+      await newerSeed;
+      writes[0].resolve({ ok: false, status: 400 });
+      await olderSeed;
+      expect(store.writeError('tags')).toBe('');
+
+      // A later success on another tag says nothing about this one.
+      const olderRelated = store._batchToggleTags([relatedTag], 'add');
+      const newerOther = store._batchToggleTags([{ ID: 8, Name: 'other' }], 'add');
+      writes[3].resolve({ ok: true });
+      await newerOther;
+      writes[2].resolve({ ok: false, status: 400 });
+      await olderRelated;
+      expect(store.writeError('tags')).toBe('Could not add tag related. Try again.');
+    } finally { error.mockRestore(); }
   });
 });
 
@@ -876,6 +944,30 @@ describe('page refresh', () => {
     await Promise.all([first, second, third]);
     expect(secondSettled).toBe(true);
     expect(store._listSelection.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('parks focus on the list when the refreshed list no longer has the focused thumbnail', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { callback(); return 0; };
+    const doc = (globalThis as any).document;
+    const thumbnail: any = { isConnected: true, dataset: { resourceId: '1' } };
+    thumbnail.closest = () => thumbnail;
+    const list: any = {
+      isConnected: true,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      matches: () => false,
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+      focus: () => { doc.activeElement = list; },
+    };
+    doc.activeElement = thumbnail;
+    doc.querySelector = (selector: string) => (selector.includes('[data-list-container]') ? list : null);
+    // The edit took the resource out of the results: its card is gone and nothing replaces it.
+    store._listSelection = { refresh: async () => { thumbnail.isConnected = false; doc.activeElement = doc.body; } };
+    await store.refreshPageContent();
+    expect(doc.activeElement).toBe(list);
   });
 });
 

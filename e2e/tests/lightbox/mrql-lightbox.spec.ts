@@ -147,6 +147,56 @@ test.describe('MRQL default resource card lightbox', () => {
     }, { id: resourceId, value: original });
   });
 
+  test('a save that lands while close() refreshes the results still shows on the card', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+
+    // Saved while the viewer is open, so close() refreshes the results itself.
+    await name.fill(`${original} one`);
+    await name.press('Enter');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').needsRefreshOnClose))
+      .toBe(true);
+
+    // close()'s refresh is slow, and the save Back makes lands while it is still running.
+    await page.route('**/v1/mrql?render=list', async route => {
+      const response = await route.fetch();
+      await new Promise(resolve => setTimeout(resolve, 800));
+      await route.fulfill({ response });
+    });
+    await page.route('**/v1/resource/editName**', async route => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await route.continue();
+    });
+    const renamed = `${original} two`;
+    await name.fill(renamed);
+    await page.evaluate(() => { (window as any).__sameDocument = true; });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    expect(await page.evaluate(() => (window as any).__sameDocument)).toBe(true);
+
+    await page.unroute('**/v1/mrql?render=list');
+    await page.unroute('**/v1/resource/editName**');
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
   test('lightbox navigates between multiple MRQL results', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

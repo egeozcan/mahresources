@@ -691,9 +691,10 @@ export const quickTagPanelMethods = {
       const where = session === this._session && currentId === resourceId ? ''
         : ` ${action === 'add' ? 'to' : 'from'} ${imageName || 'another image'}`;
       const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
-      this._setWriteError('tags', currentId, message, session, seq, resourceId, tags.map(t => t.ID));
+      const tagIds = tags.map(t => t.ID);
+      this._setWriteError('tags', currentId, message, session, seq, resourceId, tagIds);
       // The same words a sighted user reads, not a vaguer summary.
-      this.announce(message);
+      if (!this._isSuperseded('tags', resourceId, seq, tagIds)) this.announce(message);
       return false;
     } finally {
       this._endDetailsWrite(resourceId);

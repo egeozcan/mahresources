@@ -63,6 +63,7 @@ export function mrqlEditor() {
       this._actionRefreshTimer = setTimeout(refresh, 100);
     },
     connectSelections() {
+      if (typeof window === 'undefined') return;
       const snapshot = this.executedQuery;
       for (const type of ['resource','note','group']) {
         const selection = window.Alpine?.store('selection:mrql-' + type);
@@ -817,6 +818,13 @@ export function mrqlEditor() {
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
         this.addToHistory(query);
+
+        // Rebind the selections' refresh to this result now, not only on the tick below.
+        // Alpine runs $nextTick a macrotask later, and a refresh asked for in between (the
+        // lightbox's trailing page refresh) would reach the handler bound to the query this
+        // run replaced, which refuses it. The tick still reaches a selection store that the
+        // new cards create as they render.
+        this.connectSelections();
 
         // Re-collect lightbox items once the result cards have rendered, so
         // clicking a default-card thumbnail opens the lightbox.

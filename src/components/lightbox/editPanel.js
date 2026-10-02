@@ -1,7 +1,7 @@
 import { abortableFetch } from '../../index.js';
 import { morphAndReinitChangedComponents } from '../../utils/shortcodeElementMorph.js';
 import { findListContainer, LIST_CONTAINER_SELECTOR } from '../../utils/listContainer.js';
-import { focusFirstIn, focusOn, focusedElement } from '../../utils/focus.js';
+import { focusFirstIn, focusOn, focusedElement, restoreFocus } from '../../utils/focus.js';
 
 /**
  * Edit panel state/methods for the lightbox store.
@@ -60,9 +60,12 @@ export const editPanelState = {
 };
 
 export const editPanelMethods = {
+  // Shown on the image the user was on when it failed and on the image the write was for: a
+  // failure that lands after they moved on names that image, and they go back there to retry.
   writeError(field) {
     const error = this.writeErrors[field];
-    return error && error.resourceId === this.getCurrentItem()?.id ? error.message : '';
+    const currentId = this.getCurrentItem()?.id;
+    return error && (error.resourceId === currentId || error.targetId === currentId) ? error.message : '';
   },
 
   // `resourceId` is the image the message shows on; `targetId` the one the failed write was
@@ -70,15 +73,33 @@ export const editPanelMethods = {
   // viewing session the write started in; a failure landing after close() must not show up in
   // the next one. `seq` is the write's _writeSeq.
   _setWriteError(field, resourceId, message, session, seq, targetId = resourceId, tagIds = null) {
-    if (session !== this._session) return;
+    if (session !== this._session || this._isSuperseded(field, targetId, seq, tagIds)) return;
     this.writeErrors[field] = { resourceId, targetId, message, tagIds, seq };
   },
 
+  // A write that started later on the same field of the same image (for tags, on every tag
+  // that failed) has already gone through, so this one's failure lost nothing: rename to A,
+  // then to B, and B saving first leaves B in place, which A's message would call lost.
+  _isSuperseded(field, resourceId, seq, tagIds = null) {
+    return this._writeKeys(field, resourceId, tagIds).every(key => this._writeSucceeded?.get(key) > seq);
+  },
+
+  // Tags count one by one: saving Y says nothing about the X that failed.
+  _writeKeys(field, resourceId, tagIds) {
+    return field === 'tags' ? tagIds.map(id => `tags:${resourceId}:${id}`) : [`${field}:${resourceId}`];
+  },
+
+  // Called by every write that succeeds, which it records for _isSuperseded.
   // Only a later success in the same session, on the image the failed write was for, replaces
   // its message; a success elsewhere says nothing about it. Later means started later: rename
   // to A, then to B, and A's save landing after B failed has not saved B. A tag failure also
   // needs the success to touch one of its tags: adding Y says nothing about the X that failed.
   _clearWriteError(field, resourceId, session, seq, tagIds = []) {
+    // Lazily allocated per store, like _suggestedDirty, so stores do not share one Map.
+    this._writeSucceeded ??= new Map();
+    for (const key of this._writeKeys(field, resourceId, tagIds)) {
+      if (!(this._writeSucceeded.get(key) > seq)) this._writeSucceeded.set(key, seq);
+    }
     const error = this.writeErrors[field];
     if (session !== this._session || error?.targetId !== resourceId || seq <= error.seq) return;
     if (error.tagIds && !tagIds.some(id => error.tagIds.includes(id))) return;
@@ -290,14 +311,16 @@ export const editPanelMethods = {
           this._pageRefreshAgain = false;
           // MRQL refreshes by re-running its query, which rebuilds every card: the thumbnail
           // close() gave focus back to goes, and the reader is left on <body>. Put them on the
-          // same resource's new thumbnail once it renders, unless they have moved on since.
+          // same resource's new thumbnail once it renders, unless they have moved on since, or
+          // on the list when the edit took the resource out of the results.
           const thumbnail = focusedElement()?.closest('[data-lightbox-item]');
           await this._refreshPageContentOnce();
           if (!thumbnail) continue;
           await new Promise(resolve => requestAnimationFrame(resolve));
           if (focusedElement() || thumbnail.isConnected) continue;
-          focusOn(findListContainer(document)?.querySelector(
-            `[data-lightbox-item][data-resource-id="${thumbnail.dataset.resourceId}"]`));
+          const list = findListContainer(document);
+          restoreFocus(list?.querySelector(`[data-lightbox-item][data-resource-id="${thumbnail.dataset.resourceId}"]`),
+            list ?? document.querySelector('main'));
         } while (this._pageRefreshAgain);
       } finally {
         this._pageRefresh = null;
@@ -661,8 +684,10 @@ export const editPanelMethods = {
       }
       // The cached copy for this resource is now uncertain — drop it so a later view refetches.
       this.detailsCache.delete(resourceId);
-      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`, session, seq);
-      this.announce('Failed to update name');
+      const message = `Could not save the name "${newName}". The previous name is back.`;
+      this._setWriteError('name', resourceId, message, session, seq);
+      // The words on screen: after Enter, focus has left the field the message describes.
+      if (!this._isSuperseded('name', resourceId, seq)) this.announce(message);
     } finally {
       this._endDetailsWrite(resourceId);
     }
@@ -705,8 +730,9 @@ export const editPanelMethods = {
       console.error('Failed to update description:', err);
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
-      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.', session, seq);
-      this.announce('Failed to update description');
+      const message = 'Could not save the description. The previous text is back.';
+      this._setWriteError('description', resourceId, message, session, seq);
+      if (!this._isSuperseded('description', resourceId, seq)) this.announce(message);
     } finally {
       this._endDetailsWrite(resourceId);
     }

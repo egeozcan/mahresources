@@ -42,6 +42,22 @@ describe('mrqlEditor request lifecycle', () => {
     expect(editor.executedQuery.query).toBe(editor.getQuery());
   });
 
+  it('runs a refresh asked for as soon as the previous one has finished', async () => {
+    const { editor, selection } = editorWithSelection();
+    // Alpine runs $nextTick in a setTimeout, a macrotask after execute() resolves.
+    editor.$nextTick = (callback: () => void) => setTimeout(callback, 0);
+    const request = vi.fn().mockResolvedValue(noteResponse);
+    vi.stubGlobal('fetch', request);
+
+    await selection.refresh!();
+    // The lightbox's trailing page refresh comes a few microtasks later, before that tick.
+    await selection.refresh!();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    // Let the deferred ticks run while window is still stubbed.
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+
   it('does not interrupt paging with a callback from the page being replaced', async () => {
     const { editor, selection } = editorWithSelection();
     const oldRefresh = selection.refresh!;
