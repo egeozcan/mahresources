@@ -336,7 +336,7 @@ test.describe('Lightbox stale-details & repeat-announce fixes', () => {
     await page.waitForTimeout(300);
 
     const settled = await liveText(page);
-    expect(settled).toMatch(/failed to add tags/i);
+    expect(settled).toMatch(/could not add tag/i);
     expect(settled).not.toMatch(/repeated/i);
 
     // And nothing was actually applied to image2.

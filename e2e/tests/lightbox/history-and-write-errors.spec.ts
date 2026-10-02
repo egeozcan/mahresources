@@ -77,13 +77,26 @@ test.describe('Lightbox history and visible write errors', () => {
 
   test('Back closes the viewer and stays on the page; the next Back leaves it', async ({ page }) => {
     await page.goto('/notes');
-    const lightbox = await openLightbox(page);
+    // Short, so the list scrolls and a traversal that reset the scroll position would show.
+    await page.setViewportSize({ width: 1280, height: 400 });
+    await page.goto(listUrl());
+    await page.waitForLoadState('load');
+    await page.evaluate(() => window.scrollTo(0, 120));
+    const trigger = page.locator('[data-lightbox-item]').first();
+    // The click scrolls its target into view first, so read the position after that.
+    await trigger.scrollIntoViewIfNeeded();
+    const scrolled = await page.evaluate(() => window.scrollY);
+    expect(scrolled).toBeGreaterThan(0);
+    await trigger.click();
+    const lightbox = page.locator(LIGHTBOX);
+    await expect(lightbox).toBeVisible();
     const listPage = page.url();
 
     await page.goBack();
     await expect(lightbox).toBeHidden();
     expect(page.url()).toBe(listPage);
-    await expect(page.locator('[data-lightbox-item]').first()).toBeVisible();
+    await expect(trigger).toBeFocused();
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/notes/);
@@ -94,6 +107,8 @@ test.describe('Lightbox history and visible write errors', () => {
     const lightbox = await openLightbox(page);
     await page.keyboard.press('Escape');
     await expect(lightbox).toBeHidden();
+    // close() steps back off the viewer's entry asynchronously.
+    await expect.poll(() => page.evaluate(() => history.state?.mahLightbox ?? null)).toBe(null);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/notes/);
@@ -115,7 +130,6 @@ test.describe('Lightbox history and visible write errors', () => {
     await expect(nameError).toBeVisible();
     await expect(nameError).toHaveText('Could not save the name "Renamed and lost". The previous name is back.');
     await expect(name).toHaveValue(original);
-    await expect(name).toHaveAttribute('aria-invalid', 'true');
     await expect(name).toHaveAttribute('aria-describedby', 'lightbox-edit-name-error');
 
     // A failed save drops the cached details, and the refetch that follows re-renders the
@@ -131,7 +145,7 @@ test.describe('Lightbox history and visible write errors', () => {
     await name.focus();
     const descriptionError = page.locator('#lightbox-edit-description-error');
     await expect(descriptionError).toHaveText('Could not save the description. The previous text is back.');
-    await expect(description).toHaveAttribute('aria-invalid', 'true');
+    await expect(description).toHaveAttribute('aria-describedby', 'lightbox-edit-description-error');
 
     // A save that goes through clears the message.
     await detailsRefetched();
@@ -139,7 +153,7 @@ test.describe('Lightbox history and visible write errors', () => {
     await name.fill(original + ' ok');
     await name.press('Enter');
     await expect(nameError).toBeHidden();
-    await expect(name).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(name).not.toHaveAttribute('aria-describedby', /.+/);
     await name.fill(original);
     await name.press('Enter');
   });
@@ -157,11 +171,16 @@ test.describe('Lightbox history and visible write errors', () => {
     await panel.getByRole('button', { name: "Repeat previous image's tags" }).click();
     const error = panel.locator('[data-write-error="tags"]');
     await expect(error).toHaveText(`Could not add tag ${tagName}. Try again.`);
+    await expect(panel.getByRole('button', { name: "Repeat previous image's tags" }))
+      .toHaveAttribute('aria-describedby', 'lightbox-tag-write-error');
 
     // Only on the image it belongs to.
     await page.keyboard.press('PageUp');
     await expect(error).toBeHidden();
 
+    // With the panel closed, the viewer itself shows the message.
+    await page.keyboard.press('PageDown');
     await panel.getByRole('button', { name: 'Close edit tags panel' }).click();
+    await expect(lightbox.locator('[data-write-error="tags-viewer"]')).toHaveText(`Could not add tag ${tagName}. Try again.`);
   });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.hoisted(() => ({
   abortableFetch: vi.fn(),
@@ -648,13 +648,13 @@ describe('visible write errors', () => {
       store._undoRing.push({ resourceId: 1, tags: [seedTag, relatedTag], action: 'add', name: 'image 1' });
       store.currentIndex = 1;
       await store.undoLastTagAction();
-      expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related from image 1. Try again.');
 
       post.mockResolvedValue({ ok: true } as Response);
       // A success on another image says nothing about the failed write...
       store.items.push(item(3));
       await store._batchToggleTags([relatedTag], 'add', { targetResourceId: 3, fromUndo: true });
-      expect(store.writeError('tags')).toBe('Could not remove tags seed, related on image 1. Try again.');
+      expect(store.writeError('tags')).toBe('Could not remove tags seed, related from image 1. Try again.');
       // ...but retrying it on the image the message is about does.
       await store.undoLastTagAction();
       expect(store.writeError('tags')).toBe('');
@@ -694,8 +694,44 @@ describe('browser history', () => {
     (globalThis as any).history = {
       get state() { return state; },
       pushState: vi.fn((next: any) => { state = next; }),
+      replaceState: vi.fn((next: any) => { state = next; }),
       back,
     };
+  });
+
+  afterEach(() => { delete (globalThis as any).history; });
+
+  it('defers the push of a viewer reopened before close()\'s Back has landed', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    store.open(0);
+    const marker = state;
+    store.close();
+    store.open(0);
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    // The traversal close() asked for lands now: it must not close the new viewer.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(true);
+    expect(history.pushState).toHaveBeenCalledTimes(2);
+    expect(state.mahLightbox).not.toBe(marker.mahLightbox);
+
+    // And the new entry behaves like any other.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    expect(store.isOpen).toBe(false);
+  });
+
+  it('reuses a marker entry a previous page load left behind instead of stacking another', () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    state = { page: 'own', mahLightbox: 'left-by-reload' };
+    store.open(0);
+    expect(history.pushState).not.toHaveBeenCalled();
+    expect(state).toEqual({ page: 'own', mahLightbox: expect.not.stringMatching(/^left-by-reload$/) });
+    store.close();
+    expect(back).toHaveBeenCalledTimes(1);
   });
 
   it('pushes one entry on open and closes on Back without going back again', () => {

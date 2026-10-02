@@ -744,6 +744,7 @@ export const editPanelMethods = {
       // to cache, so _settleDetailsCache drops the entry and a later view refetches.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
+      this._clearWriteError('tags', resourceId);
       this.announce(`Added tag: ${tag.Name}`);
 
       // Record as recent tag (skips if in a quick-add slot)
@@ -791,6 +792,7 @@ export const editPanelMethods = {
       // _settleDetailsCache drops the entry and a later view refetches the authoritative set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
+      this._clearWriteError('tags', resourceId);
       this.announce(`Removed tag: ${tag.Name}`);
     } catch (err) {
       console.error('Failed to remove tag:', err);

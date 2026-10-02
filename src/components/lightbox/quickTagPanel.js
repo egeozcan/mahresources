@@ -683,10 +683,11 @@ export const quickTagPanelMethods = {
       const names = tags.map(t => t.Name).join(', ');
       const currentId = this.getCurrentItem()?.id;
       const where = currentId === resourceId ? ''
-        : ` on ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
-      this._setWriteError('tags', currentId,
-        `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`, session, resourceId);
-      this.announce(`Failed to ${action} tags`);
+        : ` ${action === 'add' ? 'to' : 'from'} ${this.items.find(i => i.id === resourceId)?.name || 'another image'}`;
+      const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
+      this._setWriteError('tags', currentId, message, session, resourceId);
+      // The same words a sighted user reads, not a vaguer summary.
+      this.announce(message);
       return false;
     } finally {
       this._endDetailsWrite(resourceId);
@@ -729,7 +730,7 @@ export const quickTagPanelMethods = {
     const ok = await this._batchToggleTags(missing, 'add');
     // Only override _batchToggleTags' own announce with this count+source message on success;
     // under the 50ms latest-wins live region it is the one a screen reader hears. On failure
-    // its "Failed to add tags" must remain the final message rather than being masked by a
+    // its failure message must remain the final one rather than being masked by a
     // false "Repeated…" success.
     if (ok) {
       this.announce(`Repeated ${missing.length} tag(s) from ${this._carryForwardName}`);
@@ -792,7 +793,7 @@ export const quickTagPanelMethods = {
     } else {
       // Restore the entry so a transient failure can be retried.
       this._undoRing.push(entry);
-      this.announce('Undo failed');
+      this.announce(`Undo failed. ${this.writeError('tags')}`);
     }
   },
 

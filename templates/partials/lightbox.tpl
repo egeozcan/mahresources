@@ -293,6 +293,12 @@
         </button>
     </div>
 
+    <!-- A failed tag write (an Undo, or a batch still retrying when the panel closed) while the
+         Tags panel, which shows these itself, is closed. Not a live region: the store already
+         announced it. -->
+    <p data-write-error="tags-viewer" x-show="!$store.lightbox.quickTagPanelOpen && $store.lightbox.writeError('tags')" x-cloak
+       class="px-4 pt-2 text-sm text-red-300 text-center z-20" x-text="$store.lightbox.writeError('tags')"></p>
+
     <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
     <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
         <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
@@ -467,6 +473,7 @@
                     @click="$store.lightbox.repeatPreviousTags()"
                     class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Repeat previous image's tags"
+                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                     title="Apply the previous image's tags to this one"
                 >
                     <span>Repeat</span>
@@ -476,6 +483,7 @@
                     @click="$store.lightbox.undoLastTagAction()"
                     class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-hidden focus:ring-2 focus:ring-stone-400"
                     aria-label="Undo last tag change"
+                    :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                     title="Undo the last tag change"
                 >
                     <span>Undo</span>
@@ -678,7 +686,7 @@
 
             <!-- Failed quick-slot, suggestion, repeat or undo write. Not a live region: the
                  store already announced it. -->
-            <p data-write-error="tags" x-show="$store.lightbox.writeError('tags')" x-cloak
+            <p id="lightbox-tag-write-error" data-write-error="tags" x-show="$store.lightbox.writeError('tags')" x-cloak
                class="text-sm text-red-400" x-text="$store.lightbox.writeError('tags')"></p>
 
             <!-- Divider -->
@@ -1006,7 +1014,6 @@
                             {# the blur's save sees no change.                                 #}
                             @keydown.enter.stop.prevent="$event.target.blur()"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Name || ''; $event.target.blur()"
-                            :aria-invalid="$store.lightbox.writeError('name') ? 'true' : null"
                             :aria-describedby="$store.lightbox.writeError('name') ? 'lightbox-edit-name-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
@@ -1025,7 +1032,6 @@
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.value = $store.lightbox.displayDetails()?.Description || ''; $event.target.blur()"
                             rows="4"
-                            :aria-invalid="$store.lightbox.writeError('description') ? 'true' : null"
                             :aria-describedby="$store.lightbox.writeError('description') ? 'lightbox-edit-description-error' : null"
                             class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."

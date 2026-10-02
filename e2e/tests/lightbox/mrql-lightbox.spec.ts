@@ -105,6 +105,8 @@ test.describe('MRQL default resource card lightbox', () => {
     await expect(lightbox).toBeHidden();
     expect(page.url()).toBe(urlBefore);
     await expect(thumbnails).toHaveCount(2);
+    // A re-run would start after the popstate handler's own awaits; give it the chance.
+    await page.waitForTimeout(300);
     expect(reruns).toEqual([]);
   });
 

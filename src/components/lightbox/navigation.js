@@ -42,6 +42,11 @@ export const navigationState = {
   // Marker of the history entry open() pushed, so browser Back closes the viewer instead of
   // leaving the page. Null while no entry of ours is on the stack.
   _historyToken: null,
+  // close() has called history.back() and its popstate has not arrived yet. An open() in
+  // that window defers its push (_historyPushDeferred) until it has, or the late popstate
+  // would read as Back and close the new viewer.
+  _historyBackPending: false,
+  _historyPushDeferred: false,
 
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
@@ -387,7 +392,10 @@ export const navigationMethods = {
     this.currentIndex = safeIndex;
     // Only the first open() of a session pushes. Should open() run on an already-open viewer,
     // a second entry would make Back need two presses to leave it.
-    if (!this.isOpen) this._pushHistoryEntry();
+    if (!this.isOpen) {
+      if (this._historyBackPending) this._historyPushDeferred = true;
+      else this._pushHistoryEntry();
+    }
     this.isOpen = true;
     this._armMediaLoad();
 
@@ -501,10 +509,17 @@ export const navigationMethods = {
 
   // Same URL, so nothing reloads and a bookmarked or shared link is unchanged; the marker
   // rides on the page's own state so a component that stored something there keeps it.
+  // An entry that already carries a marker is one a closed viewer left behind (the page was
+  // reloaded, or left through a link inside the viewer, with the viewer open): reuse it rather
+  // than stacking another entry Back would have to step through.
   _pushHistoryEntry() {
     this._historyToken = `${Date.now()}:${Math.random()}`;
     try {
       const state = history.state;
+      if (state?.mahLightbox) {
+        history.replaceState({ ...state, mahLightbox: this._historyToken }, '');
+        return;
+      }
       const plain = state && Object.getPrototypeOf(state) === Object.prototype;
       history.pushState(plain ? { ...state, mahLightbox: this._historyToken }
         : { mahLightbox: this._historyToken, previousState: state }, '');
@@ -516,6 +531,16 @@ export const navigationMethods = {
   // Back (or Forward) moved off our entry while the viewer is open: close without touching
   // history again, since the browser already popped it.
   _onHistoryPop() {
+    if (this._historyBackPending) {
+      // The traversal close() asked for: nothing to close. Now it is safe to push for a
+      // viewer opened in the meantime.
+      this._historyBackPending = false;
+      if (this._historyPushDeferred) {
+        this._historyPushDeferred = false;
+        if (this.isOpen) this._pushHistoryEntry();
+      }
+      return;
+    }
     if (!this.isOpen || !this._historyToken) return;
     if (history.state?.mahLightbox === this._historyToken) return;
     this._historyToken = null;
@@ -528,7 +553,10 @@ export const navigationMethods = {
   _popHistoryEntry() {
     const token = this._historyToken;
     this._historyToken = null;
-    if (token && history.state?.mahLightbox === token) history.back();
+    if (token && history.state?.mahLightbox === token) {
+      this._historyBackPending = true;
+      history.back();
+    }
   },
 
   close() {
