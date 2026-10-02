@@ -243,6 +243,11 @@ test.describe('Lightbox history and visible write errors', () => {
     }, { id: tagId, name: tagName });
     await expect(panel.getByRole('button', { name: `Add ${tagName}` }))
       .toHaveAttribute('aria-describedby', 'lightbox-tag-write-error');
+    // So do the slot's individual tags when it is expanded.
+    await page.evaluate(() => { (window as any).Alpine.store('lightbox').expandedSlotIndex = 0; });
+    await expect(panel.getByRole('region', { name: 'Expanded slot tags' }).getByRole('button', { name: `Add ${tagName}` }))
+      .toHaveAttribute('aria-describedby', 'lightbox-tag-write-error');
+    await page.evaluate(() => { (window as any).Alpine.store('lightbox').expandedSlotIndex = null; });
 
     // Only on the image it belongs to.
     await showImage(0);

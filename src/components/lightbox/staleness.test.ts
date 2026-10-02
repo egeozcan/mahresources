@@ -782,6 +782,101 @@ describe('visible write errors', () => {
       expect(store.writeError('tags')).toBe('Could not remove tag seed from image 1. Try again.');
     } finally { post.mockRestore(); error.mockRestore(); }
   });
+
+  it.each([
+    ['name', 'updateName', 'Could not save the name "B". The previous name is back.'],
+    ['description', 'updateDescription', 'Could not save the description. The previous text is back.'],
+  ])('does not let an older %s save clear a newer one\'s failure', async (field, method, message) => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Name: 'image 1', Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const savingA = store[method]('A');
+      const savingB = store[method]('B');
+      newer.resolve({ ok: false, status: 500 });
+      await savingB;
+      expect(store.writeError(field)).toBe(message);
+      older.resolve({ ok: true });
+      await savingA;
+      expect(store.writeError(field)).toBe(message);
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('does not let an older tag write clear a newer one\'s failure', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const older = deferred<any>();
+    const newer = deferred<any>();
+    // The per-tag chain already orders two writes of one tag; stubbing it out pins the rule itself.
+    store._postTagsWithRetry = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      const first = store._batchToggleTags([seedTag], 'add');
+      const second = store._batchToggleTags([seedTag], 'add');
+      newer.resolve({ ok: false, status: 400 });
+      await second;
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+      older.resolve({ ok: true });
+      await first;
+      expect(store.writeError('tags')).toBe('Could not add tag seed. Try again.');
+    } finally { error.mockRestore(); }
+  });
+
+  it('does not announce a failed undo from a closed session with the next session\'s error', async () => {
+    const store = taggingStore();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+    try {
+      store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+      const undoing = store.undoLastTagAction();
+      store.close();
+      store._setWriteError('tags', 1, 'The next session\'s own failure.', store._session);
+      response.resolve({ ok: false, status: 400 });
+      await undoing;
+      expect(store.announce).toHaveBeenLastCalledWith('Could not remove tag seed from image 1. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
+  it('names an undo\'s image from its entry when the viewer no longer lists it', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      store._undoRing.push({ resourceId: 9, tags: [seedTag], action: 'add', name: 'image 9' });
+      await store.undoLastTagAction();
+      expect(store.writeError('tags')).toBe('Could not remove tag seed from image 9. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+});
+
+describe('page refresh', () => {
+  it('runs one refresh at a time, with one trailing run for every call made meanwhile', async () => {
+    const store = makeStore([item(1)]);
+    store.refreshPageContent = editPanelMethods.refreshPageContent;
+    const runs = [deferred<void>(), deferred<void>()];
+    let started = 0;
+    store._listSelection = { refresh: vi.fn(() => runs[started++]?.promise) };
+    const first = store.refreshPageContent();
+    const second = store.refreshPageContent();
+    const third = store.refreshPageContent();
+    expect(store._listSelection.refresh).toHaveBeenCalledTimes(1);
+
+    let secondSettled = false;
+    second.then(() => { secondSettled = true; });
+    runs[0].resolve();
+    await vi.waitFor(() => expect(store._listSelection.refresh).toHaveBeenCalledTimes(2));
+    // A caller made during the first run waits for the run that covers it.
+    expect(secondSettled).toBe(false);
+    runs[1].resolve();
+    await Promise.all([first, second, third]);
+    expect(secondSettled).toBe(true);
+    expect(store._listSelection.refresh).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('browser history', () => {

@@ -590,8 +590,9 @@ export const quickTagPanelMethods = {
   // explicit targetResourceId so undo (Item 6) can invert a change on an image the user
   // has since navigated away from. Returns true on success, false on failure, so callers
   // (flow advance, undo) can gate on the result. fromUndo suppresses the undo-ring push so
-  // an undo does not record its own inverse and become a toggle loop.
-  async _batchToggleTags(tags, action, { targetResourceId = null, fromUndo = false } = {}) {
+  // an undo does not record its own inverse and become a toggle loop. targetName is the name
+  // undo recorded, so a failure can name an image `items` no longer lists.
+  async _batchToggleTags(tags, action, { targetResourceId = null, targetName = null, fromUndo = false } = {}) {
     const resourceId = targetResourceId ?? this.getCurrentItem()?.id;
     if (!resourceId) return false;
 
@@ -601,9 +602,10 @@ export const quickTagPanelMethods = {
     // the panel nor the background prefetch may commit it on top of the change.
     const writeGeneration = this._beginTagWrite(resourceId, tags, action);
     const session = this._session;
+    const seq = ++this._writeSeq;
     // Named now: by the time a failure lands, close() may have given `items` back to a page
     // gallery that does not list this image.
-    const targetName = this.items.find(i => i.id === resourceId)?.name;
+    const imageName = this.items.find(i => i.id === resourceId)?.name || targetName;
 
     // Only mutate the live resourceDetails optimistically when it actually describes the
     // target resource. A non-current target (cross-image undo), a write that lands after the
@@ -643,7 +645,7 @@ export const quickTagPanelMethods = {
       // later view of that resource refetches the authoritative tag set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this._refreshOnClose(session);
-      this._clearWriteError('tags', resourceId, session, tags.map(t => t.ID));
+      this._clearWriteError('tags', resourceId, session, seq, tags.map(t => t.ID));
 
       // Record an undo-ring entry for every non-undo batch write (Item 6).
       if (!fromUndo) {
@@ -687,9 +689,9 @@ export const quickTagPanelMethods = {
       const names = tags.map(t => t.Name).join(', ');
       const currentId = this.getCurrentItem()?.id;
       const where = session === this._session && currentId === resourceId ? ''
-        : ` ${action === 'add' ? 'to' : 'from'} ${targetName || 'another image'}`;
+        : ` ${action === 'add' ? 'to' : 'from'} ${imageName || 'another image'}`;
       const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
-      this._setWriteError('tags', currentId, message, session, resourceId, tags.map(t => t.ID));
+      this._setWriteError('tags', currentId, message, session, seq, resourceId, tags.map(t => t.ID));
       // The same words a sighted user reads, not a vaguer summary.
       this.announce(message);
       return false;
@@ -786,8 +788,10 @@ export const quickTagPanelMethods = {
       return;
     }
     const inverse = entry.action === 'add' ? 'remove' : 'add';
+    const session = this._session;
     const ok = await this._batchToggleTags(entry.tags, inverse, {
       targetResourceId: entry.resourceId,
+      targetName: entry.name,
       fromUndo: true,
     });
     if (ok) {
@@ -798,9 +802,10 @@ export const quickTagPanelMethods = {
       // Restore the entry so a transient failure can be retried.
       this._undoRing.push(entry);
       // Nothing is shown once close() has ended the session, and _batchToggleTags then
-      // announced the failure naming its image; a bare "Undo failed" would replace that.
+      // announced the failure naming its image; a bare "Undo failed" would replace that, and
+      // writeError() would read the next session's message.
       const shown = this.writeError('tags');
-      if (shown) this.announce(`Undo failed. ${shown}`);
+      if (shown && session === this._session) this.announce(`Undo failed. ${shown}`);
     }
   },
 

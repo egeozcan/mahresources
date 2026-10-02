@@ -54,6 +54,9 @@ export const editPanelState = {
   // gone the moment it is spoken, and a sighted user saw a typed name silently snap back.
   // Read through writeError(), which shows a message only on the image it belongs to.
   writeErrors: { name: null, description: null, tags: null },
+  // Drawn by every name, description and tag write as it starts, so a failure records which
+  // write it was and an older save that lands later cannot clear it (see _clearWriteError).
+  _writeSeq: 0,
 };
 
 export const editPanelMethods = {
@@ -65,18 +68,19 @@ export const editPanelMethods = {
   // `resourceId` is the image the message shows on; `targetId` the one the failed write was
   // for, when they differ; `tagIds` the tags a failed tag write was changing. `session` is the
   // viewing session the write started in; a failure landing after close() must not show up in
-  // the next one.
-  _setWriteError(field, resourceId, message, session, targetId = resourceId, tagIds = null) {
+  // the next one. `seq` is the write's _writeSeq.
+  _setWriteError(field, resourceId, message, session, seq, targetId = resourceId, tagIds = null) {
     if (session !== this._session) return;
-    this.writeErrors[field] = { resourceId, targetId, message, tagIds };
+    this.writeErrors[field] = { resourceId, targetId, message, tagIds, seq };
   },
 
   // Only a later success in the same session, on the image the failed write was for, replaces
-  // its message; a success elsewhere says nothing about it. A tag failure also needs the
-  // success to touch one of its tags: adding Y says nothing about the X that failed.
-  _clearWriteError(field, resourceId, session, tagIds = []) {
+  // its message; a success elsewhere says nothing about it. Later means started later: rename
+  // to A, then to B, and A's save landing after B failed has not saved B. A tag failure also
+  // needs the success to touch one of its tags: adding Y says nothing about the X that failed.
+  _clearWriteError(field, resourceId, session, seq, tagIds = []) {
     const error = this.writeErrors[field];
-    if (session !== this._session || error?.targetId !== resourceId) return;
+    if (session !== this._session || error?.targetId !== resourceId || seq <= error.seq) return;
     if (error.tagIds && !tagIds.some(id => error.tagIds.includes(id))) return;
     this.writeErrors[field] = null;
   },
@@ -271,7 +275,38 @@ export const editPanelMethods = {
     }
   },
 
-  async refreshPageContent() {
+  // One refresh at a time. Overlapping ones morphed in whatever order their responses came
+  // back, so a slow early one could bring back a name a later one had shown, and MRQL's
+  // selection refresh drops a call made while its query is still running. A call made during
+  // a refresh asks for one more run after it, and gets a promise that settles once that is done.
+  refreshPageContent() {
+    if (this._pageRefresh) {
+      this._pageRefreshAgain = true;
+      return this._pageRefresh;
+    }
+    this._pageRefresh = (async () => {
+      try {
+        do {
+          this._pageRefreshAgain = false;
+          // MRQL refreshes by re-running its query, which rebuilds every card: the thumbnail
+          // close() gave focus back to goes, and the reader is left on <body>. Put them on the
+          // same resource's new thumbnail once it renders, unless they have moved on since.
+          const thumbnail = focusedElement()?.closest('[data-lightbox-item]');
+          await this._refreshPageContentOnce();
+          if (!thumbnail) continue;
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          if (focusedElement() || thumbnail.isConnected) continue;
+          focusOn(findListContainer(document)?.querySelector(
+            `[data-lightbox-item][data-resource-id="${thumbnail.dataset.resourceId}"]`));
+        } while (this._pageRefreshAgain);
+      } finally {
+        this._pageRefresh = null;
+      }
+    })();
+    return this._pageRefresh;
+  },
+
+  async _refreshPageContentOnce() {
     if (this._listSelection?.refresh) {
       await this._listSelection.refresh();
       this.updateItemsFromDOM();
@@ -594,6 +629,7 @@ export const editPanelMethods = {
 
     const writeGeneration = this._beginDetailsWrite(resourceId);
     const session = this._session;
+    const seq = ++this._writeSeq;
     details.Name = newName;
     if (item) {
       item.name = newName;
@@ -615,7 +651,7 @@ export const editPanelMethods = {
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this._refreshOnClose(session);
-      this._clearWriteError('name', resourceId, session);
+      this._clearWriteError('name', resourceId, session, seq);
       this.announce('Name updated');
     } catch (err) {
       console.error('Failed to update name:', err);
@@ -625,7 +661,7 @@ export const editPanelMethods = {
       }
       // The cached copy for this resource is now uncertain — drop it so a later view refetches.
       this.detailsCache.delete(resourceId);
-      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`, session);
+      this._setWriteError('name', resourceId, `Could not save the name "${newName}". The previous name is back.`, session, seq);
       this.announce('Failed to update name');
     } finally {
       this._endDetailsWrite(resourceId);
@@ -644,6 +680,7 @@ export const editPanelMethods = {
 
     const writeGeneration = this._beginDetailsWrite(resourceId);
     const session = this._session;
+    const seq = ++this._writeSeq;
     details.Description = newDescription;
 
     try {
@@ -662,13 +699,13 @@ export const editPanelMethods = {
 
       this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this._refreshOnClose(session);
-      this._clearWriteError('description', resourceId, session);
+      this._clearWriteError('description', resourceId, session, seq);
       this.announce('Description updated');
     } catch (err) {
       console.error('Failed to update description:', err);
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
-      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.', session);
+      this._setWriteError('description', resourceId, 'Could not save the description. The previous text is back.', session, seq);
       this.announce('Failed to update description');
     } finally {
       this._endDetailsWrite(resourceId);
@@ -728,6 +765,7 @@ export const editPanelMethods = {
 
     const writeGeneration = this._beginTagWrite(resourceId, [tag], 'add');
     const session = this._session;
+    const seq = ++this._writeSeq;
 
     // Only mutate/cache the live details when they belong to the current resource. During a
     // cache-miss load window resourceDetails still describes the previous image, so caching
@@ -755,7 +793,7 @@ export const editPanelMethods = {
       // to cache, so _settleDetailsCache drops the entry and a later view refetches.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this._refreshOnClose(session);
-      this._clearWriteError('tags', resourceId, session, [tag.ID]);
+      this._clearWriteError('tags', resourceId, session, seq, [tag.ID]);
       this.announce(`Added tag: ${tag.Name}`);
 
       // Record as recent tag (skips if in a quick-add slot)
@@ -782,6 +820,7 @@ export const editPanelMethods = {
 
     const writeGeneration = this._beginTagWrite(resourceId, [tag], 'remove');
     const session = this._session;
+    const seq = ++this._writeSeq;
 
     // Only mutate/cache the live details when they belong to the current resource — a
     // cache-miss load window otherwise misdirects this onto the previous image (BH: H5).
@@ -804,7 +843,7 @@ export const editPanelMethods = {
       // _settleDetailsCache drops the entry and a later view refetches the authoritative set.
       this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this._refreshOnClose(session);
-      this._clearWriteError('tags', resourceId, session, [tag.ID]);
+      this._clearWriteError('tags', resourceId, session, seq, [tag.ID]);
       this.announce(`Removed tag: ${tag.Name}`);
     } catch (err) {
       console.error('Failed to remove tag:', err);

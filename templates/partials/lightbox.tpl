@@ -914,6 +914,7 @@
                           @click="$store.lightbox.toggleExpandedTag(idx)"
                           class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-hidden focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                           :aria-label="(isOn ? 'Remove ' : 'Add ') + tagName()"
+                          :aria-describedby="$store.lightbox.writeError('tags') ? 'lightbox-tag-write-error' : null"
                         >
                           <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                           <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagName()"></span>

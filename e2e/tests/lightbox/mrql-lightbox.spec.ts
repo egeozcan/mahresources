@@ -110,6 +110,43 @@ test.describe('MRQL default resource card lightbox', () => {
     expect(reruns).toEqual([]);
   });
 
+  test('a Name edit saved by Back keeps focus on the refreshed thumbnail', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+
+    const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
+    const resourceId = await thumbnail.getAttribute('data-resource-id');
+    await thumbnail.click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    const name = page.locator('#lightbox-edit-name');
+    await expect(name).toHaveValue(/MRQL Lightbox/);
+    const original = await name.inputValue();
+    const renamed = `${original} renamed`;
+    await name.fill(renamed);
+
+    // Hold the save until close() has given focus back to the thumbnail, so the refresh it
+    // starts re-runs the query, and rebuilds that card, after the reader is on it.
+    await page.route('**/v1/resource/editName**', async route => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await route.continue();
+    });
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await expect(mrql.resultsSection.locator(`.card-title a[href="/resource?id=${resourceId}"]`)).toHaveText(renamed);
+    await expect(mrql.resultsSection.locator(`[data-lightbox-item][data-resource-id="${resourceId}"]`)).toBeFocused();
+
+    await page.unroute('**/v1/resource/editName**');
+    await page.evaluate(async ({ id, value }) => {
+      const body = new FormData();
+      body.append('Name', value);
+      await fetch(`/v1/resource/editName?id=${id}`, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    }, { id: resourceId, value: original });
+  });
+
   test('lightbox navigates between multiple MRQL results', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();
