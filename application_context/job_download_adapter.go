@@ -778,9 +778,9 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 			// ending the Job here lost the successful download.
 			return err
 		}
-		return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobDownloadResourceOutput}, downloadFinalFigures(snap))
+		return a.ctx.finishQueueJobMeasured(execution, jobs.StateSucceeded, nil, []string{jobDownloadResourceOutput}, downloadFinalFigures(snap))
 	case download_queue.JobStatusCancelled:
-		return a.ctx.finishQueueJobWith(execution, jobs.StateCancelled, nil, nil, downloadFinalFigures(snap))
+		return a.ctx.finishQueueJobMeasured(execution, jobs.StateCancelled, nil, nil, downloadFinalFigures(snap))
 	default:
 		if snap.ExistingResourceID != nil && *snap.ExistingResourceID != 0 {
 			return a.finishExisting(execution, *snap.ExistingResourceID, snap.FailureReason, downloadFinalFigures(snap))
@@ -823,7 +823,7 @@ func (a *downloadJobAdapter) finishExisting(execution jobs.Execution, resourceID
 		Class:   jobs.FailureClassConflict,
 		Message: downloadFailureMessage(reason),
 	}
-	return a.ctx.finishQueueJobWith(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
+	return a.ctx.finishQueueJobMeasured(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
 }
 
 // jobDownloadResourceOutput is the output key a succeeded download publishes. §7
@@ -897,7 +897,7 @@ func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason
 		Class:   downloadFailureKindOf(code).class,
 		Message: downloadFailureMessage(reason),
 	}
-	return a.ctx.finishQueueJobWith(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
+	return a.ctx.finishQueueJobMeasured(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
 }
 
 // downloadFailureKind is what one failure code means to a download's Job: the

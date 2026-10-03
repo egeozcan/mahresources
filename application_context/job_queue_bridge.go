@@ -1191,6 +1191,30 @@ func (ctx *MahresourcesContext) finishQueueJobWith(
 	requiredOutputs []string,
 	final func(jobs.Progress) jobs.Progress,
 ) error {
+	return ctx.finishQueueJobFigures(execution, outcome, failure, requiredOutputs, final, false)
+}
+
+// finishQueueJobMeasured is finishQueueJobWith for figures that measure the work done
+// rather than describe a success (a transfer's bytes received): they land whatever
+// outcome wins, a cancellation that beat the success included.
+func (ctx *MahresourcesContext) finishQueueJobMeasured(
+	execution jobs.Execution,
+	outcome jobs.State,
+	failure *jobs.Failure,
+	requiredOutputs []string,
+	measured func(jobs.Progress) jobs.Progress,
+) error {
+	return ctx.finishQueueJobFigures(execution, outcome, failure, requiredOutputs, measured, true)
+}
+
+func (ctx *MahresourcesContext) finishQueueJobFigures(
+	execution jobs.Execution,
+	outcome jobs.State,
+	failure *jobs.Failure,
+	requiredOutputs []string,
+	final func(jobs.Progress) jobs.Progress,
+	anyOutcome bool,
+) error {
 	service := ctx.JobService()
 	if service == nil {
 		return nil
@@ -1218,7 +1242,7 @@ func (ctx *MahresourcesContext) finishQueueJobWith(
 			attemptRequiredOutputs = nil
 		}
 		var finalProgress *jobs.Progress
-		if final != nil && attemptOutcome == outcome {
+		if final != nil && (anyOutcome || attemptOutcome == outcome) {
 			progress := final(current.Progress)
 			// The phase is the Job's own, which the outcome does not change.
 			progress.Phase = ""

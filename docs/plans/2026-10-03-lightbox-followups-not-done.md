@@ -124,3 +124,10 @@ before for all three: 5177344 of 5242880 bytes).
 Review: pi found the success fix correct and the root cause right, and that a
 failure or cancellation after the body kept the stale figures the same way;
 the outcome-wide fix above came from that.
+
+Review round 2: no regression; one residual, fixed. A cancellation that won
+over the success went through `finishQueueJobWith`, which drops final figures
+when the outcome changes (right for an export's claimed archive size). A
+download's figures measure bytes received, so downloads now finish through
+`finishQueueJobMeasured`, which applies them whatever outcome wins. The table
+test gained "cancelled over a success" (red with the old rule).

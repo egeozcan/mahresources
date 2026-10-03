@@ -7,6 +7,7 @@ import (
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/models/query_models"
 )
 
@@ -24,17 +25,23 @@ func TestAFinishedDownloadKeepsItsFinalAmountOverAStaleProgressWrite(t *testing.
 		state jobs.State
 		// The queue's snapshot at the end, with the whole body received.
 		snap func(size int64) *download_queue.DownloadJob
+		// A cancellation asked for just before the outcome was published.
+		cancelFirst bool
 	}{
 		{"succeeded", jobs.StateSucceeded, func(size int64) *download_queue.DownloadJob {
 			return &download_queue.DownloadJob{Status: download_queue.JobStatusCompleted, Progress: size, TotalSize: size, ResourceID: &resourceID}
-		}},
+		}, false},
 		// Saving the Resource failed after the whole body arrived.
 		{"failed", jobs.StateFailed, func(size int64) *download_queue.DownloadJob {
 			return &download_queue.DownloadJob{Status: download_queue.JobStatusFailed, Progress: size, TotalSize: size, FailureCode: download_queue.FailureDownloadFailed}
-		}},
+		}, false},
 		{"cancelled", jobs.StateCancelled, func(size int64) *download_queue.DownloadJob {
 			return &download_queue.DownloadJob{Status: download_queue.JobStatusCancelled, Progress: size, TotalSize: size}
-		}},
+		}, false},
+		// The cancellation wins the outcome; the bytes received are still what they were.
+		{"cancelled over a success", jobs.StateCancelled, func(size int64) *download_queue.DownloadJob {
+			return &download_queue.DownloadJob{Status: download_queue.JobStatusCompleted, Progress: size, TotalSize: size, ResourceID: &resourceID}
+		}, true},
 	} {
 		t.Run(outcome.name, func(t *testing.T) {
 			ctx := newJobHarnessContext(t, false)
@@ -72,6 +79,12 @@ func TestAFinishedDownloadKeepsItsFinalAmountOverAStaleProgressWrite(t *testing.
 				Completed: &stale, Total: &total, Unit: "bytes",
 			}); err != nil {
 				t.Fatal(err)
+			}
+			if outcome.cancelFirst {
+				if err := ctx.db.Model(&models.Job{}).Where("id = ?", accepted.ID).
+					Update("control_intent", jobs.ControlIntentCancel).Error; err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := sink.DownloadFinished(ref, outcome.snap(size)); err != nil {
 				t.Fatal(err)
