@@ -145,7 +145,7 @@ Plan review (pi, gpt-6.1-sol high) changed the design in five places:
   button, when the tag search is absent. #61 moved focus off that button
   because Space, the tagging flow's "next" key, would close the panel.
 
-Known limit: Forward across MRQL queries (`history.go(2)` onto another
+Known limit (fixed since, see 2026-10-03-lightbox-followups-not-done.md): Forward across MRQL queries (`history.go(2)` onto another
 query's marker) runs before the destination query renders its cards, finds no
 thumbnail, and steps back onto that query's page entry with the viewer
 closed.

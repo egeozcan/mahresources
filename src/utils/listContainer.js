@@ -25,3 +25,23 @@ export const LIST_CONTAINER_SELECTOR = '[data-list-container], .list-container, 
 export function findListContainer(root = document) {
     return root.querySelector(LIST_CONTAINER_SELECTOR);
 }
+
+let rendering = null;
+
+/**
+ * A page that renders its list again on a history traversal (MRQL re-runs the
+ * query in the URL) registers that render here, so the media viewer reopening
+ * on Forward can wait for the cards rather than find none and step back off.
+ *
+ * @param {Promise<unknown>} render
+ */
+export function noteListRender(render) {
+    const settled = Promise.resolve(render).catch(() => {});
+    rendering = settled;
+    void settled.then(() => { if (rendering === settled) rendering = null; });
+}
+
+/** The traversal render still going, or null. @returns {Promise<void>|null} */
+export function listRendering() {
+    return rendering;
+}

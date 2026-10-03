@@ -131,14 +131,30 @@ export { expect };
 
 /**
  * Log in through the browser login form and wait for the post-login navigation.
- * Returns once the session cookie is set and the destination page has loaded.
+ * Returns once the session cookie is set and the destination page's document is
+ * parsed. Not its load event: that waits for every thumbnail on the dashboard,
+ * which a busy full run can take longer than the timeout to generate.
+ *
+ * A login the server could not judge because the database was busy comes back
+ * to /login?error=busy (or =unavailable), which the server calls worth retrying
+ * at once; it is retried here. Any other error fails with its code.
  */
 export async function loginAs(page: Page, creds: RoleCreds): Promise<void> {
-  await page.goto('/login');
-  await page.fill('input[name="username"]', creds.username);
-  await page.fill('input[name="password"]', creds.password);
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 15000 }),
-    page.click('button[type="submit"]'),
-  ]);
+  for (let attempt = 1; ; attempt++) {
+    await page.goto('/login');
+    await page.fill('input[name="username"]', creds.username);
+    await page.fill('input[name="password"]', creds.password);
+    await Promise.all([
+      page.waitForURL(
+        (url) => !url.pathname.startsWith('/login') || url.searchParams.has('error'),
+        { timeout: 15000, waitUntil: 'domcontentloaded' },
+      ),
+      page.click('button[type="submit"]'),
+    ]);
+    const error = new URL(page.url()).searchParams.get('error');
+    if (!error) return;
+    if (!['busy', 'unavailable'].includes(error) || attempt === 3) {
+      throw new Error(`login as ${creds.username} failed: error=${error} (attempt ${attempt})`);
+    }
+  }
 }

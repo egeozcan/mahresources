@@ -127,6 +127,16 @@ export function focusedElement() {
 }
 
 /**
+ * The element that has focus when the reader can see it: null on `<body>`, and
+ * null on an element a closing dialog has hidden, which keeps focus until the
+ * browser lets it go. A painted one is where the reader has gone since.
+ */
+export function visibleFocus() {
+  const active = focusedElement();
+  return active && isPainted(active) ? active : null;
+}
+
+/**
  * Send focus back to `trigger` after a dialog or overlay closes.
  *
  * Returns true if focus landed. A trigger that has been re-rendered away since

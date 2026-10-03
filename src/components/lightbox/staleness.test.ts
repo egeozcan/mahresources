@@ -15,6 +15,7 @@ import { editPanelMethods, editPanelState } from './editPanel.js';
 import { quickTagPanelMethods, quickTagPanelState } from './quickTagPanel.js';
 import { navigationMethods, navigationState } from './navigation.js';
 import { cropPanelMethods } from './cropPanel.js';
+import { noteListRender } from '../../utils/listContainer.js';
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -662,6 +663,21 @@ describe('visible write errors', () => {
     expect(store.writeError('tags')).toBe('');
   });
 
+  it('names only the tags still unsaved once some of them are saved', async () => {
+    const store = taggingStore();
+    routeFetches({ 1: { ID: 1, Tags: [] } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response);
+    try {
+      await store._batchToggleTags([seedTag, relatedTag], 'add');
+      expect(store.writeError('tags')).toBe('Could not add tags seed, related. Try again.');
+      post.mockResolvedValue({ ok: true } as Response);
+      await store.saveTagAddition(seedTag);
+      // seed is saved now; a message still naming it would send the reader to retry it.
+      expect(store.writeError('tags')).toBe('Could not add tag related. Try again.');
+    } finally { post.mockRestore(); error.mockRestore(); }
+  });
+
   it('dismisses the tag failures shown on this image and keeps the others', () => {
     const store = taggingStore();
     store.items.push(item(3));
@@ -1145,6 +1161,36 @@ describe('focus after close', () => {
   });
 });
 
+describe('focus after close, reader moved', () => {
+  it.each([
+    ['moved onto the page', 'elsewhere', true, false],
+    ['still on the hidden viewer', 'trigger', false, false],
+    // A viewer Forward reopened, whose trap left focus on the page all along.
+    ['on the page since before close()', 'trigger', true, true],
+  ])('focus %s before the return ends on the %s', (_name, expected, painted, before) => {
+    const store = makeStore([item(1)]);
+    const frames: Array<() => void> = [];
+    (globalThis as any).requestAnimationFrame = (callback: () => void) => { frames.push(callback); return 0; };
+    const doc = (globalThis as any).document;
+    const focusable = (el: any) => Object.assign(el, {
+      isConnected: true, matches: () => true, setAttribute: vi.fn(), removeAttribute: vi.fn(),
+      focus: () => { doc.activeElement = el; },
+    });
+    const trigger: any = focusable({ dataset: { resourceId: '1' }, checkVisibility: () => true });
+    trigger.closest = () => trigger;
+    const elsewhere: any = focusable({ checkVisibility: () => painted });
+    doc.querySelector = () => null;
+    doc.activeElement = before ? elsewhere : doc.body;
+    store.isOpen = true;
+    store.triggerElement = trigger;
+    store.close();
+    // A click or Tab lands before close()'s two-frame return comes round.
+    doc.activeElement = elsewhere;
+    while (frames.length) frames.shift()!();
+    expect(doc.activeElement).toBe(expected === 'trigger' ? trigger : elsewhere);
+  });
+});
+
 describe('focus after close, superseded', () => {
   it('drops the focus return of a session the reader has reopened and closed since', async () => {
     const store = makeStore([item(1), item(2)]);
@@ -1368,7 +1414,7 @@ describe('browser history', () => {
     expect(store.triggerElement).not.toBe(thumbs.get(1));
   });
 
-  it('steps back off the entry when its image is no longer on the page', () => {
+  it('steps back off the entry when its image is no longer on the page', async () => {
     const store = makeStore([item(1)]);
     store._preloadUpcoming = vi.fn();
     thumbnailsFor([]);
@@ -1379,6 +1425,9 @@ describe('browser history', () => {
 
     state = marker;
     store._onHistoryPop();
+    // It first gives a page that renders its list on this traversal the chance to start.
+    expect(back).not.toHaveBeenCalled();
+    await new Promise(resolve => setTimeout(resolve));
     expect(store.isOpen).toBe(false);
     expect(back).toHaveBeenCalledTimes(1);
     // That traversal's own popstate changes nothing.
@@ -1386,6 +1435,31 @@ describe('browser history', () => {
     store._onHistoryPop();
     expect(store.isOpen).toBe(false);
     expect(back).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for a list the traversal renders again before looking for the image', async () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    const thumbs = thumbnailsFor([]);
+    store.open(0);
+    const marker = state;
+    state = { page: 'own' };
+    store._onHistoryPop();
+
+    state = marker;
+    store._onHistoryPop();
+    // MRQL's own popstate listener runs after the viewer's and re-runs this entry's query.
+    let finishRun!: () => void;
+    noteListRender(new Promise<void>(resolve => { finishRun = resolve; }));
+    await new Promise(resolve => setTimeout(resolve));
+    expect(back).not.toHaveBeenCalled();
+    thumbs.set(1, { dataset: { resourceId: '1', contentType: 'image/png' }, closest: () => null, nodeType: 1 });
+    finishRun();
+    await new Promise(resolve => setTimeout(resolve));
+    await new Promise(resolve => setTimeout(resolve));
+    expect(store.isOpen).toBe(true);
+    expect(store.getCurrentItem().id).toBe(1);
+    expect(back).not.toHaveBeenCalled();
   });
 
   it('drops its entry when closed from the viewer', () => {

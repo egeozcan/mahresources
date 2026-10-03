@@ -1,7 +1,7 @@
 import { abortableFetch } from '../../index.js';
-import { captureTrigger, focusedElement, restoreFocus } from '../../utils/focus.js';
+import { captureTrigger, focusedElement, restoreFocus, visibleFocus } from '../../utils/focus.js';
 import { selectionForElement } from '../bulkSelection.js';
-import { findListContainer } from '../../utils/listContainer.js';
+import { findListContainer, listRendering } from '../../utils/listContainer.js';
 
 /**
  * Navigation and pagination state/methods for the lightbox store.
@@ -566,14 +566,22 @@ export const navigationMethods = {
   // standalone) is rebuilt the same way. With no such thumbnail on the page (deleted, filtered
   // out, paged past inside the viewer) there is nothing to show, so step back off the entry
   // rather than leave Forward on a page that looks unchanged.
-  _reopenFromHistory(state) {
+  async _reopenFromHistory(state) {
     const id = state.mahLightboxItem;
-    const selector = `[data-lightbox-item][data-resource-id="${id}"]`;
-    // The gallery the session was opened from first: a resource listed twice (a Group's own
-    // and related resources) would otherwise reopen among the other gallery's neighbours.
-    const gallery = this._historyGallery?.isConnected ? this._historyGallery : null;
-    const thumbnail = id == null ? null
-      : gallery?.querySelector(selector) ?? findListContainer(document)?.querySelector(selector) ?? document.querySelector(selector);
+    let thumbnail = this._historyThumbnail(id);
+    if (!thumbnail && id != null) {
+      // Forward from another MRQL query lands here before the page has re-run this entry's
+      // query: its popstate listener starts the run after this one, and the cards come later.
+      await new Promise(resolve => setTimeout(resolve));
+      const rendering = listRendering();
+      if (rendering) {
+        await rendering;
+        await new Promise(resolve => setTimeout(resolve));
+      }
+      // The reader may have moved on, or opened the viewer themselves, while it rendered.
+      if (this.isOpen || history.state?.mahLightbox !== state.mahLightbox) return;
+      thumbnail = this._historyThumbnail(id);
+    }
     const contentType = thumbnail?.dataset.contentType ?? '';
     if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
       this._historyAdopt = state.mahLightbox;
@@ -584,6 +592,15 @@ export const navigationMethods = {
       }
     }
     if (!this.isOpen) this._goBackOffEntry();
+  },
+
+  _historyThumbnail(id) {
+    if (id == null) return null;
+    const selector = `[data-lightbox-item][data-resource-id="${id}"]`;
+    // The gallery the session was opened from first: a resource listed twice (a Group's own
+    // and related resources) would otherwise reopen among the other gallery's neighbours.
+    const gallery = this._historyGallery?.isConnected ? this._historyGallery : null;
+    return gallery?.querySelector(selector) ?? findListContainer(document)?.querySelector(selector) ?? document.querySelector(selector);
   },
 
   // Back (or Forward) moved off our entry while the viewer is open: close without touching
@@ -774,8 +791,9 @@ export const navigationMethods = {
       const trigger = this.triggerElement;
       this.triggerElement = null;
       const session = this._session;
+      const leaving = document.activeElement;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => this._returnFocus(trigger, session));
+        requestAnimationFrame(() => this._returnFocus(trigger, session, leaving));
       });
     }
 
@@ -790,10 +808,15 @@ export const navigationMethods = {
   // a fast server, and MRQL's re-run tears the cards down at once. That refresh started while
   // focus was on <body>, so it will not put it back itself. Wait for it, then put the reader on
   // the same resource's new thumbnail, unless they have moved somewhere since. A session the
-  // reader has reopened (and perhaps closed) since owns focus instead.
-  async _returnFocus(trigger, session) {
+  // reader has reopened (and perhaps closed) since owns focus instead. So does a Tab or click
+  // that put the reader on the page in the frame between x-trap letting go and this return
+  // (the trap holds focus in the viewer through the first): focus left on the hidden viewer
+  // is not painted, and focus close() found on the page (a viewer Forward reopened, which the
+  // trap did not move it out of) is not the reader's doing.
+  async _returnFocus(trigger, session, leaving = null) {
     const current = () => session === this._session && !this.isOpen;
-    if (!current()) return;
+    const moved = visibleFocus();
+    if (!current() || (moved && moved !== trigger && moved !== leaving)) return;
     if (!this._pageRefresh) {
       this._refocusInList(trigger);
       return;

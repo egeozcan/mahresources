@@ -86,13 +86,14 @@ export const editPanelMethods = {
   // `resourceId` is the image the message shows on; `targetId` the one the failed write was
   // for, when they differ; `tagIds` the tags a failed tag write was changing. `session` is the
   // viewing session the write started in; a failure landing after close() must not show up in
-  // the next one. `seq` is the write's _writeSeq.
-  _setWriteError(field, resourceId, message, session, seq, targetId = resourceId, tagIds = null) {
+  // the next one. `seq` is the write's _writeSeq. `describe(tagIds)` restates a tag message for
+  // the tags still unsaved once a later write has saved the others.
+  _setWriteError(field, resourceId, message, session, seq, targetId = resourceId, tagIds = null, describe = null) {
     if (session !== this._session || this._isSuperseded(field, targetId, seq, tagIds)) return;
     // Nor replace the failure of a write that started later: rename to A, then to B, and when
     // both fail the message is about B, the name the reader last typed.
     if (this.writeErrors[field][targetId]?.seq > seq) return;
-    this.writeErrors[field] = { ...this.writeErrors[field], [targetId]: { resourceId, targetId, message, tagIds, seq } };
+    this.writeErrors[field] = { ...this.writeErrors[field], [targetId]: { resourceId, targetId, message, tagIds, seq, describe } };
   },
 
   // A write that started later on the same field of the same image (for tags, on every tag
@@ -121,11 +122,12 @@ export const editPanelMethods = {
     }
     const error = this.writeErrors[field][resourceId];
     if (session !== this._session || !error || seq <= error.seq) return;
-    // Saving X after X and Y failed leaves Y unsaved, so the message stays until Y is saved too.
+    // Saving X after X and Y failed leaves Y unsaved, so the message stays, naming Y only.
     const unsaved = error.tagIds?.filter(id => !tagIds.includes(id));
     if (unsaved?.length) {
       if (unsaved.length < error.tagIds.length) {
-        this.writeErrors[field] = { ...this.writeErrors[field], [resourceId]: { ...error, tagIds: unsaved } };
+        const message = error.describe?.(unsaved) ?? error.message;
+        this.writeErrors[field] = { ...this.writeErrors[field], [resourceId]: { ...error, tagIds: unsaved, message } };
       }
       return;
     }

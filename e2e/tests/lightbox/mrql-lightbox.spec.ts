@@ -110,6 +110,36 @@ test.describe('MRQL default resource card lightbox', () => {
     expect(reruns).toEqual([]);
   });
 
+  test('Forward from another query reopens the viewer once that query has rendered', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    const thumbnails = mrql.resultsSection.locator('[data-lightbox-item]');
+    await mrql.enterQuery(`type = resource AND name ~ "*MRQL Lightbox ${testRunId} Image 1*"`);
+    await mrql.executeQuery();
+    await expect(thumbnails).toHaveCount(1);
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+    await expect(thumbnails).toHaveCount(2);
+    const flatUrl = page.url();
+    const opened = await thumbnails.nth(1).getAttribute('data-resource-id');
+    await thumbnails.nth(1).click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await page.goBack();
+    await expect(thumbnails).toHaveCount(1);
+
+    // Two entries ahead in one step: onto the viewer's entry for the other query, whose
+    // cards the page only renders once it has re-run that query.
+    await page.evaluate(() => history.go(2));
+    await expect(lightbox).toBeVisible();
+    expect(page.url()).toBe(flatUrl);
+    await expect(thumbnails).toHaveCount(2);
+    expect(String(await page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem()?.id))).toBe(opened);
+  });
+
   test('a Name edit saved by Back keeps focus on the refreshed thumbnail', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

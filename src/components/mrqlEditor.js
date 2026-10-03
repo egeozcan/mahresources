@@ -1,6 +1,7 @@
 import { replaceMRQLSort } from '../utils/mrqlListQuery.js';
 import * as userSettings from '../userSettings.js';
 import { focusOn, parkFocus } from '../utils/focus.js';
+import { noteListRender } from '../utils/listContainer.js';
 import { askToConfirm } from './confirmDialog.js';
 
 export function mrqlEditor() {
@@ -514,7 +515,7 @@ export function mrqlEditor() {
         const q = new URLSearchParams(window.location.search).get('q');
         if (q) {
           this.setQuery(q);
-          this.execute({ pushState: false });
+          noteListRender(this.execute({ pushState: false }));
         } else {
           this._executeController?.abort();
           // Null it as cancelStaleQueryRequests does: the aborted request's own

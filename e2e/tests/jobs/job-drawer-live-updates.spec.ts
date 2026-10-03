@@ -5,19 +5,30 @@ import type { APIRequestContext, Page, Request } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
 
 // Answers at once: /missing/* with a 404, /slow/* over about six seconds,
-// anything else with a few fresh bytes.
+// anything else with a few fresh bytes. /held/* streams like /slow/* but stops a
+// sixth of the way in until release() is called.
 async function startServer() {
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
   const server = http.createServer((request, response) => {
     if (request.url?.startsWith('/missing/')) {
       response.writeHead(404, { 'Content-Type': 'text/plain' });
       response.end('gone');
       return;
     }
-    if (request.url?.startsWith('/slow/')) {
+    if (request.url?.startsWith('/slow/') || request.url?.startsWith('/held/')) {
+      let held = request.url.startsWith('/held/');
       const body = randomBytes(64 * 1024 * 60);
       response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) });
       let sent = 0;
+      let waiting = false;
       const timer = setInterval(() => {
+        if (waiting) return;
+        if (held && sent === 64 * 1024 * 10) {
+          waiting = true;
+          void released.then(() => { held = false; waiting = false; });
+          return;
+        }
         response.write(body.subarray(sent, sent + 64 * 1024));
         sent += 64 * 1024;
         if (sent >= body.length) {
@@ -33,7 +44,7 @@ async function startServer() {
     response.end(body);
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, release };
 }
 
 async function submitDownload(request: APIRequestContext, url: string, name: string): Promise<string> {
@@ -336,13 +347,14 @@ test.describe('Job Center pages when a read fails', () => {
     }
   });
   test('a running card on the Job Center moves with its progress frames, without refetching the list', async ({ page, request }) => {
-    const { server, base } = await startServer();
+    const { server, base, release } = await startServer();
     const ids: string[] = [];
     try {
       const name = `job-center-progress-${Date.now()}.bin`;
       await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
       await expect(page.getByTestId('job-live-status')).toHaveText('Live updates connected', { timeout: 15_000 });
-      ids.push(await submitDownload(request, `${base}/slow/${name}`, name));
+      // Held, so a page slow to show the first frame does not find the transfer finished.
+      ids.push(await submitDownload(request, `${base}/held/${name}`, name));
       const card = page.locator(`[data-job-id="${ids[0]}"]`);
       const value = card.locator('[data-job-progress-value]');
       await expect(value).toHaveText(/^\d+%$/, { timeout: 15_000 });
@@ -354,6 +366,7 @@ test.describe('Job Center pages when a read fails', () => {
         if (new URL(request.url()).pathname === '/jobs') refetches += 1;
       });
       const first = Number((await value.textContent())!.replace('%', ''));
+      release();
       await expect.poll(async () => Number((await value.textContent())!.replace('%', '')), { timeout: 10_000 })
         .toBeGreaterThan(first);
       const moved = Number((await value.textContent())!.replace('%', ''));

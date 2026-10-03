@@ -686,13 +686,17 @@ export const quickTagPanelMethods = {
       // Shown on the image the user is looking at when it fails, which for an undo can be a
       // different one than the write targeted, so the message names that image. So does one
       // that lands after close(), which only the announcement below carries.
-      const names = tags.map(t => t.Name).join(', ');
       const currentId = this.getCurrentItem()?.id;
       const where = session === this._session && currentId === resourceId ? ''
         : ` ${action === 'add' ? 'to' : 'from'} ${imageName || 'another image'}`;
-      const message = `Could not ${action} ${tags.length === 1 ? 'tag' : 'tags'} ${names}${where}. Try again.`;
+      // Restated from the tags still unsaved when a later write saves some of them.
+      const describe = ids => {
+        const unsaved = tags.filter(t => ids.includes(t.ID));
+        return `Could not ${action} ${unsaved.length === 1 ? 'tag' : 'tags'} ${unsaved.map(t => t.Name).join(', ')}${where}. Try again.`;
+      };
       const tagIds = tags.map(t => t.ID);
-      this._setWriteError('tags', currentId, message, session, seq, resourceId, tagIds);
+      const message = describe(tagIds);
+      this._setWriteError('tags', currentId, message, session, seq, resourceId, tagIds, describe);
       // The same words a sighted user reads, not a vaguer summary.
       if (!this._isSuperseded('tags', resourceId, seq, tagIds)) this.announce(message);
       return false;
