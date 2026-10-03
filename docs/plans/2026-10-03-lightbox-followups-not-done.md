@@ -100,3 +100,21 @@ Round 4: one P2, fixed. Network idle was not refresher idle: a trailing
 refresh (500 ms) or a retry after a failed read (5 s) could still be due when
 the baseline was taken. The refresher now answers `idle()` (no timer, nothing
 asked for, nothing out) and the test waits for it.
+
+Round 5: clean (no P0/P1/P2).
+
+## 5. A finished download that kept its last throttled amount
+
+Found through a Postgres flake in `job-progress-figures.spec.ts`: a succeeded
+download's card read "4.9 MB of 5.0 MB · average ...". A download Job has two
+unordered progress writers, the transfer's mirror (which flushes the final
+amount at the end of the body) and the queue follower (which copies the
+entry's snapshot every 100 ms). A follower snapshot from a chunk before the end
+could commit after the final flush, and the success write kept the stored
+figures. The success now carries the transfer's final figures in the same
+guarded write (`finishSucceeded`, `job_download_adapter.go`), as exports do; a
+stale write landing later is refused because the Job is no longer running.
+
+Test: `TestASucceededDownloadKeepsItsFinalAmountOverAStaleProgressWrite` calls
+the two writers in the losing order, with no timing (red before: 5177344 of
+5242880 bytes).

@@ -778,7 +778,7 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 			// ending the Job here lost the successful download.
 			return err
 		}
-		return a.finish(execution, jobs.StateSucceeded, "")
+		return a.finishSucceeded(execution, snap)
 	case download_queue.JobStatusCancelled:
 		return a.finish(execution, jobs.StateCancelled, "")
 	default:
@@ -869,6 +869,24 @@ func (a *downloadJobAdapter) finish(execution jobs.Execution, outcome jobs.State
 		return a.finishFailed(execution, code, "")
 	}
 	return a.ctx.finishQueueJob(execution, outcome, nil, []string{jobDownloadResourceOutput})
+}
+
+// finishSucceeded ends the Job as succeeded with the transfer's final figures in
+// the same guarded write. The transfer's mirror flushes them at the end of the body,
+// but the queue follower copies the entry's snapshot on its own tick, unordered
+// against that flush: one taken a chunk before the end can commit after it, and a
+// success that kept the stored figures left the Job reading "4.9 MB of 5.0 MB".
+func (a *downloadJobAdapter) finishSucceeded(execution jobs.Execution, snap *download_queue.DownloadJob) error {
+	figures := downloadJobProgress(snap)
+	return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobDownloadResourceOutput},
+		func(progress jobs.Progress) jobs.Progress {
+			if figures.Completed == nil {
+				return progress
+			}
+			progress.Completed, progress.Total, progress.Unit, progress.Metrics = figures.Completed, figures.Total, figures.Unit, figures.Metrics
+			progress.ETA, progress.Activity, progress.ActivityAt = nil, false, nil
+			return progress
+		})
 }
 
 // finishFailed ends the Job as failed, saying why.
