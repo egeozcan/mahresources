@@ -322,7 +322,7 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 			// attempt can fetch it: the Job fails as invalid input, which offers no
 			// Retry, rather than as an executor error that would.
 			return a.finishFailed(execution, download_queue.FailureInvalidURL,
-				"the stored address is not a download: "+reason)
+				"the stored address is not a download: "+reason, nil)
 		}
 		if err != nil {
 			return err
@@ -760,7 +760,7 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 			resourceID = *snap.ResourceID
 		}
 		if resourceID == 0 {
-			return a.finish(execution, jobs.StateFailed, "download-produced-nothing")
+			return a.finishFailed(execution, "download-produced-nothing", "", downloadFinalFigures(snap))
 		}
 		reference, err := json.Marshal(map[string]any{"resourceId": resourceID})
 		if err != nil {
@@ -778,18 +778,18 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 			// ending the Job here lost the successful download.
 			return err
 		}
-		return a.finishSucceeded(execution, snap)
+		return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobDownloadResourceOutput}, downloadFinalFigures(snap))
 	case download_queue.JobStatusCancelled:
-		return a.finish(execution, jobs.StateCancelled, "")
+		return a.ctx.finishQueueJobWith(execution, jobs.StateCancelled, nil, nil, downloadFinalFigures(snap))
 	default:
 		if snap.ExistingResourceID != nil && *snap.ExistingResourceID != 0 {
-			return a.finishExisting(execution, *snap.ExistingResourceID, snap.FailureReason)
+			return a.finishExisting(execution, *snap.ExistingResourceID, snap.FailureReason, downloadFinalFigures(snap))
 		}
 		code := snap.FailureCode
 		if code == "" {
 			code = download_queue.FailureDownloadFailed
 		}
-		return a.finishFailed(execution, code, snap.FailureReason)
+		return a.finishFailed(execution, code, snap.FailureReason, downloadFinalFigures(snap))
 	}
 }
 
@@ -801,7 +801,7 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 // A publication that fails is returned rather than ended past, as the success
 // path's is: the outcome publication is retried, and ending the Job first would
 // leave the link unpublishable, since a terminal Job takes no more outputs.
-func (a *downloadJobAdapter) finishExisting(execution jobs.Execution, resourceID uint, reason string) error {
+func (a *downloadJobAdapter) finishExisting(execution jobs.Execution, resourceID uint, reason string, final func(jobs.Progress) jobs.Progress) error {
 	reference, err := json.Marshal(map[string]any{"resourceId": resourceID})
 	if err != nil {
 		return err
@@ -823,7 +823,7 @@ func (a *downloadJobAdapter) finishExisting(execution jobs.Execution, resourceID
 		Class:   jobs.FailureClassConflict,
 		Message: downloadFailureMessage(reason),
 	}
-	return a.ctx.finishQueueJob(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput})
+	return a.ctx.finishQueueJobWith(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
 }
 
 // jobDownloadResourceOutput is the output key a succeeded download publishes. §7
@@ -861,32 +861,26 @@ func (a *downloadJobAdapter) AuthorizeJobOutput(_ context.Context, request JobOu
 	return ErrJobOutputForbidden
 }
 
-// finish ends the Job with a bounded classification, through the same completion path
-// every queue-backed Kind uses: the read, the versioned retry and the "somebody else
-// already ended it" tolerance are one implementation rather than one per Kind.
-func (a *downloadJobAdapter) finish(execution jobs.Execution, outcome jobs.State, code string) error {
-	if outcome == jobs.StateFailed {
-		return a.finishFailed(execution, code, "")
+// downloadFinalFigures is the end of a transfer's figures, for the terminal write
+// to carry. The transfer's mirror flushes them at the end of the body, but the queue
+// follower copies the entry's snapshot on its own tick, unordered against that
+// flush: one taken a chunk before the end can commit after it, and an outcome that
+// kept the stored figures left a finished Job reading "4.9 MB of 5.0 MB". Nil for a
+// Job that never ran a transfer, and the stored figures stand when the snapshot has
+// none.
+func downloadFinalFigures(snap *download_queue.DownloadJob) func(jobs.Progress) jobs.Progress {
+	if snap == nil {
+		return nil
 	}
-	return a.ctx.finishQueueJob(execution, outcome, nil, []string{jobDownloadResourceOutput})
-}
-
-// finishSucceeded ends the Job as succeeded with the transfer's final figures in
-// the same guarded write. The transfer's mirror flushes them at the end of the body,
-// but the queue follower copies the entry's snapshot on its own tick, unordered
-// against that flush: one taken a chunk before the end can commit after it, and a
-// success that kept the stored figures left the Job reading "4.9 MB of 5.0 MB".
-func (a *downloadJobAdapter) finishSucceeded(execution jobs.Execution, snap *download_queue.DownloadJob) error {
 	figures := downloadJobProgress(snap)
-	return a.ctx.finishQueueJobWith(execution, jobs.StateSucceeded, nil, []string{jobDownloadResourceOutput},
-		func(progress jobs.Progress) jobs.Progress {
-			if figures.Completed == nil {
-				return progress
-			}
-			progress.Completed, progress.Total, progress.Unit, progress.Metrics = figures.Completed, figures.Total, figures.Unit, figures.Metrics
-			progress.ETA, progress.Activity, progress.ActivityAt = nil, false, nil
+	return func(progress jobs.Progress) jobs.Progress {
+		if figures.Completed == nil {
 			return progress
-		})
+		}
+		progress.Completed, progress.Total, progress.Unit, progress.Metrics = figures.Completed, figures.Total, figures.Unit, figures.Metrics
+		progress.ETA, progress.Activity, progress.ActivityAt = nil, false, nil
+		return progress
+	}
 }
 
 // finishFailed ends the Job as failed, saying why.
@@ -897,13 +891,13 @@ func (a *downloadJobAdapter) finishSucceeded(execution jobs.Execution, snap *dow
 // same reason with every URL cut to its origin, rendered by the queue while it
 // still held the error value. The code is the queue's too, and the class follows
 // from it (downloadFailureKinds).
-func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason string) error {
+func (a *downloadJobAdapter) finishFailed(execution jobs.Execution, code, reason string, final func(jobs.Progress) jobs.Progress) error {
 	failure := &jobs.Failure{
 		Code:    code,
 		Class:   downloadFailureKindOf(code).class,
 		Message: downloadFailureMessage(reason),
 	}
-	return a.ctx.finishQueueJob(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput})
+	return a.ctx.finishQueueJobWith(execution, jobs.StateFailed, failure, []string{jobDownloadResourceOutput}, final)
 }
 
 // downloadFailureKind is what one failure code means to a download's Job: the

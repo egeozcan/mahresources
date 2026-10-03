@@ -111,10 +111,16 @@ unordered progress writers, the transfer's mirror (which flushes the final
 amount at the end of the body) and the queue follower (which copies the
 entry's snapshot every 100 ms). A follower snapshot from a chunk before the end
 could commit after the final flush, and the success write kept the stored
-figures. The success now carries the transfer's final figures in the same
-guarded write (`finishSucceeded`, `job_download_adapter.go`), as exports do; a
-stale write landing later is refused because the Job is no longer running.
+figures. Every outcome a transfer reaches (succeeded, failed, cancelled,
+already in the library) now carries the transfer's final figures in the same
+guarded write (`downloadFinalFigures`, `job_download_adapter.go`), as exports
+do for their success; a stale write landing later is refused because the Job
+is no longer running.
 
-Test: `TestASucceededDownloadKeepsItsFinalAmountOverAStaleProgressWrite` calls
-the two writers in the losing order, with no timing (red before: 5177344 of
-5242880 bytes).
+Test: `TestAFinishedDownloadKeepsItsFinalAmountOverAStaleProgressWrite` calls
+the two writers in the losing order for each outcome, with no timing (red
+before for all three: 5177344 of 5242880 bytes).
+
+Review: pi found the success fix correct and the root cause right, and that a
+failure or cancellation after the body kept the stale figures the same way;
+the outcome-wide fix above came from that.
