@@ -74,7 +74,8 @@ func TestAFinishedDownloadKeepsItsFinalAmountOverAStaleProgressWrite(t *testing.
 				t.Fatal(err)
 			}
 			// The follower's snapshot from a chunk earlier, committing after it.
-			stale, total := size-64<<10, size
+			const chunk = int64(64 << 10)
+			stale, total := size-chunk, size
 			if _, err := ctx.JobService().UpdateProgress(ctx.jobDeps(), executionRefOf(ref), jobs.Progress{
 				Completed: &stale, Total: &total, Unit: "bytes",
 			}); err != nil {
