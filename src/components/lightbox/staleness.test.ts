@@ -1492,7 +1492,7 @@ describe('browser history', () => {
   it('leaves a reopen to the newer traversal that landed on the same entry', async () => {
     const store = makeStore([item(1)]);
     store._preloadUpcoming = vi.fn();
-    const thumbs = thumbnailsFor([]);
+    thumbnailsFor([]);
     store.open(0);
     const marker = state;
     state = { page: 'own' };
@@ -1503,20 +1503,19 @@ describe('browser history', () => {
     let finishFirst!: () => void;
     noteListRender(new Promise<void>(resolve => { finishFirst = resolve; }));
     await new Promise(resolve => setTimeout(resolve));
-    // Away and back onto the same entry: a second render starts, and the first is aborted.
+    // Away and back onto the same entry while it renders: a second reopen and render start.
+    state = { page: 'own' };
+    store._onHistoryPop();
+    state = marker;
     store._onHistoryPop();
     let finishSecond!: () => void;
     noteListRender(new Promise<void>(resolve => { finishSecond = resolve; }));
     finishFirst();
-    await new Promise(resolve => setTimeout(resolve));
-    await new Promise(resolve => setTimeout(resolve));
-    expect(back).not.toHaveBeenCalled();
-    thumbs.set(1, { dataset: { resourceId: '1', contentType: 'image/png' }, closest: () => null, nodeType: 1 });
     finishSecond();
-    await new Promise(resolve => setTimeout(resolve));
-    await new Promise(resolve => setTimeout(resolve));
-    expect(store.isOpen).toBe(true);
-    expect(back).not.toHaveBeenCalled();
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve));
+    // The image is gone, so the entry is stepped off once: by the newer reopen only.
+    expect(store.isOpen).toBe(false);
+    expect(back).toHaveBeenCalledTimes(1);
   });
 
   it('drops its entry when closed from the viewer', () => {

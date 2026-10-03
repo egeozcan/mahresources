@@ -356,6 +356,13 @@ test.describe('Job Center pages when a read fails', () => {
     const ids: string[] = [];
     try {
       const name = `job-center-progress-${Date.now()}.bin`;
+      // Every list read from the start, so one already out when the baseline is taken counts.
+      let refetches = 0;
+      let reading = 0;
+      const isList = (r: Request) => new URL(r.url()).pathname === '/jobs' && r.resourceType() !== 'document';
+      page.on('request', r => { if (isList(r)) { refetches += 1; reading += 1; } });
+      page.on('requestfinished', r => { if (isList(r)) reading -= 1; });
+      page.on('requestfailed', r => { if (isList(r)) reading -= 1; });
       await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
       await expect(page.getByTestId('job-live-status')).toHaveText('Live updates connected', { timeout: 15_000 });
       // Held, so a page slow to show the first frame does not find the transfer finished.
@@ -365,11 +372,10 @@ test.describe('Job Center pages when a read fails', () => {
       await expect(value).toHaveText(/^\d+%$/, { timeout: 15_000 });
 
       // From here on the list is only refetched for a lifecycle change, and the
-      // download's next one is its success.
-      let refetches = 0;
-      page.on('request', request => {
-        if (new URL(request.url()).pathname === '/jobs') refetches += 1;
-      });
+      // download's next one is its success. Reads the start and the first frame caused
+      // land first, so none can carry a later percentage in after the baseline.
+      await expect.poll(() => reading, { timeout: 10_000 }).toBe(0);
+      refetches = 0;
       const first = Number((await value.textContent())!.replace('%', ''));
       // To the second stop, halfway: the progress has to move while the download still runs,
       // so a lifecycle refetch at its success cannot stand in for the frames.

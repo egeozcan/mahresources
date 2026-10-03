@@ -794,8 +794,10 @@ export function mrqlEditor() {
       }
 
       this._executeController?.abort();
-      // The media viewer reopening on Forward waits for the cards (see noteListRender).
+      // The media viewer reopening on Forward waits for the cards and its own gallery (see
+      // noteListRender): settled on the tick below that collects them, or in finally.
       let rendered;
+      let renderedOnTick = false;
       noteListRender(new Promise(resolve => { rendered = resolve; }));
       const controller = new AbortController();
       const requestId = ++this._executeRequestId;
@@ -857,13 +859,18 @@ export function mrqlEditor() {
 
         // Re-collect lightbox items once the result cards have rendered, so
         // clicking a default-card thumbnail opens the lightbox.
+        renderedOnTick = true;
         this.$nextTick(() => {
-          window.Alpine?.store('lightbox')?.initFromDOM();
-          this.connectSelections();
-          // Only the run that is still current: a newer Run or page has replaced these cards.
-          if (requestId === this._executeRequestId && this._keptSelection) {
-            this.restoreSelections(this._keptSelection);
-            this._keptSelection = null;
+          try {
+            window.Alpine?.store('lightbox')?.initFromDOM();
+            this.connectSelections();
+            // Only the run that is still current: a newer Run or page has replaced these cards.
+            if (requestId === this._executeRequestId && this._keptSelection) {
+              this.restoreSelections(this._keptSelection);
+              this._keptSelection = null;
+            }
+          } finally {
+            rendered();
           }
         });
 
@@ -886,7 +893,7 @@ export function mrqlEditor() {
           this.executing = false;
           this._executeController = null;
         }
-        rendered();
+        if (!renderedOnTick) rendered();
       }
     },
 

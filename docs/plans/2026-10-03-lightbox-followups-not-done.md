@@ -77,3 +77,14 @@ pi (gpt-6.1-sol high), round 1: one P1 and four P2, all confirmed and fixed.
 - P2: the progress test could pass with live frames broken, since the lifecycle
   refetch at success also reaches 100%. The download now stops again halfway,
   and the test requires movement below 100% with no refetch.
+
+Round 2: three P2, all fixed.
+
+- A Run's render settled when its request finished, before the tick that
+  rebuilds the viewer's gallery (`initFromDOM`). It now settles on that tick.
+- The generation test passed with the guard removed. It now leaves and comes
+  back onto the entry during a render and expects exactly one step back.
+- The progress test took its baseline with a list read possibly still out. It
+  now counts list reads from page load and waits for them to finish first.
+- Not changed: `_returnFocus` treats focus inside any dialog as not moved, which
+  pi called broader than needed but found no failing path for.

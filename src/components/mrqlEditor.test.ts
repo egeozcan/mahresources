@@ -60,6 +60,20 @@ describe('mrqlEditor request lifecycle', () => {
     expect(listRendering()).toBeNull();
   });
 
+  it('holds the render until the tick that collects the viewer\'s gallery has run', async () => {
+    const { editor } = editorWithSelection();
+    const ticks: Array<() => void> = [];
+    editor.$nextTick = (callback: () => void) => { ticks.push(callback); };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(noteResponse));
+    await editor.execute({ pushState: false });
+    await Promise.resolve();
+    expect(listRendering()).not.toBeNull();
+    ticks.forEach(tick => tick());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listRendering()).toBeNull();
+  });
+
   it('runs a refresh asked for as soon as the previous one has finished', async () => {
     const { editor, selection } = editorWithSelection();
     // Alpine runs $nextTick in a setTimeout, a macrotask after execute() resolves.
