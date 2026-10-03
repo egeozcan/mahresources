@@ -88,3 +88,10 @@ Round 2: three P2, all fixed.
   now counts list reads from page load and waits for them to finish first.
 - Not changed: `_returnFocus` treats focus inside any dialog as not moved, which
   pi called broader than needed but found no failing path for.
+
+Round 3: one P2, fixed; no P0/P1. The progress test's baseline could come
+before the stream delivered the Job's accepted and started events, whose
+refetch then counted against it (pi reproduced it with a 2.5 s pause after the
+first reading). The test now waits until the page's `lastSequence` reaches the
+Job's latest `deliverySequence`, then past the 500 ms refresh debounce, then for
+no list read in flight. With pi's pause added it passes 5/5.

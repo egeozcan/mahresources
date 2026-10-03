@@ -372,8 +372,17 @@ test.describe('Job Center pages when a read fails', () => {
       await expect(value).toHaveText(/^\d+%$/, { timeout: 15_000 });
 
       // From here on the list is only refetched for a lifecycle change, and the
-      // download's next one is its success. Reads the start and the first frame caused
-      // land first, so none can carry a later percentage in after the baseline.
+      // download's next one is its success. The page can show the running card before
+      // the stream has delivered its accepted and started events, so first wait until it
+      // has heard every event the Job has, then for the refetches those asked for (each
+      // after a 500 ms debounce) to land, so none comes in after the baseline.
+      await expect.poll(async () => {
+        const events = (await (await request.get(`/v1/jobs/${encodeURIComponent(ids[0])}/events`)).json()).events as Array<{ deliverySequence?: number }>;
+        const latest = Math.max(0, ...events.map(event => event.deliverySequence ?? Infinity));
+        const heard = await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('[data-testid="job-center"]')).lastSequence);
+        return Number.isFinite(latest) && heard >= latest;
+      }, { timeout: 15_000 }).toBe(true);
+      await page.waitForTimeout(800);
       await expect.poll(() => reading, { timeout: 10_000 }).toBe(0);
       refetches = 0;
       const first = Number((await value.textContent())!.replace('%', ''));
