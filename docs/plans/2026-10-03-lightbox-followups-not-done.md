@@ -95,3 +95,8 @@ refetch then counted against it (pi reproduced it with a 2.5 s pause after the
 first reading). The test now waits until the page's `lastSequence` reaches the
 Job's latest `deliverySequence`, then past the 500 ms refresh debounce, then for
 no list read in flight. With pi's pause added it passes 5/5.
+
+Round 4: one P2, fixed. Network idle was not refresher idle: a trailing
+refresh (500 ms) or a retry after a failed read (5 s) could still be due when
+the baseline was taken. The refresher now answers `idle()` (no timer, nothing
+asked for, nothing out) and the test waits for it.

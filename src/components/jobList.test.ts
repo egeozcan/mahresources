@@ -56,6 +56,27 @@ describe('job list live refresh', () => {
         expect(document.querySelector('[data-entity]')?.getAttribute('data-entity')).toContain('running');
     });
 
+    test('is idle only with nothing asked for, due, out or to retry', async () => {
+        vi.useFakeTimers();
+        document.body.innerHTML = page({ rows: '', quick: '' });
+        let answer!: (response: unknown) => void;
+        const fetchImpl = vi.fn(() => new Promise(resolve => { answer = resolve; }));
+        const refresher = createJobListRefresher({ fetchImpl, morph: replace, debounceMs: 50, retryMs: 500, logger: { error() {} } as any });
+        expect(refresher.idle()).toBe(true);
+        refresher.request();
+        expect(refresher.idle()).toBe(false);
+        await vi.advanceTimersByTimeAsync(60);
+        // Out, and a second event during it asks for a trailing refresh.
+        refresher.request();
+        answer({ ok: false, status: 500 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(refresher.idle()).toBe(false);
+        await vi.advanceTimersByTimeAsync(500);
+        answer({ ok: true, text: async () => page({ rows: '', quick: '' }) });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(refresher.idle()).toBe(true);
+    });
+
     test('a steady stream of events still refreshes, at most once per interval', async () => {
         vi.useFakeTimers();
         document.body.innerHTML = page({ rows: '', quick: '' });

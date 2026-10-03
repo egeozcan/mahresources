@@ -151,6 +151,11 @@ export function createJobListRefresher({
             if (timer !== null) clearTimeout(timer);
             timer = null;
         },
+        // Nothing asked for, due or out: a test reads this to know no refresh will
+        // land on a baseline it takes now.
+        idle() {
+            return timer === null && !inFlight && !dirty;
+        },
     };
 }
 

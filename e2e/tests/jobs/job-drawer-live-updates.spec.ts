@@ -356,13 +356,10 @@ test.describe('Job Center pages when a read fails', () => {
     const ids: string[] = [];
     try {
       const name = `job-center-progress-${Date.now()}.bin`;
-      // Every list read from the start, so one already out when the baseline is taken counts.
+      // Every list read from the start; the baseline below resets the count.
       let refetches = 0;
-      let reading = 0;
       const isList = (r: Request) => new URL(r.url()).pathname === '/jobs' && r.resourceType() !== 'document';
-      page.on('request', r => { if (isList(r)) { refetches += 1; reading += 1; } });
-      page.on('requestfinished', r => { if (isList(r)) reading -= 1; });
-      page.on('requestfailed', r => { if (isList(r)) reading -= 1; });
+      page.on('request', r => { if (isList(r)) refetches += 1; });
       await page.goto(`/jobs?search=${encodeURIComponent(name)}&dismissed=false`);
       await expect(page.getByTestId('job-live-status')).toHaveText('Live updates connected', { timeout: 15_000 });
       // Held, so a page slow to show the first frame does not find the transfer finished.
@@ -374,16 +371,17 @@ test.describe('Job Center pages when a read fails', () => {
       // From here on the list is only refetched for a lifecycle change, and the
       // download's next one is its success. The page can show the running card before
       // the stream has delivered its accepted and started events, so first wait until it
-      // has heard every event the Job has, then for the refetches those asked for (each
-      // after a 500 ms debounce) to land, so none comes in after the baseline.
+      // has heard every event the Job has, then for the refresher to have nothing asked
+      // for, due (a debounce, a trailing refresh, a retry) or out, so none lands after
+      // the baseline.
       await expect.poll(async () => {
         const events = (await (await request.get(`/v1/jobs/${encodeURIComponent(ids[0])}/events`)).json()).events as Array<{ deliverySequence?: number }>;
         const latest = Math.max(0, ...events.map(event => event.deliverySequence ?? Infinity));
         const heard = await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('[data-testid="job-center"]')).lastSequence);
         return Number.isFinite(latest) && heard >= latest;
       }, { timeout: 15_000 }).toBe(true);
-      await page.waitForTimeout(800);
-      await expect.poll(() => reading, { timeout: 10_000 }).toBe(0);
+      await expect.poll(() => page.evaluate(() =>
+        (window as any).Alpine.$data(document.querySelector('[data-testid="job-center"]'))._refresher.idle()), { timeout: 15_000 }).toBe(true);
       refetches = 0;
       const first = Number((await value.textContent())!.replace('%', ''));
       // To the second stop, halfway: the progress has to move while the download still runs,
