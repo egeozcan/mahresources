@@ -140,6 +140,32 @@ test.describe('MRQL default resource card lightbox', () => {
     expect(String(await page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem()?.id))).toBe(opened);
   });
 
+  test('Forward from a query that also lists the image reopens among the entry\'s own results', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    const thumbnails = mrql.resultsSection.locator('[data-lightbox-item]');
+    await mrql.enterQuery(flatQuery);
+    await mrql.executeQuery();
+    await expect(thumbnails).toHaveCount(2);
+    await mrql.enterQuery(`type = resource AND name ~ "*MRQL Lightbox ${testRunId} Image 1*"`);
+    await mrql.executeQuery();
+    await expect(thumbnails).toHaveCount(1);
+    await thumbnails.first().click();
+    const lightbox = lightboxDialog(page);
+    await expect(lightbox).toBeVisible();
+
+    await page.goBack();
+    await expect(lightbox).toBeHidden();
+    await page.goBack();
+    await expect(thumbnails).toHaveCount(2);
+
+    // The query on screen lists the image too, but it is not the gallery that entry was in.
+    await page.evaluate(() => history.go(2));
+    await expect(lightbox).toBeVisible();
+    await expect(thumbnails).toHaveCount(1);
+    expect(await page.evaluate(() => (window as any).Alpine.store('lightbox').items.length)).toBe(1);
+  });
+
   test('a Name edit saved by Back keeps focus on the refreshed thumbnail', async ({ page }) => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();

@@ -515,7 +515,7 @@ export function mrqlEditor() {
         const q = new URLSearchParams(window.location.search).get('q');
         if (q) {
           this.setQuery(q);
-          noteListRender(this.execute({ pushState: false }));
+          this.execute({ pushState: false });
         } else {
           this._executeController?.abort();
           // Null it as cancelStaleQueryRequests does: the aborted request's own
@@ -794,6 +794,9 @@ export function mrqlEditor() {
       }
 
       this._executeController?.abort();
+      // The media viewer reopening on Forward waits for the cards (see noteListRender).
+      let rendered;
+      noteListRender(new Promise(resolve => { rendered = resolve; }));
       const controller = new AbortController();
       const requestId = ++this._executeRequestId;
       this._executeController = controller;
@@ -883,6 +886,7 @@ export function mrqlEditor() {
           this.executing = false;
           this._executeController = null;
         }
+        rendered();
       }
     },
 

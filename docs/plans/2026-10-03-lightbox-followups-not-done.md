@@ -55,3 +55,25 @@ viewer once that query has rendered" (red before, green after); unit
   database was busy redirects to `/login?error=busy`, which the old URL
   predicate never matched; the helper now retries `busy`/`unavailable` up to
   three times and fails with the error code on anything else.
+
+## Review
+
+pi (gpt-6.1-sol high), round 1: one P1 and four P2, all confirmed and fixed.
+
+- P1: with the Info panel open, Escape let `closeEditPanel()`'s own two-frame
+  callback focus the Info toggle. The viewer stays painted through the panel's
+  leave transition, so the guard read that as the reader moving, and focus fell
+  to `<body>`. Focus inside any dialog no longer counts as a move.
+- P2: Forward from a query that also lists the image opened among that query's
+  results. `_reopenFromHistory` now always yields one task and waits for a
+  registered render before it looks (E2E "Forward from a query that also lists
+  the image ...", red before).
+- P2: a Run started while Forward waited replaced the awaited render, which
+  settled early and bounced the entry. Every `execute()` now registers itself,
+  and the viewer waits until no render is current.
+- P2: leaving the entry and coming back to it during a render let the first
+  waiter bounce the second. Each reopen takes a generation (`_historyReopens`)
+  and gives up when a newer one started.
+- P2: the progress test could pass with live frames broken, since the lifecycle
+  refetch at success also reaches 100%. The download now stops again halfway,
+  and the test requires movement below 100% with no refetch.

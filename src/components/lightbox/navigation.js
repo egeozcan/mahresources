@@ -53,6 +53,8 @@ export const navigationState = {
   _historyReused: false,
   // Set while Forward reopens the viewer: the token of the entry open() takes over.
   _historyAdopt: null,
+  // Counts Forward reopens, so one still waiting on a render knows a later traversal took over.
+  _historyReopens: 0,
   // The scoped or sourced gallery the last session was opened from, if any.
   _historyGallery: null,
 
@@ -568,20 +570,20 @@ export const navigationMethods = {
   // rather than leave Forward on a page that looks unchanged.
   async _reopenFromHistory(state) {
     const id = state.mahLightboxItem;
-    let thumbnail = this._historyThumbnail(id);
-    if (!thumbnail && id != null) {
-      // Forward from another MRQL query lands here before the page has re-run this entry's
-      // query: its popstate listener starts the run after this one, and the cards come later.
+    const generation = ++this._historyReopens;
+    // A page that renders its list again on this traversal (MRQL re-runs the entry's query)
+    // starts that in its own popstate listener, after this one. Look only once it has: the
+    // page still shows the other query, which can list this image among other neighbours.
+    // A Run started meanwhile replaces the render, so wait for whichever is current.
+    await new Promise(resolve => setTimeout(resolve));
+    for (let rendering = listRendering(); rendering; rendering = listRendering()) {
+      await rendering;
       await new Promise(resolve => setTimeout(resolve));
-      const rendering = listRendering();
-      if (rendering) {
-        await rendering;
-        await new Promise(resolve => setTimeout(resolve));
-      }
-      // The reader may have moved on, or opened the viewer themselves, while it rendered.
-      if (this.isOpen || history.state?.mahLightbox !== state.mahLightbox) return;
-      thumbnail = this._historyThumbnail(id);
     }
+    // The reader may have opened the viewer, or traversed again (even back onto this entry,
+    // which a newer call is now handling), while it rendered.
+    if (generation !== this._historyReopens || this.isOpen || history.state?.mahLightbox !== state.mahLightbox) return;
+    const thumbnail = this._historyThumbnail(id);
     const contentType = thumbnail?.dataset.contentType ?? '';
     if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
       this._historyAdopt = state.mahLightbox;
@@ -810,13 +812,15 @@ export const navigationMethods = {
   // the same resource's new thumbnail, unless they have moved somewhere since. A session the
   // reader has reopened (and perhaps closed) since owns focus instead. So does a Tab or click
   // that put the reader on the page in the frame between x-trap letting go and this return
-  // (the trap holds focus in the viewer through the first): focus left on the hidden viewer
-  // is not painted, and focus close() found on the page (a viewer Forward reopened, which the
-  // trap did not move it out of) is not the reader's doing.
+  // (the trap holds focus in the viewer through the first). Not counted as the reader's doing:
+  // focus anywhere in a dialog (the viewer stays painted through a side panel's leave
+  // transition, and closing that panel puts focus on its toggle), nor focus close() found on
+  // the page (a viewer Forward reopened, which the trap did not move it out of).
   async _returnFocus(trigger, session, leaving = null) {
     const current = () => session === this._session && !this.isOpen;
     const moved = visibleFocus();
-    if (!current() || (moved && moved !== trigger && moved !== leaving)) return;
+    if (!current()) return;
+    if (moved && moved !== trigger && moved !== leaving && !moved.closest?.('[role="dialog"]')) return;
     if (!this._pageRefresh) {
       this._refocusInList(trigger);
       return;

@@ -1167,7 +1167,10 @@ describe('focus after close, reader moved', () => {
     ['still on the hidden viewer', 'trigger', false, false],
     // A viewer Forward reopened, whose trap left focus on the page all along.
     ['on the page since before close()', 'trigger', true, true],
-  ])('focus %s before the return ends on the %s', (_name, expected, painted, before) => {
+    // The viewer stays painted through a side panel's leave transition, and closing the
+    // panel put focus on its toggle.
+    ['on the still-painted viewer', 'trigger', true, false, true],
+  ])('focus %s before the return ends on the %s', (_name, expected, painted, before, inDialog = false) => {
     const store = makeStore([item(1)]);
     const frames: Array<() => void> = [];
     (globalThis as any).requestAnimationFrame = (callback: () => void) => { frames.push(callback); return 0; };
@@ -1178,7 +1181,7 @@ describe('focus after close, reader moved', () => {
     });
     const trigger: any = focusable({ dataset: { resourceId: '1' }, checkVisibility: () => true });
     trigger.closest = () => trigger;
-    const elsewhere: any = focusable({ checkVisibility: () => painted });
+    const elsewhere: any = focusable({ checkVisibility: () => painted, closest: (selector: string) => (inDialog && selector.includes('dialog') ? {} : null) });
     doc.querySelector = () => null;
     doc.activeElement = before ? elsewhere : doc.body;
     store.isOpen = true;
@@ -1360,7 +1363,7 @@ describe('browser history', () => {
   it.each([
     ['Back', (store: any) => { state = { page: 'own' }; store._onHistoryPop(); }],
     ['Escape', (store: any) => { store.close(); state = { page: 'own' }; store._onHistoryPop(); }],
-  ])('reopens on Forward after %s, on the image it was closed on, without a new entry', (_name, closeIt) => {
+  ])('reopens on Forward after %s, on the image it was closed on, without a new entry', async (_name, closeIt) => {
     const store = makeStore([item(1), item(2)]);
     store._preloadUpcoming = vi.fn();
     store.onResourceChange = vi.fn();
@@ -1374,6 +1377,7 @@ describe('browser history', () => {
 
     state = marker;
     store._onHistoryPop();
+    await new Promise(resolve => setTimeout(resolve));
     expect(store.isOpen).toBe(true);
     expect(store.getCurrentItem().id).toBe(2);
     expect(store.triggerElement).toBe(thumbs.get(2));
@@ -1387,7 +1391,7 @@ describe('browser history', () => {
     expect(back).not.toHaveBeenCalled();
   });
 
-  it('reopens in the gallery the session was opened from when the image is listed twice', () => {
+  it('reopens in the gallery the session was opened from when the image is listed twice', async () => {
     const store = makeStore([item(1)]);
     store._preloadUpcoming = vi.fn();
     const thumbs = thumbnailsFor([1]);
@@ -1409,6 +1413,7 @@ describe('browser history', () => {
 
     state = marker;
     store._onHistoryPop();
+    await new Promise(resolve => setTimeout(resolve));
     expect(store.isOpen).toBe(true);
     expect(store.triggerElement).toBe(related);
     expect(store.triggerElement).not.toBe(thumbs.get(1));
@@ -1459,6 +1464,58 @@ describe('browser history', () => {
     await new Promise(resolve => setTimeout(resolve));
     expect(store.isOpen).toBe(true);
     expect(store.getCurrentItem().id).toBe(1);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('waits for the render even when the other query also lists the image', async () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    thumbnailsFor([1]);
+    store.open(0);
+    const marker = state;
+    state = { page: 'own' };
+    store._onHistoryPop();
+
+    state = marker;
+    store._onHistoryPop();
+    let finishRun!: () => void;
+    noteListRender(new Promise<void>(resolve => { finishRun = resolve; }));
+    await new Promise(resolve => setTimeout(resolve));
+    // The page still shows the other query's cards: opening among them is the wrong gallery.
+    expect(store.isOpen).toBe(false);
+    finishRun();
+    await new Promise(resolve => setTimeout(resolve));
+    await new Promise(resolve => setTimeout(resolve));
+    expect(store.isOpen).toBe(true);
+  });
+
+  it('leaves a reopen to the newer traversal that landed on the same entry', async () => {
+    const store = makeStore([item(1)]);
+    store._preloadUpcoming = vi.fn();
+    const thumbs = thumbnailsFor([]);
+    store.open(0);
+    const marker = state;
+    state = { page: 'own' };
+    store._onHistoryPop();
+
+    state = marker;
+    store._onHistoryPop();
+    let finishFirst!: () => void;
+    noteListRender(new Promise<void>(resolve => { finishFirst = resolve; }));
+    await new Promise(resolve => setTimeout(resolve));
+    // Away and back onto the same entry: a second render starts, and the first is aborted.
+    store._onHistoryPop();
+    let finishSecond!: () => void;
+    noteListRender(new Promise<void>(resolve => { finishSecond = resolve; }));
+    finishFirst();
+    await new Promise(resolve => setTimeout(resolve));
+    await new Promise(resolve => setTimeout(resolve));
+    expect(back).not.toHaveBeenCalled();
+    thumbs.set(1, { dataset: { resourceId: '1', contentType: 'image/png' }, closest: () => null, nodeType: 1 });
+    finishSecond();
+    await new Promise(resolve => setTimeout(resolve));
+    await new Promise(resolve => setTimeout(resolve));
+    expect(store.isOpen).toBe(true);
     expect(back).not.toHaveBeenCalled();
   });
 

@@ -6,10 +6,14 @@ import { test, expect } from '../../fixtures/base.fixture';
 
 // Answers at once: /missing/* with a 404, /slow/* over about six seconds,
 // anything else with a few fresh bytes. /held/* streams like /slow/* but stops a
-// sixth of the way in until release() is called.
+// sixth of the way in and again halfway, each time until release() is called.
 async function startServer() {
-  let release!: () => void;
-  const released = new Promise<void>(resolve => { release = resolve; });
+  const gates = [10, 30].map(chunk => {
+    let open!: () => void;
+    return { chunk, opened: new Promise<void>(resolve => { open = resolve; }), open, passed: false };
+  });
+  let released = 0;
+  const release = () => gates[released++]?.open();
   const server = http.createServer((request, response) => {
     if (request.url?.startsWith('/missing/')) {
       response.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -17,16 +21,17 @@ async function startServer() {
       return;
     }
     if (request.url?.startsWith('/slow/') || request.url?.startsWith('/held/')) {
-      let held = request.url.startsWith('/held/');
+      const held = request.url.startsWith('/held/');
       const body = randomBytes(64 * 1024 * 60);
       response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) });
       let sent = 0;
       let waiting = false;
       const timer = setInterval(() => {
         if (waiting) return;
-        if (held && sent === 64 * 1024 * 10) {
+        const gate = held ? gates.find(g => sent === 64 * 1024 * g.chunk) : undefined;
+        if (gate && !gate.passed) {
           waiting = true;
-          void released.then(() => { held = false; waiting = false; });
+          void gate.opened.then(() => { gate.passed = true; waiting = false; });
           return;
         }
         response.write(body.subarray(sent, sent + 64 * 1024));
@@ -366,12 +371,15 @@ test.describe('Job Center pages when a read fails', () => {
         if (new URL(request.url()).pathname === '/jobs') refetches += 1;
       });
       const first = Number((await value.textContent())!.replace('%', ''));
+      // To the second stop, halfway: the progress has to move while the download still runs,
+      // so a lifecycle refetch at its success cannot stand in for the frames.
       release();
       await expect.poll(async () => Number((await value.textContent())!.replace('%', '')), { timeout: 10_000 })
         .toBeGreaterThan(first);
-      const moved = Number((await value.textContent())!.replace('%', ''));
-      if (moved < 100) expect(refetches).toBe(0);
+      expect(Number((await value.textContent())!.replace('%', ''))).toBeLessThan(100);
+      expect(refetches).toBe(0);
       await expect(card.locator('[data-job-stats]')).toContainText('/s');
+      release();
       await waitForState(request, ids[0], 'succeeded');
     } finally {
       await dismiss(request, ids);

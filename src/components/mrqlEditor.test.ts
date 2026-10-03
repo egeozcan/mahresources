@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mrqlEditor } from './mrqlEditor.js';
+import { listRendering } from '../utils/listContainer.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -40,6 +41,23 @@ describe('mrqlEditor request lifecycle', () => {
     complete(noteResponse);
     await Promise.all([running, refreshing]);
     expect(editor.executedQuery.query).toBe(editor.getQuery());
+  });
+
+  it('tells the media viewer a Run is rendering until the newest one settles', async () => {
+    const { editor } = editorWithSelection();
+    const completes: Array<(response: typeof noteResponse) => void> = [];
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { completes.push(resolve); })));
+
+    const first = editor.execute({ pushState: false });
+    // A Run replaces it (Ctrl+Enter while Forward waits for the cards).
+    const second = editor.execute({ pushState: false });
+    completes[0](noteResponse);
+    await first;
+    expect(listRendering()).not.toBeNull();
+    completes[1](noteResponse);
+    await second;
+    await Promise.resolve();
+    expect(listRendering()).toBeNull();
   });
 
   it('runs a refresh asked for as soon as the previous one has finished', async () => {
