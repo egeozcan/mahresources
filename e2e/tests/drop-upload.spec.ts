@@ -312,6 +312,91 @@ test.describe.serial('Drop Upload', () => {
     await expect(modal.getByLabel('Search group categories')).toHaveCount(0);
   });
 
+  test('a drop another handler already consumed does not open the modal', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.evaluate(() => {
+      const zone = document.createElement('div');
+      zone.id = 'local-drop-zone';
+      zone.textContent = 'local zone';
+      zone.addEventListener('drop', (e) => e.preventDefault());
+      document.body.prepend(zone);
+    });
+    await page.evaluate(() => {
+      const f = new File(['local-' + Date.now()], 'local.txt');
+      const dt: any = {
+        types: ['Files'],
+        items: [{ kind: 'file', webkitGetAsEntry: () => null, getAsFile: () => f }],
+        files: [f],
+      };
+      const fire = (type: string, target: Element) => {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, 'dataTransfer', { value: dt });
+        target.dispatchEvent(ev);
+      };
+      const zone = document.getElementById('local-drop-zone')!;
+      fire('dragenter', zone);
+      fire('drop', zone);
+    });
+    await page.waitForTimeout(500);
+    await expect(page.locator(MODAL)).not.toBeVisible();
+    await expect(page.getByTestId('drop-overlay')).toBeHidden();
+  });
+
+  test('crossing a file input mid-drag keeps the overlay up', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.evaluate(() => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.id = 'stray-file-input';
+      document.body.prepend(input);
+    });
+    await page.evaluate(() => {
+      const dt: any = { types: ['Files'], items: [], files: [] };
+      const fire = (type: string, target: Element) => {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, 'dataTransfer', { value: dt });
+        target.dispatchEvent(ev);
+      };
+      const input = document.getElementById('stray-file-input')!;
+      fire('dragenter', document.body);
+      fire('dragenter', input);
+      fire('dragleave', input);
+    });
+    await expect(page.getByTestId('drop-overlay')).toBeVisible();
+  });
+
+  test('a folder dropped inside the success window keeps the category the picker shows', async ({ page, groupPage }) => {
+    const first = `win1-${uid}`;
+    const second = `win2-${uid}`;
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [dir(first, [file(`win1-${uid}.txt`, `w1-${uid}`)])]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+    await modal.getByLabel('Search group categories').fill(folderCategoryName);
+    await modal
+      .locator('#paste-upload-group-category-listbox [role="option"]', { hasText: folderCategoryName })
+      .click();
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('pasteUpload').state)).toBe('success');
+
+    await drop(page, [dir(second, [file(`win2-${uid}.txt`, `w2-${uid}`)])]);
+    await expect(modal.locator('input[aria-label^="Name for item"]')).toHaveCount(1);
+    // What the picker shows and what the store will send must agree.
+    const shown = await modal.locator('#paste-upload-group-category-listbox').count();
+    expect(shown).toBeGreaterThan(0);
+    const stored = await page.evaluate(() => (window as any).Alpine.store('pasteUpload').groupCategoryId);
+    await expect(modal.getByText(folderCategoryName).first()).toBeVisible();
+    expect(stored).toBe(folderCategoryId);
+
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect(modal).not.toBeVisible({ timeout: 15000 });
+    await track(page, first);
+    const g = (await track(page, second))[0];
+    expect(g.CategoryId).toBe(folderCategoryId);
+    await findResource(page, `win1-${uid}.txt`);
+    await findResource(page, `win2-${uid}.txt`);
+  });
+
   test('a folder with only ignored content opens nothing and says why', async ({ page, groupPage }) => {
     await groupPage.gotoDisplay(groupId);
     await drop(page, [dir('only-junk', [file('.DS_Store', 'x'), dir('empty', [])])]);

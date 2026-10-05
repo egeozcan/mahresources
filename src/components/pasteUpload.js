@@ -329,8 +329,12 @@ export function setupDropListener() {
     if (store) store.dragActive = false;
   };
 
+  // Enter and leave are counted on the same terms, whatever the target, or
+  // crossing a native file input (which gets no preventDefault) skews the count.
+  const counted = (e) => carriesFiles(e) && pageHasUploadTarget();
+
   window.addEventListener('dragenter', (e) => {
-    if (!eligible(e)) return;
+    if (!counted(e)) return;
     depth++;
     const store = getStore();
     if (!store || store.state === 'uploading') return;
@@ -343,19 +347,25 @@ export function setupDropListener() {
   });
 
   window.addEventListener('dragover', (e) => {
-    if (!eligible(e)) return;
+    if (e.defaultPrevented || !eligible(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });
 
   window.addEventListener('dragleave', (e) => {
-    if (!carriesFiles(e)) return;
+    if (!counted(e)) return;
     depth = Math.max(0, depth - 1);
     if (depth === 0) hideOverlay();
   });
 
   window.addEventListener('drop', async (e) => {
     if (!eligible(e)) return;
+    // Something on the page already took this drop (a widget in a custom
+    // header, say); it is theirs, not ours to open a second workflow for.
+    if (e.defaultPrevented) {
+      hideOverlay();
+      return;
+    }
     e.preventDefault();
     hideOverlay();
 
@@ -467,9 +477,12 @@ export function registerPasteUploadStore(Alpine) {
           }
         }
         this.items = this.items.filter(i => i.error !== 'done');
-        this._forgetCategoryWithoutFolders();
 
         this.items.push(...items);
+        // After the push: judged before it, a success-window drop of a new
+        // folder would clear the category while the picker (never remounted
+        // within one tick) still shows it.
+        this._forgetCategoryWithoutFolders();
         this.state = 'preview';
         this.errorMessage = '';
         return;
