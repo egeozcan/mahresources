@@ -364,12 +364,68 @@ test.describe.serial('Drop Upload', () => {
     });
     await expect(page.getByTestId('drop-overlay')).toBeVisible();
 
-    // Dropping on the input is the browser's; no dragleave follows, so the overlay must still clear.
-    await page.evaluate(() => {
-      const dt: any = { types: ['Files'], items: [], files: [] };
+    // Dropping on the input is the browser's: a populated drop must not be
+    // taken (so input.files is the browser's to fill) and the overlay must still clear.
+    const result = await page.evaluate(() => {
+      const f = new File(['native-' + Date.now()], 'native.txt');
+      const dt: any = {
+        types: ['Files'],
+        items: [{ kind: 'file', webkitGetAsEntry: () => null, getAsFile: () => f }],
+        files: [f],
+      };
       const ev = new Event('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dt });
       document.getElementById('stray-file-input')!.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(result).toBe(false);
+    await expect(page.getByTestId('drop-overlay')).toBeHidden();
+    await page.waitForTimeout(300);
+    await expect(page.locator(MODAL)).not.toBeVisible();
+  });
+
+  test('a file input inside a shadow root keeps its native drop', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    const prevented = await page.evaluate(() => {
+      const host = document.createElement('div');
+      const input = document.createElement('input');
+      input.type = 'file';
+      host.attachShadow({ mode: 'open' }).append(input);
+      document.body.prepend(host);
+      const f = new File(['shadow-' + Date.now()], 'shadow.txt');
+      const dt: any = {
+        types: ['Files'],
+        items: [{ kind: 'file', webkitGetAsEntry: () => null, getAsFile: () => f }],
+        files: [f],
+      };
+      const ev = new Event('drop', { bubbles: true, cancelable: true, composed: true });
+      Object.defineProperty(ev, 'dataTransfer', { value: dt });
+      input.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(prevented).toBe(false);
+    await page.waitForTimeout(300);
+    await expect(page.locator(MODAL)).not.toBeVisible();
+  });
+
+  test('a local handler that stops propagation does not leave the overlay up', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.evaluate(() => {
+      const zone = document.createElement('div');
+      zone.id = 'greedy-zone';
+      zone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); });
+      document.body.prepend(zone);
+    });
+    await page.evaluate(() => {
+      const dt: any = { types: ['Files'], items: [], files: [] };
+      const fire = (type: string, target: Element) => {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, 'dataTransfer', { value: dt });
+        target.dispatchEvent(ev);
+      };
+      const zone = document.getElementById('greedy-zone')!;
+      fire('dragenter', zone);
+      fire('drop', zone);
     });
     await expect(page.getByTestId('drop-overlay')).toBeHidden();
   });

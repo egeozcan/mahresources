@@ -324,9 +324,12 @@ export function setupDropListener() {
   let depth = 0;
   const getStore = () => window.Alpine?.store('pasteUpload');
   const carriesFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
-  const eligible = (e) => carriesFiles(e)
-    && pageHasUploadTarget()
-    && !(e.target instanceof Element && e.target.closest("input[type='file']"));
+  // composedPath, not target: a file input inside a shadow root is retargeted to
+  // its host, which would make the browser's own drop look like ours to take.
+  const overFileInput = (e) => e.composedPath().some(
+    (node) => node instanceof Element && node.matches("input[type='file']"),
+  );
+  const eligible = (e) => carriesFiles(e) && pageHasUploadTarget() && !overFileInput(e);
   const hideOverlay = () => {
     depth = 0;
     const store = getStore();
@@ -362,17 +365,19 @@ export function setupDropListener() {
     if (depth === 0) hideOverlay();
   });
 
-  window.addEventListener('drop', async (e) => {
-    // A drop onto a native file input is left to the browser, which also means
-    // no dragleave follows, so the overlay is cleared here.
+  // Capture phase and state-only: a drop never produces a dragleave, and a local
+  // handler that stops propagation (or the browser, for a native input) would
+  // otherwise leave the overlay up. Opening the modal stays in the bubbling
+  // listener below so local handlers keep precedence.
+  window.addEventListener('drop', (e) => {
     if (counted(e)) hideOverlay();
+  }, true);
+
+  window.addEventListener('drop', async (e) => {
     if (!eligible(e)) return;
     // Something on the page already took this drop (a widget in a custom
     // header, say); it is theirs, not ours to open a second workflow for.
-    if (e.defaultPrevented) {
-      hideOverlay();
-      return;
-    }
+    if (e.defaultPrevented) return;
     e.preventDefault();
 
     // Two aria-modal dialogs at once is a defect (utils/modality.js); say why nothing opened.
