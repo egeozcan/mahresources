@@ -100,6 +100,13 @@ describe('walkDrop', () => {
     ]);
   });
 
+  it('tells apart two roots that share a name', async () => {
+    const { files } = await walkDrop(
+      snapshotDrop(transfer([dirEntry('photos', [fileEntry('1')]), dirEntry('photos', [fileEntry('2')])])),
+    );
+    expect(files.map((f) => [f.file.name, f.root])).toEqual([['1', 0], ['2', 1]]);
+  });
+
   it('gives each dropped root its own drop-local identity', async () => {
     const { files } = await walkDrop(
       snapshotDrop(transfer([dirEntry('a', [fileEntry('1')]), dirEntry('b', [fileEntry('2')])])),

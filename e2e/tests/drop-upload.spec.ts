@@ -18,9 +18,9 @@ const file = (name: string, body: string, mime = 'text/plain'): Node => ({ type:
 const dir = (name: string, children: Node[]): Node => ({ type: 'dir', name, children });
 
 /** Dispatch dragenter + dragover + drop carrying `tree`. Returns whether drop was default-prevented. */
-async function drop(page: Page, tree: Node[], opts: { hold?: boolean } = {}): Promise<boolean> {
+async function drop(page: Page, tree: Node[], opts: { hold?: boolean; delayMs?: number } = {}): Promise<boolean> {
   return page.evaluate(
-    ({ tree, hold }) => {
+    ({ tree, hold, delayMs }) => {
       const mkFile = (n: any) => new File([n.body], n.name, { type: n.mime || 'text/plain' });
       const mkEntry = (n: any): any => {
         if (n.type === 'file') {
@@ -36,7 +36,7 @@ async function drop(page: Page, tree: Node[], opts: { hold?: boolean } = {}): Pr
               readEntries(ok: any) {
                 const batch = n.children.slice(at, at + 2).map(mkEntry);
                 at += 2;
-                setTimeout(() => ok(batch), 0);
+                setTimeout(() => ok(batch), delayMs);
               },
             };
           },
@@ -63,7 +63,7 @@ async function drop(page: Page, tree: Node[], opts: { hold?: boolean } = {}): Pr
       if (hold) return false;
       return fire('drop').defaultPrevented;
     },
-    { tree, hold: !!opts.hold },
+    { tree, hold: !!opts.hold, delayMs: opts.delayMs ?? 0 },
   );
 }
 
@@ -230,6 +230,86 @@ test.describe.serial('Drop Upload', () => {
     const g = (await findGroups(page, root))[0];
     expect((await findResource(page, `retry-1-${uid}.txt`)).OwnerId).toBe(g.ID);
     expect((await findResource(page, `retry-2-${uid}.txt`)).OwnerId).toBe(g.ID);
+  });
+
+  test('two same-named folders in one drop make two groups', async ({ page, groupPage }) => {
+    const root = `dup-root-${uid}`;
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [
+      dir(root, [file(`dr-1-${uid}.txt`, `dr1-${uid}`)]),
+      dir(root, [file(`dr-2-${uid}.txt`, `dr2-${uid}`)]),
+    ]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+    await expect(modal.getByText('2 groups will be created')).toBeVisible();
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect(modal).not.toBeVisible({ timeout: 15000 });
+
+    expect(await track(page, root)).toHaveLength(2);
+    const r1 = await findResource(page, `dr-1-${uid}.txt`);
+    const r2 = await findResource(page, `dr-2-${uid}.txt`);
+    expect(r1.OwnerId).not.toBe(r2.OwnerId);
+  });
+
+  test('a drop that finishes reading mid-upload leaves the running batch alone', async ({ page, groupPage }) => {
+    const late = `late-${uid}`;
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [file(`running-${uid}.txt`, `running-${uid}`)]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+
+    await page.route('**/v1/resource', async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      await route.continue();
+    });
+    // The drop starts reading while nothing is uploading; Upload is clicked
+    // before the read ends, so the guard before the walk cannot catch it.
+    await drop(page, [dir(late, [file(`late-1-${uid}.txt`, `l1-${uid}`)])], { delayMs: 1200 });
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('pasteUpload').state)).toBe('uploading');
+
+    await expect(page.getByRole('status').filter({ hasText: /wait for the current upload/i })).toBeVisible();
+    await expect(modal).not.toBeVisible({ timeout: 15000 });
+    expect((await findResource(page, `running-${uid}.txt`)).OwnerId).toBe(groupId);
+    expect(await findGroups(page, late)).toEqual([]);
+  });
+
+  test('cancelling while a drop is still being read does not bring the modal back', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [file(`first-${uid}.txt`, `first-${uid}`)]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+
+    await drop(page, [dir(`cancelled-${uid}`, [file(`cancelled-1-${uid}.txt`, `c1-${uid}`)])], { delayMs: 800 });
+    await modal.getByRole('button', { name: 'Cancel' }).click();
+    await expect(modal).not.toBeVisible();
+    await page.waitForTimeout(2000);
+    await expect(modal).not.toBeVisible();
+    expect(await page.evaluate(() => (window as any).Alpine.store('pasteUpload').items.length)).toBe(0);
+  });
+
+  test('the group category does not outlive the folders it was chosen for', async ({ page, groupPage }) => {
+    const root = `stale-${uid}`;
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [dir(root, [file(`stale-in-${uid}.txt`, `si-${uid}`)]), file(`stale-loose-${uid}.txt`, `sl-${uid}`)]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+
+    await modal.getByLabel('Search group categories').fill(folderCategoryName);
+    await modal
+      .locator('#paste-upload-group-category-listbox [role="option"]', { hasText: folderCategoryName })
+      .click();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('pasteUpload').groupCategoryId)).toBe(folderCategoryId);
+
+    // Only the loose file fails, so the folder's file is removed from the batch.
+    await page.route('**/v1/resource', (route) =>
+      route.request().postData()?.includes(`stale-loose-${uid}`) ? route.abort() : route.continue());
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect(modal.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 10000 });
+    await track(page, root);
+
+    expect(await page.evaluate(() => (window as any).Alpine.store('pasteUpload').groupCategoryId)).toBeNull();
+    await expect(modal.getByLabel('Search group categories')).toHaveCount(0);
   });
 
   test('a folder with only ignored content opens nothing and says why', async ({ page, groupPage }) => {

@@ -55,23 +55,25 @@ async function readAll(directory) {
 
 /**
  * @param {{ entries: object[], loose: File[] }} snapshot
- * @returns {Promise<{ files: Array<{ file: File, dirPath: string[] }>, unreadable: number }>}
+ * @returns {Promise<{ files: Array<{ file: File, dirPath: string[], root: number }>, unreadable: number }>}
  *   `dirPath` is the folder chain from the dropped root down (`[]` for a loose
- *   file). A folder only shows up through the files beneath it, so folders that
- *   are empty or hold only ignored names produce nothing.
+ *   file). `root` is the index of the dropped entry the file came from (`-1` for
+ *   a loose file), so two roots that share a name stay apart. A folder only
+ *   shows up through the files beneath it, so folders that are empty or hold
+ *   only ignored names produce nothing.
  */
 export async function walkDrop({ entries, loose }) {
-  const files = loose.map((file) => ({ file, dirPath: [] }));
+  const files = loose.map((file) => ({ file, dirPath: [], root: -1 }));
   let unreadable = 0;
 
-  async function visit(entry, dirPath, isRoot) {
+  async function visit(entry, dirPath, root, isRoot) {
     if (!isRoot && isIgnoredName(entry.name)) return;
     try {
       if (entry.isFile) {
-        files.push({ file: await fileOf(entry), dirPath });
+        files.push({ file: await fileOf(entry), dirPath, root });
       } else if (entry.isDirectory) {
         const inner = [...dirPath, entry.name];
-        for (const child of await readAll(entry)) await visit(child, inner, false);
+        for (const child of await readAll(entry)) await visit(child, inner, root, false);
       }
     } catch (_) {
       unreadable++;
@@ -79,6 +81,6 @@ export async function walkDrop({ entries, loose }) {
   }
 
   // A root is something the user picked on purpose, so a dot-name is kept.
-  for (const entry of entries) await visit(entry, [], true);
+  for (const [root, entry] of entries.entries()) await visit(entry, [], root, true);
   return { files, unreadable };
 }

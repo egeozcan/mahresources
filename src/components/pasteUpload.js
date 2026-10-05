@@ -305,7 +305,7 @@ export function setupPasteListener() {
 /** Image thumbnails made per drop; a big folder would otherwise hold thousands of object URLs. */
 const DROP_PREVIEW_LIMIT = 60;
 
-/** Each drop gets an id so two folders with the same name never share a group. */
+/** Each dropped root gets an id (drop.root) so two folders with the same name never share a group. */
 let dropSeq = 0;
 
 /**
@@ -368,15 +368,19 @@ export function setupDropListener() {
       return;
     }
 
+    // A close during the walk cancels this drop; an upload started during it
+    // must not have its batch replaced.
+    const session = store.sessionId;
     const [walked, resolved] = await Promise.all([walkDrop(snapshot), resolveUploadContext()]);
+    if (store.sessionId !== session) return;
     if (!resolved.context) {
       store.showInfo(resolved.message);
       return;
     }
 
-    const dropId = ++dropSeq;
+    const dropSeqNow = ++dropSeq;
     let previewsLeft = DROP_PREVIEW_LIMIT;
-    const items = walked.files.map(({ file, dirPath }) => {
+    const items = walked.files.map(({ file, dirPath, root }) => {
       const asImage = file.type.startsWith('image/') && previewsLeft-- > 0;
       return {
         file,
@@ -387,7 +391,7 @@ export function setupDropListener() {
         errorResourceId: null,
         _snippet: null,
         dirPath,
-        dropId,
+        dropId: `${dropSeqNow}.${root}`,
       };
     });
 
@@ -420,6 +424,7 @@ export function registerPasteUploadStore(Alpine) {
     dragActive: false,       // a file drag is over the page
     dragTarget: '',          // name shown on the drop overlay
     _folderGroups: {},       // folder key -> id of the group created for it
+    sessionId: 0,            // bumped on close so a drop still being read can tell it was cancelled
     state: 'idle',       // 'idle' | 'preview' | 'uploading' | 'success' | 'error'
     uploadProgress: '',
     errorMessage: '',
@@ -439,6 +444,15 @@ export function registerPasteUploadStore(Alpine) {
     open(items, context) {
       if (!items || items.length === 0) return;
 
+      // Opening now would replace the batch that is being uploaded.
+      if (this.state === 'uploading') {
+        for (const item of items) {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
+        this.showInfo('Wait for the current upload to finish, then try again.');
+        return;
+      }
+
       // Append to existing list when the dialog is already visible
       if (this.isOpen && this.state !== 'uploading') {
         // Cancel any pending auto-close from a previous successful upload
@@ -453,6 +467,7 @@ export function registerPasteUploadStore(Alpine) {
           }
         }
         this.items = this.items.filter(i => i.error !== 'done');
+        this._forgetCategoryWithoutFolders();
 
         this.items.push(...items);
         this.state = 'preview';
@@ -483,6 +498,7 @@ export function registerPasteUploadStore(Alpine) {
      * Close the modal and clean up object URLs to prevent memory leaks.
      */
     close() {
+      this.sessionId++;
       // Clear any pending auto-close timer
       if (_autoCloseTimer) {
         clearTimeout(_autoCloseTimer);
@@ -528,9 +544,14 @@ export function registerPasteUploadStore(Alpine) {
       }
       if (this.items.length === 0) {
         this.close();
-      } else if (!this.foldersApply()) {
-        this.groupCategoryId = null;
+      } else {
+        this._forgetCategoryWithoutFolders();
       }
+    },
+
+    /** The picker is rebuilt once no folder is left, so the stored choice must go with it. */
+    _forgetCategoryWithoutFolders() {
+      if (!this.foldersApply()) this.groupCategoryId = null;
     },
 
     /** Folder identity of one item: the drop it came from plus its chain. */
@@ -713,6 +734,7 @@ export function registerPasteUploadStore(Alpine) {
           }
         }
         this.items = this.items.filter(i => i.error !== 'done');
+        this._forgetCategoryWithoutFolders();
         this.state = 'error';
         this.errorMessage = `${successCount} succeeded, ${total - successCount} failed.`;
       } else {
