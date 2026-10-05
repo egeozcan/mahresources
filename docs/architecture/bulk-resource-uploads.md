@@ -9,6 +9,14 @@ transfer. Above `upload_widget_file_threshold` files **or**
 intercepts the submit and sends one request per file instead,
 `upload_concurrency` at a time.
 
+- **The drop/paste modal uses the same setting.** `src/components/pasteUpload.js`
+  runs a worker pool of `upload_concurrency` over one snapshot of the pending
+  items; the modal partial carries the value as `data-upload-concurrency`
+  (default 3 if absent). Folder groups are created once per run: workers that
+  need the same folder await one shared creation promise (`folderRuns`), so
+  parallel files never make duplicate groups and a failed folder is reported
+  once. `drop-upload.spec.ts` pins both (peak in-flight above 1 and within the
+  setting, one group POST for eight files).
 - **The endpoint is unchanged.** `POST /v1/resource` still accepts many files per
   request and still loops them; the split is a browser-side decision. Below the
   threshold, or with JavaScript unavailable, the native post is what happens — so

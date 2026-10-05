@@ -303,6 +303,16 @@ export function setupPasteListener() {
   });
 }
 
+/**
+ * How many files go up at once: the server's `upload_concurrency` runtime
+ * setting, which the modal partial carries as `data-upload-concurrency`.
+ */
+function uploadConcurrency() {
+  const raw = document.querySelector('[data-upload-concurrency]')?.getAttribute('data-upload-concurrency');
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 3;
+}
+
 /** Another painted dialog, ignoring the upload dialog itself (a drop may append to it). */
 const otherModal = () => blockingModal(document.querySelector('[aria-labelledby="paste-upload-title"]'));
 
@@ -626,10 +636,12 @@ export function registerPasteUploadStore(Alpine) {
 
     /**
      * Resolve (creating as needed) the group for a folder chain, parents first.
-     * `failed` memoizes this run's failures so a broken folder is asked for once.
+     * `runs` maps a folder key to the promise that creates it for this run, so
+     * parallel workers that need the same folder share one request and one
+     * outcome (a failed folder is asked for once, not once per file).
      * @returns {Promise<{ id: number }|{ error: string }>}
      */
-    async _ensureFolderGroup(dropId, segments, failed) {
+    async _ensureFolderGroup(dropId, segments, runs) {
       let parentId = this.context.id;
       for (let n = 1; n <= segments.length; n++) {
         const key = this._folderKey(dropId, segments.slice(0, n));
@@ -637,33 +649,39 @@ export function registerPasteUploadStore(Alpine) {
           parentId = this._folderGroups[key];
           continue;
         }
-        if (failed.has(key)) return { error: failed.get(key) };
-
-        const name = segments[n - 1];
-        const body = { Name: name, OwnerId: parentId };
-        if (this.groupCategoryId) body.CategoryId = this.groupCategoryId;
-        let message;
-        try {
-          const response = await fetch('/v1/group', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          if (response.ok) {
-            const group = await response.json();
-            this._folderGroups[key] = group.ID;
-            parentId = group.ID;
-            continue;
-          }
-          message = parseUploadError(await response.text(), response.status).message;
-        } catch (err) {
-          message = err.message || 'Network error';
+        let creation = runs.get(key);
+        if (!creation) {
+          creation = this._createFolderGroup(segments[n - 1], parentId);
+          runs.set(key, creation);
         }
-        message = `Could not create group "${name}": ${message}`;
-        failed.set(key, message);
-        return { error: message };
+        const folder = await creation;
+        if (folder.error) return folder;
+        this._folderGroups[key] = folder.id;
+        parentId = folder.id;
       }
       return { id: parentId };
+    },
+
+    /** @returns {Promise<{ id: number }|{ error: string }>} */
+    async _createFolderGroup(name, parentId) {
+      const body = { Name: name, OwnerId: parentId };
+      if (this.groupCategoryId) body.CategoryId = this.groupCategoryId;
+      let message;
+      try {
+        const response = await fetch('/v1/group', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (response.ok) {
+          const group = await response.json();
+          return { id: group.ID };
+        }
+        message = parseUploadError(await response.text(), response.status).message;
+      } catch (err) {
+        message = err.message || 'Network error';
+      }
+      return { error: `Could not create group "${name}": ${message}` };
     },
 
     /**
@@ -680,8 +698,8 @@ export function registerPasteUploadStore(Alpine) {
     },
 
     /**
-     * Upload items sequentially to the server, tracking progress and errors.
-     * Skips items already marked as 'done' (useful for retries).
+     * Upload items to the server, `concurrency` at a time, tracking progress and
+     * errors. Skips items already marked as 'done' (useful for retries).
      */
     async upload() {
       if (this.items.length === 0 || !this.context) return;
@@ -694,73 +712,25 @@ export function registerPasteUploadStore(Alpine) {
       this.state = 'uploading';
       this.errorMessage = '';
 
-      const total = this.items.filter(i => i.error !== 'done').length;
+      // The list cannot change mid-run (open() and removeItem are refused), so
+      // the workers share one snapshot and one cursor.
+      const queue = this.items.filter(i => i.error !== 'done');
+      const total = queue.length;
       let successCount = 0;
-      let current = 0;
+      let started = 0;
+      let next = 0;
       const structured = this.structured();
-      const failedFolders = new Map();
+      const folderRuns = new Map();
 
-      for (const item of this.items) {
-        if (item.error === 'done') continue;
-
-        current++;
-        this.uploadProgress = `Uploading ${current} of ${total}...`;
-
-        let ownerGroupId = this.context.id;
-        if (structured && item.dirPath?.length) {
-          const folder = await this._ensureFolderGroup(item.dropId, item.dirPath, failedFolders);
-          if (folder.error) {
-            item.error = folder.error;
-            item.errorResourceId = null;
-            continue;
-          }
-          ownerGroupId = folder.id;
+      const worker = async () => {
+        while (next < queue.length) {
+          const item = queue[next++];
+          started++;
+          this.uploadProgress = `Uploading ${started} of ${total}...`;
+          if (await this._uploadItem(item, structured, folderRuns)) successCount++;
         }
-
-        const formData = new FormData();
-        formData.append('resource', item.file, item.name);
-
-        if (this.context.type === 'group') {
-          formData.append('ownerId', ownerGroupId);
-          formData.append('groups', ownerGroupId);
-        } else if (this.context.type === 'note') {
-          if (this.context.ownerId) {
-            formData.append('ownerId', this.context.ownerId);
-          }
-          formData.append('notes', this.context.id);
-        }
-
-        for (const tagId of this.tags) {
-          formData.append('tags', tagId);
-        }
-
-        if (this.categoryId) {
-          formData.append('resourceCategoryId', this.categoryId);
-        }
-
-        if (this.seriesId) {
-          formData.append('SeriesId', this.seriesId);
-        }
-
-        try {
-          const response = await fetch('/v1/resource', {
-            method: 'POST',
-            body: formData,
-          });
-          if (!response.ok) {
-            const text = await response.text();
-            const parsed = parseUploadError(text, response.status);
-            item.error = parsed.message;
-            item.errorResourceId = parsed.resourceId;
-          } else {
-            item.error = 'done';
-            item.errorResourceId = null;
-            successCount++;
-          }
-        } catch (err) {
-          item.error = err.message || 'Network error';
-        }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(uploadConcurrency(), total) }, worker));
 
       if (successCount === total) {
         this.state = 'success';
@@ -784,6 +754,65 @@ export function registerPasteUploadStore(Alpine) {
       } else {
         this.state = 'error';
         this.errorMessage = `All ${total} upload${total !== 1 ? 's' : ''} failed.`;
+      }
+    },
+
+    /** Send one item; true on success. Records the outcome on the item. */
+    async _uploadItem(item, structured, folderRuns) {
+      let ownerGroupId = this.context.id;
+      if (structured && item.dirPath?.length) {
+        const folder = await this._ensureFolderGroup(item.dropId, item.dirPath, folderRuns);
+        if (folder.error) {
+          item.error = folder.error;
+          item.errorResourceId = null;
+          return false;
+        }
+        ownerGroupId = folder.id;
+      }
+
+      const formData = new FormData();
+      formData.append('resource', item.file, item.name);
+
+      if (this.context.type === 'group') {
+        formData.append('ownerId', ownerGroupId);
+        formData.append('groups', ownerGroupId);
+      } else if (this.context.type === 'note') {
+        if (this.context.ownerId) {
+          formData.append('ownerId', this.context.ownerId);
+        }
+        formData.append('notes', this.context.id);
+      }
+
+      for (const tagId of this.tags) {
+        formData.append('tags', tagId);
+      }
+
+      if (this.categoryId) {
+        formData.append('resourceCategoryId', this.categoryId);
+      }
+
+      if (this.seriesId) {
+        formData.append('SeriesId', this.seriesId);
+      }
+
+      try {
+        const response = await fetch('/v1/resource', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          const parsed = parseUploadError(text, response.status);
+          item.error = parsed.message;
+          item.errorResourceId = parsed.resourceId;
+          return false;
+        }
+        item.error = 'done';
+        item.errorResourceId = null;
+        return true;
+      } catch (err) {
+        item.error = err.message || 'Network error';
+        return false;
       }
     },
 

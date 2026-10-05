@@ -561,6 +561,86 @@ test.describe.serial('Drop Upload', () => {
     await expect(page.locator(MODAL)).not.toBeVisible();
   });
 
+  test('a dropped folder uploads exactly `upload_concurrency` files at once', async ({ page, groupPage }) => {
+    const root = `parallel-${uid}`;
+    const names = Array.from({ length: 8 }, (_, i) => `par-${i}-${uid}.txt`);
+    let inFlight = 0;
+    let peak = 0;
+    let groupPosts = 0;
+    await page.route('**/v1/group', async (route) => {
+      if (route.request().method() === 'POST') groupPosts++;
+      await route.continue();
+    });
+    await page.route('**/v1/resource', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // Hold each request open long enough for the others to overlap it, and
+      // count it as outstanding until the server's response is back.
+      await new Promise((r) => setTimeout(r, 300));
+      try {
+        await route.fulfill({ response: await route.fetch() });
+      } finally {
+        inFlight--;
+      }
+    });
+
+    await groupPage.gotoDisplay(groupId);
+    // A non-default value, so a hardcoded 3 (or the fallback) would fail.
+    await page.evaluate(() => document.querySelector('[data-upload-concurrency]')!.setAttribute('data-upload-concurrency', '2'));
+    await drop(page, [dir(root, names.map((n) => file(n, `${n}-body`)))]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect(modal).not.toBeVisible({ timeout: 20000 });
+
+    const rootGroups = await track(page, root);
+    expect(rootGroups).toHaveLength(1);
+    // Eight workers' worth of files share one folder: one group request, not one per file.
+    expect(groupPosts).toBe(1);
+    for (const n of names) expect((await findResource(page, n)).OwnerId).toBe(rootGroups[0].ID);
+    expect(peak).toBe(2);
+  });
+
+  test('a folder whose group cannot be created fails once for every file, and a retry recovers', async ({ page, groupPage }) => {
+    const root = `failgroup-${uid}`;
+    const names = Array.from({ length: 6 }, (_, i) => `fg-${i}-${uid}.txt`);
+    let failGroups = true;
+    let groupPosts = 0;
+    let resourcePosts = 0;
+    await page.route('**/v1/group', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      groupPosts++;
+      await new Promise((r) => setTimeout(r, 200));
+      if (failGroups) return route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' });
+      await route.continue();
+    });
+    await page.route('**/v1/resource', async (route) => {
+      if (route.request().method() === 'POST') resourcePosts++;
+      await route.continue();
+    });
+
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [dir(root, names.map((n) => file(n, `${n}-body`)))]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect(modal.getByText(/All 6 uploads failed/)).toBeVisible({ timeout: 15000 });
+
+    // More files than workers, one folder: one attempt, shared by all of them.
+    expect(groupPosts).toBe(1);
+    expect(resourcePosts).toBe(0);
+    await expect(modal.getByText(`Could not create group "${root}"`)).toHaveCount(6);
+
+    failGroups = false;
+    await modal.getByRole('button', { name: 'Retry' }).click();
+    await expect(modal).not.toBeVisible({ timeout: 20000 });
+    expect(groupPosts).toBe(2);
+    const rootGroups = await track(page, root);
+    expect(rootGroups).toHaveLength(1);
+    for (const n of names) expect((await findResource(page, n)).OwnerId).toBe(rootGroups[0].ID);
+  });
+
   test.afterAll(async ({ apiClient }) => {
     for (const id of createdResourceIds) await apiClient.deleteResource(id).catch(() => {});
     for (const id of [...createdGroupIds].reverse()) await apiClient.deleteGroup(id).catch(() => {});

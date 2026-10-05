@@ -12,6 +12,7 @@
      role="dialog"
      aria-modal="true"
      aria-labelledby="paste-upload-title"
+     data-upload-concurrency="{{ uploadConcurrency }}"
      @keydown.escape.window="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()">
     {# Backdrop #}
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
