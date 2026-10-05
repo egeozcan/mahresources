@@ -258,8 +258,12 @@ test.describe.serial('Drop Upload', () => {
     const modal = page.locator(MODAL);
     await expect(modal).toBeVisible();
 
+    // The upload response is held until the refusal has been seen, so a slow
+    // browser cannot finish the upload before the late drop finishes reading.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     await page.route('**/v1/resource', async (route) => {
-      await new Promise((r) => setTimeout(r, 2500));
+      await gate;
       await route.continue();
     });
     // The drop starts reading while nothing is uploading; Upload is clicked
@@ -269,6 +273,7 @@ test.describe.serial('Drop Upload', () => {
     await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('pasteUpload').state)).toBe('uploading');
 
     await expect(page.getByRole('status').filter({ hasText: /wait for the current upload/i })).toBeVisible();
+    release();
     await expect(modal).not.toBeVisible({ timeout: 15000 });
     expect((await findResource(page, `running-${uid}.txt`)).OwnerId).toBe(groupId);
     expect(await findGroups(page, late)).toEqual([]);
