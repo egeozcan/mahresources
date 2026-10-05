@@ -88,6 +88,26 @@ The paste upload modal supports:
 
 Pasted text is uploaded too: rich text becomes an `.html` resource and plain text a `.txt` resource, each named after the moment it was pasted and previewed in the modal as a text snippet rather than a thumbnail.
 
+### Drag and Drop Upload
+
+Drop files or folders onto a page that accepts a paste (a group or note detail page, or a list view filtered by a single owner) to open the same upload modal. While files are dragged over the page, an overlay names the target. Dropping on any other page leaves the browser's own handling untouched, and a drop while an upload is running is refused with a notice.
+
+Dropped files behave exactly like pasted ones. Dropped folders add two things when the target is a group:
+
+- **Keep folder structure** -- on by default. Each dropped folder becomes a new group inside the current group, and subfolders become groups inside their parent folder's group. Every file is uploaded into the group of the folder it came from. Clear the checkbox to upload every file straight into the current group.
+- **Group category** -- optional category applied to every group the upload creates.
+
+The modal lists each file under its folder path and states how many groups the upload will create. Groups are created when you click **Upload**, so cancelling creates nothing.
+
+Rules that are easy to trip over:
+
+- A dropped folder always creates new groups. A group with the same name already in the target is never reused.
+- Inside a dropped folder, names starting with `.`, `Thumbs.db` and `desktop.ini` are skipped. A folder that is empty, or holds only skipped names, creates no group.
+- If a group cannot be created, the files that belong to it fail with the reason shown, and **Retry** reuses the groups that were already created instead of making duplicates.
+- A group stays in place even if every file uploaded into it fails.
+- On a note detail page, folders are always flattened.
+- Thumbnails are generated for the first 60 images of a drop. The rest show a file icon.
+
 ## Viewing Resources
 
 ### Resource List

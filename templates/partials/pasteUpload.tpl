@@ -98,6 +98,10 @@
 
                         {# Name input #}
                         <div class="flex-1 min-w-0">
+                            <p x-show="$store.pasteUpload.structured() && item.dirPath?.length > 0"
+                               x-cloak
+                               class="mb-1 text-xs font-mono text-stone-600 truncate"
+                               x-text="(item.dirPath || []).join('/') + '/'"></p>
                             <input type="text"
                                    x-model="item.name"
                                    :disabled="$store.pasteUpload.state === 'uploading'"
@@ -128,6 +132,47 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                             </svg>
                         </button>
+                    </div>
+                </template>
+
+                {# Folder options: only when a dropped folder is in the batch. The x-if is #}
+                {# tied to isOpen so the selector inside is rebuilt, not left showing a #}
+                {# category the store has already forgotten. #}
+                <template x-if="$store.pasteUpload.isOpen && $store.pasteUpload.foldersApply()">
+                    <div x-show="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success'"
+                         class="space-y-3 pt-2 border-t border-stone-200">
+                        <p class="text-sm font-medium text-stone-700">Folders</p>
+                        <label class="flex items-center gap-2 text-sm text-stone-700">
+                            <input type="checkbox"
+                                   x-model="$store.pasteUpload.keepStructure"
+                                   class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                            Keep folder structure
+                        </label>
+                        <template x-if="$store.pasteUpload.structured() && $store.pasteUpload.folderSummary()">
+                            <p class="text-xs text-stone-600" x-text="$store.pasteUpload.folderSummary()"></p>
+                        </template>
+                        <div x-show="$store.pasteUpload.keepStructure"
+                             x-data="singleEntitySelector({
+                                 entity: 'category',
+                                 onChange: (change) => $store.pasteUpload.groupCategoryId = change.current[0]?.raw.ID || null,
+                             })"
+                             class="relative w-full">
+                            <label class="block text-xs text-stone-500 font-mono mb-1">Group category (for new folder groups)</label>
+                            <div class="relative">
+                                <div class="flex items-center gap-1">
+                                <input x-ref="autocompleter"
+                                       type="text"
+                                       x-bind="inputEvents"
+                                       class="w-full min-w-0 px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                       placeholder="Search group categories..."
+                                       aria-label="Search group categories"
+                                       autocomplete="off">
+                                {% include "/partials/form/entityBrowseButton.tpl" %}
+                                </div>
+                                {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-group-category" title="Group category" %}
+                                {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
+                            </div>
+                        </div>
                     </div>
                 </template>
 
@@ -279,6 +324,19 @@
             </div>
         </div>
     </div>
+</div>
+
+{# Drop overlay: decorative. The modal that opens on drop announces the result. #}
+{# pointer-events is inline because `.overlays > *` in index.css sets it back to auto and outranks the utility class. #}
+<div x-data
+     data-testid="drop-overlay"
+     aria-hidden="true"
+     x-show="$store.pasteUpload.dragActive"
+     x-cloak
+     style="pointer-events: none"
+     class="fixed inset-0 z-40 flex items-center justify-center bg-amber-50/80 border-4 border-dashed border-amber-700">
+    <p class="px-6 py-4 bg-white border-2 border-amber-700 text-lg font-semibold text-stone-900"
+       x-text="$store.pasteUpload.dragTarget ? 'Drop files or folders to upload to ' + $store.pasteUpload.dragTarget : 'Drop files or folders to upload'"></p>
 </div>
 
 {# Info toast (OUTSIDE the modal, at bottom of page) #}

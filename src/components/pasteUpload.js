@@ -7,6 +7,7 @@
 
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 import { parseUploadError } from '../utils/uploadError.js';
+import { snapshotDrop, walkDrop } from '../utils/dropEntries.js';
 
 // ---------------------------------------------------------------------------
 // Helpers (module-private)
@@ -186,6 +187,53 @@ function isEditablePasteTarget(event) {
   return false;
 }
 
+function revokePreviews(items) {
+  for (const item of items) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  }
+}
+
+/** True when the page names an upload target without needing a fetch. */
+function pageHasUploadTarget() {
+  return document.querySelector('[data-paste-context]') !== null
+    || new URLSearchParams(window.location.search).get('ownerId') !== null;
+}
+
+/**
+ * Work out where an upload from this page should go: the page's
+ * `data-paste-context`, else the group named by the `ownerId` query param.
+ * @returns {Promise<{ context: object|null, message: string }>}
+ */
+async function resolveUploadContext() {
+  const ctxEl = document.querySelector('[data-paste-context]');
+  if (ctxEl) {
+    try {
+      return { context: JSON.parse(ctxEl.getAttribute('data-paste-context')), message: '' };
+    } catch (err) {
+      console.error('Failed to parse data-paste-context:', err);
+      return { context: null, message: 'Invalid paste context on this page.' };
+    }
+  }
+
+  const ownerId = new URLSearchParams(window.location.search).get('ownerId');
+  if (ownerId) {
+    try {
+      const resp = await fetch(`/v1/group.json?id=${encodeURIComponent(ownerId)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const group = await resp.json();
+      return { context: { type: 'group', id: group.ID, name: group.Name }, message: '' };
+    } catch (err) {
+      console.error('Failed to fetch owner group:', err);
+      return { context: null, message: 'Could not determine the owner group for pasted content.' };
+    }
+  }
+
+  return {
+    context: null,
+    message: 'To paste and upload, navigate to a group or note detail page, or filter a list by owner.',
+  };
+}
+
 /**
  * Set up the global paste event listener.
  *
@@ -243,44 +291,113 @@ export function setupPasteListener() {
     const store = window.Alpine?.store('pasteUpload');
     if (!store) return;
 
-    // --- Context detection: data-paste-context attribute -----------------------
-    const ctxEl = document.querySelector('[data-paste-context]');
-    if (ctxEl) {
-      try {
-        const context = JSON.parse(ctxEl.getAttribute('data-paste-context'));
-        store.open(items, context);
-      } catch (err) {
-        console.error('Failed to parse data-paste-context:', err);
-        store.showInfo('Invalid paste context on this page.');
-        for (const item of items) {
-          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-        }
-      }
+    // --- Context detection ------------------------------------------------------
+    const resolved = await resolveUploadContext();
+    if (resolved.context) {
+      store.open(items, resolved.context);
+    } else {
+      store.showInfo(resolved.message);
+      revokePreviews(items);
+    }
+  });
+}
+
+/** Image thumbnails made per drop; a big folder would otherwise hold thousands of object URLs. */
+const DROP_PREVIEW_LIMIT = 60;
+
+/** Each drop gets an id so two folders with the same name never share a group. */
+let dropSeq = 0;
+
+/**
+ * Set up drag-and-drop upload. It is active on the pages that already take a
+ * paste (a `[data-paste-context]` or an `ownerId` filter) and leaves every
+ * other page's drop to the browser, so a native file input still works.
+ *
+ * Dropped folders arrive with the folder chain each file was found in; the
+ * store decides whether that becomes groups.
+ */
+export function setupDropListener() {
+  let depth = 0;
+  const getStore = () => window.Alpine?.store('pasteUpload');
+  const carriesFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const eligible = (e) => carriesFiles(e)
+    && pageHasUploadTarget()
+    && !(e.target instanceof Element && e.target.closest("input[type='file']"));
+  const hideOverlay = () => {
+    depth = 0;
+    const store = getStore();
+    if (store) store.dragActive = false;
+  };
+
+  window.addEventListener('dragenter', (e) => {
+    if (!eligible(e)) return;
+    depth++;
+    const store = getStore();
+    if (!store || store.state === 'uploading') return;
+    let name = '';
+    try {
+      name = JSON.parse(document.querySelector('[data-paste-context]')?.getAttribute('data-paste-context') || '{}').name || '';
+    } catch (_) { /* the drop itself reports an unreadable context */ }
+    store.dragTarget = name;
+    store.dragActive = true;
+  });
+
+  window.addEventListener('dragover', (e) => {
+    if (!eligible(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  window.addEventListener('dragleave', (e) => {
+    if (!carriesFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) hideOverlay();
+  });
+
+  window.addEventListener('drop', async (e) => {
+    if (!eligible(e)) return;
+    e.preventDefault();
+    hideOverlay();
+
+    // The DataTransfer is only readable until the first await.
+    const snapshot = snapshotDrop(e.dataTransfer);
+    const store = getStore();
+    if (!store) return;
+    if (store.state === 'uploading') {
+      store.showInfo('Wait for the current upload to finish, then drop again.');
       return;
     }
 
-    // --- Context detection: ownerId query param → fetch group -----------------
-    const ownerId = new URLSearchParams(window.location.search).get('ownerId');
-    if (ownerId) {
-      try {
-        const resp = await fetch(`/v1/group.json?id=${encodeURIComponent(ownerId)}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const group = await resp.json();
-        store.open(items, { type: 'group', id: group.ID, name: group.Name });
-      } catch (err) {
-        console.error('Failed to fetch owner group:', err);
-        store.showInfo('Could not determine the owner group for pasted content.');
-        for (const item of items) {
-          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-        }
-      }
+    const [walked, resolved] = await Promise.all([walkDrop(snapshot), resolveUploadContext()]);
+    if (!resolved.context) {
+      store.showInfo(resolved.message);
       return;
     }
 
-    // --- No context found ------------------------------------------------------
-    store.showInfo('To paste and upload, navigate to a group or note detail page, or filter a list by owner.');
-    for (const item of items) {
-      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    const dropId = ++dropSeq;
+    let previewsLeft = DROP_PREVIEW_LIMIT;
+    const items = walked.files.map(({ file, dirPath }) => {
+      const asImage = file.type.startsWith('image/') && previewsLeft-- > 0;
+      return {
+        file,
+        name: file.name,
+        previewUrl: asImage ? URL.createObjectURL(file) : null,
+        type: asImage ? 'image' : (friendlyType(file.type) === 'image' ? 'file' : friendlyType(file.type)),
+        error: null,
+        errorResourceId: null,
+        _snippet: null,
+        dirPath,
+        dropId,
+      };
+    });
+
+    if (items.length === 0) {
+      store.showInfo('Nothing to upload: the drop held no files, only empty folders or hidden files.');
+      return;
+    }
+    store.open(items, resolved.context);
+    if (walked.unreadable > 0) {
+      store.showInfo(`${walked.unreadable} dropped item${walked.unreadable !== 1 ? 's' : ''} could not be read.`);
     }
   });
 }
@@ -298,6 +415,11 @@ export function registerPasteUploadStore(Alpine) {
     tags: [],
     categoryId: null,
     seriesId: null,
+    groupCategoryId: null,   // Category for groups created from dropped folders
+    keepStructure: true,     // dropped folders become groups instead of flattening
+    dragActive: false,       // a file drag is over the page
+    dragTarget: '',          // name shown on the drop overlay
+    _folderGroups: {},       // folder key -> id of the group created for it
     state: 'idle',       // 'idle' | 'preview' | 'uploading' | 'success' | 'error'
     uploadProgress: '',
     errorMessage: '',
@@ -347,6 +469,9 @@ export function registerPasteUploadStore(Alpine) {
       this.tags = [];
       this.categoryId = null;
       this.seriesId = null;
+      this.groupCategoryId = null;
+      this.keepStructure = true;
+      this._folderGroups = {};
       this.state = 'preview';
       this.uploadProgress = '';
       this.errorMessage = '';
@@ -379,6 +504,10 @@ export function registerPasteUploadStore(Alpine) {
       this.tags = [];
       this.categoryId = null;
       this.seriesId = null;
+      this.groupCategoryId = null;
+      this.keepStructure = true;
+      this._folderGroups = {};
+      this.dragActive = false;
       this.state = 'idle';
       this.uploadProgress = '';
       this.errorMessage = '';
@@ -399,7 +528,83 @@ export function registerPasteUploadStore(Alpine) {
       }
       if (this.items.length === 0) {
         this.close();
+      } else if (!this.foldersApply()) {
+        this.groupCategoryId = null;
       }
+    },
+
+    /** Folder identity of one item: the drop it came from plus its chain. */
+    _folderKey(dropId, segments) {
+      return JSON.stringify([dropId, ...segments]);
+    },
+
+    /** True when the batch holds dropped folders that could become groups. */
+    foldersApply() {
+      return this.context?.type === 'group' && this.items.some(i => i.dirPath?.length > 0);
+    },
+
+    /** True when the upload will create groups for the dropped folders. */
+    structured() {
+      return this.keepStructure && this.foldersApply();
+    },
+
+    /** How many groups the next upload would still create. */
+    folderCount() {
+      const needed = new Set();
+      for (const item of this.items) {
+        for (let n = 1; n <= (item.dirPath?.length || 0); n++) {
+          const key = this._folderKey(item.dropId, item.dirPath.slice(0, n));
+          if (!this._folderGroups[key]) needed.add(key);
+        }
+      }
+      return needed.size;
+    },
+
+    folderSummary() {
+      const n = this.folderCount();
+      return n === 0 ? '' : `${n} group${n !== 1 ? 's' : ''} will be created`;
+    },
+
+    /**
+     * Resolve (creating as needed) the group for a folder chain, parents first.
+     * `failed` memoizes this run's failures so a broken folder is asked for once.
+     * @returns {Promise<{ id: number }|{ error: string }>}
+     */
+    async _ensureFolderGroup(dropId, segments, failed) {
+      let parentId = this.context.id;
+      for (let n = 1; n <= segments.length; n++) {
+        const key = this._folderKey(dropId, segments.slice(0, n));
+        if (this._folderGroups[key]) {
+          parentId = this._folderGroups[key];
+          continue;
+        }
+        if (failed.has(key)) return { error: failed.get(key) };
+
+        const name = segments[n - 1];
+        const body = { Name: name, OwnerId: parentId };
+        if (this.groupCategoryId) body.CategoryId = this.groupCategoryId;
+        let message;
+        try {
+          const response = await fetch('/v1/group', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (response.ok) {
+            const group = await response.json();
+            this._folderGroups[key] = group.ID;
+            parentId = group.ID;
+            continue;
+          }
+          message = parseUploadError(await response.text(), response.status).message;
+        } catch (err) {
+          message = err.message || 'Network error';
+        }
+        message = `Could not create group "${name}": ${message}`;
+        failed.set(key, message);
+        return { error: message };
+      }
+      return { id: parentId };
     },
 
     /**
@@ -428,6 +633,8 @@ export function registerPasteUploadStore(Alpine) {
       const total = this.items.filter(i => i.error !== 'done').length;
       let successCount = 0;
       let current = 0;
+      const structured = this.structured();
+      const failedFolders = new Map();
 
       for (const item of this.items) {
         if (item.error === 'done') continue;
@@ -435,12 +642,23 @@ export function registerPasteUploadStore(Alpine) {
         current++;
         this.uploadProgress = `Uploading ${current} of ${total}...`;
 
+        let ownerGroupId = this.context.id;
+        if (structured && item.dirPath?.length) {
+          const folder = await this._ensureFolderGroup(item.dropId, item.dirPath, failedFolders);
+          if (folder.error) {
+            item.error = folder.error;
+            item.errorResourceId = null;
+            continue;
+          }
+          ownerGroupId = folder.id;
+        }
+
         const formData = new FormData();
         formData.append('resource', item.file, item.name);
 
         if (this.context.type === 'group') {
-          formData.append('ownerId', this.context.id);
-          formData.append('groups', this.context.id);
+          formData.append('ownerId', ownerGroupId);
+          formData.append('groups', ownerGroupId);
         } else if (this.context.type === 'note') {
           if (this.context.ownerId) {
             formData.append('ownerId', this.context.ownerId);

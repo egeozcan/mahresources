@@ -72,7 +72,7 @@ import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
-import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
+import { registerPasteUploadStore, setupPasteListener, setupDropListener } from './components/pasteUpload.js';
 import { registerConfirmDialogStore } from './components/confirmDialog.js';
 import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
@@ -279,6 +279,7 @@ setupBulkSelectionListeners();
 
 // Setup global paste listener (handles file-input paste, modal, and context detection)
 setupPasteListener();
+setupDropListener();
 
 // Setup entity-link hover-preview cards (respects the "showHoverPreviews" setting)
 setupHoverCard();

@@ -37,7 +37,7 @@ Categories, Resource Categories, and Note Types support **custom templates**: HT
 
 A Lua **plugin system** can intercept create/update/delete operations, add custom pages, run background jobs, perform full entity CRUD (`mah.db.create_*`, `mah.db.update_*`, `mah.db.delete_*`), and store per-plugin data via a key-value store (`mah.kv.*`).
 
-**Paste upload** lets you paste images or text from the clipboard (Cmd/Ctrl+V) to create Resources with a preview-and-tag modal workflow. Every page has a **JSON API** equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
+**Paste upload** lets you paste images or text from the clipboard (Cmd/Ctrl+V), or drag and drop files and folders, to create Resources with a preview-and-tag modal workflow. Dropped folders can become nested Groups. Every page has a **JSON API** equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
 
 :::danger Authentication is off by default
 

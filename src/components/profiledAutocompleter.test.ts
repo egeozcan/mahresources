@@ -132,10 +132,12 @@ describe('profiled autocompleter bridge', () => {
         expect(markup).toContain("entity: 'resourceCategory'");
         expect(markup).toContain('creatableEntitySelector({');
         expect(markup).toContain("entity: 'series'");
-        expect(markup.match(/onChange: \(change\) =>/g)).toHaveLength(3);
+        expect(markup.match(/onChange: \(change\) =>/g)).toHaveLength(4);
         expect(markup).toContain('$store.pasteUpload.tags = change.current.map');
         expect(markup).toContain('$store.pasteUpload.categoryId = change.current[0]?.raw.ID || null');
         expect(markup).toContain('$store.pasteUpload.seriesId = change.current[0]?.raw.ID || null');
+        expect(markup).toContain("entity: 'category'");
+        expect(markup).toContain('$store.pasteUpload.groupCategoryId = change.current[0]?.raw.ID || null');
         expect(markup).not.toContain('x-effect="$store.pasteUpload');
         expect(markup).not.toContain('selectedResults: []');
         expect(markup).not.toContain('standalone: true');
