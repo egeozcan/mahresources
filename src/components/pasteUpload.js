@@ -8,6 +8,7 @@
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 import { parseUploadError } from '../utils/uploadError.js';
 import { snapshotDrop, walkDrop } from '../utils/dropEntries.js';
+import { blockingModal, refuseOverModal } from '../utils/modality.js';
 
 // ---------------------------------------------------------------------------
 // Helpers (module-private)
@@ -302,6 +303,9 @@ export function setupPasteListener() {
   });
 }
 
+/** Another painted dialog, ignoring the upload dialog itself (a drop may append to it). */
+const otherModal = () => blockingModal(document.querySelector('[aria-labelledby="paste-upload-title"]'));
+
 /** Image thumbnails made per drop; a big folder would otherwise hold thousands of object URLs. */
 const DROP_PREVIEW_LIMIT = 60;
 
@@ -337,7 +341,7 @@ export function setupDropListener() {
     if (!counted(e)) return;
     depth++;
     const store = getStore();
-    if (!store || store.state === 'uploading') return;
+    if (!store || store.state === 'uploading' || otherModal()) return;
     let name = '';
     try {
       name = JSON.parse(document.querySelector('[data-paste-context]')?.getAttribute('data-paste-context') || '{}').name || '';
@@ -359,6 +363,9 @@ export function setupDropListener() {
   });
 
   window.addEventListener('drop', async (e) => {
+    // A drop onto a native file input is left to the browser, which also means
+    // no dragleave follows, so the overlay is cleared here.
+    if (counted(e)) hideOverlay();
     if (!eligible(e)) return;
     // Something on the page already took this drop (a widget in a custom
     // header, say); it is theirs, not ours to open a second workflow for.
@@ -367,7 +374,13 @@ export function setupDropListener() {
       return;
     }
     e.preventDefault();
-    hideOverlay();
+
+    // Two aria-modal dialogs at once is a defect (utils/modality.js); say why nothing opened.
+    const blocker = otherModal();
+    if (blocker) {
+      refuseOverModal(blocker, 'Close this dialog first to upload dropped files.');
+      return;
+    }
 
     // The DataTransfer is only readable until the first await.
     const snapshot = snapshotDrop(e.dataTransfer);
@@ -383,6 +396,11 @@ export function setupDropListener() {
     const session = store.sessionId;
     const [walked, resolved] = await Promise.all([walkDrop(snapshot), resolveUploadContext()]);
     if (store.sessionId !== session) return;
+    const lateBlocker = otherModal();
+    if (lateBlocker) {
+      refuseOverModal(lateBlocker, 'Close this dialog first to upload dropped files.');
+      return;
+    }
     if (!resolved.context) {
       store.showInfo(resolved.message);
       return;
@@ -406,7 +424,9 @@ export function setupDropListener() {
     });
 
     if (items.length === 0) {
-      store.showInfo('Nothing to upload: the drop held no files, only empty folders or hidden files.');
+      store.showInfo(walked.unreadable > 0
+        ? 'Could not read the dropped items.'
+        : 'Nothing to upload: the drop held no files, only empty folders or hidden files.');
       return;
     }
     store.open(items, resolved.context);
@@ -660,6 +680,11 @@ export function registerPasteUploadStore(Alpine) {
      */
     async upload() {
       if (this.items.length === 0 || !this.context) return;
+      // Not while running, not during the success window (a second run would
+      // overwrite the auto-close timer handle and the orphan would close a
+      // later batch), and not with nothing left to send.
+      if (this.state === 'uploading' || this.state === 'success') return;
+      if (!this.items.some(i => i.error !== 'done')) return;
 
       this.state = 'uploading';
       this.errorMessage = '';
@@ -735,6 +760,7 @@ export function registerPasteUploadStore(Alpine) {
       if (successCount === total) {
         this.state = 'success';
         this.uploadProgress = `Uploaded ${successCount} file${successCount !== 1 ? 's' : ''} successfully.`;
+        if (_autoCloseTimer) clearTimeout(_autoCloseTimer);
         _autoCloseTimer = setTimeout(() => {
           _autoCloseTimer = null;
           this.close();

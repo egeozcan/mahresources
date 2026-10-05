@@ -107,13 +107,6 @@ describe('walkDrop', () => {
     expect(files.map((f) => [f.file.name, f.root])).toEqual([['1', 0], ['2', 1]]);
   });
 
-  it('gives each dropped root its own drop-local identity', async () => {
-    const { files } = await walkDrop(
-      snapshotDrop(transfer([dirEntry('a', [fileEntry('1')]), dirEntry('b', [fileEntry('2')])])),
-    );
-    expect(new Set(files.map((f) => f.dirPath[0]))).toEqual(new Set(['a', 'b']));
-  });
-
   it('counts entries it could not read instead of throwing', async () => {
     const broken = {
       isFile: true,

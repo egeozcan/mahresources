@@ -363,6 +363,71 @@ test.describe.serial('Drop Upload', () => {
       fire('dragleave', input);
     });
     await expect(page.getByTestId('drop-overlay')).toBeVisible();
+
+    // Dropping on the input is the browser's; no dragleave follows, so the overlay must still clear.
+    await page.evaluate(() => {
+      const dt: any = { types: ['Files'], items: [], files: [] };
+      const ev = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'dataTransfer', { value: dt });
+      document.getElementById('stray-file-input')!.dispatchEvent(ev);
+    });
+    await expect(page.getByTestId('drop-overlay')).toBeHidden();
+  });
+
+  test('a second Upload during the success window cannot close a later batch', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await drop(page, [file(`win-a-${uid}.txt`, `wa-${uid}`)]);
+    const modal = page.locator(MODAL);
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Upload' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).Alpine.store('pasteUpload').state)).toBe('success');
+    // One shot inside the window: a polling assertion would also pass once the
+    // modal had closed and emptied itself, which is the bug.
+    expect(await modal.getByRole('button', { name: 'Upload' }).isDisabled()).toBe(true);
+
+    // The button is disabled now, so reach the same entry point the old button did.
+    await page.evaluate(() => (window as any).Alpine.store('pasteUpload').upload());
+    await drop(page, [file(`win-b-${uid}.txt`, `wb-${uid}`)]);
+    await page.waitForTimeout(2000);
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('input[aria-label^="Name for item"]')).toHaveCount(1);
+    await modal.getByRole('button', { name: 'Cancel' }).click();
+    await findResource(page, `win-a-${uid}.txt`);
+  });
+
+  test('a drop while another dialog is open is refused instead of stacking a second dialog', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.keyboard.press('ControlOrMeta+k');
+    const search = page.locator('[role="dialog"][aria-modal="true"]').filter({ hasNot: page.locator('#paste-upload-title') }).first();
+    await expect(search).toBeVisible();
+
+    await drop(page, [file(`blocked-${uid}.txt`, `bl-${uid}`)]);
+    await page.waitForTimeout(500);
+    await expect(page.locator(MODAL)).not.toBeVisible();
+    await expect(page.getByTestId('drop-overlay')).toBeHidden();
+    await expect(page.locator('[data-modal-refusal]')).toContainText(/upload dropped files/i);
+  });
+
+  test('a drop that cannot be read at all says so, not that it was empty', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.evaluate(() => {
+      const broken = {
+        isFile: true,
+        isDirectory: false,
+        name: 'bad.bin',
+        file: (_ok: unknown, fail: (e: Error) => void) => fail(new Error('gone')),
+      };
+      const dt: any = {
+        types: ['Files'],
+        items: [{ kind: 'file', webkitGetAsEntry: () => broken, getAsFile: () => null }],
+        files: [],
+      };
+      const ev = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'dataTransfer', { value: dt });
+      document.body.dispatchEvent(ev);
+    });
+    await expect(page.getByRole('status').filter({ hasText: /could not read the dropped items/i })).toBeVisible();
+    await expect(page.locator(MODAL)).not.toBeVisible();
   });
 
   test('a folder dropped inside the success window keeps the category the picker shows', async ({ page, groupPage }) => {

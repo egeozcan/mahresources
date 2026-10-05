@@ -308,7 +308,7 @@
                         Cancel
                     </button>
                     <button @click="$store.pasteUpload.upload()"
-                            :disabled="$store.pasteUpload.state === 'uploading' || $store.pasteUpload.items.length === 0"
+                            :disabled="$store.pasteUpload.state === 'uploading' || $store.pasteUpload.state === 'success' || $store.pasteUpload.items.length === 0"
                             type="button"
                             class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-700 rounded-md hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
                         {# Spinner SVG during uploading #}
