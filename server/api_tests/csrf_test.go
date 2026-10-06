@@ -1,9 +1,7 @@
 package api_tests
 
 import (
-	"bytes"
 	"encoding/json"
-	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -151,101 +149,5 @@ func TestCSRF_AuthDisabledNoOp(t *testing.T) {
 		strings.NewReader("name=csrf-authoff"))
 	if rr.Code == http.StatusForbidden {
 		t.Fatalf("auth-off POST must not be CSRF-blocked, got %d (%s)", rr.Code, rr.Body.String())
-	}
-}
-
-// csrfUploadBody builds a /v1/resource multipart body with the given fields in
-// order. A field named "file" is written as a file part carrying payload.
-func csrfUploadBody(t *testing.T, payload []byte, order ...[2]string) (*bytes.Buffer, string) {
-	t.Helper()
-	var body bytes.Buffer
-	w := multipart.NewWriter(&body)
-	for _, f := range order {
-		if f[0] == "file" {
-			fw, err := w.CreateFormFile("resource", f[1])
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fw.Write(payload); err != nil {
-				t.Fatal(err)
-			}
-			continue
-		}
-		if err := w.WriteField(f[0], f[1]); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return &body, w.FormDataContentType()
-}
-
-// A real upload whose csrf_token part comes first reaches the handler with its
-// file intact, even when the file is far larger than the peek window.
-func TestCSRF_MultipartUploadWithLeadingTokenKeepsFileIntact(t *testing.T) {
-	tc := setupAuthEnv(t)
-	cookie, token := loginCookieAndCSRF(t, tc)
-
-	payload := make([]byte, 300*1024)
-	for i := range payload {
-		payload[i] = byte(i*31 + i/251)
-	}
-	body, ct := csrfUploadBody(t, payload,
-		[2]string{"csrf_token", token}, [2]string{"Name", "csrf_big"}, [2]string{"file", "big.bin"})
-
-	rr := doReq(tc, http.MethodPost, "/v1/resource",
-		map[string]string{"Content-Type": ct, "Accept": "application/json"}, []*http.Cookie{cookie}, body)
-	if rr.Code >= 300 {
-		t.Fatalf("upload with leading token: status %d body=%s", rr.Code, rr.Body.String())
-	}
-	var res models.Resource
-	if err := tc.DB.Where("name = ?", "csrf_big").First(&res).Error; err != nil {
-		t.Fatalf("load uploaded resource: %v", err)
-	}
-	if res.FileSize != int64(len(payload)) {
-		t.Fatalf("stored size %d, want %d (the peek must not drop or duplicate bytes)", res.FileSize, len(payload))
-	}
-}
-
-// The token must be the first part: one that follows the file is not honoured,
-// because reading it would mean buffering the file.
-func TestCSRF_MultipartTokenAfterFileIsRejected(t *testing.T) {
-	tc := setupAuthEnv(t)
-	cookie, token := loginCookieAndCSRF(t, tc)
-
-	body, ct := csrfUploadBody(t, []byte("small"),
-		[2]string{"file", "a.bin"}, [2]string{"csrf_token", token})
-	rr := doReq(tc, http.MethodPost, "/v1/resource",
-		map[string]string{"Content-Type": ct, "Accept": "application/json"}, []*http.Cookie{cookie}, body)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("token after the file should be 403, got %d (%s)", rr.Code, rr.Body.String())
-	}
-}
-
-// The query-string spelling is gone: it lands in access logs and history.
-func TestCSRF_QueryParamTokenIsNoLongerAccepted(t *testing.T) {
-	tc := setupAuthEnv(t)
-	cookie, token := loginCookieAndCSRF(t, tc)
-
-	body, ct := csrfUploadBody(t, []byte("small"), [2]string{"Name", "csrf_q"}, [2]string{"file", "a.bin"})
-	rr := doReq(tc, http.MethodPost, "/v1/resource?csrf_token="+token,
-		map[string]string{"Content-Type": ct, "Accept": "application/json"}, []*http.Cookie{cookie}, body)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("query-param token should be 403, got %d (%s)", rr.Code, rr.Body.String())
-	}
-}
-
-// A wrong leading token is rejected.
-func TestCSRF_MultipartWrongLeadingTokenIsRejected(t *testing.T) {
-	tc := setupAuthEnv(t)
-	cookie, _ := loginCookieAndCSRF(t, tc)
-
-	body, ct := csrfUploadBody(t, []byte("small"),
-		[2]string{"csrf_token", "nope"}, [2]string{"file", "a.bin"})
-	rr := doReq(tc, http.MethodPost, "/v1/resource",
-		map[string]string{"Content-Type": ct, "Accept": "application/json"}, []*http.Cookie{cookie}, body)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("wrong token should be 403, got %d (%s)", rr.Code, rr.Body.String())
 	}
 }

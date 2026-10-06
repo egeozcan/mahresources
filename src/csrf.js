@@ -82,14 +82,14 @@ document.addEventListener(
       input = document.createElement('input');
       input.type = 'hidden';
       input.name = 'csrf_token';
-    }
-    if (enctype === 'multipart/form-data') {
-      // It must be the very first part so the server can read it from the start
-      // of the body without parsing the file. A token already in the form (a
-      // resubmit, or one rendered by a template) is moved up, not left in place.
-      if (form.firstElementChild !== input) form.prepend(input);
-    } else if (!input.isConnected) {
-      form.appendChild(input);
+
+      if (enctype === 'multipart/form-data') {
+        // For multipart, it must be the very first part so the server can read it
+        // quickly without parsing the entire file.
+        form.prepend(input);
+      } else {
+        form.appendChild(input);
+      }
     }
     input.value = token;
   },

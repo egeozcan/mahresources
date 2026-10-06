@@ -299,7 +299,7 @@ Plugin egress does **not** use `HTTP_PROXY`/`HTTPS_PROXY`. Through a proxy the d
 
 ### What this does not cover
 
-A plugin never receives its caller's credentials. The `Authorization` header, session cookie, `X-CSRF-Token` and `Proxy-Authorization` are withheld from `mah.api` handlers and plugin pages; so is `csrf_token` as a query parameter or form field, since this application accepts the token as a header or a form field and a client may still send it in the URL. Without that, a plugin could call this server's own API as its caller and have the *application* fetch a URL of the plugin's choosing.
+A plugin never receives its caller's credentials. The `Authorization` header, session cookie, `X-CSRF-Token` and `Proxy-Authorization` are withheld from `mah.api` handlers and plugin pages; so is `csrf_token` as a query parameter or form field, since this application accepts the token in all three spellings. Without that, a plugin could call this server's own API as its caller and have the *application* fetch a URL of the plugin's choosing.
 
 Credential-bearing entity fields are withheld too. The entity handed to a shortcode is built by walking every exported field, so a credential added to a model would be exposed by default; `ShareToken`, `TokenHash`, `CsrfToken` and `PasswordHash` are withheld by name. A note's share token is a bearer credential granting anonymous read of that note, and `render` -- the least privileged capability that sees an entity at all -- would otherwise be handed one.
 

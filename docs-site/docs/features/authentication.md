@@ -110,7 +110,7 @@ Browser login sessions are governed by two settings:
 The session cookie is set `SameSite=Lax`, which by itself blocks cross-site state-changing requests (POST / PUT / DELETE). On top of that baseline, each session carries a random synchronizer token (defense-in-depth):
 
 - The token is published to the page in a `<meta name="csrf-token">` tag and is also returned by `/v1/auth/me`.
-- State-changing, cookie-authenticated requests must echo it. The built-in JavaScript `fetch` wrapper adds the `X-CSRF-Token` header automatically, so the UI just works. Native forms send it as a `csrf_token` form field; on a multipart upload form it is the first part of the body, and the server reads only that first part before streaming the rest, so per-upload size limits are preserved. The token is not accepted in the URL query string.
+- State-changing, cookie-authenticated requests must echo it. The built-in JavaScript `fetch` wrapper adds the `X-CSRF-Token` header automatically, so the UI just works. Native multipart upload forms pass the token as a `csrf_token` query parameter (their body is never parsed here, which preserves the per-upload size limits); other native forms send it as a `csrf_token` form field.
 - The check is a **no-op when auth is disabled**, and it never applies to Bearer (API-token) requests, which carry no ambient cookie and are not CSRF-exposed.
 
 You normally do not need to think about CSRF. It is handled for you. It matters only if you are scripting state-changing requests with a session cookie instead of a Bearer token.

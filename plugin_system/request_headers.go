@@ -65,12 +65,12 @@ func SafeRequestHeaders(header http.Header) map[string]any {
 
 // credentialParams are the request PARAMETER names that carry a credential.
 //
-// The CSRF token is accepted as the X-CSRF-Token header or as a csrf_token
-// form field, urlencoded or multipart (see server/csrf.go). The query string
-// no longer carries it, but a stale client may still send it there, and the
-// query string is handed to plugins in full. A redaction that covers only the
-// header spelling leaves the invariant it claims ("a plugin never sees the
-// caller's credentials") false for the others.
+// The CSRF token is accepted three ways — the X-CSRF-Token header, a
+// csrf_token query parameter (native multipart upload forms, which cannot set
+// a header), and a csrf_token urlencoded form field (see server/csrf.go). A
+// redaction that covers only the header spelling leaves the invariant it claims
+// ("a plugin never sees the caller's credentials") false for the other two, and
+// the query string is handed to plugins in full.
 var credentialParams = map[string]bool{
 	"csrf_token": true,
 }
