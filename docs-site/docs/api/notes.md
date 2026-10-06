@@ -423,10 +423,15 @@ DELETE /v1/note/share?noteId={id}
 |-----------|------|-------------|
 | `noteId` | integer | **Required.** The note ID to unshare |
 
+The ID may also be sent in a form body or in a JSON body (`{"noteId": 123}`, or `{"id": 123}`) with `Content-Type: application/json`. The query string and form value win over a JSON body. A JSON ID that is not a whole positive number answers 400.
+
 ### Example
 
 ```bash
 curl -X DELETE "http://localhost:8181/v1/note/share?noteId=123"
+
+curl -X DELETE http://localhost:8181/v1/note/share \
+  -H "Content-Type: application/json" -d '{"noteId": 123}'
 ```
 
 ### Response
