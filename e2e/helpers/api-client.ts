@@ -860,9 +860,7 @@ export class ApiClient {
   }
 
   async deleteBlock(blockId: number): Promise<void> {
-    // DELETE requires the owning noteId, so resolve it from the block first.
-    const block = await this.getBlock(blockId);
-    return this.deleteRetry(`${this.baseUrl}/v1/note/block?id=${blockId}&noteId=${block.noteId}`);
+    return this.deleteRetry(`${this.baseUrl}/v1/note/block?id=${blockId}`);
   }
 
   async reorderBlocks(noteId: number, positions: Record<number, string>): Promise<void> {

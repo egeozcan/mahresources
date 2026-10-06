@@ -228,8 +228,8 @@ The Note's `description` field and the first text block stay in sync:
 | `POST` | `/v1/note/block` | Create block (JSON body: `noteId`, `type`, `position`, `content`) |
 | `PUT` | `/v1/note/block?id={id}` | Update block content (JSON body: `content`) |
 | `PATCH` | `/v1/note/block/state?id={id}` | Update block state (JSON body: `state`) |
-| `DELETE` | `/v1/note/block?id={id}&noteId={noteId}` | Delete block (`noteId` must be the owning note) |
-| `POST` | `/v1/note/block/delete?id={id}&noteId={noteId}` | Delete block (form alternative) |
+| `DELETE` | `/v1/note/block?id={id}` | Delete block |
+| `POST` | `/v1/note/block/delete?id={id}` | Delete block (form alternative) |
 
 ### Ordering
 

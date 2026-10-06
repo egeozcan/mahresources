@@ -140,7 +140,7 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 
 	t.Run("Delete Block", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", createdBlockID, note.ID)
+		url := fmt.Sprintf("/v1/note/block?id=%d", createdBlockID)
 		resp := tc.MakeRequest(http.MethodDelete, url, nil)
 		assert.Equal(t, http.StatusNoContent, resp.Code)
 
@@ -162,7 +162,7 @@ func TestBlockEndpoints(t *testing.T) {
 		var block models.NoteBlock
 		json.Unmarshal(resp.Body.Bytes(), &block)
 
-		url := fmt.Sprintf("/v1/note/block/delete?id=%d&noteId=%d", block.ID, note.ID)
+		url := fmt.Sprintf("/v1/note/block/delete?id=%d", block.ID)
 		resp = tc.MakeRequest(http.MethodPost, url, nil)
 		assert.Equal(t, http.StatusNoContent, resp.Code)
 	})
@@ -244,7 +244,7 @@ func TestDeleteLastTextBlockClearsDescription(t *testing.T) {
 		"description should be synced from the text block")
 
 	// Delete the only text block
-	delURL := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", block.ID, note.ID)
+	delURL := fmt.Sprintf("/v1/note/block?id=%d", block.ID)
 	delResp := tc.MakeRequest(http.MethodDelete, delURL, nil)
 	assert.Equal(t, http.StatusNoContent, delResp.Code)
 
