@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"bytes"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"mahresources/constants"
 	"mahresources/contracts"
@@ -138,32 +138,39 @@ func parseUintStrict(s string) (uint, error) {
 	return uint(n), nil
 }
 
+// noteIdFromJSONBody reads "noteId" (or "id") from a small JSON object body.
+// It returns 0 for anything that is not a whole positive number, so a value
+// like 1.5, -1 or 1e30 is refused instead of being truncated or wrapped onto
+// another note.
+func noteIdFromJSONBody(request *http.Request) uint {
+	if request.Body == nil {
+		return 0
+	}
+	var body map[string]json.Number
+	dec := json.NewDecoder(io.LimitReader(request.Body, 4096))
+	dec.UseNumber()
+	if err := dec.Decode(&body); err != nil {
+		return 0
+	}
+	raw, ok := body["noteId"]
+	if !ok {
+		raw = body["id"]
+	}
+	id, err := parseUintStrict(raw.String())
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 func GetUnshareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
 		noteId := http_utils.GetUIntFormValue(request, "noteId", 0)
-
-		// If not found in query/form, try parsing JSON body
-		if noteId == 0 && request.Body != nil {
-			bodyBytes, err := io.ReadAll(request.Body)
-			if err == nil && len(bodyBytes) > 0 {
-				request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				var jsonBody map[string]interface{}
-				if err := json.Unmarshal(bodyBytes, &jsonBody); err == nil {
-					if v, ok := jsonBody["id"]; ok {
-						if val, ok := v.(float64); ok {
-							noteId = uint(val)
-						}
-					}
-					if v, ok := jsonBody["noteId"]; ok {
-						if val, ok := v.(float64); ok {
-							noteId = uint(val)
-						}
-					}
-				}
-			}
+		if noteId == 0 && strings.HasPrefix(request.Header.Get("Content-Type"), constants.JSON) {
+			noteId = noteIdFromJSONBody(request)
 		}
 		if noteId == 0 {
 			http_utils.HandleError(
