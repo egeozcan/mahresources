@@ -342,16 +342,23 @@ func calculateRelevanceScore(name, description, searchTerm string, extraFields .
 		return 60
 	}
 	// Check extra fields (e.g., original_name) before description
+	bestExtraScore := 0
 	for _, extra := range extraFields {
 		if extra != "" {
 			extraLower := strings.ToLower(extra)
 			if extraLower == termLower {
-				return 90 // exact match on extra field
-			}
-			if strings.Contains(extraLower, termLower) {
-				return 55 // substring match on extra field
+				if 90 > bestExtraScore {
+					bestExtraScore = 90
+				}
+			} else if strings.Contains(extraLower, termLower) {
+				if 55 > bestExtraScore {
+					bestExtraScore = 55
+				}
 			}
 		}
+	}
+	if bestExtraScore > 0 {
+		return bestExtraScore
 	}
 	if strings.Contains(strings.ToLower(description), termLower) {
 		return 40
@@ -423,14 +430,26 @@ func entityDisplayType(v any) string {
 	return ""
 }
 
-func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
+func preloadSearchDisplayType(db *gorm.DB, entityType string, loadTags bool) *gorm.DB {
 	switch entityType {
 	case EntityTypeNote:
-		return db.Preload("NoteType")
+		db = db.Preload("NoteType")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	case EntityTypeGroup:
-		return db.Preload("Category")
+		db = db.Preload("Category")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	case EntityTypeResource:
-		return db.Preload("ResourceCategory")
+		db = db.Preload("ResourceCategory")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	default:
 		return db
 	}
@@ -439,11 +458,26 @@ func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
 // entityExtraText returns additional searchable text fields for relevance scoring.
 // For resources, this includes the original_name so that matches on the original
 // filename are scored appropriately (instead of falling through to the minimum score).
-func entityExtraText(v any) string {
-	if r, ok := v.(models.Resource); ok {
-		return r.OriginalName
+func entityExtraText(v any) []string {
+	var extras []string
+	switch e := v.(type) {
+	case models.Resource:
+		if e.OriginalName != "" {
+			extras = append(extras, e.OriginalName)
+		}
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
+	case models.Note:
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
+	case models.Group:
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
 	}
-	return ""
+	return extras
 }
 
 // escapeLikeWildcards escapes SQL LIKE wildcard characters so they match literally.
@@ -486,7 +520,7 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 	}
 
 	var entities []T
-	preloadSearchDisplayType(ctx.db, entityType).
+	preloadSearchDisplayType(ctx.db, entityType, true).
 		Where(strings.Join(whereParts, " OR "), args...).
 		Limit(limit).
 		Find(&entities)
@@ -500,7 +534,7 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 			DisplayType: entityDisplayType(e),
 			Name:        name,
 			Description: truncateDescription(description, 100),
-			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)),
+			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)...),
 			URL:         fmt.Sprintf(info.urlFormat, id),
 			Extra:       entityExtra(e),
 		})
@@ -526,7 +560,7 @@ func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.Pa
 	info := entitySearchInfo[entityType]
 
 	var entities []T
-	preloadSearchDisplayType(ctx.db.Model(new(T)), entityType).
+	preloadSearchDisplayType(ctx.db.Model(new(T)), entityType, false).
 		Scopes(state.provider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit).
 		Find(&entities)
