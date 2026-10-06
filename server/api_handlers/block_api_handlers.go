@@ -86,18 +86,20 @@ func UpdateBlockContentHandler(ctx contracts.BlockWriter) func(http.ResponseWrit
 			return
 		}
 
-		// Validate note ownership if noteId is provided
+		// Validate note ownership
 		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
-		if noteId != 0 {
-			existing, err := ctx.GetBlock(id)
-			if err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusNotFound)
-				return
-			}
-			if existing.NoteID != noteId {
-				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
-				return
-			}
+		if noteId == 0 {
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+		existing, err := ctx.GetBlock(id)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			return
+		}
+		if existing.NoteID != noteId {
+			http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+			return
 		}
 
 		var body struct {
@@ -127,18 +129,20 @@ func UpdateBlockStateHandler(ctx contracts.BlockStateWriter) func(http.ResponseW
 			return
 		}
 
-		// Validate note ownership if noteId is provided
+		// Validate note ownership
 		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
-		if noteId != 0 {
-			existing, err := ctx.GetBlock(id)
-			if err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusNotFound)
-				return
-			}
-			if existing.NoteID != noteId {
-				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
-				return
-			}
+		if noteId == 0 {
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+		existing, err := ctx.GetBlock(id)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			return
+		}
+		if existing.NoteID != noteId {
+			http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+			return
 		}
 
 		var body struct {
@@ -176,18 +180,20 @@ func DeleteBlockHandler(ctx contracts.BlockDeleter) func(http.ResponseWriter, *h
 			return
 		}
 
-		// Validate note ownership if noteId is provided
+		// Validate note ownership
 		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
-		if noteId != 0 {
-			existing, err := ctx.GetBlock(id)
-			if err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusNotFound)
-				return
-			}
-			if existing.NoteID != noteId {
-				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
-				return
-			}
+		if noteId == 0 {
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+		existing, err := ctx.GetBlock(id)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			return
+		}
+		if existing.NoteID != noteId {
+			http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+			return
 		}
 
 		if err := ctx.DeleteBlock(id); err != nil {

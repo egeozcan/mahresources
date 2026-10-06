@@ -408,7 +408,10 @@ export function blockEditor(noteId, initialBlocks = []) {
     async _doUpdateBlockContent(blockId, content) {
       this.error = null;
       try {
-        const res = await fetch(`/v1/note/block?id=${blockId}`, {
+        const url = this.noteId
+          ? `/v1/note/block?id=${blockId}&noteId=${this.noteId}`
+          : `/v1/note/block?id=${blockId}`;
+        const res = await fetch(url, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content })
@@ -445,7 +448,10 @@ export function blockEditor(noteId, initialBlocks = []) {
     async updateBlockState(blockId, state) {
       this.error = null;
       try {
-        const res = await fetch(`/v1/note/block/state?id=${blockId}`, {
+        const url = this.noteId
+          ? `/v1/note/block/state?id=${blockId}&noteId=${this.noteId}`
+          : `/v1/note/block/state?id=${blockId}`;
+        const res = await fetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ state })
@@ -472,7 +478,10 @@ export function blockEditor(noteId, initialBlocks = []) {
       this.error = null;
       const removedIdx = this.blocks.findIndex(b => b.id === blockId);
       try {
-        const res = await fetch(`/v1/note/block?id=${blockId}`, {
+        const url = this.noteId
+          ? `/v1/note/block?id=${blockId}&noteId=${this.noteId}`
+          : `/v1/note/block?id=${blockId}`;
+        const res = await fetch(url, {
           method: 'DELETE'
         });
 
