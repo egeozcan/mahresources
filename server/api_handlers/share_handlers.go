@@ -3,6 +3,8 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"bytes"
 	"net/http"
 	"strconv"
 
@@ -142,6 +144,27 @@ func GetUnshareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWr
 		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
 		noteId := http_utils.GetUIntFormValue(request, "noteId", 0)
+
+		// If not found in query/form, try parsing JSON body
+		if noteId == 0 && request.Body != nil {
+			bodyBytes, err := io.ReadAll(request.Body)
+			if err == nil && len(bodyBytes) > 0 {
+				request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				var jsonBody map[string]interface{}
+				if err := json.Unmarshal(bodyBytes, &jsonBody); err == nil {
+					if v, ok := jsonBody["id"]; ok {
+						if val, ok := v.(float64); ok {
+							noteId = uint(val)
+						}
+					}
+					if v, ok := jsonBody["noteId"]; ok {
+						if val, ok := v.(float64); ok {
+							noteId = uint(val)
+						}
+					}
+				}
+			}
+		}
 		if noteId == 0 {
 			http_utils.HandleError(
 				errors.New("noteId is required"),
