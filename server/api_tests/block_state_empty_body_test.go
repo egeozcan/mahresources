@@ -19,7 +19,7 @@ func TestBlockStatePatch_EmptyBodyTextBlock(t *testing.T) {
 	block := tc.CreateDummyBlock(note.ID, "text", `{"text": "hello"}`, "n")
 
 	// PATCH with empty JSON body {} — state field is missing, so body.State is nil
-	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d&noteId=%d", block.ID, note.ID)
+	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d", block.ID)
 	resp := tc.MakeRequest(http.MethodPatch, stateURL, map[string]any{})
 
 	// Should return 400 with a user-friendly error, NOT a 500 or SQL constraint error
@@ -45,7 +45,7 @@ func TestBlockStatePatch_NullStateTextBlock(t *testing.T) {
 	block := tc.CreateDummyBlock(note.ID, "text", `{"text": "hello"}`, "n")
 
 	// PATCH with explicit null state: {"state": null}
-	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d&noteId=%d", block.ID, note.ID)
+	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d", block.ID)
 	resp := tc.MakeRequest(http.MethodPatch, stateURL, map[string]any{
 		"state": nil,
 	})
@@ -65,7 +65,7 @@ func TestBlockStatePatch_EmptyBodyTodosBlock(t *testing.T) {
 		`{"items": [{"id": "x1", "label": "Task"}]}`, "n")
 
 	// PATCH with empty JSON body {} — state field is missing
-	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d&noteId=%d", block.ID, note.ID)
+	stateURL := fmt.Sprintf("/v1/note/block/state?id=%d", block.ID)
 	resp := tc.MakeRequest(http.MethodPatch, stateURL, map[string]any{})
 
 	// Should return 400
