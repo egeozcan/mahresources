@@ -426,11 +426,11 @@ func entityDisplayType(v any) string {
 func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
 	switch entityType {
 	case EntityTypeNote:
-		return db.Preload("NoteType")
+		return db.Preload("NoteType").Preload("Tags")
 	case EntityTypeGroup:
-		return db.Preload("Category")
+		return db.Preload("Category").Preload("Tags")
 	case EntityTypeResource:
-		return db.Preload("ResourceCategory")
+		return db.Preload("ResourceCategory").Preload("Tags")
 	default:
 		return db
 	}
@@ -439,11 +439,26 @@ func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
 // entityExtraText returns additional searchable text fields for relevance scoring.
 // For resources, this includes the original_name so that matches on the original
 // filename are scored appropriately (instead of falling through to the minimum score).
-func entityExtraText(v any) string {
-	if r, ok := v.(models.Resource); ok {
-		return r.OriginalName
+func entityExtraText(v any) []string {
+	var extras []string
+	switch e := v.(type) {
+	case models.Resource:
+		if e.OriginalName != "" {
+			extras = append(extras, e.OriginalName)
+		}
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
+	case models.Note:
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
+	case models.Group:
+		for _, tag := range e.Tags {
+			extras = append(extras, tag.Name)
+		}
 	}
-	return ""
+	return extras
 }
 
 // escapeLikeWildcards escapes SQL LIKE wildcard characters so they match literally.
@@ -500,7 +515,7 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 			DisplayType: entityDisplayType(e),
 			Name:        name,
 			Description: truncateDescription(description, 100),
-			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)),
+			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)...),
 			URL:         fmt.Sprintf(info.urlFormat, id),
 			Extra:       entityExtra(e),
 		})
