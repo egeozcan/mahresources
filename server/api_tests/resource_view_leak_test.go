@@ -39,3 +39,19 @@ func TestResourceView_InvalidId_NoSearchCriteria_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.Code,
 		"GET /v1/resource/view with invalid id and no search criteria should return 400")
 }
+
+// An unparseable id must be rejected even when other search criteria are
+// present; otherwise the request silently turns into a name search and
+// redirects to an unrelated resource.
+func TestResourceView_InvalidId_WithSearchCriteria_Returns400(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := &models.Resource{Name: "Findable Resource", Meta: []byte(`{}`)}
+	tc.DB.Create(res)
+
+	resp := tc.MakeRequest(http.MethodGet, "/v1/resource/view?id=abc&name=Findable", nil)
+
+	assert.Equal(t, http.StatusBadRequest, resp.Code,
+		"GET /v1/resource/view with an invalid id must be 400 even when a name filter is present")
+	assert.Empty(t, resp.Header().Get("Location"), "must not redirect to a resource")
+}
