@@ -620,6 +620,8 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 }
 
 func registerBlockRoutes(r *openapi.Registry) {
+	blockOwnerNoteIDParam := openapi.QueryParam{Name: "noteId", Type: "integer", Required: true, Description: "ID of the note that owns the block. A block belonging to a different note is refused with 400."}
+
 	noteBlockType := reflect.TypeOf(models.NoteBlock{})
 	noteBlockEditorType := reflect.TypeOf(query_models.NoteBlockEditor{})
 	noteBlockReorderType := reflect.TypeOf(query_models.NoteBlockReorderEditor{})
@@ -696,23 +698,25 @@ func registerBlockRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodDelete,
-		Path:         "/v1/note/block",
-		OperationID:  "deleteBlock",
-		Summary:      "Delete a block",
-		Tags:         []string{"blocks"},
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:           http.MethodDelete,
+		Path:             "/v1/note/block",
+		OperationID:      "deleteBlock",
+		Summary:          "Delete a block",
+		Tags:             []string{"blocks"},
+		IDQueryParam:     "id",
+		IDRequired:       true,
+		ExtraQueryParams: []openapi.QueryParam{blockOwnerNoteIDParam},
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPost,
-		Path:         "/v1/note/block/delete",
-		OperationID:  "deleteBlockPost",
-		Summary:      "Delete a block (POST alternative)",
-		Tags:         []string{"blocks"},
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:           http.MethodPost,
+		Path:             "/v1/note/block/delete",
+		OperationID:      "deleteBlockPost",
+		Summary:          "Delete a block (POST alternative)",
+		Tags:             []string{"blocks"},
+		IDQueryParam:     "id",
+		IDRequired:       true,
+		ExtraQueryParams: []openapi.QueryParam{blockOwnerNoteIDParam},
 	})
 
 	r.Register(openapi.RouteInfo{

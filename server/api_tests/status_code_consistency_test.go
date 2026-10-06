@@ -14,7 +14,7 @@ func TestDeleteBlock_NotFound_Returns404(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	// DELETE a block that does not exist (ID 99999)
-	resp := tc.MakeRequest(http.MethodDelete, "/v1/note/block?id=99999", nil)
+	resp := tc.MakeRequest(http.MethodDelete, "/v1/note/block?id=99999&noteId=1", nil)
 	assert.Equal(t, http.StatusNotFound, resp.Code,
 		"DELETE /v1/note/block with non-existent ID should return 404, not 500")
 }

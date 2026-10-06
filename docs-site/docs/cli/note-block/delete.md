@@ -6,7 +6,9 @@ sidebar_label: delete
 
 # mr note-block delete
 
-Delete a note block by ID. Destructive: removes the database row.
+Delete a note block by ID. `--note-id` is required and must be the note that
+owns the block; a block that belongs to a different note is refused with an
+HTTP 400 error and left in place. Destructive: removes the database row.
 Deleting a nonexistent ID returns exit code 1 with an HTTP 404 error.
 Sibling blocks are untouched, but deleting a `text` block re-syncs the
 parent Note's description to whatever text block now sorts first. To
@@ -28,19 +30,21 @@ Positional arguments:
 **Delete a note block by ID**
 
 ```bash
-mr note-block delete 42
+mr note-block delete 42 --note-id 7
 ```
 
 **Delete**
 
 ```bash
-mr note-block delete 42 && mr note-blocks list --note-id 7
+mr note-block delete 42 --note-id 7 && mr note-blocks list --note-id 7
 ```
 
 
 ## Flags
 
-This command has no local flags.
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--note-id` | uint | `0` | ID of the note that owns the block (required) **(required)** |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |
