@@ -342,23 +342,23 @@ func calculateRelevanceScore(name, description, searchTerm string, extraFields .
 		return 60
 	}
 	// Check extra fields (e.g., original_name) before description
-	// Take the best match across all extras: a later exact tag must beat an
-	// earlier substring one.
-	extraScore := 0
+	bestExtraScore := 0
 	for _, extra := range extraFields {
 		if extra != "" {
 			extraLower := strings.ToLower(extra)
 			if extraLower == termLower {
-				extraScore = 90 // exact match on extra field
-				break
-			}
-			if strings.Contains(extraLower, termLower) {
-				extraScore = 55 // substring match on extra field
+				if 90 > bestExtraScore {
+					bestExtraScore = 90
+				}
+			} else if strings.Contains(extraLower, termLower) {
+				if 55 > bestExtraScore {
+					bestExtraScore = 55
+				}
 			}
 		}
 	}
-	if extraScore > 0 {
-		return extraScore
+	if bestExtraScore > 0 {
+		return bestExtraScore
 	}
 	if strings.Contains(strings.ToLower(description), termLower) {
 		return 40
@@ -430,14 +430,26 @@ func entityDisplayType(v any) string {
 	return ""
 }
 
-func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
+func preloadSearchDisplayType(db *gorm.DB, entityType string, loadTags bool) *gorm.DB {
 	switch entityType {
 	case EntityTypeNote:
-		return db.Preload("NoteType")
+		db = db.Preload("NoteType")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	case EntityTypeGroup:
-		return db.Preload("Category")
+		db = db.Preload("Category")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	case EntityTypeResource:
-		return db.Preload("ResourceCategory")
+		db = db.Preload("ResourceCategory")
+		if loadTags {
+			db = db.Preload("Tags")
+		}
+		return db
 	default:
 		return db
 	}
@@ -507,16 +519,9 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 		args = append(args, pattern)
 	}
 
-	// Tags feed the relevance score (see entityExtraText). The FTS path ranks by
-	// BM25 position and never reads them, so only this path loads them.
-	q := preloadSearchDisplayType(ctx.db, entityType)
-	switch entityType {
-	case EntityTypeNote, EntityTypeGroup, EntityTypeResource:
-		q = q.Preload("Tags")
-	}
-
 	var entities []T
-	q.Where(strings.Join(whereParts, " OR "), args...).
+	preloadSearchDisplayType(ctx.db, entityType, true).
+		Where(strings.Join(whereParts, " OR "), args...).
 		Limit(limit).
 		Find(&entities)
 
@@ -555,7 +560,7 @@ func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.Pa
 	info := entitySearchInfo[entityType]
 
 	var entities []T
-	preloadSearchDisplayType(ctx.db.Model(new(T)), entityType).
+	preloadSearchDisplayType(ctx.db.Model(new(T)), entityType, false).
 		Scopes(state.provider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit).
 		Find(&entities)

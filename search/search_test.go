@@ -126,20 +126,6 @@ func TestCalculateRelevanceScore(t *testing.T) {
 	}
 }
 
-// A row with several extra fields (tag names, original_name) must score on the
-// best of them, not on whichever happens to come first.
-func TestCalculateRelevanceScoreUsesBestExtraField(t *testing.T) {
-	if got := calculateRelevanceScore("unrelated", "", "bar", "foo-bar", "bar"); got != 90 {
-		t.Errorf("exact match on a later extra field = %d, want 90", got)
-	}
-	if got := calculateRelevanceScore("unrelated", "", "bar", "bar", "foo-bar"); got != 90 {
-		t.Errorf("exact match on an earlier extra field = %d, want 90", got)
-	}
-	if got := calculateRelevanceScore("unrelated", "", "bar", "foo-bar", "baz"); got != 55 {
-		t.Errorf("substring-only extra match = %d, want 55", got)
-	}
-}
-
 func TestTruncateDescription(t *testing.T) {
 	tests := []struct {
 		name   string

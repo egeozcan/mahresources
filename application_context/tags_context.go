@@ -190,17 +190,8 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 		"description": tag.Description,
 	})
 
-	ctx.invalidateTagSearchCache()
+	ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	return &tag, nil
-}
-
-// invalidateTagSearchCache drops cached results for the tag type and for the
-// entity types whose relevance score reads tag names (resources, notes,
-// groups), so a rename, delete or merge is not ranked from the old names.
-func (ctx *MahresourcesContext) invalidateTagSearchCache() {
-	for _, t := range []string{EntityTypeTag, EntityTypeResource, EntityTypeNote, EntityTypeGroup} {
-		ctx.InvalidateSearchCacheByType(t)
-	}
 }
 
 // tagDeleteEffect is the after-commit payload for one deleted tag, mirroring
@@ -237,7 +228,7 @@ func (ctx *MahresourcesContext) emitTagDeleteEffects(events []tagDeleteEffect) {
 		id := event.ID
 		ctx.Logger().Info(models.LogActionDelete, "tag", &id, event.Name, "Deleted tag", nil)
 		ctx.RunAfterPluginHooks("after_tag_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
-		ctx.invalidateTagSearchCache()
+		ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	}
 }
 
