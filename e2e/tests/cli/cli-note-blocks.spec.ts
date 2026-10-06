@@ -98,7 +98,7 @@ test.describe('Note block CRUD lifecycle', () => {
     // blockId should be set from the create test. If it's undefined due to
     // worker restart after previous test failure, skip gracefully.
     test.skip(!blockId, 'blockId not set (previous test may have caused worker restart)');
-    cli.runOrFail('note-block', 'delete', String(blockId));
+    cli.runOrFail('note-block', 'delete', String(blockId), '--note-id', String(noteId));
 
     const result = cli.run('note-block', 'get', String(blockId), '--json');
     expect(result.exitCode).not.toBe(0);
@@ -125,7 +125,7 @@ test.describe('Note blocks list', () => {
 
   test.afterAll(() => {
     const cli = createCliRunner();
-    cli.run('note-block', 'delete', String(blockId));
+    cli.run('note-block', 'delete', String(blockId), '--note-id', String(noteId));
     cli.run('note', 'delete', String(noteId));
   });
 
@@ -165,8 +165,8 @@ test.describe('Note blocks rebalance and reorder', () => {
 
   test.afterAll(() => {
     const cli = createCliRunner();
-    cli.run('note-block', 'delete', String(block1Id));
-    cli.run('note-block', 'delete', String(block2Id));
+    cli.run('note-block', 'delete', String(block1Id), '--note-id', String(noteId));
+    cli.run('note-block', 'delete', String(block2Id), '--note-id', String(noteId));
     cli.run('note', 'delete', String(noteId));
   });
 

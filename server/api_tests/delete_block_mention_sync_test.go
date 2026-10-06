@@ -91,7 +91,7 @@ func TestDeleteBlockDoesNotResyncMentions(t *testing.T) {
 
 	// Step 5: Delete block A — block B becomes the first text block,
 	// its content gets synced to the note's description.
-	delURL := fmt.Sprintf("/v1/note/block?id=%d", blockA.ID)
+	delURL := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", blockA.ID, note.ID)
 	delResp := tc.MakeRequest(http.MethodDelete, delURL, nil)
 	require.Equal(t, http.StatusNoContent, delResp.Code)
 
