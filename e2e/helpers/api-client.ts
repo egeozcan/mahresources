@@ -837,8 +837,9 @@ export class ApiClient {
     blockId: number,
     content: Record<string, unknown>
   ): Promise<NoteBlock> {
+    const { noteId } = await this.getBlock(blockId);
     return this.withRetry(async () => {
-      const response = await this.request.put(`${this.baseUrl}/v1/note/block?id=${blockId}`, {
+      const response = await this.request.put(`${this.baseUrl}/v1/note/block?id=${blockId}&noteId=${noteId}`, {
         headers: { 'Content-Type': 'application/json' },
         data: JSON.stringify({ content }),
       });
@@ -850,8 +851,9 @@ export class ApiClient {
     blockId: number,
     state: Record<string, unknown>
   ): Promise<NoteBlock> {
+    const { noteId } = await this.getBlock(blockId);
     return this.withRetry(async () => {
-      const response = await this.request.patch(`${this.baseUrl}/v1/note/block/state?id=${blockId}`, {
+      const response = await this.request.patch(`${this.baseUrl}/v1/note/block/state?id=${blockId}&noteId=${noteId}`, {
         headers: { 'Content-Type': 'application/json' },
         data: JSON.stringify({ state }),
       });
@@ -860,7 +862,8 @@ export class ApiClient {
   }
 
   async deleteBlock(blockId: number): Promise<void> {
-    return this.deleteRetry(`${this.baseUrl}/v1/note/block?id=${blockId}`);
+    const { noteId } = await this.getBlock(blockId);
+    return this.deleteRetry(`${this.baseUrl}/v1/note/block?id=${blockId}&noteId=${noteId}`);
   }
 
   async reorderBlocks(noteId: number, positions: Record<number, string>): Promise<void> {

@@ -138,6 +138,25 @@ func newNoteBlockCreateCmd(c *client.Client, opts *output.Options) *cobra.Comman
 	return cmd
 }
 
+// blockNoteIDQuery builds the query for a block mutation. The server requires
+// the owning noteId alongside the block id, so the CLI looks the block up first
+// and sends the note it belongs to.
+func blockNoteIDQuery(c *client.Client, id string) (url.Values, error) {
+	q := url.Values{}
+	q.Set("id", id)
+
+	var raw json.RawMessage
+	if err := c.Get("/v1/note/block", q, &raw); err != nil {
+		return nil, err
+	}
+	var block noteBlockResponse
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	q.Set("noteId", strconv.FormatUint(uint64(block.NoteID), 10))
+	return q, nil
+}
+
 func newNoteBlockUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var content string
 
@@ -150,8 +169,10 @@ func newNoteBlockUpdateCmd(c *client.Client, opts *output.Options) *cobra.Comman
 		Annotations: help.Annotations,
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+			q, err := blockNoteIDQuery(c, args[0])
+			if err != nil {
+				return err
+			}
 
 			body := map[string]any{"content": json.RawMessage(content)}
 
@@ -187,8 +208,10 @@ func newNoteBlockUpdateStateCmd(c *client.Client, opts *output.Options) *cobra.C
 		Annotations: help.Annotations,
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+			q, err := blockNoteIDQuery(c, args[0])
+			if err != nil {
+				return err
+			}
 
 			body := map[string]any{"state": json.RawMessage(state)}
 
@@ -222,8 +245,10 @@ func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 		Annotations: help.Annotations,
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+			q, err := blockNoteIDQuery(c, args[0])
+			if err != nil {
+				return err
+			}
 
 			var raw json.RawMessage
 			if err := c.Delete("/v1/note/block", q, &raw); err != nil {

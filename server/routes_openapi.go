@@ -677,6 +677,7 @@ func registerBlockRoutes(r *openapi.Registry) {
 		Tags:                 []string{"blocks"},
 		IDQueryParam:         "id",
 		IDRequired:           true,
+		ExtraQueryParams:     []openapi.QueryParam{{Name: "noteId", Type: "integer", Required: true, Description: "The note that owns the block. A block belonging to a different note is refused with 400."}},
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseType:         noteBlockType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
@@ -690,29 +691,32 @@ func registerBlockRoutes(r *openapi.Registry) {
 		Tags:                 []string{"blocks"},
 		IDQueryParam:         "id",
 		IDRequired:           true,
+		ExtraQueryParams:     []openapi.QueryParam{{Name: "noteId", Type: "integer", Required: true, Description: "The note that owns the block. A block belonging to a different note is refused with 400."}},
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseType:         noteBlockType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodDelete,
-		Path:         "/v1/note/block",
-		OperationID:  "deleteBlock",
-		Summary:      "Delete a block",
-		Tags:         []string{"blocks"},
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:           http.MethodDelete,
+		Path:             "/v1/note/block",
+		OperationID:      "deleteBlock",
+		Summary:          "Delete a block",
+		Tags:             []string{"blocks"},
+		IDQueryParam:     "id",
+		IDRequired:       true,
+		ExtraQueryParams: []openapi.QueryParam{{Name: "noteId", Type: "integer", Required: true, Description: "The note that owns the block. A block belonging to a different note is refused with 400."}},
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPost,
-		Path:         "/v1/note/block/delete",
-		OperationID:  "deleteBlockPost",
-		Summary:      "Delete a block (POST alternative)",
-		Tags:         []string{"blocks"},
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:           http.MethodPost,
+		Path:             "/v1/note/block/delete",
+		OperationID:      "deleteBlockPost",
+		Summary:          "Delete a block (POST alternative)",
+		Tags:             []string{"blocks"},
+		IDQueryParam:     "id",
+		IDRequired:       true,
+		ExtraQueryParams: []openapi.QueryParam{{Name: "noteId", Type: "integer", Required: true, Description: "The note that owns the block. A block belonging to a different note is refused with 400."}},
 	})
 
 	r.Register(openapi.RouteInfo{
