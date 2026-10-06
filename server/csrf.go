@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -66,25 +70,78 @@ func csrfExempt(r *http.Request) bool {
 }
 
 // csrfTokenFromRequest extracts the submitted CSRF token without ever reading a
-// multipart or JSON body (which would defeat the per-upload size limits applied
+// full multipart or JSON body (which would defeat the per-upload size limits applied
 // downstream via http.MaxBytesReader). Resolution order:
 //  1. X-CSRF-Token header — sent by the JS fetch layer for all AJAX requests.
-//  2. csrf_token query parameter — used by native multipart upload forms, whose
-//     body cannot be read here.
-//  3. csrf_token field of an application/x-www-form-urlencoded body — native
+//  2. csrf_token field of an application/x-www-form-urlencoded body — native
 //     non-upload forms. ParseForm caches the parse, so the handler re-reads it
 //     for free.
+//  3. csrf_token field in a multipart/form-data body. This requires the frontend
+//     to send it as the first part. We peek at the body stream to read it safely.
 func csrfTokenFromRequest(r *http.Request) string {
 	if v := r.Header.Get("X-CSRF-Token"); v != "" {
 		return v
 	}
-	if v := r.URL.Query().Get("csrf_token"); v != "" {
-		return v
-	}
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
 		return r.PostFormValue("csrf_token")
 	}
+
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		return peekMultipartCSRFToken(r)
+	}
 	return ""
+}
+
+// peekMultipartCSRFToken reads the first part of a multipart/form-data request
+// body, expecting it to be the csrf_token. It reconstructs the request body
+// so downstream handlers can parse the full multipart data.
+func peekMultipartCSRFToken(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return ""
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return ""
+	}
+
+	// We only read a small amount of the body to prevent loading a huge file
+	// into memory just to find the token. The frontend prepends the token,
+	// so it will be within the first few kilobytes.
+	var buf bytes.Buffer
+	const maxPeekSize = 4096
+	limitedBody := io.LimitReader(r.Body, maxPeekSize)
+	tee := io.TeeReader(limitedBody, &buf)
+
+	mr := multipart.NewReader(tee, boundary)
+
+	var token string
+	part, err := mr.NextPart()
+	if err == nil {
+		if part.FormName() == "csrf_token" {
+			if tokenBytes, err := io.ReadAll(part); err == nil {
+				token = string(tokenBytes)
+			}
+		}
+	}
+
+	// Reconstruct the body so the downstream handler can read the whole thing.
+	// We combine the bytes we buffered with the unread remainder of the body.
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.MultiReader(&buf, r.Body),
+		Closer: r.Body,
+	}
+
+	return token
 }
 
 // denyCSRF rejects a request that failed the CSRF check. API/JSON callers get a
