@@ -68,13 +68,8 @@ func TestDeleteBlock_RejectsBlockBelongingToDifferentNote(t *testing.T) {
 	deleteURL := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", blockOnNoteA.ID, noteB.ID)
 	deleteResp := tc.MakeRequest(http.MethodDelete, deleteURL, nil)
 
-	// BUG: The handler ignores noteId entirely and deletes the block.
-	// It should return 400 Bad Request with "block does not belong to the specified note".
-	assert.NotEqual(t, http.StatusNoContent, deleteResp.Code,
-		"BUG: DeleteBlock should reject deletion of blocks that belong to a different note. "+
-			"UpdateBlockContent and UpdateBlockState both validate noteId ownership, but "+
-			"DeleteBlock ignores noteId entirely. This allowed deleting block %d (owned by Note A, ID=%d) "+
-			"while specifying noteId=%d (Note B). The block was silently destroyed.",
+	assert.Equal(t, http.StatusBadRequest, deleteResp.Code,
+		"DeleteBlock should reject deletion of blocks that belong to a different note. This allowed deleting block %d (owned by Note A, ID=%d) while specifying noteId=%d (Note B).",
 		blockOnNoteA.ID, noteA.ID, noteB.ID)
 
 	// Verify the damage: the block on Note A was actually deleted
@@ -91,4 +86,32 @@ func TestDeleteBlock_RejectsBlockBelongingToDifferentNote(t *testing.T) {
 		assert.NotEmpty(t, noteACheck.Description,
 			"Note A's description was blanked as a side effect of the cross-note block deletion")
 	}
+}
+
+func TestDeleteBlock_RequiresNoteId(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	noteA := tc.CreateDummyNote("Note A")
+
+	createResp := tc.MakeRequest(http.MethodPost, "/v1/note/block", map[string]any{
+		"noteId":   noteA.ID,
+		"type":     "text",
+		"position": "n",
+		"content":  map[string]string{"text": "Important content"},
+	})
+	require.Equal(t, http.StatusCreated, createResp.Code)
+
+	var blockOnNoteA models.NoteBlock
+	require.NoError(t, json.Unmarshal(createResp.Body.Bytes(), &blockOnNoteA))
+
+	// Attempt to delete without noteId
+	deleteURL := fmt.Sprintf("/v1/note/block?id=%d", blockOnNoteA.ID)
+	deleteResp := tc.MakeRequest(http.MethodDelete, deleteURL, nil)
+
+	assert.Equal(t, http.StatusBadRequest, deleteResp.Code, "DeleteBlock should require noteId")
+
+	// Verify block still exists
+	var count int64
+	tc.DB.Model(&models.NoteBlock{}).Where("id = ?", blockOnNoteA.ID).Count(&count)
+	assert.Equal(t, int64(1), count)
 }
