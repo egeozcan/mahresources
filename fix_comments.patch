@@ -1,0 +1,14 @@
+--- server/api_handlers/resource_api_handlers.go
++++ server/api_handlers/resource_api_handlers.go
+@@ -128,10 +128,7 @@
+		var resource *models.Resource
+
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
+-			// If they passed an ID but it's invalid, it's a Bad Request, not a missing ID.
+-			// We can check if "id" is present but failed to parse.
+-			// Wait, if it fails to parse anything, returning 400 is perfectly fine and fixes the bug!
+-			// Actually I can refine the error message for friendlier output.
++			// If an ID was explicitly provided but failed to parse, it's a Bad Request.
+			if request.URL.Query().Has("id") || formHasField(request, "id") {
+				http_utils.HandleError(fmt.Errorf("invalid value for \"id\": must be a valid number"), writer, request, http.StatusBadRequest)
+				return
