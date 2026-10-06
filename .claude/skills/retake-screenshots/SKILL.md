@@ -144,7 +144,7 @@ Then add blocks via `POST /v1/note/block` with JSON body. Block content schemas:
 
 To check a todo item, PATCH the block state:
 ```bash
-curl -s -X PATCH "$API_URL/note/block/state?id=$BLOCK_ID" \
+curl -s -X PATCH "$API_URL/note/block/state?id=$BLOCK_ID&noteId=$NOTE_ID" \
   -H "Content-Type: application/json" \
   -d '{"state":{"checked":["t1"]}}'
 ```
@@ -338,7 +338,7 @@ Update `docs-site/static/img/screenshot-manifest.json` with the current date for
 - **Version upload field**: Use `file` not `resource` for version uploads
 - **Version endpoint**: `POST /v1/resource/versions?resourceId=ID` (plural "versions")
 - **Block content**: Must be JSON objects matching the block type schema (not plain strings)
-- **Todo state**: Separate from content. PATCH `/v1/note/block/state?id=ID` with `{"state":{"checked":["item-id"]}}`
+- **Todo state**: Separate from content. PATCH `/v1/note/block/state?id=ID&noteId=NOTE_ID` with `{"state":{"checked":["item-id"]}}`
 - **Relation types**: Default types (Address, Employer) have category constraints. Custom types with `fromCategoryId=0` may not persist due to an FTS trigger bug.
 - **Page load**: Use `waitUntil: 'load'` in Playwright, NOT `'networkidle'` — the latter causes timeouts with the download queue polling.
 - **Duplicate hash**: If two generated images happen to produce the same SHA1 hash, the upload silently returns empty. Ensure images have distinct color palettes.

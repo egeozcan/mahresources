@@ -346,7 +346,7 @@ func TestScopedUser_CannotMutateOutsideBlock(t *testing.T) {
 	}
 
 	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/json"}
-	resp := doReq(tc, http.MethodPut, "/v1/note/block?id="+itoa(int(block.ID)), h, nil,
+	resp := doReq(tc, http.MethodPut, "/v1/note/block?id="+itoa(int(block.ID))+"&noteId="+itoa(int(block.NoteID)), h, nil,
 		strings.NewReader(`{"content":{"text":"hacked"}}`))
 	if resp.Code >= 200 && resp.Code < 300 {
 		t.Fatalf("scoped user should not edit a block of an out-of-subtree note, got %d", resp.Code)

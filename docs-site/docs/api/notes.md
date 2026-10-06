@@ -679,7 +679,7 @@ Returns the created block with HTTP status 201.
 Update the content of an existing block. Use this in edit mode.
 
 ```
-PUT /v1/note/block?id={id}
+PUT /v1/note/block?id={id}&noteId={noteId}
 ```
 
 ### Query Parameters
@@ -687,7 +687,7 @@ PUT /v1/note/block?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
-| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
+| `noteId` | integer | **Required.** The note that owns the block. A missing `noteId` is refused with 400, as is a block belonging to a different note |
 
 ### Request Body (JSON)
 
@@ -698,7 +698,7 @@ PUT /v1/note/block?id={id}
 ### Example
 
 ```bash
-curl -X PUT "http://localhost:8181/v1/note/block?id=5" \
+curl -X PUT "http://localhost:8181/v1/note/block?id=5&noteId=123" \
   -H "Content-Type: application/json" \
   -d '{
     "content": {"text": "Updated paragraph text"}
@@ -727,7 +727,7 @@ Returns the updated block.
 Update the state of a block. Use this while viewing (e.g., checking a todo item).
 
 ```
-PATCH /v1/note/block/state?id={id}
+PATCH /v1/note/block/state?id={id}&noteId={noteId}
 ```
 
 ### Query Parameters
@@ -735,7 +735,7 @@ PATCH /v1/note/block/state?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
-| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
+| `noteId` | integer | **Required.** The note that owns the block. A missing `noteId` is refused with 400, as is a block belonging to a different note |
 
 ### Request Body (JSON)
 
@@ -747,7 +747,7 @@ PATCH /v1/note/block/state?id={id}
 
 ```bash
 # Mark a todo item as checked
-curl -X PATCH "http://localhost:8181/v1/note/block/state?id=10" \
+curl -X PATCH "http://localhost:8181/v1/note/block/state?id=10&noteId=123" \
   -H "Content-Type: application/json" \
   -d '{
     "state": {"checked": ["item-1", "item-2"]}
@@ -776,13 +776,13 @@ Returns the updated block.
 Delete a block.
 
 ```
-DELETE /v1/note/block?id={id}
+DELETE /v1/note/block?id={id}&noteId={noteId}
 ```
 
 Or using POST (for form compatibility):
 
 ```
-POST /v1/note/block/delete?id={id}
+POST /v1/note/block/delete?id={id}&noteId={noteId}
 ```
 
 ### Query Parameters
@@ -790,12 +790,12 @@ POST /v1/note/block/delete?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
-| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
+| `noteId` | integer | **Required.** The note that owns the block. A missing `noteId` is refused with 400, as is a block belonging to a different note |
 
 ### Example
 
 ```bash
-curl -X DELETE "http://localhost:8181/v1/note/block?id=5"
+curl -X DELETE "http://localhost:8181/v1/note/block?id=5&noteId=123"
 ```
 
 ### Response
