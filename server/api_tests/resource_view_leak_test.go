@@ -39,3 +39,15 @@ func TestResourceView_InvalidId_NoSearchCriteria_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.Code,
 		"GET /v1/resource/view with invalid id and no search criteria should return 400")
 }
+
+func TestResourceView_InvalidId_WithSearchCriteria_Returns400(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := &models.Resource{Name: "Another Secret", Meta: []byte(`{}`)}
+	tc.DB.Create(res)
+
+	resp := tc.MakeRequest(http.MethodGet, "/v1/resource/view?id=abc&name=Another", nil)
+
+	assert.Equal(t, http.StatusBadRequest, resp.Code,
+		"GET /v1/resource/view with invalid id and search criteria should return 400")
+}

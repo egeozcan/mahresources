@@ -127,7 +127,15 @@ func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.Re
 		var detailsQuery query_models.ResourceSearchQuery
 		var resource *models.Resource
 
-		if err := tryFillStructValuesFromRequest(&query, request); err != nil || query.ID == 0 {
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
+			// If an ID was explicitly provided but failed to parse, it's a Bad Request.
+			if request.URL.Query().Has("id") || formHasField(request, "id") {
+				http_utils.HandleError(fmt.Errorf("invalid value for \"id\": must be a valid number"), writer, request, http.StatusBadRequest)
+				return
+			}
+		}
+
+		if query.ID == 0 {
 			if err := tryFillStructValuesFromRequest(&detailsQuery, request); err != nil {
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
@@ -147,6 +155,7 @@ func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.Re
 
 			resource = &resources[0]
 		} else {
+			var err error
 			resource, err = ctx.GetResource(query.ID)
 
 			if err != nil {
