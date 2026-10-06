@@ -342,16 +342,23 @@ func calculateRelevanceScore(name, description, searchTerm string, extraFields .
 		return 60
 	}
 	// Check extra fields (e.g., original_name) before description
+	// Take the best match across all extras: a later exact tag must beat an
+	// earlier substring one.
+	extraScore := 0
 	for _, extra := range extraFields {
 		if extra != "" {
 			extraLower := strings.ToLower(extra)
 			if extraLower == termLower {
-				return 90 // exact match on extra field
+				extraScore = 90 // exact match on extra field
+				break
 			}
 			if strings.Contains(extraLower, termLower) {
-				return 55 // substring match on extra field
+				extraScore = 55 // substring match on extra field
 			}
 		}
+	}
+	if extraScore > 0 {
+		return extraScore
 	}
 	if strings.Contains(strings.ToLower(description), termLower) {
 		return 40
@@ -426,11 +433,11 @@ func entityDisplayType(v any) string {
 func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
 	switch entityType {
 	case EntityTypeNote:
-		return db.Preload("NoteType").Preload("Tags")
+		return db.Preload("NoteType")
 	case EntityTypeGroup:
-		return db.Preload("Category").Preload("Tags")
+		return db.Preload("Category")
 	case EntityTypeResource:
-		return db.Preload("ResourceCategory").Preload("Tags")
+		return db.Preload("ResourceCategory")
 	default:
 		return db
 	}
@@ -500,9 +507,16 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 		args = append(args, pattern)
 	}
 
+	// Tags feed the relevance score (see entityExtraText). The FTS path ranks by
+	// BM25 position and never reads them, so only this path loads them.
+	q := preloadSearchDisplayType(ctx.db, entityType)
+	switch entityType {
+	case EntityTypeNote, EntityTypeGroup, EntityTypeResource:
+		q = q.Preload("Tags")
+	}
+
 	var entities []T
-	preloadSearchDisplayType(ctx.db, entityType).
-		Where(strings.Join(whereParts, " OR "), args...).
+	q.Where(strings.Join(whereParts, " OR "), args...).
 		Limit(limit).
 		Find(&entities)
 
