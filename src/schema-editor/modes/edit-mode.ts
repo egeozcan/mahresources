@@ -126,9 +126,12 @@ export class SchemaEditMode extends LitElement {
         const parentAndIndex = this._findParentOf(this._selectedId);
         if (parentAndIndex) {
           const [, , arr] = parentAndIndex;
-          const siblingNames = new Set(
-            arr.filter(c => c.id !== selected.id).map(c => c.name)
-          );
+          const siblingNames = new Set<string>();
+          for (let i = 0; i < arr.length; i++) {
+            if (arr[i].id !== selected.id) {
+              siblingNames.add(arr[i].name);
+            }
+          }
           if (siblingNames.has(value)) {
             let deduped = value;
             let counter = 1;
