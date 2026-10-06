@@ -8577,12 +8577,6 @@ paths:
                   required: true
                   schema:
                     type: integer
-                - description: ID of the note that owns the block. A block belonging to a different note is refused with 400.
-                  in: query
-                  name: noteId
-                  required: true
-                  schema:
-                    type: integer
             responses:
                 "200":
                     description: Successful response
@@ -8678,12 +8672,6 @@ paths:
             parameters:
                 - in: query
                   name: id
-                  required: true
-                  schema:
-                    type: integer
-                - description: ID of the note that owns the block. A block belonging to a different note is refused with 400.
-                  in: query
-                  name: noteId
                   required: true
                   schema:
                     type: integer

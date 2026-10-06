@@ -776,13 +776,13 @@ Returns the updated block.
 Delete a block.
 
 ```
-DELETE /v1/note/block?id={id}&noteId={noteId}
+DELETE /v1/note/block?id={id}
 ```
 
 Or using POST (for form compatibility):
 
 ```
-POST /v1/note/block/delete?id={id}&noteId={noteId}
+POST /v1/note/block/delete?id={id}
 ```
 
 ### Query Parameters
@@ -790,12 +790,12 @@ POST /v1/note/block/delete?id={id}&noteId={noteId}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
-| `noteId` | integer | **Required.** The note that owns the block. A missing `noteId`, or a block that belongs to a different note, is refused with 400 and the block is left in place |
+| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
 
 ### Example
 
 ```bash
-curl -X DELETE "http://localhost:8181/v1/note/block?id=5&noteId=1"
+curl -X DELETE "http://localhost:8181/v1/note/block?id=5"
 ```
 
 ### Response

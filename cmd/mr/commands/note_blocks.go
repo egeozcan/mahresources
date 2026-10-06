@@ -213,10 +213,8 @@ func newNoteBlockUpdateStateCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var noteID uint
-
 	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_delete.md")
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:         "delete <id>",
 		Short:       "Delete a note block by ID",
 		Long:        help.Long,
@@ -226,7 +224,6 @@ func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
-			q.Set("noteId", strconv.FormatUint(uint64(noteID), 10))
 
 			var raw json.RawMessage
 			if err := c.Delete("/v1/note/block", q, &raw); err != nil {
@@ -241,11 +238,6 @@ func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 			return nil
 		},
 	}
-
-	cmd.Flags().UintVar(&noteID, "note-id", 0, "ID of the note that owns the block (required)")
-	cmd.MarkFlagRequired("note-id")
-
-	return cmd
 }
 
 func newNoteBlockTypesCmd(c *client.Client, opts *output.Options) *cobra.Command {
