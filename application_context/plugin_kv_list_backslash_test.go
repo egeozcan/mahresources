@@ -35,13 +35,6 @@ func TestPluginKV_ListWithBackslashPrefix(t *testing.T) {
 	}
 
 	// We expect exactly 2 keys: "path\to\file1" and "path\to\file2"
-	// BUG: because the backslash is not escaped in the LIKE pattern,
-	// the prefix "path\to\" is misinterpreted. The LIKE ESCAPE '\'
-	// treats each '\' as an escape prefix for the next character,
-	// so "path\to\" becomes "pathto" + dangling escape. The actual
-	// behavior depends on SQLite's handling of the trailing escape
-	// character, but it won't correctly match only keys starting
-	// with "path\to\".
 	if len(keys) != 2 {
 		t.Errorf("expected 2 keys matching prefix 'path\\to\\', got %d: %v", len(keys), keys)
 	}
