@@ -12,10 +12,10 @@ import (
 // TestUpdateSeriesRejectsWhitespaceOnlyName demonstrates that UpdateSeries
 // does not validate the Name field the same way that series creation does.
 //
-// Root cause:
-// buildSeries (used for creation) calls strings.TrimSpace(name) and rejects
+// Historical context:
+// Previously, buildSeries (used for creation) called strings.TrimSpace(name) and rejected
 // the result if it's empty. UpdateSeries simply checks `editor.Name != ""`
-// and assigns it directly without trimming. This means:
+// and assigned it directly without trimming. This meant:
 //   - Create with " " -> trimmed to "" -> rejected with "series name must be non-empty"
 //   - Update with " " -> not empty -> accepted, series name is now " "
 //
@@ -50,8 +50,8 @@ func TestUpdateSeriesRejectsWhitespaceOnlyName(t *testing.T) {
 		Name: "   ",
 	})
 
-	// BUG: UpdateSeries should reject whitespace-only names (matching
-	// the creation validation), but it accepts them silently.
+	// Test that UpdateSeries correctly rejects whitespace-only names
+	// matching the creation validation.
 	if err == nil {
 		// If the update succeeded, verify the name is actually whitespace
 		var check models.Series
