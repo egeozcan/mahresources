@@ -237,11 +237,12 @@ func TestEachResourceJSONRefusesOversizedPieces(t *testing.T) {
 		5: `{"items": ["` + fits + `", "` + fits + `", "` + fits + `"]}`,
 	})
 
+	tooLarge := fmt.Sprintf("an element is larger than %d bytes", maxStreamedElementSize)
 	for id, want := range map[string]string{
 		"1": "first|nil|1\n=> nil not valid JSON: nested more than 10000 levels deep",
 		"2": "items|1|1\n=> nil not valid JSON",
-		"3": "items|1|1\n=> nil an element is larger than 16777216 bytes",
-		"4": "=> nil an element is larger than 16777216 bytes",
+		"3": "items|1|1\n=> nil " + tooLarge,
+		"4": "=> nil " + tooLarge,
 	} {
 		if got := jsonStreamPage(t, pm, "read", map[string]any{"id": id}); !strings.HasPrefix(got, want) {
 			t.Errorf("file %s: got\n%q\nwant prefix\n%s", id, got[:min(len(got), 300)], want)
@@ -250,5 +251,55 @@ func TestEachResourceJSONRefusesOversizedPieces(t *testing.T) {
 	// Pieces under the cap pass however many there are: the window is per piece.
 	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "5"}); got != "true nil 3" {
 		t.Errorf("pieces under the cap: %q", got)
+	}
+}
+
+// A piece can be small in bytes and huge as Lua tables: a megabyte of "[],"
+// is half a million tables. The value cap refuses it before the tables exist.
+func TestEachResourceJSONRefusesPiecesOfTooManyValues(t *testing.T) {
+	empties := strings.TrimSuffix(strings.Repeat("[],", 350000), ",")
+	under := strings.TrimSuffix(strings.Repeat("1,", maxStreamedElementValues-2), ",")
+	pm := jsonStreamFixture(t, map[uint]string{
+		1: `{"locations": [1, [` + empties + `], 3]}`,
+		2: `{"locations": [[` + under + `]]}`,
+	})
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got := jsonStreamPage(t, pm, "read", map[string]any{"id": "1"})
+	runtime.ReadMemStats(&after)
+	want := fmt.Sprintf("locations|1|1\n=> nil an element holds more than %d values", maxStreamedElementValues)
+	if got != want {
+		t.Errorf("got %q, want %q", got[:min(len(got), 200)], want)
+	}
+	// Allocation over the whole call, garbage included: a few hundred
+	// thousand exactly-sized empty tables at most, not gigabytes.
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 512<<20 {
+		t.Errorf("refusing the piece allocated %d MB", grew>>20)
+	}
+	// The cap counts the array itself, so one short of it passes.
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "2"}); got != "true nil 1" {
+		t.Errorf("a piece under the value cap: %q", got)
+	}
+}
+
+// The byte cap is exact: a piece of exactly the cap passes even with
+// whitespace after it, one byte more does not.
+func TestEachResourceJSONByteCapIsExact(t *testing.T) {
+	// A string element's bytes are its quotes plus its contents; InputOffset
+	// counts from just after the separator before it.
+	at := strings.Repeat("a", maxStreamedElementSize-2)
+	over := strings.Repeat("b", maxStreamedElementSize-1)
+	pm := jsonStreamFixture(t, map[uint]string{
+		1: `["` + at + `"   ` + strings.Repeat("\n", 2000) + `]`,
+		2: `["` + over + `"]`,
+	})
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "1"}); got != "true nil 1" {
+		t.Errorf("a piece of exactly the cap: %q", got)
+	}
+	want := fmt.Sprintf("nil an element is larger than %d bytes 0", maxStreamedElementSize)
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "2"}); got != want {
+		t.Errorf("a piece one byte over: %q", got)
 	}
 }

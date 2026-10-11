@@ -518,9 +518,11 @@ func TestLocationHistoryReadsTimeAndPlaceSpellings(t *testing.T) {
 	}
 }
 
-// The delete hook is dropped when the plugin is busy, so an hourly sweep
-// forgets imports whose resource is gone -- and only those: a resource that
-// exists, or one whose read failed, keeps its import.
+// The delete hook is dropped when the plugin is busy, so a sweep forgets
+// imports whose resource is gone -- and only those: a resource that exists,
+// one whose read failed, and an import still writing in another process keep
+// their data. It runs only for an administrator with no scope, since "not
+// found" means "deleted" only to someone who can read every resource.
 func TestLocationHistorySweepForgetsImportsOfDeletedResources(t *testing.T) {
 	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture, 11: timelineEditsFixture, 12: timelineEditsFixture})
 	for _, id := range []uint{10, 11, 12} {
@@ -528,33 +530,56 @@ func TestLocationHistorySweepForgetsImportsOfDeletedResources(t *testing.T) {
 	}
 	delete(f.querier.files, 10)
 	f.querier.failing = map[uint]bool{12: true}
-	// What an import that timed out part way through storing leaves: data, no summary.
-	if err := f.kv.KVSet("location-history", "d:13:p:2026-04:1", `[[1,2,3,4]]`); err != nil {
-		t.Fatal(err)
+	set := func(key, value string) {
+		t.Helper()
+		if err := f.kv.KVSet("location-history", key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// What an import that timed out part way through storing leaves: data, a
+	// writing marker long expired, no summary.
+	set("d:13:p:2026-04:1", `[[1,2,3,4]]`)
+	set("w:13", "1000")
+	// An import writing right now in another process: data, a fresh marker.
+	set("d:14:p:2026-04:1", `[[1,2,3,4]]`)
+	set("w:14", fmt.Sprint(time.Now().Unix()))
+
+	visit := func(principal map[string]any) {
+		t.Helper()
+		f.page(t, PageContext{Principal: principal})
 	}
 
-	regs := f.pm.DeclaredSchedules("location-history")
-	if len(regs) != 1 || regs[0].ScheduleID != "forget-deleted" {
-		t.Fatalf("schedules = %+v", regs)
+	// Scoped and non-admin callers never sweep: to them, out of scope reads as
+	// not found.
+	visit(map[string]any{"isAdmin": true, "scopeGroupId": float64(7)})
+	visit(map[string]any{"isAdmin": false, "role": "user"})
+	visit(nil)
+	if len(f.keys("imp:10")) != 1 || len(f.keys("d:13:")) != 1 {
+		t.Fatalf("a caller who cannot see everything swept: %v", f.keys(""))
 	}
-	if _, ran, err := f.pm.RunSchedule(regs[0], 0, 5*time.Second, false); !ran || err != nil {
-		t.Fatalf("RunSchedule: ran=%v err=%v", ran, err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
-	for len(f.keys("imp:10"))+len(f.keys("d:13:")) > 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
+
+	visit(map[string]any{"isAdmin": true, "scopeGroupId": nil, "superUser": true})
 	if keys := append(f.keys("imp:10"), f.keys("d:10:")...); len(keys) != 0 {
 		t.Errorf("the deleted resource's import survived the sweep: %v", keys)
 	}
-	if keys := f.keys("d:13:"); len(keys) != 0 {
-		t.Errorf("an unsummarised import survived the sweep: %v", keys)
+	if keys := append(f.keys("d:13:"), f.keys("w:13")...); len(keys) != 0 {
+		t.Errorf("an abandoned import survived the sweep: %v", keys)
+	}
+	if len(f.keys("d:14:")) != 1 {
+		t.Error("the sweep removed an import that is still writing")
 	}
 	if len(f.keys("imp:11")) != 1 || len(f.keys("d:11:")) == 0 {
 		t.Error("the sweep forgot an import whose resource exists")
 	}
 	if len(f.keys("imp:12")) != 1 || len(f.keys("d:12:")) == 0 {
 		t.Error("the sweep forgot an import whose resource could not be read")
+	}
+
+	// It runs at most every ten minutes.
+	delete(f.querier.files, 11)
+	visit(map[string]any{"isAdmin": true})
+	if len(f.keys("imp:11")) != 1 {
+		t.Error("the sweep ran again straight away")
 	}
 }
 
@@ -586,5 +611,22 @@ func TestLocationHistoryToleratesMalformedFields(t *testing.T) {
 	html := f.page(t, PageContext{Query: map[string]any{"q": "at", "time": "2020-01-01T09:30:00Z"}})
 	if !strings.Contains(html, "Visit from") || !strings.Contains(html, "How often was I here?") {
 		t.Errorf("at page:\n%s", html)
+	}
+}
+
+// Corrupt timestamps are dropped. One in the year 33658 used to send the
+// month walk round thirty thousand years of months until the job timed out.
+func TestLocationHistoryDropsTimesOutsideASaneRange(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: `{"timelineObjects": [
+ {"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": "far"},
+   "duration": {"startTimestampMs": "1556704800000", "endTimestampMs": "1000000000000000"}}},
+ {"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": "ok"},
+   "duration": {"startTimestamp": "2019-05-01T09:00:00Z", "endTimestamp": "2019-05-01T10:00:00Z"},
+   "simplifiedRawPath": {"points": [{"latE7": 1, "lngE7": 1, "timestampMs": "99999999999999999"}, {"latE7": 1, "lngE7": 1, "timestamp": "1970-01-02T00:00:00Z"}]}}}
+]}`})
+	start := time.Now()
+	msg := f.mustImport(t, 1)
+	if !strings.Contains(msg, "Imported 0 positions and 1 visits and trips") || time.Since(start) > 5*time.Second {
+		t.Errorf("message %q after %v", msg, time.Since(start))
 	}
 }

@@ -14,10 +14,22 @@ import (
 const maxStreamedResourceFileSize = 1 << 30 // 1 GiB
 
 // maxStreamedElementSize caps the bytes of one piece -- an array element, or a
-// top-level member with its key. A piece is decoded whole, into Go values and
-// then a Lua table, at many times its size in memory, so without this a single
-// huge element in a small-enough file could exhaust the server's memory.
-const maxStreamedElementSize = 16 << 20 // 16 MiB
+// top-level member with its key. A piece is decoded whole into Go values, at
+// up to about fifteen times its size for something like "[[],[],...]", so
+// without this a single huge element in a small-enough file could exhaust the
+// server's memory. Real export entries are kilobytes.
+const maxStreamedElementSize = 4 << 20 // 4 MiB
+
+// maxStreamedElementValues caps the values in one piece. Bytes alone do not
+// bound the Lua side: every table costs on the order of a hundred bytes however
+// small its JSON, so a piece of a few megabytes of "[]," would still become
+// gigabytes of tables. Each scalar, array and object counts as one.
+const maxStreamedElementValues = 200_000
+
+// windowSlack lets the decoder read a little past a piece at the cap -- the
+// separator and whitespace after it -- without tripping the window. The exact
+// cap is still enforced on the parsed size.
+const windowSlack = 4096
 
 // maxStreamedNestingDepth matches the nesting limit encoding/json's Decode
 // applies. The token path below recurses once per level and would otherwise
@@ -26,6 +38,8 @@ const maxStreamedElementSize = 16 << 20 // 16 MiB
 const maxStreamedNestingDepth = 10000
 
 var errElementTooLarge = fmt.Errorf("an element is larger than %d bytes", maxStreamedElementSize)
+
+var errElementTooManyValues = fmt.Errorf("an element holds more than %d values", maxStreamedElementValues)
 
 // windowReader refuses to read more than maxStreamedElementSize bytes past the
 // start of the current piece, so the decoder never buffers much more than one
@@ -38,7 +52,7 @@ type windowReader struct {
 }
 
 // open starts a piece at the decoder's parse offset.
-func (w *windowReader) open(start int64) { w.limit = start + maxStreamedElementSize + 1 }
+func (w *windowReader) open(start int64) { w.limit = start + maxStreamedElementSize + windowSlack }
 
 func (w *windowReader) Read(p []byte) (int, error) {
 	if w.read >= w.limit {
@@ -84,7 +98,12 @@ func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFuncti
 				return err
 			}
 		}
-		if err := L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, key, index, goToLuaValue(L, value)); err != nil {
+		budget := maxStreamedElementValues
+		luaValue, err := streamedValueToLua(L, value, &budget)
+		if err != nil {
+			return err
+		}
+		if err := L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, key, index, luaValue); err != nil {
 			var apiErr *lua.ApiError
 			if errors.As(err, &apiErr) {
 				L.Error(apiErr.Object, 0)
@@ -112,6 +131,10 @@ func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFuncti
 	case errors.Is(err, errElementTooLarge):
 		L.Push(lua.LNil)
 		L.Push(lua.LString(errElementTooLarge.Error()))
+		return 2
+	case errors.Is(err, errElementTooManyValues):
+		L.Push(lua.LNil)
+		L.Push(lua.LString(errElementTooManyValues.Error()))
 		return 2
 	default:
 		L.Push(lua.LNil)
@@ -244,4 +267,47 @@ func valueFromToken(dec *json.Decoder, tok json.Token, depth int) (any, error) {
 		return arr, nil
 	}
 	return tok, nil
+}
+
+// streamedValueToLua converts one decoded piece to Lua, as mah.json.decode
+// would, but with every table sized exactly and the values counted against
+// budget. goToLuaValue preallocates a few kilobytes per table, which is
+// harmless for the small values it is used for and not for a piece of JSON
+// made of empty arrays.
+func streamedValueToLua(L *lua.LState, v any, budget *int) (lua.LValue, error) {
+	*budget--
+	if *budget < 0 {
+		return nil, errElementTooManyValues
+	}
+	switch val := v.(type) {
+	case nil:
+		return lua.LNil, nil
+	case string:
+		return lua.LString(val), nil
+	case float64:
+		return lua.LNumber(val), nil
+	case bool:
+		return lua.LBool(val), nil
+	case []any:
+		tbl := L.CreateTable(len(val), 0)
+		for i, item := range val {
+			lv, err := streamedValueToLua(L, item, budget)
+			if err != nil {
+				return nil, err
+			}
+			tbl.RawSetInt(i+1, lv)
+		}
+		return tbl, nil
+	case map[string]any:
+		tbl := L.CreateTable(0, len(val))
+		for k, item := range val {
+			lv, err := streamedValueToLua(L, item, budget)
+			if err != nil {
+				return nil, err
+			}
+			tbl.RawSetString(k, lv)
+		}
+		return tbl, nil
+	}
+	return nil, fmt.Errorf("not valid JSON: unexpected %T", v)
 }

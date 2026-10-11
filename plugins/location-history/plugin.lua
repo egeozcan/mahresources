@@ -24,11 +24,14 @@ plugin = {
     name = "location-history",
     version = "1.0",
     description = "Import a Google location export (Takeout Timeline JSON) and ask where you were at a given time, or how often you were near a place.",
-    capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks", "schedule" },
+    capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks" },
 }
 
 local PAGE = "/plugins/location-history/query"
 local CHUNK = 20000            -- positions per KV value, ~1 MB serialized
+-- Times outside 1990-2100 are corrupt, and dropped: a timestamp in the year
+-- 33658 would otherwise make an import walk thirty thousand years of months.
+local MIN_TIME, MAX_TIME = 631152000, 4102444800
 local WINDOW = 2 * 3600        -- "at": how far a fix may be from the asked time
 local PRESENCE_GAP = 3600      -- "near": fixes further apart start a new presence
 local MAX_ROWS = 500           -- "near": rows listed
@@ -278,7 +281,7 @@ end
 local POINT_FORMAT = "%013d|%.7f|%.7f|%d"
 
 local function add_point(c, t, lat, lng, acc)
-    if not t or t < 0 or not valid(lat, lng) then return end
+    if not t or t < MIN_TIME or t >= MAX_TIME or not valid(lat, lng) then return end
     c.points[#c.points + 1] = string.format(POINT_FORMAT, floor(t + 0.5), lat, lng, floor((tonumber(acc) or 0) + 0.5))
 end
 
@@ -297,7 +300,7 @@ local function text(v)
 end
 
 local function add_segment(c, seg)
-    if not seg.s or not seg.e or seg.e < seg.s then return end
+    if not seg.s or not seg.e or seg.e < seg.s or seg.s < MIN_TIME or seg.e >= MAX_TIME then return end
     if seg.lat and not valid(seg.lat, seg.lng) then return end
     seg.s, seg.e = floor(seg.s + 0.5), floor(seg.e + 0.5)
     if seg.lat then seg.lat, seg.lng = round7(seg.lat), round7(seg.lng) end
@@ -435,11 +438,15 @@ local function data_prefix(id) return "d:" .. id .. ":" end
 local function points_key(id, month, part) return "d:" .. id .. ":p:" .. month .. ":" .. part end
 local function segments_key(id, month) return "d:" .. id .. ":s:" .. month end
 
+-- Set while an import is writing, to the time it started: see sweep_orphans.
+local function writing_key(id) return "w:" .. id end
+
 local function forget(id)
     mah.kv.delete(meta_key(id))
     for _, key in ipairs(mah.kv.list(data_prefix(id))) do
         mah.kv.delete(key)
     end
+    mah.kv.delete(writing_key(id))
 end
 
 local function grow_box(box, lat, lng)
@@ -498,6 +505,7 @@ local function store(id, name, format, c, progress)
     end
 
     forget(id)
+    mah.kv.set(writing_key(id), mah.util.now())
 
     -- Points arrive sorted, so each month's are written as soon as the next
     -- month begins, and only one month is ever decoded at a time.
@@ -553,6 +561,7 @@ local function store(id, name, format, c, progress)
         imported_at = mah.util.now_iso(), months = summary,
     }
     mah.kv.set(meta_key(id), meta)
+    mah.kv.delete(writing_key(id))
     -- The resource may have been deleted while this ran, and its delete hook
     -- skipped because this import held the plugin. Then nothing must be left.
     local resource, err = mah.db.get_resource(id)
@@ -563,13 +572,21 @@ local function store(id, name, format, c, progress)
     return meta
 end
 
+-- How long an import may be writing before its leftovers count as abandoned:
+-- the 5-minute limit on background work, with room to spare.
+local WRITING_GRACE = 15 * 60
+local SWEEP_EVERY = 10 * 60
+
 -- Forgets every import whose resource no longer exists, and the data of any
 -- import that stopped before writing its summary (a timeout part way through
 -- store). The delete hook is a notification the host drops when the plugin is
--- busy (an import holds it for minutes), so this catches what it missed. It
--- runs as the administrator who enabled the plugin, who can read every
--- resource, and forgets only on a definite "not found", never on a failed
--- read. It cannot meet an import half written: both hold the plugin's one VM.
+-- busy (an import holds it for minutes), so this catches what it missed.
+--
+-- "Not found" only means "deleted" to a caller who can read every resource,
+-- so this runs only for an administrator with no scope (see maybe_sweep), and
+-- forgets on a definite "not found", never on a failed read. An import still
+-- writing -- in another server process, which has its own VM -- has a fresh
+-- writing marker and is left alone.
 local function sweep_orphans()
     local forgotten, summarised = 0, {}
     for _, key in ipairs(mah.kv.list("imp:")) do
@@ -588,11 +605,35 @@ local function sweep_orphans()
         local id = tonumber(key:match("^d:(%d+):"))
         if id and not summarised[id] then unsummarised[id] = true end
     end
+    local now = mah.util.now()
     for id in pairs(unsummarised) do
-        forget(id)
-        forgotten = forgotten + 1
+        local started = tonumber(mah.kv.get(writing_key(id)))
+        if not started or now - started > WRITING_GRACE then
+            forget(id)
+            forgotten = forgotten + 1
+        end
     end
     return forgotten
+end
+
+-- Whether the caller can read every resource: an administrator with no scope.
+-- With authentication off every request carries such a principal (the
+-- implicit super-user); a request without one is not assumed to.
+local function sees_everything(principal)
+    if type(principal) ~= "table" or principal.isAdmin ~= true then return false end
+    local scope = tonumber(principal.scopeGroupId)
+    return scope == nil or scope == 0
+end
+
+-- Runs the sweep at most every SWEEP_EVERY seconds, on a request from someone
+-- who sees everything.
+local function maybe_sweep(principal)
+    if not sees_everything(principal) then return end
+    local now = mah.util.now()
+    local last = tonumber(mah.kv.get("sweep:last"))
+    if last and now - last < SWEEP_EVERY then return end
+    mah.kv.set("sweep:last", now)
+    sweep_orphans()
 end
 
 -- Imports the caller can see, as { id, meta, name } sorted by id. With `only`,
@@ -1069,6 +1110,7 @@ local function is_guest(principal)
 end
 
 local function page(ctx)
+    maybe_sweep(ctx.principal)
     local q = ctx.query or {}
     local params = ctx.params or {}
     local notice = ""
@@ -1131,6 +1173,7 @@ end
 -- API ------------------------------------------------------------------------
 
 local function api_imports(ctx)
+    maybe_sweep(ctx.principal)
     ctx.query = ctx.query or {}
     local only = positive_int(ctx.query.resource)
     if ctx.query.resource and ctx.query.resource ~= "" and not only then
@@ -1227,8 +1270,4 @@ function init()
         local id = tonumber(data and data.id)
         if id then forget(id) end
     end)
-
-    mah.schedule({ id = "forget-deleted", every = "1h", handler = function(job_id)
-        mah.job_complete(job_id, { message = "Forgot " .. sweep_orphans() .. " imports of deleted resources." })
-    end })
 end

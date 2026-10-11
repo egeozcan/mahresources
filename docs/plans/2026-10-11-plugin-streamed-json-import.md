@@ -150,3 +150,31 @@ P2s left: a re-import deletes the previous import before writing the new one,
 so a re-import that fails part way loses the old one (the sweep then clears the
 partial data); Forget while an import of the same resource is queued is undone
 when it finishes.
+
+## Review round 2 (fresh subagent)
+
+Three P0/P1 findings, all fixed:
+
+- **P0: bytes do not bound Lua memory.** `goToLuaValue` preallocates ~3 KB per
+  table, so 1 MiB of `[[],[],...]` became ~1 GB and a 16 MiB piece got the
+  process OOM-killed. Pieces now convert through `streamedValueToLua`, which
+  sizes tables exactly and caps a piece at 200,000 values; the byte cap drops
+  to 4 MiB (Go's own `[]any` decoding amplifies too). The window gets 4 KiB of
+  slack so a piece at the cap followed by whitespace is not refused; the exact
+  cap is still checked on the parsed size. `TestEachResourceJSONRefusesPiecesOfTooManyValues`,
+  `TestEachResourceJSONByteCapIsExact`.
+- **P1: the sweep trusted a principal it could not see.** A schedule runs as
+  whoever enabled the plugin; demoted to a scoped user, its sweep would read
+  every out-of-scope resource as deleted and forget other users' imports.
+  Plugin code cannot see a schedule's principal, so the schedule is gone (and
+  with it the `schedule` capability): the sweep runs on page/API requests from
+  an administrator with no scope, at most every ten minutes.
+- **P1: the sweep could delete an import still writing in another process.**
+  Each process has its own VM, so "both hold the VM" did not hold. An import
+  now writes `w:<id>` (its start time) before its data and deletes it with the
+  summary; the sweep leaves unsummarised data alone while that marker is
+  younger than 15 minutes.
+
+P2 fixed alongside: times outside 1990–2100 are dropped (a year-33658
+timestamp made the month walk spin until the job timed out), and the user docs
+no longer claim a timed-out import "keeps nothing".

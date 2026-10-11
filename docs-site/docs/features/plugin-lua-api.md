@@ -621,9 +621,10 @@ end)
 Reads a resource's file as JSON one piece at a time, for files too large to
 decode whole. Only one piece is decoded at a time, so memory follows the
 largest piece rather than the file, and the bytes never pass through a Lua
-string. The file may be up to **1 GiB**, one piece (an array element, or a
-top-level member with its key) up to **16 MiB**, and nesting up to 10,000
-levels deep. Needs `db:read`.
+string. The file may be up to **1 GiB**. One piece (an array element, or a
+top-level member with its key) may be up to **4 MiB** and hold up to
+**200,000 values** (each scalar, array and object counts one), and nesting may
+be up to 10,000 levels deep. Needs `db:read`.
 
 | Root of the file | Calls |
 |------------------|-------|
@@ -636,7 +637,7 @@ Elements arrive as `mah.json.decode` would return them (`null` is `nil`).
 |---------|------|
 | `true` | The whole file was read. |
 | `false` | The callback returned `false`. |
-| `nil, err` | The resource cannot be read by the caller, the file or one piece is over its cap (`an element is larger than 16777216 bytes`), or it is not JSON (`not valid JSON: ...`, including nesting past 10,000 levels; `not a JSON object or array`). Pieces before the problem have already been delivered. |
+| `nil, err` | The resource cannot be read by the caller, the file or one piece is over its cap (`an element is larger than 4194304 bytes`, `an element holds more than 200000 values`), or it is not JSON (`not valid JSON: ...`, including nesting past 10,000 levels; `not a JSON object or array`). Pieces before the problem have already been delivered. |
 
 An error raised inside the callback propagates out of `each_resource_json` as
 if the callback had been called directly. Like `get_resource_data`, it reads as
