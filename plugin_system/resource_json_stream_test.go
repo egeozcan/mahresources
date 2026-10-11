@@ -153,8 +153,8 @@ n|nil|4.5
 // below the file's size (decoding it whole into Lua tables takes several times
 // the file's size).
 func TestEachResourceJSONStreamsInBoundedMemory(t *testing.T) {
-	if testing.Short() {
-		t.Skip("writes a 64 MB file")
+	if testing.Short() || raceEnabled {
+		t.Skip("writes a 64 MB file; measures memory, which -race distorts")
 	}
 	path := filepath.Join(t.TempDir(), "big.json")
 	f, err := os.Create(path)

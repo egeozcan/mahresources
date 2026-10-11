@@ -639,8 +639,8 @@ func TestLocationHistoryDropsTimesOutsideASaneRange(t *testing.T) {
 // it back, and a month like this cost hundreds of megabytes per query. The
 // answers have to be right across the part boundaries too.
 func TestLocationHistoryDenseMonthQueriesInBoundedMemory(t *testing.T) {
-	if testing.Short() {
-		t.Skip("imports 100,000 fixes")
+	if testing.Short() || raceEnabled {
+		t.Skip("imports 100,000 fixes; measures memory, which -race distorts")
 	}
 	var b strings.Builder
 	b.WriteString(`{"locations": [`)
@@ -762,8 +762,8 @@ func TestLocationHistoryStoresALongSegmentOnce(t *testing.T) {
 // small however many months an import spans; the month index is read only by
 // queries that use the import, and as columns.
 func TestLocationHistoryManyLongImportsStayCheapPerRequest(t *testing.T) {
-	if testing.Short() {
-		t.Skip("imports thirty files")
+	if testing.Short() || raceEnabled {
+		t.Skip("imports thirty files; measures memory, which -race distorts")
 	}
 	var b strings.Builder
 	b.WriteString(`{"locations": [`)
@@ -874,5 +874,158 @@ func TestLocationHistorySkipsWrongShapedObjects(t *testing.T) {
 		if msg := f.mustImport(t, id); !strings.Contains(msg, "Imported 1 positions") {
 			t.Errorf("import %d: %q", id, msg)
 		}
+	}
+}
+
+// peakHeapGrowth runs fn and reports how far the heap rose above where it
+// started, sampling every few milliseconds.
+func peakHeapGrowth(fn func()) int64 {
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+	var peak atomic.Uint64
+	done := make(chan struct{})
+	go func() {
+		var m runtime.MemStats
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(5 * time.Millisecond):
+				runtime.ReadMemStats(&m)
+				if m.HeapAlloc > peak.Load() {
+					peak.Store(m.HeapAlloc)
+				}
+			}
+		}
+	}()
+	fn()
+	close(done)
+	return int64(peak.Load()) - int64(base.HeapAlloc)
+}
+
+// An import holds its segments as packed strings, and "near" holds a place
+// string per visit, not a table: 100,000 visits used to cost ~2.7 KB each to
+// import and another ~1.2 KB each per query.
+func TestLocationHistoryManyVisitsStayCompact(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("imports 100,000 visits; measures memory, which -race distorts")
+	}
+	const visits = 100000
+	var b strings.Builder
+	b.WriteString(`{"semanticSegments": [`)
+	base := time.Date(2019, 5, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < visits; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		// 10 s visits 100 s apart: each its own time there.
+		s := base.Add(time.Duration(i) * 100 * time.Second)
+		fmt.Fprintf(&b, `{"startTime": "%s", "endTime": "%s", "visit": {"topCandidate": {"placeId": "place-%d", "placeLocation": {"latLng": "0°, 0°"}}}}`,
+			s.Format("2006-01-02T15:04:05Z"), s.Add(10*time.Second).Format("2006-01-02T15:04:05Z"), i)
+	}
+	b.WriteString(`]}`)
+	f := locationPlugin(t, map[uint]string{1: b.String()})
+
+	grew := peakHeapGrowth(func() { f.mustImport(t, 1) })
+	t.Logf("import of %d visits: peak heap growth %d MB", visits, grew>>20)
+	if per := grew / visits; per > 1200 {
+		t.Errorf("import held %d bytes per visit", per)
+	}
+
+	var body map[string]any
+	grew = peakHeapGrowth(func() { _, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "50"}) })
+	t.Logf("near over %d visits: peak heap growth %d MB", visits, grew>>20)
+	if body["times"] != float64(visits) {
+		t.Errorf("times = %v", body["times"])
+	}
+	if per := grew / visits; per > 700 {
+		t.Errorf("near held %d bytes per visit", per)
+	}
+}
+
+// A forget marks its own work so an interrupted one is swept, and never takes
+// over the marker of an import running in another process.
+func TestLocationHistoryForgetMarkers(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture})
+	set := func(key, value string) {
+		t.Helper()
+		if err := f.kv.KVSet("location-history", key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A forget that stopped part way: its marker, data, no summary.
+	set("w:30", "0")
+	set("d:30:p:2026-04:1", `{"t":[1]}`)
+	f.page(t, PageContext{Principal: map[string]any{"isAdmin": true}})
+	if keys := append(f.keys("w:30"), f.keys("d:30:")...); len(keys) != 0 {
+		t.Errorf("an interrupted forget's leftovers survived the sweep: %v", keys)
+	}
+
+	// An import of 40 is writing in another process when 40 is deleted here.
+	started := fmt.Sprint(time.Now().Unix())
+	set("w:40", started)
+	set("d:40:p:2026-04:1", `{"t":[1]}`)
+	f.pm.RunAfterHooks(NewInvocation(0), "after_resource_delete", map[string]any{"id": float64(40)})
+	if got, _, _ := f.kv.KVGet("location-history", "w:40"); got != started {
+		t.Errorf("the forget changed the running import's marker to %q", got)
+	}
+	if keys := f.keys("d:40:"); len(keys) != 0 {
+		t.Errorf("the forget left %v", keys)
+	}
+}
+
+// Segments go in parts of 5,000; a month of 5,001 is two, and both are read.
+func TestLocationHistorySegmentPartsAreAllRead(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"timelineObjects": [`)
+	base := time.Date(2019, 5, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 5001; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		s := base.Add(time.Duration(i) * 5 * time.Minute)
+		fmt.Fprintf(&b, `{"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": "p%d"}, "duration": {"startTimestamp": "%s", "endTimestamp": "%s"}}}`,
+			i, s.Format(time.RFC3339), s.Add(time.Minute).Format(time.RFC3339))
+	}
+	b.WriteString(`]}`)
+	f := locationPlugin(t, map[uint]string{1: b.String()})
+	f.mustImport(t, 1)
+	if keys := f.keys("d:1:s:2019-05:"); len(keys) != 2 {
+		t.Fatalf("segment parts = %v", keys)
+	}
+	last := base.Add(5000 * 5 * time.Minute).Add(30 * time.Second)
+	_, body := f.api(t, "at", map[string]any{"time": last.Format(time.RFC3339)})
+	if get(t, body, "segment", "place_id") != "p5000" {
+		t.Errorf("at the last visit: %v", body["segment"])
+	}
+	if _, body := f.api(t, "near", map[string]any{"point": "0, 0", "radius": "10"}); body["times"] != float64(5001) {
+		t.Errorf("near times = %v", body["times"])
+	}
+}
+
+// Past its limits an import stops reading and fails, keeping nothing, and a
+// "near" question stops counting and says to narrow it.
+func TestLocationHistoryLimits(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: timelineEditsFixture, 2: timelineEditsFixture})
+	f.pm.SetPluginSettings("location-history", map[string]any{"max_positions": float64(5)})
+	job := f.importResource(t, 1)
+	if job.Status != "failed" || !strings.Contains(job.Message, "more than 5 positions") || len(f.keys("")) != 0 {
+		t.Errorf("positions limit: %s %q, kept %v", job.Status, job.Message, f.keys(""))
+	}
+	f.pm.SetPluginSettings("location-history", map[string]any{"max_segments": float64(3)})
+	if job := f.importResource(t, 1); job.Status != "failed" || !strings.Contains(job.Message, "more than 3 visits and trips") {
+		t.Errorf("segments limit: %s %q", job.Status, job.Message)
+	}
+
+	f.pm.SetPluginSettings("location-history", map[string]any{"max_near_entries": float64(2)})
+	f.mustImport(t, 2)
+	status, body := f.api(t, "near", map[string]any{"point": "50.0, 8.0", "radius": "100"})
+	if status != 400 || !strings.Contains(fmt.Sprint(body["error"]), "more than 2 separate visits and stays") {
+		t.Errorf("near limit: %d %v", status, body)
+	}
+	f.pm.SetPluginSettings("location-history", map[string]any{})
+	if _, body := f.api(t, "near", map[string]any{"point": "50.0, 8.0", "radius": "100"}); body["times"] != float64(3) {
+		t.Errorf("default limits: %v", body)
 	}
 }

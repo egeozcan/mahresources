@@ -234,3 +234,37 @@ cross-import merge and ring buffer (`TestLocationHistoryNearMergesImportsAndKeep
 and for "at" across a month boundary, the accuracy is zero-padded so dedupe
 keeps the most precise duplicate, "before" is never after a fractional query
 time, and the stale storage descriptions.
+
+## Review round 5 (fresh subagent)
+
+A randomized check against a brute-force answer found no mismatches in the new
+layout. One P0 and one P1, both memory a crafted file could drive:
+
+- **P0: an import held a Lua table per segment** (~2.7 KB each) until it was
+  stored, so a few hundred MB of tiny segments could reach ~10 GB. Segments
+  are now packed strings while importing, like points (unpacked one at a time
+  when stored), and an import stops and fails past 4,000,000 positions or
+  400,000 visits and trips.
+- **P1: "near" kept a table of place names per visit.** It now keeps one place
+  string per entry and at most five per listed row, tracks the stay being
+  built in locals, and reuses the ring's 500 slots, so merging allocates
+  nothing per stay. A question stops past 1,000,000 separate visits and stays
+  and asks to be narrowed.
+
+Every round so far found the next structure that grew with what a file holds,
+so this round adds hard limits rather than only compacting: the three limits
+above are plugin settings (`max_positions`, `max_segments`,
+`max_near_entries`) with those defaults, which also lets
+`TestLocationHistoryLimits` exercise them. `TestLocationHistoryManyVisitsStayCompact`:
+100,000 visits import at ~560 bytes each and a "near" over them at ~570.
+
+P2/P3 fixed alongside: a forget no longer takes over or removes an import's
+marker in another process, and the sweep removes the stale marker of an
+interrupted forget (`TestLocationHistoryForgetMarkers`); a test crosses the
+5,000-segment part boundary; query times are clamped to 1990–2100 before the
+month search. Memory-measuring tests skip under `-race`.
+
+Left: one very long segment makes "at" scan the import's earlier segments
+(time only: 0.75 s with 200,000 visits).
+
+Re-measured on the 254 MB export: import 104 s, ~300 MB over idle (was ~830).

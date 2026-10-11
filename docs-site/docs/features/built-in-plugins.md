@@ -247,8 +247,9 @@ curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.672
 `offset` is `auto` or whole minutes east of UTC (`120` for UTC+02:00); `resource` limits a query to one import.
 
 - **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it. Deleting the resource removes it straight away unless the plugin is busy (an import running). Then, and for what an interrupted import left behind, a cleanup removes it the next time an administrator with no group scope opens the page or calls an endpoint (at most every ten minutes). Only such an administrator can tell a deleted resource from one outside their scope.
+- **Limits.** One import may hold at most 4,000,000 positions and 400,000 visits and trips (ten years of a dense phone history is under three million and a hundred thousand), and one "How often" question may count at most 1,000,000 separate visits and stays; past a limit the import fails and keeps nothing, and the question asks you to narrow it. All three are plugin settings.
 - **Access.** Every query first reads the resource the import came from as you, so an account sees only imports of resources it can read. Guests cannot forget an import.
-- **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by 700–850 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
+- **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by about 300 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
 
 ## Enabling a Plugin
 

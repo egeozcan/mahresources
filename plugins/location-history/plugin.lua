@@ -33,6 +33,11 @@ plugin = {
     version = "1.0",
     description = "Import a Google location export (Takeout Timeline JSON) and ask where you were at a given time, or how often you were near a place.",
     capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks" },
+    settings = {
+        { name = "max_positions", type = "number", label = "Most positions one import may hold", default = 4000000 },
+        { name = "max_segments", type = "number", label = "Most visits and trips one import may hold", default = 400000 },
+        { name = "max_near_entries", type = "number", label = "Most separate visits and stays one \"How often\" question may count", default = 1000000 },
+    },
 }
 
 local PAGE = "/plugins/location-history/query"
@@ -40,9 +45,21 @@ local CHUNK = 20000            -- positions per KV value, ~1 MB serialized
 -- Times outside 1990-2100 are corrupt, and dropped: a timestamp in the year
 -- 33658 would otherwise make an import walk thirty thousand years of months.
 local MIN_TIME, MAX_TIME = 631152000, 4102444800
+-- An import holds what it has read until it is stored, and "near" holds an
+-- entry per separate visit or run of fixes until it has merged them, so each
+-- stops past a limit rather than grow with whatever a file holds. Ten years of
+-- a dense phone history is under three million positions and a hundred
+-- thousand visits and trips. The limits are settings, for a deployment with
+-- more or less memory to spare.
+local function limit(name, default)
+    local n = tonumber(mah.get_setting(name))
+    if not n or n < 1 then return default end
+    return math.floor(n)
+end
 local WINDOW = 2 * 3600        -- "at": how far a fix may be from the asked time
 local PRESENCE_GAP = 3600      -- "near": fixes further apart start a new presence
 local MERGE_GAP = 60           -- "near": times there closer than this are one
+local MAX_PLACES = 5           -- "near": places named per row
 local MAX_ROWS = 500           -- "near": rows listed
 local MAX_RADIUS = 100000
 local EARTH_RADIUS = 6371008.8
@@ -280,7 +297,13 @@ end
 -- Parsing --------------------------------------------------------------------
 
 local function new_collector()
-    return { points = {}, segments = {} }
+    return { points = {}, segments = {},
+        max_points = limit("max_positions", 4000000), max_segments = limit("max_segments", 400000) }
+end
+
+-- Marks the collector full, which stops the read (see read_export).
+local function full(c, what, limit)
+    c.over = c.over or string.format("the export holds more than %d %s, more than one import can take", limit, what)
 end
 
 -- A point is held as one fixed-width string, "time|lat|lng|accuracy", until it
@@ -293,6 +316,7 @@ local POINT_FORMAT = "%013d|%.7f|%.7f|%09d"
 
 local function add_point(c, t, lat, lng, acc)
     if not t or t < MIN_TIME or t >= MAX_TIME or not valid(lat, lng) then return end
+    if #c.points >= c.max_points then return full(c, "positions", c.max_points) end
     c.points[#c.points + 1] = string.format(POINT_FORMAT, floor(t + 0.5), lat, lng, floor((tonumber(acc) or 0) + 0.5))
 end
 
@@ -305,9 +329,65 @@ end
 -- A text field from the file, or nil. Exports are not trusted to hold strings
 -- where strings belong, and a table stored here would break every query that
 -- prints it.
+local SEP = "\31" -- separates the fields of a packed segment
+
 local function text(v)
-    if type(v) == "string" or type(v) == "number" then return tostring(v) end
-    return nil
+    if type(v) ~= "string" and type(v) ~= "number" then return nil end
+    v = tostring(v)
+    -- The separator cannot appear in a field, or the segment would not unpack.
+    local at = find(v, SEP, 1, true)
+    while at do
+        v = sub(v, 1, at - 1) .. sub(v, at + 1)
+        at = find(v, SEP, at, true)
+    end
+    return v
+end
+
+-- A segment is held as one string until it is stored, like a point: a table
+-- with a dozen fields costs kilobytes. The zero-padded start sorts first.
+-- SEGMENT_FIELDS, below, lists the fields; these are packed after the start.
+local PACKED = { "k", "e", "lat", "lng", "lat2", "lng2", "place", "name", "type", "off", "edited", "dist" }
+local PACKED_NUMBER = { e = true, lat = true, lng = true, lat2 = true, lng2 = true, off = true, dist = true }
+
+local function pack_segment(seg)
+    local parts = { string.format("%013d", seg.s) }
+    for i, f in ipairs(PACKED) do
+        local v = seg[f]
+        if v == nil or v == false then
+            v = ""
+        elseif v == true then
+            v = "1"
+        elseif PACKED_NUMBER[f] then
+            v = string.format("%.17g", v)
+        end
+        parts[i + 1] = v
+    end
+    return table.concat(parts, SEP)
+end
+
+local function unpack_segment(str)
+    local seg, at, i = {}, 1, 0
+    while true do
+        local stop = find(str, SEP, at, true)
+        local v = sub(str, at, (stop or 0) - 1)
+        if i == 0 then
+            seg.s = tonumber(v)
+        else
+            local f = PACKED[i]
+            if v ~= "" then
+                if f == "edited" then
+                    seg.edited = true
+                elseif PACKED_NUMBER[f] then
+                    seg[f] = tonumber(v)
+                else
+                    seg[f] = v
+                end
+            end
+        end
+        if not stop then break end
+        at, i = stop + 1, i + 1
+    end
+    return seg
 end
 
 local function add_segment(c, seg)
@@ -316,11 +396,10 @@ local function add_segment(c, seg)
     seg.s, seg.e = floor(seg.s + 0.5), floor(seg.e + 0.5)
     if seg.lat then seg.lat, seg.lng = round7(seg.lat), round7(seg.lng) end
     if seg.lat2 then seg.lat2, seg.lng2 = round7(seg.lat2), round7(seg.lng2) end
-    c.segments[#c.segments + 1] = seg
+    if #c.segments >= c.max_segments then return full(c, "visits and trips", c.max_segments) end
+    c.segments[#c.segments + 1] = pack_segment(seg)
 end
 
--- A segment of the current timeline format, as found in Timeline Edits.json
--- (wrapped in .segment) and in the phone export (not wrapped).
 -- v if it is a table, otherwise an empty one: exports are not trusted to hold
 -- objects where objects belong, and indexing anything else would fail the
 -- whole import.
@@ -329,6 +408,8 @@ local function obj(v)
     return {}
 end
 
+-- A segment of the current timeline format, as found in Timeline Edits.json
+-- (wrapped in .segment) and in the phone export (not wrapped).
 local function semantic_segment(c, seg, edited)
     local s, s_off = parse_time(seg.startTime)
     local e = parse_time(seg.endTime)
@@ -441,9 +522,11 @@ local function read_export(id, progress)
         if not handler or index == nil or type(value) ~= "table" then return end
         format = format or handler[1]
         handler[2](c, value)
+        if c.over then return false end
         n = n + 1
         if n % 20000 == 0 then progress(n) end
     end)
+    if c.over then return nil, c.over end
     if not ok then return nil, err end
     if not format then
         return nil, "this is not a Google location export this plugin recognises "
@@ -479,9 +562,12 @@ local function remove_data(id)
 end
 
 local function forget(id)
-    mah.kv.set(writing_key(id), 0)
+    -- Mark the forget only where no import (in another server process) holds
+    -- the marker, and remove only that mark: overwriting or removing an
+    -- import's would leave what it goes on to write with no marker at all.
+    local mine = mah.kv.compare_and_set(writing_key(id), mah.kv.ABSENT, 0)
     remove_data(id)
-    mah.kv.delete(writing_key(id))
+    if mine and mah.kv.get(writing_key(id)) == 0 then mah.kv.delete(writing_key(id)) end
 end
 
 local function grow_box(box, lat, lng)
@@ -499,25 +585,13 @@ local function sorted_keys(t)
     return keys
 end
 
--- The offset most segments were recorded at, for showing positions (which
--- carry none) in local time.
-local function usual_offset(segments)
-    local counts, best, best_n = {}, nil, 0
-    for _, seg in ipairs(segments) do
-        if seg.off then
-            counts[seg.off] = (counts[seg.off] or 0) + 1
-            if counts[seg.off] > best_n then best, best_n = seg.off, counts[seg.off] end
-        end
-    end
-    return best
-end
 
 -- Writes a parsed export, replacing the resource's earlier import. The summary
 -- goes last, so a failure part way leaves no summary and therefore nothing a
 -- query would read; the next import clears the leftovers.
 local function store(id, name, format, c, progress)
     table.sort(c.points)
-    table.sort(c.segments, function(a, b) return a.s < b.s end)
+    table.sort(c.segments)
 
     local months = {}
     local function month(key)
@@ -544,7 +618,16 @@ local function store(id, name, format, c, progress)
         mah.kv.set(segments_key(id, seg_month, m.sparts), seg_cols)
         seg_cols, seg_n = nil, 0
     end
-    for _, seg in ipairs(c.segments) do
+    local offsets, usual, usual_n = {}, nil, 0
+    local seg_first, seg_last = nil, nil
+    for _, packed in ipairs(c.segments) do
+        local seg = unpack_segment(packed)
+        if seg.off then
+            offsets[seg.off] = (offsets[seg.off] or 0) + 1
+            if offsets[seg.off] > usual_n then usual, usual_n = seg.off, offsets[seg.off] end
+        end
+        seg_first = seg_first or seg.s
+        if not seg_last or seg.e > seg_last then seg_last = seg.e end
         local key = month_of(seg.s)
         if key ~= seg_month then
             write_segment_part()
@@ -617,13 +700,13 @@ local function store(id, name, format, c, progress)
     end
     mah.kv.set(index_key(id), index)
 
-    for _, seg in ipairs(c.segments) do
-        first = math.min(first or seg.s, seg.s)
-        final = math.max(final or seg.e, seg.e)
+    if seg_first then
+        first = math.min(first or seg_first, seg_first)
+        final = math.max(final or seg_last, seg_last)
     end
     local meta = {
         id = id, name = name, format = format, points = kept, segments = #c.segments,
-        first = first, last = final, offset = usual_offset(c.segments), span = span,
+        first = first, last = final, offset = usual, span = span,
         imported_at = mah.util.now_iso(),
     }
     mah.kv.set(meta_key(id), meta)
@@ -676,6 +759,8 @@ local function sweep_orphans()
         local started = id and tonumber(mah.kv.get(key))
         if started and not summarised[id] and mah.kv.get(meta_key(id)) == nil and now - started > WRITING_GRACE then
             forget(id)
+            -- forget leaves a marker it did not set; this one is abandoned.
+            if mah.kv.get(key) == started then mah.kv.delete(key) end
             forgotten = forgotten + 1
         end
     end
@@ -921,8 +1006,11 @@ local function where_at(imports, when, offset_param)
         end
     end
     -- Fixes are whole seconds: the last at or before t, the first after it.
-    local before = nearest_fix(imports, floor(t) + 1, -1)
-    local after = nearest_fix(imports, floor(t) + 1, 1)
+    -- No data lies outside MIN_TIME..MAX_TIME, and month keys only sort as
+    -- times inside it, so the search starts from t clamped there.
+    local search = math.max(MIN_TIME, math.min(floor(t) + 1, MAX_TIME - 1))
+    local before = nearest_fix(imports, search, -1)
+    local after = nearest_fix(imports, search, 1)
 
     local estimate = nil
     local near_before = before and t - before[1] <= WINDOW
@@ -994,7 +1082,8 @@ local function how_often_near(imports, args)
     -- of numbers, joined as they grow when they overlap, and then merged across
     -- lists into a running summary that keeps only the newest MAX_ROWS rows, so
     -- memory follows the number of separate times there, not of fixes.
-    local lists = {}
+    local lists, entries = {}, 0
+    local max_entries = limit("max_near_entries", 1000000)
     local function new_list()
         local list = { n = 0, s = {}, e = {}, fixes = {}, visits = {}, d = {}, places = {} }
         lists[#lists + 1] = list
@@ -1008,15 +1097,15 @@ local function how_often_near(imports, args)
             if d < list.d[n] then list.d[n] = d end
         else
             n = n + 1
+            entries = entries + 1
             list.n, list.s[n], list.e[n], list.fixes[n], list.visits[n], list.d[n] = n, s0, e0, fixes, visits, d
         end
-        if place then
-            list.places[n] = list.places[n] or {}
-            table.insert(list.places[n], place)
-        end
+        -- One place per entry, as a string column: the first visit's.
+        if place and not list.places[n] then list.places[n] = place end
     end
 
     for _, imp in ipairs(imports) do
+        if entries > max_entries then break end
         local visits, presences = new_list(), new_list()
         local in_presence, last_t = false, nil
         local idx = index_of(imp)
@@ -1024,6 +1113,7 @@ local function how_often_near(imports, args)
         -- the range can start up to the import's longest segment before it.
         local seg_from = from_t - (imp.meta.span or 0)
         for i, key in ipairs(idx.m) do
+            if entries > max_entries then break end
             local month_start = days_from_civil(tonumber(key:sub(1, 4)), tonumber(key:sub(6, 7)), 1) * 86400
             local month_end = days_from_civil(tonumber(next_month(key):sub(1, 4)), tonumber(next_month(key):sub(6, 7)), 1) * 86400
             local box = box_of(idx, i)
@@ -1041,6 +1131,7 @@ local function how_often_near(imports, args)
                                 if place == false then place = cols.place[j] end
                                 -- Only the part of a visit inside the range counts.
                                 add(visits, math.max(ss, from_t), math.min(se, to_t), 0, 1, d, place or nil)
+                                if entries > max_entries then return end
                             end
                         end
                     end
@@ -1060,6 +1151,7 @@ local function how_often_near(imports, args)
                                     if d < presences.d[n] then presences.d[n] = d end
                                 else
                                     add(presences, pt, pt, 1, 0, d, nil)
+                                    if entries > max_entries then return false end
                                 end
                                 in_presence, last_t = true, pt
                             elseif d - accs[i] > radius then
@@ -1077,19 +1169,31 @@ local function how_often_near(imports, args)
         end
     end
 
+    if entries > max_entries then
+        return nil, "more than " .. max_entries .. " separate visits and stays match; narrow the radius or the dates"
+    end
+
     -- Merge the lists in time order. Overlapping visits and presences, from
     -- any import, are one time there.
+    -- The stay being built is held in locals and a finished one is copied into
+    -- a reused slot of the ring of the newest MAX_ROWS, so merging allocates
+    -- nothing per stay.
     local days, day_count, total, first, last, times = {}, 0, 0, nil, nil, 0
-    local ring, top = {}, nil
-    local function finish(iv)
+    local ring = {}
+    local open, ts, te, tf, tv, td, tplaces = false, 0, 0, 0, 0, 0, {}
+    local function finish()
         times = times + 1
-        total = total + (iv.e - iv.s)
-        first = first and math.min(first, iv.s) or iv.s
-        last = last and math.max(last, iv.e) or iv.e
-        for day = local_day(iv.s, off), local_day(iv.e, off) do
+        total = total + (te - ts)
+        first = first and math.min(first, ts) or ts
+        last = last and math.max(last, te) or te
+        for day = local_day(ts, off), local_day(te, off) do
             if not days[day] then days[day] = true; day_count = day_count + 1 end
         end
-        ring[(times - 1) % MAX_ROWS + 1] = iv
+        local slot = (times - 1) % MAX_ROWS + 1
+        local row = ring[slot] or { places = {} }
+        ring[slot] = row
+        row.s, row.e, row.fixes, row.visits, row.d = ts, te, tf, tv, td
+        for k = 1, MAX_PLACES do row.places[k] = tplaces[k] end
     end
     local heads = {}
     for i = 1, #lists do heads[i] = 1 end
@@ -1102,25 +1206,32 @@ local function how_often_near(imports, args)
         local list, j = lists[pick], heads[pick]
         heads[pick] = j + 1
         local s0, e0 = list.s[j], list.e[j]
-        if top and s0 <= top.e + MERGE_GAP then
-            if e0 > top.e then top.e = e0 end
-            top.fixes, top.visits = top.fixes + list.fixes[j], top.visits + list.visits[j]
-            if list.d[j] < top.d then top.d = list.d[j] end
+        if open and s0 <= te + MERGE_GAP then
+            if e0 > te then te = e0 end
+            tf, tv = tf + list.fixes[j], tv + list.visits[j]
+            if list.d[j] < td then td = list.d[j] end
         else
-            if top then finish(top) end
-            top = { s = s0, e = e0, fixes = list.fixes[j], visits = list.visits[j], d = list.d[j], places = {} }
+            if open then finish() end
+            open, ts, te, tf, tv, td = true, s0, e0, list.fixes[j], list.visits[j], list.d[j]
+            for k = 1, MAX_PLACES do tplaces[k] = nil end
         end
-        for _, place in ipairs(list.places[j] or {}) do top.places[#top.places + 1] = place end
+        -- A row names at most MAX_PLACES places, so a stay made of many
+        -- visits holds a few strings, not one per visit.
+        local place = list.places[j]
+        if place then
+            for k = 1, MAX_PLACES do
+                if tplaces[k] == place then break end
+                if tplaces[k] == nil then tplaces[k] = place; break end
+            end
+        end
     end
-    if top then finish(top) end
+    if open then finish() end
 
     local rows = {}
     for k = 0, math.min(times, MAX_ROWS) - 1 do
         local iv = ring[(times - 1 - k) % MAX_ROWS + 1]
-        local places, seen = {}, {}
-        for _, p in ipairs(iv.places) do
-            if p and not seen[p] then seen[p] = true; places[#places + 1] = p end
-        end
+        local places = {}
+        for k = 1, MAX_PLACES do places[k] = iv.places[k] end
         rows[#rows + 1] = { start = format_time(iv.s, off), ["end"] = format_time(iv.e, off), seconds = iv.e - iv.s,
             fixes = iv.fixes, visits = iv.visits, places = mah.json.array(places), closest_m = floor(iv.d + 0.5) }
     end
