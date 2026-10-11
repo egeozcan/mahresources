@@ -726,3 +726,153 @@ func TestLocationHistoryNearClipsVisitsToTheRange(t *testing.T) {
 		t.Errorf("body = %v", body)
 	}
 }
+
+// A segment is stored once, under the month it starts in, however long it is:
+// one visit from 1990 to 2099 used to be written into 1,320 months.
+func TestLocationHistoryStoresALongSegmentOnce(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: `{"timelineObjects": [
+ {"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": "forever"},
+   "duration": {"startTimestamp": "1990-01-02T00:00:00Z", "endTimestamp": "2099-12-01T00:00:00Z"}}},
+ {"placeVisit": {"location": {"latitudeE7": 10000000, "longitudeE7": 0, "placeId": "brief"},
+   "duration": {"startTimestamp": "2050-06-01T10:00:00Z", "endTimestamp": "2050-06-01T11:00:00Z"}}}
+]}`})
+	f.mustImport(t, 1)
+	if keys := f.keys("d:1:s:"); len(keys) != 2 {
+		t.Fatalf("segment keys = %v", keys)
+	}
+	// Found from a month it does not start in, while a shorter covering
+	// segment wins where they overlap.
+	_, body := f.api(t, "at", map[string]any{"time": "2050-06-01T09:00:00Z"})
+	if get(t, body, "segment", "place_id") != "forever" {
+		t.Errorf("at 09:00: %v", body["segment"])
+	}
+	_, body = f.api(t, "at", map[string]any{"time": "2050-06-01T10:30:00Z"})
+	if get(t, body, "segment", "place_id") != "brief" {
+		t.Errorf("at 10:30: %v", body["segment"])
+	}
+	// "near" over a range finds it although it started decades earlier, and
+	// counts only the part inside the range.
+	_, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "50", "from": "2050-01-01", "to": "2050-01-02", "offset": "0"})
+	if body["times"] != float64(1) || body["total_seconds"] != float64(2*86400-1) {
+		t.Errorf("near: %v", body)
+	}
+}
+
+// Every request reads every visible import's summary, so a summary must stay
+// small however many months an import spans; the month index is read only by
+// queries that use the import, and as columns.
+func TestLocationHistoryManyLongImportsStayCheapPerRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports thirty files")
+	}
+	var b strings.Builder
+	b.WriteString(`{"locations": [`)
+	for y := 1990; y < 2100; y++ {
+		for m := 1; m <= 12; m++ {
+			if y > 1990 || m > 1 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `{"latitudeE7": 0, "longitudeE7": 0, "timestamp": "%04d-%02d-15T12:00:00Z"}`, y, m)
+		}
+	}
+	b.WriteString(`]}`)
+	files := map[uint]string{}
+	for id := uint(1); id <= 30; id++ {
+		files[id] = b.String()
+	}
+	f := locationPlugin(t, files)
+	for id := uint(1); id <= 30; id++ {
+		f.mustImport(t, id)
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, body := f.api(t, "imports", nil)
+	runtime.ReadMemStats(&after)
+	if n := len(body["imports"].([]any)); n != 30 {
+		t.Fatalf("imports = %d", n)
+	}
+	// Allocation over the request, garbage included.
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 32<<20 {
+		t.Errorf("listing 30 century-long imports allocated %d MB", grew>>20)
+	}
+	_, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "10"})
+	if body["times"] != float64(1320) {
+		t.Errorf("near times = %v", body["times"])
+	}
+}
+
+// Times merge across imports and the newest 500 are listed: two imports of
+// the same 1,210 stays, one 30 s behind the other, are 1,210 times there.
+func TestLocationHistoryNearMergesImportsAndKeepsTheNewestRows(t *testing.T) {
+	file := func(shift int64) string {
+		var b strings.Builder
+		b.WriteString(`{"locations": [`)
+		base := int64(1556668800) // 2019-05-01T00:00:00Z
+		for k := int64(0); k < 1210; k++ {
+			if k > 0 {
+				b.WriteString(",")
+			}
+			at := base + k*7200 + shift
+			// At the spot, then a sharp fix 10 km away an hour later.
+			fmt.Fprintf(&b, `{"latitudeE7": 0, "longitudeE7": 0, "accuracy": 5, "timestampMs": "%d"},`, at*1000)
+			fmt.Fprintf(&b, `{"latitudeE7": 900000, "longitudeE7": 0, "accuracy": 5, "timestampMs": "%d"}`, (at+3600)*1000)
+		}
+		b.WriteString(`]}`)
+		return b.String()
+	}
+	f := locationPlugin(t, map[uint]string{1: file(0), 2: file(30)})
+	f.mustImport(t, 1)
+	f.mustImport(t, 2)
+	_, body := f.api(t, "near", map[string]any{"point": "0, 0", "radius": "100", "offset": "0"})
+	rows := body["rows"].([]any)
+	if body["times"] != float64(1210) || len(rows) != 500 || body["rows_omitted"] != float64(710) {
+		t.Fatalf("times %v, rows %d, omitted %v", body["times"], len(rows), body["rows_omitted"])
+	}
+	newest, oldest := rows[0].(map[string]any), rows[499].(map[string]any)
+	// Stay k starts k * 2 h after 2019-05-01 00:00: 1209 is 100 days 18 h on,
+	// and the oldest listed, 710, is 59 days 4 h on.
+	if newest["start"] != "2019-08-09 18:00:00" || newest["end"] != "2019-08-09 18:00:30" || newest["fixes"] != float64(2) {
+		t.Errorf("newest = %v", newest)
+	}
+	if oldest["start"] != "2019-06-29 04:00:00" {
+		t.Errorf("oldest listed = %v", oldest)
+	}
+	if body["first"] != "2019-05-01 00:00:00" || body["total_seconds"] != float64(1210*30) {
+		t.Errorf("first %v, total %v", body["first"], body["total_seconds"])
+	}
+}
+
+// "at" looks across a month boundary for the fixes either side.
+func TestLocationHistoryAtAcrossAMonthBoundary(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: `{"locations": [
+ {"latitudeE7": 0, "longitudeE7": 0, "timestamp": "2019-04-30T23:59:00Z"},
+ {"latitudeE7": 100, "longitudeE7": 0, "timestamp": "2019-05-01T00:01:00Z"}
+]}`})
+	f.mustImport(t, 1)
+	_, body := f.api(t, "at", map[string]any{"time": "2019-05-01T00:00:00Z"})
+	if get(t, body, "before", "time") != "2019-04-30 23:59:00" || get(t, body, "after", "time") != "2019-05-01 00:01:00" {
+		t.Errorf("before %v, after %v", body["before"], body["after"])
+	}
+}
+
+// Objects where the format has objects, but given as something else, are
+// skipped rather than failing the whole import.
+func TestLocationHistorySkipsWrongShapedObjects(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{
+		1: `{"timelineObjects": [
+ {"placeVisit": {"location": 5, "duration": {"startTimestamp": "2019-05-01T09:00:00Z", "endTimestamp": "2019-05-01T10:00:00Z"}}},
+ {"activitySegment": {"topCandidate": 1, "duration": {"startTimestamp": "2019-05-01T10:00:00Z", "endTimestamp": "2019-05-01T11:00:00Z"},
+   "simplifiedRawPath": {"points": [7, {"latE7": 0, "lngE7": 0, "timestamp": "2019-05-01T10:30:00Z"}]}}}
+]}`,
+		2: `{"semanticSegments": [
+ {"startTime": "2019-05-01T09:00:00Z", "endTime": "2019-05-01T10:00:00Z", "segment": 3, "visit": {"topCandidate": "x"}},
+ {"startTime": "2019-05-01T10:00:00Z", "endTime": "2019-05-01T11:00:00Z", "timelinePath": [9, {"point": "0°, 0°", "time": "2019-05-01T10:30:00Z"}]}
+]}`,
+	})
+	for _, id := range []uint{1, 2} {
+		if msg := f.mustImport(t, id); !strings.Contains(msg, "Imported 1 positions") {
+			t.Errorf("import %d: %q", id, msg)
+		}
+	}
+}

@@ -4,9 +4,17 @@
 -- and keeps the positions and visit/activity segments in mah.kv, bucketed by
 -- UTC month, under keys that name the resource:
 --
---   imp:<id>                   summary: format, counts, range, months
+--   imp:<id>                   summary: format, counts, range, longest segment
+--   idx:<id>                   month index, as columns: months, counts, boxes
 --   d:<id>:p:YYYY-MM:<part>    positions, sorted, as columns {t, lat, lng, acc}
---   d:<id>:s:YYYY-MM           segments overlapping that month
+--   d:<id>:s:YYYY-MM:<part>    segments starting that month, sorted, as columns
+--   w:<id>                     set while an import or a forget is writing
+--   sweep:last                 when the orphan sweep last ran
+--
+-- Nothing is stored more than once and nothing is stored as a table per item:
+-- mah.kv.get turns every table it returns into a Lua table of a few kilobytes,
+-- so a layout with a table per point, per segment or per month costs memory in
+-- proportion to the data on every query.
 --
 -- mah.kv is per plugin, not per user, so every read goes through
 -- mah.db.get_resource first: that call is bound to the acting principal, and an
@@ -278,8 +286,10 @@ end
 -- A point is held as one fixed-width string, "time|lat|lng|accuracy", until it
 -- is stored: a Lua table per point costs about ten times the memory, and the
 -- zero-padded time makes the strings sort by time with the built-in
--- comparison instead of a Lua comparator.
-local POINT_FORMAT = "%013d|%.7f|%.7f|%d"
+-- comparison instead of a Lua comparator. The accuracy is zero-padded too, so
+-- of two fixes at the same time and place the more precise sorts first and is
+-- the one kept.
+local POINT_FORMAT = "%013d|%.7f|%.7f|%09d"
 
 local function add_point(c, t, lat, lng, acc)
     if not t or t < MIN_TIME or t >= MAX_TIME or not valid(lat, lng) then return end
@@ -311,13 +321,21 @@ end
 
 -- A segment of the current timeline format, as found in Timeline Edits.json
 -- (wrapped in .segment) and in the phone export (not wrapped).
+-- v if it is a table, otherwise an empty one: exports are not trusted to hold
+-- objects where objects belong, and indexing anything else would fail the
+-- whole import.
+local function obj(v)
+    if type(v) == "table" then return v end
+    return {}
+end
+
 local function semantic_segment(c, seg, edited)
     local s, s_off = parse_time(seg.startTime)
     local e = parse_time(seg.endTime)
     local off = tonumber(seg.startTimeTimezoneUtcOffsetMinutes) or s_off
-    local inner = seg.segment or seg
+    local inner = type(seg.segment) == "table" and seg.segment or seg
     if type(inner.visit) == "table" then
-        local top = inner.visit.topCandidate or {}
+        local top = obj(inner.visit.topCandidate)
         local lat, lng = coord(top.placeLocation)
         add_segment(c, { k = "visit", s = s, e = e, lat = lat, lng = lng, off = off, edited = edited,
             place = text(top.placeId or top.placeID), type = text(top.semanticType) })
@@ -325,12 +343,13 @@ local function semantic_segment(c, seg, edited)
         local a = inner.activity
         local lat, lng = coord(a.start)
         local lat2, lng2 = coord(a["end"])
-        local top = a.topCandidate or {}
+        local top = obj(a.topCandidate)
         add_segment(c, { k = "activity", s = s, e = e, lat = lat, lng = lng, lat2 = lat2, lng2 = lng2,
             off = off, edited = edited, type = text(top.type), dist = tonumber(a.distanceMeters) })
     end
     if type(inner.timelinePath) == "table" then
         for _, p in ipairs(inner.timelinePath) do
+            p = obj(p)
             local lat, lng = coord(p.point)
             local t = parse_time(p.time)
             if not t and s and tonumber(p.durationMinutesOffsetFromStartTime) then
@@ -376,15 +395,16 @@ end
 local function legacy_path(c, path)
     if type(path) ~= "table" or type(path.points) ~= "table" then return end
     for _, p in ipairs(path.points) do
+        p = obj(p)
         local lat, lng = coord(p)
         add_point(c, parse_time(p.timestamp) or parse_ms(p.timestampMs), lat, lng, p.accuracyMeters)
     end
 end
 
-local function timeline_object(c, obj)
-    local v, a = obj.placeVisit, obj.activitySegment
+local function timeline_object(c, entry)
+    local v, a = entry.placeVisit, entry.activitySegment
     if type(v) == "table" then
-        local loc = v.location or {}
+        local loc = obj(v.location)
         local lat, lng = coord(loc)
         add_segment(c, { k = "visit", s = legacy_time(v.duration, "start"), e = legacy_time(v.duration, "end"),
             lat = lat, lng = lng, place = text(loc.placeId), name = text(loc.name), type = text(loc.semanticType) })
@@ -435,18 +455,32 @@ end
 -- Storage --------------------------------------------------------------------
 
 local function meta_key(id) return "imp:" .. id end
+local function index_key(id) return "idx:" .. id end
 local function data_prefix(id) return "d:" .. id .. ":" end
 local function points_key(id, month, part) return "d:" .. id .. ":p:" .. month .. ":" .. part end
-local function segments_key(id, month) return "d:" .. id .. ":s:" .. month end
+local function segments_key(id, month, part) return "d:" .. id .. ":s:" .. month .. ":" .. part end
 
--- Set while an import is writing, to the time it started: see sweep_orphans.
+-- Set while an import or a forget is writing: to the time an import started,
+-- or 0 for a forget. One left behind marks data a stopped write left without a
+-- summary; see sweep_orphans.
 local function writing_key(id) return "w:" .. id end
 
-local function forget(id)
+-- The fields of a segment, stored as one column each. A missing value is
+-- stored as false, since a JSON null would leave a hole in the column.
+local SEGMENT_FIELDS = { "k", "s", "e", "lat", "lng", "lat2", "lng2", "place", "name", "type", "off", "edited", "dist" }
+local SEGMENT_CHUNK = 5000
+
+local function remove_data(id)
     mah.kv.delete(meta_key(id))
+    mah.kv.delete(index_key(id))
     for _, key in ipairs(mah.kv.list(data_prefix(id))) do
         mah.kv.delete(key)
     end
+end
+
+local function forget(id)
+    mah.kv.set(writing_key(id), 0)
+    remove_data(id)
     mah.kv.delete(writing_key(id))
 end
 
@@ -489,24 +523,49 @@ local function store(id, name, format, c, progress)
     local function month(key)
         local m = months[key]
         if not m then
-            m = { p = 0, parts = 0, s = 0, segments = {} }
+            m = { p = 0, parts = 0, s = 0, sparts = 0 }
             months[key] = m
         end
         return m
     end
-    for _, seg in ipairs(c.segments) do
-        local key, final = month_of(seg.s), month_of(seg.e)
-        while true do
-            local m = month(key)
-            m.segments[#m.segments + 1] = seg
-            m.box = grow_box(grow_box(m.box, seg.lat, seg.lng), seg.lat2, seg.lng2)
-            if key == final then break end
-            key = next_month(key)
-        end
-    end
 
-    forget(id)
     mah.kv.set(writing_key(id), mah.util.now())
+    remove_data(id)
+
+    -- Segments, each once, under the month it starts in. A query looking for
+    -- segments overlapping a time looks back as far as the longest one.
+    local span = 0
+    local seg_month, seg_cols, seg_n = nil, nil, 0
+    local function write_segment_part()
+        if seg_n == 0 then return end
+        local m = month(seg_month)
+        m.sparts = m.sparts + 1
+        m.s = m.s + seg_n
+        mah.kv.set(segments_key(id, seg_month, m.sparts), seg_cols)
+        seg_cols, seg_n = nil, 0
+    end
+    for _, seg in ipairs(c.segments) do
+        local key = month_of(seg.s)
+        if key ~= seg_month then
+            write_segment_part()
+            seg_month = key
+        end
+        if not seg_cols then
+            seg_cols = {}
+            for _, f in ipairs(SEGMENT_FIELDS) do seg_cols[f] = {} end
+        end
+        seg_n = seg_n + 1
+        for _, f in ipairs(SEGMENT_FIELDS) do
+            local v = seg[f]
+            if v == nil then v = false end
+            seg_cols[f][seg_n] = v
+        end
+        local m = month(key)
+        m.box = grow_box(grow_box(m.box, seg.lat, seg.lng), seg.lat2, seg.lng2)
+        if seg.e - seg.s > span then span = seg.e - seg.s end
+        if seg_n == SEGMENT_CHUNK then write_segment_part() end
+    end
+    write_segment_part()
 
     -- Points arrive sorted, so they are written a part at a time as they
     -- come, each part as four columns of numbers. A table per point costs
@@ -548,11 +607,15 @@ local function store(id, name, format, c, progress)
     write_part()
     c.points = nil
 
-    local summary = {}
-    for key, m in pairs(months) do
-        if #m.segments > 0 then mah.kv.set(segments_key(id, key), m.segments) end
-        summary[key] = { p = m.p, parts = m.parts, s = #m.segments, box = m.box }
+    -- The month index, as columns in month order.
+    local index = { m = {}, p = {}, parts = {}, s = {}, sparts = {}, b1 = {}, b2 = {}, b3 = {}, b4 = {} }
+    for i, key in ipairs(sorted_keys(months)) do
+        local m = months[key]
+        local box = m.box or { false, false, false, false }
+        index.m[i], index.p[i], index.parts[i], index.s[i], index.sparts[i] = key, m.p, m.parts, m.s, m.sparts
+        index.b1[i], index.b2[i], index.b3[i], index.b4[i] = box[1], box[2], box[3], box[4]
     end
+    mah.kv.set(index_key(id), index)
 
     for _, seg in ipairs(c.segments) do
         first = math.min(first or seg.s, seg.s)
@@ -560,8 +623,8 @@ local function store(id, name, format, c, progress)
     end
     local meta = {
         id = id, name = name, format = format, points = kept, segments = #c.segments,
-        first = first, last = final, offset = usual_offset(c.segments),
-        imported_at = mah.util.now_iso(), months = summary,
+        first = first, last = final, offset = usual_offset(c.segments), span = span,
+        imported_at = mah.util.now_iso(),
     }
     mah.kv.set(meta_key(id), meta)
     mah.kv.delete(writing_key(id))
@@ -581,7 +644,7 @@ local WRITING_GRACE = 15 * 60
 local SWEEP_EVERY = 10 * 60
 
 -- Forgets every import whose resource no longer exists, and the data of any
--- import that stopped before writing its summary (a timeout part way through
+-- import or forget that stopped before finishing (a timeout part way through
 -- store). The delete hook is a notification the host drops when the plugin is
 -- busy (an import holds it for minutes), so this catches what it missed.
 --
@@ -603,17 +666,15 @@ local function sweep_orphans()
             end
         end
     end
-    local unsummarised = {}
-    for _, key in ipairs(mah.kv.list("d:")) do
-        local id = tonumber(key:match("^d:(%d+):"))
-        if id and not summarised[id] then unsummarised[id] = true end
-    end
+    -- Every write that can stop part way -- an import, a forget -- leaves its
+    -- marker until it finishes, so data without a summary always has one.
     local now = mah.util.now()
-    for id in pairs(unsummarised) do
+    for _, key in ipairs(mah.kv.list("w:")) do
+        local id = tonumber(key:match("^w:(%d+)$"))
         -- Read again just before forgetting: in another process, an import may
-        -- have finished (summary written, marker removed) since the lists above.
-        local started = tonumber(mah.kv.get(writing_key(id)))
-        if mah.kv.get(meta_key(id)) == nil and (not started or now - started > WRITING_GRACE) then
+        -- have finished (summary written, marker removed) since the list above.
+        local started = id and tonumber(mah.kv.get(key))
+        if started and not summarised[id] and mah.kv.get(meta_key(id)) == nil and now - started > WRITING_GRACE then
             forget(id)
             forgotten = forgotten + 1
         end
@@ -659,16 +720,67 @@ local function visible_imports(only)
     return list
 end
 
+-- An import's month index, loaded once per request and only for the imports a
+-- query reads. idx.at maps a month to its row.
+local function index_of(imp)
+    if imp.index then return imp.index end
+    local idx = mah.kv.get(index_key(imp.id))
+    if type(idx) ~= "table" or type(idx.m) ~= "table" then idx = { m = {} } end
+    idx.at = {}
+    for i, key in ipairs(idx.m) do idx.at[key] = i end
+    imp.index = idx
+    return idx
+end
+
+-- The box of a month's row, or nil.
+local function box_of(idx, i)
+    if idx.b1[i] == false then return nil end
+    return { idx.b1[i], idx.b2[i], idx.b3[i], idx.b4[i] }
+end
+
 -- Calls fn(cols) with each part of a month's positions in time order, one
 -- part in memory at a time, until fn returns false. cols holds the columns t,
 -- lat, lng and acc.
 local function each_part(imp, month, fn)
-    local info = imp.meta.months[month]
-    if not info or info.p == 0 then return end
-    for part = 1, info.parts do
+    local idx = index_of(imp)
+    local i = idx.at[month]
+    if not i or idx.p[i] == 0 then return end
+    for part = 1, idx.parts[i] do
         local cols = mah.kv.get(points_key(imp.id, month, part))
         if type(cols) == "table" and type(cols.t) == "table" and fn(cols) == false then return end
     end
+end
+
+-- Calls fn(cols, n) with each part of the segments starting in a month, in
+-- start order. cols holds a column per SEGMENT_FIELDS name, false for missing.
+local function each_segment_part(imp, month, fn)
+    local idx = index_of(imp)
+    local i = idx.at[month]
+    if not i or idx.s[i] == 0 then return end
+    for part = 1, idx.sparts[i] do
+        local cols = mah.kv.get(segments_key(imp.id, month, part))
+        if type(cols) == "table" and type(cols.s) == "table" then fn(cols, #cols.s) end
+    end
+end
+
+-- One segment out of its columns, as a table.
+local function segment_at(cols, i)
+    local seg = {}
+    for _, f in ipairs(SEGMENT_FIELDS) do
+        local v = cols[f][i]
+        if v ~= false then seg[f] = v end
+    end
+    return seg
+end
+
+-- Months of an import with data between two times, oldest first. Only months
+-- the import has are visited, however far apart the times.
+local function months_between(imp, from_t, to_t)
+    local out, from_key, to_key = {}, month_of(math.max(from_t, MIN_TIME)), month_of(math.min(to_t, MAX_TIME - 1))
+    for _, key in ipairs(index_of(imp).m) do
+        if key >= from_key and key <= to_key then out[#out + 1] = key end
+    end
+    return out
 end
 
 -- The largest index in the sorted times ts whose time is before t, or 0.
@@ -683,23 +795,6 @@ end
 
 local function point_at(cols, i)
     return { cols.t[i], cols.lat[i], cols.lng[i], cols.acc[i] }
-end
-
-local function load_segments(imp, month)
-    local info = imp.meta.months[month]
-    if not info or info.s == 0 then return {} end
-    return mah.kv.get(segments_key(imp.id, month)) or {}
-end
-
--- Months of an import between two times, oldest first.
-local function months_between(imp, from_t, to_t)
-    local out, key, final = {}, month_of(from_t), month_of(to_t)
-    while true do
-        if imp.meta.months[key] then out[#out + 1] = key end
-        if key == final then break end
-        key = next_month(key)
-    end
-    return out
 end
 
 -- Queries --------------------------------------------------------------------
@@ -725,13 +820,16 @@ end
 local function offset_near(imports, t)
     local best, best_gap = nil, 86400
     for _, imp in ipairs(imports) do
-        for _, key in ipairs(months_between(imp, t - 86400, t + 86400)) do
-            for _, seg in ipairs(load_segments(imp, key)) do
-                if seg.off then
-                    local gap = (t < seg.s and seg.s - t) or (t > seg.e and t - seg.e) or 0
-                    if gap < best_gap or (gap == best_gap and best == nil) then best, best_gap = seg.off, gap end
+        for _, key in ipairs(months_between(imp, t - 86400 - (imp.meta.span or 0), t + 86400)) do
+            each_segment_part(imp, key, function(cols, n)
+                for i = 1, n do
+                    local seg_off, ss, se = cols.off[i], cols.s[i], cols.e[i]
+                    if seg_off ~= false then
+                        local gap = (t < ss and ss - t) or (t > se and t - se) or 0
+                        if gap < best_gap or (gap == best_gap and best == nil) then best, best_gap = seg_off, gap end
+                    end
                 end
-            end
+            end)
         end
     end
     if best then return best end
@@ -761,7 +859,7 @@ end
 local function nearest_fix(imports, t, dir)
     local best = nil
     for _, imp in ipairs(imports) do
-        local keys = sorted_keys(imp.meta.months)
+        local keys = index_of(imp).m
         local here = month_of(t)
         local first, last, step = #keys, 1, -1
         if dir > 0 then first, last, step = 1, #keys, 1 end
@@ -811,12 +909,20 @@ local function where_at(imports, when, offset_param)
 
     local seg = nil
     for _, imp in ipairs(imports) do
-        for _, s in ipairs(load_segments(imp, month_of(t))) do
-            if s.s <= t and t <= s.e and better_segment(seg, s) then seg = s end
+        for _, key in ipairs(months_between(imp, t - (imp.meta.span or 0), t)) do
+            each_segment_part(imp, key, function(cols, n)
+                for i = 1, n do
+                    if cols.s[i] <= t and t <= cols.e[i] then
+                        local candidate = segment_at(cols, i)
+                        if better_segment(seg, candidate) then seg = candidate end
+                    end
+                end
+            end)
         end
     end
-    local before = nearest_fix(imports, t + 1, -1)
-    local after = nearest_fix(imports, t + 1, 1)
+    -- Fixes are whole seconds: the last at or before t, the first after it.
+    local before = nearest_fix(imports, floor(t) + 1, -1)
+    local after = nearest_fix(imports, floor(t) + 1, 1)
 
     local estimate = nil
     local near_before = before and t - before[1] <= WINDOW
@@ -888,7 +994,7 @@ local function how_often_near(imports, args)
     -- of numbers, joined as they grow when they overlap, and then merged across
     -- lists into a running summary that keeps only the newest MAX_ROWS rows, so
     -- memory follows the number of separate times there, not of fixes.
-    local lists, seen_visits = {}, {}
+    local lists = {}
     local function new_list()
         local list = { n = 0, s = {}, e = {}, fixes = {}, visits = {}, d = {}, places = {} }
         lists[#lists + 1] = list
@@ -913,21 +1019,34 @@ local function how_often_near(imports, args)
     for _, imp in ipairs(imports) do
         local visits, presences = new_list(), new_list()
         local in_presence, last_t = false, nil
-        for _, key in ipairs(sorted_keys(imp.meta.months)) do
-            local info = imp.meta.months[key]
+        local idx = index_of(imp)
+        -- A segment is stored under the month it starts in, so one overlapping
+        -- the range can start up to the import's longest segment before it.
+        local seg_from = from_t - (imp.meta.span or 0)
+        for i, key in ipairs(idx.m) do
             local month_start = days_from_civil(tonumber(key:sub(1, 4)), tonumber(key:sub(6, 7)), 1) * 86400
             local month_end = days_from_civil(tonumber(next_month(key):sub(1, 4)), tonumber(next_month(key):sub(6, 7)), 1) * 86400
-            if month_end > from_t and month_start <= to_t and info.box and distance_to_box(lat, lng, info.box) <= radius then
-                for _, seg in ipairs(load_segments(imp, key)) do
-                    local id = seg.s .. ":" .. seg.e .. ":" .. (seg.place or "")
-                    if seg.k == "visit" and seg.lat and not seen_visits[id] and seg.e >= from_t and seg.s <= to_t
-                        and distance(lat, lng, seg.lat, seg.lng) <= radius then
-                        seen_visits[id] = true
-                        -- Only the part of a visit inside the range counts.
-                        add(visits, math.max(seg.s, from_t), math.min(seg.e, to_t), 0, 1,
-                            distance(lat, lng, seg.lat, seg.lng), seg.name or seg.place)
+            local box = box_of(idx, i)
+            local near = box and distance_to_box(lat, lng, box) <= radius
+            if near and month_end > seg_from and month_start <= to_t then
+                -- Months in order and segments in start order within each: the
+                -- visits list stays in start order, clipped or not.
+                each_segment_part(imp, key, function(cols, n)
+                    for j = 1, n do
+                        local slat, slng, ss, se = cols.lat[j], cols.lng[j], cols.s[j], cols.e[j]
+                        if cols.k[j] == "visit" and slat ~= false and se >= from_t and ss <= to_t then
+                            local d = distance(lat, lng, slat, slng)
+                            if d <= radius then
+                                local place = cols.name[j]
+                                if place == false then place = cols.place[j] end
+                                -- Only the part of a visit inside the range counts.
+                                add(visits, math.max(ss, from_t), math.min(se, to_t), 0, 1, d, place or nil)
+                            end
+                        end
                     end
-                end
+                end)
+            end
+            if near and month_end > from_t and month_start <= to_t then
                 each_part(imp, key, function(cols)
                     local ts, lats, lngs, accs = cols.t, cols.lat, cols.lng, cols.acc
                     for i = 1, #ts do

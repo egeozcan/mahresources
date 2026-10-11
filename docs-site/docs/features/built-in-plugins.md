@@ -248,7 +248,7 @@ curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.672
 
 - **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it. Deleting the resource removes it straight away unless the plugin is busy (an import running). Then, and for what an interrupted import left behind, a cleanup removes it the next time an administrator with no group scope opens the page or calls an endpoint (at most every ten minutes). Only such an administrator can tell a deleted resource from one outside their scope.
 - **Access.** Every query first reads the resource the import came from as you, so an account sees only imports of resources it can read. Guests cannot forget an import.
-- **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by about 700 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
+- **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by 700–850 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
 
 ## Enabling a Plugin
 

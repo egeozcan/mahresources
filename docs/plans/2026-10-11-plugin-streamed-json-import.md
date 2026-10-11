@@ -208,3 +208,29 @@ would be a separate, host-wide change.
 
 Re-measured on the 254 MB export: import 118 s and ~700 MB over idle (98 s /
 ~580 MB last time, partly run-to-run noise); a ten-year "near" 11 s (was 14 s).
+
+## Review round 4 (fresh subagent)
+
+No regressions from round 3's rewrite (the reviewer checked visit ordering,
+presence boundaries across months and parts, the merge, the ring buffer and
+the binary search with experiments). Two P1s, both abuse cases a user-role
+account could trigger with small crafted files, both fixed:
+
+- **A segment was stored once per month it spanned.** A 1990–2099 visit was
+  written into 1,320 months; a 3 MB file could write ~1.5 GB. Segments are
+  now stored once, under their start month, as columns in parts of 5,000, and
+  each import records its longest segment so queries look back that far.
+  `TestLocationHistoryStoresALongSegmentOnce`.
+- **Every request loaded every import's per-month summary as tables.** The
+  summary is now small (`imp:<id>`), and the month index is a separate
+  columnar value (`idx:<id>`) loaded only for imports a query reads. The sweep
+  finds interrupted writes through their `w:<id>` markers (a forget now sets
+  one too) instead of listing every data key.
+  `TestLocationHistoryManyLongImportsStayCheapPerRequest`.
+
+P2/P3s fixed alongside: wrong-shaped objects are skipped rather than failing
+the import (`TestLocationHistorySkipsWrongShapedObjects`), tests for the
+cross-import merge and ring buffer (`TestLocationHistoryNearMergesImportsAndKeepsTheNewestRows`)
+and for "at" across a month boundary, the accuracy is zero-padded so dedupe
+keeps the most precise duplicate, "before" is never after a fractional query
+time, and the stale storage descriptions.

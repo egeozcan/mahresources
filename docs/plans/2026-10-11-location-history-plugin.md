@@ -48,13 +48,20 @@ offsets and fractional seconds.
 **Storage** is `mah.kv`, keyed by resource and UTC month, so a query touches
 only the months it needs:
 
-- `imp:<id>` — format, counts, first/last time, list of months and each
-  month's bounding box, import time.
-- `d:<id>:p:YYYY-MM:<part>` — points as `[epoch, lat, lng, accuracy_m]`,
-  sorted, 20,000 per part.
-- `d:<id>:s:YYYY-MM` — segments as `{k="visit"|"activity", s, e, lat, lng,
-  (lat2, lng2), place, type, off, edited}`, sorted by start. A segment is stored
-  under every month it overlaps.
+- `imp:<id>` — format, counts, first/last time, usual offset, longest
+  segment, import time.
+- `idx:<id>` — the month index as columns: months, counts, parts, boxes.
+- `d:<id>:p:YYYY-MM:<part>` — positions, sorted, as four number columns
+  (`t`, `lat`, `lng`, `acc`), 20,000 per part.
+- `d:<id>:s:YYYY-MM:<part>` — segments starting that month, sorted, as one
+  column per field, 5,000 per part. A query looking for segments overlapping
+  a time looks back as far as the import's longest segment.
+- `w:<id>` — set while an import or forget is writing.
+
+(Layout as revised through four review rounds; see
+`2026-10-11-plugin-streamed-json-import.md`. Nothing is stored once per month
+it spans, and nothing as a table per item, because `mah.kv.get` makes every
+returned table cost kilobytes.)
 
 **Scoping.** `mah.kv` is per plugin, not per user. Every read of an import goes
 through `mah.db.get_resource(id)` first, which is bound to the acting principal,
