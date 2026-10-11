@@ -963,6 +963,37 @@ func TestTheAccountFiltersNeedAccountsToTellApart(t *testing.T) {
 	}
 }
 
+// TestDismissAllIsOfferedToViewersWhoCanDismiss pins who sees Dismiss all: an
+// account that can write, with authentication on or off, on a list that is not
+// already the viewer's dismissed jobs; never a read-only guest, nor an
+// administrator with no account, who has no list of their own to dismiss from.
+func TestDismissAllIsOfferedToViewersWhoCanDismiss(t *testing.T) {
+	offered := func(address string, principal *auth.Principal) any {
+		request := httptest.NewRequest(http.MethodGet, address, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
+		return jobListContextProvider(&fakeJobListReader{})(request)["jobDismissAllOffered"]
+	}
+	cases := []struct {
+		name      string
+		address   string
+		principal *auth.Principal
+		want      bool
+	}{
+		{"user", "/jobs?dismissed=false", &auth.Principal{UserID: 3, Role: models.RoleUser}, true},
+		{"editor on Any", "/jobs?dismissed=any", &auth.Principal{UserID: 4, Role: models.RoleEditor}, true},
+		{"authentication off", "/jobs?dismissed=false", &auth.Principal{UserID: 1, Role: models.RoleAdmin, SuperUser: true}, true},
+		{"guest", "/jobs?dismissed=false", &auth.Principal{UserID: 5, Role: models.RoleGuest}, false},
+		{"administrator with no account", "/jobs?dismissed=false", &auth.Principal{Role: models.RoleAdmin}, false},
+		{"the dismissed list", "/jobs?dismissed=true", &auth.Principal{UserID: 3, Role: models.RoleUser}, false},
+		{"the dismissed list spelled 1", "/jobs?dismissed=1", &auth.Principal{UserID: 3, Role: models.RoleUser}, false},
+	}
+	for _, c := range cases {
+		if got := offered(c.address, c.principal); got != c.want {
+			t.Errorf("%s: Dismiss all offered %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // TestAJobCardSaysWhoOwnsItAndWhyItFailed pins the card payload the page reads
 // when a refresh changes a row: its owner, so the page can tell whether the
 // drawer announces it, and its failure, so the page says why when it does not.
