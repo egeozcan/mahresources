@@ -779,7 +779,31 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 	// mah.db.each_resource_json(id, fn) -> true | false | (nil, error)
 	// Streams a JSON file one element at a time; see resource_json_stream.go.
-	setRead("each_resource_json", pm.luaEachResourceJSON)
+	setRead("each_resource_json", func(L *lua.LState) int {
+		// Refused inside a transaction for get_resource_data's reason: file
+		// I/O, possibly remote, under the write lock.
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.each_resource_json", whyItWaits)))
+			return 2
+		}
+		id := checkEntityID(L, 1)
+		fn := L.CheckFunction(2)
+		db := pm.querierFor(L)
+		if db == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database not available"))
+			return 2
+		}
+		file, size, err := db.OpenResourceFile(id)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		defer file.Close()
+		return eachResourceJSON(L, file, size, fn)
+	})
 
 	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
 	setFetchingWrite("create_resource_from_url", func(L *lua.LState) int {

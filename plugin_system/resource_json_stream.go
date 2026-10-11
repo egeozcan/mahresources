@@ -16,42 +16,23 @@ const maxStreamedResourceFileSize = 1 << 30 // 1 GiB
 // errStopStream is how a callback returning false ends the walk early.
 var errStopStream = errors.New("stopped by callback")
 
-// luaEachResourceJSON implements
+// eachResourceJSON is the body of
 //
 //	mah.db.each_resource_json(id, fn(key, index, value)) -> true | false | nil, err
 //
-// It streams a resource's JSON file and calls fn once per piece: for a root
-// object, once per element of each top-level array member as (key, i, element)
-// and once per other member as (key, nil, value); for a root array, once per
-// element as (nil, i, element). Only one element is decoded at a time, which is
-// the point: get_resource_data hands over the whole file, and decoding a large
-// export into Lua tables in one go takes many times the file's size in memory.
+// once db_api.go has opened the file as the caller. It streams the JSON and
+// calls fn once per piece: for a root object, once per element of each
+// top-level array member as (key, i, element) and once per other member as
+// (key, nil, value); for a root array, once per element as (nil, i, element).
+// Only one element is decoded at a time, which is the point: get_resource_data
+// hands over the whole file, and decoding a large export into Lua tables in one
+// go takes many times the file's size in memory.
 //
 // It returns true after the whole file, false when fn returned false, and
-// nil, err when the file could not be read or is not JSON, after any pieces
+// nil, err when the file is over the cap or is not JSON, after any pieces
 // already delivered. An error raised inside fn propagates as if fn had been
 // called directly.
-func (pm *PluginManager) luaEachResourceJSON(L *lua.LState) int {
-	if pm.inTransaction(L) {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(refusedInTransaction("mah.db.each_resource_json", whyItWaits)))
-		return 2
-	}
-	id := checkEntityID(L, 1)
-	fn := L.CheckFunction(2)
-	db := pm.querierFor(L)
-	if db == nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString("database not available"))
-		return 2
-	}
-	file, size, err := db.OpenResourceFile(id)
-	if err != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
-		return 2
-	}
-	defer file.Close()
+func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFunction) int {
 	if size > maxStreamedResourceFileSize {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(fmt.Sprintf("file too large (max %d bytes)", maxStreamedResourceFileSize)))
@@ -79,7 +60,7 @@ func (pm *PluginManager) luaEachResourceJSON(L *lua.LState) int {
 		return nil
 	}
 
-	err = streamJSON(io.LimitReader(file, maxStreamedResourceFileSize), deliver)
+	err := streamJSON(io.LimitReader(file, maxStreamedResourceFileSize), deliver)
 	switch {
 	case err == nil:
 		L.Push(lua.LTrue)
