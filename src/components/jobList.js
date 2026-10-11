@@ -934,6 +934,124 @@ export function jobSummary({ fetchImpl = (...args) => fetch(...args) } = {}) {
     };
 }
 
+// One page of the list and one bulk command are both bounded at 200 Jobs
+// (jobs.MaxPageSize, jobs.MaxBulkCommandJobs), so each page Dismiss all reads
+// is one bulk request, as bounded as the ones the bar sends.
+export const JOB_DISMISS_ALL_BATCH = 200;
+// The states dismissal is offered in (terminalJobStates in jobs/query.go).
+const DISMISSIBLE_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
+
+/**
+ * The list request Dismiss all reads the filter's Jobs with: the page position
+ * dropped, the largest page, and, unless the filter already names a command,
+ * only the Jobs that offer Dismiss. A filter naming another command still says
+ * which Jobs it means; the ones among them that cannot be dismissed are left
+ * out when the page is read.
+ */
+export function dismissAllListParams(query, cursor = '') {
+    const params = new URLSearchParams(query);
+    params.delete('cursor');
+    params.delete('before');
+    params.delete('view');
+    if (!params.get('command')) params.set('command', 'dismiss');
+    params.set('limit', String(JOB_DISMISS_ALL_BATCH));
+    if (cursor) params.set('cursor', cursor);
+    return params;
+}
+
+/**
+ * The Job Center's Dismiss all: every finished Job the list's filter selects,
+ * on every page, not only the selection on this one. Like the panel's Dismiss
+ * finished, it walks the filter by keyset cursor, so rows leaving it while it
+ * pages do not shift it, and dismisses each page with one bulk request; only
+ * counts are kept. The first page tells the confirmation how many it reaches.
+ * `query` is the filter as the API reads it (jobAPIQuery in
+ * job_template_context.go).
+ */
+export function jobDismissAll({ fetchImpl = (...args) => fetch(...args) } = {}) {
+    return {
+        query: '',
+        busy: false,
+        status: '',
+        error: '',
+
+        init() {
+            this.query = this.$root?.dataset.dismissQuery || '';
+        },
+
+        async readPage(cursor) {
+            const response = await fetchImpl(`/v1/jobs?${dismissAllListParams(this.query, cursor)}`, { headers: { Accept: 'application/json' } });
+            const page = await answerOf(response, 'Reading the matching jobs');
+            return {
+                ids: (page.jobs || []).filter(job => DISMISSIBLE_STATES.has(job.state) && !job.dismissed).map(job => job.id),
+                next: page.nextCursor || '',
+            };
+        },
+
+        async run() {
+            if (this.busy) return;
+            this.busy = true;
+            this.error = '';
+            this.status = '';
+            let dismissed = 0;
+            let refused = 0;
+            try {
+                let page = await this.readPage('');
+                if (!page.ids.length && !page.next) {
+                    this.status = 'No finished jobs match this filter, so there is nothing to dismiss.';
+                    return;
+                }
+                const count = page.ids.length;
+                const reach = page.next
+                    ? `every finished job matching this filter, on every page?${count ? ` That is at least ${count}.` : ''}`
+                    : `${count} finished ${count === 1 ? 'job' : 'jobs'} matching this filter?`;
+                const accepted = await window.Alpine?.store('confirmDialog')?.ask(
+                    `Dismiss ${reach} Running and queued jobs are left. The Dismissed filter still shows them.`,
+                    { title: 'Dismiss all', confirmLabel: 'Dismiss all', cancelLabel: 'Keep them' },
+                );
+                if (!accepted) return;
+                for (;;) {
+                    if (page.ids.length) {
+                        const key = idempotencyKey();
+                        const body = JSON.stringify({ jobIds: page.ids, idempotencyKey: key });
+                        const response = await fetchImpl('/v1/jobs/commands/dismiss', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': key },
+                            body,
+                        });
+                        const payload = await answerOf(response, 'Dismissing the jobs');
+                        announcePreferenceCommand('/v1/jobs/commands/dismiss', { method: 'POST', body }, payload);
+                        for (const result of payload.results || []) {
+                            if (result.status === 'succeeded' && result.code === 'applied') dismissed++;
+                            else refused++;
+                        }
+                        this.status = `Dismissed ${dismissed} so far…`;
+                    }
+                    if (!page.next) break;
+                    page = await this.readPage(page.next);
+                }
+                this.status = dismissAllReport(dismissed, refused);
+            } catch (error) {
+                this.status = '';
+                this.error = dismissed ? `${error.message} Dismissed ${dismissed} before it stopped.` : error.message;
+            } finally {
+                this.busy = false;
+                if (dismissed || refused) {
+                    window.dispatchEvent(new CustomEvent('job-list-notice', { detail: { message: this.error || this.status } }));
+                    window.dispatchEvent(new CustomEvent('job-list-refresh'));
+                }
+            }
+        },
+    };
+}
+
+/** What Dismiss all did, in one sentence for the panel and the page notice. */
+export function dismissAllReport(dismissed, refused) {
+    const done = `Dismissed ${dismissed} matching ${dismissed === 1 ? 'job' : 'jobs'}.`;
+    if (!refused) return done;
+    return `${done} ${refused} ${refused === 1 ? 'was' : 'were'} not dismissed: changed meanwhile or no longer offered.`;
+}
+
 function pad(value, width = 2) {
     return String(value).padStart(width, '0');
 }

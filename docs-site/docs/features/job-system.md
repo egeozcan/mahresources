@@ -373,7 +373,11 @@ changes the viewer's own list or retention and can be reversed. A dismissed
 Job's page reads **Dismissed by you** and offers **Undismiss**, and a row
 dismissed in the drawer leaves a notice with **Undo**. **Dismiss finished**
 reaches every finished Job the viewer has not dismissed, not only the rows
-shown, so it asks first and says how many.
+shown, so it asks first and says how many. On `/jobs`, **Dismiss all matching
+jobs** in the sidebar does the same for the list's current filter: every
+finished Job it selects, on every page, not only the cards selected for the bulk
+bar. It also asks first. Running and queued Jobs are left alone, and the
+Dismissed filter still lists what it dismissed.
 
 The drawer never leaves the page it is open on, which may hold unsaved work.
 **Retry** and **Continue** leave a notice naming the new Job with a link to it,
