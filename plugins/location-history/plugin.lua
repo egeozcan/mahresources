@@ -5,7 +5,7 @@
 -- UTC month, under keys that name the resource:
 --
 --   imp:<id>                   summary: format, counts, range, months
---   d:<id>:p:YYYY-MM:<part>    positions {t, lat, lng, accuracy_m}, sorted
+--   d:<id>:p:YYYY-MM:<part>    positions, sorted, as columns {t, lat, lng, acc}
 --   d:<id>:s:YYYY-MM           segments overlapping that month
 --
 -- mah.kv is per plugin, not per user, so every read goes through
@@ -34,6 +34,7 @@ local CHUNK = 20000            -- positions per KV value, ~1 MB serialized
 local MIN_TIME, MAX_TIME = 631152000, 4102444800
 local WINDOW = 2 * 3600        -- "at": how far a fix may be from the asked time
 local PRESENCE_GAP = 3600      -- "near": fixes further apart start a new presence
+local MERGE_GAP = 60           -- "near": times there closer than this are one
 local MAX_ROWS = 500           -- "near": rows listed
 local MAX_RADIUS = 100000
 local EARTH_RADIUS = 6371008.8
@@ -507,20 +508,19 @@ local function store(id, name, format, c, progress)
     forget(id)
     mah.kv.set(writing_key(id), mah.util.now())
 
-    -- Points arrive sorted, so each month's are written as soon as the next
-    -- month begins, and only one month is ever decoded at a time.
-    local current, list, until_t = nil, {}, -1
-    local function flush()
-        if not current then return end
+    -- Points arrive sorted, so they are written a part at a time as they
+    -- come, each part as four columns of numbers. A table per point costs
+    -- kilobytes once mah.kv.get hands it back, which made a dense month cost
+    -- gigabytes to query; columns cost sixteen bytes a number.
+    local current, until_t = nil, -1
+    local cols, n = nil, 0
+    local function write_part()
+        if n == 0 then return end
         local m = month(current)
-        for start = 1, #list, CHUNK do
-            m.parts = m.parts + 1
-            local slice = {}
-            for j = start, math.min(start + CHUNK - 1, #list) do slice[#slice + 1] = list[j] end
-            mah.kv.set(points_key(id, current, m.parts), slice)
-        end
-        m.p = #list
-        list = {}
+        m.parts = m.parts + 1
+        m.p = m.p + n
+        mah.kv.set(points_key(id, current, m.parts), cols)
+        cols, n = nil, 0
     end
     local kept, last_t, last_lat, last_lng = 0, nil, nil, nil
     local first, final = nil, nil
@@ -528,21 +528,24 @@ local function store(id, name, format, c, progress)
         local t, lat, lng, acc = decode_point(str)
         if not (t == last_t and lat == last_lat and lng == last_lng) then
             if t >= until_t then
-                flush()
+                write_part()
                 current = month_of(t)
                 until_t = days_from_civil(tonumber(next_month(current):sub(1, 4)), tonumber(next_month(current):sub(6, 7)), 1) * 86400
             end
-            list[#list + 1] = { t, lat, lng, acc }
+            if not cols then cols = { t = {}, lat = {}, lng = {}, acc = {} } end
+            n = n + 1
+            cols.t[n], cols.lat[n], cols.lng[n], cols.acc[n] = t, lat, lng, acc
             local m = month(current)
             m.box = grow_box(m.box, lat, lng)
             kept = kept + 1
             last_t, last_lat, last_lng = t, lat, lng
             first = first or t
             final = t
+            if n == CHUNK then write_part() end
         end
         if i % 50000 == 0 then progress(i, #c.points) end
     end
-    flush()
+    write_part()
     c.points = nil
 
     local summary = {}
@@ -607,8 +610,10 @@ local function sweep_orphans()
     end
     local now = mah.util.now()
     for id in pairs(unsummarised) do
+        -- Read again just before forgetting: in another process, an import may
+        -- have finished (summary written, marker removed) since the lists above.
         local started = tonumber(mah.kv.get(writing_key(id)))
-        if not started or now - started > WRITING_GRACE then
+        if mah.kv.get(meta_key(id)) == nil and (not started or now - started > WRITING_GRACE) then
             forget(id)
             forgotten = forgotten + 1
         end
@@ -654,14 +659,30 @@ local function visible_imports(only)
     return list
 end
 
-local function load_points(imp, month)
+-- Calls fn(cols) with each part of a month's positions in time order, one
+-- part in memory at a time, until fn returns false. cols holds the columns t,
+-- lat, lng and acc.
+local function each_part(imp, month, fn)
     local info = imp.meta.months[month]
-    if not info or info.p == 0 then return {} end
-    local out = {}
+    if not info or info.p == 0 then return end
     for part = 1, info.parts do
-        for _, p in ipairs(mah.kv.get(points_key(imp.id, month, part)) or {}) do out[#out + 1] = p end
+        local cols = mah.kv.get(points_key(imp.id, month, part))
+        if type(cols) == "table" and type(cols.t) == "table" and fn(cols) == false then return end
     end
-    return out
+end
+
+-- The largest index in the sorted times ts whose time is before t, or 0.
+local function last_before(ts, t)
+    local lo, hi, found = 1, #ts, 0
+    while lo <= hi do
+        local mid = floor((lo + hi) / 2)
+        if ts[mid] < t then found, lo = mid, mid + 1 else hi = mid - 1 end
+    end
+    return found
+end
+
+local function point_at(cols, i)
+    return { cols.t[i], cols.lat[i], cols.lng[i], cols.acc[i] }
 end
 
 local function load_segments(imp, month)
@@ -748,10 +769,18 @@ local function nearest_fix(imports, t, dir)
             local key = keys[i]
             if (dir < 0 and key <= here) or (dir > 0 and key >= here) then
                 local found = nil
-                for _, p in ipairs(load_points(imp, key)) do
-                    if dir < 0 and p[1] < t then found = p
-                    elseif dir > 0 and p[1] >= t then found = p; break end
-                end
+                each_part(imp, key, function(cols)
+                    local i = last_before(cols.t, t)
+                    if dir < 0 then
+                        if i > 0 then found = point_at(cols, i) end
+                        -- A later part holds only later times.
+                        return i == #cols.t
+                    end
+                    if i < #cols.t then
+                        found = point_at(cols, i + 1)
+                        return false
+                    end
+                end)
                 if found then
                     if not best or (dir < 0 and found[1] > best[1]) or (dir > 0 and found[1] < best[1]) then best = found end
                     break
@@ -854,9 +883,36 @@ local function how_often_near(imports, args)
         if not to_t then return nil, "the end date must look like 2026-04-30" end
     end
 
-    local intervals, seen_visits = {}, {}
+    -- Each import gives two lists already in time order: its visits near the
+    -- place and its presences (runs of fixes near it). They are kept as columns
+    -- of numbers, joined as they grow when they overlap, and then merged across
+    -- lists into a running summary that keeps only the newest MAX_ROWS rows, so
+    -- memory follows the number of separate times there, not of fixes.
+    local lists, seen_visits = {}, {}
+    local function new_list()
+        local list = { n = 0, s = {}, e = {}, fixes = {}, visits = {}, d = {}, places = {} }
+        lists[#lists + 1] = list
+        return list
+    end
+    local function add(list, s0, e0, fixes, visits, d, place)
+        local n = list.n
+        if n > 0 and s0 <= list.e[n] + MERGE_GAP then
+            if e0 > list.e[n] then list.e[n] = e0 end
+            list.fixes[n], list.visits[n] = list.fixes[n] + fixes, list.visits[n] + visits
+            if d < list.d[n] then list.d[n] = d end
+        else
+            n = n + 1
+            list.n, list.s[n], list.e[n], list.fixes[n], list.visits[n], list.d[n] = n, s0, e0, fixes, visits, d
+        end
+        if place then
+            list.places[n] = list.places[n] or {}
+            table.insert(list.places[n], place)
+        end
+    end
+
     for _, imp in ipairs(imports) do
-        local in_presence, current, last_t = false, nil, nil
+        local visits, presences = new_list(), new_list()
+        local in_presence, last_t = false, nil
         for _, key in ipairs(sorted_keys(imp.meta.months)) do
             local info = imp.meta.months[key]
             local month_start = days_from_civil(tonumber(key:sub(1, 4)), tonumber(key:sub(6, 7)), 1) * 86400
@@ -867,29 +923,34 @@ local function how_often_near(imports, args)
                     if seg.k == "visit" and seg.lat and not seen_visits[id] and seg.e >= from_t and seg.s <= to_t
                         and distance(lat, lng, seg.lat, seg.lng) <= radius then
                         seen_visits[id] = true
-                        intervals[#intervals + 1] = { s = seg.s, e = seg.e, fixes = 0, visits = 1,
-                            places = { seg.name or seg.place }, d = distance(lat, lng, seg.lat, seg.lng) }
+                        -- Only the part of a visit inside the range counts.
+                        add(visits, math.max(seg.s, from_t), math.min(seg.e, to_t), 0, 1,
+                            distance(lat, lng, seg.lat, seg.lng), seg.name or seg.place)
                     end
                 end
-                for _, p in ipairs(load_points(imp, key)) do
-                    if p[1] >= from_t and p[1] <= to_t then
-                        local d = distance(lat, lng, p[2], p[3])
-                        if d <= radius then
-                            if in_presence and current and p[1] - last_t <= PRESENCE_GAP then
-                                current.e, current.fixes = p[1], current.fixes + 1
-                                current.d = math.min(current.d, d)
-                            else
-                                current = { s = p[1], e = p[1], fixes = 1, visits = 0, places = {}, d = d }
-                                intervals[#intervals + 1] = current
+                each_part(imp, key, function(cols)
+                    local ts, lats, lngs, accs = cols.t, cols.lat, cols.lng, cols.acc
+                    for i = 1, #ts do
+                        local pt = ts[i]
+                        if pt >= from_t and pt <= to_t then
+                            local d = distance(lat, lng, lats[i], lngs[i])
+                            if d <= radius then
+                                local n = presences.n
+                                if in_presence and n > 0 and pt - last_t <= PRESENCE_GAP then
+                                    presences.e[n], presences.fixes[n] = pt, presences.fixes[n] + 1
+                                    if d < presences.d[n] then presences.d[n] = d end
+                                else
+                                    add(presences, pt, pt, 1, 0, d, nil)
+                                end
+                                in_presence, last_t = true, pt
+                            elseif d - accs[i] > radius then
+                                -- Only a fix whose whole accuracy circle is outside
+                                -- ends a presence; a vague one may still be there.
+                                in_presence = false
                             end
-                            in_presence, last_t = true, p[1]
-                        elseif d - p[4] > radius then
-                            -- Only a fix whose whole accuracy circle is outside
-                            -- ends a presence; a vague one may still be there.
-                            in_presence = false
                         end
                     end
-                end
+                end)
             else
                 -- A month that cannot hold a fix nearby ends any presence.
                 in_presence = false
@@ -897,35 +958,46 @@ local function how_often_near(imports, args)
         end
     end
 
-    -- Overlapping visits and presences, from any import, are one time there.
-    table.sort(intervals, function(a, b) return a.s < b.s end)
-    local merged = {}
-    for _, iv in ipairs(intervals) do
-        local top = merged[#merged]
-        if top and iv.s <= top.e + 60 then
-            top.e = math.max(top.e, iv.e)
-            top.fixes, top.visits = top.fixes + iv.fixes, top.visits + iv.visits
-            top.d = math.min(top.d, iv.d)
-            for _, p in ipairs(iv.places) do top.places[#top.places + 1] = p end
-        else
-            merged[#merged + 1] = iv
-        end
-    end
-
-    local days, total, first, last = {}, 0, nil, nil
-    local day_count = 0
-    for _, iv in ipairs(merged) do
+    -- Merge the lists in time order. Overlapping visits and presences, from
+    -- any import, are one time there.
+    local days, day_count, total, first, last, times = {}, 0, 0, nil, nil, 0
+    local ring, top = {}, nil
+    local function finish(iv)
+        times = times + 1
         total = total + (iv.e - iv.s)
         first = first and math.min(first, iv.s) or iv.s
         last = last and math.max(last, iv.e) or iv.e
         for day = local_day(iv.s, off), local_day(iv.e, off) do
             if not days[day] then days[day] = true; day_count = day_count + 1 end
         end
+        ring[(times - 1) % MAX_ROWS + 1] = iv
     end
+    local heads = {}
+    for i = 1, #lists do heads[i] = 1 end
+    while true do
+        local pick = nil
+        for i, list in ipairs(lists) do
+            if heads[i] <= list.n and (not pick or list.s[heads[i]] < lists[pick].s[heads[pick]]) then pick = i end
+        end
+        if not pick then break end
+        local list, j = lists[pick], heads[pick]
+        heads[pick] = j + 1
+        local s0, e0 = list.s[j], list.e[j]
+        if top and s0 <= top.e + MERGE_GAP then
+            if e0 > top.e then top.e = e0 end
+            top.fixes, top.visits = top.fixes + list.fixes[j], top.visits + list.visits[j]
+            if list.d[j] < top.d then top.d = list.d[j] end
+        else
+            if top then finish(top) end
+            top = { s = s0, e = e0, fixes = list.fixes[j], visits = list.visits[j], d = list.d[j], places = {} }
+        end
+        for _, place in ipairs(list.places[j] or {}) do top.places[#top.places + 1] = place end
+    end
+    if top then finish(top) end
 
     local rows = {}
-    for i = #merged, math.max(1, #merged - MAX_ROWS + 1), -1 do
-        local iv = merged[i]
+    for k = 0, math.min(times, MAX_ROWS) - 1 do
+        local iv = ring[(times - 1 - k) % MAX_ROWS + 1]
         local places, seen = {}, {}
         for _, p in ipairs(iv.places) do
             if p and not seen[p] then seen[p] = true; places[#places + 1] = p end
@@ -937,9 +1009,9 @@ local function how_often_near(imports, args)
     return {
         query = { lat = lat, lng = lng, radius_m = radius, offset = format_offset(off), offset_minutes = off,
             offset_source = how, from = args.from, to = args.to },
-        times = #merged, days = day_count, total_seconds = total,
+        times = times, days = day_count, total_seconds = total,
         first = first and format_time(first, off) or nil, last = last and format_time(last, off) or nil,
-        rows = mah.json.array(rows), rows_omitted = #merged - #rows,
+        rows = mah.json.array(rows), rows_omitted = times - #rows,
     }
 end
 

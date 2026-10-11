@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -73,7 +75,8 @@ func (f *locationFixture) importResource(t *testing.T, id uint) *ActionJob {
 	if err != nil {
 		t.Fatalf("RunActionAsync(import, %d): %v", id, err)
 	}
-	deadline := time.Now().Add(20 * time.Second)
+	// Generous: the race detector slows the 100,000-fix import several times over.
+	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		job := f.pm.GetActionJob(jobID)
 		if job == nil {
@@ -628,5 +631,98 @@ func TestLocationHistoryDropsTimesOutsideASaneRange(t *testing.T) {
 	msg := f.mustImport(t, 1)
 	if !strings.Contains(msg, "Imported 0 positions and 1 visits and trips") || time.Since(start) > 5*time.Second {
 		t.Errorf("message %q after %v", msg, time.Since(start))
+	}
+}
+
+// A month of 100,000 fixes is five parts. Queries hold one part at a time, as
+// columns of numbers: a table per point cost kilobytes once mah.kv.get handed
+// it back, and a month like this cost hundreds of megabytes per query. The
+// answers have to be right across the part boundaries too.
+func TestLocationHistoryDenseMonthQueriesInBoundedMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports 100,000 fixes")
+	}
+	var b strings.Builder
+	b.WriteString(`{"locations": [`)
+	const fixes = 100000
+	base := int64(1556668800) // 2019-05-01T00:00:00Z
+	for i := 0; i < fixes; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		// Every 20 s, alternating between two spots 1 km apart.
+		fmt.Fprintf(&b, `{"latitudeE7": %d, "longitudeE7": 0, "accuracy": 5, "timestampMs": "%d"}`, (i%2)*90000, (base+int64(i)*20)*1000)
+	}
+	b.WriteString(`]}`)
+	f := locationPlugin(t, map[uint]string{1: b.String()})
+	f.mustImport(t, 1)
+	if keys := f.keys("d:1:p:2019-05:"); len(keys) != 5 {
+		t.Fatalf("parts = %v", keys)
+	}
+
+	peakDuring := func(run func()) int64 {
+		runtime.GC()
+		var base runtime.MemStats
+		runtime.ReadMemStats(&base)
+		var peak atomic.Uint64
+		done := make(chan struct{})
+		go func() {
+			var m runtime.MemStats
+			for {
+				select {
+				case <-done:
+					return
+				case <-time.After(5 * time.Millisecond):
+					runtime.ReadMemStats(&m)
+					if m.HeapAlloc > peak.Load() {
+						peak.Store(m.HeapAlloc)
+					}
+				}
+			}
+		}()
+		run()
+		close(done)
+		return int64(peak.Load()) - int64(base.HeapAlloc)
+	}
+
+	var body map[string]any
+	grew := peakDuring(func() { _, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "100"}) })
+	// Every other fix is at the spot, 40 s apart: each is its own presence (a
+	// sharp fix 1 km away lies between), but times under a minute apart are
+	// one time there, so this is one long stay holding every one of them.
+	rows := body["rows"].([]any)
+	if body["times"] != float64(1) || len(rows) != 1 || rows[0].(map[string]any)["fixes"] != float64(fixes/2) {
+		t.Errorf("near = times %v, rows %v", body["times"], rows)
+	}
+	t.Logf("near over %d fixes: peak heap growth %d MB", fixes, grew>>20)
+	if grew > 64<<20 {
+		t.Errorf("a near query over one dense month grew the heap by %d MB", grew>>20)
+	}
+
+	// Fix k is at base + 20k. The boundary between parts 1 and 2 is between
+	// fixes 19999 and 20000.
+	for _, k := range []int64{19999, 20000, 59999, 99998} {
+		at := time.Unix(base+k*20+10, 0).UTC().Format("2006-01-02T15:04:05Z")
+		var body map[string]any
+		grew := peakDuring(func() { _, body = f.api(t, "at", map[string]any{"time": at}) })
+		if get(t, body, "before", "epoch") != float64(base+k*20) || get(t, body, "after", "epoch") != float64(base+(k+1)*20) {
+			t.Errorf("at %s: before %v, after %v", at, body["before"], body["after"])
+		}
+		if grew > 64<<20 {
+			t.Errorf("an at query grew the heap by %d MB", grew>>20)
+		}
+	}
+}
+
+// With a date range, only the part of a visit inside it counts.
+func TestLocationHistoryNearClipsVisitsToTheRange(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: `{"timelineObjects": [
+ {"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": "home"},
+   "duration": {"startTimestamp": "2019-04-30T22:00:00Z", "endTimestamp": "2019-05-01T08:00:00Z"}}}
+]}`})
+	f.mustImport(t, 1)
+	_, body := f.api(t, "near", map[string]any{"point": "0, 0", "radius": "50", "from": "2019-05-01", "offset": "0"})
+	if body["total_seconds"] != float64(8*3600) || body["days"] != float64(1) || body["first"] != "2019-05-01 00:00:00" {
+		t.Errorf("body = %v", body)
 	}
 }

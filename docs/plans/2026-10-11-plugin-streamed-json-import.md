@@ -178,3 +178,33 @@ Three P0/P1 findings, all fixed:
 P2 fixed alongside: times outside 1990–2100 are dropped (a year-33658
 timestamp made the month walk spin until the job timed out), and the user docs
 no longer claim a timed-out import "keeps nothing".
+
+## Review round 3 (fresh subagent)
+
+One P0, fixed:
+
+- **P0: queries rebuilt a table per stored point.** `mah.kv.get` converts
+  values through `goToLuaValue`, whose ~3 KB-per-table preallocation turned
+  each stored `[t, lat, lng, acc]` into a 3 KB table, and `load_points`
+  concatenated a whole month: a dense month cost hundreds of megabytes to
+  gigabytes per query. Parts are now stored as four number columns
+  (`{t, lat, lng, acc}`), queries walk one part at a time (`each_part`), "at"
+  binary-searches each part, and "near" keeps its visits and presences as
+  number columns joined as they grow, merged into a running summary that keeps
+  only the newest rows. `TestLocationHistoryDenseMonthQueriesInBoundedMemory`
+  (100,000 fixes in one month, five parts): peak heap growth 17 MB, and "at"
+  answers correctly across part boundaries. The stored format changed; this
+  branch has not shipped, so there is no migration.
+
+P2s fixed alongside: the sweep re-reads the summary and marker just before
+forgetting unsummarised data (an import finishing in another process between
+the sweep's two listings), visits are clipped to a "near" date range
+(`TestLocationHistoryNearClipsVisitsToTheRange`), and two comments that
+understated per-piece amplification.
+
+`goToLuaValue`'s preallocation is unchanged: it is shared host code that every
+plugin's `mah.kv.get` and `mah.json.decode` use, and sizing its tables exactly
+would be a separate, host-wide change.
+
+Re-measured on the 254 MB export: import 118 s and ~700 MB over idle (98 s /
+~580 MB last time, partly run-to-run noise); a ten-year "near" 11 s (was 14 s).

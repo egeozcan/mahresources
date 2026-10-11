@@ -15,7 +15,7 @@ const maxStreamedResourceFileSize = 1 << 30 // 1 GiB
 
 // maxStreamedElementSize caps the bytes of one piece -- an array element, or a
 // top-level member with its key. A piece is decoded whole into Go values, at
-// up to about fifteen times its size for something like "[[],[],...]", so
+// up to about forty times its size for something like "[{},{},...]", so
 // without this a single huge element in a small-enough file could exhaust the
 // server's memory. Real export entries are kilobytes.
 const maxStreamedElementSize = 4 << 20 // 4 MiB

@@ -255,7 +255,8 @@ func TestEachResourceJSONRefusesOversizedPieces(t *testing.T) {
 }
 
 // A piece can be small in bytes and huge as Lua tables: a megabyte of "[],"
-// is half a million tables. The value cap refuses it before the tables exist.
+// is half a million tables. The value cap refuses it while converting, before
+// more than 200,000 Lua values exist.
 func TestEachResourceJSONRefusesPiecesOfTooManyValues(t *testing.T) {
 	empties := strings.TrimSuffix(strings.Repeat("[],", 350000), ",")
 	under := strings.TrimSuffix(strings.Repeat("1,", maxStreamedElementValues-2), ",")
