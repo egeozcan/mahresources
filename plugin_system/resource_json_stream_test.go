@@ -221,3 +221,34 @@ func TestEachResourceJSONStreamsInBoundedMemory(t *testing.T) {
 		t.Errorf("heap grew by %d bytes streaming a %d-byte file; it should not scale with the file", growth, info.Size())
 	}
 }
+
+// One piece is decoded whole, so its size and nesting are capped: past either
+// cap the walk fails cleanly instead of exhausting memory or overflowing the
+// stack (which kills the process rather than panicking).
+func TestEachResourceJSONRefusesOversizedPieces(t *testing.T) {
+	deep := strings.Repeat(`{"a":`, maxStreamedNestingDepth+10) + "1" + strings.Repeat("}", maxStreamedNestingDepth+10)
+	big := strings.Repeat("x", maxStreamedElementSize+1)
+	fits := strings.Repeat("y", maxStreamedElementSize/2)
+	pm := jsonStreamFixture(t, map[uint]string{
+		1: `{"first": 1, "deep": ` + deep + `}`,
+		2: `{"items": [1, ` + deep + `]}`,
+		3: `{"items": [1, "` + big + `", 3]}`,
+		4: `{"huge": "` + big + `"}`,
+		5: `{"items": ["` + fits + `", "` + fits + `", "` + fits + `"]}`,
+	})
+
+	for id, want := range map[string]string{
+		"1": "first|nil|1\n=> nil not valid JSON: nested more than 10000 levels deep",
+		"2": "items|1|1\n=> nil not valid JSON",
+		"3": "items|1|1\n=> nil an element is larger than 16777216 bytes",
+		"4": "=> nil an element is larger than 16777216 bytes",
+	} {
+		if got := jsonStreamPage(t, pm, "read", map[string]any{"id": id}); !strings.HasPrefix(got, want) {
+			t.Errorf("file %s: got\n%q\nwant prefix\n%s", id, got[:min(len(got), 300)], want)
+		}
+	}
+	// Pieces under the cap pass however many there are: the window is per piece.
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "5"}); got != "true nil 3" {
+		t.Errorf("pieces under the cap: %q", got)
+	}
+}

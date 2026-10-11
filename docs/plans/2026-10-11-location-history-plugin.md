@@ -29,8 +29,9 @@ Wifi scans, activity records, place aggregates and `semanticLocationStates`
 carry no position of their own worth answering from and are skipped.
 
 The Takeout `.zip` itself cannot be read from Lua; the user uploads the JSON
-file inside it. `mah.db.get_resource_data` caps reads at 50 MB, so larger files
-(a long legacy `Records.json`) are refused with a message saying so.
+file inside it. (As first built, imports went through `mah.db.get_resource_data`
+and its 50 MB cap; `2026-10-11-plugin-streamed-json-import.md` replaced that
+with streamed reads.)
 
 ## Design
 
@@ -47,10 +48,11 @@ offsets and fractional seconds.
 **Storage** is `mah.kv`, keyed by resource and UTC month, so a query touches
 only the months it needs:
 
-- `r<id>:meta` — format, counts, first/last time, list of months and each
+- `imp:<id>` — format, counts, first/last time, list of months and each
   month's bounding box, import time.
-- `r<id>:p:YYYY-MM` — points as `[epoch, lat, lng, accuracy_m]`, sorted.
-- `r<id>:s:YYYY-MM` — segments as `{k="visit"|"activity", s, e, lat, lng,
+- `d:<id>:p:YYYY-MM:<part>` — points as `[epoch, lat, lng, accuracy_m]`,
+  sorted, 20,000 per part.
+- `d:<id>:s:YYYY-MM` — segments as `{k="visit"|"activity", s, e, lat, lng,
   (lat2, lng2), place, type, off, edited}`, sorted by start. A segment is stored
   under every month it overlaps.
 
@@ -60,7 +62,7 @@ so a group-limited user only ever sees imports of resources they can read. The
 data is deleted when its resource is deleted (`after_resource_delete` hook) and
 from a "Forget this import" button.
 
-**Queries** live on one page, `/plugins/location-history/` (menu entry
+**Queries** live on one page, `/plugins/location-history/query` (menu entry
 "Location History"), and the same functions back two JSON endpoints,
 `GET /v1/plugins/location-history/at` and `.../near`, so they can be scripted.
 

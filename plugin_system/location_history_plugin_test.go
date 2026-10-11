@@ -16,9 +16,17 @@ import (
 type locationQuerier struct {
 	mockQuerier
 	files map[uint]string
+	// failing ids answer every read with an error, as a database outage would.
+	failing map[uint]bool
+	// vanishOnOpen ids are deleted as soon as their file is opened, as if the
+	// resource were deleted while its import ran.
+	vanishOnOpen map[uint]bool
 }
 
 func (q *locationQuerier) GetResourceData(id uint) (map[string]any, error) {
+	if q.failing[id] {
+		return nil, fmt.Errorf("database is down")
+	}
 	if _, ok := q.files[id]; !ok {
 		return nil, nil
 	}
@@ -29,6 +37,9 @@ func (q *locationQuerier) OpenResourceFile(id uint) (io.ReadCloser, int64, error
 	body, ok := q.files[id]
 	if !ok {
 		return nil, 0, fmt.Errorf("not found")
+	}
+	if q.vanishOnOpen[id] {
+		delete(q.files, id)
 	}
 	return io.NopCloser(strings.NewReader(body)), int64(len(body)), nil
 }
@@ -504,5 +515,76 @@ func TestLocationHistoryReadsTimeAndPlaceSpellings(t *testing.T) {
 		if !ok && status != 400 {
 			t.Errorf("%q: status %d, want 400", in, status)
 		}
+	}
+}
+
+// The delete hook is dropped when the plugin is busy, so an hourly sweep
+// forgets imports whose resource is gone -- and only those: a resource that
+// exists, or one whose read failed, keeps its import.
+func TestLocationHistorySweepForgetsImportsOfDeletedResources(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture, 11: timelineEditsFixture, 12: timelineEditsFixture})
+	for _, id := range []uint{10, 11, 12} {
+		f.mustImport(t, id)
+	}
+	delete(f.querier.files, 10)
+	f.querier.failing = map[uint]bool{12: true}
+	// What an import that timed out part way through storing leaves: data, no summary.
+	if err := f.kv.KVSet("location-history", "d:13:p:2026-04:1", `[[1,2,3,4]]`); err != nil {
+		t.Fatal(err)
+	}
+
+	regs := f.pm.DeclaredSchedules("location-history")
+	if len(regs) != 1 || regs[0].ScheduleID != "forget-deleted" {
+		t.Fatalf("schedules = %+v", regs)
+	}
+	if _, ran, err := f.pm.RunSchedule(regs[0], 0, 5*time.Second, false); !ran || err != nil {
+		t.Fatalf("RunSchedule: ran=%v err=%v", ran, err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(f.keys("imp:10"))+len(f.keys("d:13:")) > 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if keys := append(f.keys("imp:10"), f.keys("d:10:")...); len(keys) != 0 {
+		t.Errorf("the deleted resource's import survived the sweep: %v", keys)
+	}
+	if keys := f.keys("d:13:"); len(keys) != 0 {
+		t.Errorf("an unsummarised import survived the sweep: %v", keys)
+	}
+	if len(f.keys("imp:11")) != 1 || len(f.keys("d:11:")) == 0 {
+		t.Error("the sweep forgot an import whose resource exists")
+	}
+	if len(f.keys("imp:12")) != 1 || len(f.keys("d:12:")) == 0 {
+		t.Error("the sweep forgot an import whose resource could not be read")
+	}
+}
+
+// A resource deleted while its own import runs (its delete hook skipped,
+// since the import holds the plugin) leaves nothing behind.
+func TestLocationHistoryImportOfAResourceDeletedMidwayKeepsNothing(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture})
+	f.querier.vanishOnOpen = map[uint]bool{10: true}
+	job := f.importResource(t, 10)
+	if job.Status != "failed" || !strings.Contains(job.Message, "deleted while it was being imported") {
+		t.Errorf("status %s, message %q", job.Status, job.Message)
+	}
+	if keys := f.keys(""); len(keys) != 0 {
+		t.Errorf("left behind: %v", keys)
+	}
+}
+
+// Fields that should be text but are not are dropped at import, so one odd
+// export cannot break every query over it.
+func TestLocationHistoryToleratesMalformedFields(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: `{"timelineObjects": [
+ {"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "placeId": {"oops": 1}, "name": ["x"], "semanticType": true},
+   "duration": {"startTimestamp": "2020-01-01T09:00:00Z", "endTimestamp": "2020-01-01T10:00:00Z"}}}
+]}`})
+	f.mustImport(t, 1)
+	if status, body := f.api(t, "near", map[string]any{"point": "0, 0", "radius": "50"}); status != 200 || body["times"] != float64(1) {
+		t.Errorf("near: %d %v", status, body)
+	}
+	html := f.page(t, PageContext{Query: map[string]any{"q": "at", "time": "2020-01-01T09:30:00Z"}})
+	if !strings.Contains(html, "Visit from") || !strings.Contains(html, "How often was I here?") {
+		t.Errorf("at page:\n%s", html)
 	}
 }

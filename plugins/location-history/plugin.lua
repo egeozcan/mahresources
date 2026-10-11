@@ -24,7 +24,7 @@ plugin = {
     name = "location-history",
     version = "1.0",
     description = "Import a Google location export (Takeout Timeline JSON) and ask where you were at a given time, or how often you were near a place.",
-    capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks" },
+    capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks", "schedule" },
 }
 
 local PAGE = "/plugins/location-history/query"
@@ -288,6 +288,14 @@ local function decode_point(s)
     return tonumber(sub(s, 1, 13)), tonumber(sub(s, 15, p2 - 1)), tonumber(sub(s, p2 + 1, p3 - 1)), tonumber(sub(s, p3 + 1))
 end
 
+-- A text field from the file, or nil. Exports are not trusted to hold strings
+-- where strings belong, and a table stored here would break every query that
+-- prints it.
+local function text(v)
+    if type(v) == "string" or type(v) == "number" then return tostring(v) end
+    return nil
+end
+
 local function add_segment(c, seg)
     if not seg.s or not seg.e or seg.e < seg.s then return end
     if seg.lat and not valid(seg.lat, seg.lng) then return end
@@ -308,14 +316,14 @@ local function semantic_segment(c, seg, edited)
         local top = inner.visit.topCandidate or {}
         local lat, lng = coord(top.placeLocation)
         add_segment(c, { k = "visit", s = s, e = e, lat = lat, lng = lng, off = off, edited = edited,
-            place = top.placeId or top.placeID, type = top.semanticType })
+            place = text(top.placeId or top.placeID), type = text(top.semanticType) })
     elseif type(inner.activity) == "table" then
         local a = inner.activity
         local lat, lng = coord(a.start)
         local lat2, lng2 = coord(a["end"])
         local top = a.topCandidate or {}
         add_segment(c, { k = "activity", s = s, e = e, lat = lat, lng = lng, lat2 = lat2, lng2 = lng2,
-            off = off, edited = edited, type = top.type, dist = tonumber(a.distanceMeters) })
+            off = off, edited = edited, type = text(top.type), dist = tonumber(a.distanceMeters) })
     end
     if type(inner.timelinePath) == "table" then
         for _, p in ipairs(inner.timelinePath) do
@@ -375,13 +383,13 @@ local function timeline_object(c, obj)
         local loc = v.location or {}
         local lat, lng = coord(loc)
         add_segment(c, { k = "visit", s = legacy_time(v.duration, "start"), e = legacy_time(v.duration, "end"),
-            lat = lat, lng = lng, place = loc.placeId, name = loc.name, type = loc.semanticType })
+            lat = lat, lng = lng, place = text(loc.placeId), name = text(loc.name), type = text(loc.semanticType) })
         legacy_path(c, v.simplifiedRawPath)
     elseif type(a) == "table" then
         local lat, lng = coord(a.startLocation)
         local lat2, lng2 = coord(a.endLocation)
         add_segment(c, { k = "activity", s = legacy_time(a.duration, "start"), e = legacy_time(a.duration, "end"),
-            lat = lat, lng = lng, lat2 = lat2, lng2 = lng2, type = a.activityType, dist = tonumber(a.distance) })
+            lat = lat, lng = lng, lat2 = lat2, lng2 = lng2, type = text(a.activityType), dist = tonumber(a.distance) })
         legacy_path(c, a.simplifiedRawPath)
     end
 end
@@ -545,7 +553,46 @@ local function store(id, name, format, c, progress)
         imported_at = mah.util.now_iso(), months = summary,
     }
     mah.kv.set(meta_key(id), meta)
+    -- The resource may have been deleted while this ran, and its delete hook
+    -- skipped because this import held the plugin. Then nothing must be left.
+    local resource, err = mah.db.get_resource(id)
+    if not resource and not err then
+        forget(id)
+        return nil
+    end
     return meta
+end
+
+-- Forgets every import whose resource no longer exists, and the data of any
+-- import that stopped before writing its summary (a timeout part way through
+-- store). The delete hook is a notification the host drops when the plugin is
+-- busy (an import holds it for minutes), so this catches what it missed. It
+-- runs as the administrator who enabled the plugin, who can read every
+-- resource, and forgets only on a definite "not found", never on a failed
+-- read. It cannot meet an import half written: both hold the plugin's one VM.
+local function sweep_orphans()
+    local forgotten, summarised = 0, {}
+    for _, key in ipairs(mah.kv.list("imp:")) do
+        local id = tonumber(key:match("^imp:(%d+)$"))
+        if id then
+            summarised[id] = true
+            local resource, err = mah.db.get_resource(id)
+            if not resource and not err then
+                forget(id)
+                forgotten = forgotten + 1
+            end
+        end
+    end
+    local unsummarised = {}
+    for _, key in ipairs(mah.kv.list("d:")) do
+        local id = tonumber(key:match("^d:(%d+):"))
+        if id and not summarised[id] then unsummarised[id] = true end
+    end
+    for id in pairs(unsummarised) do
+        forget(id)
+        forgotten = forgotten + 1
+    end
+    return forgotten
 end
 
 -- Imports the caller can see, as { id, meta, name } sorted by id. With `only`,
@@ -933,7 +980,8 @@ local function at_html(r)
             html = html .. '<p class="mt-2">Visit from ' .. esc(s.start) .. ' to ' .. esc(s["end"]) .. ' ' .. esc(s.offset)
                 .. (s.place_name and (' at ' .. esc(s.place_name)) or '')
                 .. (s.type and s.type ~= "UNKNOWN" and (' (' .. esc(s.type) .. ')') or '')
-                .. (s.edited and ' — edited by you' or '') .. '.</p>'
+                .. (s.edited and ' — edited by you' or '') .. '.'
+                .. (s.lat and (' ' .. near_link(s.lat, s.lng)) or '') .. '</p>'
         else
             html = html .. '<p class="mt-2">Moving (' .. esc(s.type or "unknown mode") .. ') from ' .. esc(s.start)
                 .. ' to ' .. esc(s["end"]) .. ' ' .. esc(s.offset)
@@ -1134,6 +1182,10 @@ function init()
             local meta = store(id, resource.name, format, c, function(done, total)
                 mah.job_progress(ctx.job_id, 50 + floor(45 * done / total), "Saved " .. done .. " of " .. total .. " positions")
             end)
+            if not meta then
+                mah.job_fail(ctx.job_id, "The resource was deleted while it was being imported; nothing was kept.")
+                return
+            end
             mah.job_complete(ctx.job_id, {
                 message = string.format("Imported %d positions and %d visits and trips (%s, %s to %s UTC).",
                     meta.points, meta.segments, format,
@@ -1175,4 +1227,8 @@ function init()
         local id = tonumber(data and data.id)
         if id then forget(id) end
     end)
+
+    mah.schedule({ id = "forget-deleted", every = "1h", handler = function(job_id)
+        mah.job_complete(job_id, { message = "Forgot " .. sweep_orphans() .. " imports of deleted resources." })
+    end })
 end

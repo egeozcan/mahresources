@@ -9,9 +9,48 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// maxStreamedResourceFileSize caps mah.db.each_resource_json. The decoder holds
-// one element at a time, so this bounds how long a call can run, not memory.
+// maxStreamedResourceFileSize caps mah.db.each_resource_json's file. Memory is
+// bounded per piece (below), so this bounds how long a call can run.
 const maxStreamedResourceFileSize = 1 << 30 // 1 GiB
+
+// maxStreamedElementSize caps the bytes of one piece -- an array element, or a
+// top-level member with its key. A piece is decoded whole, into Go values and
+// then a Lua table, at many times its size in memory, so without this a single
+// huge element in a small-enough file could exhaust the server's memory.
+const maxStreamedElementSize = 16 << 20 // 16 MiB
+
+// maxStreamedNestingDepth matches the nesting limit encoding/json's Decode
+// applies. The token path below recurses once per level and would otherwise
+// overflow the goroutine stack -- a fatal error, not a panic -- on a file of a
+// few million '{'.
+const maxStreamedNestingDepth = 10000
+
+var errElementTooLarge = fmt.Errorf("an element is larger than %d bytes", maxStreamedElementSize)
+
+// windowReader refuses to read more than maxStreamedElementSize bytes past the
+// start of the current piece, so the decoder never buffers much more than one
+// piece. The decoder may already hold bytes past that start from reading
+// ahead, so a piece's size is also checked once it is parsed (see piece).
+type windowReader struct {
+	r     io.Reader
+	read  int64
+	limit int64
+}
+
+// open starts a piece at the decoder's parse offset.
+func (w *windowReader) open(start int64) { w.limit = start + maxStreamedElementSize + 1 }
+
+func (w *windowReader) Read(p []byte) (int, error) {
+	if w.read >= w.limit {
+		return 0, errElementTooLarge
+	}
+	if room := w.limit - w.read; int64(len(p)) > room {
+		p = p[:room]
+	}
+	n, err := w.r.Read(p)
+	w.read += int64(n)
+	return n, err
+}
 
 // errStopStream is how a callback returning false ends the walk early.
 var errStopStream = errors.New("stopped by callback")
@@ -29,8 +68,8 @@ var errStopStream = errors.New("stopped by callback")
 // go takes many times the file's size in memory.
 //
 // It returns true after the whole file, false when fn returned false, and
-// nil, err when the file is over the cap or is not JSON, after any pieces
-// already delivered. An error raised inside fn propagates as if fn had been
+// nil, err when the file or one piece of it is over its cap, or it is not
+// JSON, after any pieces already delivered. An error raised inside fn propagates as if fn had been
 // called directly.
 func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFunction) int {
 	if size > maxStreamedResourceFileSize {
@@ -50,6 +89,8 @@ func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFuncti
 			if errors.As(err, &apiErr) {
 				L.Error(apiErr.Object, 0)
 			}
+			// Protect:true reports every error as an *ApiError; this is only
+			// here so a change to that cannot swallow one.
 			L.RaiseError("%s", err.Error())
 		}
 		ret := L.Get(-1)
@@ -68,6 +109,10 @@ func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFuncti
 	case errors.Is(err, errStopStream):
 		L.Push(lua.LFalse)
 		return 1
+	case errors.Is(err, errElementTooLarge):
+		L.Push(lua.LNil)
+		L.Push(lua.LString(errElementTooLarge.Error()))
+		return 2
 	default:
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -75,20 +120,24 @@ func eachResourceJSON(L *lua.LState, file io.Reader, size int64, fn *lua.LFuncti
 	}
 }
 
-// streamJSON walks a JSON document as luaEachResourceJSON describes.
+// streamJSON walks a JSON document as eachResourceJSON describes.
 func streamJSON(r io.Reader, deliver func(key, index lua.LValue, value any) error) error {
-	dec := json.NewDecoder(r)
+	w := &windowReader{r: r}
+	w.open(0)
+	dec := json.NewDecoder(w)
 	tok, err := dec.Token()
 	if err != nil {
 		return fmt.Errorf("not valid JSON: %w", err)
 	}
 	switch tok {
 	case json.Delim('['):
-		if err := streamArray(dec, lua.LNil, deliver); err != nil {
+		if err := streamArray(dec, w, lua.LNil, deliver); err != nil {
 			return err
 		}
 	case json.Delim('{'):
 		for dec.More() {
+			start := dec.InputOffset()
+			w.open(start)
 			keyTok, err := dec.Token()
 			if err != nil {
 				return fmt.Errorf("not valid JSON: %w", err)
@@ -99,14 +148,17 @@ func streamJSON(r io.Reader, deliver func(key, index lua.LValue, value any) erro
 				return fmt.Errorf("not valid JSON: %w", err)
 			}
 			if valueTok == json.Delim('[') {
-				if err := streamArray(dec, key, deliver); err != nil {
+				if err := streamArray(dec, w, key, deliver); err != nil {
 					return err
 				}
 				continue
 			}
-			value, err := valueFromToken(dec, valueTok)
+			value, err := valueFromToken(dec, valueTok, 1)
 			if err != nil {
 				return err
+			}
+			if dec.InputOffset()-start > maxStreamedElementSize {
+				return errElementTooLarge
 			}
 			if err := deliver(key, lua.LNil, value); err != nil {
 				return err
@@ -125,11 +177,16 @@ func streamJSON(r io.Reader, deliver func(key, index lua.LValue, value any) erro
 }
 
 // streamArray delivers the elements of an array whose '[' has been read.
-func streamArray(dec *json.Decoder, key lua.LValue, deliver func(key, index lua.LValue, value any) error) error {
+func streamArray(dec *json.Decoder, w *windowReader, key lua.LValue, deliver func(key, index lua.LValue, value any) error) error {
 	for i := 1; dec.More(); i++ {
+		start := dec.InputOffset()
+		w.open(start)
 		var element any
 		if err := dec.Decode(&element); err != nil {
 			return fmt.Errorf("not valid JSON: %w", err)
+		}
+		if dec.InputOffset()-start > maxStreamedElementSize {
+			return errElementTooLarge
 		}
 		if err := deliver(key, lua.LNumber(i), element); err != nil {
 			return err
@@ -143,8 +200,12 @@ func streamArray(dec *json.Decoder, key lua.LValue, deliver func(key, index lua.
 
 // valueFromToken builds the value that starts with tok. The decoder cannot
 // peek, so a member that turned out not to be an array has already had its
-// first token read, and the rest is assembled from tokens.
-func valueFromToken(dec *json.Decoder, tok json.Token) (any, error) {
+// first token read, and the rest is assembled from tokens. depth is the
+// nesting level tok opens.
+func valueFromToken(dec *json.Decoder, tok json.Token, depth int) (any, error) {
+	if depth > maxStreamedNestingDepth {
+		return nil, fmt.Errorf("not valid JSON: nested more than %d levels deep", maxStreamedNestingDepth)
+	}
 	switch tok {
 	case json.Delim('{'):
 		obj := map[string]any{}
@@ -157,7 +218,7 @@ func valueFromToken(dec *json.Decoder, tok json.Token) (any, error) {
 			if err != nil {
 				return nil, fmt.Errorf("not valid JSON: %w", err)
 			}
-			value, err := valueFromToken(dec, next)
+			value, err := valueFromToken(dec, next, depth+1)
 			if err != nil {
 				return nil, err
 			}

@@ -21,7 +21,7 @@ All nine ship an `api_version = 1` manifest, and enabling one is your consent to
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
 | project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule` | none |
 | ketchup | `db:read`, `pages`, `inject`, `actions` | none |
-| location-history | `db:read`, `kv`, `actions`, `pages`, `api`, `hooks` | none |
+| location-history | `db:read`, `kv`, `actions`, `pages`, `api`, `hooks`, `schedule` | none |
 
 fal-ai is the only one that reaches the network.
 
@@ -227,14 +227,14 @@ Import a Google location export and ask it where you were. Upload the JSON file 
 | `Records.json` | Older Takeout Location History exports. |
 | `YYYY_MONTH.json` | Older Takeout "Semantic Location History" month files. |
 
-Upload the JSON file itself; the plugin cannot read inside a `.zip`. The file is read one entry at a time (see [`mah.db.each_resource_json`](./plugin-lua-api.md#streaming-a-json-file)), so it may be up to 1 GiB. An import must finish within the 5-minute limit on background plugin work: a 254 MB phone export of 2.6 million positions took about 100 seconds on a development machine. Importing a file again replaces its earlier import.
+Upload the JSON file itself; the plugin cannot read inside a `.zip`. The file is read one entry at a time (see [`mah.db.each_resource_json`](./plugin-lua-api.md#streaming-a-json-file)), so its size is not limited by memory, but an import must finish within the 5-minute limit on background plugin work: a 254 MB phone export of 2.6 million positions took about 100 seconds on a development machine, which puts the practical limit at a few hundred megabytes. A larger import fails with a timeout and keeps nothing. Importing a file again replaces its earlier import.
 
 The page answers two questions:
 
 - **Where was I?** Give a date and time. The answer is the visit or trip covering it (one you edited wins over the one Google inferred), plus the last fix before and the first fix after. Your position is the visit's place, or else interpolated between fixes no more than two hours either side. The time is read in the zone your timeline recorded around then ("Auto"), or in the zone you pick; a time typed with its own offset (`2026-04-27T10:30:00+02:00`, API only) is taken as given.
 - **How often was I near…?** Give a place as `latitude, longitude`, a radius in metres, and optionally a date range. Visits whose place is inside the radius, and runs of fixes inside it, count as one *time* there each; overlapping ones merge. A run ends when a fix lands outside the radius (counting its accuracy, so a vague fix does not end it) or after an hour with no fix. The summary gives the number of times, distinct days, total time, and first and last; the times are listed newest first, up to 500.
 
-Positions link to OpenStreetMap, and every visit links to a "How often was I here?" query.
+Positions link to OpenStreetMap, and the estimated position and every visit link to a "How often was I here?" query.
 
 The same queries are JSON endpoints, for scripts:
 
@@ -246,7 +246,7 @@ curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.672
 
 `offset` is `auto` or whole minutes east of UTC (`120` for UTC+02:00); `resource` limits a query to one import.
 
-- **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it.
+- **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it. Deleting the resource removes it straight away unless the plugin is busy (an import running), in which case an hourly sweep, running as the administrator who enabled the plugin, removes it within the hour.
 - **Access.** Every query first reads the resource the import came from as you, so an account sees only imports of resources it can read. Guests cannot forget an import.
 - **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by about 600 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
 

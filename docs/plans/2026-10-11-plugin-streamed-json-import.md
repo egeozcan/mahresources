@@ -116,3 +116,37 @@ Not done: a test that cancellation stops the walk between elements. The check
 is there, but gopher-lua also stops the callback itself at the next
 instruction when the context is cancelled, so a test could not tell the two
 apart. No Postgres run: nothing here touches SQL.
+
+## Review round 1 (subagent)
+
+Three P0/P1 findings, all fixed:
+
+- **P0: unbounded nesting on the token path.** A non-array top-level member
+  was assembled from `Decoder.Token` recursively with no depth limit; ~7M
+  levels of `{` overflowed the goroutine stack, a fatal error that kills the
+  process. Now capped at 10,000 levels, as `Decode` is.
+- **P1: one huge piece could exhaust memory.** Pieces are decoded whole into Go
+  and then Lua values at many times their size. Each piece is now capped at
+  16 MiB: a reader window anchored at the decoder's parse offset stops the
+  decoder buffering past it, and the parsed size is checked exactly.
+  `TestEachResourceJSONRefusesOversizedPieces`.
+- **P1: delete hook dropped while the plugin is busy.** The host skips an after
+  hook that cannot get the VM within 5 s, and an import holds it for minutes,
+  so a resource deleted meanwhile kept its location data. An import now checks
+  its resource still exists after storing, and an hourly `mah.schedule` sweep
+  (running as the enabling administrator) forgets imports whose resource is
+  definitely gone, plus data an interrupted import left without a summary.
+  `TestLocationHistorySweepForgetsImportsOfDeletedResources`,
+  `TestLocationHistoryImportOfAResourceDeletedMidwayKeepsNothing`. The plugin
+  now also declares `schedule`, so an existing install must be re-enabled to
+  consent to it.
+
+P2s fixed alongside: text fields coerced at import
+(`TestLocationHistoryToleratesMalformedFields`), visits link to the "near"
+query as documented, the 1 GiB claim restated as the practical limit, the
+first plan's stale design section.
+
+P2s left: a re-import deletes the previous import before writing the new one,
+so a re-import that fails part way loses the old one (the sweep then clears the
+partial data); Forget while an import of the same resource is queued is undone
+when it finishes.
