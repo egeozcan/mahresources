@@ -268,3 +268,33 @@ Left: one very long segment makes "at" scan the import's earlier segments
 (time only: 0.75 s with 200,000 visits).
 
 Re-measured on the 254 MB export: import 104 s, ~300 MB over idle (was ~830).
+
+## Review round 6 (fresh subagent): no P0/P1
+
+The reviewer confirmed every earlier fix, checked pack/unpack round-trips with
+edge values through the real VM, and compared "near" against an independent
+brute force over 12 random seeds (times, totals, days, rows, ring order past 500
+rows): all matched.
+
+Open P2/P3s, not yet fixed:
+
+- When visits in one import overlap or touch, "near" names only the first
+  visit's place for that row (counts are right). A regression from round 5's
+  one-place-per-entry change.
+- `text()` strips the separator quadratically and text fields have no length
+  cap: a ~6 MB crafted file can hold the plugin's VM until the 5-minute limit,
+  and very long names could push a 5,000-segment part past the 8 MB KV value
+  limit mid-store.
+- Segment UTC offsets are not range-checked at import (the query side checks
+  -720..840), so a crafted offset can skew "auto" offset answers for anyone
+  who can see that import.
+- With more than one server process, a forget or a second import of the same
+  resource during an import's write phase can leave an index naming parts that
+  were deleted. Worse than the "Forget while queued" case recorded earlier;
+  needs `store` to take the marker with compare-and-set and forget to defer
+  while an import marker is fresh.
+- P3: a forget's marker (0) looks abandoned to a sweep in another process at
+  once; more than 4 MiB of trailing whitespace is reported as "data after the
+  end of the document"; the docs undersell that a re-import over a limit keeps
+  the earlier import; a duplicated heap-sampling helper in the tests; no test
+  for invalid limit settings.
