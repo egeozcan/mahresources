@@ -385,10 +385,12 @@ test.describe('Job Center', () => {
     await expect(page.locator('[data-job-id]')).toHaveCount(50);
     await page.getByTestId('job-dismiss-all').getByRole('button', { name: 'Dismiss all matching jobs' }).click();
     const confirm = page.getByRole('alertdialog');
-    await expect(confirm).toContainText('Dismiss 51 finished jobs matching this filter');
-    await confirm.getByRole('button', { name: 'Dismiss all' }).click();
+    await expect(confirm).toContainText('Dismiss 51 finished jobs the filter applied to this list selects?');
+    await confirm.getByRole('button', { name: 'Dismiss 51' }).click();
 
     await expect(page.getByTestId('job-list-notice')).toHaveText('Dismissed 51 matching jobs.', { timeout: 20_000 });
+    await expect(page.locator('[data-job-dismiss-all-status]')).toHaveText('Dismissed 51 matching jobs.');
+    await expect(page.getByTestId('job-dismiss-all').getByRole('button', { name: 'Dismiss all matching jobs' })).toBeFocused();
     await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
     const dismissed = await request.get(`/v1/jobs?search=${encodeURIComponent(name)}&dismissed=true&limit=200`);
     expect(((await dismissed.json()).jobs as Job[]).map(job => job.id).sort()).toEqual([...ids].sort());

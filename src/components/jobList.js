@@ -943,16 +943,18 @@ const DISMISSIBLE_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interru
 
 /**
  * The list request Dismiss all reads the filter's Jobs with: the page position
- * dropped, the largest page, and, unless the filter already names a command,
- * only the Jobs that offer Dismiss. A filter naming another command still says
- * which Jobs it means; the ones among them that cannot be dismissed are left
- * out when the page is read.
+ * dropped, the largest page, only the Jobs not yet dismissed (Dismissed: Any
+ * would otherwise walk every Job ever dismissed to send nothing), and, unless
+ * the filter already names a command, only the Jobs that offer Dismiss. A
+ * filter naming another command still says which Jobs it means; the ones among
+ * them that cannot be dismissed are left out when the page is read.
  */
 export function dismissAllListParams(query, cursor = '') {
     const params = new URLSearchParams(query);
     params.delete('cursor');
     params.delete('before');
     params.delete('view');
+    params.set('dismissed', 'false');
     if (!params.get('command')) params.set('command', 'dismiss');
     params.set('limit', String(JOB_DISMISS_ALL_BATCH));
     if (cursor) params.set('cursor', cursor);
@@ -973,6 +975,9 @@ export function jobDismissAll({ fetchImpl = (...args) => fetch(...args) } = {}) 
         query: '',
         busy: false,
         status: '',
+        // Per-batch progress, shown but not spoken: a long backlog would queue
+        // one announcement a batch. The status says the start and the result.
+        progress: '',
         error: '',
 
         init() {
@@ -992,7 +997,8 @@ export function jobDismissAll({ fetchImpl = (...args) => fetch(...args) } = {}) 
             if (this.busy) return;
             this.busy = true;
             this.error = '';
-            this.status = '';
+            this.status = 'Reading the matching jobs…';
+            this.progress = '';
             let dismissed = 0;
             let refused = 0;
             try {
@@ -1003,13 +1009,15 @@ export function jobDismissAll({ fetchImpl = (...args) => fetch(...args) } = {}) 
                 }
                 const count = page.ids.length;
                 const reach = page.next
-                    ? `every finished job matching this filter, on every page?${count ? ` That is at least ${count}.` : ''}`
-                    : `${count} finished ${count === 1 ? 'job' : 'jobs'} matching this filter?`;
+                    ? `every finished job the filter applied to this list selects, on every page?${count ? ` That is at least ${count}.` : ''}`
+                    : `${count} finished ${count === 1 ? 'job' : 'jobs'} the filter applied to this list selects?`;
+                this.status = '';
                 const accepted = await window.Alpine?.store('confirmDialog')?.ask(
-                    `Dismiss ${reach} Running and queued jobs are left. The Dismissed filter still shows them.`,
-                    { title: 'Dismiss all', confirmLabel: 'Dismiss all', cancelLabel: 'Keep them' },
+                    `Dismiss ${reach} Jobs that have not finished are left alone. Dismissed jobs stay under the Dismissed filter, where each can be undismissed.`,
+                    { title: 'Dismiss all', confirmLabel: page.next ? 'Dismiss all' : `Dismiss ${count}`, destructive: false },
                 );
                 if (!accepted) return;
+                this.status = 'Dismissing the matching jobs…';
                 for (;;) {
                     if (page.ids.length) {
                         const key = idempotencyKey();
@@ -1025,14 +1033,16 @@ export function jobDismissAll({ fetchImpl = (...args) => fetch(...args) } = {}) 
                             if (result.status === 'succeeded' && result.code === 'applied') dismissed++;
                             else refused++;
                         }
-                        this.status = `Dismissed ${dismissed} so far…`;
+                        this.progress = `Dismissed ${dismissed} so far…`;
                     }
                     if (!page.next) break;
                     page = await this.readPage(page.next);
                 }
+                this.progress = '';
                 this.status = dismissAllReport(dismissed, refused);
             } catch (error) {
                 this.status = '';
+                this.progress = '';
                 this.error = dismissed ? `${error.message} Dismissed ${dismissed} before it stopped.` : error.message;
             } finally {
                 this.busy = false;

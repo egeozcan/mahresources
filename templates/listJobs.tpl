@@ -226,12 +226,14 @@
         </details>
         {% endif %}
     </div>
-    {% if jobFilter.Dismissed != "true" %}
+    {% if jobFilter.Dismissed != "true" and jobSummaryExportOffered %}
     {# Every page of the filter, not the selection on this one: the bulk bar acts on the cards picked here. #}
-    <div class="sidebar-group w-full mt-3 text-sm" x-data="jobDismissAll()" data-dismiss-query="{{ jobSummaryQuery }}" data-testid="job-dismiss-all">
-        <button type="button" @click="run()" :aria-disabled="busy" aria-describedby="job-dismiss-all-help" class="py-1.5 px-3 border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-amber-600">Dismiss all matching jobs</button>
-        <p id="job-dismiss-all-help" class="mt-1 text-xs text-stone-600">Dismisses every finished job this filter selects, on every page.</p>
+    {# Offered to the viewers who can dismiss: a read-only one is offered no command. x-cloak: it needs JavaScript. #}
+    <div class="sidebar-group w-full mt-3 text-sm" x-data="jobDismissAll()" data-dismiss-query="{{ jobSummaryQuery }}" data-testid="job-dismiss-all" x-cloak>
+        <button type="button" @click="run()" :aria-disabled="busy" aria-describedby="job-dismiss-all-help" class="py-1.5 px-3 border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">Dismiss all matching jobs</button>
+        <p id="job-dismiss-all-help" class="mt-1 text-xs text-stone-600">Dismisses every finished job the filter applied to this list selects, on every page.</p>
         <p role="status" class="mt-1 text-xs text-stone-800" x-text="status" data-job-dismiss-all-status></p>
+        <p x-show="progress" x-text="progress" class="mt-1 text-xs text-stone-800"></p>
         <p x-show="error" x-text="error" role="alert" class="mt-1 text-xs text-red-800" x-cloak></p>
     </div>
     {% endif %}

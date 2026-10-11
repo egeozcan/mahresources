@@ -843,7 +843,9 @@ describe('job dismiss all', () => {
     test('reads the filter without its page position, asking only for dismissible jobs', () => {
         expect(dismissAllListParams('state=failed&dismissed=false&cursor=abc&before=def&view=x').toString())
             .toBe('state=failed&dismissed=false&command=dismiss&limit=200');
-        expect(dismissAllListParams('command=retry', 'next').toString()).toBe('command=retry&limit=200&cursor=next');
+        expect(dismissAllListParams('command=retry', 'next').toString()).toBe('command=retry&dismissed=false&limit=200&cursor=next');
+        // Already dismissed is nothing to send: Any asks the server for the rest.
+        expect(dismissAllListParams('dismissed=any').get('dismissed')).toBe('false');
     });
 
     test('dismisses every finished job on every page, one bulk request per page, after confirming', async () => {
@@ -865,7 +867,9 @@ describe('job dismiss all', () => {
             await panel.run();
 
             expect(fetchImpl.mock.calls[0][0]).toBe('/v1/jobs?kind=remote-download&dismissed=false&command=dismiss&limit=200');
-            expect(ask.mock.calls[0][0]).toContain('Dismiss every finished job matching this filter, on every page? That is at least 200.');
+            expect(ask.mock.calls[0][0]).toContain('Dismiss every finished job the filter applied to this list selects, on every page? That is at least 200.');
+            // Reversible, so not styled as a deletion.
+            expect(ask.mock.calls[0][1]).toMatchObject({ confirmLabel: 'Dismiss all', destructive: false });
             const posts = fetchImpl.mock.calls.filter(([url]) => url === '/v1/jobs/commands/dismiss');
             expect(posts.map(([, init]) => JSON.parse(init.body).jobIds.length)).toEqual([200, 1]);
             // Running, and already dismissed, are not sent.
@@ -886,7 +890,8 @@ describe('job dismiss all', () => {
         const fetchImpl = vi.fn(async () => jobsPage([{ id: 'a', state: 'succeeded' }, { id: 'b', state: 'failed' }]));
         const panel = Object.assign(jobDismissAll({ fetchImpl: fetchImpl as any }), { query: '' });
         await panel.run();
-        expect(ask.mock.calls[0][0]).toMatch(/^Dismiss 2 finished jobs matching this filter\?/);
+        expect(ask.mock.calls[0][0]).toMatch(/^Dismiss 2 finished jobs the filter applied to this list selects\?/);
+        expect(ask.mock.calls[0][1]).toMatchObject({ confirmLabel: 'Dismiss 2' });
         // Kept: nothing was sent and nothing is said.
         expect(fetchImpl).toHaveBeenCalledTimes(1);
         expect(panel.status).toBe('');
@@ -917,6 +922,23 @@ describe('job dismiss all', () => {
         await panel.run();
         expect(panel.error).toBe('database is locked. Dismissed 199 before it stopped.');
         expect(panel.busy).toBe(false);
+    });
+
+    test('a read that fails before asking says why and changes nothing', async () => {
+        const ask = vi.fn();
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const refresh = vi.fn();
+        window.addEventListener('job-list-refresh', refresh);
+        try {
+            const panel = Object.assign(jobDismissAll({ fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'unknown state' }) })) as any }), { query: 'state=bogus' });
+            await panel.run();
+            expect(panel.error).toBe('unknown state');
+            expect(panel.status).toBe('');
+            expect(ask).not.toHaveBeenCalled();
+            expect(refresh).not.toHaveBeenCalled();
+        } finally {
+            window.removeEventListener('job-list-refresh', refresh);
+        }
     });
 
     test('reports refused jobs alongside the dismissed ones', () => {
