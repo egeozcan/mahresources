@@ -607,6 +607,49 @@ caller is about to use the bytes, and if it cannot have them it wants the reason
 resource are all reported, where previously all three arrived as the same bare
 `nil`.
 
+For a JSON file, [`mah.db.each_resource_json`](#streaming-a-json-file) reads it
+one element at a time instead, up to 1 GiB.
+
+#### Streaming a JSON file
+
+```lua
+local ok, err = mah.db.each_resource_json(id, function(key, index, value)
+    -- return false to stop
+end)
+```
+
+Reads a resource's file as JSON one piece at a time, for files too large to
+decode whole. Only one element is decoded at a time, so memory follows the
+largest element rather than the file, and the bytes never pass through a Lua
+string. The file may be up to **1 GiB**. Needs `db:read`.
+
+| Root of the file | Calls |
+|------------------|-------|
+| object | For each top-level member: once per element when its value is an array, as `(key, i, element)`; once otherwise, as `(key, nil, value)`. An empty array produces no call. |
+| array | Once per element, as `(nil, i, element)`. |
+
+Elements arrive as `mah.json.decode` would return them (`null` is `nil`).
+
+| Returns | When |
+|---------|------|
+| `true` | The whole file was read. |
+| `false` | The callback returned `false`. |
+| `nil, err` | The resource cannot be read by the caller, the file is over the cap, or it is not JSON (`not valid JSON: ...`, `not a JSON object or array`). Pieces before the problem have already been delivered. |
+
+An error raised inside the callback propagates out of `each_resource_json` as
+if the callback had been called directly. Like `get_resource_data`, it reads as
+the acting principal and is refused inside `mah.db.transaction`.
+
+```lua
+local count = 0
+local ok, err = mah.db.each_resource_json(id, function(key, i, value)
+    if key == "locations" then count = count + 1 end
+end)
+if not ok then
+    return "could not read the file: " .. tostring(err)
+end
+```
+
 ### Resource Creation
 
 #### From URL
@@ -998,6 +1041,7 @@ different reasons:
 | `mah.http.get_sync` / `mah.http.post_sync` | response table with `error` set | waits on the network |
 | `mah.sleep` | raises | waits |
 | `mah.db.get_resource_data` | `nil, nil, error` | reads the file's bytes, from a filesystem that may be remote |
+| `mah.db.each_resource_json` | `nil, error` | reads the file, from a filesystem that may be remote |
 | `mah.db.delete_resource` | `nil, error` | deletes the file; a rollback restores the row but not the bytes |
 | `mah.http.get` / `post` / `request` | raises | the request is sent immediately; a rollback cannot recall it |
 

@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 
@@ -44,6 +45,9 @@ type EntityQuerier interface {
 	CountGroups(filter map[string]any) (int64, error)
 	// Resource file data — returns base64 content and MIME type
 	GetResourceFileData(id uint) (string, string, error)
+	// OpenResourceFile opens a resource's file for streaming and reports its
+	// size. The caller closes it.
+	OpenResourceFile(id uint) (io.ReadCloser, int64, error)
 	// Resource creation
 	CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error)
 	CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error)
@@ -772,6 +776,10 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		L.Push(lua.LString(mimeType))
 		return 2
 	})
+
+	// mah.db.each_resource_json(id, fn) -> true | false | (nil, error)
+	// Streams a JSON file one element at a time; see resource_json_stream.go.
+	setRead("each_resource_json", pm.luaEachResourceJSON)
 
 	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
 	setFetchingWrite("create_resource_from_url", func(L *lua.LState) int {

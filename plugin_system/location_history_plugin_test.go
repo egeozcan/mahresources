@@ -2,9 +2,9 @@ package plugin_system
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -25,12 +25,12 @@ func (q *locationQuerier) GetResourceData(id uint) (map[string]any, error) {
 	return map[string]any{"id": float64(id), "name": fmt.Sprintf("export-%d.json", id), "content_type": "application/json"}, nil
 }
 
-func (q *locationQuerier) GetResourceFileData(id uint) (string, string, error) {
+func (q *locationQuerier) OpenResourceFile(id uint) (io.ReadCloser, int64, error) {
 	body, ok := q.files[id]
 	if !ok {
-		return "", "", fmt.Errorf("not found")
+		return nil, 0, fmt.Errorf("not found")
 	}
-	return base64.StdEncoding.EncodeToString([]byte(body)), "application/json", nil
+	return io.NopCloser(strings.NewReader(body)), int64(len(body)), nil
 }
 
 type locationFixture struct {
@@ -432,7 +432,7 @@ func TestLocationHistoryOtherFormats(t *testing.T) {
 }
 
 func TestLocationHistoryRefusesWhatItCannotRead(t *testing.T) {
-	f := locationPlugin(t, map[uint]string{1: "not json", 2: `{"something": "else"}`, 3: `{"locations": []}`})
+	f := locationPlugin(t, map[uint]string{1: "not json", 2: `{"something": "else"}`, 3: `{"locations": [{"note": "no coordinates"}]}`})
 	for id, want := range map[uint]string{
 		1: "not valid JSON",
 		2: "not a Google location export",
@@ -465,5 +465,44 @@ func TestLocationHistoryVagueFixDoesNotEndAPresence(t *testing.T) {
 	rows := body["rows"].([]any)
 	if body["times"] != float64(2) || rows[1].(map[string]any)["end"] != "2026-01-01 00:20:00" {
 		t.Errorf("body = %v", body)
+	}
+}
+
+// Timestamps and coordinates are read byte by byte in the common shape and
+// by the pattern parser otherwise; both must give the same answers.
+func TestLocationHistoryReadsTimeAndPlaceSpellings(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture})
+	f.mustImport(t, 10)
+
+	for in, want := range map[string]string{
+		"2026-04-27T10:15:30.25+05:30": "2026-04-27 04:45:30Z",
+		"2026-04-27T08:15:00z":         "2026-04-27 08:15:00Z",
+		"2026-04-27T08:15:00-03:00":    "2026-04-27 11:15:00Z",
+		"2026-04-27 08:15:00Z":         "2026-04-27 08:15:00Z", // space: the pattern parser
+		"2026-04-27T08:15+02:00":       "2026-04-27 06:15:00Z", // no seconds: the pattern parser
+		"2026-04-27T08:15:00+0200":     "2026-04-27 06:15:00Z", // no colon: the pattern parser
+	} {
+		status, body := f.api(t, "at", map[string]any{"time": in})
+		if status != 200 || get(t, body, "query", "utc") != want {
+			t.Errorf("%s: status %d, utc %v, want %s", in, status, body["query"], want)
+		}
+	}
+	for _, bad := range []string{"2026-13-27T08:15:00Z", "2026-04-27T08:15:00+02", "2026-04-27T25:15:00Z", "2026-04-27T08:15:00Zjunk"} {
+		if status, _ := f.api(t, "at", map[string]any{"time": bad}); status != 400 {
+			t.Errorf("%s: status %d, want 400", bad, status)
+		}
+	}
+
+	for in, ok := range map[string]bool{
+		"50.0, 8.0": true, "geo:50.0,8.0": true, "50.0°, 8.0°": true, " 50 ,8 ": true, "-33.9,151.2": true,
+		"50.0": false, "50.0 N, 8.0 E": false, "95, 8": false, "50, 8, 9": false,
+	} {
+		status, body := f.api(t, "near", map[string]any{"point": in})
+		if ok && (status != 200 || get(t, body, "query", "lat") == nil) {
+			t.Errorf("%q: status %d, body %v", in, status, body)
+		}
+		if !ok && status != 400 {
+			t.Errorf("%q: status %d, want 400", in, status)
+		}
 	}
 }

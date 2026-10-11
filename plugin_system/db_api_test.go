@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,6 +122,10 @@ func (m *mockQuerier) QueryGroups(filter map[string]any) ([]map[string]any, erro
 func (m *mockQuerier) CountNotes(filter map[string]any) (int64, error)     { return 0, nil }
 func (m *mockQuerier) CountResources(filter map[string]any) (int64, error) { return 0, nil }
 func (m *mockQuerier) CountGroups(filter map[string]any) (int64, error)    { return 0, nil }
+
+func (m *mockQuerier) OpenResourceFile(id uint) (io.ReadCloser, int64, error) {
+	return nil, 0, fmt.Errorf("not found")
+}
 
 func (m *mockQuerier) GetResourceFileData(id uint) (string, string, error) {
 	if id == 1 {

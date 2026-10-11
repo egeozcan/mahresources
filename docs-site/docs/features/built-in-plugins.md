@@ -227,7 +227,7 @@ Import a Google location export and ask it where you were. Upload the JSON file 
 | `Records.json` | Older Takeout Location History exports. |
 | `YYYY_MONTH.json` | Older Takeout "Semantic Location History" month files. |
 
-Upload the JSON file itself; the plugin cannot read inside a `.zip`. Files over 50 MB cannot be read by a plugin and are refused. Importing a file again replaces its earlier import.
+Upload the JSON file itself; the plugin cannot read inside a `.zip`. The file is read one entry at a time (see [`mah.db.each_resource_json`](./plugin-lua-api.md#streaming-a-json-file)), so it may be up to 1 GiB. An import must finish within the 5-minute limit on background plugin work: a 254 MB phone export of 2.6 million positions took about 100 seconds on a development machine. Importing a file again replaces its earlier import.
 
 The page answers two questions:
 
@@ -248,7 +248,7 @@ curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.672
 
 - **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it.
 - **Access.** Every query first reads the resource the import came from as you, so an account sees only imports of resources it can read. Guests cannot forget an import.
-- **Size.** A 40 MB `Records.json` of 400,000 fixes imports in well under a minute, but decoding it holds several gigabytes of memory while the import runs. While an import runs, the plugin's page and endpoints wait for it.
+- **Size.** An import holds every position in memory, compactly, until it has sorted and stored them: a 254 MB export raised the server's memory by about 600 MB while it ran. While an import runs, the plugin's page and endpoints wait for it. A "How often" question over a whole decade of dense history reads every month near the place and can take 10–20 seconds.
 
 ## Enabling a Plugin
 

@@ -438,6 +438,9 @@ function init()
 
             local _, _, gerr = mah.db.get_resource_data(1)
             out[#out + 1] = "getdata:" .. tostring(gerr)
+
+            local _, jerr = mah.db.each_resource_json(1, function() end)
+            out[#out + 1] = "eachjson:" .. tostring(jerr)
         end)
         report = table.concat(out, " ")
         return report
@@ -460,6 +463,7 @@ func TestPluginTransaction_RefusesCallsThatWaitOnIO(t *testing.T) {
 		// A read, refused for the same reason as the writes that wait: it pulls
 		// bytes off a filesystem that may be remote, under the write lock.
 		"mah.db.get_resource_data cannot run inside mah.db.transaction",
+		"mah.db.each_resource_json cannot run inside mah.db.transaction",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("slot reported %q, which does not contain %q", got, want)

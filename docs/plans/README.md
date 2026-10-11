@@ -41,6 +41,7 @@ the code wins. For how the system is actually put together see
 - [2026-10-02-lightbox-history-and-error-followups.md](2026-10-02-lightbox-history-and-error-followups.md)
 - [2026-10-03-lightbox-followups-not-done.md](2026-10-03-lightbox-followups-not-done.md)
 - [2026-10-11-location-history-plugin.md](2026-10-11-location-history-plugin.md)
+- [2026-10-11-plugin-streamed-json-import.md](2026-10-11-plugin-streamed-json-import.md)
 
 ## Archive
 

@@ -651,6 +651,29 @@ func (a *pluginDBAdapter) GetResourceFileData(id uint) (string, string, error) {
 	return base64.StdEncoding.EncodeToString(data), resource.ContentType, nil
 }
 
+// OpenResourceFile opens a resource's file for mah.db.each_resource_json,
+// which streams it rather than holding it, so no size cap applies here.
+func (a *pluginDBAdapter) OpenResourceFile(id uint) (io.ReadCloser, int64, error) {
+	resource, err := a.ctx.GetResourceByID(id)
+	if err != nil {
+		return nil, 0, err
+	}
+	fs, err := a.ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return nil, 0, fmt.Errorf("storage not available: %w", err)
+	}
+	file, err := fs.Open(resource.GetCleanLocation())
+	if err != nil {
+		return nil, 0, fmt.Errorf("could not open file: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, 0, fmt.Errorf("could not read file: %w", err)
+	}
+	return file, info.Size(), nil
+}
+
 func (a *pluginDBAdapter) CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error) {
 	lower := strings.ToLower(url)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {

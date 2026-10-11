@@ -65,11 +65,68 @@ local function civil_from_days(z)
     return y, m, d
 end
 
+local byte, find, sub = string.byte, string.find, string.sub
+
+-- The number in the n digits of s starting at i, or nil.
+local function digits(s, i, n)
+    local v = 0
+    for k = i, i + n - 1 do
+        local b = byte(s, k)
+        if not b or b < 48 or b > 57 then return nil end
+        v = v * 10 + b - 48
+    end
+    return v
+end
+
+-- parse_time for the shape every export timestamp has,
+-- "YYYY-MM-DDTHH:MM:SS[.fff](Z|±HH:MM)", read byte by byte. gopher-lua
+-- compiles a pattern on every match, which made the pattern parser below the
+-- largest single cost of an import. nil for anything else.
+local function parse_time_fast(s)
+    local n = #s
+    if n < 20 or byte(s, 5) ~= 45 or byte(s, 8) ~= 45 or byte(s, 11) ~= 84
+        or byte(s, 14) ~= 58 or byte(s, 17) ~= 58 then
+        return nil
+    end
+    local y, mo, d = digits(s, 1, 4), digits(s, 6, 2), digits(s, 9, 2)
+    local h, mi, sec = digits(s, 12, 2), digits(s, 15, 2), digits(s, 18, 2)
+    if not (y and mo and d and h and mi and sec) or mo < 1 or mo > 12 or d < 1 or d > 31
+        or h > 23 or mi > 59 or sec >= 61 then
+        return nil
+    end
+    local i = 20
+    if byte(s, i) == 46 then
+        local frac, scale = 0, 1
+        i = i + 1
+        local b = byte(s, i)
+        while b and b >= 48 and b <= 57 do
+            frac, scale = frac * 10 + b - 48, scale * 10
+            i = i + 1
+            b = byte(s, i)
+        end
+        sec = sec + frac / scale
+    end
+    local b, offset = byte(s, i), nil
+    if (b == 90 or b == 122) and i == n then
+        offset = 0
+    elseif (b == 43 or b == 45) and i + 5 == n and byte(s, i + 3) == 58 then
+        local oh, om = digits(s, i + 1, 2), digits(s, i + 4, 2)
+        if not (oh and om) then return nil end
+        offset = oh * 60 + om
+        if b == 45 then offset = -offset end
+    else
+        return nil
+    end
+    return days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec - offset * 60, offset
+end
+
 -- Parses "YYYY-MM-DD[THH:MM[:SS[.fff]]][Z|±HH:MM]". Returns epoch seconds and
 -- the zone offset in minutes, or nil for the offset when the string has no
 -- zone; the seconds are then the wall-clock time read as UTC.
 local function parse_time(s)
     if type(s) ~= "string" then return nil end
+    local fast, fast_offset = parse_time_fast(s)
+    if fast then return fast, fast_offset end
     local y, mo, d, rest = s:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)(.*)$")
     if not y then return nil end
     y, mo, d = tonumber(y), tonumber(mo), tonumber(d)
@@ -156,11 +213,23 @@ local function from_e7(v)
     return v / 1e7
 end
 
+local DEGREE = "\194\176"
+
+-- tonumber of one coordinate, without its degree sign. Plain finds only: see
+-- parse_time_fast.
+local function coordinate_number(str)
+    local d = find(str, DEGREE, 1, true)
+    if d then str = sub(str, 1, d - 1) .. sub(str, d + 2) end
+    return tonumber(str)
+end
+
 -- "50.5837°, 8.6744°", "geo:50.5837,8.6744" or "50.5837, 8.6744".
 local function parse_latlng(s)
-    -- "°" is two bytes, so it is removed rather than matched with "°?".
-    local a, b = s:gsub("^geo:", ""):gsub("°", ""):match("^%s*([%+%-]?%d+%.?%d*)%s*,%s*([%+%-]?%d+%.?%d*)%s*$")
-    local lat, lng = tonumber(a), tonumber(b)
+    local start = 1
+    if byte(s, 1) == 103 and byte(s, 2) == 101 and byte(s, 3) == 111 and byte(s, 4) == 58 then start = 5 end
+    local comma = find(s, ",", start, true)
+    if not comma then return nil end
+    local lat, lng = coordinate_number(sub(s, start, comma - 1)), coordinate_number(sub(s, comma + 1))
     if valid(lat, lng) then return lat, lng end
     return nil
 end
@@ -202,9 +271,21 @@ local function new_collector()
     return { points = {}, segments = {} }
 end
 
+-- A point is held as one fixed-width string, "time|lat|lng|accuracy", until it
+-- is stored: a Lua table per point costs about ten times the memory, and the
+-- zero-padded time makes the strings sort by time with the built-in
+-- comparison instead of a Lua comparator.
+local POINT_FORMAT = "%013d|%.7f|%.7f|%d"
+
 local function add_point(c, t, lat, lng, acc)
-    if not t or not valid(lat, lng) then return end
-    c.points[#c.points + 1] = { floor(t + 0.5), round7(lat), round7(lng), floor((tonumber(acc) or 0) + 0.5) }
+    if not t or t < 0 or not valid(lat, lng) then return end
+    c.points[#c.points + 1] = string.format(POINT_FORMAT, floor(t + 0.5), lat, lng, floor((tonumber(acc) or 0) + 0.5))
+end
+
+local function decode_point(s)
+    local p2 = find(s, "|", 15, true)
+    local p3 = find(s, "|", p2 + 1, true)
+    return tonumber(sub(s, 1, 13)), tonumber(sub(s, 15, p2 - 1)), tonumber(sub(s, p2 + 1, p3 - 1)), tonumber(sub(s, p3 + 1))
 end
 
 local function add_segment(c, seg)
@@ -248,42 +329,31 @@ local function semantic_segment(c, seg, edited)
     end
 end
 
-local function parse_timeline_edits(c, doc)
-    for _, entry in ipairs(doc.timelineEdits) do
-        local signal = type(entry.rawSignal) == "table" and entry.rawSignal.signal
-        local p = type(signal) == "table" and signal.position
-        if type(p) == "table" then
-            local lat, lng = coord(p.point)
-            add_point(c, parse_time(p.timestamp), lat, lng, tonumber(p.accuracyMm) and p.accuracyMm / 1000)
-        end
-        if type(entry.userEditedSemanticSegment) == "table" then
-            semantic_segment(c, entry.userEditedSemanticSegment, true)
-        elseif type(entry.inferredSemanticSegment) == "table" then
-            semantic_segment(c, entry.inferredSemanticSegment, false)
-        end
+local function timeline_edit(c, entry)
+    local signal = type(entry.rawSignal) == "table" and entry.rawSignal.signal
+    local p = type(signal) == "table" and signal.position
+    if type(p) == "table" then
+        local lat, lng = coord(p.point)
+        add_point(c, parse_time(p.timestamp), lat, lng, tonumber(p.accuracyMm) and p.accuracyMm / 1000)
+    end
+    if type(entry.userEditedSemanticSegment) == "table" then
+        semantic_segment(c, entry.userEditedSemanticSegment, true)
+    elseif type(entry.inferredSemanticSegment) == "table" then
+        semantic_segment(c, entry.inferredSemanticSegment, false)
     end
 end
 
-local function parse_phone_export(c, segments, raw_signals)
-    for _, seg in ipairs(segments or {}) do
-        if type(seg) == "table" then semantic_segment(c, seg, false) end
-    end
-    for _, r in ipairs(raw_signals or {}) do
-        local p = type(r) == "table" and r.position
-        if type(p) == "table" then
-            local lat, lng = coord(p.LatLng or p.latLng or p.point)
-            add_point(c, parse_time(p.timestamp), lat, lng, p.accuracyMeters)
-        end
+local function raw_signal(c, r)
+    local p = r.position
+    if type(p) == "table" then
+        local lat, lng = coord(p.LatLng or p.latLng or p.point)
+        add_point(c, parse_time(p.timestamp), lat, lng, p.accuracyMeters)
     end
 end
 
-local function parse_records(c, doc)
-    for _, loc in ipairs(doc.locations) do
-        if type(loc) == "table" then
-            local lat, lng = coord(loc)
-            add_point(c, parse_time(loc.timestamp) or parse_ms(loc.timestampMs), lat, lng, loc.accuracy)
-        end
-    end
+local function record(c, loc)
+    local lat, lng = coord(loc)
+    add_point(c, parse_time(loc.timestamp) or parse_ms(loc.timestampMs), lat, lng, loc.accuracy)
 end
 
 local function legacy_time(duration, which)
@@ -299,47 +369,55 @@ local function legacy_path(c, path)
     end
 end
 
-local function parse_semantic_history(c, doc)
-    for _, obj in ipairs(doc.timelineObjects) do
-        local v, a = obj.placeVisit, obj.activitySegment
-        if type(v) == "table" then
-            local loc = v.location or {}
-            local lat, lng = coord(loc)
-            add_segment(c, { k = "visit", s = legacy_time(v.duration, "start"), e = legacy_time(v.duration, "end"),
-                lat = lat, lng = lng, place = loc.placeId, name = loc.name, type = loc.semanticType })
-            legacy_path(c, v.simplifiedRawPath)
-        elseif type(a) == "table" then
-            local lat, lng = coord(a.startLocation)
-            local lat2, lng2 = coord(a.endLocation)
-            add_segment(c, { k = "activity", s = legacy_time(a.duration, "start"), e = legacy_time(a.duration, "end"),
-                lat = lat, lng = lng, lat2 = lat2, lng2 = lng2, type = a.activityType, dist = tonumber(a.distance) })
-            legacy_path(c, a.simplifiedRawPath)
-        end
+local function timeline_object(c, obj)
+    local v, a = obj.placeVisit, obj.activitySegment
+    if type(v) == "table" then
+        local loc = v.location or {}
+        local lat, lng = coord(loc)
+        add_segment(c, { k = "visit", s = legacy_time(v.duration, "start"), e = legacy_time(v.duration, "end"),
+            lat = lat, lng = lng, place = loc.placeId, name = loc.name, type = loc.semanticType })
+        legacy_path(c, v.simplifiedRawPath)
+    elseif type(a) == "table" then
+        local lat, lng = coord(a.startLocation)
+        local lat2, lng2 = coord(a.endLocation)
+        add_segment(c, { k = "activity", s = legacy_time(a.duration, "start"), e = legacy_time(a.duration, "end"),
+            lat = lat, lng = lng, lat2 = lat2, lng2 = lng2, type = a.activityType, dist = tonumber(a.distance) })
+        legacy_path(c, a.simplifiedRawPath)
     end
 end
 
--- Returns the collector and a format label, or nil and an error.
-local function parse_export(doc)
-    if type(doc) ~= "table" then return nil, "the file is not a JSON object or array" end
-    local c = new_collector()
-    if type(doc.timelineEdits) == "table" then
-        parse_timeline_edits(c, doc)
-        return c, "Takeout Timeline Edits"
-    elseif type(doc.semanticSegments) == "table" or type(doc.rawSignals) == "table" then
-        parse_phone_export(c, doc.semanticSegments, doc.rawSignals)
-        return c, "Phone Timeline export"
-    elseif type(doc[1]) == "table" and doc[1].startTime then
-        parse_phone_export(c, doc, nil)
-        return c, "Phone Timeline export (iOS)"
-    elseif type(doc.locations) == "table" then
-        parse_records(c, doc)
-        return c, "Takeout Records"
-    elseif type(doc.timelineObjects) == "table" then
-        parse_semantic_history(c, doc)
-        return c, "Takeout Semantic Location History"
+-- The handler and format for each top-level array, by its key. The key is
+-- false for a root array, which is the iOS phone export.
+local ELEMENT_HANDLERS = {
+    timelineEdits = { "Takeout Timeline Edits", timeline_edit },
+    semanticSegments = { "Phone Timeline export", function(c, seg) semantic_segment(c, seg, false) end },
+    rawSignals = { "Phone Timeline export", raw_signal },
+    [false] = { "Phone Timeline export (iOS)", function(c, seg)
+        if seg.startTime then semantic_segment(c, seg, false) end
+    end },
+    locations = { "Takeout Records", record },
+    timelineObjects = { "Takeout Semantic Location History", timeline_object },
+}
+
+-- Reads a resource's export one element at a time (the file is never held
+-- whole). Returns the collector and a format label, or nil and an error.
+-- progress(n) is called every so many elements.
+local function read_export(id, progress)
+    local c, format, n = new_collector(), nil, 0
+    local ok, err = mah.db.each_resource_json(id, function(key, index, value)
+        local handler = ELEMENT_HANDLERS[key or false]
+        if not handler or index == nil or type(value) ~= "table" then return end
+        format = format or handler[1]
+        handler[2](c, value)
+        n = n + 1
+        if n % 20000 == 0 then progress(n) end
+    end)
+    if not ok then return nil, err end
+    if not format then
+        return nil, "this is not a Google location export this plugin recognises "
+            .. "(expected Timeline Edits.json, a phone Timeline.json, Records.json or a Semantic Location History month file)"
     end
-    return nil, "this is not a Google location export this plugin recognises "
-        .. "(expected Timeline Edits.json, a phone Timeline.json, Records.json or a Semantic Location History month file)"
+    return c, format
 end
 
 -- Storage --------------------------------------------------------------------
@@ -388,28 +466,17 @@ end
 -- goes last, so a failure part way leaves no summary and therefore nothing a
 -- query would read; the next import clears the leftovers.
 local function store(id, name, format, c, progress)
-    table.sort(c.points, function(a, b) return a[1] < b[1] end)
+    table.sort(c.points)
     table.sort(c.segments, function(a, b) return a.s < b.s end)
 
     local months = {}
     local function month(key)
         local m = months[key]
         if not m then
-            m = { p = 0, parts = 0, s = 0, points = {}, segments = {} }
+            m = { p = 0, parts = 0, s = 0, segments = {} }
             months[key] = m
         end
         return m
-    end
-
-    local kept, last = 0, nil
-    for _, p in ipairs(c.points) do
-        if not (last and last[1] == p[1] and last[2] == p[2] and last[3] == p[3]) then
-            local m = month(month_of(p[1]))
-            m.points[#m.points + 1] = p
-            m.box = grow_box(m.box, p[2], p[3])
-            kept = kept + 1
-            last = p
-        end
     end
     for _, seg in ipairs(c.segments) do
         local key, final = month_of(seg.s), month_of(seg.e)
@@ -423,24 +490,51 @@ local function store(id, name, format, c, progress)
     end
 
     forget(id)
-    local keys = sorted_keys(months)
-    local summary = {}
-    for i, key in ipairs(keys) do
-        local m = months[key]
-        local part = 0
-        for start = 1, #m.points, CHUNK do
-            part = part + 1
+
+    -- Points arrive sorted, so each month's are written as soon as the next
+    -- month begins, and only one month is ever decoded at a time.
+    local current, list, until_t = nil, {}, -1
+    local function flush()
+        if not current then return end
+        local m = month(current)
+        for start = 1, #list, CHUNK do
+            m.parts = m.parts + 1
             local slice = {}
-            for j = start, math.min(start + CHUNK - 1, #m.points) do slice[#slice + 1] = m.points[j] end
-            mah.kv.set(points_key(id, key, part), slice)
+            for j = start, math.min(start + CHUNK - 1, #list) do slice[#slice + 1] = list[j] end
+            mah.kv.set(points_key(id, current, m.parts), slice)
         end
+        m.p = #list
+        list = {}
+    end
+    local kept, last_t, last_lat, last_lng = 0, nil, nil, nil
+    local first, final = nil, nil
+    for i, str in ipairs(c.points) do
+        local t, lat, lng, acc = decode_point(str)
+        if not (t == last_t and lat == last_lat and lng == last_lng) then
+            if t >= until_t then
+                flush()
+                current = month_of(t)
+                until_t = days_from_civil(tonumber(next_month(current):sub(1, 4)), tonumber(next_month(current):sub(6, 7)), 1) * 86400
+            end
+            list[#list + 1] = { t, lat, lng, acc }
+            local m = month(current)
+            m.box = grow_box(m.box, lat, lng)
+            kept = kept + 1
+            last_t, last_lat, last_lng = t, lat, lng
+            first = first or t
+            final = t
+        end
+        if i % 50000 == 0 then progress(i, #c.points) end
+    end
+    flush()
+    c.points = nil
+
+    local summary = {}
+    for key, m in pairs(months) do
         if #m.segments > 0 then mah.kv.set(segments_key(id, key), m.segments) end
-        summary[key] = { p = #m.points, parts = part, s = #m.segments, box = m.box }
-        progress(i, #keys)
+        summary[key] = { p = m.p, parts = m.parts, s = #m.segments, box = m.box }
     end
 
-    local first, final = nil, nil
-    if #c.points > 0 then first, final = c.points[1][1], c.points[#c.points][1] end
     for _, seg in ipairs(c.segments) do
         first = math.min(first or seg.s, seg.s)
         final = math.max(final or seg.e, seg.e)
@@ -1020,28 +1114,15 @@ function init()
         async = true,
         handler = function(ctx)
             local id = ctx.entity_id
-            mah.job_progress(ctx.job_id, 5, "Reading the file")
+            mah.job_progress(ctx.job_id, 2, "Reading the file")
             local resource = mah.db.get_resource(id)
             if not resource then
                 mah.job_fail(ctx.job_id, "The resource could not be found.")
                 return
             end
-            local data, _, err = mah.db.get_resource_data(id)
-            if not data then
-                mah.job_fail(ctx.job_id, "The file could not be read: " .. tostring(err))
-                return
-            end
-            data = mah.util.base64.decode(data)
-            mah.job_progress(ctx.job_id, 15, "Decoding JSON")
-            local doc, json_err = mah.json.decode(data)
-            data = nil
-            if doc == nil then
-                mah.job_fail(ctx.job_id, "The file is not valid JSON: " .. tostring(json_err))
-                return
-            end
-            mah.job_progress(ctx.job_id, 35, "Reading positions and visits")
-            local c, format = parse_export(doc)
-            doc = nil
+            local c, format = read_export(id, function(n)
+                mah.job_progress(ctx.job_id, 5, "Read " .. n .. " entries")
+            end)
             if not c then
                 mah.job_fail(ctx.job_id, "Cannot import: " .. format)
                 return
@@ -1051,7 +1132,7 @@ function init()
                 return
             end
             local meta = store(id, resource.name, format, c, function(done, total)
-                mah.job_progress(ctx.job_id, 50 + floor(45 * done / total), "Saved month " .. done .. " of " .. total)
+                mah.job_progress(ctx.job_id, 50 + floor(45 * done / total), "Saved " .. done .. " of " .. total .. " positions")
             end)
             mah.job_complete(ctx.job_id, {
                 message = string.format("Imported %d positions and %d visits and trips (%s, %s to %s UTC).",
