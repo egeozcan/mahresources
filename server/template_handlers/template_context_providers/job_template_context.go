@@ -278,6 +278,7 @@ func jobListContextProvider(reader JobListReader) func(request *http.Request) po
 		// An export is a write: an account that cannot write is not offered one.
 		base["jobSummaryExportOffered"] = viewer == nil || viewer.CanWrite()
 		base["jobSummaryExportQuery"], base["jobSummaryExportRefusal"] = jobSummaryExportFilter(query, filter, viewer)
+		base["jobDismissAllOffered"] = jobDismissAllOffered(filter, viewer)
 		if accounts != nil && accountFilters && viewer.IsAdmin() {
 			if err := nameJobRowOwners(accounts, viewer.UserID, page.Jobs, rows); err != nil {
 				return addJobListError(err, base)
@@ -478,6 +479,17 @@ func jobListFilter(query url.Values) (jobs.Filter, error) {
 		filter.Dismissed = &undismissed
 	}
 	return filter, nil
+}
+
+// jobDismissAllOffered reports whether the page offers Dismiss all. Dismissal
+// is offered to a viewer with an account of their own who can write (a
+// read-only one is offered no command), and a list of what they already
+// dismissed, however its address spells true, has nothing to dismiss.
+func jobDismissAllOffered(filter jobs.Filter, viewer *auth.Principal) bool {
+	if filter.Dismissed != nil && *filter.Dismissed {
+		return false
+	}
+	return viewer == nil || (viewer.CanWrite() && viewer.UserID != 0)
 }
 
 // jobAPIQuery is the list's filter as the Job API reads it, for the summary

@@ -226,9 +226,9 @@
         </details>
         {% endif %}
     </div>
-    {% if jobFilter.Dismissed != "true" and jobSummaryExportOffered %}
+    {% if jobDismissAllOffered %}
     {# Every page of the filter, not the selection on this one: the bulk bar acts on the cards picked here. #}
-    {# Offered to the viewers who can dismiss: a read-only one is offered no command. x-cloak: it needs JavaScript. #}
+    {# x-cloak: it needs JavaScript. #}
     <div class="sidebar-group w-full mt-3 text-sm" x-data="jobDismissAll()" data-dismiss-query="{{ jobSummaryQuery }}" data-testid="job-dismiss-all" x-cloak>
         <button type="button" @click="run()" :aria-disabled="busy" aria-describedby="job-dismiss-all-help" class="py-1.5 px-3 border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">Dismiss all matching jobs</button>
         <p id="job-dismiss-all-help" class="mt-1 text-xs text-stone-600">Dismisses every finished job the filter applied to this list selects, on every page.</p>
