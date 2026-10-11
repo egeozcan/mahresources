@@ -5,11 +5,11 @@ title: Built-in Plugins
 
 # Built-in Plugins
 
-Mahresources ships with eight plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
+Mahresources ships with nine plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
 The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation is available on each plugin's documentation page after enabling: shortcode pages render their supplied examples, while documented note-block pages show their defaults, validation schemas, filters, and a safe view-mode preview whenever the block can render without live data.
 
-All eight ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
+All nine ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
 
 | Plugin | Declared capabilities | Network |
 |--------|-----------------------|---------|
@@ -21,6 +21,7 @@ All eight ship an `api_version = 1` manifest, and enabling one is your consent t
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
 | project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule` | none |
 | ketchup | `db:read`, `pages`, `inject`, `actions` | none |
+| location-history | `db:read`, `kv`, `actions`, `pages`, `api`, `hooks` | none |
 
 fal-ai is the only one that reaches the network.
 
@@ -214,6 +215,40 @@ After a new image is first saved, the page switches to editing that resource, so
 Settings: **New image width** and **New image height** (default 1200 × 800 pixels) size a new drawing.
 
 The editor itself is Ketchup's embeddable build, committed as `plugins/ketchup/public/ketchup.js` so the plugin needs no internet access. Its first line names the Ketchup commit it was built from. To update it, run `./scripts/update-ketchup.sh <ref>` with a Ketchup branch, tag or commit: it builds that ref from a clean clone and writes the stamped result to the plugin and to its copy in `e2e/test-plugins/ketchup`.
+
+## location-history
+
+Import a Google location export and ask it where you were. Upload the JSON file and run **Import location history** on it (resource sidebar or card menu). Then open **Location History** from the Plugins menu (`/plugins/location-history/query`).
+
+| File | Where it comes from |
+|------|---------------------|
+| `Timeline Edits.json` | Google Takeout, `Takeout/Timeline/`. Since Google moved Timeline onto the phone, this is what Takeout exports: raw position fixes plus the visits and trips the phone inferred or you edited. |
+| `Timeline.json` | Exported from Timeline's settings on the phone. Both the Android object and the iOS array layouts are read. |
+| `Records.json` | Older Takeout Location History exports. |
+| `YYYY_MONTH.json` | Older Takeout "Semantic Location History" month files. |
+
+Upload the JSON file itself; the plugin cannot read inside a `.zip`. Files over 50 MB cannot be read by a plugin and are refused. Importing a file again replaces its earlier import.
+
+The page answers two questions:
+
+- **Where was I?** Give a date and time. The answer is the visit or trip covering it (one you edited wins over the one Google inferred), plus the last fix before and the first fix after. Your position is the visit's place, or else interpolated between fixes no more than two hours either side. The time is read in the zone your timeline recorded around then ("Auto"), or in the zone you pick; a time typed with its own offset (`2026-04-27T10:30:00+02:00`, API only) is taken as given.
+- **How often was I near…?** Give a place as `latitude, longitude`, a radius in metres, and optionally a date range. Visits whose place is inside the radius, and runs of fixes inside it, count as one *time* there each; overlapping ones merge. A run ends when a fix lands outside the radius (counting its accuracy, so a vague fix does not end it) or after an hour with no fix. The summary gives the number of times, distinct days, total time, and first and last; the times are listed newest first, up to 500.
+
+Positions link to OpenStreetMap, and every visit links to a "How often was I here?" query.
+
+The same queries are JSON endpoints, for scripts:
+
+```bash
+curl "http://localhost:8181/v1/plugins/location-history/imports"
+curl "http://localhost:8181/v1/plugins/location-history/at?time=2026-04-27T10:30&offset=auto"
+curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.6725&radius=150&from=2026-04-01&to=2026-04-30"
+```
+
+`offset` is `auto` or whole minutes east of UTC (`120` for UTC+02:00); `resource` limits a query to one import.
+
+- **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it.
+- **Access.** Every query first reads the resource the import came from as you, so an account sees only imports of resources it can read. Guests cannot forget an import.
+- **Size.** A 40 MB `Records.json` of 400,000 fixes imports in well under a minute, but decoding it holds several gigabytes of memory while the import runs. While an import runs, the plugin's page and endpoints wait for it.
 
 ## Enabling a Plugin
 
