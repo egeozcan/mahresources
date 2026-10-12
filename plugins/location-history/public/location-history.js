@@ -28,6 +28,8 @@
     let tileErrors = false;
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
+        // OSM requires identification; send only the origin, never location queries.
+        referrerPolicy: 'origin',
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).on('loading', () => { tileErrors = false; })
         .on('tileerror', () => { tileErrors = true; tileNotice.hidden = false; })

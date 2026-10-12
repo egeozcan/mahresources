@@ -262,7 +262,10 @@ Positions link to OpenStreetMap, and the estimated position and every visit link
 
 The map code (Leaflet 1.9.4) ships with the plugin, so no external script service
 is required. Background tiles require internet access: OpenStreetMap receives
-your IP address and the map area you view. Recorded data comes from your server;
+your IP address, the app's origin and the map area you view. Tile requests set
+an origin-only referrer policy to identify the application as required by
+OpenStreetMap; the page path and location query parameters are not sent in that
+header. Recorded data comes from your server;
 if tiles fail to load, locations and search controls still work. Text queries
 and their ordinary GET forms also work without JavaScript.
 

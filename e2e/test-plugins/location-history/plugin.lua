@@ -1633,7 +1633,7 @@ local function page(ctx)
         .. '<span class="lh-dot lh-visit-dot"></span>Visit <span class="lh-dot lh-trip-dot"></span>Trip endpoint</p>'
         .. '<p id="lh-map-status" role="status">The interactive map requires JavaScript. The queries below also work without it.</p>'
         .. '<p class="lh-muted">Background tiles load from OpenStreetMap and require internet access. '
-        .. 'The tile provider receives your IP address and the map area you view.</p>'
+        .. 'The tile provider receives your IP address, the app’s origin and the map area you view.</p>'
         .. '<div id="lh-fixes" class="lh-fix-picker" hidden><div><label for="lh-fix">Recorded fix</label>'
         .. '<select id="lh-fix"><option value="">Choose a recorded fix</option></select></div>'
         .. '<button id="lh-use-fix" type="button" disabled>Use recorded fix</button></div>'

@@ -2278,3 +2278,12 @@ When asked to repeat review and fixes until no P0/P1 issues remain, reviewers
 must inspect and report all actionable priorities. Fix reported P2/P3 issues too;
 use zero P0/P1 only as the loop's stopping condition. Do not turn the stopping
 threshold into the review or repair scope.
+
+## External integrations must be tested under the app's real security headers
+
+Check the document's security headers before assuming browser defaults apply.
+The main server's `no-referrer` policy suppressed OpenStreetMap's required
+identification, while unconditional tile mocks hid the 403. Model required
+request headers in integration tests and assert that sensitive URL paths and
+query parameters are excluded. Keep necessary policy overrides on the specific
+external resource rather than relaxing privacy for the whole page.

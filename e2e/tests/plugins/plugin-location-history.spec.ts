@@ -72,6 +72,37 @@ test.describe('Location History map', () => {
     expect(await page.evaluate(() => (window as any).locationPageSentinel)).toBe(true);
   });
 
+  test('tile requests identify the app without exposing location query parameters', async ({ page, baseURL }) => {
+    const expectedReferrer = new URL(baseURL!).origin + '/';
+    const requests: { referer: string | undefined; cacheControl: string | undefined; pragma: string | undefined }[] = [];
+    const statuses: number[] = [];
+    await page.unroute('https://tile.openstreetmap.org/**');
+    page.on('response', response => {
+      if (response.url().startsWith('https://tile.openstreetmap.org/')) statuses.push(response.status());
+    });
+    await page.route('https://tile.openstreetmap.org/**', async route => {
+      const headers = await route.request().allHeaders();
+      requests.push({ referer: headers.referer, cacheControl: headers['cache-control'], pragma: headers.pragma });
+      // Reproduce the provider's documented refusal of unidentified requests
+      // without sending automated test traffic to the public tile service.
+      await route.fulfill({
+        status: headers.referer === expectedReferrer ? 200 : 403,
+        contentType: 'image/png',
+        body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1sAAAAASUVORK5CYII=', 'base64'),
+      });
+    });
+    const response = await page.goto(`${pagePath}?resource=${resourceId}&q=near&point=50,8&radius=250`);
+    expect(response?.headers()['referrer-policy']).toBe('no-referrer');
+    await expect(page.locator('#lh-map-status')).toContainText('3 recorded fixes');
+    await expect.poll(() => statuses.length).toBeGreaterThan(0);
+    expect(statuses, 'The tile provider must accept the app identification').not.toContain(403);
+    for (const request of requests) {
+      expect(request.referer).toBe(expectedReferrer);
+      expect(request.cacheControl).toBeUndefined();
+      expect(request.pragma).toBeUndefined();
+    }
+  });
+
   test('chooses a place with keyboard controls and runs nearby and time queries in place', async ({ page }) => {
     await page.evaluate(() => { (window as any).locationPageSentinel = true; });
     await page.locator('#lh-places button').filter({ hasText: 'Home' }).click();

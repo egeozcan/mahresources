@@ -43,6 +43,7 @@ the code wins. For how the system is actually put together see
 - [2026-10-11-location-history-plugin.md](2026-10-11-location-history-plugin.md)
 - [2026-10-11-plugin-streamed-json-import.md](2026-10-11-plugin-streamed-json-import.md)
 - [2026-10-12-location-history-plugin-map.md](2026-10-12-location-history-plugin-map.md)
+- [2026-10-12-location-history-tile-referrer.md](2026-10-12-location-history-tile-referrer.md)
 
 ## Archive
 
