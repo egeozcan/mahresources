@@ -21,9 +21,10 @@ All nine ship an `api_version = 1` manifest, and enabling one is your consent to
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
 | project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule` | none |
 | ketchup | `db:read`, `pages`, `inject`, `actions` | none |
-| location-history | `db:read`, `kv`, `actions`, `pages`, `api`, `hooks` | none |
+| location-history | `db:read`, `kv`, `actions`, `pages`, `api`, `hooks` | browser map tiles from OpenStreetMap |
 
-fal-ai is the only one that reaches the network.
+fal-ai is the only one that makes server-side network requests. Location History
+loads background map tiles from OpenStreetMap in the browser.
 
 ## data-views
 
@@ -229,22 +230,60 @@ Import a Google location export and ask it where you were. Upload the JSON file 
 
 Upload the JSON file itself; the plugin cannot read inside a `.zip`. The file is read one entry at a time (see [`mah.db.each_resource_json`](./plugin-lua-api.md#streaming-a-json-file)), so its size is not limited by memory, but an import must finish within the 5-minute limit on background plugin work: a 254 MB phone export of 2.6 million positions took about 100 seconds on a development machine, which puts the practical limit at a few hundred megabytes. A larger import fails with a timeout. That file's earlier import, if it had one, is lost with it, and the part already written is cleaned up as described under Storage. Importing a file again replaces its earlier import.
 
-The page answers two questions:
+The page opens with an interactive map of the latest recorded day. Pick another
+day, use **Previous day** / **Next day**, or choose an import to explore. Blue dots
+are recorded fixes, green dots are visits, and amber dots are trip endpoints;
+the map does not draw an inferred route between them. **Fit day** brings the
+day's locations into view. A day shows at most 2,000 fixes and 500 located visits
+and trips across the selected imports, with a notice when the display is
+incomplete; the counts describe the whole day. Auto uses the latest selected
+import's usual UTC offset, or UTC when none was recorded.
+
+Click the map or a visit below it to fill the nearby search's coordinates, then
+set a radius; its circle updates as you type. Keyboard users can focus the map,
+pan with arrow keys, zoom with +/−, and choose **Use map center**. The visit list
+also offers keyboard-accessible place buttons, including separate start and
+destination buttons for trips.
+
+The **Recorded fix** selector exposes each displayed fix's time, coordinates and
+reported accuracy. Choose a fix and press **Use recorded fix** to center the map
+and fill the nearby search's coordinates using the keyboard.
+
+Time-query results also expose their plotted positions under **Query locations**.
+Those buttons select the estimate, surrounding fixes, or trip endpoints even
+when they are outside the displayed day.
+
+The page answers two questions, updating the answer and map without a reload:
 
 - **Where was I?** Give a date and time. The answer is the visit or trip covering it (one you edited wins over the one Google inferred), plus the last fix before and the first fix after. Your position is the visit's place, or else interpolated between fixes no more than two hours either side. The time is read in the zone your timeline recorded around then ("Auto"), or in the zone you pick; a time typed with its own offset (`2026-04-27T10:30:00+02:00`, API only) is taken as given.
 - **How often was I near…?** Give a place as `latitude, longitude`, a radius in metres, and optionally a date range. Visits whose place is inside the radius, and runs of fixes inside it, count as one *time* there each; overlapping ones merge. A run ends when a fix lands outside the radius (counting its accuracy, so a vague fix does not end it) or after an hour with no fix. The summary gives the number of times, distinct days, total time, and first and last; the times are listed newest first, up to 500.
 
 Positions link to OpenStreetMap, and the estimated position and every visit link to a "How often was I here?" query.
 
+The map code (Leaflet 1.9.4) ships with the plugin, so no external script service
+is required. Background tiles require internet access: OpenStreetMap receives
+your IP address and the map area you view. Recorded data comes from your server;
+if tiles fail to load, locations and search controls still work. Text queries
+and their ordinary GET forms also work without JavaScript.
+
 The same queries are JSON endpoints, for scripts:
 
 ```bash
 curl "http://localhost:8181/v1/plugins/location-history/imports"
+curl "http://localhost:8181/v1/plugins/location-history/day?date=2026-04-27&offset=120"
 curl "http://localhost:8181/v1/plugins/location-history/at?time=2026-04-27T10:30&offset=auto"
 curl "http://localhost:8181/v1/plugins/location-history/near?point=50.5818,8.6725&radius=150&from=2026-04-01&to=2026-04-30"
 ```
 
 `offset` is `auto` or whole minutes east of UTC (`120` for UTC+02:00); `resource` limits a query to one import.
+
+The `day` endpoint requires a valid `date` between 1990 and 2099. Its `points`
+array contains `[epoch_seconds, latitude, longitude, accuracy_metres, resource_id]`
+tuples. `segments` contains located visit/trip objects in the same shape as an
+`at` answer's segment, plus `resource_id`. `point_count` and `segment_count` count
+the day's located records, while `truncated` indicates the display caps were
+exceeded. Day boundaries use the returned `offset_minutes`; overnight visits
+are included even when they started in an earlier month.
 
 - **Storage.** The parsed data lives in the plugin's key-value store, bucketed by month, not in notes. **Forget** on the page, deleting the resource, or purging the plugin's data removes it. Deleting the resource removes it straight away unless the plugin is busy (an import running), in which case the import notices the delete when it finishes and keeps nothing. With more than one server process, an import or forget of a file waits for one already writing that file in another process: the import fails with a "try again" message and **Forget** asks you to try again. Then, and for what an interrupted import left behind, a cleanup removes it the next time an administrator with no group scope opens the page or calls an endpoint (at most every ten minutes). Only such an administrator can tell a deleted resource from one outside their scope.
 - **Limits.** One import may hold at most 4,000,000 positions and 400,000 visits and trips (ten years of a dense phone history is under three million and a hundred thousand), and one "How often" question may count at most 1,000,000 separate visits and stays; past a limit the import fails before writing anything, so an earlier import of the same file stays as it was, and the question asks you to narrow it. All three are plugin settings. Place names, place IDs and types are kept to 200 bytes each, and a UTC offset outside −12:00 to +14:00 is ignored.

@@ -30,7 +30,7 @@
 plugin = {
     api_version = 1,
     name = "location-history",
-    version = "1.0",
+    version = "1.1",
     description = "Import a Google location export (Takeout Timeline JSON) and ask where you were at a given time, or how often you were near a place.",
     capabilities = { "db:read", "kv", "actions", "pages", "api", "hooks" },
     settings = {
@@ -1108,6 +1108,63 @@ local function day_bound(s, off, last)
     return t
 end
 
+-- A map reads one local day, and never holds a table for every recorded fix.
+-- The caps apply across all imports. Counts still describe the whole day.
+local MAP_POINTS, MAP_SEGMENTS = 2000, 500
+
+local function latest_import(imports)
+    local latest
+    for _, imp in ipairs(imports) do
+        if not latest or (imp.meta.last or 0) > (latest.meta.last or 0) then latest = imp end
+    end
+    return latest
+end
+
+local function map_day(imports, args)
+    local date = args.date
+    local t = type(date) == "string" and date:match("^%d%d%d%d%-%d%d%-%d%d$") and parse_time(date)
+    if not t or t < MIN_TIME or t >= MAX_TIME or format_time(t, 0):sub(1, 10) ~= date then
+        return nil, "the date must be a valid day between 1990 and 2099 (YYYY-MM-DD)"
+    end
+    local off, err = parse_offset(args.offset)
+    if err then return nil, err end
+    local latest = latest_import(imports)
+    off = off or (latest and latest.meta.offset) or 0
+    local first, last = t - off * 60, t - off * 60 + 86400
+    local points, segments, np, ns = {}, {}, 0, 0
+    for _, imp in ipairs(imports) do
+        for _, key in ipairs(months_between(imp, first, last - 1)) do
+            each_part(imp, key, function(cols)
+                for i = last_before(cols.t, first) + 1, #cols.t do
+                    if cols.t[i] >= last then return false end
+                    np = np + 1
+                    if #points < MAP_POINTS then
+                        points[#points + 1] = mah.json.array({ cols.t[i], cols.lat[i], cols.lng[i], cols.acc[i], imp.id })
+                    end
+                end
+            end)
+        end
+        for _, key in ipairs(months_between(imp, first - (imp.meta.span or 0), last - 1)) do
+            each_segment_part(imp, key, function(cols, n)
+                for i = 1, n do
+                    if cols.s[i] < last and (cols.e[i] > first or cols.s[i] == first)
+                        and (cols.lat[i] ~= false or cols.lat2[i] ~= false) then
+                        ns = ns + 1
+                        if #segments < MAP_SEGMENTS then
+                            local seg = segment_view(segment_at(cols, i), off)
+                            seg.resource_id = imp.id
+                            segments[#segments + 1] = seg
+                        end
+                    end
+                end
+            end)
+        end
+    end
+    return { date = date, offset_minutes = off, offset = format_offset(off),
+        points = mah.json.array(points), segments = mah.json.array(segments),
+        point_count = np, segment_count = ns, truncated = np > MAP_POINTS or ns > MAP_SEGMENTS }
+end
+
 -- "How often was I within <radius> of <point>?"
 local function how_often_near(imports, args)
     local lat, lng = parse_point(args.point)
@@ -1511,25 +1568,27 @@ local function page(ctx)
     local at_result, near_result = "", ""
     if q.q == "at" and q.time and q.time ~= "" then
         local r, err = where_at(selected, q.time, q.offset)
-        at_result = '<div id="at-results" class="mt-4 border rounded p-4" role="region" aria-label="Where you were">'
+        at_result = '<div id="at-results" data-answer="' .. esc(mah.json.encode(r or {}))
+            .. '" class="mt-4 border rounded p-4" role="region" aria-label="Where you were">'
             .. (r and at_html(r) or alert(err)) .. '</div>'
     elseif q.q == "near" and q.point and q.point ~= "" then
         local r, err = how_often_near(selected, q)
-        near_result = '<div id="near-results" class="mt-4 border rounded p-4" role="region" aria-label="How often you were there">'
+        near_result = '<div id="near-results" data-answer="' .. esc(mah.json.encode(r or {}))
+            .. '" class="mt-4 border rounded p-4" role="region" aria-label="How often you were there">'
             .. (r and near_html(r) or alert(err)) .. '</div>'
     end
 
-    local at_form = '<form method="GET" class="space-y-3 max-w-lg"><input type="hidden" name="q" value="at">'
+    local at_form = '<form method="GET" data-lh-query="at" class="space-y-3"><input type="hidden" name="q" value="at">'
         .. field("at-time", "Date and time", input("at-time", "time", "datetime-local", q.q == "at" and q.time or "", 'step="1" required'))
         .. field("at-offset", "Time zone", offset_select("at-offset", q.q == "at" and q.offset or nil),
             "Auto reads the time in the zone your timeline recorded around then.")
         .. field("at-resource", "Import", import_select("at-resource", imports, q.q == "at" and q.resource or nil))
         .. '<button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Find</button></form>'
 
-    local near_form = '<form method="GET" class="space-y-3 max-w-lg"><input type="hidden" name="q" value="near">'
+    local near_form = '<form method="GET" data-lh-query="near" class="space-y-3"><input type="hidden" name="q" value="near">'
         .. field("near-point", "Place (latitude, longitude)",
             input("near-point", "point", "text", q.q == "near" and q.point or "", 'required placeholder="50.5837, 8.6744" aria-describedby="near-point-hint"'),
-            "Right-click a spot in a map app to copy its coordinates.")
+            "Click the map to choose a place, or type its coordinates here.")
         .. field("near-radius", "Radius (metres)", input("near-radius", "radius", "number", q.q == "near" and q.radius or "250", 'min="1" max="' .. MAX_RADIUS .. '" step="1"'))
         .. '<div class="grid grid-cols-2 gap-3">'
         .. field("near-from", "From (optional)", input("near-from", "from", "date", q.q == "near" and q.from or ""))
@@ -1540,11 +1599,59 @@ local function page(ctx)
         .. field("near-resource", "Import", import_select("near-resource", imports, q.q == "near" and q.resource or nil))
         .. '<button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Count</button></form>'
 
-    return '<div class="p-4 max-w-4xl">' .. notice
-        .. section("lh-at", "Where was I?", at_form .. at_result)
-        .. section("lh-near", "How often was I near…?", near_form .. near_result)
-        .. section("lh-imports", "Imports", imports_html(imports))
-        .. '</div>'
+    local latest = latest_import(selected)
+    local off = parse_offset(q.offset) or (latest and latest.meta.offset) or 0
+    local date = ""
+    if q.q == "at" and type(q.time) == "string" then
+        date = q.time:sub(1, 10)
+    elseif latest and latest.meta.last then
+        local last = latest.meta.last
+        date = format_time(last, off):sub(1, 10)
+        -- A visit's end is exclusive for a map day. Keep a real midnight fix
+        -- or visit on the new day, but do not open an empty day for an end alone.
+        if (last + off * 60) % 86400 == 0 then
+            local day = map_day(selected, { date = date, offset = tostring(off) })
+            if day and day.point_count == 0 and day.segment_count == 0 then
+                date = format_time(last - 1, off):sub(1, 10)
+            end
+        end
+    end
+    local map_form = '<form id="lh-day-form" class="lh-toolbar" hidden>'
+        .. field("lh-date", "Day", input("lh-date", "date", "date", date, 'required min="1990-01-01" max="2099-12-31"'))
+        .. field("lh-offset", "Time zone", offset_select("lh-offset", q.offset),
+            "Auto uses the latest import’s usual offset.")
+        .. field("lh-resource", "Import", import_select("lh-resource", imports, q.resource))
+        .. '<button type="submit">Show day</button></form>'
+        .. '<div class="lh-map-actions" hidden><button type="button" id="lh-prev">Previous day</button>'
+        .. '<button type="button" id="lh-next">Next day</button><button type="button" id="lh-fit">Fit day</button>'
+        .. '<button type="button" id="lh-center">Use map center</button></div>'
+    local map_html = map_form
+        .. '<div id="lh-map" role="region" aria-label="Location history map" aria-describedby="lh-map-hint" hidden></div>'
+        .. '<p id="lh-map-hint" class="lh-muted">Pan and zoom to explore. Click to choose a place for a nearby search. '
+        .. 'With the map focused, use arrow keys to pan and +/− to zoom, then choose Use map center.</p>'
+        .. '<p class="lh-legend"><span class="lh-dot lh-fix-dot"></span>Recorded fix '
+        .. '<span class="lh-dot lh-visit-dot"></span>Visit <span class="lh-dot lh-trip-dot"></span>Trip endpoint</p>'
+        .. '<p id="lh-map-status" role="status">The interactive map requires JavaScript. The queries below also work without it.</p>'
+        .. '<p class="lh-muted">Background tiles load from OpenStreetMap and require internet access. '
+        .. 'The tile provider receives your IP address and the map area you view.</p>'
+        .. '<div id="lh-fixes" class="lh-fix-picker" hidden><div><label for="lh-fix">Recorded fix</label>'
+        .. '<select id="lh-fix"><option value="">Choose a recorded fix</option></select></div>'
+        .. '<button id="lh-use-fix" type="button" disabled>Use recorded fix</button></div>'
+        .. '<ul id="lh-places" aria-label="Visits and trips for this day"></ul>'
+        .. '<div id="lh-answer-locations" hidden><h3 class="font-medium mt-4">Query locations</h3>'
+        .. '<ul id="lh-answer-places" aria-label="Locations from the current query"></ul></div>'
+    return '<link rel="stylesheet" href="/plugins/location-history/public/vendor/leaflet.css">'
+        .. '<link rel="stylesheet" href="/plugins/location-history/public/location-history.css">'
+        .. '<div id="lh-app" class="lh-app">' .. notice
+        .. '<header class="lh-header"><p class="lh-eyebrow">YOUR TIMELINE</p><h2>Location History</h2>'
+        .. '<p>Explore a day, find a moment, or rediscover a place.</p></header>'
+        .. section("lh-explore", "Explore your history", map_html)
+        .. '<div class="lh-queries">'
+        .. section("lh-at", "Where was I?", at_form .. '<div data-lh-result="at" aria-live="polite">' .. at_result .. '</div>')
+        .. section("lh-near", "How often was I near…?", near_form .. '<div data-lh-result="near" aria-live="polite">' .. near_result .. '</div>')
+        .. '</div><div class="lh-imports">' .. section("lh-imports", "Imports", imports_html(imports)) .. '</div>'
+        .. '</div><script src="/plugins/location-history/public/vendor/leaflet.js"></script>'
+        .. '<script src="/plugins/location-history/public/location-history.js"></script>'
 end
 
 -- API ------------------------------------------------------------------------
@@ -1635,6 +1742,12 @@ function init()
         local imports = api_imports(ctx)
         if not imports then return end
         api_answer(ctx, where_at(imports, ctx.query.time, ctx.query.offset))
+    end, { timeout = 120 })
+
+    mah.api("GET", "day", function(ctx)
+        local imports = api_imports(ctx)
+        if not imports then return end
+        api_answer(ctx, map_day(imports, ctx.query))
     end, { timeout = 120 })
 
     mah.api("GET", "near", function(ctx)
