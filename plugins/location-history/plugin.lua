@@ -331,15 +331,25 @@ end
 -- prints it.
 local SEP = "\31" -- separates the fields of a packed segment
 
+-- Longest name, place id or type kept, in bytes. Real ones are tens of bytes;
+-- without a cap a crafted file could make every stored part too large to save.
+local MAX_TEXT = 200
+
 local function text(v)
     if type(v) ~= "string" and type(v) ~= "number" then return nil end
     v = tostring(v)
+    if #v > MAX_TEXT * 4 then v = sub(v, 1, MAX_TEXT * 4) end
     -- The separator cannot appear in a field, or the segment would not unpack.
-    local at = find(v, SEP, 1, true)
-    while at do
-        v = sub(v, 1, at - 1) .. sub(v, at + 1)
-        at = find(v, SEP, at, true)
+    v = string.gsub(v, SEP, "")
+    if #v > MAX_TEXT then
+        -- Cut at a character boundary: back off over UTF-8 continuation bytes.
+        local cut = MAX_TEXT
+        while cut > 0 and string.byte(v, cut + 1) and string.byte(v, cut + 1) >= 128 and string.byte(v, cut + 1) < 192 do
+            cut = cut - 1
+        end
+        v = sub(v, 1, cut)
     end
+    if v == "" then return nil end
     return v
 end
 
@@ -396,6 +406,11 @@ local function add_segment(c, seg)
     seg.s, seg.e = floor(seg.s + 0.5), floor(seg.e + 0.5)
     if seg.lat then seg.lat, seg.lng = round7(seg.lat), round7(seg.lng) end
     if seg.lat2 then seg.lat2, seg.lng2 = round7(seg.lat2), round7(seg.lng2) end
+    -- Kept only when plausible: a stored offset feeds every "auto" answer.
+    local off = seg.off
+    if off and (off ~= floor(off) or off < -720 or off > 840) then seg.off = nil end
+    local dist = seg.dist
+    if dist and not (dist >= 0 and dist < 1e9) then seg.dist = nil end
     if #c.segments >= c.max_segments then return full(c, "visits and trips", c.max_segments) end
     c.segments[#c.segments + 1] = pack_segment(seg)
 end
@@ -544,9 +559,45 @@ local function points_key(id, month, part) return "d:" .. id .. ":p:" .. month .
 local function segments_key(id, month, part) return "d:" .. id .. ":s:" .. month .. ":" .. part end
 
 -- Set while an import or a forget is writing: to the time an import started,
--- or 0 for a forget. One left behind marks data a stopped write left without a
--- summary; see sweep_orphans.
+-- or minus the time a forget started. Only the holder writes the resource's
+-- data, which matters with more than one server process (each has its own
+-- VM). One left behind marks data a stopped write left without a summary; see
+-- sweep_orphans.
 local function writing_key(id) return "w:" .. id end
+
+-- How long an import may be writing before its leftovers count as abandoned:
+-- the 5-minute limit on background work, with room to spare.
+local WRITING_GRACE = 15 * 60
+
+local function marker_age(held, now)
+    local started = tonumber(held)
+    if not started then return math.huge end
+    return now - math.abs(started)
+end
+
+-- Takes the resource's marker, or takes over one abandoned for longer than
+-- WRITING_GRACE. Returns the value now held, or nil while another import or
+-- forget holds it.
+local function take_marker(id, forgetting)
+    local key = writing_key(id)
+    local now = mah.util.now()
+    local mine = forgetting and -now or now
+    for _ = 1, 3 do
+        if mah.kv.compare_and_set(key, mah.kv.ABSENT, mine) then return mine end
+        local held = mah.kv.get(key)
+        if held ~= nil then
+            if marker_age(held, now) <= WRITING_GRACE then return nil end
+            if mah.kv.compare_and_set(key, held, mine) then return mine end
+        end
+    end
+    return nil
+end
+
+-- Removes the marker if it is still the one taken. Nobody else replaces a
+-- marker until it is WRITING_GRACE old, longer than any write runs.
+local function release_marker(id, mine)
+    if mah.kv.get(writing_key(id)) == mine then mah.kv.delete(writing_key(id)) end
+end
 
 -- The fields of a segment, stored as one column each. A missing value is
 -- stored as false, since a JSON null would leave a hole in the column.
@@ -561,13 +612,16 @@ local function remove_data(id)
     end
 end
 
+-- Removes an import. Returns false, removing nothing, while an import or
+-- forget of the same resource (in another server process) is writing: an
+-- import checks at its end whether its resource still exists, so a delete
+-- during one is still caught.
 local function forget(id)
-    -- Mark the forget only where no import (in another server process) holds
-    -- the marker, and remove only that mark: overwriting or removing an
-    -- import's would leave what it goes on to write with no marker at all.
-    local mine = mah.kv.compare_and_set(writing_key(id), mah.kv.ABSENT, 0)
+    local mine = take_marker(id, true)
+    if not mine then return false end
     remove_data(id)
-    if mine and mah.kv.get(writing_key(id)) == 0 then mah.kv.delete(writing_key(id)) end
+    release_marker(id, mine)
+    return true
 end
 
 local function grow_box(box, lat, lng)
@@ -590,6 +644,10 @@ end
 -- goes last, so a failure part way leaves no summary and therefore nothing a
 -- query would read; the next import clears the leftovers.
 local function store(id, name, format, c, progress)
+    local mine = take_marker(id, false)
+    if not mine then
+        return nil, "another import or forget of this file is running; try again in a few minutes."
+    end
     table.sort(c.points)
     table.sort(c.segments)
 
@@ -603,7 +661,6 @@ local function store(id, name, format, c, progress)
         return m
     end
 
-    mah.kv.set(writing_key(id), mah.util.now())
     remove_data(id)
 
     -- Segments, each once, under the month it starts in. A query looking for
@@ -710,20 +767,19 @@ local function store(id, name, format, c, progress)
         imported_at = mah.util.now_iso(),
     }
     mah.kv.set(meta_key(id), meta)
-    mah.kv.delete(writing_key(id))
     -- The resource may have been deleted while this ran, and its delete hook
-    -- skipped because this import held the plugin. Then nothing must be left.
+    -- skipped because this import held the plugin, or deferred because it
+    -- held the marker. Then nothing must be left.
     local resource, err = mah.db.get_resource(id)
     if not resource and not err then
-        forget(id)
-        return nil
+        remove_data(id)
+        release_marker(id, mine)
+        return nil, "the resource was deleted while it was being imported; nothing was kept."
     end
+    release_marker(id, mine)
     return meta
 end
 
--- How long an import may be writing before its leftovers count as abandoned:
--- the 5-minute limit on background work, with room to spare.
-local WRITING_GRACE = 15 * 60
 local SWEEP_EVERY = 10 * 60
 
 -- Forgets every import whose resource no longer exists, and the data of any
@@ -737,14 +793,12 @@ local SWEEP_EVERY = 10 * 60
 -- writing -- in another server process, which has its own VM -- has a fresh
 -- writing marker and is left alone.
 local function sweep_orphans()
-    local forgotten, summarised = 0, {}
+    local forgotten = 0
     for _, key in ipairs(mah.kv.list("imp:")) do
         local id = tonumber(key:match("^imp:(%d+)$"))
         if id then
-            summarised[id] = true
             local resource, err = mah.db.get_resource(id)
-            if not resource and not err then
-                forget(id)
+            if not resource and not err and forget(id) then
                 forgotten = forgotten + 1
             end
         end
@@ -756,12 +810,15 @@ local function sweep_orphans()
         local id = tonumber(key:match("^w:(%d+)$"))
         -- Read again just before forgetting: in another process, an import may
         -- have finished (summary written, marker removed) since the list above.
-        local started = id and tonumber(mah.kv.get(key))
-        if started and not summarised[id] and mah.kv.get(meta_key(id)) == nil and now - started > WRITING_GRACE then
-            forget(id)
-            -- forget leaves a marker it did not set; this one is abandoned.
-            if mah.kv.get(key) == started then mah.kv.delete(key) end
-            forgotten = forgotten + 1
+        local held = id and mah.kv.get(key)
+        if held ~= nil and marker_age(held, now) > WRITING_GRACE then
+            if mah.kv.get(meta_key(id)) == nil then
+                -- forget takes the abandoned marker over and removes it.
+                if forget(id) then forgotten = forgotten + 1 end
+            else
+                -- A write that finished but stopped before clearing it.
+                release_marker(id, held)
+            end
         end
     end
     return forgotten
@@ -1100,8 +1157,17 @@ local function how_often_near(imports, args)
             entries = entries + 1
             list.n, list.s[n], list.e[n], list.fixes[n], list.visits[n], list.d[n] = n, s0, e0, fixes, visits, d
         end
-        -- One place per entry, as a string column: the first visit's.
-        if place and not list.places[n] then list.places[n] = place end
+        -- An entry's places, up to MAX_PLACES, as one string joined by SEP
+        -- (which no stored name holds): a string per entry, not a table.
+        if place then
+            local held = list.places[n]
+            if not held then
+                list.places[n] = place
+            elseif held ~= place and not find(SEP .. held .. SEP, SEP .. place .. SEP, 1, true) then
+                local _, seps = string.gsub(held, SEP, "")
+                if seps < MAX_PLACES - 1 then list.places[n] = held .. SEP .. place end
+            end
+        end
     end
 
     for _, imp in ipairs(imports) do
@@ -1217,11 +1283,17 @@ local function how_often_near(imports, args)
         end
         -- A row names at most MAX_PLACES places, so a stay made of many
         -- visits holds a few strings, not one per visit.
-        local place = list.places[j]
-        if place then
-            for k = 1, MAX_PLACES do
-                if tplaces[k] == place then break end
-                if tplaces[k] == nil then tplaces[k] = place; break end
+        local joined = list.places[j]
+        if joined then
+            local at = 1
+            while at do
+                local stop = find(joined, SEP, at, true)
+                local place = sub(joined, at, (stop or 0) - 1)
+                for k = 1, MAX_PLACES do
+                    if tplaces[k] == place then break end
+                    if tplaces[k] == nil then tplaces[k] = place; break end
+                end
+                at = stop and stop + 1
             end
         end
     end
@@ -1422,8 +1494,11 @@ local function page(ctx)
         if is_guest(ctx.principal) then
             notice = alert("Guests cannot forget imports.")
         elseif id and #visible_imports(id) == 1 then
-            forget(id)
-            notice = '<p class="bg-green-50 border border-green-200 rounded p-3" role="status">Import forgotten.</p>'
+            if forget(id) then
+                notice = '<p class="bg-green-50 border border-green-200 rounded p-3" role="status">Import forgotten.</p>'
+            else
+                notice = alert("This file is being imported right now. Try again once that has finished.")
+            end
         else
             notice = alert("There is no such import you can see.")
         end
@@ -1524,11 +1599,11 @@ function init()
                 mah.job_fail(ctx.job_id, "Cannot import: the " .. format .. " file holds no positions or visits.")
                 return
             end
-            local meta = store(id, resource.name, format, c, function(done, total)
+            local meta, err = store(id, resource.name, format, c, function(done, total)
                 mah.job_progress(ctx.job_id, 50 + floor(45 * done / total), "Saved " .. done .. " of " .. total .. " positions")
             end)
             if not meta then
-                mah.job_fail(ctx.job_id, "The resource was deleted while it was being imported; nothing was kept.")
+                mah.job_fail(ctx.job_id, "Cannot import: " .. err)
                 return
             end
             mah.job_complete(ctx.job_id, {
@@ -1570,6 +1645,7 @@ function init()
 
     mah.on("after_resource_delete", function(data)
         local id = tonumber(data and data.id)
+        -- Deferred when an import of it is writing; that import notices.
         if id then forget(id) end
     end)
 end

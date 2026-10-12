@@ -298,3 +298,27 @@ Open P2/P3s, not yet fixed:
   end of the document"; the docs undersell that a re-import over a limit keeps
   the earlier import; a duplicated heap-sampling helper in the tests; no test
   for invalid limit settings.
+
+## Round-6 follow-ups (fixed before round 7)
+
+- "near" entries keep up to five places as one SEP-joined string, and the
+  merge splits them into the row, so merged visits name every place again.
+- `text()` strips SEP with one `gsub`, caps fields at 200 bytes on a UTF-8
+  boundary (pre-truncating huge inputs first), and drops empty results.
+- Segment offsets outside -720..840 or not whole minutes, and distances that
+  are negative, NaN or huge, are dropped at import.
+- Writes take the `w:<id>` marker with compare-and-set: imports store the
+  start time, forgets minus it. A fresh marker held by someone else makes an
+  import fail ("try again") and a forget return false (the page says so; the
+  delete hook relies on the import's end-of-store recheck). Markers older
+  than WRITING_GRACE are taken over with CAS; release deletes only a marker
+  still equal to the one taken. The store's recheck removes data while still
+  holding its marker. The sweep forgets under the abandoned marker, or clears
+  a stale marker whose write did finish.
+- Trailing data after the document is checked by reading the rest of the
+  file in buffers, outside the piece window, so any amount of whitespace is
+  accepted and other data refused without being parsed.
+- Docs: a re-import over a limit keeps the earlier import; text and offset
+  caps; cross-process waiting. Tests: one heap-sampling helper; invalid
+  limit settings; place merging; text/offset caps; overlapping writes;
+  trailing whitespace.

@@ -304,3 +304,19 @@ func TestEachResourceJSONByteCapIsExact(t *testing.T) {
 		t.Errorf("a piece one byte over: %q", got)
 	}
 }
+
+// Whitespace after the document is accepted however long it is; anything else
+// after it is refused, also far past the last piece.
+func TestEachResourceJSONTrailingData(t *testing.T) {
+	pad := strings.Repeat(" \n", 3*maxStreamedElementSize)
+	pm := jsonStreamFixture(t, map[uint]string{
+		1: `[1, 2]` + pad,
+		2: `{"a": [1]}` + pad + `x`,
+	})
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "1"}); got != "true nil 2" {
+		t.Errorf("trailing whitespace: %q", got)
+	}
+	if got := jsonStreamPage(t, pm, "count", map[string]any{"id": "2"}); got != "nil not valid JSON: data after the end of the document 1" {
+		t.Errorf("trailing data: %q", got)
+	}
+}

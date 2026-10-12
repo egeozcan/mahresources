@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // locationQuerier serves the resources the location-history plugin imports.
@@ -660,33 +661,8 @@ func TestLocationHistoryDenseMonthQueriesInBoundedMemory(t *testing.T) {
 		t.Fatalf("parts = %v", keys)
 	}
 
-	peakDuring := func(run func()) int64 {
-		runtime.GC()
-		var base runtime.MemStats
-		runtime.ReadMemStats(&base)
-		var peak atomic.Uint64
-		done := make(chan struct{})
-		go func() {
-			var m runtime.MemStats
-			for {
-				select {
-				case <-done:
-					return
-				case <-time.After(5 * time.Millisecond):
-					runtime.ReadMemStats(&m)
-					if m.HeapAlloc > peak.Load() {
-						peak.Store(m.HeapAlloc)
-					}
-				}
-			}
-		}()
-		run()
-		close(done)
-		return int64(peak.Load()) - int64(base.HeapAlloc)
-	}
-
 	var body map[string]any
-	grew := peakDuring(func() { _, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "100"}) })
+	grew := peakHeapGrowth(func() { _, body = f.api(t, "near", map[string]any{"point": "0, 0", "radius": "100"}) })
 	// Every other fix is at the spot, 40 s apart: each is its own presence (a
 	// sharp fix 1 km away lies between), but times under a minute apart are
 	// one time there, so this is one long stay holding every one of them.
@@ -704,7 +680,7 @@ func TestLocationHistoryDenseMonthQueriesInBoundedMemory(t *testing.T) {
 	for _, k := range []int64{19999, 20000, 59999, 99998} {
 		at := time.Unix(base+k*20+10, 0).UTC().Format("2006-01-02T15:04:05Z")
 		var body map[string]any
-		grew := peakDuring(func() { _, body = f.api(t, "at", map[string]any{"time": at}) })
+		grew := peakHeapGrowth(func() { _, body = f.api(t, "at", map[string]any{"time": at}) })
 		if get(t, body, "before", "epoch") != float64(base+k*20) || get(t, body, "after", "epoch") != float64(base+(k+1)*20) {
 			t.Errorf("at %s: before %v, after %v", at, body["before"], body["after"])
 		}
@@ -954,15 +930,16 @@ func TestLocationHistoryForgetMarkers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A forget that stopped part way: its marker, data, no summary.
-	set("w:30", "0")
+	// A forget that stopped part way, long ago: its marker, data, no summary.
+	set("w:30", "-1000")
 	set("d:30:p:2026-04:1", `{"t":[1]}`)
 	f.page(t, PageContext{Principal: map[string]any{"isAdmin": true}})
 	if keys := append(f.keys("w:30"), f.keys("d:30:")...); len(keys) != 0 {
 		t.Errorf("an interrupted forget's leftovers survived the sweep: %v", keys)
 	}
 
-	// An import of 40 is writing in another process when 40 is deleted here.
+	// An import of 40 is writing in another process when 40 is deleted here:
+	// the forget leaves it alone (the import checks for the delete at its end).
 	started := fmt.Sprint(time.Now().Unix())
 	set("w:40", started)
 	set("d:40:p:2026-04:1", `{"t":[1]}`)
@@ -970,8 +947,118 @@ func TestLocationHistoryForgetMarkers(t *testing.T) {
 	if got, _, _ := f.kv.KVGet("location-history", "w:40"); got != started {
 		t.Errorf("the forget changed the running import's marker to %q", got)
 	}
-	if keys := f.keys("d:40:"); len(keys) != 0 {
-		t.Errorf("the forget left %v", keys)
+	if keys := f.keys("d:40:"); len(keys) != 1 {
+		t.Errorf("the forget removed data a running import is writing: %v", keys)
+	}
+
+	// A forget just started here, in another process, is not abandoned.
+	set("w:50", fmt.Sprint(-time.Now().Unix()))
+	set("d:50:p:2026-04:1", `{"t":[1]}`)
+	if err := f.kv.KVDelete("location-history", "sweep:last"); err != nil {
+		t.Fatal(err)
+	}
+	f.page(t, PageContext{Principal: map[string]any{"isAdmin": true}})
+	if keys := f.keys("w:50"); len(keys) != 1 {
+		t.Errorf("the sweep took a fresh forget for an abandoned one")
+	}
+}
+
+// While another process imports or forgets a resource, an import of it here
+// fails without writing, and a forget from the page says to try again.
+func TestLocationHistoryWritesOfOneResourceDoNotOverlap(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{10: timelineEditsFixture})
+	f.mustImport(t, 10)
+	data := func() string { return strings.Join(append(f.keys("d:"), append(f.keys("idx:"), f.keys("imp:")...)...), ",") }
+	before := data()
+	now := fmt.Sprint(time.Now().Unix())
+	if err := f.kv.KVSet("location-history", "w:10", now); err != nil {
+		t.Fatal(err)
+	}
+	job := f.importResource(t, 10)
+	if job.Status != "failed" || !strings.Contains(job.Message, "another import or forget") {
+		t.Errorf("status %s, message %q", job.Status, job.Message)
+	}
+	html := f.page(t, PageContext{Method: "POST", Principal: map[string]any{"isAdmin": true},
+		Params: map[string]any{"forget": "10"}})
+	if !strings.Contains(html, "being imported right now") {
+		t.Error("the page did not say the forget has to wait")
+	}
+	if after := data(); after != before {
+		t.Errorf("data changed from %v to %v", before, after)
+	}
+	if got, _, _ := f.kv.KVGet("location-history", "w:10"); got != now {
+		t.Errorf("the marker became %q", got)
+	}
+
+	// A marker abandoned long ago is taken over.
+	if err := f.kv.KVSet("location-history", "w:10", "1000"); err != nil {
+		t.Fatal(err)
+	}
+	f.mustImport(t, 10)
+	if keys := f.keys("w:"); len(keys) != 0 {
+		t.Errorf("markers left: %v", keys)
+	}
+}
+
+// When visits in one import run into each other, the row names each place.
+func TestLocationHistoryNearNamesEveryPlaceOfAMergedStay(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"timelineObjects": [`)
+	base := time.Date(2019, 5, 1, 8, 0, 0, 0, time.UTC)
+	for i := 0; i < 8; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		s := base.Add(time.Duration(i) * 10 * time.Minute)
+		// p0, p1, p0, p1, p2, ... back to back.
+		place := []string{"p0", "p1", "p0", "p1", "p2", "p3", "p4", "p5"}[i]
+		fmt.Fprintf(&b, `{"placeVisit": {"location": {"latitudeE7": 0, "longitudeE7": 0, "name": "%s"}, "duration": {"startTimestamp": "%s", "endTimestamp": "%s"}}}`,
+			place, s.Format(time.RFC3339), s.Add(10*time.Minute).Format(time.RFC3339))
+	}
+	b.WriteString(`]}`)
+	f := locationPlugin(t, map[uint]string{1: b.String()})
+	f.mustImport(t, 1)
+	_, body := f.api(t, "near", map[string]any{"point": "0, 0", "radius": "50"})
+	rows := body["rows"].([]any)
+	if body["times"] != float64(1) || len(rows) != 1 {
+		t.Fatalf("times %v, rows %v", body["times"], rows)
+	}
+	if got := fmt.Sprint(rows[0].(map[string]any)["places"]); got != "[p0 p1 p2 p3 p4]" {
+		t.Errorf("places = %s", got)
+	}
+}
+
+// Names are capped (at a character boundary) and stripped of the separator
+// packed segments use; implausible UTC offsets are dropped.
+func TestLocationHistoryCapsTextAndChecksOffsets(t *testing.T) {
+	long := strings.Repeat("ä", 150) // 300 bytes
+	f := locationPlugin(t, map[uint]string{1: `{"semanticSegments": [
+ {"startTime": "2019-05-01T08:00:00.000+02:00", "endTime": "2019-05-01T09:00:00.000+02:00",
+  "startTimeTimezoneUtcOffsetMinutes": 100000,
+  "visit": {"topCandidate": {"placeId": "a\u001fb` + strings.Repeat(`\u001f`, 5000) + `", "semanticType": "` + long + `",
+   "placeLocation": {"latLng": "0.0°, 0.0°"}}}}]}`})
+	f.mustImport(t, 1)
+	_, body := f.api(t, "at", map[string]any{"time": "2019-05-01T06:30:00Z", "offset": "0"})
+	visit := get(t, body, "segment").(map[string]any)
+	if visit["place_id"] != "ab" {
+		t.Errorf("place id %q", visit["place_id"])
+	}
+	if typ := fmt.Sprint(visit["type"]); len(typ) != 200 || !utf8.ValidString(typ) {
+		t.Errorf("type of %d bytes, valid UTF-8 %v", len(typ), utf8.ValidString(typ))
+	}
+	if raw, _, _ := f.kv.KVGet("location-history", "imp:1"); strings.Contains(raw, "100000") {
+		t.Errorf("the implausible offset was kept: %s", raw)
+	}
+}
+
+// Settings that are not positive numbers fall back to the defaults.
+func TestLocationHistoryIgnoresInvalidLimitSettings(t *testing.T) {
+	f := locationPlugin(t, map[uint]string{1: timelineEditsFixture})
+	f.pm.SetPluginSettings("location-history", map[string]any{
+		"max_positions": "lots", "max_segments": float64(-3), "max_near_entries": float64(0)})
+	f.mustImport(t, 1)
+	if _, body := f.api(t, "near", map[string]any{"point": "50.0, 8.0", "radius": "100"}); body["times"] != float64(3) {
+		t.Errorf("near with invalid limits: %v", body)
 	}
 }
 

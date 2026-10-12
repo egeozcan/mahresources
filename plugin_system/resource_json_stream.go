@@ -193,10 +193,28 @@ func streamJSON(r io.Reader, deliver func(key, index lua.LValue, value any) erro
 	default:
 		return errors.New("not a JSON object or array")
 	}
-	if _, err := dec.Token(); err != io.EOF {
-		return errors.New("not valid JSON: data after the end of the document")
+	return onlyWhitespaceLeft(io.MultiReader(dec.Buffered(), w.r))
+}
+
+// onlyWhitespaceLeft reads what follows the document a buffer at a time, so
+// trailing whitespace of any length (up to the file cap) is accepted and
+// anything else is refused without being parsed.
+func onlyWhitespaceLeft(r io.Reader) error {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := r.Read(buf)
+		for _, b := range buf[:n] {
+			if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+				return errors.New("not valid JSON: data after the end of the document")
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return nil
 }
 
 // streamArray delivers the elements of an array whose '[' has been read.
