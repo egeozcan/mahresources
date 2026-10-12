@@ -12,29 +12,42 @@
     const fixSelect = $('#lh-fix');
     const useFix = $('#lh-use-fix');
     const mapElement = $('#lh-map');
+    const nearMapElement = $('#lh-near-map');
     dayForm.hidden = false;
     $('.lh-map-actions').hidden = false;
     mapElement.hidden = false;
+    nearMapElement.hidden = false;
+    $('#lh-near-controls').hidden = false;
+    $('#lh-near-map-hint').hidden = false;
 
-    const map = L.map(mapElement, { scrollWheelZoom: false, preferCanvas: true }).setView([20, 0], 2);
+    function createMap(element, hint) {
+        const target = L.map(element, { scrollWheelZoom: false, preferCanvas: true }).setView([20, 0], 2);
+        const notice = document.createElement('p');
+        notice.id = `${element.id}-tile-status`;
+        notice.className = 'lh-muted';
+        notice.hidden = true;
+        notice.textContent = 'Some map background tiles could not load. Recorded locations and search controls still work.';
+        $(hint).after(notice);
+        let errors = false;
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            // OSM requires identification; send only the origin, never location queries.
+            referrerPolicy: 'origin',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).on('loading', () => { errors = false; })
+            .on('tileerror', () => { errors = true; notice.hidden = false; })
+            .on('load', () => { notice.hidden = !errors; }).addTo(target);
+        L.control.scale({ imperial: false }).addTo(target);
+        return target;
+    }
+
+    const map = createMap(mapElement, '#lh-map-hint');
+    const nearMap = createMap(nearMapElement, '#lh-near-map-hint');
     const historyLayer = L.featureGroup().addTo(map);
     const answerLayer = L.featureGroup().addTo(map);
-    const selectionLayer = L.featureGroup().addTo(map);
-    const tileNotice = document.createElement('p');
-    tileNotice.className = 'lh-muted';
-    tileNotice.hidden = true;
-    tileNotice.textContent = 'Some map background tiles could not load. Recorded locations and search controls still work.';
-    $('#lh-map-hint').after(tileNotice);
-    let tileErrors = false;
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        // OSM requires identification; send only the origin, never location queries.
-        referrerPolicy: 'origin',
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    }).on('loading', () => { tileErrors = false; })
-        .on('tileerror', () => { tileErrors = true; tileNotice.hidden = false; })
-        .on('load', () => { tileNotice.hidden = !tileErrors; }).addTo(map);
-    L.control.scale({ imperial: false }).addTo(map);
+    const selectionLayers = [map, nearMap].map(target => L.featureGroup().addTo(target));
+    const selectionLayer = selectionLayers[0];
+    let nearPickerTouched = false;
 
     let dayRequest, queryRequest;
     let dayGeneration = 0, queryGeneration = 0;
@@ -65,16 +78,20 @@
     }
 
     function showSelection() {
-        selectionLayer.clearLayers();
+        selectionLayers.forEach(layer => layer.clearLayers());
         const parts = nearPoint.value.replace(/^geo:/, '').split(',').map(value => value.replace('°', '').trim());
         if (parts.length !== 2 || parts.some(value => value === '')) return;
         const pair = parts.map(Number);
         if (!coordinates(...pair)) return;
         const radius = Number(radiusInput.value);
-        if (Number.isFinite(radius) && radius > 0 && radius <= 100000) {
-            L.circle(pair, { radius, color: colors.estimate, weight: 2, fillOpacity: 0.08 }).addTo(selectionLayer);
+        for (const layer of selectionLayers) {
+            if (Number.isFinite(radius) && radius > 0 && radius <= 100000) {
+                L.circle(pair, { radius, color: colors.estimate, weight: 2, fillOpacity: 0.08 }).addTo(layer);
+            }
+            L.marker(pair, { title: 'Selected place', alt: 'Selected place', keyboard: false }).addTo(layer);
         }
-        L.marker(pair, { title: 'Selected place', alt: 'Selected place' }).addTo(selectionLayer);
+        nearPickerTouched = true;
+        fit(selectionLayers[1].getBounds(), nearMap);
     }
 
     function popup(label, lat, lng) {
@@ -115,8 +132,8 @@
         $('#lh-answer-locations').hidden = true;
     }
 
-    function fit(bounds) {
-        if (bounds?.isValid()) map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
+    function fit(bounds, target = map) {
+        if (bounds?.isValid()) target.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
 
     function showAnswer(result, kind, move = true) {
@@ -180,6 +197,7 @@
             : `No locations recorded for ${data.date} (${data.offset}). Try another day or import.`;
         if (data.truncated) status.textContent += ` Showing the first ${data.points.length.toLocaleString()} fixes and ${data.segments.length} visits and trips across the selected imports; this day's display is incomplete.`;
         if (move) fit(dayBounds);
+        if (!nearPickerTouched) fit(dayBounds, nearMap);
     }
 
     async function loadDay(move = true) {
@@ -270,6 +288,9 @@
     }
     $('#lh-fit').addEventListener('click', () => fit(dayBounds));
     $('#lh-center').addEventListener('click', () => { const center = map.getCenter(); choose(center.lat, center.lng, true); });
+    $('#lh-near-center').addEventListener('click', () => { const center = nearMap.getCenter(); choose(center.lat, center.lng, true); });
+    nearMapElement.addEventListener('pointerdown', () => { nearPickerTouched = true; });
+    nearMapElement.addEventListener('keydown', () => { nearPickerTouched = true; });
     fixSelect.addEventListener('change', () => { useFix.disabled = fixSelect.value === ''; });
     useFix.addEventListener('click', () => {
         if (fixSelect.value === '') return;
@@ -278,6 +299,7 @@
         map.setView([lat, lng], 16);
     });
     map.on('click', event => choose(event.latlng.lat, event.latlng.lng));
+    nearMap.on('click', event => choose(event.latlng.lat, event.latlng.lng));
     nearPoint.addEventListener('input', showSelection);
     radiusInput.addEventListener('input', showSelection);
     root.querySelectorAll('[data-lh-query]').forEach(form => {
@@ -325,9 +347,9 @@
     window.addEventListener('pagehide', event => {
         cancelDay();
         cancelQuery();
-        if (!event.persisted) map.remove();
+        if (!event.persisted) { map.remove(); nearMap.remove(); }
     });
     window.addEventListener('pageshow', event => {
-        if (event.persisted) { map.invalidateSize(); loadDay(false); }
+        if (event.persisted) { map.invalidateSize(); nearMap.invalidateSize(); loadDay(false); }
     });
 })();

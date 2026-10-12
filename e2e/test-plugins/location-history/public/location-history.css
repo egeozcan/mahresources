@@ -39,7 +39,9 @@
 .lh-fix-picker select { width: 100%; }
 .lh-fix-picker button:disabled { opacity: .5; cursor: default; }
 .lh-app :is(button, input, select, a, [tabindex]):focus-visible { outline: 2px solid #047857 !important; outline-offset: 3px; }
-#lh-map { height: clamp(20rem, 52vh, 36rem); border: 1px solid #d6d3d1; border-radius: .5rem; isolation: isolate; background: #f0f4f3; }
+#lh-map, #lh-near-map { border: 1px solid #d6d3d1; border-radius: .5rem; isolation: isolate; background: #f0f4f3; }
+#lh-map { height: clamp(20rem, 52vh, 36rem); }
+#lh-near-map { height: 18rem; }
 .lh-app .leaflet-container { font: inherit; }
 .lh-app .leaflet-container img { max-width: none; }
 .lh-app .leaflet-popup-content { line-height: 1.5; }

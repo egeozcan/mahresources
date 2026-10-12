@@ -133,6 +133,97 @@ test.describe('Location History map', () => {
     await expect(page.locator('#lh-map .leaflet-marker-icon')).toHaveCount(1);
   });
 
+  test('nearby form has a map picker synchronized with coordinates and radius', async ({ page }) => {
+    await expect(page.locator('[data-lh-query="near"] #lh-near-map')).toBeVisible();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'L', { configurable: true, set(leaflet) {
+        delete (window as any).L;
+        (window as any).L = leaflet;
+        const original = leaflet.map;
+        (window as any).locationMaps = {};
+        leaflet.map = (...args: any[]) => {
+          const map = original(...args);
+          (window as any).locationMaps[args[0].id] = map;
+          return map;
+        };
+      } });
+    });
+    await page.reload();
+    await expect(page.locator('#lh-map-status')).toContainText('3 recorded fixes');
+    await page.evaluate(() => { (window as any).locationPageSentinel = true; });
+    await page.locator('#near-point').fill('geo:50.01,8.00');
+    const selection = () => page.evaluate(() => {
+      const circle = (map: any) => {
+        let result: any;
+        map.eachLayer((layer: any) => {
+          if (layer instanceof (window as any).L.Circle) result = { point: layer.getLatLng(), radius: layer.getRadius() };
+        });
+        return result;
+      };
+      return { picker: circle((window as any).locationMaps['lh-near-map']),
+        history: circle((window as any).locationMaps['lh-map']),
+        center: (window as any).locationMaps['lh-near-map'].getCenter(),
+        zoom: (window as any).locationMaps['lh-near-map'].getZoom() };
+    });
+    await expect.poll(async () => (await selection()).picker?.radius).toBe(250);
+    const before = await selection();
+    expect(before.center.lat).toBeCloseTo(50.01, 5);
+    expect(before.center.lng).toBeCloseTo(8, 5);
+    await page.locator('#near-radius').fill('5000');
+    await expect.poll(async () => (await selection()).picker?.radius).toBe(5000);
+    const after = await selection();
+    expect(after.history).toEqual(after.picker);
+    expect(after.zoom).toBeLessThan(before.zoom);
+    const bounds = (await page.locator('#lh-near-map').boundingBox())!;
+    await page.locator('#lh-near-map').click({ position: { x: bounds.width / 2 + 40, y: bounds.height / 2 + 30 } });
+    await expect(page.locator('#near-point')).toHaveValue(/^-?\d+\.\d{6}, -?\d+\.\d{6}$/);
+    const clicked = await selection();
+    expect(clicked.history).toEqual(clicked.picker);
+    await page.locator('[data-lh-query="near"] button[type="submit"]').click();
+    await expect(page.locator('#near-results')).toContainText('Within 5000 m');
+    expect(await page.evaluate(() => (window as any).locationPageSentinel)).toBe(true);
+    await page.locator('#near-point').fill('50,');
+    await expect(page.locator('#lh-near-map .leaflet-marker-icon')).toHaveCount(0);
+    await expect(page.locator('#lh-map .leaflet-marker-icon')).toHaveCount(0);
+  });
+
+  test('nearby picker supports keyboard selection and clicks do not submit a search', async ({ page }) => {
+    const picker = page.getByRole('region', { name: 'Nearby search map picker', exact: true });
+    await expect(picker).toBeVisible();
+    await picker.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.getByRole('button', { name: 'Use picker center', exact: true }).click();
+    await expect(page.locator('#near-point')).toBeFocused();
+    await expect(page.locator('#near-point')).toHaveValue(/^-?\d+\.\d{6}, -?\d+\.\d{6}$/);
+    await expect(page.locator('#lh-near-map .leaflet-marker-icon')).toHaveCount(1);
+    await expect(page.locator('#near-results')).toHaveCount(0);
+  });
+
+  test('a late day load preserves a picker viewport the user has moved', async ({ page }) => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let requested!: () => void;
+    const started = new Promise<void>(resolve => { requested = resolve; });
+    let reads = 0;
+    await page.route('**/v1/plugins/location-history/day?**', async route => {
+      reads++;
+      const response = await route.fetch();
+      requested();
+      await held;
+      await route.fulfill({ response });
+    });
+    await page.reload();
+    await started;
+    await page.locator('#lh-near-map').focus();
+    await page.keyboard.press('ArrowRight');
+    release();
+    await expect(page.locator('#lh-map-status')).toContainText('3 recorded fixes');
+    await page.getByRole('button', { name: 'Use picker center', exact: true }).click();
+    const latitude = Number((await page.locator('#near-point').inputValue()).split(',')[0]);
+    expect(latitude).toBeLessThan(30); // The initial viewport, rather than the imported day's latitude 50.
+    expect(reads).toBe(1); // The picker reuses the existing day response.
+  });
+
   test('coordinate previews accept server formats and reject incomplete values', async ({ page }) => {
     for (const point of ['50, 8', 'geo:50,8', '50°, 8°']) {
       await page.locator('#near-point').fill(point);
@@ -331,6 +422,7 @@ test.describe('Location History map', () => {
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
     await expect(page.locator('#lh-map-status')).toContainText('3 recorded fixes');
     await expect(page.locator('#lh-map')).toHaveClass(/leaflet-container/);
+    await expect(page.locator('#lh-near-map')).toHaveClass(/leaflet-container/);
     await page.getByRole('button', { name: 'Use map center', exact: true }).click();
     await expect(page.locator('#near-point')).toHaveValue(/, /);
   });
@@ -340,7 +432,8 @@ test.describe('Location History map', () => {
     await page.route('https://tile.openstreetmap.org/**', route => route.abort());
     await page.reload();
     await expect(page.locator('#lh-map-status')).toContainText('3 recorded fixes');
-    await expect(page.getByText('Some map background tiles could not load. Recorded locations and search controls still work.')).toBeVisible();
+    await expect(page.locator('#lh-map-tile-status')).toBeVisible();
+    await expect(page.locator('#lh-near-map-tile-status')).toBeVisible();
     await page.locator('#lh-places button').filter({ hasText: 'Home' }).click();
     await expect(page.locator('#near-point')).toHaveValue('50.000000, 8.000000');
   });
@@ -349,14 +442,17 @@ test.describe('Location History map', () => {
     await page.unroute('https://tile.openstreetmap.org/**');
     await page.route('https://tile.openstreetmap.org/**', route => route.abort());
     await page.reload();
-    const warning = page.getByText('Some map background tiles could not load. Recorded locations and search controls still work.');
+    const warning = page.locator('#lh-map-tile-status');
     await expect(warning).toBeVisible();
     await page.unroute('https://tile.openstreetmap.org/**');
     await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
       contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1sAAAAASUVORK5CYII=', 'base64'),
     }));
-    await page.locator('.leaflet-control-zoom-in').click();
+    await page.locator('#lh-map .leaflet-control-zoom-in').click();
     await expect(warning).toBeHidden();
+    await expect(page.locator('#lh-near-map-tile-status')).toBeVisible();
+    await page.locator('#lh-near-map .leaflet-control-zoom-in').click();
+    await expect(page.locator('#lh-near-map-tile-status')).toBeHidden();
   });
 
   test('map and query controls meet accessibility checks at desktop and mobile widths', async ({ page }) => {
@@ -366,6 +462,9 @@ test.describe('Location History map', () => {
     await page.getByRole('button', { name: 'Use map center', exact: true }).focus();
     const outline = await page.getByRole('button', { name: 'Use map center', exact: true }).evaluate(el => getComputedStyle(el).outlineStyle);
     expect(outline).not.toBe('none');
+    await page.getByRole('button', { name: 'Use picker center', exact: true }).focus();
+    const pickerOutline = await page.getByRole('button', { name: 'Use picker center', exact: true }).evaluate(el => getComputedStyle(el).outlineStyle);
+    expect(pickerOutline).not.toBe('none');
     await page.setViewportSize({ width: 390, height: 844 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
@@ -378,6 +477,8 @@ test.describe('Location History map', () => {
     await expect(page.locator('#at-results')).toContainText('You were at');
     await expect(page.locator('#at-results')).toContainText('Home <b>literal</b>');
     await expect(page.locator('#lh-map')).toBeHidden();
+    await expect(page.locator('#lh-near-map')).toBeHidden();
+    await expect(page.locator('#lh-near-map-hint')).toBeHidden();
     await context.close();
   });
 });

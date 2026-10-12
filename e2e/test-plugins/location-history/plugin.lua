@@ -1590,6 +1590,11 @@ local function page(ctx)
             input("near-point", "point", "text", q.q == "near" and q.point or "", 'required placeholder="50.5837, 8.6744" aria-describedby="near-point-hint"'),
             "Click the map to choose a place, or type its coordinates here.")
         .. field("near-radius", "Radius (metres)", input("near-radius", "radius", "number", q.q == "near" and q.radius or "250", 'min="1" max="' .. MAX_RADIUS .. '" step="1"'))
+        .. '<div id="lh-near-map" role="region" aria-label="Nearby search map picker" aria-describedby="lh-near-map-hint" hidden></div>'
+        .. '<div id="lh-near-controls" class="lh-map-actions" hidden><button id="lh-near-center" type="button">Use picker center</button></div>'
+        .. '<p id="lh-near-map-hint" class="lh-muted" hidden>Click the picker to choose a place, or type coordinates above. '
+        .. 'The circle shows your search radius. With the picker focused, use arrow keys to pan and +/− to zoom, '
+        .. 'then choose Use picker center.</p>'
         .. '<div class="grid grid-cols-2 gap-3">'
         .. field("near-from", "From (optional)", input("near-from", "from", "date", q.q == "near" and q.from or ""))
         .. field("near-to", "To (optional)", input("near-to", "to", "date", q.q == "near" and q.to or ""))

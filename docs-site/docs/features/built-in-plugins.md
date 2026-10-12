@@ -245,6 +245,13 @@ pan with arrow keys, zoom with +/−, and choose **Use map center**. The visit l
 also offers keyboard-accessible place buttons, including separate start and
 destination buttons for trips.
 
+**How often was I near…?** also has its own map picker beside the coordinate
+and radius fields. Click that map to choose a place, or enter coordinates
+directly; both maps show the same selection and search circle. The picker
+centers on your selection as you type. Keyboard users can pan/zoom it and press
+**Use picker center**. Choosing a place fills the coordinates; press **Count**
+to run the search.
+
 The **Recorded fix** selector exposes each displayed fix's time, coordinates and
 reported accuracy. Choose a fix and press **Use recorded fix** to center the map
 and fill the nearby search's coordinates using the keyboard.
