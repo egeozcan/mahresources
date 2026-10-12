@@ -322,3 +322,26 @@ Open P2/P3s, not yet fixed:
   caps; cross-process waiting. Tests: one heap-sampling helper; invalid
   limit settings; place merging; text/offset caps; overlapping writes;
   trailing whitespace.
+
+## Review round 7 (fresh subagent): no P0/P1
+
+Confirmed the round-6 follow-ups (marker CAS and takeover, recheck under the
+marker, UTF-8 cut, offset/distance checks, place join/split, trailing reader),
+authorization through the caller's querier, non-reused resource ids, and the
+page's accessibility.
+
+Open, not yet fixed:
+
+- P2: JSON escaping (`<` becomes `<`) can grow a 200-byte text field
+  six-fold, so a crafted 5,000-segment part can pass the 8 MB KV cap (18 MB
+  reproduced); the store then raises after `remove_data`. Fix: smaller
+  SEGMENT_CHUNK (~1,500) or flush on a running size estimate, plus a test KV
+  mock that enforces the cap.
+- P3: a store that raises (timeout, KV error) leaves its marker for 15
+  minutes, blocking re-import and Forget in the meantime; the stream window
+  is not re-opened after a piece, so a near-4 MiB piece followed by >4 KiB of
+  whitespace is refused; the sweep's get-then-delete release can drop a
+  marker another process just took over (microsecond window); marker ages
+  trust each process's clock; "at" accepts an out-of-range offset typed into
+  the time (display only); the 800-byte pre-cut in `text()` can leave a
+  partial UTF-8 character.
