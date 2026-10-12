@@ -85,6 +85,10 @@ test.describe.serial('Custom thumbnail popup accessibility', () => {
         return !!dlg && !!document.activeElement && dlg.contains(document.activeElement);
       });
 
+    // x-trap activates after the popup becomes visible. Wait for its autofocus
+    // before Tab so this checks the armed trap rather than racing its timer.
+    await expect.poll(insideDialog).toBe(true);
+
     // Forward past the last control, then back past the first: the trap is what
     // makes either end come back inside rather than onto the page behind.
     for (let i = 0; i < 6; i += 1) {
