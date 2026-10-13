@@ -1,3 +1,4 @@
+{% with cardSc=entity.NoteType.SectionConfig|sectionConfig:"note" %}
 <article class="card note-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>
     {% if selectable %}
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
@@ -19,11 +20,13 @@
             </div>
         </header>
 
+        {% if cardSc.Content %}
         <div class="card-description">
             {% include "partials/description.tpl" with description=entity.Description descriptionEntity=entity descriptionEditUrl="/v1/note/editDescription" descriptionEditId=entity.ID preview=true %}
         </div>
+        {% endif %}
 
-        {% if entity.Tags %}
+        {% if cardSc.Tags && entity.Tags %}
         <div class="tags card-tags">
             {% for tag in entity.Tags %}
             <a class="card-badge{% if !tagBaseUrl && hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{% if tagBaseUrl %}{{ tagBaseUrl }}?tags={{ tag.ID }}{% else %}{{ withQuery("tags", stringId(tag.ID), true) }}{% endif %}'>
@@ -35,3 +38,4 @@
         {% include "partials/pluginActionsCard.tpl" with entityType="note" %}
     </div>
 </article>
+{% endwith %}

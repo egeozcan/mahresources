@@ -17,7 +17,11 @@ import (
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	var resource models.Resource
 
-	return &resource, ctx.db.Preload(clause.Associations).First(&resource, id).Error
+	return &resource, ctx.db.Preload(clause.Associations).
+		Preload("Owner.Category").
+		Preload("Notes.NoteType").
+		Preload("Groups.Category").
+		First(&resource, id).Error
 }
 
 // GetResourceByID returns a resource without preloading associations.
@@ -128,6 +132,7 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 
 		fallback := ctx.db.
 			Preload("Tags").
+			Preload("ResourceCategory").
 			Joins("Owner").
 			Where("resources.id IN (?)", sameHashIdsQuery).
 			Where("resources.id <> ?", id).
@@ -142,6 +147,7 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 	// Fetch resources
 	if err := ctx.db.
 		Preload("Tags").
+		Preload("ResourceCategory").
 		Joins("Owner").
 		Where("resources.id IN ?", similarIDs).
 		Find(&resources).Error; err != nil {
@@ -591,6 +597,7 @@ func (ctx *MahresourcesContext) GetSeriesSiblings(resourceID uint, seriesID uint
 	return resources, ctx.db.
 		Where("series_id = ? AND id != ?", seriesID, resourceID).
 		Order("created_at ASC").
+		Preload("ResourceCategory").
 		Find(&resources).Error
 }
 

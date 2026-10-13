@@ -242,6 +242,8 @@ test.describe.serial('Video actions popup accessibility', () => {
         const dlg = document.querySelector('[role="dialog"][aria-modal="true"]');
         return !!dlg && !!document.activeElement && dlg.contains(document.activeElement);
       });
+    // The trap activates after the popup becomes visible; wait for its initial focus.
+    await expect.poll(insideDialog).toBe(true);
 
     // Every tabbable in the dialog, walked past in both directions: close, the
     // media element (one stop — its own controls are reached from there), the

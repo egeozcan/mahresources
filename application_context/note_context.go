@@ -230,6 +230,8 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 	var note models.Note
 
 	return &note, ctx.db.Preload(clause.Associations).
+		Preload("Groups.Category").
+		Preload("Resources.ResourceCategory").
 		Preload("Owner.Category").
 		Preload("Owner.Owner").
 		Preload("Owner.Owner.Category").

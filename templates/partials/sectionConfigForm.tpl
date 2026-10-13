@@ -5,11 +5,12 @@
     <input type="hidden" name="SectionConfig" :value="JSON.stringify(config)">
 
     <p class="text-sm text-stone-600">
-        Control which sections are visible on detail pages for
+        Control which built-in sections are visible on detail pages and list cards for
         <template x-if="type === 'group'"><span>groups</span></template>
         <template x-if="type === 'resource'"><span>resources</span></template>
         <template x-if="type === 'note'"><span>notes</span></template>
         in this category.
+        Card settings apply wherever that section appears. Custom Summary and Custom Avatar templates remain visible.
     </p>
 
     {# ── Main Content ── #}

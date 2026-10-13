@@ -1,4 +1,5 @@
 {% if entity %}
+{% with cardSc=entity.Category.SectionConfig|sectionConfig:"group" %}
 <article class="card group-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>
     {% if selectable %}
         <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.GetName() }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
@@ -35,7 +36,7 @@
                     </a>
                 {% endif %}
 
-                {% if !fullText %}
+                {% if !fullText && cardSc.Timestamps %}
                 <div class="card-meta">
                     <span class="card-meta-item">
                         <span class="card-meta-label">Updated:</span>
@@ -70,13 +71,13 @@
             </a>
         {% endif %}
 
-        {% if !noDescription %}
+        {% if !noDescription && cardSc.Description %}
             <div class="card-description">
                 {% include "partials/description.tpl" with description=entity.Description descriptionEntity=entity preview=!fullText %}
             </div>
         {% endif %}
 
-        {% if !noTag && entity.Tags %}
+        {% if !noTag && cardSc.Tags && entity.Tags %}
             <div class="tags card-tags">
                 {% for tag in entity.Tags %}
                 <a class="card-badge{% if !tagBaseUrl && hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{% if tagBaseUrl %}{{ tagBaseUrl }}?tags={{ tag.ID }}{% else %}{{ withQuery("tags", stringId(tag.ID), true) }}{% endif %}'>
@@ -88,4 +89,5 @@
         {% include "partials/pluginActionsCard.tpl" with entityType="group" %}
     </div>
 </article>
+{% endwith %}
 {% endif %}

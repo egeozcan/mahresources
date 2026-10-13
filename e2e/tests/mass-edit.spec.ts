@@ -142,6 +142,8 @@ test.describe('Mass Edit', () => {
     const tagCombo = dialog.getByRole('combobox', { name: 'Tags to apply' });
     await tagCombo.fill(`Mass Edit Second ${testRunId}`);
     await page.locator('[role="option"]').filter({ hasText: `Mass Edit Second ${testRunId}` }).first().click();
+    // Tag creation is asynchronous; selection enables the operation when it finishes.
+    await expect(dialog.getByRole('combobox', { name: 'Tags operation' })).toHaveValue('add');
 
     await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
     // The confirm dialog states the blast radius; its title is this modal's own.

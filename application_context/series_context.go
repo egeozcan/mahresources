@@ -41,7 +41,9 @@ func (ctx *MahresourcesContext) withResourceSeriesRetry(operation string, fn fun
 // GetSeries retrieves a series by ID with preloaded resources.
 func (ctx *MahresourcesContext) GetSeries(id uint) (*models.Series, error) {
 	var series models.Series
-	return &series, ctx.db.Preload("Resources", pageLimit).First(&series, id).Error
+	return &series, ctx.db.Preload("Resources", pageLimit).
+		Preload("Resources.ResourceCategory").
+		First(&series, id).Error
 }
 
 // GetSeriesCount returns the total count of series.

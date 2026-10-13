@@ -27,7 +27,11 @@ func (ctx *MahresourcesContext) GetTagsCount(query *query_models.TagQuery) (int6
 func (ctx *MahresourcesContext) GetTag(id uint) (*models.Tag, error) {
 	var tag models.Tag
 
-	return &tag, ctx.db.Preload(clause.Associations, pageLimit).First(&tag, id).Error
+	return &tag, ctx.db.Preload(clause.Associations, pageLimit).
+		Preload("Notes.NoteType").
+		Preload("Groups.Category").
+		Preload("Resources.ResourceCategory").
+		First(&tag, id).Error
 }
 
 // GetTagByID returns a tag without preloading associations.

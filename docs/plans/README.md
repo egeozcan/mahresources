@@ -40,6 +40,7 @@ the code wins. For how the system is actually put together see
 - [2026-09-30-pm-rollup-refresh-on-write.md](2026-09-30-pm-rollup-refresh-on-write.md)
 - [2026-10-02-lightbox-history-and-error-followups.md](2026-10-02-lightbox-history-and-error-followups.md)
 - [2026-10-03-lightbox-followups-not-done.md](2026-10-03-lightbox-followups-not-done.md)
+- [2026-10-13-category-template-card-visibility.md](2026-10-13-category-template-card-visibility.md)
 
 ## Archive
 

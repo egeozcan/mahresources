@@ -244,7 +244,7 @@ The CustomSummary template appears in list views. Keep it compact:
 The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:
 
 - **Group cards** (via Category) and **Note cards** (via Note Type): CustomAvatar **replaces the default initials avatar**. When it is empty, the initials avatar shows instead.
-- **Resource cards** (via Resource Category): resource cards are thumbnail-led and have no initials avatar to replace, so CustomAvatar is **shown next to the category name** under the thumbnail -- the thumbnail always remains.
+- **Resource cards** (via Resource Category): resource cards are thumbnail-led and have no initials avatar to replace, so CustomAvatar is **shown next to the category name** under the thumbnail. The **Preview Image** visibility control can hide the thumbnail; **Category Link** can hide the category name. Neither hides CustomAvatar.
 
 This is intentional, not an inconsistency; avatar-replacement on resource cards would be a feature change, not a fix.
 
@@ -508,11 +508,31 @@ Do not add `x-ignore` to these shortcode wrappers; it can prevent useful server-
 
 ## Section Configuration
 
-Categories, Resource Categories, and Note Types can define a `sectionConfig` JSON field that controls which sections appear on entity detail pages.
+Categories, Resource Categories, and Note Types can define a `sectionConfig` JSON field that controls which built-in sections appear on entity detail pages and list cards.
 
 ### How It Works
 
-When a category has a `sectionConfig` set, the detail page for entities in that category shows or hides sections accordingly. Any section not mentioned in the config defaults to visible. An empty config (or no config) shows all sections.
+When a category has a `sectionConfig` set, its entities show or hide the corresponding built-in sections. Any section not mentioned in the config defaults to visible. An empty config (or no config) shows all sections.
+
+The same controls apply to matching sections on list cards:
+
+| Card | Controls |
+|------|----------|
+| Group | **Description**, **Tags**, **Timestamps** |
+| Resource | **Description**, **Tags** (including Edit Tags), **Owner**, **File Size**, **Category Link**, **Preview Image** |
+| Note | **Content** (description preview and inline editor), **Tags** |
+
+Each card uses its own category or note type, including mixed-category lists and cards inside another entity's detail page. These settings also apply to the group text list and resource simple list, which use the same cards. Controls for sections that have no counterpart on cards still apply only to detail pages.
+
+CustomSummary and CustomAvatar remain visible when built-in card sections are hidden. Selection controls, entity titles, relation descriptions and plugin actions remain available. Table rows, timeline entries, hover cards, the lightbox, custom MRQL templates and public shares retain their separate rendering behavior.
+
+To replace the built-in group or resource description with your own card layout, uncheck **Description** in **Section Visibility** and put this in **Custom Summary**:
+
+```html
+<p class="my-card-description">[property path="Description"]</p>
+```
+
+The description remains available to the template, and only your custom rendering appears on the card. Use **Custom Header** to render your replacement on the detail page too. For notes, uncheck **Content** instead; this also hides the default description and blocks on note detail pages.
 
 ### Setting via the UI
 
@@ -523,7 +543,7 @@ When a category has a `sectionConfig` set, the detail page for entities in that 
 
 ### JSON Format
 
-The `sectionConfig` is a JSON object. Each key corresponds to a section on the detail page. Boolean keys default to `true` (visible). Object keys support a `state` field with collapsible behavior.
+The `sectionConfig` is a JSON object. Each key corresponds to a built-in section, with the matching card behavior listed above. Boolean keys default to `true` (visible). Object keys support a `state` field with collapsible behavior on detail pages.
 
 **Collapsible states:**
 

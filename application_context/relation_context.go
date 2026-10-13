@@ -438,7 +438,10 @@ func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *
 	if deny {
 		return []*models.GroupRelation{}, nil
 	}
-	return groupRelations, db.Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
+	return groupRelations, db.Preload(clause.Associations, pageLimit).
+		Preload("FromGroup.Category").
+		Preload("ToGroup.Category").
+		Limit(maxResults).Offset(offset).Find(&groupRelations).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationsCount(query *query_models.GroupRelationshipQuery) (int64, error) {

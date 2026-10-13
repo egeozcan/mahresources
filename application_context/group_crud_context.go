@@ -411,18 +411,21 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 		Preload("OwnGroups", pageLimit).
 		Preload("OwnGroups.Category").
 		Preload("OwnResources", pageLimitCustom(5)).
+		Preload("OwnResources.ResourceCategory").
 		Preload("OwnNotes", pageLimit).
 		Preload("OwnNotes.NoteType").
 		Preload("OwnNotes.Owner.Category").
 		Preload("OwnNotes.Owner.Owner").
 		Preload("OwnNotes.Owner.Owner.Category").
 		Preload("RelatedResources", pageLimitCustom(5)).
+		Preload("RelatedResources.ResourceCategory").
 		Preload("RelatedNotes", pageLimit).
 		Preload("RelatedNotes.NoteType").
 		Preload("RelatedNotes.Owner.Category").
 		Preload("RelatedNotes.Owner.Owner").
 		Preload("RelatedNotes.Owner.Owner.Category").
 		Preload("RelatedGroups", pageLimit).
+		Preload("RelatedGroups.Category").
 		Preload("Tags").
 		Preload("Owner").
 		Preload("Owner.Category").
@@ -431,9 +434,11 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 		Preload("Category", pageLimit).
 		Preload("Relationships", relCond("to_group_id")).
 		Preload("Relationships.ToGroup").
+		Preload("Relationships.ToGroup.Category").
 		Preload("Relationships.RelationType").
 		Preload("BackRelations", relCond("from_group_id")).
 		Preload("BackRelations.FromGroup").
+		Preload("BackRelations.FromGroup.Category").
 		Preload("BackRelations.RelationType").
 		First(&group, id).Error
 
