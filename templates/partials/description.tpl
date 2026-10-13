@@ -2,7 +2,7 @@
 <div x-data="descriptionEditor({ url: '{{ descriptionEditUrl }}{% if descriptionEditId %}?id={{ descriptionEditId }}{% endif %}' })"
     x-show="$store.savedSetting.localSettings.showDescriptions ?? true"
     class="description flex-1 relative"
-     :class="{ 'lg:prose-xl prose font-sans bg-white border border-stone-200 rounded p-4 mb-2': !editing && !preview }"
+    {% if not preview %}:class="{ 'lg:prose-xl prose font-sans bg-white border border-stone-200 rounded p-4 mb-2': !editing }"{% endif %}
     @click.away="editing && save({ event: $event })"
 >
     <template x-if="!editing">

@@ -258,7 +258,9 @@ test.describe('Location History map', () => {
       const fixes = page.getByLabel('Recorded fix', { exact: true });
       await expect(fixes.locator('option')).toContainText(['Choose a recorded fix', '12:34:56 UTC+00:00 · 50.010000, 8.000000 (±12 m)']);
       await fixes.focus();
-      await page.keyboard.press('ArrowDown');
+      // Native select type-ahead avoids platform-dependent arrow-key popup behavior.
+      await page.keyboard.press('1');
+      await expect(fixes).toHaveValue('0');
       await page.keyboard.press('Tab');
       await expect(page.getByRole('button', { name: 'Use recorded fix', exact: true })).toBeFocused();
       await page.keyboard.press('Enter');

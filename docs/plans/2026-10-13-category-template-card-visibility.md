@@ -86,3 +86,35 @@ specification/correctness review each reported no findings: P0 0, P1 0, P2 0,
 P3 0. Both traced the shared-card callers and checked per-card configuration,
 carrier availability, query scope/limits, retained custom content and regression
 coverage. The requested zero-P0/P1 review gate is satisfied.
+
+## Publication integration
+
+The user requested publishing to `origin/master` and `mahlayf/master`. Both had
+advanced to `5795d06c`; merge `219e0bad` preserves those commits and this feature.
+The plan-index conflict was resolved by regenerating the index in an isolated
+worktree, keeping the primary checkout's unrelated work out of the commits.
+
+Integrated verification exposed an incoming description-preview regression:
+Alpine evaluated the server-side `preview` variable and threw on description
+pages. The template now decides whether to emit the dynamic detail styling.
+Existing page-error regressions failed before the fix; 11 focused description
+and card cases passed afterwards. A separate location-history keyboard test
+used a native-select arrow sequence that did not select an option on macOS.
+It now uses keyboard type-ahead and verifies the selected value before testing
+Tab, activation and the resulting coordinates.
+
+- [x] Integrate both remotes without discarding their changes.
+- [x] Diagnose integrated browser failures and make surgical fixes.
+- [x] Repeat full SQLite and Postgres verification on the integrated result.
+- [x] Run fresh standards and specification reviews after the fixes.
+- [x] Prepare the verified result for publishing to both requested branches.
+
+The integrated full Go suite and Postgres Go API/MRQL tests passed. After the
+template fix, template-handler tests and CSS scan checks passed again. The final
+full SQLite browser/CLI run passed 2,485 tests with 5 skipped; the Postgres run
+passed 2,485 tests with 1 passing on retry and 4 skipped. The retry timed out
+waiting for an MRQL tag-selector option and passed on its first retry. The
+location-history keyboard test also passed 10 isolated runs with retries
+disabled. Fresh standards and specification subagents reviewed the complete
+feature and integration fixes against `5795d06c`, including unstaged changes;
+each reported P0 0, P1 0, P2 0, P3 0. No source changes followed those reviews.
