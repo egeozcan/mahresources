@@ -2,7 +2,7 @@
 <div x-data="descriptionEditor({ url: '{{ descriptionEditUrl }}{% if descriptionEditId %}?id={{ descriptionEditId }}{% endif %}' })"
     x-show="$store.savedSetting.localSettings.showDescriptions ?? true"
     class="description flex-1 relative"
-     :class="{ 'lg:prose-xl prose font-sans bg-white border border-stone-200 rounded p-4 mb-2': !editing }"
+     :class="{ 'lg:prose-xl prose font-sans bg-white border border-stone-200 rounded p-4 mb-2': !editing && !preview }"
     @click.away="editing && save({ event: $event })"
 >
     <template x-if="!editing">
@@ -11,11 +11,11 @@
         {# relation halves) promised an editor that startEditing() refuses to    #}
         {# open. The handler is bound only where it can fire, so the element     #}
         {# does not claim an interaction it does not have either. #}
-        <div class="contents"{% if descriptionEditUrl %} @dblclick="startEditing()" title="Double-click to edit"{% endif %} data-description-display>
+        <div class="{% if preview %}description-preview-content{% else %}contents{% endif %}"{% if descriptionEditUrl %} @dblclick="startEditing()" title="Double-click to edit"{% endif %} data-description-display>
             {% autoescape off %}
                 {% if description %}
                     {% if !preview %}{% process_shortcodes description|markdown2|render_mentions descriptionEntity %}{% endif %}
-                    {% if preview %}{{ description|markdown|render_mentions|truncatechars_html:250 }}{% endif %}
+                    {% if preview %}{{ description|escape }}{% endif %}
                 {% else %}
                     <p class="text-stone-500 italic">No description</p>
                 {% endif %}

@@ -51,7 +51,7 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 
 	t.Run("Get Single Block", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/block?id=%d", createdBlockID)
+		url := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", createdBlockID, note.ID)
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
 
@@ -62,7 +62,7 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 
 	t.Run("Update Block Content", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/block?id=%d", createdBlockID)
+		url := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", createdBlockID, note.ID)
 		payload := map[string]interface{}{
 			"content": map[string]string{"text": "Updated content"},
 		}
@@ -90,7 +90,7 @@ func TestBlockEndpoints(t *testing.T) {
 		json.Unmarshal(resp.Body.Bytes(), &todosBlock)
 
 		// Update state
-		stateURL := fmt.Sprintf("/v1/note/block/state?id=%d", todosBlock.ID)
+		stateURL := fmt.Sprintf("/v1/note/block/state?id=%d&noteId=%d", todosBlock.ID, note.ID)
 		statePayload := map[string]interface{}{
 			"state": map[string][]string{"checked": {"x1"}},
 		}
@@ -140,7 +140,7 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 
 	t.Run("Delete Block", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/block?id=%d", createdBlockID)
+		url := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", createdBlockID, note.ID)
 		resp := tc.MakeRequest(http.MethodDelete, url, nil)
 		assert.Equal(t, http.StatusNoContent, resp.Code)
 
@@ -162,7 +162,7 @@ func TestBlockEndpoints(t *testing.T) {
 		var block models.NoteBlock
 		json.Unmarshal(resp.Body.Bytes(), &block)
 
-		url := fmt.Sprintf("/v1/note/block/delete?id=%d", block.ID)
+		url := fmt.Sprintf("/v1/note/block/delete?id=%d&noteId=%d", block.ID, note.ID)
 		resp = tc.MakeRequest(http.MethodPost, url, nil)
 		assert.Equal(t, http.StatusNoContent, resp.Code)
 	})
@@ -244,7 +244,7 @@ func TestDeleteLastTextBlockClearsDescription(t *testing.T) {
 		"description should be synced from the text block")
 
 	// Delete the only text block
-	delURL := fmt.Sprintf("/v1/note/block?id=%d", block.ID)
+	delURL := fmt.Sprintf("/v1/note/block?id=%d&noteId=%d", block.ID, note.ID)
 	delResp := tc.MakeRequest(http.MethodDelete, delURL, nil)
 	assert.Equal(t, http.StatusNoContent, delResp.Code)
 

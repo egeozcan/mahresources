@@ -65,8 +65,8 @@ for plugin-rendered markup to change the block it belongs to.
 
 | Method | Signature | Effect |
 |--------|-----------|--------|
-| `saveContent` | `(blockId, content) => Promise` | `PUT /v1/note/block?id={blockId}` with `{ content }` |
-| `updateState` | `(blockId, state) => Promise` | `PATCH /v1/note/block/state?id={blockId}` with `{ state }` |
+| `saveContent` | `(blockId, content) => Promise` | `PUT /v1/note/block?id={blockId}&noteId={noteId}` with `{ content }` |
+| `updateState` | `(blockId, state) => Promise` | `PATCH /v1/note/block/state?id={blockId}&noteId={noteId}` with `{ state }` |
 | `getBlock` | `(blockId) => object \| null` | The loaded block, from the editor's own in-memory list |
 
 ```html

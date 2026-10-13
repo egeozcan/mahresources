@@ -62,7 +62,7 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 
 | Capability | Grants |
 |---|---|
-| `db:read` | the `mah.db` readers, `mrql_query`, `get_resource_data` |
+| `db:read` | the `mah.db` readers, `mrql_query`, `get_resource_data`, `each_resource_json` |
 | `db:write` | the `mah.db` writers, including creation and association, and `mah.download` |
 | `http` | `mah.http` |
 | `kv` | `mah.kv` |

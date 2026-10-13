@@ -4,10 +4,9 @@
  * tag, to same-origin state-changing requests so the server can verify them:
  *
  *   - fetch() requests get an `X-CSRF-Token` header.
- *   - native form submits get a hidden `csrf_token` field (urlencoded forms,
- *     where the token travels in the body) or a `csrf_token` query parameter
- *     (multipart upload forms, whose body the server cannot read without
- *     defeating the upload size limit).
+ *   - native form submits get a hidden `csrf_token` field in the body.
+ *     For multipart forms, this field is prepended to ensure the server can
+ *     read it before processing potentially large file uploads.
  *
  * Entirely a no-op when auth is disabled: the meta tag renders empty, so nothing
  * is attached and behaviour matches the historical no-auth deployment.
@@ -77,22 +76,22 @@ document.addEventListener(
     if (!isSameOrigin(action)) return;
 
     const enctype = (form.enctype || form.getAttribute('enctype') || '').toLowerCase();
-    if (enctype === 'multipart/form-data') {
-      // The server does not read multipart bodies for the token (it would defeat
-      // the streaming upload size limit), so pass it as a query parameter.
-      const url = new URL(action, window.location.origin);
-      url.searchParams.set('csrf_token', token);
-      form.setAttribute('action', url.pathname + url.search + url.hash);
-    } else {
-      let input = form.querySelector('input[name="csrf_token"]');
-      if (!input) {
-        input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'csrf_token';
+
+    let input = form.querySelector('input[name="csrf_token"]');
+    if (!input) {
+      input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'csrf_token';
+
+      if (enctype === 'multipart/form-data') {
+        // For multipart, it must be the very first part so the server can read it
+        // quickly without parsing the entire file.
+        form.prepend(input);
+      } else {
         form.appendChild(input);
       }
-      input.value = token;
     }
+    input.value = token;
   },
   true
 );

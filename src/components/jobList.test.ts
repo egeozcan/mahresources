@@ -6,6 +6,9 @@ import {
     datetimeInputFromInstant,
     instantFromDatetimeInput,
     jobBulkCommands,
+    jobDismissAll,
+    dismissAllListParams,
+    dismissAllReport,
     bulkCommandReport,
     jobFilterTimes,
     jobList,
@@ -832,6 +835,117 @@ function localDayEndForTest(day: string) {
     nextMidnight.setTime(nextMidnight.getTime() - 1);
     return nextMidnight.toISOString().replace(/\.(\d{3})Z$/, '.$1999999Z');
 }
+
+describe('job dismiss all', () => {
+    const jobsPage = (jobs: object[], nextCursor = '') => ({ ok: true, json: async () => ({ jobs, ...(nextCursor ? { nextCursor } : {}) }) });
+    const applied = (ids: string[]) => ({ ok: true, json: async () => ({ results: ids.map(jobId => ({ jobId, status: 'succeeded', code: 'applied' })) }) });
+
+    test('reads the filter without its page position, asking only for dismissible jobs', () => {
+        expect(dismissAllListParams('state=failed&dismissed=false&cursor=abc&before=def&view=x').toString())
+            .toBe('state=failed&dismissed=false&command=dismiss&limit=200');
+        expect(dismissAllListParams('command=retry', 'next').toString()).toBe('command=retry&dismissed=false&limit=200&cursor=next');
+        // Already dismissed is nothing to send: Any asks the server for the rest.
+        expect(dismissAllListParams('dismissed=any').get('dismissed')).toBe('false');
+    });
+
+    test('dismisses every finished job on every page, one bulk request per page, after confirming', async () => {
+        const first = Array.from({ length: 200 }, (_, i) => ({ id: `a${i}`, state: 'succeeded' }));
+        const second = [{ id: 'b0', state: 'failed' }, { id: 'b1', state: 'running' }, { id: 'b2', state: 'cancelled', dismissed: true }];
+        const fetchImpl = vi.fn(async (url: string, init?: any) => {
+            if (url.startsWith('/v1/jobs?')) return url.includes('cursor=p2') ? jobsPage(second) : jobsPage(first, 'p2');
+            return applied(JSON.parse(init.body).jobIds);
+        });
+        const ask = vi.fn(async () => true);
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const refresh = vi.fn();
+        const notices: string[] = [];
+        const onNotice = (event: Event) => notices.push((event as CustomEvent).detail.message);
+        window.addEventListener('job-list-refresh', refresh);
+        window.addEventListener('job-list-notice', onNotice);
+        try {
+            const panel = Object.assign(jobDismissAll({ fetchImpl: fetchImpl as any }), { query: 'kind=remote-download&dismissed=false' });
+            await panel.run();
+
+            expect(fetchImpl.mock.calls[0][0]).toBe('/v1/jobs?kind=remote-download&dismissed=false&command=dismiss&limit=200');
+            expect(ask.mock.calls[0][0]).toContain('Dismiss every finished job the filter applied to this list selects, on every page? That is at least 200.');
+            // Reversible, so not styled as a deletion.
+            expect(ask.mock.calls[0][1]).toMatchObject({ confirmLabel: 'Dismiss all', destructive: false });
+            const posts = fetchImpl.mock.calls.filter(([url]) => url === '/v1/jobs/commands/dismiss');
+            expect(posts.map(([, init]) => JSON.parse(init.body).jobIds.length)).toEqual([200, 1]);
+            // Running, and already dismissed, are not sent.
+            expect(JSON.parse(posts[1][1].body).jobIds).toEqual(['b0']);
+            expect(posts[0][1].headers['Idempotency-Key']).not.toBe(posts[1][1].headers['Idempotency-Key']);
+            expect(panel.status).toBe('Dismissed 201 matching jobs.');
+            expect(notices).toEqual(['Dismissed 201 matching jobs.']);
+            expect(refresh).toHaveBeenCalledTimes(1);
+        } finally {
+            window.removeEventListener('job-list-refresh', refresh);
+            window.removeEventListener('job-list-notice', onNotice);
+        }
+    });
+
+    test('names the exact count when the filter fits one page', async () => {
+        const ask = vi.fn(async () => false);
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const fetchImpl = vi.fn(async () => jobsPage([{ id: 'a', state: 'succeeded' }, { id: 'b', state: 'failed' }]));
+        const panel = Object.assign(jobDismissAll({ fetchImpl: fetchImpl as any }), { query: '' });
+        await panel.run();
+        expect(ask.mock.calls[0][0]).toMatch(/^Dismiss 2 finished jobs the filter applied to this list selects\?/);
+        expect(ask.mock.calls[0][1]).toMatchObject({ confirmLabel: 'Dismiss 2' });
+        // Kept: nothing was sent and nothing is said.
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(panel.status).toBe('');
+    });
+
+    test('says there is nothing to dismiss without asking', async () => {
+        const ask = vi.fn();
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const panel = Object.assign(jobDismissAll({ fetchImpl: vi.fn(async () => jobsPage([{ id: 'r', state: 'running' }])) as any }), { query: 'command=retry' });
+        await panel.run();
+        expect(ask).not.toHaveBeenCalled();
+        expect(panel.status).toBe('No finished jobs match this filter, so there is nothing to dismiss.');
+    });
+
+    test('counts refusals, and says how far it got when a request fails', async () => {
+        const pageOf = (prefix: string) => Array.from({ length: 200 }, (_, i) => ({ id: `${prefix}${i}`, state: 'failed' }));
+        let batch = 0;
+        const fetchImpl = vi.fn(async (url: string, init?: any) => {
+            if (url.startsWith('/v1/jobs?')) return url.includes('cursor=') ? jobsPage(pageOf('b')) : jobsPage(pageOf('a'), 'p2');
+            batch++;
+            if (batch === 2) return { ok: false, status: 500, json: async () => ({ error: 'database is locked.' }) };
+            const jobIds = JSON.parse(init.body).jobIds;
+            return { ok: true, json: async () => ({ results: jobIds.map((jobId: string, i: number) => (
+                i === 0 ? { jobId, status: 'failed', code: 'conflict' } : { jobId, status: 'succeeded', code: 'applied' })) }) };
+        });
+        vi.stubGlobal('Alpine', { store: () => ({ ask: async () => true }) });
+        const panel = Object.assign(jobDismissAll({ fetchImpl: fetchImpl as any }), { query: '' });
+        await panel.run();
+        expect(panel.error).toBe('database is locked. Dismissed 199 before it stopped.');
+        expect(panel.busy).toBe(false);
+    });
+
+    test('a read that fails before asking says why and changes nothing', async () => {
+        const ask = vi.fn();
+        vi.stubGlobal('Alpine', { store: () => ({ ask }) });
+        const refresh = vi.fn();
+        window.addEventListener('job-list-refresh', refresh);
+        try {
+            const panel = Object.assign(jobDismissAll({ fetchImpl: vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'unknown state' }) })) as any }), { query: 'state=bogus' });
+            await panel.run();
+            expect(panel.error).toBe('unknown state');
+            expect(panel.status).toBe('');
+            expect(ask).not.toHaveBeenCalled();
+            expect(refresh).not.toHaveBeenCalled();
+        } finally {
+            window.removeEventListener('job-list-refresh', refresh);
+        }
+    });
+
+    test('reports refused jobs alongside the dismissed ones', () => {
+        expect(dismissAllReport(3, 1)).toBe('Dismissed 3 matching jobs. 1 was not dismissed: changed meanwhile or no longer offered.');
+        expect(dismissAllReport(1, 0)).toBe('Dismissed 1 matching job.');
+    });
+});
 
 describe('job list live progress', () => {
     // A running card as the server renders it (templates/partials/job.tpl).

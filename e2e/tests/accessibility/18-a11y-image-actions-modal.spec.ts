@@ -83,6 +83,10 @@ test.describe.serial('Image actions popup accessibility', () => {
         return !!dlg && !!document.activeElement && dlg.contains(document.activeElement);
       });
 
+    // x-trap activates after the popup becomes visible. Wait for its autofocus
+    // before Tab so this checks the armed trap rather than racing its timer.
+    await expect.poll(insideDialog).toBe(true);
+
     // Four controls (close, recalculate, rotate, crop); past the last and back
     // past the first in both directions, which is where the trap shows.
     for (let i = 0; i < 6; i += 1) {

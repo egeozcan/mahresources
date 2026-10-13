@@ -62,9 +62,9 @@ func TestCSRF_CookiePostWithoutTokenIsRejected(t *testing.T) {
 	}
 }
 
-// The token is accepted via the X-CSRF-Token header, the csrf_token query
-// parameter, and (for urlencoded bodies) the csrf_token form field.
-func TestCSRF_TokenAcceptedViaHeaderQueryAndField(t *testing.T) {
+// The token is accepted via the X-CSRF-Token header, and (for urlencoded bodies)
+// the csrf_token form field.
+func TestCSRF_TokenAcceptedViaHeaderAndField(t *testing.T) {
 	tc := setupAuthEnv(t)
 	cookie, token := loginCookieAndCSRF(t, tc)
 
@@ -76,20 +76,29 @@ func TestCSRF_TokenAcceptedViaHeaderQueryAndField(t *testing.T) {
 		t.Fatalf("POST with X-CSRF-Token header should not be 403, got %d (%s)", rr.Code, rr.Body.String())
 	}
 
-	// Query parameter
-	rr = doReq(tc, http.MethodPost, "/v1/tag?csrf_token="+token,
-		map[string]string{"Content-Type": urlEncoded}, []*http.Cookie{cookie},
-		strings.NewReader("name=csrf-query"))
-	if rr.Code == http.StatusForbidden {
-		t.Fatalf("POST with csrf_token query param should not be 403, got %d (%s)", rr.Code, rr.Body.String())
-	}
-
 	// Urlencoded body field
 	rr = doReq(tc, http.MethodPost, "/v1/tag",
 		map[string]string{"Content-Type": urlEncoded}, []*http.Cookie{cookie},
 		strings.NewReader("name=csrf-field&csrf_token="+token))
 	if rr.Code == http.StatusForbidden {
 		t.Fatalf("POST with csrf_token body field should not be 403, got %d (%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// The token is accepted via the csrf_token form field in a multipart/form-data body
+// when it is the first part.
+func TestCSRF_TokenAcceptedViaMultipartField(t *testing.T) {
+	tc := setupAuthEnv(t)
+	cookie, token := loginCookieAndCSRF(t, tc)
+
+	boundary := "test-boundary"
+	bodyStr := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n" + token + "\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\ncsrf-multipart\r\n--" + boundary + "--\r\n"
+
+	rr := doReq(tc, http.MethodPost, "/v1/tag",
+		map[string]string{"Content-Type": "multipart/form-data; boundary=" + boundary},
+		[]*http.Cookie{cookie}, strings.NewReader(bodyStr))
+	if rr.Code == http.StatusForbidden {
+		t.Fatalf("POST with csrf_token multipart field should not be 403, got %d (%s)", rr.Code, rr.Body.String())
 	}
 }
 

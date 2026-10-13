@@ -2271,3 +2271,19 @@ where the review's own record lives.
 ## A generator reverted the AGENTS.md rename — 2026-09-30
 
 - Running `./docs/plans/generate-index.sh` to index a new plan rewrote the README's root link from `AGENTS.md` back to `CLAUDE.md`. The rename commit had edited the generated `docs/plans/README.md` by hand and left the generator hardcoding the old name, so the first regeneration undid it. Two rules follow. When you rename or move something a generated file mentions, change the generator, not only its output. And after running any generator, read its whole diff before staging: a line you did not intend to change is the generator disagreeing with a hand edit, and the fix belongs in the generator.
+
+## A review stopping threshold does not narrow the findings to report or fix
+
+When asked to repeat review and fixes until no P0/P1 issues remain, reviewers
+must inspect and report all actionable priorities. Fix reported P2/P3 issues too;
+use zero P0/P1 only as the loop's stopping condition. Do not turn the stopping
+threshold into the review or repair scope.
+
+## External integrations must be tested under the app's real security headers
+
+Check the document's security headers before assuming browser defaults apply.
+The main server's `no-referrer` policy suppressed OpenStreetMap's required
+identification, while unconditional tile mocks hid the 403. Model required
+request headers in integration tests and assert that sensitive URL paths and
+query parameters are excluded. Keep necessary policy overrides on the specific
+external resource rather than relaxing privacy for the whole page.

@@ -40,6 +40,11 @@ the code wins. For how the system is actually put together see
 - [2026-09-30-pm-rollup-refresh-on-write.md](2026-09-30-pm-rollup-refresh-on-write.md)
 - [2026-10-02-lightbox-history-and-error-followups.md](2026-10-02-lightbox-history-and-error-followups.md)
 - [2026-10-03-lightbox-followups-not-done.md](2026-10-03-lightbox-followups-not-done.md)
+- [2026-10-11-location-history-plugin.md](2026-10-11-location-history-plugin.md)
+- [2026-10-11-plugin-streamed-json-import.md](2026-10-11-plugin-streamed-json-import.md)
+- [2026-10-12-location-history-near-map-picker.md](2026-10-12-location-history-near-map-picker.md)
+- [2026-10-12-location-history-plugin-map.md](2026-10-12-location-history-plugin-map.md)
+- [2026-10-12-location-history-tile-referrer.md](2026-10-12-location-history-tile-referrer.md)
 - [2026-10-13-category-template-card-visibility.md](2026-10-13-category-template-card-visibility.md)
 
 ## Archive

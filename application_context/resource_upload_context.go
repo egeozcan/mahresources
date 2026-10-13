@@ -567,8 +567,9 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		fileName = path.Base(resourceQuery.LocalPath)
 	}
 
-	if resourceQuery.OriginalName == "" {
-		resourceQuery.OriginalName = fileName
+	originalName := resourceQuery.OriginalName
+	if originalName == "" {
+		originalName = fileName
 	}
 
 	hookData := map[string]any{
@@ -624,7 +625,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		StorageLocation:    storageLocation,
 		Description:        resourceQuery.Description,
 		OriginalLocation:   resourceQuery.OriginalLocation,
-		OriginalName:       resourceQuery.OriginalName,
+		OriginalName:       originalName,
 		Width:              uint(width),
 		Height:             uint(height),
 	}
@@ -1477,8 +1478,9 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 
 	name := fileName
 
-	if resourceQuery.OriginalName == "" {
-		resourceQuery.OriginalName = fileName
+	originalName := resourceQuery.OriginalName
+	if originalName == "" {
+		originalName = fileName
 	}
 
 	if resourceQuery.Name != "" {
@@ -1522,7 +1524,7 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 			OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
 			Description:        resourceQuery.Description,
 			OriginalLocation:   resourceQuery.OriginalLocation,
-			OriginalName:       resourceQuery.OriginalName,
+			OriginalName:       originalName,
 			Width:              uint(width),
 			Height:             uint(height),
 		}

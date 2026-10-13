@@ -368,6 +368,35 @@ test.describe('Job Center', () => {
     }).toBe(2);
   });
 
+  test('Dismiss all dismisses every job the filter selects, on every page', async ({ page, request }) => {
+    test.slow();
+    const stamp = Date.now();
+    const name = `job-center-dismiss-all-${stamp}`;
+    const groupId = await createGroup(request, name);
+    const ids: string[] = [];
+    for (let i = 0; i < 51; i++) {
+      ids.push((await submitFailingDownload(request, groupId, `${name}-${String(i).padStart(2, '0')}.bin`)).canonicalId);
+    }
+    // Outside the filter: Dismiss all leaves it.
+    const other = await submitFailingDownload(request, groupId, `job-center-kept-${stamp}.bin`);
+    for (const id of [...ids, other.canonicalId]) await waitForJobState(request, id, 'failed');
+
+    await page.goto(`/jobs?search=${encodeURIComponent(name)}`);
+    await expect(page.locator('[data-job-id]')).toHaveCount(50);
+    await page.getByTestId('job-dismiss-all').getByRole('button', { name: 'Dismiss all matching jobs' }).click();
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm).toContainText('Dismiss 51 finished jobs the filter applied to this list selects?');
+    await confirm.getByRole('button', { name: 'Dismiss 51' }).click();
+
+    await expect(page.getByTestId('job-list-notice')).toHaveText('Dismissed 51 matching jobs.', { timeout: 20_000 });
+    await expect(page.locator('[data-job-dismiss-all-status]')).toHaveText('Dismissed 51 matching jobs.');
+    await expect(page.getByTestId('job-dismiss-all').getByRole('button', { name: 'Dismiss all matching jobs' })).toBeFocused();
+    await expect(page.locator('[data-job-id]')).toHaveCount(0, { timeout: 10_000 });
+    const dismissed = await request.get(`/v1/jobs?search=${encodeURIComponent(name)}&dismissed=true&limit=200`);
+    expect(((await dismissed.json()).jobs as Job[]).map(job => job.id).sort()).toEqual([...ids].sort());
+    expect((await readJob(request, other.canonicalId) as any)?.dismissed).toBe(false);
+  });
+
   test('a job whose card leaves the list leaves the bulk selection', async ({ page, request }) => {
     const stamp = Date.now();
     const name = `job-center-ghost-${stamp}`;
