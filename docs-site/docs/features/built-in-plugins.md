@@ -146,6 +146,10 @@ Several actions expose a `model` selector that switches the underlying fal.ai en
 
 Action parameters use `show_when` conditions, so the form reveals only the inputs relevant to the current selection. Every fal.ai action parameter carries concise inline help, and every model selector reveals a short strengths/tradeoffs card before its controls. Nested controls are also conditional: for example, Topaz Redefine reveals prompt/creativity/texture fields that other Topaz Generative presets do not use.
 
+### How images reach fal.ai
+
+Each input image is uploaded to [fal's CDN](https://fal.ai/docs/documentation/model-apis/fal-cdn) first (kept for an hour), and the request names it by URL, which is the way fal recommends passing files. If the upload fails, the image is sent inline as a base64 data URI instead, so a CDN problem slows a run down rather than failing it. While a request runs the plugin checks its status every half second, then every second after 10 seconds and every 2 seconds after a minute.
+
 ### Output mode
 
 Every action except `vectorize` includes a **Save Result As** toggle:

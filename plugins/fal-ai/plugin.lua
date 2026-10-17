@@ -243,6 +243,102 @@ local function build_data_uri(resource_id)
     return "data:" .. mime_type .. ";base64," .. base64_data, mime_type
 end
 
+-- fal's CDN, where inputs are uploaded so a request can name them by URL.
+-- fal documents it as the recommended way to pass files and data URIs as the
+-- slow one: a data URI carries the whole file, a third larger, inside the
+-- queue request itself. Both hosts are inside `network`: rest.fal.ai under
+-- *.fal.ai, v3.fal.media under *.fal.media.
+-- See https://fal.ai/docs/documentation/model-apis/fal-cdn
+local FAL_CDN_TOKEN_URL = "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3"
+local FAL_CDN_UPLOAD_URL = "https://v3.fal.media/files/upload"
+local FAL_INPUT_LIFECYCLE = '{"expiration_duration_seconds": 3600}'
+
+-- Ask fal for a short-lived CDN upload token. Returns {header, upload_url} or
+-- (nil, reason). The token's own base URL is used only when it is a fal.media
+-- host, so an odd answer cannot aim the upload anywhere else.
+local function fal_cdn_token(api_key)
+    local resp = mah.http.post_sync(FAL_CDN_TOKEN_URL, "{}", {
+        headers = {Authorization = "Key " .. api_key, ["Content-Type"] = "application/json"},
+        timeout = 15,
+    })
+    if resp.error then return nil, resp.error end
+    if resp.status_code ~= 200 and resp.status_code ~= 201 then
+        return nil, "token status " .. tostring(resp.status_code)
+    end
+    local t = mah.json.decode(resp.body or "")
+    if not t or type(t.token) ~= "string" or t.token == "" then
+        return nil, "token response has no token"
+    end
+    local upload_url = FAL_CDN_UPLOAD_URL
+    if type(t.base_url) == "string" and t.base_url:match("^https://[%w%-]+%.fal%.media/?$") then
+        upload_url = (t.base_url:gsub("/$", "")) .. "/files/upload"
+    end
+    local token_type = type(t.token_type) == "string" and t.token_type ~= "" and t.token_type or "Bearer"
+    return {header = token_type .. " " .. t.token, upload_url = upload_url}
+end
+
+-- Upload one base64 data URI's bytes to fal's CDN. Returns its URL or
+-- (nil, reason).
+local function fal_cdn_upload(cdn, data_uri, file_name)
+    local mime, b64 = data_uri:match("^data:([^;,]+);base64,(.*)$")
+    if not mime then return nil, "not a base64 data URI" end
+    local bytes, decode_err = mah.util.base64.decode(b64)
+    if not bytes then return nil, decode_err end
+    local resp = mah.http.post_sync(cdn.upload_url, bytes, {
+        headers = {
+            Authorization = cdn.header,
+            ["Content-Type"] = mime,
+            ["X-Fal-File-Name"] = file_name,
+            ["X-Fal-Object-Lifecycle"] = FAL_INPUT_LIFECYCLE,
+            ["X-Fal-Object-Lifecycle-Preference"] = FAL_INPUT_LIFECYCLE,
+        },
+        timeout = 60,
+    })
+    if resp.error then return nil, resp.error end
+    if resp.status_code ~= 200 and resp.status_code ~= 201 then
+        return nil, "upload status " .. tostring(resp.status_code) .. ": " .. (resp.body or ""):sub(1, 200)
+    end
+    local r = mah.json.decode(resp.body or "")
+    if not r or type(r.access_url) ~= "string" or not r.access_url:match("^https://") then
+        return nil, "upload response has no access_url"
+    end
+    return r.access_url
+end
+
+local MIME_EXTENSIONS = {
+    ["image/jpeg"] = "jpg", ["image/png"] = "png", ["image/webp"] = "webp",
+    ["image/gif"] = "gif", ["image/tiff"] = "tiff", ["image/bmp"] = "bmp",
+}
+
+-- Replace each data URI in `uris` (in place) with a fal CDN URL, uploading
+-- each distinct one once. Any failure leaves every URI as it was: the data
+-- URI is slower, not wrong, so a CDN problem must not fail the job.
+local function upload_inputs(uris, api_key)
+    local cdn, token_err = fal_cdn_token(api_key)
+    if not cdn then
+        mah.log("warn", "[fal.ai] cdn upload: no token (" .. tostring(token_err) .. "), sending images inline")
+        return false
+    end
+    local uploaded, urls = {}, {}
+    for i, uri in ipairs(uris) do
+        local url = uploaded[uri]
+        if not url then
+            local mime = uri:match("^data:([^;,]+);") or ""
+            local name = "input-" .. i .. "." .. (MIME_EXTENSIONS[mime] or "bin")
+            local err
+            url, err = fal_cdn_upload(cdn, uri, name)
+            if not url then
+                mah.log("warn", "[fal.ai] cdn upload failed (" .. tostring(err) .. "), sending images inline")
+                return false
+            end
+            uploaded[uri] = url
+        end
+        urls[i] = url
+    end
+    for i, url in ipairs(urls) do uris[i] = url end
+    return true
+end
+
 -- Apply a numeric param to payload only when it parses as a number.
 local function apply_num(payload, key, val)
     local n = tonumber(val)
@@ -1038,7 +1134,9 @@ end
 -- like nafnet/denoise can exceed it). Returns the parsed result table on success;
 -- on failure raises via error() with a descriptive message.
 --
--- Polling cadence: starts at 1s, grows linearly to a max of 5s, capped at 15min total.
+-- Polling cadence: every 0.5s, then every 1s after the first 10s and every 2s
+-- after the first minute; capped at 15min total. A status call is a small GET,
+-- and the old 1s..5s ramp added up to 5s of waiting after fal had finished.
 -- The progress range [progress_start, progress_end] is reported via mah.job_progress
 -- (if job_id is provided) as the request moves IN_QUEUE -> IN_PROGRESS -> COMPLETED.
 local function fal_submit_and_wait(endpoint, payload, api_key, job_id, progress_start, progress_end)
@@ -1069,12 +1167,12 @@ local function fal_submit_and_wait(endpoint, payload, api_key, job_id, progress_
     -- Poll until terminal state. 15 min cap = plenty for any current fal.ai model.
     local max_wait_s = 15 * 60
     local elapsed = 0
-    local delay = 1
     local last_status = ""
     while elapsed < max_wait_s do
+        local delay = 0.5
+        if elapsed >= 60 then delay = 2 elseif elapsed >= 10 then delay = 1 end
         mah.sleep(delay)
         elapsed = elapsed + delay
-        if delay < 5 then delay = delay + 1 end
 
         local status_resp = mah.http.get_sync(submit_result.status_url, {headers = headers, timeout = 30})
         if status_resp.error then
@@ -1201,6 +1299,19 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     else
         -- show_when hid the param for this model (e.g. flux1dev), or user cleared it.
         all_image_uris[1] = data_uri
+    end
+
+    if job_id then
+        mah.job_progress(job_id, 18, "Uploading image to fal.ai...")
+    end
+    -- The source goes first so data_uri can take its URL from the same pass;
+    -- it is usually in all_image_uris already and is then uploaded once.
+    local inputs = {data_uri}
+    for _, uri in ipairs(all_image_uris) do inputs[#inputs + 1] = uri end
+    if upload_inputs(inputs, api_key) then
+        data_uri = table.remove(inputs, 1)
+        all_image_uris = inputs
+        mah.log("info", "[fal.ai] process_image: uploaded " .. #all_image_uris .. " image(s) to fal's CDN")
     end
 
     -- Build API request
