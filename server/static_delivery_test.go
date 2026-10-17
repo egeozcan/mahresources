@@ -86,8 +86,6 @@ func TestCompressStatic_LeavesAloneWhatItMustNotCompress(t *testing.T) {
 	}{
 		{"no Accept-Encoding", http.MethodGet, "/public/app.js", nil},
 		{"gzip refused with q=0", http.MethodGet, "/public/app.js", map[string]string{"Accept-Encoding": "br, gzip;q=0"}},
-		{"a byte range", http.MethodGet, "/public/app.js", map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=0-9"}},
-		{"HEAD", http.MethodHead, "/public/app.js", map[string]string{"Accept-Encoding": "gzip"}},
 		{"an image", http.MethodGet, "/public/photo.png", map[string]string{"Accept-Encoding": "gzip"}},
 		{"a tiny file", http.MethodGet, "/public/small.css", map[string]string{"Accept-Encoding": "gzip"}},
 		{"a missing file", http.MethodGet, "/public/missing.js", map[string]string{"Accept-Encoding": "gzip"}},
@@ -100,8 +98,52 @@ func TestCompressStatic_LeavesAloneWhatItMustNotCompress(t *testing.T) {
 			t.Errorf("%s: Vary = %q, want Accept-Encoding even uncompressed", tc.name, rr.Header().Get("Vary"))
 		}
 	}
-	if rr := serveStatic(h, http.MethodGet, "/public/app.js", map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=0-9"}); rr.Code != http.StatusPartialContent || rr.Body.String() != "xxxxxxxxxx" {
-		t.Errorf("range request = %d %q, want the 10 raw bytes", rr.Code, rr.Body.String())
+	// Byte ranges stay for what is never compressed, and for a client that
+	// takes no gzip.
+	if rr := serveStatic(h, http.MethodGet, "/public/photo.png", map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=0-9"}); rr.Code != http.StatusPartialContent || rr.Body.String() != "xxxxxxxxxx" {
+		t.Errorf("image range request = %d %q, want the 10 raw bytes", rr.Code, rr.Body.String())
+	}
+	if rr := serveStatic(h, http.MethodGet, "/public/app.js", map[string]string{"Range": "bytes=0-9"}); rr.Code != http.StatusPartialContent || rr.Body.String() != "xxxxxxxxxx" {
+		t.Errorf("identity range request = %d %q, want the 10 raw bytes", rr.Code, rr.Body.String())
+	}
+}
+
+// Every request for a compressible file that accepts gzip gets the gzip
+// representation: HEAD describes it, and a range of it is not offered, since
+// a range of the uncompressed file under the same Last-Modified would splice
+// raw bytes onto a gzip prefix on resume.
+func TestCompressStatic_OneRepresentationPerFile(t *testing.T) {
+	big := strings.Repeat("x", 4096)
+	h := staticHandler(t, map[string]string{"app.js": big})
+	gzipOnly := map[string]string{"Accept-Encoding": "gzip"}
+
+	get := serveStatic(h, http.MethodGet, "/public/app.js", gzipOnly)
+	head := serveStatic(h, http.MethodHead, "/public/app.js", gzipOnly)
+	for _, name := range []string{"Content-Encoding", "Content-Length", "Content-Type", "Last-Modified", "Accept-Ranges"} {
+		if g, hd := get.Header().Get(name), head.Header().Get(name); g != hd {
+			t.Errorf("%s: GET %q, HEAD %q", name, g, hd)
+		}
+	}
+	if head.Header().Get("Content-Encoding") != "gzip" || head.Body.Len() != 0 {
+		t.Errorf("HEAD = %v with a %d byte body, want gzip headers and no body", head.Header(), head.Body.Len())
+	}
+
+	lastModified := get.Header().Get("Last-Modified")
+	for name, headers := range map[string]map[string]string{
+		"Range":            {"Accept-Encoding": "gzip", "Range": "bytes=50-"},
+		"Range + If-Range": {"Accept-Encoding": "gzip", "Range": "bytes=50-", "If-Range": lastModified},
+	} {
+		rr := serveStatic(h, http.MethodGet, "/public/app.js", headers)
+		if rr.Code != http.StatusOK || rr.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("%s: %d %v, want the whole gzip body", name, rr.Code, rr.Header())
+		}
+		zr, err := gzip.NewReader(rr.Body)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, err := io.ReadAll(zr); err != nil || string(got) != big {
+			t.Errorf("%s: the body does not decompress to the whole file (err %v)", name, err)
+		}
 	}
 }
 

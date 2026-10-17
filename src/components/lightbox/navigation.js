@@ -79,6 +79,9 @@ export const navigationState = {
   _preloadedUrls: new Set(),
   _preloadedImages: [],
   _preloadAheadCount: 5,
+
+  // The video a close dropped, for its reopen to resume. See _rememberClosedVideo.
+  _closedVideo: null,
 };
 
 export const navigationMethods = {
@@ -676,6 +679,7 @@ export const navigationMethods = {
       this.detailsAborter = null;
     }
     this.pauseCurrentVideo();
+    this._rememberClosedVideo();
 
     if (this.isFullscreen) {
       if (document.exitFullscreen) {
@@ -1259,5 +1263,31 @@ export const navigationMethods = {
     if (video && !video.paused) {
       video.pause();
     }
+  },
+
+  // The media only renders while the viewer is open (lightbox.tpl), so closing
+  // drops the video element and a reopen builds a new one. These carry the
+  // closed video's place across, as the element itself used to.
+  _rememberClosedVideo() {
+    const video = document.querySelector('[x-show="$store.lightbox.isOpen"] video');
+    this._closedVideo = video && this._mediaElementUrl(video)
+      ? {
+          url: this._mediaElementUrl(video),
+          currentTime: video.currentTime,
+          volume: video.volume,
+          muted: video.muted,
+          playbackRate: video.playbackRate,
+        }
+      : null;
+  },
+
+  restoreClosedVideo(video) {
+    const saved = this._closedVideo;
+    this._closedVideo = null;
+    if (!saved || this._mediaElementUrl(video) !== saved.url) return;
+    video.volume = saved.volume;
+    video.muted = saved.muted;
+    video.playbackRate = saved.playbackRate;
+    video.currentTime = saved.currentTime;
   },
 };

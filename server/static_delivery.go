@@ -35,20 +35,37 @@ var gzipWriters = sync.Pool{New: func() any {
 //
 // It is for static files only, not for the app's pages or API: it buffers
 // nothing and never flushes early, which streamed responses (job events,
-// exports) need. A Range request is served as is, since a byte range of a
-// compressed body is not the byte range that was asked for, and so is HEAD,
-// whose Content-Length must then stay the uncompressed one it reports.
+// exports) need.
+//
+// Whether a file goes out gzipped is decided from its extension, before the
+// handler runs, so every request for it that accepts gzip gets the same
+// representation:
+//   - HEAD reports the gzip headers a GET would send, with no Content-Length,
+//     since the compressed length is not known without compressing.
+//   - Range and If-Range are ignored and the whole gzip body is sent. A byte
+//     range would be one of the uncompressed file, and its Last-Modified is
+//     the gzip response's validator too, so a resumed download would splice
+//     raw bytes onto a gzip prefix. A text file is small enough to resend.
+//
+// Everything else (images, fonts, video) keeps its byte ranges untouched.
 func compressStatic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Every response here may differ by Accept-Encoding, including the
 		// ones served uncompressed, or a shared cache could hand gzip to a
 		// client that never asked for it.
 		w.Header().Add("Vary", "Accept-Encoding")
-		if r.Method != http.MethodGet || r.Header.Get("Range") != "" || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
+			!acceptsGzip(r.Header.Get("Accept-Encoding")) ||
+			!compressibleExtensions[strings.ToLower(path.Ext(r.URL.Path))] {
 			next.ServeHTTP(w, r)
 			return
 		}
-		gw := &gzipResponseWriter{ResponseWriter: w}
+		if r.Header.Get("Range") != "" || r.Header.Get("If-Range") != "" {
+			r = r.Clone(r.Context())
+			r.Header.Del("Range")
+			r.Header.Del("If-Range")
+		}
+		gw := &gzipResponseWriter{ResponseWriter: w, head: r.Method == http.MethodHead}
 		defer gw.finish()
 		next.ServeHTTP(gw, r)
 	})
@@ -75,6 +92,17 @@ func acceptsGzip(header string) bool {
 	return false
 }
 
+// compressibleExtensions are the files compressStatic may gzip, decided from
+// the URL before the handler runs. A fixed list rather than
+// mime.TypeByExtension, which reads the host's mime tables and so differs
+// between systems. The response's own Content-Type must still be one
+// compressibleType accepts.
+var compressibleExtensions = map[string]bool{
+	".js": true, ".mjs": true, ".css": true, ".json": true, ".map": true,
+	".webmanifest": true, ".html": true, ".htm": true, ".txt": true,
+	".csv": true, ".md": true, ".xml": true, ".svg": true, ".wasm": true,
+}
+
 // compressibleType reports whether a Content-Type is text-like. Images, fonts
 // and archives are already compressed, and gzip would only add to them.
 func compressibleType(contentType string) bool {
@@ -94,6 +122,7 @@ func compressibleType(contentType string) bool {
 type gzipResponseWriter struct {
 	http.ResponseWriter
 	gz          *gzip.Writer
+	head        bool // a HEAD: the gzip headers, but no body to compress
 	wroteHeader bool
 }
 
@@ -111,8 +140,10 @@ func (w *gzipResponseWriter) WriteHeader(code int) {
 		h.Set("Content-Encoding", "gzip")
 		h.Del("Content-Length")
 		h.Del("Accept-Ranges")
-		w.gz = gzipWriters.Get().(*gzip.Writer)
-		w.gz.Reset(w.ResponseWriter)
+		if !w.head {
+			w.gz = gzipWriters.Get().(*gzip.Writer)
+			w.gz.Reset(w.ResponseWriter)
+		}
 	}
 	w.ResponseWriter.WriteHeader(code)
 }

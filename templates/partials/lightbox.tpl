@@ -220,6 +220,7 @@
                     class="max-h-[90vh] transition-all duration-300"
                     :class="$store.lightbox._mediaMaxWidthClass()"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                    @loadedmetadata="$store.lightbox.restoreClosedVideo($el)"
                     @loadeddata="$store.lightbox.onMediaLoaded($event)"
                     @error="$store.lightbox.onMediaError($event)"
                 >
