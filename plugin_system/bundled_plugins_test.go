@@ -206,8 +206,8 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 		"colorize": {"ddcolor", "topaz_colorize"},
 		"adjust":   {"adjust_v2", "white_balance"},
 		"upscale":  {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria", "bria_creative", "recraft_crisp", "recraft_creative", "topaz", "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
-		"restore":  {"photo_restoration", "codeformer", "swin2sr", "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
-		"edit":     {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex", "nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage25_flare", "gptimage25_sunburst", "gptimage2", "qwen3", "mai25", "mai25pro", "ideogram_v4", "seedream5lite", "seedream5", "grok2", "muse", "fibo15", "flux1dev"},
+		"restore":  {"photo_restoration", "codeformer", "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
+		"edit":     {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex", "flux3", "flux3klein", "nanobanana2", "nanobanana21", "nanobananapro", "nanobanana_lite", "gptimage25_flare", "gptimage25_sunburst", "gptimage2", "qwen3", "mai25", "mai25pro", "ideogram_v4", "seedream5lite", "seedream5", "grok2", "muse", "fibo15", "krea3", "flux1dev"},
 		"polish":   {"post_processing", "topaz_sharpen"},
 	} {
 		action, ok := actions[actionID]
@@ -284,7 +284,7 @@ func TestFalAIGeneratePageListsModels(t *testing.T) {
 	}
 
 	for _, model := range []string{
-		"nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage25_flare",
+		"nanobanana2", "nanobanana21", "nanobananapro", "nanobanana_lite", "flux3", "flux3klein", "krea3", "gptimage25_flare",
 		"gptimage25_sunburst", "gptimage2", "qwen3", "mai25", "mai25pro",
 		"ideogram_v4", "recraft_v4_style", "recraft_v4_style_pro", "krea2_style",
 		"seedream5lite", "seedream5", "grok2", "muse", "fibo15",
