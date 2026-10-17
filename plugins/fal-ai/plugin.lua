@@ -27,7 +27,7 @@ plugin = {
         "fal.media", "*.fal.media",
     },
     name = "fal-ai",
-    version = "1.4.0",
+    version = "1.5.0",
     description = "AI-powered image processing using current fal.ai models for generation, editing, color, restoration, upscaling, and vectorization.",
     settings = {
         { name = "api_key", type = "password", label = "FAL.AI API Key" },
@@ -57,7 +57,6 @@ local FAL_ENDPOINTS = {
     topaz_adjust = "topaz/adjust/image",
     restore = "fal-ai/image-apps-v2/photo-restoration",
     codeformer = "fal-ai/codeformer",
-    swin2sr = "fal-ai/swin2sr",
     nafnet_denoise = "fal-ai/nafnet/denoise",
     nafnet_deblur = "fal-ai/nafnet/deblur",
     drct = "fal-ai/drct-super-resolution",
@@ -69,6 +68,10 @@ local FAL_ENDPOINTS = {
     flux2flash = "fal-ai/flux-2/flash/edit",
     flux2flex = "fal-ai/flux-2-flex/edit",
     flux1dev = "fal-ai/flux/dev/image-to-image",
+    flux3 = "blackforestlabs/flux-3/edit-image",
+    flux3klein = "blackforestlabs/flux-3/klein/edit-image",
+    nanobanana21 = "google/nano-banana-2.1/edit",
+    krea3 = "krea/v3/edit",
     nanobanana2 = "fal-ai/nano-banana-2/edit",
     nanobananapro = "fal-ai/nano-banana-pro/edit",
     gptimage25_flare = "openai/gpt-image-2.5/flare/edit",
@@ -86,6 +89,10 @@ local FAL_ENDPOINTS = {
     nanobanana_lite = "google/nano-banana-lite/edit",
     vectorize = "fal-ai/recraft/vectorize",
     nanobanana2_generate = "fal-ai/nano-banana-2",
+    nanobanana21_generate = "google/nano-banana-2.1",
+    flux3_generate = "blackforestlabs/flux-3/text-to-image",
+    flux3klein_generate = "blackforestlabs/flux-3/klein/text-to-image",
+    krea3_generate = "krea/v3/text-to-image",
     nanobananapro_generate = "fal-ai/nano-banana-pro",
     gptimage25_flare_generate = "openai/gpt-image-2.5/flare/text-to-image",
     gptimage25_sunburst_generate = "openai/gpt-image-2.5/sunburst/text-to-image",
@@ -105,13 +112,16 @@ local FAL_ENDPOINTS = {
     nanobanana_lite_generate = "google/nano-banana-2-lite",
 }
 
--- Last verified 2026-09-12 against fal's pricing API and model pages:
+-- Last verified 2026-10-17 against fal's model pages (no rate changed since
+-- 2026-09-12). On that date the creative-upscaler and aura-sr pages displayed
+-- "$0 per compute second", which reads as a page glitch rather than a free
+-- model, so their previous rates are kept. Sources:
 -- https://fal.ai/models/<endpoint from FAL_ENDPOINTS>
 -- Topaz's pricing API exposes opaque "units"; use the model pages' documented
 -- started-output-MP blocks instead. These are published rates, not job charges.
 -- Keep this snapshot offline: opening an action must not need a key or a price
 -- lookup. Update the date and all rates together when checking prices again.
-local UPSCALE_PRICE_CHECKED_AT = "2026-09-12"
+local UPSCALE_PRICE_CHECKED_AT = "2026-10-17"
 local UPSCALE_PRICES = {
     clarity = "$0.03/MP",
     crystal = "$0.016/MP",
@@ -456,15 +466,6 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: codeformer fidelity=" .. tostring(payload.fidelity) .. ", upscale_factor=" .. tostring(payload.upscale_factor) .. ", face_upscale=" .. tostring(payload.face_upscale))
             return FAL_ENDPOINTS.codeformer, payload
 
-        elseif model == "swin2sr" then
-            -- Generic super-resolution; preserves aspect ratio. The `real_sr`
-            -- task is trained on real-world degraded photos and is the closest
-            -- equivalent to "restore" for non-portrait sources.
-            local payload = {image_url = data_uri}
-            apply_str(payload, "task", params.swin2sr_task)
-            mah.log("info", "[fal.ai] build_request: swin2sr task=" .. tostring(payload.task))
-            return FAL_ENDPOINTS.swin2sr, payload
-
         elseif model == "nafnet_denoise" then
             -- NAFNet denoise: fal explicitly markets this for ISO noise and
             -- compression artifacts (JPEG blockiness, ringing, banding). Pure
@@ -778,6 +779,88 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             apply_num(payload, "seed", params.fibo15_seed)
             mah.log("info", "[fal.ai] build_request: Bria Fibo Edit 1.5, image_count=" .. #image_urls)
             return FAL_ENDPOINTS.fibo15, payload
+
+        elseif model == "nanobanana21" then
+            -- Nano Banana 2.1 keeps Nano Banana 2's field names, but its
+            -- resolution enum starts at 1K and its thinking enum has no "off":
+            -- minimal|medium|high, defaulting to medium.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 14 then
+                error("Nano Banana 2.1 accepts at most 14 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {image_urls = image_urls, prompt = prompt}
+            apply_str(payload, "aspect_ratio", params.nanobanana21_aspect_ratio)
+            apply_str(payload, "resolution", params.nanobanana21_resolution)
+            apply_str(payload, "output_format", params.nanobanana21_output_format)
+            apply_str(payload, "safety_tolerance", params.nanobanana21_safety_tolerance)
+            apply_num(payload, "seed", params.nanobanana21_seed)
+            apply_str(payload, "thinking_level", params.nanobanana21_thinking_level)
+            apply_str(payload, "system_prompt", params.nanobanana21_system_prompt)
+            apply_bool(payload, "enable_web_search", params.nanobanana21_enable_web_search)
+            apply_bool(payload, "limit_generations", params.nanobanana21_limit_generations)
+            mah.log("info", "[fal.ai] build_request: Nano Banana 2.1 edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution))
+            return FAL_ENDPOINTS.nanobanana21, payload
+
+        elseif model == "flux3" then
+            -- FLUX 3 Image Edit: up to 10 references, a lowercase resolution
+            -- enum (512sq/768sq are square presets), and an integer 0-4
+            -- safety_tolerance rather than the string enums of FLUX.2. No seed.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 10 then
+                error("FLUX 3 accepts at most 10 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {image_urls = image_urls, prompt = prompt}
+            apply_str(payload, "aspect_ratio", params.flux3_aspect_ratio)
+            apply_str(payload, "resolution", params.flux3_resolution)
+            apply_bool(payload, "enable_prompt_expansion", params.flux3_enable_prompt_expansion)
+            apply_num(payload, "safety_tolerance", params.flux3_safety_tolerance)
+            apply_str(payload, "output_format", params.flux3_output_format)
+            mah.log("info", "[fal.ai] build_request: FLUX 3 edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution))
+            return FAL_ENDPOINTS.flux3, payload
+
+        elseif model == "flux3klein" then
+            -- FLUX.3 Klein Edit: up to 10 references, sized from the first
+            -- reference unless an image_size preset is chosen, with a boolean
+            -- safety checker. Its bounding-box controls are not exposed here.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 10 then
+                error("FLUX.3 Klein accepts at most 10 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {image_urls = image_urls, prompt = prompt, num_images = 1}
+            if params.flux3klein_image_size ~= "auto" then
+                apply_str(payload, "image_size", params.flux3klein_image_size)
+            end
+            apply_bool(payload, "enable_prompt_expansion", params.flux3klein_enable_prompt_expansion)
+            apply_num(payload, "seed", params.flux3klein_seed)
+            apply_bool(payload, "enable_safety_checker", params.flux3klein_enable_safety_checker)
+            apply_str(payload, "output_format", params.flux3klein_output_format)
+            mah.log("info", "[fal.ai] build_request: FLUX.3 Klein edit mode, image_count=" .. #image_urls .. ", size=" .. tostring(payload.image_size))
+            return FAL_ENDPOINTS.flux3klein, payload
+
+        elseif model == "krea3" then
+            -- Krea 3 Edit: 1-8 references, a berry (quality) / jam (speed)
+            -- variant switch, and a reasoning level. negative_prompt is read
+            -- by berry only, so it is not sent with jam.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 8 then
+                error("Krea 3 accepts at most 8 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {image_urls = image_urls, prompt = prompt}
+            apply_str(payload, "model", params.krea3_model)
+            apply_str(payload, "image_size", params.krea3_image_size)
+            apply_str(payload, "reasoning_level", params.krea3_reasoning_level)
+            if payload.model ~= "jam" then
+                apply_str(payload, "negative_prompt", params.krea3_negative_prompt)
+            end
+            apply_num(payload, "seed", params.krea3_seed)
+            apply_bool(payload, "enable_safety_checker", params.krea3_enable_safety_checker)
+            apply_str(payload, "output_format", params.krea3_output_format)
+            mah.log("info", "[fal.ai] build_request: Krea 3 edit mode, image_count=" .. #image_urls .. ", variant=" .. tostring(payload.model) .. ", reasoning=" .. tostring(payload.reasoning_level))
+            return FAL_ENDPOINTS.krea3, payload
 
         else
             -- flux2 turbo / flux2pro: image_urls + prompt. Schemas diverge:
@@ -1359,6 +1442,28 @@ local GENERATE_MODELS = {
         end,
     },
     {
+        id = "nanobanana21", label = "Nano Banana 2.1",
+        info = "Google's update to Nano Banana 2 with better character consistency, 1K-4K output, web grounding, and thinking that cannot be turned off (Off sends minimal).",
+        endpoint = FAL_ENDPOINTS.nanobanana21_generate,
+        build = function(o)
+            -- No 0.5K tier, and thinking is minimal|medium|high: the form's
+            -- "off" maps to the lowest level the schema has.
+            local thinking = o.thinking_level
+            if thinking ~= "minimal" and thinking ~= "high" then thinking = "minimal" end
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K", "4K"}),
+                safety_tolerance = o.safety_tolerance,
+                output_format = o.output_format,
+                seed = o.seed,
+                thinking_level = thinking,
+                system_prompt = optional_choice(o.system_prompt, ""),
+                enable_web_search = o.enable_web_search,
+            }
+        end,
+    },
+    {
         id = "nanobananapro", label = "Nano Banana Pro",
         info = "Google's high-fidelity model for complex composition and typography. Supports 1K-4K, but not the newer thinking-level control.",
         endpoint = FAL_ENDPOINTS.nanobananapro_generate,
@@ -1425,6 +1530,54 @@ local GENERATE_MODELS = {
                 background = o.background,
                 output_format = format,
                 output_compression = compression,
+            }
+        end,
+    },
+    {
+        id = "flux3", label = "FLUX 3",
+        info = "Black Forest Labs' newest model, with native 2K and 4K output, optional prompt expansion, and a five-level safety tolerance. It has no seed; 4K can take several minutes.",
+        endpoint = FAL_ENDPOINTS.flux3_generate,
+        build = function(o)
+            -- safety_tolerance is an integer 0-4 here: the form's 1-6 shifts
+            -- down by one, with 5 and 6 both landing on the most permissive 4.
+            local safety = math.min((tonumber(o.safety_tolerance) or 3) - 1, 4)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K", "4K"}):lower(),
+                enable_prompt_expansion = o.enable_prompt_expansion,
+                safety_tolerance = safety,
+                output_format = jpeg_or_png(o.output_format),
+            }
+        end,
+    },
+    {
+        id = "flux3klein", label = "FLUX.3 Klein",
+        info = "The small open-weights FLUX 3: fast and inexpensive, with prompt expansion, seed, a safety checker, and WebP output.",
+        endpoint = FAL_ENDPOINTS.flux3klein_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                enable_prompt_expansion = o.enable_prompt_expansion,
+                seed = o.seed,
+                num_images = 1,
+                enable_safety_checker = o.enable_safety_checker,
+                output_format = o.output_format,
+            }
+        end,
+    },
+    {
+        id = "krea3", label = "Krea 3",
+        info = "Krea's newest model, aimed at aesthetic, photographic results. Output is about 1 MP and billed per megapixel; it has seed and safety-checker controls.",
+        endpoint = FAL_ENDPOINTS.krea3_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                seed = o.seed,
+                enable_safety_checker = o.enable_safety_checker,
+                output_format = jpeg_or_png(o.output_format),
             }
         end,
     },
@@ -1747,7 +1900,8 @@ local function generate_form()
         .. '<option value="3:2">3:2</option>'
         .. '<option value="2:3">2:3</option>'
         .. '</select><p class="text-xs text-gray-500 mt-1">Controls output shape. Models that use image-size presets receive the closest matching preset.</p></div>'
-        -- Options "1"–"6" cover the Nano Banana string safety_tolerance enums.
+        -- Options "1"–"6" cover the Nano Banana string safety_tolerance enums;
+        -- FLUX 3 shifts them onto its integer 0-4 scale.
         -- Models without that field either ignore
         -- this control (GPT Image 2, Grok Imagine 2.0) or derive their boolean
         -- safety switch from it (Seedream 5.0 Pro) — see GENERATE_MODELS.
@@ -1759,13 +1913,13 @@ local function generate_form()
         .. '<option value="4">4</option>'
         .. '<option value="5">5</option>'
         .. '<option value="6" selected>6 (most permissive)</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">1 blocks the most content; 6 is most permissive. Ignored by models without a tolerance field.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">1 blocks the most content; 6 is most permissive. FLUX 3 receives one level lower on its 0-4 scale. Ignored by models without a tolerance field.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="output_format">Output Format</label>'
         .. '<select id="output_format" name="output_format" class="w-full border rounded p-2">'
         .. '<option value="jpeg" selected>JPEG (small, no transparency)</option>'
         .. '<option value="png">PNG (lossless / transparency)</option>'
         .. '<option value="webp">WebP (small / transparency)</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Seedream and Fibo do not support WebP; Seedream falls back to JPEG, Krea falls back to JPEG, and Recraft chooses its native WebP output.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Seedream, Fibo, FLUX 3, and Krea do not support WebP; Seedream, FLUX 3, and Krea fall back to JPEG, and Recraft chooses its native WebP output.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="output_compression">Output Compression (optional)</label>'
         .. '<input id="output_compression" name="output_compression" type="number" min="0" max="100" step="1" class="w-full border rounded p-2" '
         .. 'placeholder="Model default"><p class="text-xs text-gray-500 mt-1">GPT Image 2.5 only; JPEG/WebP quality from 0 (most compressed) to 100.</p></div>'
@@ -1787,7 +1941,7 @@ local function generate_form()
         .. '<select id="thinking_level" name="thinking_level" class="w-full border rounded p-2">'
         .. '<option value="off" selected>Off</option><option value="minimal">Minimal</option>'
         .. '<option value="high">High</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Nano Banana 2 and Lite only. More thinking can improve complex instructions, with extra latency/cost.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Nano Banana 2, 2.1, and Lite only. More thinking can improve complex instructions, with extra latency/cost. Nano Banana 2.1 cannot turn thinking off, so Off sends minimal.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="system_prompt">System Prompt (optional)</label>'
         .. '<textarea id="system_prompt" name="system_prompt" class="w-full border rounded p-2" rows="2" '
         .. 'placeholder="Persistent style or behavior instruction"></textarea><p class="text-xs text-gray-500 mt-1">Nano Banana family only; steers the model separately from the image prompt.</p></div>'
@@ -1797,7 +1951,7 @@ local function generate_form()
         .. '<div><label class="block font-medium mb-1" for="enable_prompt_expansion">Prompt Expansion</label>'
         .. '<select id="enable_prompt_expansion" name="enable_prompt_expansion" class="w-full border rounded p-2">'
         .. '<option value="true" selected>Enabled</option><option value="false">Disabled</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3 only. Expands short prompts into richer instructions.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3, FLUX 3, and FLUX.3 Klein. Expands short prompts into richer instructions.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="expansion_model">Ideogram Expansion Model</label>'
         .. '<select id="expansion_model" name="expansion_model" class="w-full border rounded p-2">'
         .. '<option value="Medium" selected>Medium</option><option value="None">None</option>'
@@ -1805,9 +1959,9 @@ local function generate_form()
         .. '<div><label class="block font-medium mb-1" for="enable_safety_checker">Safety Checker</label>'
         .. '<select id="enable_safety_checker" name="enable_safety_checker" class="w-full border rounded p-2">'
         .. '<option value="true" selected>Enabled</option><option value="false">Disabled</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3, Ideogram V4, and Recraft V4 Style. Your account may still enforce moderation.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3, Ideogram V4, Recraft V4 Style, FLUX.3 Klein, and Krea 3. Your account may still enforce moderation.</p></div>'
         .. '<div><label class="inline-flex items-center gap-2"><input type="checkbox" name="enable_web_search" value="true">'
-        .. '<span class="font-medium">Enable Web Search</span></label><p class="text-xs text-gray-500 mt-1">Nano Banana 2 / Pro only. Grounds time-sensitive prompts in current web information and may add cost.</p></div>'
+        .. '<span class="font-medium">Enable Web Search</span></label><p class="text-xs text-gray-500 mt-1">Nano Banana 2, 2.1, and Pro only. Grounds time-sensitive prompts in current web information and may add cost.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="style_preset">Style Preset</label>'
         .. '<select id="style_preset" name="style_preset" class="w-full border rounded p-2">'
         .. '<option value="No Style" selected>No Style</option><option value="Photoreal">Photoreal</option>'
@@ -2263,9 +2417,9 @@ function init()
         params = {
             {name = "model", type = "select", label = "Model",
                 default = "photo_restoration",
-                options = {"photo_restoration", "codeformer", "swin2sr",
+                options = {"photo_restoration", "codeformer",
                            "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
-                description = "Choose by defect: combined aging, faces, generic scenes, compression/noise, blur, or Topaz professional restoration."},
+                description = "Choose by defect: combined aging, faces, compression/noise, blur, or Topaz professional restoration."},
 
             -- Per-model strengths/weaknesses, gated by show_when so only the
             -- selected model's note appears.
@@ -2275,12 +2429,8 @@ function init()
                 show_when = {model = "photo_restoration"}},
             {name = "model_info_codeformer", type = "info",
                 label = "CodeFormer — best for old portraits and family photos",
-                description = "Strengths: face-focused transformer; preserves aspect ratio exactly. Output dimensions = source × upscale_factor.\n\nWeaknesses: only restores faces well — backgrounds get less attention. No explicit scratch removal or color repair (pair with the Colorize action for color-faded sources). For scenes without faces, prefer SWIN2SR.",
+                description = "Strengths: face-focused transformer; preserves aspect ratio exactly. Output dimensions = source × upscale_factor.\n\nWeaknesses: only restores faces well — backgrounds get less attention. No explicit scratch removal or color repair (pair with the Colorize action for color-faded sources). For scenes without faces, prefer Topaz Restore or NAFNet Denoise.",
                 show_when = {model = "codeformer"}},
-            {name = "model_info_swin2sr", type = "info",
-                label = "SWIN2SR — best for degraded scenes and non-portrait sources",
-                description = "Strengths: generic super-resolution; preserves aspect ratio exactly. The 'real_sr' task is trained on real-world degraded photos — closest fit to 'restore' for landscapes, documents, street photos, etc.\n\nWeaknesses: no face-specific enhancement (use CodeFormer for portraits). No explicit scratch removal or color repair.",
-                show_when = {model = "swin2sr"}},
             {name = "model_info_nafnet_denoise", type = "info",
                 label = "NAFNet Denoise — best for JPEG / compression artifacts",
                 description = "Strengths: targets ISO noise and compression artifacts (JPEG blockiness, ringing, color banding from heavy recompression — e.g. WhatsApp / Instagram screenshots). Pure restoration: no upscale, preserves resolution and aspect ratio exactly.\n\nWeaknesses: doesn't increase resolution — pair with an Upscale action (DRCT or Aura SR v2 are both degradation-aware) if you also need to scale up. Doesn't restore faces specifically (use CodeFormer for that).",
@@ -2337,14 +2487,6 @@ function init()
                 description = "Restore only the central face instead of every detected face.",
                 show_when = {model = "codeformer"}},
 
-            -- SWIN2SR: generic super-resolution. Preserves aspect ratio.
-            -- "real_sr" is trained on real-world degraded photos and is the
-            -- closest fit to a "restore" use case for non-portrait sources.
-            {name = "swin2sr_task", type = "select", label = "Task",
-                default = "real_sr",
-                options = {"real_sr", "classical_sr", "compressed_sr"},
-                description = "real_sr fits degraded photos; classical_sr fits clean synthetic downscales; compressed_sr targets JPEG artifacts.",
-                show_when = {model = "swin2sr"}},
 
             -- NAFNet (denoise + deblur share the same `seed` param). Both are
             -- pure restoration: no upscale, aspect ratio preserved exactly.
@@ -2387,10 +2529,11 @@ function init()
                 description = "Describe the change precisely, including what must stay unchanged."},
             {name = "model", type = "select", label = "Model", default = "flux2",
                 options = {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex",
-                           "nanobanana2", "nanobananapro", "nanobanana_lite",
+                           "flux3", "flux3klein",
+                           "nanobanana2", "nanobanana21", "nanobananapro", "nanobanana_lite",
                            "gptimage25_flare", "gptimage25_sunburst", "gptimage2",
                            "qwen3", "mai25", "mai25pro", "ideogram_v4", "seedream5lite", "seedream5", "grok2",
-                           "muse", "fibo15", "flux1dev"},
+                           "muse", "fibo15", "krea3", "flux1dev"},
                 description = "Choose by quality, speed, reference-image support, typography, commercial provenance, and available controls."},
 
             {name = "model_info_flux2", type = "info", label = "FLUX.2 Turbo — fast multi-reference editing",
@@ -2568,6 +2711,126 @@ function init()
             {name = "flux2flex_enable_safety_checker", type = "boolean", label = "Safety Checker",
                 default = true, description = "Disable only if your fal.ai account is authorized.",
                 show_when = {model = "flux2flex"}},
+
+            -- FLUX 3 Image Edit. Integer 0-4 safety tolerance, lowercase
+            -- resolution tiers, no seed.
+            {name = "model_info_flux3", type = "info", label = "FLUX 3 — Black Forest Labs' newest editor",
+                description = "Up to 10 reference images with native 2K and 4K output, optional prompt expansion, and a five-level safety tolerance. No seed control; 4K can take several minutes.",
+                show_when = {model = "flux3"}},
+            {name = "flux3_aspect_ratio", type = "select", label = "Aspect Ratio",
+                default = "auto",
+                options = {"auto", "21:9", "2:1", "16:9", "3:2", "7:5", "4:3", "5:4", "1:1",
+                           "4:5", "3:4", "5:7", "2:3", "9:16", "1:2"},
+                description = "auto follows the first reference image; fixed values reshape the result.",
+                show_when = {model = "flux3"}},
+            {name = "flux3_resolution", type = "select", label = "Resolution",
+                default = "1k", options = {"512sq", "768sq", "1k", "2k", "4k"},
+                description = "Output tier. 512sq and 768sq are small square previews; higher tiers take longer and cost more.",
+                show_when = {model = "flux3"}},
+            {name = "flux3_enable_prompt_expansion", type = "boolean", label = "Expand Prompt",
+                default = false, description = "Let the model enrich the prompt while keeping its intent and the role of each reference.",
+                show_when = {model = "flux3"}},
+            {name = "flux3_safety_tolerance", type = "select", label = "Safety Tolerance",
+                default = "2", options = {"0", "1", "2", "3", "4"},
+                description = "0 is strictest; 4 is most permissive.",
+                show_when = {model = "flux3"}},
+            {name = "flux3_output_format", type = "select", label = "Output Format",
+                default = "jpeg", options = {"jpeg", "png"},
+                description = "JPEG is smaller; PNG is lossless.", show_when = {model = "flux3"}},
+
+            -- FLUX.3 Klein Edit: the small open-weights FLUX 3, sized by an
+            -- image_size preset or from the first reference.
+            {name = "model_info_flux3klein", type = "info", label = "FLUX.3 Klein — fast, low-cost FLUX 3 editing",
+                description = "Black Forest Labs' small open-weights FLUX 3. Up to 10 reference images, prompt expansion on by default, seed, and WebP output. Describe the whole target image, referring to inputs as \"the first image\" and so on.",
+                show_when = {model = "flux3klein"}},
+            {name = "flux3klein_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "auto keeps the first reference's size (one reference up to 4 MP, several up to 1 MP); presets force a shape.",
+                show_when = {model = "flux3klein"}},
+            {name = "flux3klein_enable_prompt_expansion", type = "boolean", label = "Expand Prompt",
+                default = true, description = "Expand short instructions into a fuller caption of the target image.",
+                show_when = {model = "flux3klein"}},
+            {name = "flux3klein_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "flux3klein"}},
+            {name = "flux3klein_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "flux3klein"}},
+            {name = "flux3klein_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "JPEG is smallest; PNG is lossless; WebP balances size and transparency.",
+                show_when = {model = "flux3klein"}},
+
+            -- Nano Banana 2.1. Like Nano Banana 2, but resolution starts at 1K
+            -- and thinking is minimal|medium|high (no off).
+            {name = "model_info_nanobanana21", type = "info", label = "Nano Banana 2.1 — improved character consistency",
+                description = "Google's update to Nano Banana 2, with better single- and multi-character consistency. Up to 14 references, 1K-4K output, thinking, web search, and system instruction. No 0.5K tier.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_aspect_ratio", type = "select", label = "Aspect Ratio",
+                default = "auto",
+                options = {"auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1",
+                           "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"},
+                description = "auto lets the model decide from references; extreme strip ratios are supported.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_resolution", type = "select", label = "Resolution",
+                default = "1K", options = {"1K", "2K", "4K"},
+                description = "Output tier. Higher tiers take longer and cost more.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "JPEG is smallest; PNG is lossless; WebP balances size and transparency.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_safety_tolerance", type = "select", label = "Safety Tolerance",
+                default = "4", options = {"1", "2", "3", "4", "5", "6"},
+                description = "1 blocks the most content; 6 is most permissive.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse the random starting point for more comparable results.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_thinking_level", type = "select", label = "Thinking Level",
+                default = "medium", options = {"minimal", "medium", "high"},
+                description = "More thinking can improve complex edits, with extra latency and cost. This model cannot turn thinking off.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_system_prompt", type = "text", label = "System Prompt (optional)",
+                description = "Persistent style or behavior instruction, separate from the edit prompt.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_enable_web_search", type = "boolean", label = "Enable Web Search",
+                default = false, description = "Ground time-sensitive edits in current web information; may add cost.",
+                show_when = {model = "nanobanana21"}},
+            {name = "nanobanana21_limit_generations", type = "boolean", label = "Limit Prompt-Requested Generations",
+                default = true, description = "Ignore instructions asking for multiple images so this single-result action stays predictable.",
+                show_when = {model = "nanobanana21"}},
+
+            -- Krea 3 Edit
+            {name = "model_info_krea3", type = "info", label = "Krea 3 — aesthetic multi-reference editing",
+                description = "Krea's newest model. Up to 8 reference images (refer to them as <image-1> and so on), a quality (berry) or speed (jam) variant, and a reasoning level. Billed per megapixel, counting the references.",
+                show_when = {model = "krea3"}},
+            {name = "krea3_model", type = "select", label = "Variant",
+                default = "berry", options = {"berry", "jam"},
+                description = "berry favors quality and accepts a negative prompt; jam favors speed.",
+                show_when = {model = "krea3"}},
+            {name = "krea3_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "auto sizes the result near 2048 x 2048 following the references; presets force a shape.",
+                show_when = {model = "krea3"}},
+            {name = "krea3_reasoning_level", type = "select", label = "Reasoning Level",
+                default = "low", options = {"low", "medium", "high"},
+                description = "More reasoning can help complex edits; high bills 5 MP more per request.",
+                show_when = {model = "krea3"}},
+            {name = "krea3_negative_prompt", type = "text", label = "Negative Prompt (optional)",
+                description = "Content or qualities to avoid. Used by the berry variant only.",
+                show_when = {model = "krea3", krea3_model = "berry"}},
+            {name = "krea3_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "krea3"}},
+            {name = "krea3_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "krea3"}},
+            {name = "krea3_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png"},
+                description = "JPEG is smaller; PNG is lossless.", show_when = {model = "krea3"}},
 
             -- Nano Banana 2
             {name = "nanobanana2_aspect_ratio", type = "select", label = "Aspect Ratio",
@@ -3242,17 +3505,16 @@ function init()
         description = "Restore and enhance old or damaged photographs using AI.",
         category = "Action",
         attrs = {
-            { name = "model", type = "select", default = "photo_restoration", description = "Backends: photo_restoration (combined aging), codeformer (faces), swin2sr (scenes), NAFNet (noise/blur), Topaz Restore (damage/detail), and Topaz Denoise (high ISO/night)." },
+            { name = "model", type = "select", default = "photo_restoration", description = "Backends: photo_restoration (combined aging), codeformer (faces), NAFNet (noise/blur), Topaz Restore (damage/detail), and Topaz Denoise (high ISO/night)." },
             { name = "fix_colors / remove_scratches / enhance_resolution / aspect_ratio", type = "various", description = "photo_restoration controls. aspect_ratio defaults to 'auto', which picks the closest enum to the source's actual dimensions. Other options: 1:1, 16:9, 9:16, 4:3, 3:4. (Shown when model=photo_restoration.)" },
             { name = "codeformer_*", type = "various", description = "CodeFormer controls: fidelity (identity vs. quality, 0-1), upscale_factor (1-4), face_upscale, aligned, only_center_face. (Shown when model=codeformer.)" },
-            { name = "swin2sr_task", type = "select", default = "real_sr", description = "SWIN2SR task: real_sr (degraded real-world photos), classical_sr, or compressed_sr. (Shown when model=swin2sr.)" },
             { name = "nafnet_seed", type = "number", description = "Optional seed for nafnet_denoise / nafnet_deblur reproducibility." },
             { name = "topaz_restore_* / topaz_denoise_*", type = "various", description = "Topaz preset and JPEG/PNG format. Recover 3 rebuilds detail, Dust-Scratch V2 repairs film damage; Denoise presets range from Normal to generative Denoise Max." },
         },
         examples = {
             { title = "Photo restoration (default)", code = "Combined color/scratch/quality fix in one pass.", notes = "Model: fal-ai/image-apps-v2/photo-restoration. Always reshapes to a 4K aspect_ratio enum; 'auto' matches the source's actual ratio." },
             { title = "Old portrait", code = "Use CodeFormer with fidelity 0.5-0.7 for old family photos with faces.", notes = "Model: fal-ai/codeformer. Preserves aspect ratio exactly." },
-            { title = "Old scene/landscape", code = "Use SWIN2SR with task=real_sr for degraded non-portrait photos.", notes = "Model: fal-ai/swin2sr. Preserves aspect ratio exactly." },
+            { title = "Old scene/landscape", code = "Use Topaz Restore (Recover 3) for degraded non-portrait photos.", notes = "Model: topaz/restore/image. Keeps source resolution." },
             { title = "JPEG / compression artifacts", code = "Use NAFNet Denoise on heavily-recompressed images (WhatsApp / Instagram screenshots, social-media downloads).", notes = "Model: fal-ai/nafnet/denoise. Pure restoration — preserves resolution and aspect ratio. Pair with an Upscale step (DRCT or Aura SR v2) if you also need to scale up." },
             { title = "Motion blur / camera shake", code = "Use NAFNet Deblur. Run after Denoise if both blur and compression artifacts are present.", notes = "Model: fal-ai/nafnet/deblur. Preserves resolution and aspect ratio." },
             { title = "Topaz professional restore", code = "Use Recover 3 for missing natural detail or Dust-Scratch V2 for archival film damage.", notes = "Model: topaz/restore/image" },
@@ -3260,7 +3522,7 @@ function init()
         },
         notes = {
             "photo_restoration combines scratches, color fading, and resolution repair, but always 4K-reshapes to one of {1:1, 16:9, 9:16, 4:3, 3:4}. 'auto' picks the closest enum to the source. Topaz Restore instead keeps source resolution and specializes in natural-detail recovery or dust/scratch cleanup.",
-            "codeformer and swin2sr both preserve aspect ratio exactly but don't do explicit color/scratch repair — they're denoise + super-resolution. Pair them with the Colorize action if the source is also color-faded.",
+            "codeformer preserves aspect ratio exactly but doesn't do explicit color/scratch repair — it is face restoration + super-resolution. Pair it with the Colorize action if the source is also color-faded.",
             "Result is added as a new version of the original resource.",
             "Available from both detail view and card view.",
         },
@@ -3273,9 +3535,10 @@ function init()
         category = "Action",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the desired edit" },
-            { name = "model", type = "select", default = "flux2", description = "Models: FLUX 2 Turbo/Pro/Max/Flash/Flex, Nano Banana 2/Pro/Lite, GPT Image 2/2.5, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, Bria Fibo Edit 1.5, and FLUX 1 Dev." },
+            { name = "model", type = "select", default = "flux2", description = "Models: FLUX 2 Turbo/Pro/Max/Flash/Flex, FLUX 3 and FLUX.3 Klein, Nano Banana 2/2.1/Pro/Lite, GPT Image 2/2.5, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, Bria Fibo Edit 1.5, Krea 3, and FLUX 1 Dev." },
             { name = "flux2_* / flux2pro_* / flux2max_* / flux2flash_* / flux2flex_*", type = "various", description = "FLUX controls include size/format, seed, safety checker, plus Turbo/Flash prompt expansion + CFG, Pro/Max safety tolerance, and Flex inference steps." },
-            { name = "nanobanana*", type = "various", description = "Nano Banana controls include aspect/format/safety, seed, system prompt, generation limiting, optional thinking (2/Lite), resolution and web search where supported." },
+            { name = "flux3_* / flux3klein_*", type = "various", description = "FLUX 3 exposes aspect ratio, resolution (512sq-4k), prompt expansion, an integer 0-4 safety tolerance, and JPEG/PNG; it has no seed. FLUX.3 Klein exposes image size, prompt expansion, seed, safety checker, and JPEG/PNG/WebP. Both accept up to 10 references." },
+            { name = "nanobanana*", type = "various", description = "Nano Banana controls include aspect/format/safety, seed, system prompt, generation limiting, thinking (optional on 2/Lite, minimal-high on 2.1), resolution and web search where supported." },
             { name = "gptimage2_*", type = "various", description = "GPT Image 2 exposes size, quality, format, and background. Quality drives detail/cost; transparent background needs PNG/WebP." },
             { name = "gptimage25_*", type = "various", description = "GPT Image 2.5 Flare/Sunburst expose size, six quality tiers, mask URL, background, format, and JPEG/WebP output compression. Both accept up to 16 references." },
             { name = "qwen3_* / mai25_* / ideogram_v4_*", type = "various", description = "Qwen Image 3 adds negative prompt, prompt expansion, safety, and up to 3 references. MAI uses one source image. Ideogram V4 adds expansion, rendering speed, acceleration, strength, size, safety, and output format." },
@@ -3283,6 +3546,7 @@ function init()
             { name = "seedream5_image_size / seedream5_output_format / seedream5_enable_safety_checker", type = "various", description = "Seedream 5.0 Pro controls (shown when model=seedream5). image_size auto_1K / auto_2K keep the source's aspect ratio; safety is a boolean, not a tolerance." },
             { name = "grok2_aspect_ratio / grok2_resolution / grok2_quality / grok2_output_format", type = "various", description = "Grok Imagine Image 2.0 controls (shown when model=grok2). Own aspect_ratio enum, lowercase '1k'/'2k' resolution, quality low|medium. No safety_tolerance in the schema." },
             { name = "muse_* / fibo15_*", type = "various", description = "Muse exposes aspect and output format with up to 10 references. Fibo exposes aspect and seed with up to 4 ordered references." },
+            { name = "krea3_*", type = "various", description = "Krea 3 exposes the berry (quality) or jam (speed) variant, image size, reasoning level, a berry-only negative prompt, seed, safety checker, and JPEG/PNG. Accepts up to 8 references." },
             { name = "strength", type = "number", default = "0.95", description = "Edit strength 0.01-1.0 (shown when model=flux1dev)." },
             { name = "flux1dev_num_inference_steps / flux1dev_guidance_scale / flux1dev_acceleration", type = "various", description = "Flux 1 Dev controls (shown when model=flux1dev). safety_tolerance is not in the schema for this endpoint." },
             { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. MAI, Ideogram V4, and Flux 1 Dev use only the trigger image; other editors consume the references, with model-specific ceilings enforced by the request builder." },
@@ -3297,7 +3561,7 @@ function init()
             "Result is added as a new version of the original resource.",
             "Available from detail view only.",
             "MAI Image 2.5, Ideogram V4, and Flux 1 Dev accept only the trigger image. Other edit models accept multiple input images via the 'Additional Images' picker; the trigger image is included by default.",
-            "The picker's nine-image maximum is shared by every model. The request builder reports explicit over-limit errors for Qwen (3), Grok (3), FLUX.2 Turbo/Flash (4), Seedream/Muse (10), and GPT Image 2/2.5 (16; above the picker limit).",
+            "The picker's nine-image maximum is shared by every model. The request builder reports explicit over-limit errors for Qwen (3), Grok (3), FLUX.2 Turbo/Flash (4), Krea 3 (8), FLUX 3/Klein and Seedream/Muse (10), Nano Banana 2.1 (14), and GPT Image 2/2.5 (16; both above the picker limit).",
             "Flux 1 Dev accepts only a single input image and supports a strength parameter.",
         },
     })
@@ -3342,10 +3606,10 @@ function init()
         category = "Page",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the image to generate" },
-            { name = "model", type = "select", default = "nanobanana2", description = "Models: Nano Banana 2/Pro/Lite, GPT Image 2/2.5 Flare/Sunburst, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Recraft V4 Style/Style Pro, Krea 2 Turbo Style, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, and Bria Fibo Gen 1.5." },
+            { name = "model", type = "select", default = "nanobanana2", description = "Models: Nano Banana 2/2.1/Pro/Lite, GPT Image 2/2.5 Flare/Sunburst, FLUX 3, FLUX.3 Klein, Krea 3, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Recraft V4 Style/Style Pro, Krea 2 Turbo Style, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, and Bria Fibo Gen 1.5." },
             { name = "resolution", type = "select", default = "1K", description = "0.5K-4K union. Values map to each model's native tier where supported; Seedream Lite has its own auto_2K/3K/4K control, and Fibo maps to 1MP/4MP." },
             { name = "aspect_ratio", type = "select", default = "1:1", description = "Shared aspect union; image-size models receive the closest supported preset while model-specific controls handle native size enums." },
-            { name = "safety_tolerance", type = "select", default = "6", description = "1 strictest to 6 most permissive. Nano Banana receives it; Seedream maps 1-2 to its boolean checker; Qwen/Ideogram/Recraft use their explicit safety control; other models ignore it." },
+            { name = "safety_tolerance", type = "select", default = "6", description = "1 strictest to 6 most permissive. Nano Banana receives it; FLUX 3 receives it one lower on its 0-4 scale; Seedream maps 1-2 to its boolean checker; Qwen/Ideogram/Recraft/Klein/Krea 3 use their explicit safety control; other models ignore it." },
             { name = "output_format / seed / quality / background / output_compression", type = "various", description = "Format is mapped to model support; seed is sent where supported; quality/background/compression apply to GPT Image 2/2.5 and quality also maps to Grok." },
             { name = "thinking_level / system_prompt / enable_web_search", type = "various", description = "Advanced Nano Banana controls. The inline form says exactly which family members accept each field." },
             { name = "style_preset / style_id / style_match / style_reference_urls", type = "various", description = "Bria Fibo keeps its No Style/Photoreal preset. Recraft accepts a style ID, style match mode, optional style-reference URLs, preferred hex colors, and a background color. Krea 2 requires 1-3 style-reference URLs and uses style_scale." },

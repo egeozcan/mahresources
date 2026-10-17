@@ -175,6 +175,33 @@ func TestFalLatestEditModelsMapTheirLiveSchemas(t *testing.T) {
 			endpoint: "https://queue.fal.run/bytedance/seedream/v5/lite/edit",
 			want:     []string{"image_urls", "image_size", "enable_safety_checker"},
 		},
+		{
+			name:     "flux 3",
+			params:   `{model="flux3", prompt="test", extra_images={1}, flux3_aspect_ratio="auto", flux3_resolution="2k", flux3_enable_prompt_expansion=false, flux3_safety_tolerance="2", flux3_output_format="png"}`,
+			endpoint: "https://queue.fal.run/blackforestlabs/flux-3/edit-image",
+			want:     []string{"image_urls", "aspect_ratio", "resolution", "enable_prompt_expansion", "safety_tolerance", "output_format"},
+			absent:   []string{"seed", "image_size", "guidance_scale"},
+		},
+		{
+			name:     "flux 3 klein, automatic size",
+			params:   `{model="flux3klein", prompt="test", extra_images={1}, flux3klein_image_size="auto", flux3klein_enable_prompt_expansion=true, flux3klein_seed=42, flux3klein_enable_safety_checker=true, flux3klein_output_format="webp"}`,
+			endpoint: "https://queue.fal.run/blackforestlabs/flux-3/klein/edit-image",
+			want:     []string{"image_urls", "enable_prompt_expansion", "seed", "enable_safety_checker", "output_format", "num_images"},
+			absent:   []string{"image_size", "safety_tolerance"},
+		},
+		{
+			name:     "nano banana 2.1",
+			params:   `{model="nanobanana21", prompt="test", extra_images={1}, nanobanana21_aspect_ratio="auto", nanobanana21_resolution="2K", nanobanana21_output_format="png", nanobanana21_safety_tolerance="4", nanobanana21_seed=42, nanobanana21_thinking_level="medium", nanobanana21_enable_web_search=false, nanobanana21_limit_generations=true}`,
+			endpoint: "https://queue.fal.run/google/nano-banana-2.1/edit",
+			want:     []string{"image_urls", "aspect_ratio", "resolution", "output_format", "safety_tolerance", "seed", "thinking_level", "enable_web_search", "limit_generations"},
+		},
+		{
+			name:     "krea 3 jam drops the berry-only negative prompt",
+			params:   `{model="krea3", prompt="test", extra_images={1}, krea3_model="jam", krea3_image_size="auto", krea3_reasoning_level="medium", krea3_negative_prompt="blur", krea3_seed=42, krea3_enable_safety_checker=true, krea3_output_format="jpeg"}`,
+			endpoint: "https://queue.fal.run/krea/v3/edit",
+			want:     []string{"image_urls", "model", "image_size", "reasoning_level", "seed", "enable_safety_checker", "output_format"},
+			absent:   []string{"negative_prompt"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var submittedURL string
