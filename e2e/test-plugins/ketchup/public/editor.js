@@ -209,14 +209,21 @@ async function canWrite() {
     }
 }
 
+async function loadImage() {
+    // The page started this request before this module loaded (plugin.lua's early_fetches).
+    const resp = await (window.ketchupImageRequest || fetch(config.fileUrl, { credentials: 'same-origin' }));
+    if (!resp.ok) throw new Error(`The image could not be loaded (${resp.status})`);
+    return resp.blob();
+}
+
 async function start() {
     if (config.mode === 'edit') showEditing(resource); else showNew();
-    const [writable] = await Promise.all([canWrite(), app.whenReady()]);
+    // The image downloads while the editor starts, not after it.
+    const image = config.mode === 'edit' ? loadImage() : null;
+    if (image) setStatus('Loading image…');
+    const [writable, , blob] = await Promise.all([canWrite(), app.whenReady(), image]);
     if (config.mode === 'edit') {
-        setStatus('Loading image…');
-        const resp = await fetch(config.fileUrl, { credentials: 'same-origin' });
-        if (!resp.ok) throw new Error(`The image could not be loaded (${resp.status})`);
-        await app.openImage(await resp.blob(), { name: resource.name });
+        await app.openImage(blob, { name: resource.name });
         setStatus('');
     } else {
         await app.newDocument(config.width, config.height, { name: nameInput.value });

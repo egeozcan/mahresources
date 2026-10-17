@@ -109,6 +109,14 @@ func TestKetchupEditPageForAnImage(t *testing.T) {
 	if !strings.Contains(html, `<drawing-app class="ketchup-app" embedded`) {
 		t.Error("the page does not embed the editor")
 	}
+	// The image and the editor bundle start downloading with the page, not one
+	// after the other once editor.js has run.
+	if !strings.Contains(html, `window.ketchupImageRequest = fetch("/v1/resource/view?id=7\u0026v=abc123"`) {
+		t.Error("the page does not start fetching the image")
+	}
+	if !strings.Contains(html, `<link rel="modulepreload" href="/plugins/ketchup/public/ketchup.js">`) {
+		t.Error("the page does not preload the editor bundle")
+	}
 }
 
 func TestKetchupSavesBMPAsPNG(t *testing.T) {
@@ -147,7 +155,11 @@ func TestKetchupRefusesWhatItCannotEdit(t *testing.T) {
 func TestKetchupNewImagePage(t *testing.T) {
 	pm := ketchupPlugin(t)
 
-	config := ketchupConfig(t, ketchupPage(t, pm, nil))
+	html := ketchupPage(t, pm, nil)
+	if strings.Contains(html, "ketchupImageRequest") {
+		t.Error("a new image fetches an image")
+	}
+	config := ketchupConfig(t, html)
 	if config["mode"] != "new" || config["width"] != float64(1200) || config["height"] != float64(800) || config["owner"] != nil {
 		t.Errorf("default new-image config = %v", config)
 	}
