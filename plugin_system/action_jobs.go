@@ -54,6 +54,11 @@ type ActionJob struct {
 	// is always on the entry; this says the durable Job has not seen it yet,
 	// so the next report or the settlement sends it rather than dropping it.
 	progressPending bool
+	// progressFlushArmed records that a timer will send the held report once
+	// the throttle window has passed, so a handler that reports and then blocks
+	// (a long upload, a sleep between polls) is not shown its previous step for
+	// as long as it blocks.
+	progressFlushArmed bool
 	// ownerUserID is the user that submitted the action (RBAC). It is never
 	// serialized to JSON; callers read it via Owner() to decide visibility so a
 	// non-admin only sees the jobs it created.
@@ -228,6 +233,34 @@ func flushHeldProgress(job *ActionJob) {
 		return
 	}
 	if err := reportHostJob(job, func(sink HostJobSink) error { return sink.Progress(progress) }); err != nil {
+		job.mu.Lock()
+		job.progressPending = true
+		job.mu.Unlock()
+	}
+}
+
+// progressThrottle is how often one execution's progress reaches the panel
+// and the durable Job. Reports in between replace each other on the entry.
+const progressThrottle = 200 * time.Millisecond
+
+// flushThrottledProgress is the timer armed when the throttle holds a report
+// back. It sends what is held unless a later report, or the settlement, already
+// has. Only a running entry is flushed: once an outcome is requested the panel
+// shows that, and the durable Job refuses progress after it.
+func (pm *PluginManager) flushThrottledProgress(job *ActionJob) {
+	job.mu.Lock()
+	job.progressFlushArmed = false
+	if !job.progressPending || job.Status != "running" {
+		job.mu.Unlock()
+		return
+	}
+	job.lastNotified = time.Now()
+	job.progressPending = false
+	report := job.hostProgressLocked()
+	job.mu.Unlock()
+
+	pm.notifyActionJobSubscribers("updated", job)
+	if err := reportHostJob(job, func(sink HostJobSink) error { return sink.Progress(report) }); err != nil {
 		job.mu.Lock()
 		job.progressPending = true
 		job.mu.Unlock()

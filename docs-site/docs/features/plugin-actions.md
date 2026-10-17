@@ -351,7 +351,7 @@ Same as sync, plus:
 
 | Function | Description |
 |----------|-------------|
-| `mah.job_progress(job_id, percent, message)` | Report progress (0-100). SSE updates throttled to 200ms. |
+| `mah.job_progress(job_id, percent, message)` | Report progress (0-100). Updates are sent at most every 200ms; a report held back is sent when that window ends, even if the handler is blocked. |
 | `mah.job_progress(job_id, report_table)` | Report counts, a unit and metrics. See [Counts, metrics and graphs](#counts-metrics-and-graphs). |
 | `mah.job_complete(job_id, result_table)` | Request successful completion; after the handler settles, store final progress at 100%. |
 | `mah.job_fail(job_id, error_message)` | Mark job as failed. |

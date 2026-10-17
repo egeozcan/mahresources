@@ -38,6 +38,16 @@ func falBenchmarkImage(t testing.TB) string {
 // and JSON bindings. Storage is in memory and HTTP is stopped before any I/O.
 func falPreparation(t testing.TB, uri string, submittedURL ...*string) func(string, string) (map[string]any, int, time.Duration) {
 	t.Helper()
+	return falPreparationWithCDN(t, uri, nil, submittedURL...)
+}
+
+// falCDN answers the plugin's CDN calls in a preparation run. Without one the
+// token request fails, which is the fallback the plugin must survive: the
+// images go inline exactly as before.
+type falCDN func(url string, body string, headers map[string]string) map[string]any
+
+func falPreparationWithCDN(t testing.TB, uri string, cdn falCDN, submittedURL ...*string) func(string, string) (map[string]any, int, time.Duration) {
+	t.Helper()
 	L := lua.NewState()
 	t.Cleanup(L.Close)
 	if err := L.DoString(`
@@ -56,6 +66,7 @@ func falPreparation(t testing.TB, uri string, submittedURL ...*string) func(stri
 	pm := &PluginManager{}
 	pm.registerImageModule(L, mah)
 	pm.registerJsonModule(L, mah)
+	pm.registerUtilModule(L, mah)
 	reads := 0
 	db := mah.RawGetString("db").(*lua.LTable)
 	db.RawSetString("get_resource_data", L.NewFunction(func(L *lua.LState) int {
@@ -67,8 +78,23 @@ func falPreparation(t testing.TB, uri string, submittedURL ...*string) func(stri
 	}))
 	var payload map[string]any
 	mah.RawGetString("http").(*lua.LTable).RawSetString("post_sync", L.NewFunction(func(L *lua.LState) int {
+		url := L.CheckString(1)
+		if !strings.HasPrefix(url, "https://queue.fal.run/") {
+			response := map[string]any{"error": "no CDN in this test"}
+			if cdn != nil {
+				headers := map[string]string{}
+				if opts, ok := L.Get(3).(*lua.LTable); ok {
+					if h, ok := opts.RawGetString("headers").(*lua.LTable); ok {
+						h.ForEach(func(k, v lua.LValue) { headers[k.String()] = v.String() })
+					}
+				}
+				response = cdn(url, L.CheckString(2), headers)
+			}
+			L.Push(goToLuaValue(L, response))
+			return 1
+		}
 		if len(submittedURL) > 0 {
-			*submittedURL[0] = L.CheckString(1)
+			*submittedURL[0] = url
 		}
 		if err := json.Unmarshal([]byte(L.CheckString(2)), &payload); err != nil {
 			t.Fatal(err)
@@ -239,4 +265,81 @@ func BenchmarkFalPreparation(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestFalPreparationUploadsImagesToTheCDN(t *testing.T) {
+	uri := encodeTestImageJPEG(t, 20, 20, color.RGBA{R: 255, A: 255})
+	raw, err := base64.StdEncoding.DecodeString(strings.SplitN(uri, ",", 2)[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploads []string
+	cdn := func(url, body string, headers map[string]string) map[string]any {
+		switch url {
+		case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+			if headers["Authorization"] != "Key unused-test-key" {
+				t.Errorf("token request authorization: %q", headers["Authorization"])
+			}
+			return map[string]any{"status_code": 200, "body": `{"token":"cdn-token","token_type":"Bearer","base_url":"https://v3b.fal.media"}`}
+		case "https://v3b.fal.media/files/upload":
+			if headers["Authorization"] != "Bearer cdn-token" || headers["Content-Type"] != "image/jpeg" {
+				t.Errorf("upload headers: %v", headers)
+			}
+			if body != string(raw) {
+				t.Error("upload body is not the image's bytes")
+			}
+			uploads = append(uploads, url)
+			return map[string]any{"status_code": 200, "body": `{"access_url":"https://v3b.fal.media/files/b/x/input.jpg"}`}
+		}
+		t.Errorf("unexpected CDN call to %s", url)
+		return map[string]any{"error": "unexpected"}
+	}
+
+	t.Run("single image", func(t *testing.T) {
+		uploads = nil
+		payload, _, _ := falPreparationWithCDN(t, uri, cdn)("colorize", `{}`)
+		if payload["image_url"] != "https://v3b.fal.media/files/b/x/input.jpg" {
+			t.Errorf("image_url = %.60v, want the CDN URL", payload["image_url"])
+		}
+		if len(uploads) != 1 {
+			t.Errorf("uploads = %d, want 1", len(uploads))
+		}
+	})
+	t.Run("repeated selection uploads once", func(t *testing.T) {
+		uploads = nil
+		payload, _, _ := falPreparationWithCDN(t, uri, cdn)("edit", `{model="flux2", prompt="test", extra_images={1,1}}`)
+		urls := payload["image_urls"].([]any)
+		if len(urls) != 2 || urls[0] != "https://v3b.fal.media/files/b/x/input.jpg" || urls[1] != urls[0] {
+			t.Errorf("image_urls = %.120v", urls)
+		}
+		if len(uploads) != 1 {
+			t.Errorf("uploads = %d, want 1", len(uploads))
+		}
+	})
+	t.Run("failed upload sends the image inline", func(t *testing.T) {
+		failing := func(url, body string, headers map[string]string) map[string]any {
+			if strings.HasSuffix(url, "/files/upload") {
+				return map[string]any{"status_code": 500, "body": "nope"}
+			}
+			return cdn(url, body, headers)
+		}
+		payload, _, _ := falPreparationWithCDN(t, uri, failing)("colorize", `{}`)
+		if payload["image_url"] != uri {
+			t.Error("a failed upload must leave the data URI in the request")
+		}
+	})
+	t.Run("a token naming another host keeps the default upload host", func(t *testing.T) {
+		var uploadedTo string
+		odd := func(url, body string, headers map[string]string) map[string]any {
+			if strings.Contains(url, "/storage/auth/token") {
+				return map[string]any{"status_code": 200, "body": `{"token":"t","base_url":"https://evil.example"}`}
+			}
+			uploadedTo = url
+			return map[string]any{"status_code": 200, "body": `{"access_url":"https://v3.fal.media/files/y.jpg"}`}
+		}
+		falPreparationWithCDN(t, uri, odd)("colorize", `{}`)
+		if uploadedTo != "https://v3.fal.media/files/upload" {
+			t.Errorf("uploaded to %q", uploadedTo)
+		}
+	})
 }

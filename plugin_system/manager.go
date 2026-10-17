@@ -1675,12 +1675,22 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		job.Message = next.Message
 		job.Completed, job.Total, job.Unit = next.Completed, next.Total, next.Unit
 		job.Metrics = next.Metrics
-		shouldNotify := time.Since(job.lastNotified) >= 200*time.Millisecond || next.Percent >= 100
+		sinceLast := time.Since(job.lastNotified)
+		shouldNotify := sinceLast >= progressThrottle || next.Percent >= 100
 		if shouldNotify {
 			job.lastNotified = time.Now()
 			job.progressPending = false
 		} else {
 			job.progressPending = true
+			// Held reports used to wait for the next report or the settlement,
+			// whichever came first. A handler that says "Submitting..." and
+			// then blocks on the request kept showing the step before it for
+			// the whole request -- the fal.ai plugin read as still loading
+			// its image while it was waiting on fal.
+			if !job.progressFlushArmed {
+				job.progressFlushArmed = true
+				time.AfterFunc(progressThrottle-sinceLast, func() { pm.flushThrottledProgress(job) })
+			}
 		}
 		report := job.hostProgressLocked()
 		job.mu.Unlock()

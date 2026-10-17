@@ -609,3 +609,55 @@ end
 	}
 	t.Fatal("the action never completed")
 }
+
+// TestHeldProgressIsSentWhileTheHandlerBlocks covers a handler that reports a
+// step and then blocks, as the fal.ai plugin does around its upload: the held
+// report must reach the host once the throttle window passes, not when the
+// handler next reports or finishes.
+func TestHeldProgressIsSentWhileTheHandlerBlocks(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "blocking-plugin", `
+plugin = { name = "blocking-plugin", version = "1.0", api_version = 1, capabilities = { "actions", "jobs" } }
+
+function work(ctx)
+    mah.job_progress(ctx.job_id, { completed = 1, total = 10, unit = "items" })
+    mah.job_progress(ctx.job_id, { completed = 2 })
+    mah.sleep(2)
+    return { message = "returned" }
+end
+
+function init()
+    mah.action({ id = "work", label = "Work", entity = "resource", async = true, handler = work })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("plugin manager: %v", err)
+	}
+	defer pm.Close()
+	sink := &recordingSink{}
+	pm.SetHostJobs(&recordingHostJobs{ref: &HostJobRef{JobID: "job-1", Handle: "handle-1", Sink: sink}})
+	if err := pm.EnablePlugin("blocking-plugin"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := pm.RunActionAsyncForHost(&HostJobRef{JobID: "job-1", Handle: "handle-1", Sink: sink},
+		nil, "blocking-plugin", "work", 5, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		events := append([]string(nil), sink.events...)
+		sink.mu.Unlock()
+		for _, event := range events {
+			if event == "completed" {
+				t.Fatalf("events = %v; the action finished before the check", events)
+			}
+			if event == "progress:2" {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the held report was not sent while the handler was still sleeping")
+}
