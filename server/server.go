@@ -54,7 +54,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	// belonging to resources inside its subtree. Private application storage is
 	// denied for every principal, including administrators.
 	router.PathPrefix(filePathPrefix).Handler(cacheStoredFiles(filePathPrefix, appContext.AuthEnabled(),
-		guardedFileServer(appContext, filePathPrefix, mainStorageRoot,
+		guardedFileServer(appContext, filePathPrefix, "", mainStorageRoot,
 			http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))))
 	// /public/ assets are served with a wildcard CORS header: the template
 	// live-preview pane loads the app bundle as a module script from a
@@ -68,7 +68,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 		system := createCachedStorage(systemName)
 		pathKey := fmt.Sprintf("/%v/", key)
 		router.PathPrefix(pathKey).Handler(cacheStoredFiles(pathKey, appContext.AuthEnabled(),
-			guardedFileServer(appContext, pathKey, systemName,
+			guardedFileServer(appContext, pathKey, key, systemName,
 				http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))))
 	}
 

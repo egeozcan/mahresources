@@ -339,20 +339,30 @@ func (ctx *MahresourcesContext) ResourceVisible(id uint) bool {
 	return !ctx.isScopedPrincipal() || ctx.entityVisible(&models.Resource{}, id)
 }
 
-// FilePathInScope reports whether a /files-relative storage path belongs to a
-// resource visible under the current (scoped) context. Because it queries
-// through ctx.db, the scope callbacks apply: a match exists only when the
-// resource is inside the principal's subtree. Used to guard the raw file server.
-func (ctx *MahresourcesContext) FilePathInScope(relPath string) bool {
+// FilePathInScope reports whether a storage-relative path on a storage mount
+// belongs to a resource visible under the current (scoped) context. storage is
+// the mount's StorageLocation key, "" for the main /files storage. Because it
+// queries through ctx.db, the scope callbacks apply: a match exists only when
+// the resource is inside the principal's subtree. Used to guard the raw file
+// server.
+//
+// The mount is part of the match because the same relative path can name a
+// different file on each mount: matching the path alone let a visible
+// resource's path open another mount's file of another owner.
+func (ctx *MahresourcesContext) FilePathInScope(storage, relPath string) bool {
 	relPath = strings.TrimPrefix(relPath, "/")
 	if relPath == "" {
 		return false
 	}
 	variants := []string{relPath, strings.ReplaceAll(relPath, "/", "\\")}
+	query := ctx.db.Model(&models.Resource{}).Where("location IN ?", variants)
+	if storage == "" {
+		query = query.Where("(storage_location IS NULL OR storage_location = '')")
+	} else {
+		query = query.Where("storage_location = ?", storage)
+	}
 	var count int64
-	if err := ctx.db.Model(&models.Resource{}).
-		Where("location IN ?", variants).
-		Limit(1).Count(&count).Error; err != nil {
+	if err := query.Limit(1).Count(&count).Error; err != nil {
 		return false
 	}
 	return count > 0

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models"
@@ -174,12 +175,18 @@ func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.Re
 		// link the app and its plugins build carries) names one exact content,
 		// so where it leads can be cached: a later image open, a lightbox page
 		// or the Ketchup editor then goes straight to the file, which
-		// cacheStoredFiles caches (with sign-in, revalidating every stored
-		// file, so the file guard still answers each use). A day rather than
-		// for good, which bounds how long a browser follows a pointer whose
-		// resource was since deleted.
+		// cacheStoredFiles lets the browser keep. A day rather than for good,
+		// which bounds how long a browser follows a pointer whose resource was
+		// since deleted.
+		//
+		// Only without sign-in. With it, a kept redirect would skip the check of
+		// this resource above on every later open by whoever is signed in on
+		// that browser, leaving the raw file guard, which knows a path and not
+		// a resource, as the only check.
 		if v := request.URL.Query().Get("v"); v != "" && v == resource.Hash {
-			writer.Header().Set("Cache-Control", "private, max-age=86400")
+			if p := auth.PrincipalFromContext(request.Context()); p != nil && p.SuperUser {
+				writer.Header().Set("Cache-Control", "private, max-age=86400")
+			}
 		}
 		http.Redirect(writer, request, path.Join("/", storage, resource.GetCleanLocation()), http.StatusFound)
 	}

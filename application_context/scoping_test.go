@@ -209,20 +209,49 @@ func TestScoping_FilePathInScope(t *testing.T) {
 	ctx.db.Model(&models.Resource{}).Where("owner_id = ?", outside.ID).Update("location", "out/file.bin")
 
 	scoped := scopedToRoot(ctx, root.ID)
-	if !scoped.FilePathInScope("in/file.bin") {
+	if !scoped.FilePathInScope("", "in/file.bin") {
 		t.Error("scoped user should be allowed the in-subtree file")
 	}
-	if scoped.FilePathInScope("out/file.bin") {
+	if scoped.FilePathInScope("", "out/file.bin") {
 		t.Error("scoped user must not be allowed the out-of-subtree file")
 	}
-	if scoped.FilePathInScope("nonexistent.bin") {
+	if scoped.FilePathInScope("", "nonexistent.bin") {
 		t.Error("nonexistent path must not be allowed")
 	}
 
 	// The system context is unrestricted but FilePathInScope still requires a
 	// matching resource row.
-	if !ctx.FilePathInScope("out/file.bin") {
+	if !ctx.FilePathInScope("", "out/file.bin") {
 		t.Error("system context should resolve any existing file path")
+	}
+}
+
+// The same relative path can name different files on different storage
+// mounts, so a visible resource's path must not open another mount's file.
+func TestScoping_FilePathInScopeMatchesTheMount(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	root, child, _, outside := scopingFixture(t, ctx)
+	archive := "archive"
+	ctx.db.Model(&models.Resource{}).Where("owner_id = ?", child.ID).Update("location", "shared/x.bin")
+	ctx.db.Model(&models.Resource{}).Where("owner_id = ?", outside.ID).
+		Updates(map[string]any{"location": "shared/x.bin", "storage_location": archive})
+	if err := ctx.db.Create(&models.Resource{Name: "in-archive", OwnerId: &child.ID, Location: "alt/y.bin", StorageLocation: &archive}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scoped := scopedToRoot(ctx, root.ID)
+	for _, tc := range []struct {
+		storage, rel string
+		want         bool
+	}{
+		{"", "shared/x.bin", true},
+		{"archive", "shared/x.bin", false},
+		{"archive", "alt/y.bin", true},
+		{"", "alt/y.bin", false},
+	} {
+		if got := scoped.FilePathInScope(tc.storage, tc.rel); got != tc.want {
+			t.Errorf("FilePathInScope(%q, %q) = %v, want %v", tc.storage, tc.rel, got, tc.want)
+		}
 	}
 }
 

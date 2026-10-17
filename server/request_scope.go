@@ -170,8 +170,10 @@ func denyScopedPrincipal(next http.HandlerFunc) http.HandlerFunc {
 // guardedFileServer reserves private storage directories from raw file access,
 // then ensures group-limited principals can only fetch files belonging to
 // resources inside their subtree. Dedicated download handlers apply the
-// artifact-specific authorization for private job files.
-func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, mountRoot string, next http.Handler) http.Handler {
+// artifact-specific authorization for private job files. storage is the
+// mount's StorageLocation key ("" for /files/), so a path is matched on the
+// mount it was requested from.
+func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, storage, mountRoot string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rel := strings.TrimPrefix(r.URL.Path, prefix)
 		if privateRawStoragePath(rel) || privateRawPhysicalStoragePath(appCtx, mountRoot, rel) {
@@ -184,7 +186,7 @@ func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, 
 			next.ServeHTTP(w, r)
 			return
 		}
-		if scopedCtx(appCtx, r).FilePathInScope(rel) {
+		if scopedCtx(appCtx, r).FilePathInScope(storage, rel) {
 			next.ServeHTTP(w, r)
 			return
 		}
