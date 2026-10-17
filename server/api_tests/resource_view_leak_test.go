@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -50,4 +51,40 @@ func TestResourceView_InvalidId_WithSearchCriteria_Returns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.Code,
 		"GET /v1/resource/view with invalid id and search criteria should return 400")
+}
+
+// A view URL naming the resource's current hash leads to one exact content, so
+// the browser may keep the redirect; a stale or missing hash may not.
+func TestResourceView_RedirectIsCacheableOnlyForTheCurrentHash(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := &models.Resource{Name: "Photo", Meta: []byte(`{}`), Hash: "b72e0339b3cec29046dfde0dce529d9a7b590c78",
+		Location: "/resources/b7/2e/03/b72e0339b3cec29046dfde0dce529d9a7b590c78.jpg"}
+	tc.DB.Create(res)
+	base := fmt.Sprintf("/v1/resource/view?id=%d", res.ID)
+
+	for query, want := range map[string]string{
+		"&v=" + res.Hash: "private, max-age=86400",
+		"&v=0123abcd":    "",
+		"":               "",
+	} {
+		resp := tc.MakeRequest(http.MethodGet, base+query, nil)
+		assert.Equal(t, http.StatusFound, resp.Code, query)
+		assert.Equal(t, want, resp.Header().Get("Cache-Control"), "Cache-Control for %q", query)
+	}
+}
+
+// With sign-in on, the redirect is not kept: it would skip this handler's
+// check of the resource itself on every later open by whoever is signed in
+// on that browser, leaving only the raw file guard to decide.
+func TestResourceView_RedirectIsNotCachedWithSignIn(t *testing.T) {
+	tc := setupAuthEnv(t)
+	res := &models.Resource{Name: "Photo", Meta: []byte(`{}`), Hash: "b72e0339b3cec29046dfde0dce529d9a7b590c78",
+		Location: "/resources/b7/2e/03/b72e0339b3cec29046dfde0dce529d9a7b590c78.jpg"}
+	tc.DB.Create(res)
+	cookie, _ := loginCookieAndCSRF(t, tc)
+
+	resp := doReq(tc, http.MethodGet, fmt.Sprintf("/v1/resource/view?id=%d&v=%s", res.ID, res.Hash), nil, []*http.Cookie{cookie}, nil)
+	assert.Equal(t, http.StatusFound, resp.Code)
+	assert.Equal(t, "", resp.Header().Get("Cache-Control"))
 }
