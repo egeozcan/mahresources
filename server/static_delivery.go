@@ -13,7 +13,7 @@ import (
 
 // How static files reach the browser: compressed when they are text, and
 // cached for good when their URL names their exact content (for stored files,
-// only without sign-in; see cacheContentAddressedFiles).
+// only without sign-in; see cacheStoredFiles).
 //
 // Neither existed before. The app bundle (800 KB of JavaScript), the
 // stylesheet and every plugin's scripts went out uncompressed, and nothing
@@ -242,28 +242,31 @@ func isContentAddressedPath(rel string) bool {
 	return m != nil && strings.HasPrefix(m[4], m[1]+m[2]+m[3])
 }
 
-// cacheContentAddressedFiles caches stored files whose path is their content
-// hash. It is "private" either way, so a shared cache never keeps them.
+// cacheStoredFiles sets how the browser caches stored files. It is "private"
+// either way, so a shared cache never keeps them.
 //
-// Without sign-in they are cached for good. With it, the bytes still never
-// change but who may read them does: a browser keeps one cache for every
-// account signed in on it, and a copy it served without asking would reach
-// the next account past guardedFileServer, however its access differs. So
-// with sign-in each use revalidates, which the guard answers and an unchanged
-// file costs only a 304. Logging out cannot clear the cache instead:
-// Clear-Site-Data is ignored over plain HTTP, and an expired session never
-// logs out.
-func cacheContentAddressedFiles(prefix string, authEnabled bool, next http.Handler) http.Handler {
-	value := "private, " + immutableCacheControl
-	if authEnabled {
-		value = "private, no-cache"
-	}
+// Without sign-in, a file whose path is its content hash is cached for good,
+// and any other file is left to the browser's own heuristics.
+//
+// With sign-in every stored file revalidates on each use, which the guard
+// answers and an unchanged file costs only a 304. A hash-named file's bytes
+// still never change, but who may read them does: a browser keeps one cache
+// for every account signed in on it, and a copy it served without asking would
+// reach the next account past guardedFileServer. That holds for a file a
+// resource references in place too, which the browser would otherwise keep by
+// its age, and which a cached /v1/resource/view redirect then reaches with no
+// check at all. Logging out cannot clear the cache instead: Clear-Site-Data is
+// ignored over plain HTTP, and an expired session never logs out.
+func cacheStoredFiles(prefix string, authEnabled bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isContentAddressedPath(strings.TrimPrefix(r.URL.Path, prefix)) {
-			next.ServeHTTP(&cacheOnSuccessWriter{ResponseWriter: w, value: value}, r)
-			return
+		switch {
+		case authEnabled:
+			next.ServeHTTP(&cacheOnSuccessWriter{ResponseWriter: w, value: "private, no-cache"}, r)
+		case isContentAddressedPath(strings.TrimPrefix(r.URL.Path, prefix)):
+			next.ServeHTTP(&cacheOnSuccessWriter{ResponseWriter: w, value: "private, " + immutableCacheControl}, r)
+		default:
+			next.ServeHTTP(w, r)
 		}
-		next.ServeHTTP(w, r)
 	})
 }
 

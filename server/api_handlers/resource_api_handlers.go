@@ -174,9 +174,10 @@ func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.Re
 		// link the app and its plugins build carries) names one exact content,
 		// so where it leads can be cached: a later image open, a lightbox page
 		// or the Ketchup editor then goes straight to the file, which
-		// cacheContentAddressedFiles caches (and, with sign-in, revalidates
-		// past the file guard). A day rather than for good, which bounds how
-		// long a browser follows a pointer whose resource was since deleted.
+		// cacheStoredFiles caches (with sign-in, revalidating every stored
+		// file, so the file guard still answers each use). A day rather than
+		// for good, which bounds how long a browser follows a pointer whose
+		// resource was since deleted.
 		if v := request.URL.Query().Get("v"); v != "" && v == resource.Hash {
 			writer.Header().Set("Cache-Control", "private, max-age=86400")
 		}

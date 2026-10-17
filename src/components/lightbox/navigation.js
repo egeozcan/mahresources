@@ -1272,11 +1272,13 @@ export const navigationMethods = {
   // load resets the speed, so another file starts at normal speed as it did).
   _rememberClosedVideo() {
     const video = document.querySelector('[x-show="$store.lightbox.isOpen"] video');
-    // Closed before its metadata loaded, the element never had the saved state
-    // restored onto it (restoreClosedVideo waits for that), so its values are
-    // only defaults: keep what the earlier close saved.
-    if (video && video.readyState < HTMLMediaElement.HAVE_METADATA) return;
-    this._closedVideo = video && this._mediaElementUrl(video)
+    // A saved state that is still here was never restored onto this element
+    // (restoreClosedVideo takes it once the element's metadata loads), so the
+    // element holds only defaults: keep the saved one. An element merely loading
+    // its next file after a navigation has none waiting and holds the live
+    // volume and mute. With no video showing there is nothing newer to save.
+    if (!video || this._closedVideo) return;
+    this._closedVideo = this._mediaElementUrl(video)
       ? {
           url: this._mediaElementUrl(video),
           currentTime: video.currentTime,

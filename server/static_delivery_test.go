@@ -207,7 +207,7 @@ func TestIsContentAddressedPath(t *testing.T) {
 	}
 }
 
-func TestCacheContentAddressedFiles(t *testing.T) {
+func TestCacheStoredFiles(t *testing.T) {
 	const hash = "b72e0339b3cec29046dfde0dce529d9a7b590c78"
 	dir := t.TempDir()
 	for _, rel := range []string{"resources/b7/2e/03/" + hash + ".jpg", "photos/holiday.jpg"} {
@@ -219,7 +219,7 @@ func TestCacheContentAddressedFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := cacheContentAddressedFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
+	h := cacheStoredFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
 
 	if cc := serveStatic(h, http.MethodGet, "/files/resources/b7/2e/03/"+hash+".jpg", nil).Header().Get("Cache-Control"); cc != "private, max-age=31536000, immutable" {
 		t.Errorf("hash-named file Cache-Control = %q", cc)
@@ -259,7 +259,7 @@ func TestStaticWrappersKeepTheReadFromFastPath(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	files := cacheContentAddressedFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
+	files := cacheStoredFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
 	public := compressStatic(http.StripPrefix("/public/", http.FileServer(http.Dir(dir))))
 
 	for _, tc := range []struct {

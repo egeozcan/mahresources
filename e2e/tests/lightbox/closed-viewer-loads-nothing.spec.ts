@@ -153,4 +153,36 @@ test.describe('Lightbox while closed', () => {
     expect(await video.evaluate((v: HTMLVideoElement) => [v.volume, v.muted, v.playbackRate]))
       .toEqual([0.2, true, 1.5]);
   });
+
+  // Moving between videos reuses the element, and it keeps the viewer's volume
+  // and mute while the next file loads, so a close then is not one that lost them.
+  test('closing while the next video loads keeps the volume and mute', async ({ page }) => {
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    const video = page.locator('[role="dialog"][x-show="$store.lightbox.isOpen"] video');
+    const ids = await page.locator('[data-lightbox-item]').evaluateAll(
+      (els) => els.map((el) => Number((el as HTMLElement).dataset.resourceId)));
+    const step = ids.indexOf(otherVideoId) > ids.indexOf(videoId) ? 'PageDown' : 'PageUp';
+    expect(Math.abs(ids.indexOf(otherVideoId) - ids.indexOf(videoId))).toBe(1);
+
+    await page.locator(`[data-lightbox-item][data-resource-id="${videoId}"]`).click();
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    await video.evaluate((v: HTMLVideoElement) => {
+      v.volume = 0.2;
+      v.muted = true;
+    });
+
+    // Hold the next video so the element is still loading it at the close.
+    let held = false;
+    await page.route(new RegExp(`/v1/resource/view\\?(.*&)?id=${otherVideoId}(&|$)`), () => { held = true; });
+    await page.keyboard.press(step);
+    await expect.poll(() => held).toBe(true);
+    expect(await video.evaluate((v: HTMLVideoElement) => v.readyState)).toBe(0);
+    await page.keyboard.press('Escape');
+    await expect(video).toHaveCount(0);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+
+    await page.locator(`[data-lightbox-item][data-resource-id="${otherVideoId}"]`).click();
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    expect(await video.evaluate((v: HTMLVideoElement) => [v.volume, v.muted])).toEqual([0.2, true]);
+  });
 });
