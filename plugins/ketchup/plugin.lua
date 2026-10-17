@@ -83,8 +83,24 @@ local function script_json(value)
     return (mah.json.encode(value):gsub("</", "<\\/"))
 end
 
+-- Starts every fetch the editor waits on while the page is still arriving.
+-- Left to editor.js, ketchup.js would start only once editor.js was parsed,
+-- and the image only once both had run. The image is fetched by a script
+-- rather than a <link rel="preload">: Chrome fails a fetch() that picks up a
+-- preload of this size still in flight ("Failed to fetch"), so editor.js
+-- takes over this very request instead.
+local function early_fetches(config)
+    local html = '<link rel="modulepreload" href="' .. PUBLIC .. '/ketchup.js">'
+    if config.fileUrl then
+        html = html .. '<script>window.ketchupImageRequest = fetch(' .. script_json(config.fileUrl)
+            .. ', { credentials: "same-origin" });</script>'
+    end
+    return html
+end
+
 local function render_editor(config)
-    return '<link rel="stylesheet" href="' .. PUBLIC .. '/editor.css">'
+    return early_fetches(config)
+        .. '<link rel="stylesheet" href="' .. PUBLIC .. '/editor.css">'
         .. '<section class="ketchup-host" aria-labelledby="ketchup-title">'
         .. '<div class="ketchup-bar">'
         .. '<h2 id="ketchup-title" class="ketchup-title"></h2>'
