@@ -53,7 +53,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	// Guard the raw file server: a group-limited principal may only download files
 	// belonging to resources inside its subtree. Private application storage is
 	// denied for every principal, including administrators.
-	router.PathPrefix(filePathPrefix).Handler(cacheContentAddressedFiles(filePathPrefix,
+	router.PathPrefix(filePathPrefix).Handler(cacheContentAddressedFiles(filePathPrefix, appContext.AuthEnabled(),
 		guardedFileServer(appContext, filePathPrefix, mainStorageRoot,
 			http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))))
 	// /public/ assets are served with a wildcard CORS header: the template
@@ -67,7 +67,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	for key, systemName := range altFs {
 		system := createCachedStorage(systemName)
 		pathKey := fmt.Sprintf("/%v/", key)
-		router.PathPrefix(pathKey).Handler(cacheContentAddressedFiles(pathKey,
+		router.PathPrefix(pathKey).Handler(cacheContentAddressedFiles(pathKey, appContext.AuthEnabled(),
 			guardedFileServer(appContext, pathKey, systemName,
 				http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))))
 	}

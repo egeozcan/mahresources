@@ -2,6 +2,7 @@ package server
 
 import (
 	"compress/gzip"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -11,7 +12,8 @@ import (
 )
 
 // How static files reach the browser: compressed when they are text, and
-// cached for good when their URL names their exact content.
+// cached for good when their URL names their exact content (for stored files,
+// only without sign-in; see cacheContentAddressedFiles).
 //
 // Neither existed before. The app bundle (800 KB of JavaScript), the
 // stylesheet and every plugin's scripts went out uncompressed, and nothing
@@ -128,6 +130,27 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// ReadFrom keeps net/http's sendfile path for a body sent as is: wrapping the
+// writer would otherwise hide it, and http.FileServer copies through it.
+func (w *gzipResponseWriter) ReadFrom(src io.Reader) (int64, error) {
+	if !w.wroteHeader || w.gz != nil {
+		// Write still sniffs a missing Content-Type, or compresses.
+		return io.Copy(writerOnly{w}, src)
+	}
+	return readFrom(w.ResponseWriter, src)
+}
+
+// writerOnly hides a writer's ReadFrom, so io.Copy into it cannot recurse.
+type writerOnly struct{ io.Writer }
+
+// readFrom copies src into w through w's own ReadFrom where it has one.
+func readFrom(w http.ResponseWriter, src io.Reader) (int64, error) {
+	if rf, ok := w.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(writerOnly{w}, src)
+}
+
 func (w *gzipResponseWriter) finish() {
 	if w.gz == nil {
 		return
@@ -181,12 +204,24 @@ func isContentAddressedPath(rel string) bool {
 }
 
 // cacheContentAddressedFiles caches stored files whose path is their content
-// hash for good. It is "private": these sit behind sign-in, so a shared
-// cache must not keep them.
-func cacheContentAddressedFiles(prefix string, next http.Handler) http.Handler {
+// hash. It is "private" either way, so a shared cache never keeps them.
+//
+// Without sign-in they are cached for good. With it, the bytes still never
+// change but who may read them does: a browser keeps one cache for every
+// account signed in on it, and a copy it served without asking would reach
+// the next account past guardedFileServer, however its access differs. So
+// with sign-in each use revalidates, which the guard answers and an unchanged
+// file costs only a 304. Logging out cannot clear the cache instead:
+// Clear-Site-Data is ignored over plain HTTP, and an expired session never
+// logs out.
+func cacheContentAddressedFiles(prefix string, authEnabled bool, next http.Handler) http.Handler {
+	value := "private, " + immutableCacheControl
+	if authEnabled {
+		value = "private, no-cache"
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isContentAddressedPath(strings.TrimPrefix(r.URL.Path, prefix)) {
-			next.ServeHTTP(&cacheOnSuccessWriter{ResponseWriter: w, value: "private, " + immutableCacheControl}, r)
+			next.ServeHTTP(&cacheOnSuccessWriter{ResponseWriter: w, value: value}, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -216,4 +251,12 @@ func (w *cacheOnSuccessWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	return w.ResponseWriter.Write(b)
+}
+
+// ReadFrom keeps net/http's sendfile path for the stored file behind it.
+func (w *cacheOnSuccessWriter) ReadFrom(src io.Reader) (int64, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return readFrom(w.ResponseWriter, src)
 }

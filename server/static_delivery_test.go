@@ -172,7 +172,7 @@ func TestCacheContentAddressedFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := cacheContentAddressedFiles("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
+	h := cacheContentAddressedFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
 
 	if cc := serveStatic(h, http.MethodGet, "/files/resources/b7/2e/03/"+hash+".jpg", nil).Header().Get("Cache-Control"); cc != "private, max-age=31536000, immutable" {
 		t.Errorf("hash-named file Cache-Control = %q", cc)
@@ -182,5 +182,71 @@ func TestCacheContentAddressedFiles(t *testing.T) {
 	}
 	if rr := serveStatic(h, http.MethodGet, "/files/resources/c0/ff/ee/c0ffee"+hash[6:]+".jpg", nil); rr.Code != http.StatusNotFound || rr.Header().Get("Cache-Control") != "" {
 		t.Errorf("missing file = %d with Cache-Control %q", rr.Code, rr.Header().Get("Cache-Control"))
+	}
+}
+
+// readFromRecorder is a ResponseWriter with the io.ReaderFrom fast path that
+// net/http's own writer has (sendfile for a file body), recording its use.
+type readFromRecorder struct {
+	*httptest.ResponseRecorder
+	readFrom bool
+}
+
+func (r *readFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFrom = true
+	return io.Copy(r.ResponseRecorder, src)
+}
+
+// Wrapping the writer must not cost a file its sendfile path: a stored video
+// is the largest thing the server sends.
+func TestStaticWrappersKeepTheReadFromFastPath(t *testing.T) {
+	const hash = "b72e0339b3cec29046dfde0dce529d9a7b590c78"
+	big := strings.Repeat("x", 4096)
+	dir := t.TempDir()
+	for _, rel := range []string{"resources/b7/2e/03/" + hash + ".mp4", "photo.png", "app.js"} {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(big), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := cacheContentAddressedFiles("/files/", false, http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
+	public := compressStatic(http.StripPrefix("/public/", http.FileServer(http.Dir(dir))))
+
+	for _, tc := range []struct {
+		name     string
+		h        http.Handler
+		target   string
+		readFrom bool
+	}{
+		{"a hash-named stored file", files, "/files/resources/b7/2e/03/" + hash + ".mp4", true},
+		{"an image a gzip client is sent as is", public, "/public/photo.png", true},
+		{"a script that is gzipped", public, "/public/app.js", false},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := &readFromRecorder{ResponseRecorder: httptest.NewRecorder()}
+		tc.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", tc.name, rec.Code)
+		}
+		if rec.readFrom != tc.readFrom {
+			t.Errorf("%s: ReadFrom used = %v, want %v", tc.name, rec.readFrom, tc.readFrom)
+		}
+		body := rec.Body.Bytes()
+		if rec.Header().Get("Content-Encoding") == "gzip" {
+			zr, err := gzip.NewReader(rec.Body)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if body, err = io.ReadAll(zr); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+		}
+		if string(body) != big {
+			t.Errorf("%s: body is %d bytes, want the file's %d", tc.name, len(body), len(big))
+		}
 	}
 }
