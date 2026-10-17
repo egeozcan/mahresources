@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -50,4 +51,25 @@ func TestResourceView_InvalidId_WithSearchCriteria_Returns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.Code,
 		"GET /v1/resource/view with invalid id and search criteria should return 400")
+}
+
+// A view URL naming the resource's current hash leads to one exact content, so
+// the browser may keep the redirect; a stale or missing hash may not.
+func TestResourceView_RedirectIsCacheableOnlyForTheCurrentHash(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := &models.Resource{Name: "Photo", Meta: []byte(`{}`), Hash: "b72e0339b3cec29046dfde0dce529d9a7b590c78",
+		Location: "/resources/b7/2e/03/b72e0339b3cec29046dfde0dce529d9a7b590c78.jpg"}
+	tc.DB.Create(res)
+	base := fmt.Sprintf("/v1/resource/view?id=%d", res.ID)
+
+	for query, want := range map[string]string{
+		"&v=" + res.Hash: "private, max-age=86400",
+		"&v=0123abcd":    "",
+		"":               "",
+	} {
+		resp := tc.MakeRequest(http.MethodGet, base+query, nil)
+		assert.Equal(t, http.StatusFound, resp.Code, query)
+		assert.Equal(t, want, resp.Header().Get("Cache-Control"), "Cache-Control for %q", query)
+	}
 }

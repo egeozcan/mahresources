@@ -170,6 +170,15 @@ func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.Re
 			storage = *resource.StorageLocation
 		}
 
+		// A URL carrying the resource's current hash (?v=, which every view
+		// link the app and its plugins build carries) names one exact content,
+		// so where it leads can be cached: a later image open, a lightbox page
+		// or the Ketchup editor then goes straight to the file, which
+		// cacheContentAddressedFiles lets the browser keep. A day rather than
+		// for good, since the file can move to another storage location.
+		if v := request.URL.Query().Get("v"); v != "" && v == resource.Hash {
+			writer.Header().Set("Cache-Control", "private, max-age=86400")
+		}
 		http.Redirect(writer, request, path.Join("/", storage, resource.GetCleanLocation()), http.StatusFound)
 	}
 }

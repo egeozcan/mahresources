@@ -64,7 +64,7 @@ func registerPluginAssetRoute(router *mux.Router, appContext *application_contex
 
 	router.Methods(http.MethodGet, http.MethodHead).
 		Path("/plugins/{name}/" + pluginAssetsSegment + "/{path:.*}").
-		HandlerFunc(servePluginAsset(pm))
+		Handler(compressStatic(servePluginAsset(pm)))
 }
 
 func servePluginAsset(pm *plugin_system.PluginManager) http.HandlerFunc {

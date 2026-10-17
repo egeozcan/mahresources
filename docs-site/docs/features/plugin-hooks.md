@@ -373,6 +373,12 @@ end)
 This is what replaces embedding browser code in Lua long strings, where every
 page render re-sends the same bytes through the VM lock.
 
+Text files (scripts, stylesheets, JSON, SVG) are sent gzip-compressed to
+browsers that accept it. They carry no `Cache-Control` header: a browser keeps
+a copy only for a short time based on the file's age, then checks it against
+the file's modification time, so an updated plugin's files reach it without a
+version in the URL.
+
 :::caution Do not add `defer` or `type="module"`
 
 `main.js` is a module and therefore deferred, and the `head` slot is emitted
