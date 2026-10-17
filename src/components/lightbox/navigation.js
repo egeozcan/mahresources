@@ -1266,8 +1266,10 @@ export const navigationMethods = {
   },
 
   // The media only renders while the viewer is open (lightbox.tpl), so closing
-  // drops the video element and a reopen builds a new one. These carry the
-  // closed video's place across, as the element itself used to.
+  // drops the video element and a reopen builds a new one. These carry across
+  // what the kept element did: its volume and mute to whatever video opens
+  // next, and, reopening the same file, its position and speed too (a media
+  // load resets the speed, so another file starts at normal speed as it did).
   _rememberClosedVideo() {
     const video = document.querySelector('[x-show="$store.lightbox.isOpen"] video');
     this._closedVideo = video && this._mediaElementUrl(video)
@@ -1284,9 +1286,10 @@ export const navigationMethods = {
   restoreClosedVideo(video) {
     const saved = this._closedVideo;
     this._closedVideo = null;
-    if (!saved || this._mediaElementUrl(video) !== saved.url) return;
+    if (!saved) return;
     video.volume = saved.volume;
     video.muted = saved.muted;
+    if (this._mediaElementUrl(video) !== saved.url) return;
     video.playbackRate = saved.playbackRate;
     video.currentTime = saved.currentTime;
   },
