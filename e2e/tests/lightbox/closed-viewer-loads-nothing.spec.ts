@@ -119,4 +119,38 @@ test.describe('Lightbox while closed', () => {
     expect(await video.evaluate((v: HTMLVideoElement) => [v.volume, v.muted, v.playbackRate, v.currentTime]))
       .toEqual([0.2, true, 1, 0]);
   });
+
+  // A reopen whose video is still loading when the viewer closes again never got
+  // the saved state, so that close must not record the new element's defaults.
+  test('closing again before the reopened video loads keeps the saved state', async ({ page }) => {
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    const video = page.locator('[role="dialog"][x-show="$store.lightbox.isOpen"] video');
+    const item = page.locator(`[data-lightbox-item][data-resource-id="${videoId}"]`);
+    await item.click();
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    await video.evaluate((v: HTMLVideoElement) => {
+      v.currentTime = 2;
+      v.volume = 0.2;
+      v.muted = true;
+      v.playbackRate = 1.5;
+    });
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeCloseTo(2, 0);
+    await page.keyboard.press('Escape');
+    await expect(video).toHaveCount(0);
+
+    // Hold the video so the reopened element never reaches its metadata.
+    let held = false;
+    await page.route(/\/(v1\/resource\/view|files\/)/, () => { held = true; });
+    await item.click();
+    await expect.poll(() => held).toBe(true);
+    expect(await video.evaluate((v: HTMLVideoElement) => v.readyState)).toBe(0);
+    await page.keyboard.press('Escape');
+    await expect(video).toHaveCount(0);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+
+    await item.click();
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeCloseTo(2, 0);
+    expect(await video.evaluate((v: HTMLVideoElement) => [v.volume, v.muted, v.playbackRate]))
+      .toEqual([0.2, true, 1.5]);
+  });
 });

@@ -129,6 +129,11 @@ func TestCompressStatic_OneRepresentationPerFile(t *testing.T) {
 	}
 
 	lastModified := get.Header().Get("Last-Modified")
+	// A resume naming that validator without gzip has to start over too: the
+	// prefix it holds may be the gzip one.
+	if rr := serveStatic(h, http.MethodGet, "/public/app.js", map[string]string{"Range": "bytes=50-", "If-Range": lastModified}); rr.Code != http.StatusOK || rr.Body.String() != big {
+		t.Errorf("identity resume with If-Range = %d (%d bytes), want the whole file", rr.Code, rr.Body.Len())
+	}
 	for name, headers := range map[string]map[string]string{
 		"Range":            {"Accept-Encoding": "gzip", "Range": "bytes=50-"},
 		"Range + If-Range": {"Accept-Encoding": "gzip", "Range": "bytes=50-", "If-Range": lastModified},

@@ -47,23 +47,31 @@ var gzipWriters = sync.Pool{New: func() any {
 //     the gzip response's validator too, so a resumed download would splice
 //     raw bytes onto a gzip prefix. A text file is small enough to resend.
 //
-// Everything else (images, fonts, video) keeps its byte ranges untouched.
+// A client that takes no gzip keeps byte ranges of these files, except a
+// resume naming a validator (If-Range): that validator may be the one a gzip
+// response carried, so the prefix the client holds may be gzip, and it gets
+// the whole file instead. Everything else (images, fonts, video) keeps its
+// byte ranges untouched.
 func compressStatic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Every response here may differ by Accept-Encoding, including the
 		// ones served uncompressed, or a shared cache could hand gzip to a
 		// client that never asked for it.
 		w.Header().Add("Vary", "Accept-Encoding")
-		if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
-			!acceptsGzip(r.Header.Get("Accept-Encoding")) ||
-			!compressibleExtensions[strings.ToLower(path.Ext(r.URL.Path))] {
+		if !compressibleExtensions[strings.ToLower(path.Ext(r.URL.Path))] ||
+			(r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("Range") != "" || r.Header.Get("If-Range") != "" {
+		gzipOK := acceptsGzip(r.Header.Get("Accept-Encoding"))
+		if r.Header.Get("If-Range") != "" || (gzipOK && r.Header.Get("Range") != "") {
 			r = r.Clone(r.Context())
 			r.Header.Del("Range")
 			r.Header.Del("If-Range")
+		}
+		if !gzipOK {
+			next.ServeHTTP(w, r)
+			return
 		}
 		gw := &gzipResponseWriter{ResponseWriter: w, head: r.Method == http.MethodHead}
 		defer gw.finish()
