@@ -131,4 +131,27 @@ test.describe('Text blocks render on the server', () => {
     }, first);
     await expect(rendered(page, second)).not.toContainText('first text');
   });
+
+  test('a refresh leaves an unchanged block alone, so a widget draft in it survives', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div x-data="{ draft: \'\' }"><input class="draft" x-model="draft"></div>',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('textarea').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    const draft = rendered(page, block).locator('input.draft');
+    await draft.fill('my draft');
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await expect(draft).toHaveValue('my draft');
+    await expect(draft).toBeFocused();
+  });
 });

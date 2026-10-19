@@ -621,8 +621,10 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 }
 
 func registerBlockRoutes(r *openapi.Registry) {
-	r.Register(openapi.NewRoute(http.MethodGet, "/v1/note/renderedTextBlocks", "getRenderedTextBlocks", "Render a note's text blocks for display", "blocks").
-		WithIDParam("noteId", true).
+	renderedTextBlocks := openapi.NewRoute(http.MethodGet, "/v1/note/renderedTextBlocks", "getRenderedTextBlocks", "Render a note's text blocks for display", "blocks").
+		WithIDParam("noteId", true)
+	renderedTextBlocks.ResponseContentTypes = []openapi.ContentType{openapi.ContentTypeHTML}
+	r.Register(renderedTextBlocks.
 		WithDescription(`Every text block of the note, rendered the way the note page renders
 them: markdown, then @-mentions, then shortcodes against the note, sharing one
 page render context (MRQL cache, query budget, deadline). The response is HTML,

@@ -369,7 +369,7 @@ export function blockEditor(noteId, initialBlocks = []) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
-        this.renderedText = this._readRenderedText(doc);
+        this._applyRenderedText(this._readRenderedText(doc));
         if (this.error === this._renderError) this.error = null;
         this._renderError = null;
       } catch (err) {
@@ -378,6 +378,20 @@ export function blockEditor(noteId, initialBlocks = []) {
         this.renderedText = {};
         this._renderError = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
         this.error = this._renderError;
+      }
+    },
+
+    // Update only the blocks whose rendering changed. x-html rebuilds its
+    // element whenever its value is assigned, so replacing the whole map would
+    // rebuild every block and discard whatever someone was doing in one: a
+    // draft in an inline [meta] editor, and the focus with it. Assigning an
+    // unchanged value to a reactive key triggers nothing.
+    _applyRenderedText(next) {
+      for (const id of Object.keys(this.renderedText)) {
+        if (!(id in next)) delete this.renderedText[id];
+      }
+      for (const [id, html] of Object.entries(next)) {
+        if (this.renderedText[id] !== html) this.renderedText[id] = html;
       }
     },
 

@@ -9112,7 +9112,9 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        text/html:
+                            schema:
+                                type: string
                     description: Successful response
                 "400":
                     description: Invalid input
