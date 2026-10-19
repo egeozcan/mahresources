@@ -205,15 +205,17 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       this.saveContentDebouncedFn(this.block.id, this._contentSnapshot());
     },
 
+    // Returns the save's promise: a fetch that reads the persisted
+    // configuration must wait for it.
     saveContent() {
       if (this.isQueryMode) {
-        this.saveContentFn(this.block.id, {
+        return this.saveContentFn(this.block.id, {
           queryId: this.queryId,
           queryParams: this.queryParams,
           isStatic: this.isStatic
         });
       } else {
-        this.saveContentFn(this.block.id, { columns: this.columns, rows: this.rows });
+        return this.saveContentFn(this.block.id, { columns: this.columns, rows: this.rows });
       }
     },
 
@@ -336,9 +338,8 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       // Clear manual data
       this.columns = [];
       this.rows = [];
-      this.saveContent();
-      // Fetch the query data
-      this.fetchQueryData(true);
+      // Fetch the query data once the new configuration is saved
+      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
     },
 
     clearQuery() {
@@ -371,8 +372,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
         this.saveContentDebounced();
         return;
       }
-      this.saveContent();
-      this.fetchQueryData(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
     },
 
     // Rename a param row's key (by stable row id). The row identity is unchanged,
@@ -390,14 +390,12 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
         return;
       }
       row.key = (key || '').trim();
-      this.saveContent();
-      this.fetchQueryData(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
     },
 
     removeQueryParam(id) {
       this.queryParamRows = this.queryParamRows.filter(r => r.id !== id);
-      this.saveContent();
-      this.fetchQueryData(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
     },
 
     addQueryParam() {

@@ -3,6 +3,9 @@ const MIN_CHAR = 'a'.charCodeAt(0); // 97
 const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
 const SAVE_DEBOUNCE_MS = 500;
+// Browsers cap the total keepalive body in flight at 64 KiB; above this a
+// keepalive fetch is rejected outright, so larger saves go without it.
+const KEEPALIVE_MAX_BODY = 60000;
 
 export function blockEditor(noteId, initialBlocks = []) {
   return {
@@ -222,9 +225,10 @@ export function blockEditor(noteId, initialBlocks = []) {
           save.sentEditSeq = save.editSeq;
         }
         delete this._pendingUpdates[id];
+        let sent = Promise.resolve();
         try {
           // window.fetch is CSRF-wrapped and preserves keepalive.
-          fetch(`/v1/note/block?id=${id}&noteId=${this.noteId}`, {
+          sent = fetch(`/v1/note/block?id=${id}&noteId=${this.noteId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content }),
@@ -233,6 +237,9 @@ export function blockEditor(noteId, initialBlocks = []) {
         } catch (e) {
           // Best effort on unload; nothing useful to do with the error here.
         }
+        // If the page comes back from the bfcache, later saves for this block
+        // queue behind this one instead of racing it.
+        if (save) save.chain = Promise.resolve(sent).catch(() => {});
       }
     },
 
@@ -547,10 +554,14 @@ export function blockEditor(noteId, initialBlocks = []) {
     async _doUpdateBlockContent(blockId, content, save, editSeq) {
       this.error = null;
       try {
+        const body = JSON.stringify({ content });
         const res = await fetch(`/v1/note/block?id=${blockId}&noteId=${this.noteId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content })
+          body,
+          // A save already sent is not resent on unload, so it must survive a
+          // navigation that starts while it is in flight.
+          keepalive: body.length <= KEEPALIVE_MAX_BODY
         });
 
         if (!res.ok) {
@@ -570,6 +581,10 @@ export function blockEditor(noteId, initialBlocks = []) {
         if (!newerLocalEdit) {
           delete this._prevContent[blockId];
           delete this._pendingUpdates[blockId];
+        } else {
+          // A newer edit is still unsaved; if its save fails, roll back to
+          // what the server now holds, not to the content before this save.
+          this._prevContent[blockId] = updated.content;
         }
         this._failedSaves.delete(blockId);
         this._bumpRevision(blockId);

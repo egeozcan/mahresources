@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reactive } from '@vue/reactivity';
 import { blockEditor } from './blockEditor.js';
 
-type Pending = { url: string; body: any; resolve: (r: Response) => void };
+type Pending = { url: string; body: any; init: any; resolve: (r: Response) => void };
 
 let pending: Pending[];
 
@@ -27,7 +27,7 @@ function editor(blocks: any[]) {
 beforeEach(() => {
   pending = [];
   vi.stubGlobal('fetch', vi.fn((url: string, init: any) => new Promise<Response>((resolve) => {
-    pending.push({ url, body: init?.body ? JSON.parse(init.body) : null, resolve });
+    pending.push({ url, body: init?.body ? JSON.parse(init.body) : null, init, resolve });
   })));
 });
 
@@ -229,5 +229,46 @@ describe('blockEditor save queue', () => {
     expect(pending).toHaveLength(1);
     await ed.toggleEditMode();
     expect(ed.editMode).toBe(false);
+  });
+
+  it('a save made after an unload keepalive waits for it (bfcache restore)', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContentDebounced(7, { text: 'B' });
+    ed.flushPendingUpdates();
+    expect(pending).toHaveLength(1);
+    ed.updateBlockContent(7, { text: 'C' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pending).toHaveLength(1);
+    pending[0].resolve(jsonResponse(200, { content: { text: 'B' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pending[1]?.body.content.text).toBe('C');
+  });
+
+  it('sends ordinary saves with keepalive so a navigation cannot abort them', async () => {
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContent(7, { text: 'A' });
+    await flush();
+    expect(pending[0].init.keepalive).toBe(true);
+  });
+
+  it('does not send a body over the keepalive limit with keepalive', async () => {
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContent(7, { text: 'x'.repeat(70000) });
+    await flush();
+    expect(pending[0].init.keepalive).toBeFalsy();
+  });
+
+  it('rolls a failed save back to the last saved content, not the original', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'O' } }]);
+    ed.updateBlockContentDebounced(7, { text: 'A' });
+    await vi.advanceTimersByTimeAsync(600); // A sent
+    ed.updateBlockContentDebounced(7, { text: 'B' });
+    pending[0].resolve(jsonResponse(200, { content: { text: 'A' } }));
+    await vi.advanceTimersByTimeAsync(600); // B sent
+    pending[1].resolve(jsonResponse(500, { error: 'nope' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ed.blocks[0].content.text).toBe('A');
   });
 });

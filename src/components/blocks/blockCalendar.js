@@ -306,8 +306,10 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       });
     },
 
+    // Returns the save's promise: fetchEvents reads the persisted calendars,
+    // so it must wait for it.
     saveContent() {
-      this.saveContentFn(this.block.id, { calendars: this.calendars });
+      return this.saveContentFn(this.block.id, { calendars: this.calendars });
     },
 
     // Called on input for debounced auto-save (same class as finding 50: the
@@ -349,8 +351,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
       this.newUrl = '';
       this.error = null;
-      this.saveContent();
-      this.fetchEvents(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
     },
 
     addCalendarFromResource(resourceId, resourceName) {
@@ -364,15 +365,13 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       };
       this.calendars.push(newCal);
       this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
-      this.saveContent();
-      this.fetchEvents(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
     },
 
     removeCalendar(calId) {
       this.calendars = this.calendars.filter(c => c.id !== calId);
       delete this.calendarMeta[calId];
-      this.saveContent();
-      this.fetchEvents(true);
+      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
     },
 
     updateCalendarName(calId, name, { debounced = false } = {}) {
@@ -442,8 +441,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
             }
           }
           if (added) {
-            this.saveContent();
-            this.fetchEvents(true);
+            Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
           }
         }
       });
