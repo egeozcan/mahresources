@@ -167,6 +167,9 @@ export function markdownEditor({
       this._container.hidden = true;
       this.previewLoading = true;
       this.previewError = '';
+      // Blank until this request succeeds: a failed refresh must not leave the
+      // previous text on show as if it were the preview of the current text.
+      if (this._frame) this._frame.srcdoc = '';
       const url = previewId ? `${previewUrl}?id=${encodeURIComponent(previewId)}` : previewUrl;
       const body = new FormData();
       body.append('text', this._source.value);

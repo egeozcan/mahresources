@@ -129,6 +129,8 @@ func TestPreviewDescription_RoleMatrix(t *testing.T) {
 		user, editor, admin bool
 	}{
 		{"note", true, true, true},
+		{"group", true, true, true},
+		{"resource", true, true, true},
 		{"tag", true, true, true},
 		{"query", false, true, true},
 		{"relation", false, true, true},
@@ -164,6 +166,12 @@ func TestPreviewDescription_ScopedPrincipalIsConfined(t *testing.T) {
 	}
 	if rr := previewDescription(tc, f.bearer, "group", f.outsideID, "x"); rr.Code != http.StatusNotFound {
 		t.Errorf("out-of-subtree group: expected 404, got %d", rr.Code)
+	}
+	if rr := previewDescription(tc, f.bearer, "resource", f.rOutID, "x"); rr.Code != http.StatusNotFound {
+		t.Errorf("out-of-subtree resource: expected 404, got %d", rr.Code)
+	}
+	if rr := previewDescription(tc, f.bearer, "resource", f.rInID, "x"); rr.Code != http.StatusOK {
+		t.Errorf("in-subtree resource: expected 200, got %d", rr.Code)
 	}
 	html := previewHTML(t, previewDescription(tc, f.bearer, "note", f.nInID, `[property path="Name"]`))
 	if !strings.Contains(html, "sf-nIn") {

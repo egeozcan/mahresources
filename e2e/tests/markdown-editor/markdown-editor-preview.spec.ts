@@ -67,6 +67,20 @@ test.describe('Markdown editor preview', () => {
     await expect(field(page).locator('iframe[data-markdown-preview]')).toHaveAttribute('sandbox', /^(?!.*allow-same-origin)/);
   });
 
+  test('a failed refresh does not keep showing the previous preview', async ({ page }) => {
+    await page.goto('/tag/new');
+    await editor(page).fill('first version');
+    await field(page).getByRole('button', { name: 'Preview' }).click();
+    await expect(frame(page).locator('body')).toContainText('first version');
+    await field(page).getByRole('button', { name: 'Write' }).click();
+    await editor(page).fill('second version');
+    await page.route(/\/previewDescription/, (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'render broke' }) }));
+    await field(page).getByRole('button', { name: 'Preview' }).click();
+    await expect(field(page).getByRole('alert')).toContainText('render broke');
+    await expect(frame(page).locator('body')).not.toContainText('first version');
+  });
+
   test('a failed preview says so', async ({ page }) => {
     await page.route(/\/previewDescription/, (route) =>
       route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'render broke' }) }));

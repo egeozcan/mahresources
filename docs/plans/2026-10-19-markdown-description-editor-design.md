@@ -250,6 +250,12 @@ GET past a block DELETE and checks the deleted block does not reappear.
 
 ## Follow-ups (not in this work)
 
+- **No test proves a denied plugin shortcode stays denied in a Description
+  preview.** The preview reuses the template preview's plugin renderer
+  (`previewPluginRenderer`), but the API test environment loads no plugin
+  with a shortcode, so neither endpoint's denial path is exercised. Found in
+  the slice 3 review.
+
 - **Calendar custom-event saves have no retry.** A block *state* PATCH that
   fails is swallowed by `updateBlockState` (`src/components/blockEditor.js`),
   so a custom event created during a transient failure disappears when the
