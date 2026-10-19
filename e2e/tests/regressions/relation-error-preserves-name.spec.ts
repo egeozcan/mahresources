@@ -85,8 +85,9 @@ test.describe('Relation creation error preserves Name field', () => {
     // so these values are lost on page reload.
     await expect(nameInput).toHaveValue('My Important Relation');
 
-    // The Description field should also be preserved
-    await expect(descInput).toHaveValue(
+    // The Description field should also be preserved (a markdown editor, so
+    // its text rather than an input value)
+    await expect(descInput).toHaveText(
       'Detailed description of this relation'
     );
   });

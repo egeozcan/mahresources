@@ -26,6 +26,9 @@ test.describe('Selector dropdown anchoring', () => {
     await page.goto('/group/new');
 
     const input = page.getByRole('combobox', { name: 'Tags' });
+    // Room below the field, so the dropdown opens downward: the form's
+    // Description editor is tall enough to push Tags to the viewport's edge.
+    await input.evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await input.fill(tag.Name);
 
     const option = page.getByRole('option', { name: tag.Name, exact: true });
@@ -62,6 +65,9 @@ test.describe('Selector dropdown anchoring', () => {
     await page.goto('/group/new');
 
     const input = page.getByRole('combobox', { name: 'Tags' });
+    // Room below the field, so the dropdown opens downward: the form's
+    // Description editor is tall enough to push Tags to the viewport's edge.
+    await input.evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await input.fill(tag.Name);
     await expect(page.getByRole('option', { name: tag.Name, exact: true })).toBeVisible();
 

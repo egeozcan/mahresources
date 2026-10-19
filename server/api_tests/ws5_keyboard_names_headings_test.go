@@ -659,44 +659,28 @@ func TestNoteDetail_DoesNotSkipToH3ForTheOwnerCard(t *testing.T) {
 // ---------------------------------------------------------------- finding 133
 
 // TestMentionTextarea_DeclaresTheListboxItControls is finding 133. The
-// description textarea declares aria-autocomplete=list, aria-haspopup=listbox
-// and aria-activedescendant, but no aria-controls — so assistive tech cannot
-// follow the suggestion list. autocompleter.tpl, in the same directory, sets
-// both aria-controls and aria-owns.
+// description textarea declared aria-autocomplete=list, aria-haspopup=listbox
+// and aria-activedescendant, but no aria-controls, so assistive tech could not
+// follow the suggestion list.
 //
-// The subject used to be located by role="combobox". Deferred-work item 8
-// removed that role — it overrode the textarea's implicit textbox role and took
-// aria-multiline with it, and ARIA 1.2 has no multiline combobox — so the marker
-// is now x-ref="mentionInput", which is what actually makes this a mention
-// textarea. TestTextareasKeepTheirNativeRole in internal/arch/templates_test.go
-// is what keeps the role from coming back.
+// The group form's Description is now a CodeMirror markdown editor
+// (createFormMarkdownInput.tpl), whose editable element gets aria-autocomplete,
+// aria-controls and aria-activedescendant from CodeMirror at runtime; the
+// server renders no mention textarea any more. That wiring is asserted in the
+// browser by e2e/tests/markdown-editor/markdown-editor-forms.spec.ts. What is
+// left to hold here is that the form renders that editor and not a mention
+// textarea that lacks aria-controls.
 func TestMentionTextarea_DeclaresTheListboxItControls(t *testing.T) {
 	tc := SetupTestEnv(t)
 	group := tc.createGroupNamed(t, "ws5 mention host")
 
 	_, body := tc.getHTML(t, fmt.Sprintf("/group/edit?id=%d", group.ID))
 
-	tag := findOpenTag(body, `x-ref="mentionInput"`, "textarea")
-	if tag == "" {
-		t.Fatalf("no mention textarea on the group edit form — this test measured nothing")
+	if !strings.Contains(body, `data-markdown-field="Description"`) {
+		t.Fatalf("the group edit form no longer renders the markdown Description editor — this test measured nothing")
 	}
-	if !strings.Contains(tag, "aria-controls=") {
-		t.Errorf("finding 133: the mention textarea does not declare aria-controls.\ntag: %s", whitespaceRe.ReplaceAllString(tag, " "))
-	}
-
-	ctrlRe := regexp.MustCompile(`aria-controls="([^"]+)"`)
-	m := ctrlRe.FindStringSubmatch(tag)
-	if m == nil {
-		return
-	}
-	id := m[1]
-	if !strings.Contains(body, `id="`+id+`"`) {
-		t.Errorf("finding 133: aria-controls points at id=%q, which the page does not render", id)
-	}
-	if target := findTagWithID(body, id); target == "" {
-		t.Errorf("finding 133: aria-controls target id=%q is not an element open tag", id)
-	} else if !strings.Contains(target, `role="listbox"`) {
-		t.Errorf("finding 133: aria-controls target is not role=listbox.\ntag: %s", whitespaceRe.ReplaceAllString(target, " "))
+	if tag := findOpenTag(body, `x-ref="mentionInput"`, "textarea"); tag != "" && !strings.Contains(tag, "aria-controls=") {
+		t.Errorf("finding 133: a mention textarea on the group form does not declare aria-controls.\ntag: %s", whitespaceRe.ReplaceAllString(tag, " "))
 	}
 }
 

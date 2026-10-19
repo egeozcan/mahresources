@@ -59,7 +59,7 @@ test.describe.serial('Resource Versioning', () => {
     await page.locator('input[name="Name"]').fill(`Versioned Resource ${testRunId}`);
 
     // Fill description
-    await page.locator('textarea[name="Description"]').fill('Resource for versioning tests');
+    await page.locator('[data-markdown-field="Description"] .cm-content').fill('Resource for versioning tests');
 
     // Select owner
     const ownerSection = page.locator('div.sm\\:grid:has(span:has-text("Owner"))');

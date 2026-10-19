@@ -61,37 +61,7 @@
                     </div>
                 </div>
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-t sm:border-stone-200 sm:pt-5">
-                    <label for="description" class="block text-sm font-medium font-mono text-stone-700 sm:mt-px sm:pt-2">
-                        Description
-                    </label>
-                    <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <div class="relative" x-data="mentionTextarea('note,group,tag')">
-                            <textarea
-                                x-ref="mentionInput"
-                                id="description"
-                                name="Description"
-                                rows="3"
-                                @input="onInput($event)"
-                                @keydown="onKeydown($event)"
-                                {# Deferred-work item 8: role="combobox" and :aria-expanded  #}
-                                {# dropped. Native textbox semantics keep the implicit       #}
-                                {# aria-multiline that the role override was discarding; see #}
-                                {# partials/form/createFormTextareaInput.tpl for why adding  #}
-                                {# aria-multiline to the combobox is not the conforming fix. #}
-                                aria-autocomplete="list"
-                                aria-haspopup="listbox"
-                                {# Finding 133: aria-controls was absent here too. #}
-                                aria-controls="description-mention-listbox"
-                                aria-owns="description-mention-listbox"
-                                :aria-activedescendant="activeDescendantId"
-                                class="max-w-lg shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md font-sans"
-                            >{{ queryValues.Description.0|default:resource.Description }}</textarea>
-                            {% include "/partials/form/mentionDropdown.tpl" with mentionListboxId="description" %}
-                        </div>
-                        <p class="mt-2 text-sm text-stone-500 font-sans">Describe the resource.</p>
-                    </div>
-                </div>
+                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" id="description" value=queryValues.Description.0|default:resource.Description hint="Describe the resource." shortcodes=true %}
 
                 {% if !resource.ID %}
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">

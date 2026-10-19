@@ -13,7 +13,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=query.Name required=true %}
-    {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=query.Description %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=query.Description %}
     {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Query" name="Text" value=query.Text mode="sql" dbType=dbType %}
 
     <div x-data="{ open: false }" class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start">

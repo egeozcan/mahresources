@@ -51,7 +51,7 @@ test.describe.serial('Resource CRUD Operations', () => {
     await page.locator('input[name="Name"]').fill(`E2E Test Image ${testRunId}`);
 
     // Fill description
-    await page.locator('textarea[name="Description"]').fill('Image uploaded by E2E test');
+    await page.locator('[data-markdown-field="Description"] .cm-content').fill('Image uploaded by E2E test');
 
     // Select owner - the Owner field uses an autocompleter with elName='ownerId'
     // Find the combobox inside the Owner section

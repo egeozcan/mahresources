@@ -12,7 +12,7 @@
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
                 {% include "/partials/form/createFormTextInput.tpl" with title="Title" name="Name" value=queryValues.Name.0|default:note.Name required=true %}
-                {% include "/partials/form/createFormTextareaInput.tpl" with title="Text" name="Description" value=queryValues.Description.0|default:note.Description mentionTypes="resource,group,tag" %}
+                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Text" name="Description" value=queryValues.Description.0|default:note.Description shortcodes=true %}
 
 
                 <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">

@@ -11,7 +11,9 @@ export class BasePage {
     this.page = page;
     this.saveButton = page.locator('input[type="submit"][value="Save"], button[type="submit"]:has-text("Save")');
     this.nameInput = page.locator('input[name="name"]');
-    this.descriptionInput = page.locator('textarea[name="Description"]');
+    // The Description field is a CodeMirror markdown editor; fill() and
+    // clear() work on its contenteditable element.
+    this.descriptionInput = page.locator('[data-markdown-field="Description"] .cm-content');
   }
 
   async fillName(name: string) {

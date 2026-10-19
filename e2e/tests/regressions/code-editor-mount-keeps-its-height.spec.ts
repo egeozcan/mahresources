@@ -40,11 +40,11 @@ async function expectMountingKeepsHeights(page: Page, categoryId: number, tolera
   expect(count).toBeGreaterThan(1);
   const heights = () => containers.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
 
-  await expect(page.locator('.cm-editor')).toHaveCount(0);
+  await expect(page.locator('[x-ref="editorContainer"] .cm-editor')).toHaveCount(0);
   const before = await heights();
 
   release();
-  await expect(page.locator('.cm-editor')).toHaveCount(count);
+  await expect(page.locator('[x-ref="editorContainer"] .cm-editor')).toHaveCount(count);
   const after = await heights();
   after.forEach((height, i) => expect(Math.abs(height - before[i]), `editor ${i}: ${before[i]}px became ${height}px`).toBeLessThanOrEqual(tolerance));
   // The held chunk's handler can still be running when the page closes.

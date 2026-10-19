@@ -2226,6 +2226,13 @@ html {
     max-height: 60vh;
 }
 
+/* The markdown editor is shorter than a code editor: about six lines, the
+   same as the textarea it replaces (createFormMarkdownInput.tpl), so its
+   arrival does not move the page. */
+[data-markdown-editor] .cm-editor {
+    min-height: 9rem;
+}
+
 .cm-editor.cm-focused {
     outline: 2px solid transparent;
     outline-offset: 2px;

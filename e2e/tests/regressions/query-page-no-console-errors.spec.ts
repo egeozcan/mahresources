@@ -42,12 +42,12 @@ test.describe('Query page should load without console errors', () => {
     // Wait for the code editor to initialize (it lazy-loads CodeMirror)
     // The CodeMirror editor container is created by the codeEditor Alpine
     // component, which uses dynamic imports for @codemirror/* packages.
-    // Both editors (Query + Template) must finish loading before we assert.
-    await expect(page.locator('.cm-editor')).toHaveCount(2, { timeout: 10000 });
+    // All three editors (Description markdown, Query, Template) must finish
+    // loading before we assert.
+    await expect(page.locator('.cm-editor')).toHaveCount(3, { timeout: 10000 });
 
-    // Verify the code editors actually loaded (there should be 2: Query + Template)
     const editorCount = await page.locator('.cm-editor').count();
-    expect(editorCount, 'Both CodeMirror editors (Query and Template) should load').toBe(2);
+    expect(editorCount, 'All three CodeMirror editors (Description, Query, Template) should load').toBe(3);
 
     // The main assertion: no JS chunk files should fail to load.
     // Currently, the preload helper resolves chunk paths incorrectly,

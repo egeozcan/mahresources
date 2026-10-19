@@ -111,7 +111,7 @@ test.describe('Bulk upload widget', () => {
 
     // Every other form field must survive the FormData replay onto each request.
     await page.locator('input[name="Name"]').fill(`Bulk ${stamp}`);
-    await page.locator('textarea[name="Description"]').fill('uploaded by the bulk widget');
+    await page.locator('[data-markdown-field="Description"] .cm-content').fill('uploaded by the bulk widget');
 
     // Meta travels as a hidden input that the freeFields component writes, which
     // is the part of the "new FormData(form) reproduces native submission"

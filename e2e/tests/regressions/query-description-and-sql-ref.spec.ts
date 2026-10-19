@@ -3,9 +3,9 @@ import { test, expect } from '../../fixtures/base.fixture';
 test.describe('Query Description Field', () => {
   let queryId: number;
 
-  test('should have a Description textarea on the create form', async ({ queryPage, page }) => {
+  test('should have a Description editor on the create form', async ({ queryPage, page }) => {
     await queryPage.gotoNew();
-    const descriptionField = page.locator('textarea[name="Description"]');
+    const descriptionField = page.locator('[data-markdown-field="Description"] .cm-content');
     await expect(descriptionField).toBeVisible();
   });
 

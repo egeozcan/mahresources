@@ -18,7 +18,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="Name" value=queryValues.Name.0|default:templatePartial.Name required=true pattern="[a-z](?:[a-z0-9]|-)*" patternHint="Lowercase letters, digits and hyphens, starting with a letter." description="Kebab-case identifier used in the partial shortcode, e.g. status-badge. Lowercase letters, digits, and hyphens, starting with a letter." %}
-    {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:templatePartial.Description description="Optional note describing what this partial renders and where to use it." %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:templatePartial.Description hint="Optional note describing what this partial renders and where to use it." %}
 
     {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Content" name="Content" value=queryValues.Content.0|default:templatePartial.Content mode="html" description="HTML plus shortcodes. Expanded wherever a partial shortcode references this name, using that carrier entity's context." shortcodes=true %}
 

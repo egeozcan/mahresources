@@ -52,7 +52,7 @@ test.describe('BH-006: group create form preserves values on error', () => {
 
     // Fill description to verify it's preserved
     const desc = `BH006-group-desc-${Date.now()}`;
-    await page.locator('textarea[name="Description"]').fill(desc);
+    await page.locator('[data-markdown-field="Description"] .cm-content').fill(desc);
 
     // Remove the required attribute so the browser does not block submission
     await page.evaluate(() => {
