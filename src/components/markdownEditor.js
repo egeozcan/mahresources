@@ -6,6 +6,7 @@
 // land (so nothing typed meanwhile is lost), and every edit is written back
 // to it. If loading fails the textarea simply stays.
 import * as commands from './markdownCommands.js';
+import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 // About six lines of the editor's text, then up to 60% of the viewport.
 const MIN_HEIGHT = '9rem';
@@ -22,6 +23,7 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
     _source: null,
     _container: null,
     _labelId: '',
+    _liveRegion: null,
 
     init() {
       // Captured here: inside a method reached from a toolbar @click, $el is
@@ -29,6 +31,9 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       this._source = this.$refs.source;
       this._container = this.$refs.mdContainer;
       this._labelId = this._source.dataset.labelId || '';
+      // Mention result counts, as mentionTextarea.js announced them: CodeMirror
+      // wires the listbox but says nothing about how many results came back.
+      this._liveRegion = createLiveRegion();
       this._mount().catch((err) => {
         console.error('markdown editor failed to load', err);
         this.failed = true;
@@ -59,7 +64,7 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       if (this._destroyed) return;
 
       const source = this._source;
-      const sources = [mentionCompletionSource(mentionTypes)];
+      const sources = [mentionCompletionSource(mentionTypes, (msg) => this._liveRegion?.announce(msg))];
       const shortcodeExtensions = [];
       if (shortcodeMod) {
         sources.push(shortcodeMod.shortcodeCompletionSource(() => ''));
@@ -84,7 +89,14 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
         autocompletion({ override: sources, icons: false }),
         ...shortcodeExtensions,
         // No indentWithTab: Tab moves focus out of the field, as in a textarea.
-        keymap.of([...commands.markdownKeymap, ...completionKeymap, ...defaultKeymap, ...historyKeymap]),
+        // Without macOS's Emacs-style Ctrl-k (delete to line end): Ctrl/Cmd+K
+        // belongs to global search, and it would also delete the line's text.
+        keymap.of([
+          ...commands.markdownKeymap,
+          ...completionKeymap,
+          ...defaultKeymap.filter((binding) => binding.mac !== 'Ctrl-k' && binding.key !== 'Ctrl-k'),
+          ...historyKeymap,
+        ]),
         EditorView.contentAttributes.of(contentAttributes),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
@@ -109,6 +121,10 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       this.view.scrollDOM.tabIndex = 0;
       this._container._cmView = this.view;
 
+      // Shown and the textarea hidden in the same task, before focusing: a
+      // focus() on a still-hidden editor would drop focus to <body> and lose
+      // the keystrokes of someone typing as it mounts.
+      this._container.hidden = false;
       source.hidden = true;
       this.ready = true;
       if (hadFocus) {
@@ -137,6 +153,7 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
 
     destroy() {
       this._destroyed = true;
+      this._liveRegion?.destroy();
       if (this.view) {
         this.view.destroy();
         this.view = null;

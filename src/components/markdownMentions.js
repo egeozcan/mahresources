@@ -17,7 +17,9 @@ const MENTION_BEFORE_CURSOR = /@[^\n@[\]]{0,60}/;
 const MIN_QUERY = 2;
 const DEBOUNCE_MS = 150;
 
-export function mentionCompletionSource(allowedTypes) {
+// `announce` reports the result count to a live region, as mentionTextarea.js
+// did; CodeMirror wires the listbox ARIA but does not announce counts.
+export function mentionCompletionSource(allowedTypes, announce = () => {}) {
   return async (context) => {
     const match = context.matchBefore(MENTION_BEFORE_CURSOR);
     if (!match) return null;
@@ -27,7 +29,9 @@ export function mentionCompletionSource(allowedTypes) {
     if (query.length < MIN_QUERY) return null;
 
     const controller = new AbortController();
-    context.addEventListener('abort', () => controller.abort());
+    // onDocChange: CodeMirror otherwise lets a query the user has typed past
+    // run to completion, and the next query waits for it.
+    context.addEventListener('abort', () => controller.abort(), { onDocChange: true });
     await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS));
     if (context.aborted) return null;
 
@@ -42,6 +46,13 @@ export function mentionCompletionSource(allowedTypes) {
       if (err.name !== 'AbortError') console.error('Mention search error:', err);
       return null;
     }
+    if (context.aborted) return null;
+
+    if (results.length === 0) {
+      announce('No suggestions found.');
+      return null;
+    }
+    announce(`${results.length} suggestion${results.length === 1 ? '' : 's'}. Use arrow keys to navigate.`);
 
     return {
       from: match.from,

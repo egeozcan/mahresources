@@ -18,7 +18,8 @@
                 style="field-sizing: content; min-height: calc(9rem + 2px); max-height: 60vh; font-size: 0.875rem; line-height: 1.5; padding: 0.5rem 0.75rem;"
                 class="shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 border-stone-300 rounded-md font-sans"
         >{{ value }}</textarea>
-        <div x-ref="mdContainer" x-show="ready" x-cloak data-markdown-editor
+        {# Shown by markdownEditor.js itself, in the same task that hides the textarea and moves focus. #}
+        <div x-ref="mdContainer" hidden data-markdown-editor
              class="border border-stone-300 rounded-md overflow-hidden max-w-full bg-white focus-within:ring-2 focus-within:ring-amber-600 focus-within:border-amber-600"></div>
         {% if hint %}<p class="mt-2 text-sm text-stone-500 font-sans">{{ hint }}</p>{% endif %}
     </div>

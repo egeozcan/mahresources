@@ -108,6 +108,51 @@ test.describe('Markdown editor on forms', () => {
     await expect(page.getByRole('dialog', { name: /search/i })).toBeVisible();
   });
 
+  test('Control+K opens search without deleting text (macOS Emacs binding)', async ({ page }) => {
+    await page.goto('/tag/new');
+    await editor(page).fill('important text');
+    await editor(page).press('Home');
+    await page.keyboard.press('Control+k');
+    await expect(page.getByRole('dialog', { name: /search/i })).toBeVisible();
+    await expect(editor(page)).toHaveText('important text');
+  });
+
+  test('mention results are announced, including none', async ({ page, apiClient }) => {
+    const groupName = `Announced ${Date.now()}`;
+    const category = await apiClient.createCategory(`Announce cat ${Date.now()}`, '');
+    const group = await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+    await page.goto('/tag/new');
+    await editor(page).click();
+    await page.keyboard.type(`@${groupName.slice(0, 9)}`);
+    await expect(page.getByRole('status').filter({ hasText: /\d+ suggestions?\./ })).toHaveCount(1);
+    await page.keyboard.type('zzzzqqqq');
+    await expect(page.getByRole('status').filter({ hasText: 'No suggestions found.' })).toHaveCount(1);
+    await apiClient.deleteGroup(group.ID);
+    await apiClient.deleteCategory(category.ID);
+  });
+
+  test('a stalled mention search does not block the next one', async ({ page, apiClient }) => {
+    const groupName = `Unstuck ${Date.now()}`;
+    const category = await apiClient.createCategory(`Unstuck cat ${Date.now()}`, '');
+    const group = await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+    let first = true;
+    await page.route(/\/v1\/search\?/, async (route) => {
+      if (first) {
+        first = false;
+        return; // never answered
+      }
+      await route.continue();
+    });
+    await page.goto('/tag/new');
+    await editor(page).click();
+    await page.keyboard.type('@Un');
+    await page.waitForTimeout(400); // the first search is sent and stalls
+    await page.keyboard.type('stuck');
+    await expect(page.getByRole('option', { name: new RegExp(groupName) })).toBeVisible();
+    await apiClient.deleteGroup(group.ID);
+    await apiClient.deleteCategory(category.ID);
+  });
+
   test('@-mention completion inserts a mention marker', async ({ page, apiClient }) => {
     const groupName = `Mentionable ${Date.now()}`;
     const category = await apiClient.createCategory(`Mention cat ${Date.now()}`, '');
@@ -163,6 +208,9 @@ test.describe('Markdown editor on forms', () => {
     await expect(editor(page)).toHaveCount(0);
     release();
     await expect(editor(page)).toHaveText('typed early');
+    // Typing carries on into the editor: mounting kept the focus and caret.
+    await page.keyboard.type(' more');
+    await expect(editor(page)).toHaveText('typed early more');
   });
 
   test('if the editor fails to load, the textarea still works', async ({ page, apiClient, request }) => {
