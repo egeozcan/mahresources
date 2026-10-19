@@ -178,6 +178,14 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
     - Until the response arrives the blocks keep their previous rendering.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
+    - It goes in with `x-html`, which initializes Alpine markup but runs no
+      `<script>`. This is the one rendering difference from a Description,
+      whose scripts run once while the page parses: a block re-renders in
+      place on every refresh, and re-running its scripts there duplicated
+      listeners, broke top-level `const` declarations, and let a
+      `document.write` replace the page (slice 5 review, round 2). Text blocks
+      never ran scripts before either; the old client renderer escaped all
+      HTML.
     - `renderMarkdown` and its tests
       (`src/components/blockEditor-render-markdown.test.ts`) are deleted.
     - Shortcodes already typed into blocks start running. The share page

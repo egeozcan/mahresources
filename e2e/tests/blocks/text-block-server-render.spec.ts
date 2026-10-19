@@ -82,26 +82,41 @@ test.describe('Text blocks render on the server', () => {
     await expect(rendered(page, block).locator('strong')).toHaveText('kept');
   });
 
-  test('scripts in a block run, as they do in a Description', async ({ page, apiClient }) => {
+  test('Alpine markup in a block works; a <script> in a block does not run', async ({ page, apiClient }) => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', {
-      // The script on its own line is a raw HTML block; inline after other
-      // markup, markdown would escape its quotes, in a Description too.
-      text: '<span class="probe">loading</span>\n\n<script>document.querySelectorAll(".probe").forEach((e) => { e.textContent = "ready"; });</script>',
+      text: '<div x-data="{ n: 0 }"><button type="button" class="counter" @click="n++" x-text="n">initial</button></div>\n\n<script>window.__blockScriptRan = true;</script>',
     })).id;
     await page.goto(`/note?id=${noteId}`);
-    await expect(rendered(page, block).locator('.probe')).toHaveText('ready');
+    const counter = rendered(page, block).locator('button.counter');
+    await expect(counter).toHaveText('0');
+    await counter.click();
+    await expect(counter).toHaveText('1');
+    // Re-rendering in place (Done) would re-run scripts on every refresh, so a
+    // block runs none; the design doc records this difference from a Description.
+    expect(await page.evaluate(() => (window as any).__blockScriptRan)).toBeUndefined();
+    await page.getByText('Edit Blocks').click();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(counter).toHaveText('0');
+    await counter.click();
+    await expect(counter).toHaveText('1');
   });
 
-  test('a failed render says so and shows the saved text', async ({ page, apiClient }) => {
+  test('a failed render says so and shows the saved text; a later render clears it', async ({ page, apiClient }) => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: 'before' })).id;
     await page.goto(`/note?id=${noteId}`);
     await page.route(/\/v1\/note\/renderedTextBlocks/, (route) =>
       route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' }));
     await page.getByText('Edit Blocks').click();
-    await card(page, block).locator('textarea').fill('after');
+    await card(page, block).locator('textarea').fill('**after**');
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.locator('.block-editor [role="alert"]')).toContainText(/render/i);
-    await expect(rendered(page, block)).toHaveText('after');
+    await expect(rendered(page, block)).toHaveText('**after**');
+
+    await page.unroute(/\/v1\/note\/renderedTextBlocks/);
+    await page.getByText('Edit Blocks').click();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(rendered(page, block).locator('strong')).toHaveText('after');
+    await expect(page.locator('.block-editor [role="alert"]')).toBeHidden();
   });
 
   test('deleting a block outside edit mode refreshes the blocks that show the Description', async ({ page, apiClient }) => {

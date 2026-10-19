@@ -208,3 +208,16 @@ func TestReloadRegion_AbsentForCommentedOutButton(t *testing.T) {
 		t.Errorf("a commented-out reload button must not mint a region wrapper")
 	}
 }
+
+// A <reload-shortcode> written as markup, with no shortcode brackets anywhere,
+// still gets its reloadable region: the shortcode tag skips its work for
+// bracket-free text, but not for this.
+func TestReloadRegion_HandWrittenElementWithoutBrackets(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	body, _ := renderGroupPage(t, tc, `<reload-shortcode><button type="button">Refresh</button></reload-shortcode>`)
+
+	if regionTokenPattern.FindStringSubmatch(body) == nil {
+		t.Fatalf("a hand-written reload element should still get a reloadable region, got: %s", body)
+	}
+}

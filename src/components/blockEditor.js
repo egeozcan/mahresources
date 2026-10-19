@@ -43,6 +43,9 @@ export function blockEditor(noteId, initialBlocks = []) {
     // stored on the block.
     renderedText: {},
     _renderGeneration: 0,
+    // The message a failed render put in `error`, so a later successful render
+    // clears it and nothing else.
+    _renderError: null,
     _blockTypesLoaded: false,
 
     async init() {
@@ -367,37 +370,14 @@ export function blockEditor(noteId, initialBlocks = []) {
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
         this.renderedText = this._readRenderedText(doc);
+        if (this.error === this._renderError) this.error = null;
+        this._renderError = null;
       } catch (err) {
         if (generation !== this._renderGeneration) return;
         console.error('Error rendering text blocks:', err);
         this.renderedText = {};
-        this.error = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
-      }
-    },
-
-    /**
-     * Show a text block's server rendering in `el`, or its plain text while
-     * there is none (a block not rendered yet, or a failed render). Not x-html:
-     * innerHTML never runs a <script>, and a Description's scripts run on its
-     * page, so each one is re-created to run. Alpine's mutation observer
-     * initializes any Alpine markup the rendering brings, as x-html would.
-     */
-    paintRenderedText(el, blockId, html, text) {
-      if (html === undefined) {
-        el._paintedHtml = undefined;
-        el.style.whiteSpace = 'pre-wrap';
-        el.textContent = text || '';
-        return;
-      }
-      if (el._paintedHtml === html) return;
-      el._paintedHtml = html;
-      el.style.whiteSpace = '';
-      el.innerHTML = html;
-      for (const old of el.querySelectorAll('script')) {
-        const script = document.createElement('script');
-        for (const { name, value } of old.attributes) script.setAttribute(name, value);
-        script.textContent = old.textContent;
-        old.replaceWith(script);
+        this._renderError = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
+        this.error = this._renderError;
       }
     },
 

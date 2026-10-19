@@ -31,10 +31,12 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	if content == "" {
 		return nil
 	}
-	// No bracket, no shortcode: skip building the entity's shortcode context,
-	// which walks its ownership chain. A note page renders one tag per text
-	// block, and most blocks are plain text.
-	if !strings.Contains(content, "[") {
+	// No bracket and no hand-written reload element: nothing for this tag to do,
+	// so skip building the entity's shortcode context, which walks its
+	// ownership chain. A note page renders one tag per text block, and most
+	// blocks are plain text. (A <reload-shortcode> written as markup still
+	// gets its reloadable region below, so it does not take this path.)
+	if !strings.Contains(content, "[") && !shortcodes.ContainsReloadButton(content) {
 		_, _ = writer.WriteString(content)
 		return nil
 	}
