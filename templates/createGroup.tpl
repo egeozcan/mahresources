@@ -27,7 +27,7 @@
                 </div>
 
                 {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:group.Name required=true id="form-name" %}
-                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:group.Description shortcodes=true %}
+                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:group.Description shortcodes=true previewUrl="/v1/group/previewDescription" previewId=group.ID %}
                 {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=queryValues.URL.0|default:group.URL|printUrl %}
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">

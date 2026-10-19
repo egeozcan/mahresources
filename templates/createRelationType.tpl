@@ -7,7 +7,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=relationType.Name required=true %}
-    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=relationType.Description %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=relationType.Description previewUrl="/v1/relationType/previewDescription" previewId=relationType.ID %}
     {% if !relationType.ID %}
     {% include "/partials/form/autocompleter.tpl" with profile='single' entity='category' elName='FromCategory' title='From Category' selectedItems=category min=1 max=1 id=getNextId("autocompleter") %}
     {% include "/partials/form/autocompleter.tpl" with profile='single' entity='category' elName='ToCategory' title='To Category' selectedItems=category min=1 max=1 id=getNextId("autocompleter") %}

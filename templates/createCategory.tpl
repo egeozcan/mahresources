@@ -12,7 +12,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:category.Name required=true %}
-    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:category.Description shortcodes=true %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:category.Description shortcodes=true previewUrl="/v1/category/previewDescription" previewId=category.ID %}
 
     {% include "/partials/form/templateBundleTools.tpl" with carrier="category" %}
 

@@ -101,18 +101,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
 		defer cancel()
 
-		// See auth.PluginCodeAllowed: plugin Lua runs unscoped, so a
-		// group-confined principal must not reach it through a template preview.
-		var renderer shortcodes.PluginRenderer
-		if pm := ctx.PluginManager(); pm != nil {
-			access := auth.PluginAccessFor(reqCtx, ctx.PluginAllowsScopedPrincipals)
-			renderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
-				if !access(pluginName) {
-					return "", shortcodes.ErrPluginUnavailable
-				}
-				return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
-			}
-		}
+		renderer := previewPluginRenderer(reqCtx, ctx)
 		executor := cappedQueryExecutor(template_filters.BuildQueryExecutor(ctx), previewMRQLLimitCap)
 
 		html := shortcodes.Process(reqCtx, req.Content, *metaCtx, renderer, executor)
@@ -279,5 +268,22 @@ func cappedQueryExecutor(inner shortcodes.QueryExecutor, limitCap int) shortcode
 			opts.Limit = limitCap
 		}
 		return inner(reqCtx, query, opts)
+	}
+}
+
+// previewPluginRenderer renders [plugin:*] shortcodes for a preview. See
+// auth.PluginCodeAllowed: plugin Lua runs unscoped, so a group-confined
+// principal must not reach it through a preview. Nil without a plugin manager.
+func previewPluginRenderer(reqCtx context.Context, ctx TemplatePreviewContext) shortcodes.PluginRenderer {
+	pm := ctx.PluginManager()
+	if pm == nil {
+		return nil
+	}
+	access := auth.PluginAccessFor(reqCtx, ctx.PluginAllowsScopedPrincipals)
+	return func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+		if !access(pluginName) {
+			return "", shortcodes.ErrPluginUnavailable
+		}
+		return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
 	}
 }

@@ -56,6 +56,7 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Tags
 	registerTagRoutes(registry)
+	registerDescriptionPreviewRoutes(registry)
 
 	// Categories
 	registerCategoryRoutes(registry)
@@ -1962,6 +1963,41 @@ func registerResourceCategoryRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resourceCategory/editDescription", "editResourceCategoryDescription", "Edit a resource category's description", "resourceCategories").
 		WithIDParam("id", true))
+}
+
+func registerDescriptionPreviewRoutes(r *openapi.Registry) {
+	description := `Render a Description the way the entity's detail page shows it, without
+saving it: markdown, then @-mentions, then (for groups, notes, resources,
+categories, resource categories and note types) shortcodes against the entity.
+
+Request body fields:
+  - text (string) — the Description to render
+
+Query parameters:
+  - id (integer, optional) — the entity being edited. Without it (a create form)
+    shortcodes stay literal text, as they do on a page with no entity.
+
+Response: {"html"}. Gated at the same capability as saving the entity's
+Description, and confined to a group-limited principal's subtree. [mrql] result
+limits are capped for responsiveness.`
+
+	for _, p := range []struct{ entity, op, tag string }{
+		{"note", "previewNoteDescription", "notes"},
+		{"noteType", "previewNoteTypeDescription", "notes"},
+		{"group", "previewGroupDescription", "groups"},
+		{"relation", "previewRelationDescription", "relations"},
+		{"relationType", "previewRelationTypeDescription", "relations"},
+		{"resource", "previewResourceDescription", "resources"},
+		{"tag", "previewTagDescription", "tags"},
+		{"category", "previewCategoryDescription", "categories"},
+		{"resourceCategory", "previewResourceCategoryDescription", "resourceCategories"},
+		{"templatePartial", "previewTemplatePartialDescription", "templatePartials"},
+		{"query", "previewQueryDescription", "queries"},
+	} {
+		r.Register(openapi.NewRoute(http.MethodPost, "/v1/"+p.entity+"/previewDescription", p.op, "Preview a description", p.tag).
+			WithIDParam("id", false).
+			WithDescription(description))
+	}
 }
 
 func registerTemplatePartialRoutes(r *openapi.Registry) {

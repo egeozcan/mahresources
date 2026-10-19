@@ -23,6 +23,20 @@ func NewEntityWriter[T contracts.BasicEntityReader](ctx *MahresourcesContext) *E
 	return &EntityWriter[T]{ctx: ctx}
 }
 
+// Exists reports whether the entity is visible to this context, which for a
+// principal-scoped context applies its subtree confinement. It returns
+// gorm.ErrRecordNotFound when it is not.
+func (w *EntityWriter[T]) Exists(id uint) error {
+	var count int64
+	if err := w.ctx.db.Model(new(T)).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (w *EntityWriter[T]) UpdateName(id uint, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("name must not be empty")

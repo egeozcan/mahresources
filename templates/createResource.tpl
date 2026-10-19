@@ -61,7 +61,7 @@
                     </div>
                 </div>
 
-                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" id="description" value=queryValues.Description.0|default:resource.Description hint="Describe the resource." shortcodes=true %}
+                {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" id="description" value=queryValues.Description.0|default:resource.Description hint="Describe the resource." shortcodes=true previewUrl="/v1/resource/previewDescription" previewId=resource.ID %}
 
                 {% if !resource.ID %}
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">

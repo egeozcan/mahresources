@@ -3861,6 +3861,43 @@ paths:
             summary: Generate a custom template section from natural language
             tags:
                 - shortcodes
+    /v1/category/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewCategoryDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - categories
     /v1/category/previewTemplate:
         post:
             description: |-
@@ -5458,6 +5495,43 @@ paths:
                                 type: array
                     description: Successful response
             summary: Get parents of a group
+            tags:
+                - groups
+    /v1/group/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewGroupDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
             tags:
                 - groups
     /v1/group/tree/children:
@@ -8983,6 +9057,43 @@ paths:
             summary: Get all note types
             tags:
                 - notes
+    /v1/note/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewNoteDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - notes
     /v1/note/share:
         delete:
             operationId: unshareNote
@@ -9105,6 +9216,43 @@ paths:
             summary: Generate a custom template section from natural language
             tags:
                 - shortcodes
+    /v1/noteType/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewNoteTypeDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - notes
     /v1/noteType/previewTemplate:
         post:
             description: |-
@@ -10090,6 +10238,43 @@ paths:
             summary: Edit a query's name
             tags:
                 - queries
+    /v1/query/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewQueryDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - queries
     /v1/query/run:
         post:
             description: Returns the result set as a column list plus one array of values per row, index-aligned with it. Columns appear in the order the query's SELECT names them, repeated column names are preserved, and the column list is populated even when no rows matched.
@@ -10473,6 +10658,43 @@ paths:
             summary: Edit a relation instance's name
             tags:
                 - relations
+    /v1/relation/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewRelationDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - relations
     /v1/relationType:
         post:
             operationId: createRelationType
@@ -10576,6 +10798,43 @@ paths:
                 "500":
                     description: Internal server error
             summary: Edit a relation type's name
+            tags:
+                - relations
+    /v1/relationType/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewRelationTypeDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
             tags:
                 - relations
     /v1/relationTypes:
@@ -10877,6 +11136,43 @@ paths:
                 "200":
                     description: Successful response
             summary: Clear stored thumbnails (POST alias of DELETE /v1/resource/preview)
+            tags:
+                - resources
+    /v1/resource/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewResourceDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
             tags:
                 - resources
     /v1/resource/recalculateDimensions:
@@ -11365,6 +11661,43 @@ paths:
             summary: Generate a custom template section from natural language
             tags:
                 - shortcodes
+    /v1/resourceCategory/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewResourceCategoryDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - resourceCategories
     /v1/resourceCategory/previewTemplate:
         post:
             description: |-
@@ -12373,6 +12706,43 @@ paths:
             summary: Edit a tag's name
             tags:
                 - tags
+    /v1/tag/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewTagDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
+            tags:
+                - tags
     /v1/tags:
         get:
             operationId: listTags
@@ -12654,6 +13024,43 @@ paths:
                 "500":
                     description: Internal server error
             summary: Edit a template partial's description (admin only)
+            tags:
+                - templatePartials
+    /v1/templatePartial/previewDescription:
+        post:
+            description: |-
+                Render a Description the way the entity's detail page shows it, without
+                saving it: markdown, then @-mentions, then (for groups, notes, resources,
+                categories, resource categories and note types) shortcodes against the entity.
+
+                Request body fields:
+                  - text (string) — the Description to render
+
+                Query parameters:
+                  - id (integer, optional) — the entity being edited. Without it (a create form)
+                    shortcodes stay literal text, as they do on a page with no entity.
+
+                Response: {"html"}. Gated at the same capability as saving the entity's
+                Description, and confined to a group-limited principal's subtree. [mrql] result
+                limits are capped for responsiveness.
+            operationId: previewTemplatePartialDescription
+            parameters:
+                - in: query
+                  name: id
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Preview a description
             tags:
                 - templatePartials
     /v1/templatePartials:

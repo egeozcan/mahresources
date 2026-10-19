@@ -138,6 +138,16 @@ func scopedEditDescription[T contracts.BasicEntityReader](appCtx *application_co
 	}
 }
 
+// scopedPreviewDescription serves POST /v1/<entity>/previewDescription against
+// the request's principal-scoped context, so loading the entity and any [mrql]
+// in the preview are confined like the entity's detail page.
+func scopedPreviewDescription[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := scopedCtx(appCtx, r)
+		api_handlers.GetPreviewDescriptionHandler(ctx, entityName, application_context.NewEntityWriter[T](ctx).Exists)(w, r)
+	}
+}
+
 func scopedEditMeta[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer := application_context.NewEntityWriter[T](scopedCtx(appCtx, r))

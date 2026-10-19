@@ -11,7 +11,7 @@
     <input type="hidden" value="{{ tag.ID }}" name="ID">
     {% endif %}
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:tag.Name required=true %}
-    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:tag.Description %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:tag.Description previewUrl="/v1/tag/previewDescription" previewId=tag.ID %}
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}

@@ -14,11 +14,24 @@ const MAX_HEIGHT = '60vh';
 
 const DEFAULT_MENTION_TYPES = 'resource,note,group,tag';
 
-export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcodes = false } = {}) {
+// The stylesheets base.tpl ships, so the preview frame looks like the page.
+const PREVIEW_STYLESHEETS = ['/public/index.css', '/public/tailwind.css', '/public/jsonTable.css'];
+
+export function markdownEditor({
+  mentionTypes = DEFAULT_MENTION_TYPES,
+  shortcodes = false,
+  previewUrl = '',
+  previewId = '',
+} = {}) {
   return {
     view: null,
     ready: false,
     failed: false,
+    previewing: false,
+    previewLoading: false,
+    previewError: '',
+    _previewGeneration: 0,
+    _frame: null,
     _destroyed: false,
     _source: null,
     _container: null,
@@ -30,6 +43,7 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       // the button and $refs may not resolve (docs/lessons.md).
       this._source = this.$refs.source;
       this._container = this.$refs.mdContainer;
+      this._frame = this.$refs.previewFrame || null;
       this._labelId = this._source.dataset.labelId || '';
       // Mention result counts, as mentionTextarea.js announced them: CodeMirror
       // wires the listbox but says nothing about how many results came back.
@@ -138,6 +152,61 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       }
     },
 
+    get canPreview() {
+      return Boolean(previewUrl) && this.ready;
+    },
+
+    // Preview: the server renders the text exactly as the detail page would
+    // (POST /v1/<entity>/previewDescription) into a sandboxed frame. The frame
+    // has no allow-same-origin and no scripts, so raw HTML in a Description
+    // cannot reach this page or join its form.
+    async showPreview() {
+      if (!this.canPreview) return;
+      const generation = ++this._previewGeneration;
+      this.previewing = true;
+      this._container.hidden = true;
+      this.previewLoading = true;
+      this.previewError = '';
+      const url = previewId ? `${previewUrl}?id=${encodeURIComponent(previewId)}` : previewUrl;
+      const body = new FormData();
+      body.append('text', this._source.value);
+      try {
+        const response = await fetch(url, { method: 'POST', body, headers: { Accept: 'application/json' } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `Preview failed (${response.status})`);
+        if (generation !== this._previewGeneration) return;
+        this._renderFrame(data.html || '');
+      } catch (err) {
+        if (generation !== this._previewGeneration) return;
+        this.previewError = err.message || 'Could not render the preview';
+      } finally {
+        if (generation === this._previewGeneration) this.previewLoading = false;
+      }
+    },
+
+    showWrite() {
+      this._previewGeneration++;
+      this.previewing = false;
+      this.previewLoading = false;
+      this.previewError = '';
+      if (!this.view) return;
+      this._container.hidden = false;
+      this.view.focus();
+    },
+
+    _renderFrame(html) {
+      if (!this._frame) return;
+      const links = PREVIEW_STYLESHEETS.map((href) => `<link rel="stylesheet" href="${href}">`).join('\n');
+      // <base target="_blank">: a link in the preview opens a tab rather than
+      // navigating the frame.
+      this._frame.srcdoc = `<!doctype html><html><head>
+<meta charset="utf-8">
+<base target="_blank">
+${links}
+<style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
+</head><body><div class="prose lg:prose-xl max-w-none font-sans">${html}</div></body></html>`;
+    },
+
     focusEditor(event) {
       if (!this.view) return;
       event?.preventDefault();
@@ -145,7 +214,7 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
     },
 
     _run(command) {
-      if (this.view) command(this.view);
+      if (this.view && !this.previewing) command(this.view);
     },
     bold() { this._run(commands.bold); },
     italic() { this._run(commands.italic); },

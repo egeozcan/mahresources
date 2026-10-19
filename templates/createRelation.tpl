@@ -9,7 +9,7 @@
     {% endif %}
     <div class="space-y-8 sm:space-y-5">
         {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=relation.Name %}
-        {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=relation.Description %}
+        {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=relation.Description previewUrl="/v1/relation/previewDescription" previewId=relation.ID %}
         {% if !relation.ID %}
         <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
             <div class="mt-1 sm:mt-0 sm:col-span-2">

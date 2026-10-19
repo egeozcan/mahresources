@@ -4378,6 +4378,16 @@
       opacity: 50%;
     }
   }
+  .aria-pressed\:border-amber-600 {
+    &[aria-pressed="true"] {
+      border-color: var(--color-amber-600);
+    }
+  }
+  .aria-pressed\:bg-amber-100 {
+    &[aria-pressed="true"] {
+      background-color: var(--color-amber-100);
+    }
+  }
   .motion-safe\:animate-pulse {
     @media (prefers-reduced-motion: no-preference) {
       animation: var(--animate-pulse);

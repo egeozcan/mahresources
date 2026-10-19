@@ -625,6 +625,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/note/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveNoteHandler))
 	router.Methods(http.MethodPost).Path("/v1/note/editName").HandlerFunc(scopedEditName[models.Note](appContext, "note"))
 	router.Methods(http.MethodPost).Path("/v1/note/editDescription").HandlerFunc(scopedEditDescription[models.Note](appContext, "note"))
+	router.Methods(http.MethodPost).Path("/v1/note/previewDescription").HandlerFunc(scopedPreviewDescription[models.Note](appContext, "note"))
 	router.Methods(http.MethodPost).Path("/v1/note/editMeta").HandlerFunc(scopedEditMeta[models.Note](appContext, "note"))
 	router.Methods(http.MethodGet).Path("/v1/note/noteTypes").HandlerFunc(api_handlers.GetNoteTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note/noteType").HandlerFunc(api_handlers.GetAddNoteTypeHandler(appContext))
@@ -632,6 +633,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/note/noteType/delete").HandlerFunc(api_handlers.GetRemoveNoteTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/noteType/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
 	router.Methods(http.MethodPost).Path("/v1/noteType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
+	router.Methods(http.MethodPost).Path("/v1/noteType/previewDescription").HandlerFunc(scopedPreviewDescription[models.NoteType](appContext, "noteType"))
 
 	// Note sharing routes
 	router.Methods(http.MethodPost).Path("/v1/note/share").HandlerFunc(scopedAPI(appContext, api_handlers.GetShareNoteHandler))
@@ -679,6 +681,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/groups/merge").HandlerFunc(scopedAPI(appContext, api_handlers.GetMergeGroupsHandler))
 	router.Methods(http.MethodPost).Path("/v1/group/editName").HandlerFunc(scopedEditName[models.Group](appContext, "group"))
 	router.Methods(http.MethodPost).Path("/v1/group/editDescription").HandlerFunc(scopedEditDescription[models.Group](appContext, "group"))
+	router.Methods(http.MethodPost).Path("/v1/group/previewDescription").HandlerFunc(scopedPreviewDescription[models.Group](appContext, "group"))
 	router.Methods(http.MethodPost).Path("/v1/group/editMeta").HandlerFunc(scopedEditMeta[models.Group](appContext, "group"))
 
 	router.Methods(http.MethodPost).Path("/v1/relation").HandlerFunc(api_handlers.GetAddRelationHandler(appContext))
@@ -689,8 +692,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(api_handlers.GetRelationTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationWriter, "relation"))
 	router.Methods(http.MethodPost).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationWriter, "relation"))
+	router.Methods(http.MethodPost).Path("/v1/relation/previewDescription").HandlerFunc(scopedPreviewDescription[models.GroupRelation](appContext, "relation"))
 	router.Methods(http.MethodPost).Path("/v1/relationType/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelationType](basicRelationTypeWriter, "relationType"))
 	router.Methods(http.MethodPost).Path("/v1/relationType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelationType](basicRelationTypeWriter, "relationType"))
+	router.Methods(http.MethodPost).Path("/v1/relationType/previewDescription").HandlerFunc(scopedPreviewDescription[models.GroupRelationType](appContext, "relationType"))
 
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/suggestedTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetSuggestedTagsHandler))
@@ -727,6 +732,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resources/trim").HandlerFunc(scopedAPI(appContext, api_handlers.GetTrimVideoHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/editName").HandlerFunc(scopedEditName[models.Resource](appContext, "resource"))
 	router.Methods(http.MethodPost).Path("/v1/resource/editDescription").HandlerFunc(scopedEditDescription[models.Resource](appContext, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/resource/previewDescription").HandlerFunc(scopedPreviewDescription[models.Resource](appContext, "resource"))
 	router.Methods(http.MethodPost).Path("/v1/resource/editMeta").HandlerFunc(scopedEditMeta[models.Resource](appContext, "resource"))
 
 	// Version routes
@@ -789,6 +795,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/tag/delete").HandlerFunc(tagFactory.DeleteHandler())
 	router.Methods(http.MethodPost).Path("/v1/tag/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Tag](basicTagWriter, "tag"))
 	router.Methods(http.MethodPost).Path("/v1/tag/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Tag](basicTagWriter, "tag"))
+	router.Methods(http.MethodPost).Path("/v1/tag/previewDescription").HandlerFunc(scopedPreviewDescription[models.Tag](appContext, "tag"))
 	router.Methods(http.MethodPost).Path("/v1/tags/merge").HandlerFunc(api_handlers.GetMergeTagsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tags/delete").HandlerFunc(api_handlers.GetBulkDeleteTagsHandler(appContext))
 
@@ -800,6 +807,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/category/delete").HandlerFunc(api_handlers.GetRemoveCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Category](basicCategoryWriter, "category"))
 	router.Methods(http.MethodPost).Path("/v1/category/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Category](basicCategoryWriter, "category"))
+	router.Methods(http.MethodPost).Path("/v1/category/previewDescription").HandlerFunc(scopedPreviewDescription[models.Category](appContext, "category"))
 
 	// Resource Category routes using factory
 	resourceCategoryReader, resourceCategoryWriter := appContext.ResourceCategoryCRUD()
@@ -810,6 +818,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/delete").HandlerFunc(api_handlers.GetRemoveResourceCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewDescription").HandlerFunc(scopedPreviewDescription[models.ResourceCategory](appContext, "resourceCategory"))
 
 	// Template Partial routes (admin-only writes via isTaxonomyPath; reads open)
 	basicTemplatePartialWriter := application_context.NewEntityWriter[models.TemplatePartial](appContext)
@@ -821,6 +830,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// generic EntityWriter.UpdateName (ValidateEntityName only) does not enforce.
 	// Names change through the full create/update path, which validates.
 	router.Methods(http.MethodPost).Path("/v1/templatePartial/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.TemplatePartial](basicTemplatePartialWriter, "templatePartial"))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial/previewDescription").HandlerFunc(scopedPreviewDescription[models.TemplatePartial](appContext, "templatePartial"))
 
 	// Starter template presets (static embedded bundles; read-only, open)
 	router.Methods(http.MethodGet).Path("/v1/templatePresets").HandlerFunc(api_handlers.GetTemplatePresetsHandler())
@@ -836,6 +846,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/query/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetRunQueryHandler))
 	router.Methods(http.MethodPost).Path("/v1/query/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Query](basicQueryWriter, "query"))
 	router.Methods(http.MethodPost).Path("/v1/query/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Query](basicQueryWriter, "query"))
+	router.Methods(http.MethodPost).Path("/v1/query/previewDescription").HandlerFunc(scopedPreviewDescription[models.Query](appContext, "query"))
 
 	// MRQL routes
 	router.Methods(http.MethodPost).Path("/v1/mrql").HandlerFunc(scopedMRQLAPI(appContext, api_handlers.GetExecuteMRQLHandler))

@@ -41,3 +41,12 @@ func markDownFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pong
 
 	return pongo2.AsValue(buffer.String()), nil
 }
+
+// RenderDescriptionMarkup is the markup half of how a Description is shown on
+// its detail page (templates/partials/description.tpl): markdown2, then
+// render_mentions. The shortcode pass, which needs the entity, comes after.
+func RenderDescriptionMarkup(text string) string {
+	md, _ := markDownFilter(pongo2.AsValue(text), nil)
+	withMentions, _ := renderMentionsFilter(md, nil)
+	return withMentions.String()
+}

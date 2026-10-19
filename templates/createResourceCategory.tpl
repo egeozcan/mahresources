@@ -7,7 +7,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=resourceCategory.Name required=true %}
-    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=resourceCategory.Description shortcodes=true %}
+    {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=resourceCategory.Description shortcodes=true previewUrl="/v1/resourceCategory/previewDescription" previewId=resourceCategory.ID %}
 
     {% include "/partials/form/templateBundleTools.tpl" with carrier="resourceCategory" %}
 
