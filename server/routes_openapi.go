@@ -621,6 +621,14 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 }
 
 func registerBlockRoutes(r *openapi.Registry) {
+	r.Register(openapi.NewRoute(http.MethodGet, "/v1/note/renderedTextBlocks", "getRenderedTextBlocks", "Render a note's text blocks for display", "blocks").
+		WithIDParam("noteId", true).
+		WithDescription(`Every text block of the note, rendered the way the note page renders
+them: markdown, then @-mentions, then shortcodes against the note, sharing one
+page render context (MRQL cache, query budget, deadline). The response is HTML,
+one <template data-rendered-text-block="ID"> element per text block. Confined
+to a group-limited principal's subtree.`))
+
 	noteBlockType := reflect.TypeOf(models.NoteBlock{})
 	noteBlockEditorType := reflect.TypeOf(query_models.NoteBlockEditor{})
 	noteBlockReorderType := reflect.TypeOf(query_models.NoteBlockReorderEditor{})

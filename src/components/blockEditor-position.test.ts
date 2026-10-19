@@ -2,8 +2,8 @@
  * Guards the JS positionBetween/_generateBetween port against drift from the Go
  * reference (lib/position.go). The branch ported two Go branches into
  * _generateBetween to fix an ordering bug (positionBetween("a","aa") used to
- * return "aan" > "aa"). Same extract-and-eval approach as the renderMarkdown
- * test, since these are methods on the Alpine data factory.
+ * return "aan" > "aa"). Extracts and evals the methods, since they are methods
+ * on the Alpine data factory.
  */
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';

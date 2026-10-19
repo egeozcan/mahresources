@@ -652,6 +652,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/notes/massEdit").HandlerFunc(scopedAPI(appContext, api_handlers.GetMassEditNotesHandler))
 
 	// Block API routes
+	router.Methods(http.MethodGet).Path("/v1/note/renderedTextBlocks").HandlerFunc(renderedTextBlocks(appContext))
 	router.Methods(http.MethodGet).Path("/v1/note/blocks").HandlerFunc(scopedAPI(appContext, api_handlers.GetBlocksHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block").HandlerFunc(scopedAPI(appContext, api_handlers.GetBlockHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block/types").HandlerFunc(scopedAPI(appContext, api_handlers.GetBlockTypesHandler))

@@ -16,7 +16,7 @@
     {% endautoescape %}
     {% endif %}
     {% if note.Blocks && note.Blocks|length > 0 %}
-        {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
+        {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks note=note %}
     {% endif %}
     {% endif %}
     {% process_shortcodes note.NoteType.CustomDetailFooter note %}

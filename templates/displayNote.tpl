@@ -33,7 +33,7 @@
     {% if !note.HasTextBlock %}
         {% include "/partials/description.tpl" with description=note.Description descriptionEntity=note descriptionEditUrl="/v1/note/editDescription" descriptionEditId=note.ID preview=false %}
     {% endif %}
-    {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
+    {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks note=note %}
     {% endif %}
 
     {% if sc.Groups %}

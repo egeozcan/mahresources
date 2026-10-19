@@ -9094,6 +9094,35 @@ paths:
             summary: Preview a description
             tags:
                 - notes
+    /v1/note/renderedTextBlocks:
+        get:
+            description: |-
+                Every text block of the note, rendered the way the note page renders
+                them: markdown, then @-mentions, then shortcodes against the note, sharing one
+                page render context (MRQL cache, query budget, deadline). The response is HTML,
+                one <template data-rendered-text-block="ID"> element per text block. Confined
+                to a group-limited principal's subtree.
+            operationId: getRenderedTextBlocks
+            parameters:
+                - in: query
+                  name: noteId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Render a note's text blocks for display
+            tags:
+                - blocks
     /v1/note/share:
         delete:
             operationId: unshareNote

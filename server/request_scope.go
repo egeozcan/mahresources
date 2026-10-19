@@ -15,6 +15,8 @@ import (
 	"mahresources/contracts"
 	"mahresources/jobs"
 	"mahresources/server/api_handlers"
+	"mahresources/server/http_utils"
+	"mahresources/server/template_handlers"
 )
 
 // currentJobEventsContext revalidates a job event stream's original credential
@@ -145,6 +147,28 @@ func scopedPreviewDescription[T contracts.BasicEntityReader](appCtx *application
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := scopedCtx(appCtx, r)
 		api_handlers.GetPreviewDescriptionHandler(ctx, entityName, application_context.NewEntityWriter[T](ctx).Exists)(w, r)
+	}
+}
+
+// renderedTextBlocks serves GET /v1/note/renderedTextBlocks?noteId=N: the
+// note's text blocks rendered for display, read through the request's
+// principal-scoped context so a note outside a group-limited principal's
+// subtree is not found and its shortcodes see only the subtree.
+func renderedTextBlocks(appCtx *application_context.MahresourcesContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := scopedCtx(appCtx, r)
+		note, err := ctx.GetNote(http_utils.GetUIntQueryParameter(r, "noteId", 0))
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusNotFound)
+			return
+		}
+		html, err := template_handlers.RenderTextBlocks(ctx, r, note)
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
 	}
 }
 

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"mahresources/models/types"
 	"time"
 )
@@ -17,6 +18,18 @@ type NoteBlock struct {
 	Position        string     `gorm:"index:idx_note_type_position,priority:3;index:idx_note_position,priority:2;size:64;not null" json:"position"`
 	Content         types.JSON `gorm:"not null;default:'{}'" json:"content"`
 	State           types.JSON `gorm:"not null;default:'{}'" json:"state"`
+}
+
+// TextContent is a text block's markdown: Content's "text" field, or "" when
+// the block has none (any other block type, or content that is not an object).
+func (b NoteBlock) TextContent() string {
+	var content struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(b.Content, &content); err != nil {
+		return ""
+	}
+	return content.Text
 }
 
 func (NoteBlock) TableName() string {

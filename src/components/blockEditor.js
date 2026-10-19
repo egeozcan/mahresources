@@ -36,84 +36,14 @@ export function blockEditor(noteId, initialBlocks = []) {
     // Blocks whose most recent save failed; cleared by a later successful save.
     _failedSaves: new Set(),
     _leavingEditMode: false,
+    // Text blocks as the server renders them for display (markdown, mentions,
+    // shortcodes against the note), by block id. Read from the page on init,
+    // refetched from GET /v1/note/renderedTextBlocks after the list reloads and
+    // on leaving edit mode. Rendered HTML depends on the viewer, so it is never
+    // stored on the block.
+    renderedText: {},
+    _renderGeneration: 0,
     _blockTypesLoaded: false,
-
-    // Simple markdown-like rendering: escapes HTML, converts newlines to <br>, and handles basic formatting
-    renderMarkdown(text) {
-      if (!text) return '';
-      // Escape HTML entities
-      let escaped = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-      // Convert newlines to <br>
-      escaped = escaped.replace(/\n/g, '<br>');
-
-      // BH-021: Inline code: `text` -> <code>text</code>
-      // Run BEFORE other inline tokens so inline-code content is immune to
-      // subsequent bold/italic/strike passes (standard GFM-ish behavior).
-      // Stash each <code> span behind a Unicode PUA sentinel so the raw
-      // inner text never meets the bold/italic/strike regexes below.
-      const codeSlots = [];
-      escaped = escaped.replace(/`([^`]+)`/g, (_m, inner) => {
-        const slot = 'CODE' + codeSlots.length + '';
-        codeSlots.push('<code>' + inner + '</code>');
-        return slot;
-      });
-
-      // Basic bold: **text** -> <strong>text</strong>
-      escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-      // Basic italic (asterisk form): *text* -> <em>text</em>
-      escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-      // BH-021: Italic (underscore form): _text_ -> <em>text</em>
-      // Boundary rule: the underscore must not be adjacent to a word char
-      // (A-Z a-z 0-9 _), so `snake_case_names` survive untouched. Inner
-      // text must not contain underscores or newlines (keeps the regex
-      // greedy-safe and avoids eating across lines).
-      escaped = escaped.replace(
-        /(^|[^A-Za-z0-9_])_([^_\n]+)_(?=$|[^A-Za-z0-9_])/g,
-        '$1<em>$2</em>'
-      );
-
-      // BH-021: Strikethrough: ~~text~~ -> <s>text</s>
-      escaped = escaped.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
-
-      // Basic links: [text](url) -> <a href="url">text</a>
-      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, href) => {
-          // A denylist on the raw string (.trim().startsWith('javascript:')) is
-          // bypassable: browsers strip whitespace/control chars embedded in a URL
-          // scheme, so "java\tscript:" resolves to "javascript:". Strip all
-          // whitespace, ASCII control chars, AND Unicode format/zero-width chars
-          // (\p{Cf}: U+200B, U+00AD, ... which JS \s does NOT cover) first, then
-          // ALLOWLIST safe schemes (or relative URLs) rather than denylisting.
-          const STRIP = /[\s\x00-\x1f]|\p{Cf}/gu;
-          const cleaned = href.replace(STRIP, '').toLowerCase();
-          const hasScheme = /^[a-z][a-z0-9+.\-]*:/.test(cleaned);
-          const safe = !hasScheme
-              || cleaned.startsWith('http:')
-              || cleaned.startsWith('https:')
-              || cleaned.startsWith('mailto:')
-              || cleaned.startsWith('tel:');
-          if (!safe) {
-              return text;
-          }
-          // Defang control chars that survived in the original href so they
-          // cannot reconstitute a dangerous scheme in the attribute. Only ASCII
-          // control chars are browser-stripped from schemes; we deliberately keep
-          // regular whitespace here so legitimate URLs aren't mangled. (Quotes are
-          // already HTML-escaped above, blocking attribute breakout.)
-          const safeHref = href.replace(/[\x00-\x1f]/g, '');
-          return `<a href="${safeHref}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
-      });
-
-      // Restore inline-code slots last so their contents never see earlier passes.
-      escaped = escaped.replace(/CODE(\d+)/g, (_m, i) => codeSlots[Number(i)]);
-      return escaped;
-    },
-
 
     async init() {
       // The component root, captured once.
@@ -131,6 +61,7 @@ export function blockEditor(noteId, initialBlocks = []) {
       //
       // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
       this._root = this.$el;
+      this.renderedText = this._readRenderedText(this._root.querySelector('[data-rendered-text-blocks]'));
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -367,6 +298,7 @@ export function blockEditor(noteId, initialBlocks = []) {
           const moved = (this._revisions[block.id] || 0) !== (revisionsAtStart[block.id] || 0);
           return local && moved ? { ...block, content: local.content } : block;
         });
+        this.refreshRenderedText();
       } catch (err) {
         if (generation !== this._listGeneration) return;
         this.error = err.message;
@@ -407,8 +339,35 @@ export function blockEditor(noteId, initialBlocks = []) {
           return;
         }
         this.editMode = false;
+        // Every text block, not only the edited ones: editing the first one
+        // changes the note's Description, which another block may display.
+        this.refreshRenderedText();
       } finally {
         this._leavingEditMode = false;
+      }
+    },
+
+    _readRenderedText(container) {
+      const rendered = {};
+      if (!container) return rendered;
+      for (const tpl of container.querySelectorAll('template[data-rendered-text-block]')) {
+        rendered[tpl.dataset.renderedTextBlock] = tpl.innerHTML;
+      }
+      return rendered;
+    },
+
+    // Until the response arrives the blocks keep their previous rendering; an
+    // older response than the latest request is dropped.
+    async refreshRenderedText() {
+      const generation = ++this._renderGeneration;
+      try {
+        const res = await fetch(`/v1/note/renderedTextBlocks?noteId=${this.noteId}`);
+        if (!res.ok) throw new Error(`Failed to render blocks: ${res.status}`);
+        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+        if (generation !== this._renderGeneration) return;
+        this.renderedText = this._readRenderedText(doc);
+      } catch (err) {
+        console.error('Error rendering text blocks:', err);
       }
     },
 

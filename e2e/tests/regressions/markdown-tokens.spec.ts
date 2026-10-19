@@ -81,7 +81,9 @@ test.describe('BH-021: block-editor text block — expanded markdown tokens', ()
 
     expect(html).toMatch(/<em>world<\/em>/);
     expect(html).toMatch(/<code>code<\/code>/);
-    expect(html).toMatch(/<s>strike<\/s>/);
+    // Text blocks render on the server now (goldmark, like the Description),
+    // which writes GFM strikethrough as <del>, not the old client renderer's <s>.
+    expect(html).toMatch(/<del>strike<\/del>/);
     expect(html).toMatch(/<strong>bold<\/strong>/);
   });
 });

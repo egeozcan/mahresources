@@ -49,7 +49,10 @@ test.describe('Wide display no duplicate content with blocks', () => {
   }) => {
     // Fetch the raw HTML from the server
     const resp = await request.get(`${baseURL}/note/text?id=${noteId}`);
-    const html = await resp.text();
+    // The block editor also carries each text block's server rendering in an
+    // inert <template> (data for blockEditor.js, never shown), which is not a
+    // second visible copy; leave those out.
+    const html = (await resp.text()).replace(/<template data-rendered-text-block[\s\S]*?<\/template>/g, '');
 
     // The unique text synced to Description is server-rendered as markdown
     // inside a .prose div: <p>TEXT</p>

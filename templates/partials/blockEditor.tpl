@@ -1,5 +1,7 @@
-{# with noteId= blocks= #}
+{# with noteId= blocks= note= #}
 <div x-data="blockEditor({{ noteId }}, {{ blocks|json }})" x-init="init()" class="block-editor">
+    {# Text blocks rendered on the server for display; blockEditor.js reads them on init and refetches them after edits. #}
+    <div hidden data-rendered-text-blocks>{% include "/partials/renderedTextBlocks.tpl" with note=note blocks=blocks %}</div>
     {# Edit mode toggle #}
     <div class="flex justify-end mb-4">
         <button
@@ -75,7 +77,7 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                <div class="prose max-w-none font-sans" x-html="renderMentions(renderMarkdown(block.content?.text || ''))"></div>
+                                <div class="prose max-w-none font-sans" data-text-block-rendered x-html="renderedText[block.id] ?? ''"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
