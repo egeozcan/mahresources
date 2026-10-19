@@ -101,4 +101,44 @@ describe('dependent reads wait for the block save', () => {
     expect(fetchMock).toHaveBeenCalled();
     cal.destroy();
   });
+
+  it('table: an older fetch response never overwrites a newer one', async () => {
+    const table: any = reactive(blockTable(
+      { id: 1, content: { queryId: 2 }, state: {} },
+      () => Promise.resolve(true),
+      () => {},
+      () => true,
+      () => {},
+    ));
+    const gates: Array<(v: unknown) => void> = [];
+    table.fetchFromServer = () => new Promise((r) => gates.push(r));
+    table.fetchQueryData(true);
+    table.queryId = 3;
+    table.fetchQueryData(true);
+    gates[1]({ columns: [], rows: [{ q: 3 }] });
+    await flush();
+    gates[0]({ columns: [], rows: [{ q: 2 }] });
+    await flush();
+    expect(table.queryRows).toEqual([{ q: 3 }]);
+  });
+
+  it('calendar: an older fetch response never overwrites a newer one', async () => {
+    const cal: any = reactive(blockCalendar(
+      { id: 1, content: { calendars: [{ id: 'a', name: 'a', color: '#000', source: { type: 'url', url: 'x' } }] }, state: {} },
+      () => Promise.resolve(true),
+      () => {},
+      () => true,
+      1,
+      () => {},
+    ));
+    const gates: Array<(v: unknown) => void> = [];
+    cal.fetchFromServer = () => new Promise((r) => gates.push(r));
+    cal.fetchEvents(true);
+    cal.fetchEvents(true);
+    gates[1]({ events: [{ id: 'new' }] });
+    await flush();
+    gates[0]({ events: [{ id: 'old' }] });
+    await flush();
+    expect(cal.events.map((e: any) => e.id)).toEqual(['new']);
+  });
 });

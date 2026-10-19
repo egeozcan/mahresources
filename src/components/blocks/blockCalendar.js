@@ -206,6 +206,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
           this._refetchOnSave = true;
           return;
         }
+        this._refetchOnSave = false;
         this.fetchEvents(true);
       });
     },
@@ -233,19 +234,23 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         }
       }
 
-      // Cache miss or force refresh
+      // Cache miss or force refresh. A response older than the latest
+      // request is dropped (and not cached: it may predate a calendar change).
+      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       this.loading = true;
       this.error = null;
 
       try {
         const data = await this.fetchFromServer(start, end);
+        if (generation !== this._fetchGeneration) return;
         setCacheEntry(cacheKey, data);
         this.applyEventData(data);
       } catch (err) {
+        if (generation !== this._fetchGeneration) return;
         this.error = err.message || 'Failed to load events';
         console.error('Calendar fetch error:', err);
       } finally {
-        this.loading = false;
+        if (generation === this._fetchGeneration) this.loading = false;
       }
     },
 

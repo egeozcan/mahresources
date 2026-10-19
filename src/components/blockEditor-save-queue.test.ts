@@ -340,4 +340,19 @@ describe('blockEditor save queue', () => {
     expect(ed.editMode).toBe(true);
     expect(ed.error).toBe('still down');
   });
+
+  it('announces a save only when no newer edit for the block is unsaved', async () => {
+    const ed = editor([{ id: 7, type: 'table', content: {} }]);
+    const heard: number[] = [];
+    (globalThis as any).window.addEventListener('mah:block-saved', (e: any) => heard.push(e.detail.blockId));
+    ed.updateBlockContent(7, { queryId: 2 });
+    await flush();
+    ed.updateBlockContent(7, { queryId: 3 });
+    pending[0].resolve(jsonResponse(200, { content: { queryId: 2 } }));
+    await flush();
+    expect(heard).toEqual([]);
+    pending[1].resolve(jsonResponse(200, { content: { queryId: 3 } }));
+    await flush();
+    expect(heard).toEqual([7]);
+  });
 });

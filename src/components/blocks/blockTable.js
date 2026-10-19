@@ -194,6 +194,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
           this._refetchOnSave = true;
           return;
         }
+        this._refetchOnSave = false;
         this.fetchQueryData(true);
       });
     },
@@ -271,19 +272,24 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
         }
       }
 
-      // Cache miss or expired - fetch blocking
+      // Cache miss or expired - fetch blocking. A response older than the
+      // latest request is dropped (and not cached: it may answer a query the
+      // block has since switched away from).
+      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       this.queryLoading = true;
       this.queryError = null;
 
       try {
         const data = await this.fetchFromServer();
+        if (generation !== this._fetchGeneration) return;
         setCacheEntry(cacheKey, data);
         this.applyQueryData(data);
       } catch (err) {
+        if (generation !== this._fetchGeneration) return;
         this.queryError = err.message || 'Failed to load query data';
         console.error('Table block query fetch error:', err);
       } finally {
-        this.queryLoading = false;
+        if (generation === this._fetchGeneration) this.queryLoading = false;
       }
     },
 
