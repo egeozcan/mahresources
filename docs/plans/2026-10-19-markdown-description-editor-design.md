@@ -102,11 +102,29 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
 13. **Server rendering.** Text blocks render through the same chain as a
     Description (`markdown2`, `render_mentions`, shortcodes) with the Note as
     the entity, in every text block, not only the first.
-    - On page load the server renders each text block and the block data
-      carries the HTML.
-    - On leaving edit mode, each changed block is re-rendered through
-      `POST /v1/note/previewDescription` with the note's id. Until the response
-      arrives the block keeps its previous rendering.
+    - Rendered HTML is never stored on the block, because it depends on the
+      viewer's permissions. A new read endpoint,
+      `GET /v1/note/renderedTextBlocks?noteId=`, returns `{blockId: html}`
+      for every text block of the note. It renders with the normal page
+      limits and safeguards, not the preview's 5-row MRQL cap
+      (`template_preview_api_handlers.go:20`), so a block shows the same
+      output before and after an edit. It is principal-bound and scoped like
+      `GET /v1/note/blocks`.
+    - The page-load render fills the same map server-side so text blocks do
+      not flash. Every later `loadBlocks()` (it replaces the whole array after
+      adding or reordering a block, `src/components/blockEditor.js:317-321`)
+      fetches the map again, because `/v1/note/blocks` returns raw models
+      (`server/api_handlers/block_api_handlers.go:30-37`).
+    - Leaving edit mode re-renders **all** text blocks, not only changed ones:
+      editing the first block changes the Note's Description, which a
+      `[property path="Description"]` in another block displays.
+    - Ordering: leaving edit mode first awaits every pending block save
+      (today the immediate save is fire-and-forget,
+      `src/components/blocks/blockText.js:20-21`). If a save fails, the note
+      stays in edit mode with the error shown and nothing is re-rendered.
+      Each render request carries a generation number and a response older
+      than the latest request is discarded.
+    - Until the response arrives the blocks keep their previous rendering.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
     - `renderMarkdown` and its tests
