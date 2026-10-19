@@ -50,12 +50,12 @@ describe('blockEditor save queue', () => {
     expect(pending[0].body.content.text).toBe('a');
 
     pending[0].resolve(jsonResponse(200, { content: { text: 'a' } }));
-    await first;
-    await flush();
+    await flush(); // `first` itself waits for the newest save
     expect(pending).toHaveLength(2);
     expect(pending[1].body.content.text).toBe('abc');
     pending[1].resolve(jsonResponse(200, { content: { text: 'abc' } }));
     await last;
+    expect(await first).toBe(true);
     expect(ed.blocks[0].content.text).toBe('abc');
   });
 
@@ -136,12 +136,11 @@ describe('blockEditor save queue', () => {
   it('does not apply a queued save response over an edit made before it was sent', async () => {
     vi.useFakeTimers();
     const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
-    const a = ed.updateBlockContent(7, { text: 'A' });
+    ed.updateBlockContent(7, { text: 'A' });
     await vi.advanceTimersByTimeAsync(0);
     const b = ed.updateBlockContent(7, { text: 'B' }); // queued behind A
     ed.updateBlockContentDebounced(7, { text: 'C' }); // its timer is still pending
     pending[0].resolve(jsonResponse(200, { content: { text: 'A' } }));
-    await a;
     await vi.advanceTimersByTimeAsync(0);
     expect(pending[1].body.content.text).toBe('B');
     pending[1].resolve(jsonResponse(200, { content: { text: 'B' } }));
@@ -245,18 +244,41 @@ describe('blockEditor save queue', () => {
     expect(pending[1]?.body.content.text).toBe('C');
   });
 
-  it('sends ordinary saves with keepalive so a navigation cannot abort them', async () => {
+  it('does not send ordinary saves with keepalive (its quota rejects large bodies)', async () => {
     const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
-    ed.updateBlockContent(7, { text: 'A' });
-    await flush();
-    expect(pending[0].init.keepalive).toBe(true);
-  });
-
-  it('does not send a body over the keepalive limit with keepalive', async () => {
-    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
-    ed.updateBlockContent(7, { text: 'x'.repeat(70000) });
+    ed.updateBlockContent(7, { text: '漢'.repeat(23000) });
     await flush();
     expect(pending[0].init.keepalive).toBeFalsy();
+  });
+
+  it('a superseded save resolves only once the newest save has landed', async () => {
+    const ed = editor([{ id: 7, type: 'table', content: {} }]);
+    ed.updateBlockContent(7, { queryId: 1 });
+    await flush();
+    let q2Done = false;
+    ed.updateBlockContent(7, { queryId: 2 }).then(() => { q2Done = true; });
+    ed.updateBlockContent(7, { queryId: 3 });
+    pending[0].resolve(jsonResponse(200, { content: { queryId: 1 } }));
+    await flush();
+    expect(pending[1].body.content.queryId).toBe(3);
+    expect(q2Done).toBe(false);
+    pending[1].resolve(jsonResponse(200, { content: { queryId: 3 } }));
+    await flush();
+    expect(q2Done).toBe(true);
+  });
+
+  it('an unload save that succeeds becomes the rollback baseline', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'O' } }]);
+    ed.updateBlockContentDebounced(7, { text: 'B' });
+    ed.flushPendingUpdates();
+    pending[0].resolve(jsonResponse(200, { content: { text: 'B' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    ed.updateBlockContentDebounced(7, { text: 'C' });
+    await vi.advanceTimersByTimeAsync(600);
+    pending[1].resolve(jsonResponse(500, { error: 'nope' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ed.blocks[0].content.text).toBe('B');
   });
 
   it('rolls a failed save back to the last saved content, not the original', async () => {

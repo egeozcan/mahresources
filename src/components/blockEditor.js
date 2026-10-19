@@ -3,9 +3,6 @@ const MIN_CHAR = 'a'.charCodeAt(0); // 97
 const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
 const SAVE_DEBOUNCE_MS = 500;
-// Browsers cap the total keepalive body in flight at 64 KiB; above this a
-// keepalive fetch is rejected outright, so larger saves go without it.
-const KEEPALIVE_MAX_BODY = 60000;
 
 export function blockEditor(noteId, initialBlocks = []) {
   return {
@@ -238,8 +235,13 @@ export function blockEditor(noteId, initialBlocks = []) {
           // Best effort on unload; nothing useful to do with the error here.
         }
         // If the page comes back from the bfcache, later saves for this block
-        // queue behind this one instead of racing it.
-        if (save) save.chain = Promise.resolve(sent).catch(() => {});
+        // queue behind this one instead of racing it, and a later failed save
+        // rolls back to this content once it is known to be saved.
+        if (save) {
+          save.chain = Promise.resolve(sent).then((res) => {
+            if (res && res.ok) this._prevContent[id] = content;
+          }).catch(() => {});
+        }
       }
     },
 
@@ -546,7 +548,26 @@ export function blockEditor(noteId, initialBlocks = []) {
       const save = this._saveState(blockId);
       clearTimeout(save.timer);
       save.timer = null;
-      return this._enqueueSave(blockId, content, editSeq).then(() => true, () => false);
+      return this._enqueueSave(blockId, content, editSeq)
+        .catch(() => {})
+        .then(() => this._settled(save))
+        .then(() => true, () => false);
+    },
+
+    // Wait until the newest save queued for this block has settled; reject if
+    // it failed. A superseded save resolves here rather than as soon as it is
+    // skipped, so a caller that reads the persisted content (a table's rows)
+    // does not read it before the newest save lands.
+    async _settled(save) {
+      for (;;) {
+        const chain = save.chain;
+        try {
+          await chain;
+          if (chain === save.chain) return;
+        } catch (err) {
+          if (chain === save.chain) throw err;
+        }
+      }
     },
 
     // Internal method that performs the actual API call. Throws on failure so
@@ -554,14 +575,12 @@ export function blockEditor(noteId, initialBlocks = []) {
     async _doUpdateBlockContent(blockId, content, save, editSeq) {
       this.error = null;
       try {
-        const body = JSON.stringify({ content });
+        // No keepalive here: its quota (64 KiB of body in flight, shared by
+        // every keepalive request on the page) rejects a large block outright.
         const res = await fetch(`/v1/note/block?id=${blockId}&noteId=${this.noteId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body,
-          // A save already sent is not resent on unload, so it must survive a
-          // navigation that starts while it is in flight.
-          keepalive: body.length <= KEEPALIVE_MAX_BODY
+          body: JSON.stringify({ content })
         });
 
         if (!res.ok) {

@@ -142,6 +142,11 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
         sends only the latest text, and an immediate save cancels the
         block's debounce timer;
       - a PUT response is applied only if no newer local edit exists;
+      - known limit: a save sent by the unload flush is not ordered against
+        a save for the same block already in flight, and an in-flight save
+        can be aborted by the navigation (ordinary saves do not use
+        keepalive, whose 64 KiB shared quota rejects large blocks). Closing
+        both needs server-side versioning of block content;
       - `updateBlockContent` resolves `true` once saved and `false` on
         failure, so the many fire-and-forget callers in `src/components/blocks/`
         raise no unhandled rejections; the queue itself rejects, which is what
