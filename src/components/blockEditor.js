@@ -399,14 +399,47 @@ export function blockEditor(noteId, initialBlocks = []) {
       const ids = new Set([...Object.keys(this.renderedText), ...Object.keys(next)]);
       for (const id of ids) {
         const html = next[id];
-        if (this.renderedText[id] === html) continue;
+        if (this.renderedText[id] === html) {
+          // What is shown is current again: a held update is obsolete.
+          delete this._deferredRender[id];
+          continue;
+        }
         const el = this._root?.querySelector(`[data-block-id="${id}"] [data-text-block-rendered]`);
         if (el && el.contains(document.activeElement)) {
-          this._deferRenderUntilBlur(id, html, el);
+          this._deferRenderUntilLeft(id, html, el);
         } else {
           this._setRenderedText(id, html);
         }
       }
+    },
+
+    /**
+     * Show a text block's rendering in `el`: its server HTML, or its saved text
+     * while it has none (not rendered yet, or the render failed). Writes only
+     * when that changes, so replacing the block object (a list reload, a state
+     * update) leaves a widget someone is typing in alone. Alpine markup in the
+     * HTML is initialized the way x-html does it, and no <script> runs: a
+     * block re-renders in place, and re-running scripts on each refresh
+     * duplicated listeners and let document.write replace the page.
+     */
+    paintRenderedText(el, html, text) {
+      const painted = html === undefined ? { text: text || '' } : { html };
+      if (el._painted && el._painted.html === painted.html && el._painted.text === painted.text) return;
+      el._painted = painted;
+      const Alpine = window.Alpine;
+      Alpine.mutateDom(() => {
+        for (const child of [...el.children]) Alpine.destroyTree(child);
+        if (painted.html === undefined) {
+          el.classList.add('whitespace-pre-wrap');
+          el.textContent = painted.text;
+          return;
+        }
+        el.classList.remove('whitespace-pre-wrap');
+        el.innerHTML = painted.html;
+        el._x_ignoreSelf = true;
+        Alpine.initTree(el);
+        delete el._x_ignoreSelf;
+      });
     },
 
     _setRenderedText(id, html) {
@@ -415,18 +448,24 @@ export function blockEditor(noteId, initialBlocks = []) {
       else this.renderedText[id] = html;
     },
 
-    _deferRenderUntilBlur(id, html, el) {
+    // Hold `html` for block `id` until the user is done with it: focus or a
+    // pointer press lands outside `el`. Not focusout: WebKit does not focus a
+    // clicked button, so pressing a widget's own Save blurs to <body> first,
+    // and applying then would replace the widget before its click handler ran.
+    _deferRenderUntilLeft(id, html, el) {
       this._deferredRender[id] = { html };
       if (el._renderDeferred) return;
       el._renderDeferred = true;
-      const onFocusOut = (event) => {
-        if (el.contains(event.relatedTarget)) return;
-        el.removeEventListener('focusout', onFocusOut);
+      const onAway = (event) => {
+        if (el.isConnected && el.contains(event.target)) return;
+        document.removeEventListener('focusin', onAway, true);
+        document.removeEventListener('pointerdown', onAway, true);
         el._renderDeferred = false;
         const pending = this._deferredRender[id];
         if (pending) this._setRenderedText(id, pending.html);
       };
-      el.addEventListener('focusout', onFocusOut);
+      document.addEventListener('focusin', onAway, true);
+      document.addEventListener('pointerdown', onAway, true);
     },
 
     _track(promise) {

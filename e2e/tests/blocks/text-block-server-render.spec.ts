@@ -192,4 +192,71 @@ test.describe('Text blocks render on the server', () => {
       }
     });
   }
+
+  test('replacing the block objects does not rebuild a block someone is typing in', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div x-data="{ draft: \'\' }"><input class="draft" x-model="draft"></div>',
+    })).id;
+    await page.goto(`/note?id=${noteId}`);
+    const draft = rendered(page, block).locator('input.draft');
+    await draft.fill('my draft');
+    // A list reload (and any per-block state update) replaces the block objects.
+    await page.evaluate(() => {
+      const root = document.querySelector('.block-editor') as any;
+      const editor = (window as any).Alpine.$data(root);
+      editor.blocks = editor.blocks.map((b: any) => ({ ...b }));
+    });
+    await page.waitForTimeout(200);
+    await expect(draft).toHaveValue('my draft');
+    await expect(draft).toBeFocused();
+  });
+
+  test('a held rendering waits for a click inside the block (WebKit does not focus buttons)', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div x-data="{ draft: \'\', saved: \'\' }"><input class="draft" x-model="draft"><button type="button" class="save" @click="saved = draft" x-text="saved || \'save\'"></button></div>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('textarea').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    const draft = rendered(page, block).locator('input.draft');
+    await draft.fill('kept');
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    // Simulate WebKit: the button press moves focus to <body>, not the button.
+    await rendered(page, block).locator('button.save').evaluate((button) => {
+      button.addEventListener('mousedown', (e) => { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); }, { once: true });
+    });
+    await rendered(page, block).locator('button.save').click();
+    await expect(rendered(page, block).locator('button.save')).toHaveText('kept');
+  });
+
+  test('a recovery identical to what is shown cancels a held failure fallback', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div x-data="{ draft: \'\' }"><input class="draft" x-model="draft"></div>',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let fail = true;
+    await page.route(/\/v1\/note\/renderedTextBlocks/, (route) =>
+      fail ? route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' }) : route.continue());
+    const draft = rendered(page, block).locator('input.draft');
+    await draft.fill('x');
+    // A render that fails while the widget has focus: its fallback is held.
+    await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('.block-editor')).refreshRenderedText());
+    await expect(page.locator('.block-editor [role="alert"]')).toContainText(/render/i);
+    fail = false;
+    await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('.block-editor')).refreshRenderedText());
+    await expect(page.locator('.block-editor [role="alert"]')).toBeHidden();
+    // Leaving the block must not apply the stale failure fallback.
+    await rendered(page, other).click();
+    await expect(rendered(page, block).locator('input.draft')).toHaveCount(1);
+  });
 });

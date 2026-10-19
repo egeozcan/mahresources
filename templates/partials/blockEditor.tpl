@@ -77,12 +77,8 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                {# x-html initializes Alpine markup in the rendering but runs no <script>: a block re-renders in place, and re-running its scripts on each refresh would duplicate listeners and let document.write replace the page. #}
-                                <div class="prose max-w-none font-sans" data-text-block-rendered>
-                                    <template x-if="renderedText[block.id] !== undefined"><div x-html="renderedText[block.id]"></div></template>
-                                    {# Not rendered yet, or the render failed: the saved text, as typed. #}
-                                    <template x-if="renderedText[block.id] === undefined"><div x-text="block.content?.text || ''" class="whitespace-pre-wrap"></div></template>
-                                </div>
+                                {# paintRenderedText, not x-html: x-html rebuilds whenever anything it reads changes, the block object included, which discards a widget someone is typing in. It initializes Alpine markup like x-html and, like it, runs no <script>. #}
+                                <div class="prose max-w-none font-sans" data-text-block-rendered x-effect="paintRenderedText($el, renderedText[block.id], block.content?.text)"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
