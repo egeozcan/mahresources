@@ -62,8 +62,10 @@ detail pages already render Descriptions as markdown through
    - No shortcode lint.
 7. **Preview on create forms** renders with no entity. Shortcodes then stay
    literal text, exactly as the shortcode tag does for a nil entity
-   (`shortcode_tag.go:38-42`), and a line above the preview reads "Shortcodes
-   render after saving." Markdown and mentions render normally.
+   (`shortcode_tag.go:38-42`). On the six shortcode-capable types (decision 6)
+   a line above the preview reads "Shortcodes render after saving." The other
+   five show no hint, since their shortcodes never render. Markdown and
+   mentions render normally.
 8. **Preview authorization.** The endpoint runs as the requesting user with the
    same role and scope limits as the detail page. When an entity id is given,
    it requires write access to that entity. A preview never shows more than
@@ -141,13 +143,25 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
         block's debounce timer;
       - a PUT response is applied only if no newer local edit exists;
       - the save functions return a promise that rejects on failure.
-    - **Leaving edit mode** awaits every block's save queue. If any save fails,
-      the note stays in edit mode with the error shown and nothing is
-      re-rendered.
+    - **Leaving edit mode** awaits every pending block mutation: content
+      saves and structural ones (add, delete, reorder; deleting the first
+      text block changes the Description through
+      `application_context/block_context.go:290-292,470-488`, while
+      `deleteBlock()` only removes the block locally,
+      `src/components/blockEditor.js:471-486`). If any fails, the note stays
+      in edit mode with the error shown and nothing is re-rendered. A
+      structural mutation that completes while not in edit mode triggers a
+      render of all text blocks.
     - **Reloads and renders are generation-guarded.** `loadBlocks()` and the
       render fetch each carry a generation number, and a response older than
-      the latest request is discarded. A `loadBlocks()` response does not
-      replace the text of a block that has unsaved local edits.
+      the latest request is discarded.
+    - **Per-block revisions.** Each block keeps a revision that increases on
+      every local edit and every completed save. `loadBlocks()` records each
+      block's revision when its GET starts, and its response replaces a
+      block's text only if that revision is unchanged when it arrives. This
+      covers a save completing while an older GET is in flight: the block is
+      no longer dirty, but its revision moved, so the stale text is not
+      applied.
     - Until the response arrives the blocks keep their previous rendering.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
@@ -171,7 +185,10 @@ Go API tests, run on SQLite and Postgres, for the per-entity
 `renderedTextBlocks`: a group-confined principal, a note outside the
 principal's subtree, a denied plugin shortcode, and read-only rendering of
 shortcode widgets for a principal that cannot write. Unit tests cover the
-block save queue (out-of-order responses, failure propagation).
+block save queue (out-of-order responses, failure propagation). An E2E test
+delays a `loadBlocks()` GET past a successful block save, checks the saved
+text survives, then reopens the editor and blurs to confirm the old text is
+not written back.
 
 - **Component.** A new Alpine component (working name `markdownEditor`), lazy
   loading CodeMirror like `src/components/codeEditor.js:79-83`, with the same
