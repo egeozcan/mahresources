@@ -250,6 +250,12 @@ GET past a block DELETE and checks the deleted block does not reappear.
 
 ## Follow-ups (not in this work)
 
+- **Known limit: shortcuts do not reach the page from inside the preview
+  frame.** With focus in the Preview iframe, Ctrl/Cmd+Enter and Escape do
+  nothing: the frame has no scripts and no same-origin access by design, so
+  its key events never reach the inline editor. Save and Cancel stay reachable
+  with Tab. Found in the slice 4 review.
+
 - **No test proves a denied plugin shortcode stays denied in a Description
   preview.** The preview reuses the template preview's plugin renderer
   (`previewPluginRenderer`), but the API test environment loads no plugin

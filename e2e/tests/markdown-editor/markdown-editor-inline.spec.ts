@@ -98,10 +98,16 @@ test.describe('Markdown editor in inline description editing', () => {
     page.on('pageerror', (e) => errors.push(e.message));
     const tag = await apiClient.createTag(`inline-early-${Date.now()}`, 'unchanged');
     await page.goto(`/tag?id=${tag.ID}`);
+    // markdownEditor adds a live region to <body> on init and removes it in
+    // destroy(); destroy() is also what stops the pending mount.
+    const liveRegions = () => page.locator('body > [role="status"][aria-live="polite"]').count();
+    const before = await liveRegions();
     await page.locator('[data-description-display]').first().dblclick();
     await expect(region(page).locator('textarea[name="description"]')).toBeVisible();
+    expect(await liveRegions()).toBe(before + 1);
     await page.keyboard.press('Escape');
     await expect(region(page)).toHaveCount(0);
+    expect(await liveRegions()).toBe(before);
     release();
     await page.waitForTimeout(500);
     await expect(page.locator('.cm-editor')).toHaveCount(0);
