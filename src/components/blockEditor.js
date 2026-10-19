@@ -193,17 +193,34 @@ export function blockEditor(noteId, initialBlocks = []) {
       this._flushPendingUpdates = () => this.flushPendingUpdates();
       window.addEventListener('pagehide', this._flushPendingUpdates);
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') this.flushPendingUpdates();
+        if (document.visibilityState === 'hidden') this.onPageHidden();
       });
+    },
+
+    // A hidden tab keeps running, so debounced saves go through the ordered
+    // queue rather than as independent keepalive PUTs that could land after a
+    // newer save.
+    onPageHidden() {
+      this._flushSaveTimers();
     },
 
     // Best-effort synchronous flush of pending optimistic edits using fetch
     // keepalive so an in-flight navigation does not abort the save. No awaiting
-    // and no UI update: this only runs as the page goes away.
+    // and no UI update: this only runs as the page goes away. Only an edit
+    // that was never sent goes out, so this cannot resend older content; queued
+    // saves for the block are superseded in case the page is restored.
     flushPendingUpdates() {
       const ids = Object.keys(this._pendingUpdates);
       for (const id of ids) {
         const content = this._pendingUpdates[id];
+        const save = this._saves[id];
+        if (save) {
+          if (save.deleted || save.sentEditSeq >= save.editSeq) continue;
+          clearTimeout(save.timer);
+          save.timer = null;
+          save.seq++;
+          save.sentEditSeq = save.editSeq;
+        }
         delete this._pendingUpdates[id];
         try {
           // window.fetch is CSRF-wrapped and preserves keepalive.
@@ -396,7 +413,7 @@ export function blockEditor(noteId, initialBlocks = []) {
       if (!this._saves[blockId]) {
         this._saves[blockId] = {
           timer: null, timerContent: null, timerEditSeq: 0,
-          chain: Promise.resolve(), seq: 0, editSeq: 0, deleted: false,
+          chain: Promise.resolve(), seq: 0, editSeq: 0, sentEditSeq: 0, deleted: false,
         };
       }
       return this._saves[blockId];
@@ -412,7 +429,7 @@ export function blockEditor(noteId, initialBlocks = []) {
 
     _flushSaveTimers() {
       for (const [blockId, save] of Object.entries(this._saves)) {
-        if (!save.timer) continue;
+        if (!save.timer || save.deleted) continue;
         clearTimeout(save.timer);
         save.timer = null;
         this._enqueueSave(Number(blockId), save.timerContent, save.timerEditSeq).catch(() => {});
@@ -426,6 +443,7 @@ export function blockEditor(noteId, initialBlocks = []) {
       const seq = ++save.seq;
       const run = save.chain.catch(() => {}).then(() => {
         if (save.seq !== seq || save.deleted) return;
+        save.sentEditSeq = Math.max(save.sentEditSeq, editSeq);
         return this._doUpdateBlockContent(blockId, content, save, editSeq);
       });
       save.chain = run;
@@ -500,6 +518,7 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         this.blocks[idx] = { ...this.blocks[idx], content };
       }
+      if (this._saves[blockId]?.deleted) return;
       const editSeq = this._recordEdit(blockId, content);
       const save = this._saveState(blockId);
       clearTimeout(save.timer);
@@ -514,6 +533,8 @@ export function blockEditor(noteId, initialBlocks = []) {
     // Immediate content update - use this for blur events or explicit saves.
     // Resolves true once saved, false if the save failed (the error is shown).
     updateBlockContent(blockId, content) {
+      // A late caller (a calendar's resource fetch, say) for a deleted block.
+      if (this._saves[blockId]?.deleted) return Promise.resolve(true);
       const editSeq = this._recordEdit(blockId, content);
       const save = this._saveState(blockId);
       clearTimeout(save.timer);
@@ -621,11 +642,12 @@ export function blockEditor(noteId, initialBlocks = []) {
         // a now-deleted block (which the server would reject).
         delete this._pendingUpdates[blockId];
         delete this._prevContent[blockId];
-        if (this._saves[blockId]) {
-          clearTimeout(this._saves[blockId].timer);
-          this._saves[blockId].deleted = true;
-        }
-        delete this._saves[blockId];
+        // Kept as a tombstone rather than deleted, so a late save for this
+        // block finds it and does nothing instead of recreating fresh state.
+        const save = this._saveState(blockId);
+        clearTimeout(save.timer);
+        save.timer = null;
+        save.deleted = true;
         this._failedSaves.delete(blockId);
         this.announce('Block deleted');
         // Move focus to a sensible neighbor (the block now occupying the deleted

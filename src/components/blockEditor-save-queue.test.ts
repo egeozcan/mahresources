@@ -184,4 +184,50 @@ describe('blockEditor save queue', () => {
     await leave;
     expect(ed.editMode).toBe(false);
   });
+
+  it('hiding the tab does not send a second, unordered PUT for an in-flight save', async () => {
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContent(7, { text: 'A' });
+    await flush();
+    expect(pending).toHaveLength(1);
+    ed.onPageHidden();
+    await flush();
+    expect(pending).toHaveLength(1);
+  });
+
+  it('unload sends nothing for content already sent', async () => {
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContent(7, { text: 'A' });
+    await flush();
+    ed.flushPendingUpdates();
+    expect(pending).toHaveLength(1);
+  });
+
+  it('unload sends the newest unsent edit', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.updateBlockContentDebounced(7, { text: 'typed' });
+    ed.flushPendingUpdates();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].body.content.text).toBe('typed');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(pending).toHaveLength(1);
+  });
+
+  it('a late save for a deleted block neither sends nor blocks Done', async () => {
+    const ed = editor([
+      { id: 7, type: 'calendar', content: {} },
+      { id: 8, type: 'text', content: { text: 'y' } },
+    ]);
+    ed.editMode = true;
+    const del = ed.deleteBlock(7);
+    await flush();
+    pending[0].resolve(jsonResponse(200, {}));
+    await del;
+    expect(await ed.updateBlockContent(7, { calendars: [] })).toBe(true);
+    await flush();
+    expect(pending).toHaveLength(1);
+    await ed.toggleEditMode();
+    expect(ed.editMode).toBe(false);
+  });
 });
