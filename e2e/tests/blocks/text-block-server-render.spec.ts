@@ -154,4 +154,42 @@ test.describe('Text blocks render on the server', () => {
     await expect(draft).toHaveValue('my draft');
     await expect(draft).toBeFocused();
   });
+
+  for (const outcome of ['a fresh token', 'a failed render'] as const) {
+    test(`${outcome} does not replace the block someone is typing in`, async ({ page, apiClient }) => {
+      // [reload] mints a new token on every render, so this block's HTML
+      // changes on each refresh even though its text does not.
+      const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+        text: '<div x-data="{ draft: \'\' }"><input class="draft" x-model="draft"></div>\n\n[reload label="Refresh"]',
+      })).id;
+      const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+      await page.goto(`/note?id=${noteId}`);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+        await held;
+        if (outcome === 'a failed render') {
+          await route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' });
+        } else {
+          await route.continue();
+        }
+      });
+      await page.getByText('Edit Blocks').click();
+      await card(page, other).locator('textarea').fill('other changed');
+      await page.getByRole('button', { name: 'Done' }).click();
+      const draft = rendered(page, block).locator('input.draft');
+      await draft.fill('my draft');
+      release();
+      await expect(rendered(page, other)).toHaveText('other changed');
+      await expect(draft).toHaveValue('my draft');
+      await expect(draft).toBeFocused();
+      // Held, not dropped: once focus leaves the block, the update lands.
+      await page.locator('h1').first().click();
+      if (outcome === 'a failed render') {
+        await expect(rendered(page, block)).toContainText('[reload label="Refresh"]');
+      } else {
+        await expect(rendered(page, block).locator('input.draft')).toHaveValue('');
+      }
+    });
+  }
 });

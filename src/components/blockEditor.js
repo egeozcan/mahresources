@@ -46,6 +46,9 @@ export function blockEditor(noteId, initialBlocks = []) {
     // The message a failed render put in `error`, so a later successful render
     // clears it and nothing else.
     _renderError: null,
+    // New renderings held back for blocks that had focus when they arrived,
+    // by block id; applied when focus leaves the block.
+    _deferredRender: {},
     _blockTypesLoaded: false,
 
     async init() {
@@ -375,24 +378,55 @@ export function blockEditor(noteId, initialBlocks = []) {
       } catch (err) {
         if (generation !== this._renderGeneration) return;
         console.error('Error rendering text blocks:', err);
-        this.renderedText = {};
+        // Every block falls back to its saved text: a stale rendering would
+        // claim to show text it does not.
+        this._applyRenderedText({});
         this._renderError = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
         this.error = this._renderError;
       }
     },
 
-    // Update only the blocks whose rendering changed. x-html rebuilds its
-    // element whenever its value is assigned, so replacing the whole map would
-    // rebuild every block and discard whatever someone was doing in one: a
-    // draft in an inline [meta] editor, and the focus with it. Assigning an
-    // unchanged value to a reactive key triggers nothing.
+    // Update the blocks whose rendering changed. x-html rebuilds its element
+    // whenever its value is assigned, discarding whatever someone was doing in
+    // it (a draft in an inline [meta] editor, and the focus with it), so:
+    //   - an unchanged value is not assigned (a reactive key then triggers
+    //     nothing);
+    //   - a block that has focus keeps its current rendering until focus
+    //     leaves it. Comparing HTML is not enough: [reload], [lazy] and
+    //     [details] mint a fresh token on every render.
+    // `next` lacking a block means "no rendering": it shows its saved text.
     _applyRenderedText(next) {
-      for (const id of Object.keys(this.renderedText)) {
-        if (!(id in next)) delete this.renderedText[id];
+      const ids = new Set([...Object.keys(this.renderedText), ...Object.keys(next)]);
+      for (const id of ids) {
+        const html = next[id];
+        if (this.renderedText[id] === html) continue;
+        const el = this._root?.querySelector(`[data-block-id="${id}"] [data-text-block-rendered]`);
+        if (el && el.contains(document.activeElement)) {
+          this._deferRenderUntilBlur(id, html, el);
+        } else {
+          this._setRenderedText(id, html);
+        }
       }
-      for (const [id, html] of Object.entries(next)) {
-        if (this.renderedText[id] !== html) this.renderedText[id] = html;
-      }
+    },
+
+    _setRenderedText(id, html) {
+      delete this._deferredRender[id];
+      if (html === undefined) delete this.renderedText[id];
+      else this.renderedText[id] = html;
+    },
+
+    _deferRenderUntilBlur(id, html, el) {
+      this._deferredRender[id] = { html };
+      if (el._renderDeferred) return;
+      el._renderDeferred = true;
+      const onFocusOut = (event) => {
+        if (el.contains(event.relatedTarget)) return;
+        el.removeEventListener('focusout', onFocusOut);
+        el._renderDeferred = false;
+        const pending = this._deferredRender[id];
+        if (pending) this._setRenderedText(id, pending.html);
+      };
+      el.addEventListener('focusout', onFocusOut);
     },
 
     _track(promise) {
