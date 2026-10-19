@@ -162,6 +162,11 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
       covers a save completing while an older GET is in flight: the block is
       no longer dirty, but its revision moved, so the stale text is not
       applied.
+    - **List membership.** Revisions guard text, not which blocks exist. When
+      a structural mutation (add, delete, reorder) completes, any
+      `loadBlocks()` GET started before it is discarded and a fresh one is
+      issued, so a GET that snapshotted a since-deleted block cannot bring it
+      back.
     - Until the response arrives the blocks keep their previous rendering.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
@@ -188,7 +193,8 @@ shortcode widgets for a principal that cannot write. Unit tests cover the
 block save queue (out-of-order responses, failure propagation). An E2E test
 delays a `loadBlocks()` GET past a successful block save, checks the saved
 text survives, then reopens the editor and blurs to confirm the old text is
-not written back.
+not written back. A second E2E test delays a reorder-triggered `loadBlocks()`
+GET past a block DELETE and checks the deleted block does not reappear.
 
 - **Component.** A new Alpine component (working name `markdownEditor`), lazy
   loading CodeMirror like `src/components/codeEditor.js:79-83`, with the same
