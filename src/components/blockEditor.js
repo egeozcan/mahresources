@@ -49,6 +49,13 @@ export function blockEditor(noteId, initialBlocks = []) {
     // New renderings held back for blocks that had focus when they arrived,
     // by block id; applied when focus leaves the block.
     _deferredRender: {},
+    // Interactions inside a rendered block (a click, an input, a change), by
+    // block id: the sequence number of the latest. A rendering requested
+    // before the latest interaction may predate what it saved (an inline
+    // [meta] edit), so it is not applied to that block; a fresh one is asked
+    // for instead.
+    _lastInteraction: {},
+    _interactionSeq: 0,
     _blockTypesLoaded: false,
 
     async init() {
@@ -68,6 +75,12 @@ export function blockEditor(noteId, initialBlocks = []) {
       // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
       this._root = this.$el;
       this.renderedText = this._readRenderedText(this._root.querySelector('[data-rendered-text-blocks]'));
+      const noteInteraction = (event) => {
+        const rendered = event.target.closest?.('[data-text-block-rendered]');
+        const card = rendered && rendered.closest('[data-block-id]');
+        if (card) this._lastInteraction[card.dataset.blockId] = ++this._interactionSeq;
+      };
+      for (const type of ['click', 'input', 'change']) this._root.addEventListener(type, noteInteraction, true);
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -367,12 +380,22 @@ export function blockEditor(noteId, initialBlocks = []) {
     // the blocks show their saved text rather than a stale rendering, and say so.
     async refreshRenderedText() {
       const generation = ++this._renderGeneration;
+      const interactionsAtStart = this._interactionSeq;
       try {
         const res = await fetch(`/v1/note/renderedTextBlocks?noteId=${this.noteId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
-        this._applyRenderedText(this._readRenderedText(doc));
+        const next = this._readRenderedText(doc);
+        let stale = false;
+        for (const [id, seq] of Object.entries(this._lastInteraction)) {
+          if (seq > interactionsAtStart && id in next) {
+            next[id] = this.renderedText[id];
+            stale = true;
+          }
+        }
+        this._applyRenderedText(next);
+        if (stale) this.refreshRenderedText();
         if (this.error === this._renderError) this.error = null;
         this._renderError = null;
       } catch (err) {

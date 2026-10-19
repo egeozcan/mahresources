@@ -114,8 +114,9 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
         confinement.
       - It renders all blocks inside one render context, built the way the
         first `process_shortcodes` tag builds it for a page
-        (`shortcode_tag.go:53-68`): one MRQL cache, query budget and deadline
-        shared across the batch, not one per block. It applies
+        (`shortcode_tag.go:53-68`): one MRQL cache and query budget shared
+        across the batch, not one per block. As on the page, each query keeps
+        its own timeout; there is no batch-wide deadline. It applies
         `ForceReadOnly` for principals that cannot write and the
         plugin-access check (`shortcode_tag.go:74-95`). It does not use the
         preview's 5-row MRQL cap (`template_preview_api_handlers.go:20`).

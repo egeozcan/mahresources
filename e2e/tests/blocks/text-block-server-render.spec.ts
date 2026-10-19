@@ -259,4 +259,34 @@ test.describe('Text blocks render on the server', () => {
     await rendered(page, other).click();
     await expect(rendered(page, block).locator('input.draft')).toHaveCount(1);
   });
+
+  test('a widget save during a pending render is not undone by the older rendering', async ({ page, apiClient }) => {
+    // The button stands in for an inline [meta] editor's Save: it changes
+    // server state the block displays, and shows the new value at once.
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: `<span class="name">[property path="Name"]</span> <button type="button" class="rename" x-on:click="fetch('/v1/note/editName?id=${noteId}', { method: 'POST', body: new URLSearchParams({ name: 'Renamed B' }) }).then(() => { $el.previousElementSibling.textContent = 'Renamed B'; })">rename</button>\n\n[reload label="Refresh"]`,
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let first = true;
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      if (!first) return route.continue();
+      first = false;
+      const resp = await route.fetch(); // rendered before the rename
+      await held;
+      await route.fulfill({ response: resp });
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('textarea').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await rendered(page, block).locator('button.rename').click();
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed B');
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.locator('h1').first().click();
+    await page.waitForTimeout(500);
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed B');
+  });
 });
