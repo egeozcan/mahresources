@@ -78,7 +78,9 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       // CodeMirror loaded is part of the document.
       const doc = source.value;
       const hadFocus = document.activeElement === source;
-      const caret = source.selectionStart;
+      const selStart = source.selectionStart;
+      const selEnd = source.selectionEnd;
+      const backward = source.selectionDirection === 'backward';
 
       const extensions = [
         history(),
@@ -108,7 +110,8 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
           // The same metrics as the textarea underneath (createFormMarkdownInput.tpl).
           '.cm-scroller': { overflow: 'auto', fontFamily: 'inherit', lineHeight: '1.5', minHeight: MIN_HEIGHT },
           '.cm-content': { padding: '0.5rem 0.75rem' },
-          '&.cm-focused': { outline: 'none' },
+          // Focus: the global .cm-editor.cm-focused ring (index.css), whose
+          // transparent outline still shows in forced-colors mode.
         }),
       ];
       if (source.placeholder) extensions.push(placeholder(source.placeholder));
@@ -128,8 +131,9 @@ export function markdownEditor({ mentionTypes = DEFAULT_MENTION_TYPES, shortcode
       source.hidden = true;
       this.ready = true;
       if (hadFocus) {
-        const pos = Math.min(caret ?? doc.length, doc.length);
-        this.view.dispatch({ selection: { anchor: pos } });
+        const clamp = (n) => Math.min(n ?? doc.length, doc.length);
+        const [from, to] = [clamp(selStart), clamp(selEnd)];
+        this.view.dispatch({ selection: backward ? { anchor: to, head: from } : { anchor: from, head: to } });
         this.view.focus();
       }
     },

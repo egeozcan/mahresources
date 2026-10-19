@@ -109,6 +109,11 @@ test.describe('Markdown editor on forms', () => {
   });
 
   test('Control+K opens search without deleting text (macOS Emacs binding)', async ({ page }) => {
+    // CodeMirror reads the platform when it loads; claim macOS so the Emacs
+    // binding is live on any CI host.
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' });
+    });
     await page.goto('/tag/new');
     await editor(page).fill('important text');
     await editor(page).press('Home');
@@ -211,6 +216,25 @@ test.describe('Markdown editor on forms', () => {
     // Typing carries on into the editor: mounting kept the focus and caret.
     await page.keyboard.type(' more');
     await expect(editor(page)).toHaveText('typed early more');
+  });
+
+  test('a selection made before the editor loads survives the mount', async ({ page, request }) => {
+    const eager = await eagerChunks(request);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/public\/dist\/assets\//, async (route) => {
+      if (!eager.has(chunkName(route.request().url()))) await held;
+      await route.continue();
+    });
+    await page.goto('/tag/new');
+    const source = field(page).locator('textarea[name="Description"]');
+    await source.fill('abcdef');
+    await source.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 4));
+    await expect(editor(page)).toHaveCount(0);
+    release();
+    await expect(editor(page)).toBeVisible();
+    await page.keyboard.type('X');
+    await expect(editor(page)).toHaveText('abXef');
   });
 
   test('if the editor fails to load, the textarea still works', async ({ page, apiClient, request }) => {

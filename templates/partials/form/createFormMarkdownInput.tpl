@@ -20,7 +20,7 @@
         >{{ value }}</textarea>
         {# Shown by markdownEditor.js itself, in the same task that hides the textarea and moves focus. #}
         <div x-ref="mdContainer" hidden data-markdown-editor
-             class="border border-stone-300 rounded-md overflow-hidden max-w-full bg-white focus-within:ring-2 focus-within:ring-amber-600 focus-within:border-amber-600"></div>
+             class="border border-stone-300 rounded-md overflow-hidden max-w-full bg-white"></div>
         {% if hint %}<p class="mt-2 text-sm text-stone-500 font-sans">{{ hint }}</p>{% endif %}
     </div>
 </div>
