@@ -142,7 +142,10 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
         sends only the latest text, and an immediate save cancels the
         block's debounce timer;
       - a PUT response is applied only if no newer local edit exists;
-      - the save functions return a promise that rejects on failure.
+      - `updateBlockContent` resolves `true` once saved and `false` on
+        failure, so the many fire-and-forget callers in `src/components/blocks/`
+        raise no unhandled rejections; the queue itself rejects, which is what
+        leaving edit mode sees.
     - **Leaving edit mode** awaits every pending block mutation: content
       saves and structural ones (add, delete, reorder; deleting the first
       text block changes the Description through

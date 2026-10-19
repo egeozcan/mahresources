@@ -2,21 +2,9 @@
 const MIN_CHAR = 'a'.charCodeAt(0); // 97
 const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
-// Simple debounce utility
-function debounce(fn, delay) {
-  let timeoutId;
-  return function (...args) {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn.apply(this, args), delay);
-  };
-}
+const SAVE_DEBOUNCE_MS = 500;
 
 export function blockEditor(noteId, initialBlocks = []) {
-  // Create debounced update function outside the return object
-  const debouncedUpdateFn = debounce(async function (blockId, content) {
-    await this._doUpdateBlockContent(blockId, content);
-  }, 500);
-
   return {
     noteId,
     blocks: initialBlocks,
@@ -27,6 +15,27 @@ export function blockEditor(noteId, initialBlocks = []) {
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI
     _prevContent: {}, // Snapshot of pre-edit content per block for rollback on save failure
+    // Per-block save queue: { timer, timerContent, chain, latest }. One PUT in
+    // flight per block, and a queued save sends only the newest text. The old
+    // single debounce was shared by every block, so typing in one block
+    // cancelled another's pending save, and nothing stopped two PUTs for the
+    // same block from landing out of order.
+    _saves: {},
+    // Per-block revision: bumped on every local edit and every completed save.
+    // loadBlocks() compares it to the value when its GET started, so a list
+    // snapshotted before a save cannot put the old text back.
+    _revisions: {},
+    // Bumped when an add, delete or reorder completes. A loadBlocks() GET that
+    // started before one is discarded and reissued, so it cannot resurrect a
+    // deleted block.
+    _structuralEpoch: 0,
+    _listGeneration: 0,
+    // Saves and structural mutations still in flight; leaving edit mode waits
+    // for all of them.
+    _inFlight: new Set(),
+    // Blocks whose most recent save failed; cleared by a later successful save.
+    _failedSaves: new Set(),
+    _leavingEditMode: false,
     _blockTypesLoaded: false,
 
     // Simple markdown-like rendering: escapes HTML, converts newlines to <br>, and handles basic formatting
@@ -311,6 +320,9 @@ export function blockEditor(noteId, initialBlocks = []) {
     },
 
     async loadBlocks() {
+      const generation = ++this._listGeneration;
+      const epoch = this._structuralEpoch;
+      const revisionsAtStart = { ...this._revisions };
       this.loading = true;
       this.error = null;
       try {
@@ -318,17 +330,87 @@ export function blockEditor(noteId, initialBlocks = []) {
         if (!res.ok) {
           throw new Error(`Failed to load blocks: ${res.status}`);
         }
-        this.blocks = await res.json();
+        const loaded = await res.json();
+        if (generation !== this._listGeneration) return;
+        if (epoch !== this._structuralEpoch) {
+          // An add, delete or reorder completed after this snapshot was taken.
+          return this.loadBlocks();
+        }
+        this.blocks = loaded.map((block) => {
+          const local = this.blocks.find((b) => b.id === block.id);
+          const moved = (this._revisions[block.id] || 0) !== (revisionsAtStart[block.id] || 0);
+          return local && moved ? { ...block, content: local.content } : block;
+        });
       } catch (err) {
+        if (generation !== this._listGeneration) return;
         this.error = err.message;
         console.error('Error loading blocks:', err);
       } finally {
-        this.loading = false;
+        if (generation === this._listGeneration) this.loading = false;
       }
     },
 
-    toggleEditMode() {
-      this.editMode = !this.editMode;
+    async toggleEditMode() {
+      if (!this.editMode) {
+        this.editMode = true;
+        return;
+      }
+      if (this._leavingEditMode) return;
+      this._leavingEditMode = true;
+      try {
+        // Send any save still waiting on its debounce timer now.
+        for (const [blockId, save] of Object.entries(this._saves)) {
+          if (save.timer) {
+            clearTimeout(save.timer);
+            save.timer = null;
+            this._enqueueSave(Number(blockId), save.timerContent).catch(() => {});
+          }
+        }
+        let ok = true;
+        while (this._inFlight.size) {
+          const results = await Promise.allSettled([...this._inFlight]);
+          if (results.some((r) => r.status === 'rejected')) ok = false;
+        }
+        // The error from the failed save is already showing.
+        if (!ok || this._failedSaves.size) return;
+        this.editMode = false;
+      } finally {
+        this._leavingEditMode = false;
+      }
+    },
+
+    _track(promise) {
+      this._inFlight.add(promise);
+      const done = () => this._inFlight.delete(promise);
+      promise.then(done, done);
+      return promise;
+    },
+
+    _bumpRevision(blockId) {
+      this._revisions[blockId] = (this._revisions[blockId] || 0) + 1;
+    },
+
+    _saveState(blockId) {
+      if (!this._saves[blockId]) {
+        this._saves[blockId] = { timer: null, timerContent: null, chain: Promise.resolve(), seq: 0 };
+      }
+      return this._saves[blockId];
+    },
+
+    // Queue a PUT behind this block's in-flight one. A save superseded while
+    // it waits resolves without sending; the newer one carries its text.
+    // Superseded is a sequence number, not `latest !== content`: this state
+    // sits behind Alpine's reactive proxy, so a stored object reads back as a
+    // proxy and never compares equal to the raw one.
+    _enqueueSave(blockId, content) {
+      const save = this._saveState(blockId);
+      const seq = ++save.seq;
+      const run = save.chain.catch(() => {}).then(() => {
+        if (save.seq !== seq) return;
+        return this._doUpdateBlockContent(blockId, content);
+      });
+      save.chain = run;
+      return this._track(run);
     },
 
     // Announce a status message to screen readers via the polite live region.
@@ -354,7 +436,11 @@ export function blockEditor(noteId, initialBlocks = []) {
       });
     },
 
-    async addBlock(type, afterPosition = null) {
+    addBlock(type, afterPosition = null) {
+      return this._track(this._addBlock(type, afterPosition)).catch(() => {});
+    },
+
+    async _addBlock(type, afterPosition) {
       this.error = null;
       try {
         const position = this.calculatePosition(afterPosition);
@@ -373,11 +459,13 @@ export function blockEditor(noteId, initialBlocks = []) {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.error || `Failed to add block: ${res.status}`);
         }
+        this._structuralEpoch++;
         await this.loadBlocks();
         this.announce(this._formatLabel(type) + ' block added');
       } catch (err) {
         this.error = err.message;
         console.error('Error adding block:', err);
+        throw err;
       }
     },
 
@@ -393,20 +481,31 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         this.blocks[idx] = { ...this.blocks[idx], content };
       }
+      this._bumpRevision(blockId);
       this._pendingUpdates[blockId] = content;
-      debouncedUpdateFn.call(this, blockId, content);
+      const save = this._saveState(blockId);
+      clearTimeout(save.timer);
+      save.timerContent = content;
+      save.timer = setTimeout(() => {
+        save.timer = null;
+        this._enqueueSave(blockId, content).catch(() => {});
+      }, SAVE_DEBOUNCE_MS);
     },
 
-    // Immediate content update - use this for blur events or explicit saves
-    async updateBlockContent(blockId, content) {
-      // Cancel any pending debounced update for this block
-      delete this._pendingUpdates[blockId];
-      await this._doUpdateBlockContent(blockId, content);
+    // Immediate content update - use this for blur events or explicit saves.
+    // Resolves true once saved, false if the save failed (the error is shown).
+    updateBlockContent(blockId, content) {
+      const save = this._saveState(blockId);
+      clearTimeout(save.timer);
+      save.timer = null;
+      return this._enqueueSave(blockId, content).then(() => true, () => false);
     },
 
-    // Internal method that performs the actual API call
+    // Internal method that performs the actual API call. Throws on failure so
+    // the save queue and leaving edit mode can see it.
     async _doUpdateBlockContent(blockId, content) {
       this.error = null;
+      const revisionAtSend = this._revisions[blockId] || 0;
       try {
         const res = await fetch(`/v1/note/block?id=${blockId}&noteId=${this.noteId}`, {
           method: 'PUT',
@@ -419,26 +518,35 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to update block: ${res.status}`);
         }
         const updated = await res.json();
+        const newerLocalEdit = (this._revisions[blockId] || 0) !== revisionAtSend;
         const idx = this.blocks.findIndex(b => b.id === blockId);
-        if (idx >= 0) {
+        if (idx >= 0 && !newerLocalEdit) {
           // Field-scoped merge: take the server's content but preserve any
           // locally-newer state so a concurrent state PATCH is not clobbered.
           this.blocks[idx] = { ...this.blocks[idx], content: updated.content, updatedAt: updated.updatedAt };
         }
-        delete this._prevContent[blockId];
+        if (!newerLocalEdit) delete this._prevContent[blockId];
+        this._failedSaves.delete(blockId);
+        this._bumpRevision(blockId);
         // Clear the pending entry unless a newer edit superseded this save, so
         // the unload flush doesn't redundantly re-PUT already-persisted content.
         if (this._pendingUpdates[blockId] === content) delete this._pendingUpdates[blockId];
       } catch (err) {
         // Roll back the optimistic content so the UI reflects server truth and
-        // the user is not misled into thinking an unsaved edit persisted.
+        // the user is not misled into thinking an unsaved edit persisted. A
+        // newer local edit is left alone: its own save is still to come.
+        const newerLocalEdit = (this._revisions[blockId] || 0) !== revisionAtSend;
         const idx = this.blocks.findIndex(b => b.id === blockId);
-        if (idx >= 0 && Object.prototype.hasOwnProperty.call(this._prevContent, blockId)) {
-          this.blocks[idx] = { ...this.blocks[idx], content: this._prevContent[blockId] };
+        if (!newerLocalEdit) {
+          if (idx >= 0 && Object.prototype.hasOwnProperty.call(this._prevContent, blockId)) {
+            this.blocks[idx] = { ...this.blocks[idx], content: this._prevContent[blockId] };
+          }
+          delete this._prevContent[blockId];
         }
-        delete this._prevContent[blockId];
+        this._failedSaves.add(blockId);
         this.error = err.message;
         console.error('Error updating block content:', err);
+        throw err;
       }
     },
 
@@ -468,7 +576,11 @@ export function blockEditor(noteId, initialBlocks = []) {
       }
     },
 
-    async deleteBlock(blockId) {
+    deleteBlock(blockId) {
+      return this._track(this._deleteBlock(blockId)).catch(() => {});
+    },
+
+    async _deleteBlock(blockId) {
       this.error = null;
       const removedIdx = this.blocks.findIndex(b => b.id === blockId);
       try {
@@ -480,11 +592,15 @@ export function blockEditor(noteId, initialBlocks = []) {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.error || `Failed to delete block: ${res.status}`);
         }
+        this._structuralEpoch++;
         this.blocks = this.blocks.filter(b => b.id !== blockId);
         // Drop any pending optimistic state so the unload flush can never re-PUT
         // a now-deleted block (which the server would reject).
         delete this._pendingUpdates[blockId];
         delete this._prevContent[blockId];
+        if (this._saves[blockId]) clearTimeout(this._saves[blockId].timer);
+        delete this._saves[blockId];
+        this._failedSaves.delete(blockId);
         this.announce('Block deleted');
         // Move focus to a sensible neighbor (the block now occupying the deleted
         // slot, else the add-block trigger) so keyboard users are not stranded.
@@ -506,10 +622,15 @@ export function blockEditor(noteId, initialBlocks = []) {
       } catch (err) {
         this.error = err.message;
         console.error('Error deleting block:', err);
+        throw err;
       }
     },
 
-    async moveBlock(blockId, direction) {
+    moveBlock(blockId, direction) {
+      return this._track(this._moveBlock(blockId, direction)).catch(() => {});
+    },
+
+    async _moveBlock(blockId, direction) {
       const idx = this.blocks.findIndex(b => b.id === blockId);
       if (idx < 0) return;
 
@@ -535,6 +656,7 @@ export function blockEditor(noteId, initialBlocks = []) {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.error || `Failed to reorder blocks: ${res.status}`);
         }
+        this._structuralEpoch++;
         await this.loadBlocks();
         // Announce the destination position (not the pre-move slot) and restore
         // focus to the moved block so repeated reordering stays keyboard-operable.
@@ -543,6 +665,7 @@ export function blockEditor(noteId, initialBlocks = []) {
       } catch (err) {
         this.error = err.message;
         console.error('Error moving block:', err);
+        throw err;
       }
     },
 
