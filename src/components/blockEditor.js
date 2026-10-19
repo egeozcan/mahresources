@@ -358,16 +358,12 @@ export function blockEditor(noteId, initialBlocks = []) {
       if (this._leavingEditMode) return;
       this._leavingEditMode = true;
       try {
-        // Send any save still waiting on its debounce timer now.
-        for (const [blockId, save] of Object.entries(this._saves)) {
-          if (save.timer) {
-            clearTimeout(save.timer);
-            save.timer = null;
-            this._enqueueSave(Number(blockId), save.timerContent).catch(() => {});
-          }
-        }
+        // Typing can continue while this waits, so send debounced saves and
+        // wait again until nothing is left either queued or in flight.
         let ok = true;
-        while (this._inFlight.size) {
+        for (;;) {
+          this._flushSaveTimers();
+          if (!this._inFlight.size) break;
           const results = await Promise.allSettled([...this._inFlight]);
           if (results.some((r) => r.status === 'rejected')) ok = false;
         }
@@ -390,24 +386,47 @@ export function blockEditor(noteId, initialBlocks = []) {
       this._revisions[blockId] = (this._revisions[blockId] || 0) + 1;
     },
 
+    // Per-block save state. `seq` counts queued saves (a queued save that is
+    // no longer the newest skips sending); `editSeq` counts local edits (a
+    // response is applied only if no edit was made after its content). Both
+    // are counters, not `latest !== content`: this state sits behind Alpine's
+    // reactive proxy, so a stored object reads back as a proxy and never
+    // compares equal to the raw one.
     _saveState(blockId) {
       if (!this._saves[blockId]) {
-        this._saves[blockId] = { timer: null, timerContent: null, chain: Promise.resolve(), seq: 0 };
+        this._saves[blockId] = {
+          timer: null, timerContent: null, timerEditSeq: 0,
+          chain: Promise.resolve(), seq: 0, editSeq: 0, deleted: false,
+        };
       }
       return this._saves[blockId];
     },
 
+    // Record a local edit and return its edit sequence number.
+    _recordEdit(blockId, content) {
+      const save = this._saveState(blockId);
+      this._bumpRevision(blockId);
+      this._pendingUpdates[blockId] = content;
+      return ++save.editSeq;
+    },
+
+    _flushSaveTimers() {
+      for (const [blockId, save] of Object.entries(this._saves)) {
+        if (!save.timer) continue;
+        clearTimeout(save.timer);
+        save.timer = null;
+        this._enqueueSave(Number(blockId), save.timerContent, save.timerEditSeq).catch(() => {});
+      }
+    },
+
     // Queue a PUT behind this block's in-flight one. A save superseded while
     // it waits resolves without sending; the newer one carries its text.
-    // Superseded is a sequence number, not `latest !== content`: this state
-    // sits behind Alpine's reactive proxy, so a stored object reads back as a
-    // proxy and never compares equal to the raw one.
-    _enqueueSave(blockId, content) {
+    _enqueueSave(blockId, content, editSeq) {
       const save = this._saveState(blockId);
       const seq = ++save.seq;
       const run = save.chain.catch(() => {}).then(() => {
-        if (save.seq !== seq) return;
-        return this._doUpdateBlockContent(blockId, content);
+        if (save.seq !== seq || save.deleted) return;
+        return this._doUpdateBlockContent(blockId, content, save, editSeq);
       });
       save.chain = run;
       return this._track(run);
@@ -481,31 +500,31 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         this.blocks[idx] = { ...this.blocks[idx], content };
       }
-      this._bumpRevision(blockId);
-      this._pendingUpdates[blockId] = content;
+      const editSeq = this._recordEdit(blockId, content);
       const save = this._saveState(blockId);
       clearTimeout(save.timer);
       save.timerContent = content;
+      save.timerEditSeq = editSeq;
       save.timer = setTimeout(() => {
         save.timer = null;
-        this._enqueueSave(blockId, content).catch(() => {});
+        this._enqueueSave(blockId, content, editSeq).catch(() => {});
       }, SAVE_DEBOUNCE_MS);
     },
 
     // Immediate content update - use this for blur events or explicit saves.
     // Resolves true once saved, false if the save failed (the error is shown).
     updateBlockContent(blockId, content) {
+      const editSeq = this._recordEdit(blockId, content);
       const save = this._saveState(blockId);
       clearTimeout(save.timer);
       save.timer = null;
-      return this._enqueueSave(blockId, content).then(() => true, () => false);
+      return this._enqueueSave(blockId, content, editSeq).then(() => true, () => false);
     },
 
     // Internal method that performs the actual API call. Throws on failure so
     // the save queue and leaving edit mode can see it.
-    async _doUpdateBlockContent(blockId, content) {
+    async _doUpdateBlockContent(blockId, content, save, editSeq) {
       this.error = null;
-      const revisionAtSend = this._revisions[blockId] || 0;
       try {
         const res = await fetch(`/v1/note/block?id=${blockId}&noteId=${this.noteId}`, {
           method: 'PUT',
@@ -518,24 +537,28 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to update block: ${res.status}`);
         }
         const updated = await res.json();
-        const newerLocalEdit = (this._revisions[blockId] || 0) !== revisionAtSend;
+        const newerLocalEdit = save.editSeq !== editSeq;
         const idx = this.blocks.findIndex(b => b.id === blockId);
         if (idx >= 0 && !newerLocalEdit) {
           // Field-scoped merge: take the server's content but preserve any
           // locally-newer state so a concurrent state PATCH is not clobbered.
           this.blocks[idx] = { ...this.blocks[idx], content: updated.content, updatedAt: updated.updatedAt };
         }
-        if (!newerLocalEdit) delete this._prevContent[blockId];
+        // Clear the pending entry unless a newer edit superseded this save, so
+        // the unload flush cannot re-PUT content older than what is saved.
+        if (!newerLocalEdit) {
+          delete this._prevContent[blockId];
+          delete this._pendingUpdates[blockId];
+        }
         this._failedSaves.delete(blockId);
         this._bumpRevision(blockId);
-        // Clear the pending entry unless a newer edit superseded this save, so
-        // the unload flush doesn't redundantly re-PUT already-persisted content.
-        if (this._pendingUpdates[blockId] === content) delete this._pendingUpdates[blockId];
       } catch (err) {
+        // The block was deleted meanwhile: there is nothing left to save to.
+        if (save.deleted) return;
         // Roll back the optimistic content so the UI reflects server truth and
         // the user is not misled into thinking an unsaved edit persisted. A
         // newer local edit is left alone: its own save is still to come.
-        const newerLocalEdit = (this._revisions[blockId] || 0) !== revisionAtSend;
+        const newerLocalEdit = save.editSeq !== editSeq;
         const idx = this.blocks.findIndex(b => b.id === blockId);
         if (!newerLocalEdit) {
           if (idx >= 0 && Object.prototype.hasOwnProperty.call(this._prevContent, blockId)) {
@@ -598,7 +621,10 @@ export function blockEditor(noteId, initialBlocks = []) {
         // a now-deleted block (which the server would reject).
         delete this._pendingUpdates[blockId];
         delete this._prevContent[blockId];
-        if (this._saves[blockId]) clearTimeout(this._saves[blockId].timer);
+        if (this._saves[blockId]) {
+          clearTimeout(this._saves[blockId].timer);
+          this._saves[blockId].deleted = true;
+        }
         delete this._saves[blockId];
         this._failedSaves.delete(blockId);
         this.announce('Block deleted');

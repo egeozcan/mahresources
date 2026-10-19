@@ -115,4 +115,73 @@ describe('blockEditor save queue', () => {
     await leave;
     expect(ed.editMode).toBe(false);
   });
+
+  it('does not write an already-saved older value back on unload', async () => {
+    const ed = editor([{ id: 7, type: 'heading', content: { text: 'g', level: 2 } }]);
+    // Typing (debounced), then blur (immediate) with an equal but new object,
+    // as blockHeading does.
+    ed.updateBlockContentDebounced(7, { text: 'h', level: 2 });
+    const one = ed.updateBlockContent(7, { text: 'h', level: 2 });
+    await flush();
+    pending[0].resolve(jsonResponse(200, { content: { text: 'h', level: 2 } }));
+    await one;
+    const two = ed.updateBlockContent(7, { text: 'h', level: 3 });
+    await flush();
+    pending[1].resolve(jsonResponse(200, { content: { text: 'h', level: 3 } }));
+    await two;
+    ed.flushPendingUpdates();
+    expect(pending).toHaveLength(2);
+  });
+
+  it('does not apply a queued save response over an edit made before it was sent', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    const a = ed.updateBlockContent(7, { text: 'A' });
+    await vi.advanceTimersByTimeAsync(0);
+    const b = ed.updateBlockContent(7, { text: 'B' }); // queued behind A
+    ed.updateBlockContentDebounced(7, { text: 'C' }); // its timer is still pending
+    pending[0].resolve(jsonResponse(200, { content: { text: 'A' } }));
+    await a;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pending[1].body.content.text).toBe('B');
+    pending[1].resolve(jsonResponse(200, { content: { text: 'B' } }));
+    await b;
+    expect(ed.blocks[0].content.text).toBe('C');
+  });
+
+  it('a save that fails after its block was deleted does not block Done', async () => {
+    const ed = editor([
+      { id: 7, type: 'text', content: { text: 'x' } },
+      { id: 8, type: 'text', content: { text: 'y' } },
+    ]);
+    ed.editMode = true;
+    const save = ed.updateBlockContent(7, { text: 'x1' });
+    await flush();
+    const del = ed.deleteBlock(7);
+    await flush();
+    pending[1].resolve(jsonResponse(200, {}));
+    await del;
+    pending[0].resolve(jsonResponse(404, { error: 'block not found' }));
+    await save;
+    await ed.toggleEditMode();
+    expect(ed.editMode).toBe(false);
+  });
+
+  it('Done waits for edits typed while it was waiting', async () => {
+    vi.useFakeTimers();
+    const ed = editor([{ id: 7, type: 'text', content: { text: 'old' } }]);
+    ed.editMode = true;
+    ed.updateBlockContent(7, { text: 'A' });
+    const leave = ed.toggleEditMode();
+    await vi.advanceTimersByTimeAsync(0);
+    ed.updateBlockContentDebounced(7, { text: 'AC' });
+    pending[0].resolve(jsonResponse(200, { content: { text: 'A' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ed.editMode).toBe(true);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(pending[1]?.body.content.text).toBe('AC');
+    pending[1].resolve(jsonResponse(200, { content: { text: 'AC' } }));
+    await leave;
+    expect(ed.editMode).toBe(false);
+  });
 });

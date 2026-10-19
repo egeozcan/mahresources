@@ -117,6 +117,7 @@ test.describe('Block save ordering', () => {
     const putDone = deferred();
     const getFulfilled = deferred();
     let heldGet = false;
+    let snapshot: Array<{ id: number; content: { text: string } }> = [];
     await page.route(/\/v1\/note\/block\?/, async (route: Route) => {
       if (route.request().method() !== 'PUT') return route.fallback();
       await delay(300);
@@ -128,6 +129,7 @@ test.describe('Block save ordering', () => {
       if (heldGet) return route.fallback();
       heldGet = true;
       const resp = await route.fetch(); // snapshot taken now, before the PUT lands
+      snapshot = await resp.json();
       await putDone.promise;
       // Past any trailing debounced PUT too, so nothing repairs the text after.
       await delay(1200);
@@ -142,6 +144,8 @@ test.describe('Block save ordering', () => {
     await card(page, blockA).locator('[data-block-control="move-down"]').click();
 
     await getFulfilled.promise;
+    // The race actually happened: the reload carried the pre-save text.
+    expect(snapshot.find((b) => b.id === blockA)?.content.text).toBe('old A');
     await expect.poll(async () => (await apiClient.getBlock(blockA)).content.text).toBe('new A');
     await expect(page.getByText('Loading blocks...')).toBeHidden();
 
@@ -157,7 +161,9 @@ test.describe('Block save ordering', () => {
 
   test('a reload that snapshotted before a delete does not bring the block back', async ({ page, apiClient }) => {
     const deleteDone = deferred();
+    const getFulfilled = deferred();
     let heldGet = false;
+    let snapshotIds: number[] = [];
     await page.route(/\/v1\/note\/block\?/, async (route: Route) => {
       if (route.request().method() !== 'DELETE') return route.fallback();
       await delay(500);
@@ -169,9 +175,11 @@ test.describe('Block save ordering', () => {
       if (heldGet) return route.fallback();
       heldGet = true;
       const resp = await route.fetch(); // still lists block C
+      snapshotIds = (await resp.json()).map((b: { id: number }) => b.id);
       await deleteDone.promise;
       await delay(200);
       await route.fulfill({ response: resp });
+      getFulfilled.resolve();
     });
 
     await page.goto(`/note?id=${noteId}`);
@@ -182,9 +190,12 @@ test.describe('Block save ordering', () => {
     await card(page, blockA).locator('[data-block-control="move-down"]').click();
 
     await deleteDone.promise;
+    await getFulfilled.promise;
+    // The race actually happened: the reload still listed the deleted block.
+    expect(snapshotIds).toContain(blockC);
     await expect.poll(async () => (await apiClient.getBlocks(noteId)).map((b) => b.id).sort())
       .toEqual([blockA, blockB].sort());
-    await delay(800);
+    await expect(page.getByText('Loading blocks...')).toBeHidden();
     await expect(card(page, blockC)).toHaveCount(0);
     await expect(page.locator('.block-editor [data-block-id]')).toHaveCount(2);
   });
