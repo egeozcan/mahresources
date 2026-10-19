@@ -81,4 +81,39 @@ test.describe('Text blocks render on the server', () => {
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(rendered(page, block).locator('strong')).toHaveText('kept');
   });
+
+  test('scripts in a block run, as they do in a Description', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      // The script on its own line is a raw HTML block; inline after other
+      // markup, markdown would escape its quotes, in a Description too.
+      text: '<span class="probe">loading</span>\n\n<script>document.querySelectorAll(".probe").forEach((e) => { e.textContent = "ready"; });</script>',
+    })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await expect(rendered(page, block).locator('.probe')).toHaveText('ready');
+  });
+
+  test('a failed render says so and shows the saved text', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: 'before' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await page.route(/\/v1\/note\/renderedTextBlocks/, (route) =>
+      route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' }));
+    await page.getByText('Edit Blocks').click();
+    await card(page, block).locator('textarea').fill('after');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.locator('.block-editor [role="alert"]')).toContainText(/render/i);
+    await expect(rendered(page, block)).toHaveText('after');
+  });
+
+  test('deleting a block outside edit mode refreshes the blocks that show the Description', async ({ page, apiClient }) => {
+    const first = (await apiClient.createBlock(noteId, 'text', 'd', { text: 'first text' })).id;
+    const second = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'Desc: [property path="Description"]' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await expect(rendered(page, second)).toContainText('Desc: first text');
+    // The window.mahBlock bridge and plugin code can delete without edit mode.
+    await page.evaluate((id) => {
+      const root = document.querySelector('.block-editor') as any;
+      return (window as any).Alpine.$data(root).deleteBlock(id);
+    }, first);
+    await expect(rendered(page, second)).not.toContainText('first text');
+  });
 });

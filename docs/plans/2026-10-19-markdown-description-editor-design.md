@@ -250,6 +250,12 @@ GET past a block DELETE and checks the deleted block does not reappear.
 
 ## Follow-ups (not in this work)
 
+- **Two text blocks with the same heading get the same `id`.** Each block is
+  rendered as its own markdown document with auto heading IDs, so `# Repeated`
+  in two blocks yields two `id="repeated"` headings and a fragment link to the
+  second lands on the first. Needs a per-block ID prefix in the markdown
+  renderer. Found in the slice 5 review.
+
 - **Known limit: shortcuts do not reach the page from inside the preview
   frame.** With focus in the Preview iframe, Ctrl/Cmd+Enter and Escape do
   nothing: the frame has no scripts and no same-origin access by design, so

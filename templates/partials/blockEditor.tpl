@@ -77,7 +77,8 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                <div class="prose max-w-none font-sans" data-text-block-rendered x-html="renderedText[block.id] ?? ''"></div>
+                                {# paintRenderedText, not x-html: x-html's innerHTML never runs a <script>, and a Description's do. #}
+                                <div class="prose max-w-none font-sans" data-text-block-rendered x-effect="paintRenderedText($el, block.id, renderedText[block.id], block.content?.text)"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">

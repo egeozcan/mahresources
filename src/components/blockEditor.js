@@ -357,17 +357,47 @@ export function blockEditor(noteId, initialBlocks = []) {
     },
 
     // Until the response arrives the blocks keep their previous rendering; an
-    // older response than the latest request is dropped.
+    // older response than the latest request is dropped. If rendering fails,
+    // the blocks show their saved text rather than a stale rendering, and say so.
     async refreshRenderedText() {
       const generation = ++this._renderGeneration;
       try {
         const res = await fetch(`/v1/note/renderedTextBlocks?noteId=${this.noteId}`);
-        if (!res.ok) throw new Error(`Failed to render blocks: ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
         this.renderedText = this._readRenderedText(doc);
       } catch (err) {
+        if (generation !== this._renderGeneration) return;
         console.error('Error rendering text blocks:', err);
+        this.renderedText = {};
+        this.error = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
+      }
+    },
+
+    /**
+     * Show a text block's server rendering in `el`, or its plain text while
+     * there is none (a block not rendered yet, or a failed render). Not x-html:
+     * innerHTML never runs a <script>, and a Description's scripts run on its
+     * page, so each one is re-created to run. Alpine's mutation observer
+     * initializes any Alpine markup the rendering brings, as x-html would.
+     */
+    paintRenderedText(el, blockId, html, text) {
+      if (html === undefined) {
+        el._paintedHtml = undefined;
+        el.style.whiteSpace = 'pre-wrap';
+        el.textContent = text || '';
+        return;
+      }
+      if (el._paintedHtml === html) return;
+      el._paintedHtml = html;
+      el.style.whiteSpace = '';
+      el.innerHTML = html;
+      for (const old of el.querySelectorAll('script')) {
+        const script = document.createElement('script');
+        for (const { name, value } of old.attributes) script.setAttribute(name, value);
+        script.textContent = old.textContent;
+        old.replaceWith(script);
       }
     },
 
@@ -648,6 +678,9 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         this._structuralEpoch++;
         this.blocks = this.blocks.filter(b => b.id !== blockId);
+        // Deleting the first text block changes the note's Description, which
+        // another block may display. In edit mode Done refreshes them all.
+        if (!this.editMode) this.refreshRenderedText();
         // Drop any pending optimistic state so the unload flush can never re-PUT
         // a now-deleted block (which the server would reject).
         delete this._pendingUpdates[blockId];

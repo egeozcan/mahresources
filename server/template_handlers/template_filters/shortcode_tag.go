@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"reflect"
+	"strings"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
@@ -28,6 +29,13 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	}
 	content := contentVal.String()
 	if content == "" {
+		return nil
+	}
+	// No bracket, no shortcode: skip building the entity's shortcode context,
+	// which walks its ownership chain. A note page renders one tag per text
+	// block, and most blocks are plain text.
+	if !strings.Contains(content, "[") {
+		_, _ = writer.WriteString(content)
 		return nil
 	}
 
