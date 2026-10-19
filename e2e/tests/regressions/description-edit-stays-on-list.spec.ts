@@ -47,7 +47,7 @@ test.describe('Description inline edit stays on list page', () => {
     await descriptionArea.dblclick();
 
     // Textarea should appear
-    const textarea = page.locator('.card-description textarea[name="description"]');
+    const textarea = page.locator('.card-description [data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Modify the text

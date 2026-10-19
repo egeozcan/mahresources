@@ -44,7 +44,7 @@ test.describe('RelationType description inline-edit uses correct endpoint', () =
     await descriptionArea.dblclick();
 
     // Textarea should appear
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Intercept the POST request to verify the endpoint
@@ -91,7 +91,7 @@ test.describe('RelationType description inline-edit uses correct endpoint', () =
     await descriptionArea.dblclick();
 
     // Textarea should appear
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Modify the text

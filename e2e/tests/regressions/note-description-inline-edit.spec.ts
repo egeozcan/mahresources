@@ -48,7 +48,7 @@ test.describe('Note description inline edit on list page', () => {
     await descriptionArea.dblclick();
 
     // A textarea should appear with the current description
-    const textarea = page.locator('.card-description textarea[name="description"]');
+    const textarea = page.locator('.card-description [data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Clear and type new description

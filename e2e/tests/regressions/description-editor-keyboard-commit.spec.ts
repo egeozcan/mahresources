@@ -59,7 +59,7 @@ test.describe('Inline description editor can be committed from the keyboard', ()
     const region = page.locator('.description').first();
     await expect(region).toBeVisible();
     await region.dblclick();
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible();
     return { region, textarea };
   }
@@ -128,7 +128,7 @@ test.describe('Inline description editor can be committed from the keyboard', ()
 
     // Re-opening must offer the saved text, not the template's stale copy.
     await region.dblclick();
-    await expect(page.locator('textarea[name="description"]')).toHaveValue(
+    await expect(page.locator('[data-description-editor] .cm-content')).toHaveText(
       'committed by leaving the field',
     );
 
@@ -144,19 +144,19 @@ test.describe('Inline description editor can be committed from the keyboard', ()
 
     await textarea.fill('discarded by cancel');
     await region.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.locator('textarea[name="description"]')).toBeHidden();
+    await expect(page.locator('[data-description-editor] .cm-content')).toBeHidden();
 
     await region.dblclick();
-    const reopened = page.locator('textarea[name="description"]');
+    const reopened = page.locator('[data-description-editor] .cm-content');
     await expect(reopened).toBeVisible();
     await reopened.fill('discarded by escape');
     await reopened.press('Escape');
-    await expect(page.locator('textarea[name="description"]')).toBeHidden();
+    await expect(page.locator('[data-description-editor] .cm-content')).toBeHidden();
 
     // Positive control in the same test: the write path does work on this note,
     // so "still ORIGINAL" is a real result and not an endpoint that never fires.
     await region.dblclick();
-    const third = page.locator('textarea[name="description"]');
+    const third = page.locator('[data-description-editor] .cm-content');
     await third.fill('kept after an explicit save');
     await third.press('Control+Enter');
     await expect
@@ -177,7 +177,7 @@ test.describe('Inline description editor can be committed from the keyboard', ()
     await expect(region).toBeVisible();
     await region.dblclick();
 
-    const textarea = card.locator('textarea[name="description"]');
+    const textarea = card.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible();
     await textarea.fill('committed from the list');
     await textarea.press('Control+Enter');

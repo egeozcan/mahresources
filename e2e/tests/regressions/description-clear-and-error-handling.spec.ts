@@ -52,7 +52,7 @@ test.describe('Description inline edit: clear and error handling', () => {
     await descriptionArea.dblclick();
 
     // A textarea should appear with the current description
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Clear the description
@@ -83,7 +83,7 @@ test.describe('Description inline edit: clear and error handling', () => {
     await descriptionAreaAfterClear.dblclick();
 
     // Textarea should appear (empty this time)
-    const textareaAgain = page.locator('textarea[name="description"]');
+    const textareaAgain = page.locator('[data-description-editor] .cm-content');
     await expect(textareaAgain).toBeVisible({ timeout: 3000 });
 
     // Add a new description
@@ -117,7 +117,7 @@ test.describe('Description inline edit: clear and error handling', () => {
     await expect(descriptionArea).toBeVisible({ timeout: 5000 });
     await descriptionArea.dblclick();
 
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Intercept the editDescription request to make it fail

@@ -40,7 +40,7 @@ test.describe('Description click-away should not block navigation', () => {
     await descriptionArea.dblclick();
 
     // Verify the textarea appeared
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Modify the description
@@ -77,7 +77,7 @@ test.describe('Description click-away should not block navigation', () => {
     await expect(descriptionArea).toBeVisible({ timeout: 5000 });
     await descriptionArea.dblclick();
 
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
 
     // Modify the description

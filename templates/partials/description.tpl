@@ -26,18 +26,11 @@
     <template x-if="editing">
         {# One element owns everything the editor renders, so focusout can #}
         {# tell "moved to Save" from "left the editor" (findings 15/53/87). #}
-        <div class="contents" data-description-editor @keydown="onKeyDown($event)" @focusout="onFocusOut($event)">
-            <textarea
-                x-init="if (serverValue !== null) $el.value = serverValue"
-                @keydown.escape.prevent.stop="cancel()"
-                @keydown.ctrl.enter.prevent.stop="save()"
-                @keydown.meta.enter.prevent.stop="save()"
-                autofocus
-                name="description"
-                aria-label="Edit description"
-                aria-describedby="description-edit-error"
-                class="w-full"
-            >{{ description }}</textarea>
+        <div class="contents" data-description-editor @keydown.capture="onEditorKeyCapture($event)" @keydown="onEditorKeyDown($event)" @focusout="onFocusOut($event)">
+            {# The markdown editor (markdownEditor.js) over the textarea save() reads; the textarea's own key handlers serve only if CodeMirror fails to load. #}
+            <div x-data="markdownEditor(markdownOptions())" data-markdown-field="description">
+                {% include "/partials/form/markdownEditorCore.tpl" with field_id="description-inline-edit" name="description" value=description title="Description" aria_label="Edit description" described_by="description-edit-error" has_preview=true inline=true %}
+            </div>
             <div class="flex items-center gap-2 mt-2">
                 <button type="button"
                         @mousedown.prevent

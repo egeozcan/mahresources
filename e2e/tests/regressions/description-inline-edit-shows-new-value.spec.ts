@@ -54,9 +54,9 @@ test.describe('Description inline edit shows updated value after save', () => {
     await descriptionArea.dblclick();
 
     // Textarea should appear with the original description
-    const textarea = page.locator('textarea[name="description"]');
+    const textarea = page.locator('[data-description-editor] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 3000 });
-    await expect(textarea).toHaveValue('Original description before edit');
+    await expect(textarea).toHaveText('Original description before edit');
 
     // Type a new description
     const newDescription = 'Updated description after inline edit';

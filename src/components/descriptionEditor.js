@@ -1,4 +1,5 @@
 import { selectionForElement } from './bulkSelection.js';
+import { SHORTCODE_ENTITY_TYPES } from './markdownEditor.js';
 /**
  * The inline description editor used by `templates/partials/description.tpl`,
  * which twelve templates include on both detail pages and list cards.
@@ -54,6 +55,49 @@ export function descriptionEditor({ url = '' } = {}) {
         cancel() {
             this.error = '';
             this.editing = false;
+        },
+
+        /**
+         * Options for the markdownEditor inside the editing region, derived from
+         * the edit URL (/v1/<entity>/editDescription?id=N): the matching
+         * preview route, the entity's id, and whether its Description runs
+         * shortcodes.
+         */
+        markdownOptions() {
+            const url = new URL(this.descriptionEditUrl, window.location.origin);
+            const match = url.pathname.match(/^\/v1\/(\w+)\/editDescription$/);
+            const entityType = match ? match[1] : '';
+            return {
+                shortcodes: SHORTCODE_ENTITY_TYPES.has(entityType),
+                previewUrl: entityType ? `/v1/${entityType}/previewDescription` : '',
+                previewId: url.searchParams.get('id') || '',
+                autofocus: true,
+            };
+        },
+
+        /**
+         * Escape, seen before the markdown editor gets it: it cancels unless a
+         * completion popup is on screen, which takes the first Escape. Decided
+         * here because CodeMirror also claims Escape while a completion request
+         * is still pending with nothing shown, so "it was handled" (bubbling,
+         * defaultPrevented) would swallow a cancel pressed just after typing.
+         */
+        onEditorKeyCapture(event) {
+            if (event.key !== 'Escape') return;
+            if (this._editorEl()?.querySelector('.cm-tooltip-autocomplete')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.cancel();
+        },
+
+        /** Other keys in the editor region: Tab is noted for onFocusOut; Ctrl/Cmd+Enter saves. */
+        onEditorKeyDown(event) {
+            this.onKeyDown(event);
+            if (event.defaultPrevented) return;
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                this.save();
+            }
         },
 
         // Neither $el nor $root works here. Alpine binds $el to the element whose

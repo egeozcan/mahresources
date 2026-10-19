@@ -14,6 +14,15 @@ const MAX_HEIGHT = '60vh';
 
 const DEFAULT_MENTION_TYPES = 'resource,note,group,tag';
 
+// The entity types whose Descriptions run shortcodes on their detail page:
+// the ones the server can build a shortcode context for
+// (BuildMetaContextForEntity in shortcode_tag.go). Forms pass the same choice
+// from the template; inline editing derives it from the entity type.
+// CodeMirror default bindings the editor leaves out; see the keymap below.
+const DROPPED_DEFAULT_KEYS = new Set(['Ctrl-k', 'Mod-Enter']);
+
+export const SHORTCODE_ENTITY_TYPES = new Set(['group', 'note', 'resource', 'category', 'resourceCategory', 'noteType']);
+
 // The stylesheets base.tpl ships, so the preview frame looks like the page.
 const PREVIEW_STYLESHEETS = ['/public/index.css', '/public/tailwind.css', '/public/jsonTable.css'];
 
@@ -22,6 +31,7 @@ export function markdownEditor({
   shortcodes = false,
   previewUrl = '',
   previewId = '',
+  autofocus = false,
 } = {}) {
   return {
     view: null,
@@ -48,6 +58,9 @@ export function markdownEditor({
       // Mention result counts, as mentionTextarea.js announced them: CodeMirror
       // wires the listbox but says nothing about how many results came back.
       this._liveRegion = createLiveRegion();
+      // Opened on purpose (double-click to edit): focus the textarea now, so
+      // typing during the load lands in it and the mount carries focus over.
+      if (autofocus) this._source.focus();
       this._mount().catch((err) => {
         console.error('markdown editor failed to load', err);
         this.failed = true;
@@ -87,6 +100,8 @@ export function markdownEditor({
 
       const contentAttributes = { 'aria-multiline': 'true' };
       if (this._labelId) contentAttributes['aria-labelledby'] = this._labelId;
+      else if (source.getAttribute('aria-label')) contentAttributes['aria-label'] = source.getAttribute('aria-label');
+      if (source.getAttribute('aria-describedby')) contentAttributes['aria-describedby'] = source.getAttribute('aria-describedby');
 
       // Read now, not before the imports: text typed into the textarea while
       // CodeMirror loaded is part of the document.
@@ -110,7 +125,9 @@ export function markdownEditor({
         keymap.of([
           ...commands.markdownKeymap,
           ...completionKeymap,
-          ...defaultKeymap.filter((binding) => binding.mac !== 'Ctrl-k' && binding.key !== 'Ctrl-k'),
+          // Nor Mod-Enter (insert blank line): Ctrl/Cmd+Enter saves an inline
+          // edit (descriptionEditor), and a form has no use for it.
+          ...defaultKeymap.filter((binding) => !DROPPED_DEFAULT_KEYS.has(binding.key) && binding.mac !== 'Ctrl-k'),
           ...historyKeymap,
         ]),
         EditorView.contentAttributes.of(contentAttributes),
@@ -150,6 +167,13 @@ export function markdownEditor({
         this.view.dispatch({ selection: backward ? { anchor: to, head: from } : { anchor: from, head: to } });
         this.view.focus();
       }
+    },
+
+    // What the preview pane says about shortcodes: they run only against a
+    // saved entity, and widgets need scripts the sandboxed frame does not run.
+    get shortcodeHint() {
+      if (!shortcodes) return '';
+      return previewId ? 'Interactive widgets do not work in preview.' : 'Shortcodes render after saving.';
     },
 
     get canPreview() {
