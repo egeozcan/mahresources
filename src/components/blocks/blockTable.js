@@ -173,6 +173,29 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       if (this.isQueryMode) {
         this.fetchQueryData();
       }
+      this._onBlockSaved = (e) => {
+        if (e.detail?.blockId !== this.block.id || !this._refetchOnSave) return;
+        this._refetchOnSave = false;
+        this.fetchQueryData(true);
+      };
+      window.addEventListener('mah:block-saved', this._onBlockSaved);
+    },
+
+    destroy() {
+      if (this._onBlockSaved) window.removeEventListener('mah:block-saved', this._onBlockSaved);
+    },
+
+    // Refetch rows once the configuration they read is saved. If the save
+    // failed, wait for the block's next successful save (a retry on Done)
+    // rather than fetching the previous configuration's rows.
+    _saveThenRefetch() {
+      Promise.resolve(this.saveContent()).then((ok) => {
+        if (ok === false) {
+          this._refetchOnSave = true;
+          return;
+        }
+        this.fetchQueryData(true);
+      });
     },
 
     toggleSort(colId) {
@@ -339,7 +362,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       this.columns = [];
       this.rows = [];
       // Fetch the query data once the new configuration is saved
-      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
+      this._saveThenRefetch();
     },
 
     clearQuery() {
@@ -372,7 +395,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
         this.saveContentDebounced();
         return;
       }
-      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
+      this._saveThenRefetch();
     },
 
     // Rename a param row's key (by stable row id). The row identity is unchanged,
@@ -390,12 +413,12 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
         return;
       }
       row.key = (key || '').trim();
-      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
+      this._saveThenRefetch();
     },
 
     removeQueryParam(id) {
       this.queryParamRows = this.queryParamRows.filter(r => r.id !== id);
-      Promise.resolve(this.saveContent()).then(() => this.fetchQueryData(true));
+      this._saveThenRefetch();
     },
 
     addQueryParam() {

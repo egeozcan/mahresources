@@ -618,6 +618,8 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         this._failedSaves.delete(blockId);
         this._bumpRevision(blockId);
+        // A table or calendar whose own save failed refetches on this.
+        window.dispatchEvent(new CustomEvent('mah:block-saved', { detail: { blockId } }));
       } catch (err) {
         // The block was deleted meanwhile: there is nothing left to save to.
         if (save.deleted) return;

@@ -182,9 +182,32 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         this.calendarMeta['custom'] = { name: 'My Events', color: '#6366f1' };
       }
 
+      this._onBlockSaved = (e) => {
+        if (e.detail?.blockId !== this.block.id || !this._refetchOnSave) return;
+        this._refetchOnSave = false;
+        this.fetchEvents(true);
+      };
+      window.addEventListener('mah:block-saved', this._onBlockSaved);
+
       if (this.calendars.length > 0 || this.customEvents.length > 0) {
         await this.fetchEvents();
       }
+    },
+
+    destroy() {
+      if (this._onBlockSaved) window.removeEventListener('mah:block-saved', this._onBlockSaved);
+    },
+
+    // Refetch events once the calendars they read are saved. If the save
+    // failed, wait for the block's next successful save (a retry on Done).
+    _saveThenRefetch() {
+      Promise.resolve(this.saveContent()).then((ok) => {
+        if (ok === false) {
+          this._refetchOnSave = true;
+          return;
+        }
+        this.fetchEvents(true);
+      });
     },
 
     async fetchEvents(forceRefresh = false) {
@@ -351,7 +374,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
       this.newUrl = '';
       this.error = null;
-      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
+      this._saveThenRefetch();
     },
 
     addCalendarFromResource(resourceId, resourceName) {
@@ -365,13 +388,13 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       };
       this.calendars.push(newCal);
       this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
-      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
+      this._saveThenRefetch();
     },
 
     removeCalendar(calId) {
       this.calendars = this.calendars.filter(c => c.id !== calId);
       delete this.calendarMeta[calId];
-      Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
+      this._saveThenRefetch();
     },
 
     updateCalendarName(calId, name, { debounced = false } = {}) {
@@ -441,7 +464,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
             }
           }
           if (added) {
-            Promise.resolve(this.saveContent()).then(() => this.fetchEvents(true));
+            this._saveThenRefetch();
           }
         }
       });

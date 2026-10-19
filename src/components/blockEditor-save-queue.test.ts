@@ -26,6 +26,8 @@ function editor(blocks: any[]) {
 
 beforeEach(() => {
   pending = [];
+  // Saves announce themselves on window (mah:block-saved); Node has none.
+  vi.stubGlobal('window', new EventTarget());
   vi.stubGlobal('fetch', vi.fn((url: string, init: any) => new Promise<Response>((resolve) => {
     pending.push({ url, body: init?.body ? JSON.parse(init.body) : null, init, resolve });
   })));
