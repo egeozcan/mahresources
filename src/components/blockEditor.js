@@ -384,6 +384,13 @@ export function blockEditor(noteId, initialBlocks = []) {
       if (this._leavingEditMode) return;
       this._leavingEditMode = true;
       try {
+        // Retry saves that failed earlier. Their error may already have been
+        // cleared by another block's successful save, and refusing to leave
+        // with nothing on screen would look like a dead button.
+        for (const blockId of [...this._failedSaves]) {
+          const content = this._pendingUpdates[blockId];
+          if (content !== undefined) this.updateBlockContent(blockId, content);
+        }
         // Typing can continue while this waits, so send debounced saves and
         // wait again until nothing is left either queued or in flight.
         let ok = true;
@@ -393,8 +400,12 @@ export function blockEditor(noteId, initialBlocks = []) {
           const results = await Promise.allSettled([...this._inFlight]);
           if (results.some((r) => r.status === 'rejected')) ok = false;
         }
-        // The error from the failed save is already showing.
-        if (!ok || this._failedSaves.size) return;
+        if (!ok || this._failedSaves.size) {
+          // Normally the failed request's own message is showing; never
+          // refuse silently.
+          if (!this.error) this.error = 'Some changes could not be saved. Try again.';
+          return;
+        }
         this.editMode = false;
       } finally {
         this._leavingEditMode = false;

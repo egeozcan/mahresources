@@ -293,4 +293,49 @@ describe('blockEditor save queue', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(ed.blocks[0].content.text).toBe('A');
   });
+
+  it('Done retries a save that failed earlier and leaves once it succeeds', async () => {
+    const ed = editor([
+      { id: 7, type: 'text', content: { text: 'a' } },
+      { id: 8, type: 'text', content: { text: 'b' } },
+    ]);
+    ed.editMode = true;
+    ed.updateBlockContent(7, { text: 'a1' });
+    await flush();
+    pending[0].resolve(jsonResponse(500, { error: 'blip' }));
+    await flush();
+    ed.updateBlockContent(8, { text: 'b1' });
+    await flush();
+    pending[1].resolve(jsonResponse(200, { content: { text: 'b1' } }));
+    await flush();
+    const leave = ed.toggleEditMode();
+    await flush();
+    expect(pending[2]?.body.content.text).toBe('a1');
+    pending[2].resolve(jsonResponse(200, { content: { text: 'a1' } }));
+    await leave;
+    expect(ed.editMode).toBe(false);
+  });
+
+  it('Done shows an error when a retried save fails again', async () => {
+    const ed = editor([
+      { id: 7, type: 'text', content: { text: 'a' } },
+      { id: 8, type: 'text', content: { text: 'b' } },
+    ]);
+    ed.editMode = true;
+    ed.updateBlockContent(7, { text: 'a1' });
+    await flush();
+    pending[0].resolve(jsonResponse(500, { error: 'blip' }));
+    await flush();
+    ed.updateBlockContent(8, { text: 'b1' });
+    await flush();
+    pending[1].resolve(jsonResponse(200, { content: { text: 'b1' } }));
+    await flush();
+    expect(ed.error).toBeNull();
+    const leave = ed.toggleEditMode();
+    await flush();
+    pending[2].resolve(jsonResponse(500, { error: 'still down' }));
+    await leave;
+    expect(ed.editMode).toBe(true);
+    expect(ed.error).toBe('still down');
+  });
 });
