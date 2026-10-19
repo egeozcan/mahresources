@@ -105,25 +105,49 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
     - Rendered HTML is never stored on the block, because it depends on the
       viewer's permissions. A new read endpoint,
       `GET /v1/note/renderedTextBlocks?noteId=`, returns `{blockId: html}`
-      for every text block of the note. It renders with the normal page
-      limits and safeguards, not the preview's 5-row MRQL cap
-      (`template_preview_api_handlers.go:20`), so a block shows the same
-      output before and after an edit. It is principal-bound and scoped like
-      `GET /v1/note/blocks`.
-    - The page-load render fills the same map server-side so text blocks do
-      not flash. Every later `loadBlocks()` (it replaces the whole array after
-      adding or reordering a block, `src/components/blockEditor.js:317-321`)
+      for every text block of the note.
+      - It falls through to `capRead` (`server/authz_policy.go:100-105`) and
+        is mounted with `scopedAPI` like `GET /v1/note/blocks`
+        (`server/routes.go:653`); the path prefix alone gives no subtree
+        confinement.
+      - It renders all blocks inside one render context, built the way the
+        first `process_shortcodes` tag builds it for a page
+        (`shortcode_tag.go:53-68`): one MRQL cache, query budget and deadline
+        shared across the batch, not one per block. It applies
+        `ForceReadOnly` for principals that cannot write and the
+        plugin-access check (`shortcode_tag.go:74-95`). It does not use the
+        preview's 5-row MRQL cap (`template_preview_api_handlers.go:20`).
+        Output can still differ from the page-load render where the page's
+        other slots used up part of the shared budget; that is accepted.
+    - Page load: the note template handler fills the same map and passes it
+      as `renderedBlocks` to both includes of `blockEditor.tpl`
+      (`templates/displayNote.tpl:36`, `templates/displayNoteText.tpl:19`),
+      which hands it to `blockEditor(noteId, blocks, renderedBlocks)`
+      (`templates/partials/blockEditor.tpl:2`), so text blocks do not flash.
+    - Every later `loadBlocks()` (it replaces the whole array after adding or
+      reordering a block, `src/components/blockEditor.js:313-321,376,538`)
       fetches the map again, because `/v1/note/blocks` returns raw models
       (`server/api_handlers/block_api_handlers.go:30-37`).
     - Leaving edit mode re-renders **all** text blocks, not only changed ones:
       editing the first block changes the Note's Description, which a
       `[property path="Description"]` in another block displays.
-    - Ordering: leaving edit mode first awaits every pending block save
-      (today the immediate save is fire-and-forget,
-      `src/components/blocks/blockText.js:20-21`). If a save fails, the note
-      stays in edit mode with the error shown and nothing is re-rendered.
-      Each render request carries a generation number and a response older
-      than the latest request is discarded.
+    - **Save ordering**, which this work fixes in `blockEditor.js` because
+      rendering depends on it. Today the immediate save does not cancel the
+      debounce timer (`:400-404`), overlapping PUTs can land out of order,
+      responses overwrite content unconditionally (`:421-426`) and failures
+      are swallowed (`:432-442`). After this work:
+      - each block has at most one PUT in flight; a newer edit waits and then
+        sends only the latest text, and an immediate save cancels the
+        block's debounce timer;
+      - a PUT response is applied only if no newer local edit exists;
+      - the save functions return a promise that rejects on failure.
+    - **Leaving edit mode** awaits every block's save queue. If any save fails,
+      the note stays in edit mode with the error shown and nothing is
+      re-rendered.
+    - **Reloads and renders are generation-guarded.** `loadBlocks()` and the
+      render fetch each carry a generation number, and a response older than
+      the latest request is discarded. A `loadBlocks()` response does not
+      replace the text of a block that has unsaved local edits.
     - Until the response arrives the blocks keep their previous rendering.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
@@ -142,7 +166,12 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
 ## Approach
 
 Test-first: failing E2E tests for each surface before the implementation, then
-Go API tests for the preview endpoint, run on SQLite and Postgres.
+Go API tests, run on SQLite and Postgres, for the per-entity
+`previewDescription` routes (role gates per entity type) and for
+`renderedTextBlocks`: a group-confined principal, a note outside the
+principal's subtree, a denied plugin shortcode, and read-only rendering of
+shortcode widgets for a principal that cannot write. Unit tests cover the
+block save queue (out-of-order responses, failure propagation).
 
 - **Component.** A new Alpine component (working name `markdownEditor`), lazy
   loading CodeMirror like `src/components/codeEditor.js:79-83`, with the same
