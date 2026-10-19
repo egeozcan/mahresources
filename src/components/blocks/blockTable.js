@@ -55,6 +55,12 @@ function isCacheExpired(entry) {
 export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveContentDebouncedFn) {
   return {
     block,
+    // Declared, not just assigned later: Alpine writes an undeclared property
+    // of a nested x-data to the outermost scope (the blockEditor), which would
+    // share it across every block on the note.
+    _fetchGeneration: 0,
+    _refetchOnSave: false,
+    _onBlockSaved: null,
     saveContentFn,
     saveStateFn,
     getEditMode,
@@ -245,6 +251,9 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
 
     // Fetch query data with stale-while-revalidate caching
     async fetchQueryData(forceRefresh = false) {
+      // Every call is a new request, cache hits included, so a response still
+      // in flight from an earlier one can never overwrite what this one shows.
+      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       if (!this.queryId) return;
 
       const cacheKey = getCacheKey(this.block.id, this.queryId, this.queryParams);
@@ -275,7 +284,6 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       // Cache miss or expired - fetch blocking. A response older than the
       // latest request is dropped (and not cached: it may answer a query the
       // block has since switched away from).
-      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       this.queryLoading = true;
       this.queryError = null;
 
@@ -297,9 +305,11 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
     async backgroundRefresh(cacheKey) {
       if (this.isRefreshing) return;
 
+      const generation = this._fetchGeneration || 0;
       this.isRefreshing = true;
       try {
         const data = await this.fetchFromServer();
+        if (generation !== (this._fetchGeneration || 0)) return;
         setCacheEntry(cacheKey, data);
         this.applyQueryData(data);
       } catch (err) {

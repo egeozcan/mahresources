@@ -141,4 +141,67 @@ describe('dependent reads wait for the block save', () => {
     await flush();
     expect(cal.events.map((e: any) => e.id)).toEqual(['new']);
   });
+
+  it('calendar: removing the last calendar is not undone by an older fetch', async () => {
+    const cal: any = reactive(blockCalendar(
+      { id: 1, content: { calendars: [{ id: 'a', name: 'a', color: '#000', source: { type: 'url', url: 'x' } }] }, state: {} },
+      () => Promise.resolve(true), () => {}, () => true, 1, () => {},
+    ));
+    const gates: Array<(v: unknown) => void> = [];
+    cal.fetchFromServer = () => new Promise((r) => gates.push(r));
+    cal.fetchEvents(true);
+    cal.calendars = [];
+    cal.fetchEvents(true);
+    gates[0]({ events: [{ id: 'old' }] });
+    await flush();
+    expect(cal.events).toEqual([]);
+  });
+
+  it('calendar: a background refresh older than a forced fetch is dropped', async () => {
+    const cal: any = reactive(blockCalendar(
+      { id: 1, content: { calendars: [{ id: 'a', name: 'a', color: '#000', source: { type: 'url', url: 'x' } }] }, state: {} },
+      () => Promise.resolve(true), () => {}, () => true, 1, () => {},
+    ));
+    const gates: Array<(v: unknown) => void> = [];
+    cal.fetchFromServer = () => new Promise((r) => gates.push(r));
+    const { start, end } = cal.fetchRange;
+    const key = `1:${cal.formatDate(start)}:${cal.formatDate(end)}`;
+    cal.backgroundRefresh(key, start, end);
+    cal.fetchEvents(true);
+    gates[1]({ events: [{ id: 'new' }] });
+    await flush();
+    gates[0]({ events: [{ id: 'old' }] });
+    await flush();
+    expect(cal.events.map((e: any) => e.id)).toEqual(['new']);
+  });
+
+  it('table: a background refresh older than a forced fetch is dropped', async () => {
+    const table: any = reactive(blockTable(
+      { id: 1, content: { queryId: 2 }, state: {} },
+      () => Promise.resolve(true), () => {}, () => true, () => {},
+    ));
+    const gates: Array<(v: unknown) => void> = [];
+    table.fetchFromServer = () => new Promise((r) => gates.push(r));
+    table.backgroundRefresh('k');
+    table.fetchQueryData(true);
+    gates[1]({ columns: [], rows: [{ v: 'new' }] });
+    await flush();
+    gates[0]({ columns: [], rows: [{ v: 'old' }] });
+    await flush();
+    expect(table.queryRows).toEqual([{ v: 'new' }]);
+  });
+
+  // Alpine writes a property a nested x-data never declared to the OUTERMOST
+  // scope (the blockEditor), so undeclared per-block state is silently shared
+  // by every table and calendar on the note: one block's fetch then
+  // invalidated another's. Each must declare its own.
+  it('table and calendar declare their per-block fetch state', () => {
+    const table = blockTable({ id: 1, content: {}, state: {} }, () => {}, () => {}, () => true, () => {});
+    const cal = blockCalendar({ id: 1, content: {}, state: {} }, () => {}, () => {}, () => true, 1, () => {});
+    for (const obj of [table, cal]) {
+      for (const key of ['_fetchGeneration', '_refetchOnSave', '_onBlockSaved']) {
+        expect(Object.prototype.hasOwnProperty.call(obj, key), key).toBe(true);
+      }
+    }
+  });
 });

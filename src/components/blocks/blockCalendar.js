@@ -73,6 +73,12 @@ const COLOR_PALETTE = [
 export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, noteId, saveContentDebouncedFn) {
   return {
     block,
+    // Declared, not just assigned later: Alpine writes an undeclared property
+    // of a nested x-data to the outermost scope (the blockEditor), which would
+    // share it across every block on the note.
+    _fetchGeneration: 0,
+    _refetchOnSave: false,
+    _onBlockSaved: null,
     saveContentFn,
     saveStateFn,
     getEditMode,
@@ -212,6 +218,9 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
     },
 
     async fetchEvents(forceRefresh = false) {
+      // Every call is a new request, the empty and cached paths included, so a
+      // response still in flight from an earlier one can never overwrite them.
+      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       // Only skip fetch if there are no calendars AND no custom events
       if (this.calendars.length === 0 && this.customEvents.length === 0) {
         this.events = [];
@@ -236,7 +245,6 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
 
       // Cache miss or force refresh. A response older than the latest
       // request is dropped (and not cached: it may predate a calendar change).
-      const generation = this._fetchGeneration = (this._fetchGeneration || 0) + 1;
       this.loading = true;
       this.error = null;
 
@@ -256,9 +264,13 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
 
     async backgroundRefresh(cacheKey, start, end) {
       if (this.isRefreshing) return;
+      const generation = this._fetchGeneration || 0;
       this.isRefreshing = true;
       try {
         const data = await this.fetchFromServer(start, end);
+        // A later fetch may have followed a calendar change; this response
+        // could still list a removed calendar's events.
+        if (generation !== (this._fetchGeneration || 0)) return;
         setCacheEntry(cacheKey, data);
         // Only apply if the user has not navigated to a different range while the
         // refresh was in flight; otherwise we'd flash the previous month's events.
