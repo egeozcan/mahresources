@@ -250,5 +250,11 @@ GET past a block DELETE and checks the deleted block does not reappear.
 
 ## Follow-ups (not in this work)
 
+- **Calendar custom-event saves have no retry.** A block *state* PATCH that
+  fails is swallowed by `updateBlockState` (`src/components/blockEditor.js`),
+  so a custom event created during a transient failure disappears when the
+  calendar refetches, and Done does not retry it. Found in the slice 1
+  review; it predates this work.
+
 - **Paste or drop an image to upload it** as a Resource and insert a markdown
   link. Needs its own design for owner, group and duplicate handling.

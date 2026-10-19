@@ -204,4 +204,26 @@ describe('dependent reads wait for the block save', () => {
       }
     }
   });
+
+  it('calendar: a calendar change drops cached events for every range', async () => {
+    const cal: any = reactive(blockCalendar(
+      { id: 77, content: { calendars: [
+        { id: 'a', name: 'a', color: '#000', source: { type: 'url', url: 'x' } },
+        { id: 'b', name: 'b', color: '#111', source: { type: 'url', url: 'y' } },
+      ] }, state: {} },
+      () => Promise.resolve(true), () => {}, () => true, 1, () => {},
+    ));
+    let served = [{ id: 'with-a' }];
+    cal.fetchFromServer = () => Promise.resolve({ events: served });
+    await cal.fetchEvents(true); // caches this month with calendar a
+    cal.currentDate = new Date(cal.currentDate.getFullYear(), cal.currentDate.getMonth() + 1, 1);
+    served = [];
+    cal.removeCalendar('a');
+    await flush();
+    cal.currentDate = new Date(cal.currentDate.getFullYear(), cal.currentDate.getMonth() - 1, 1);
+    let fetched = false;
+    cal.fetchFromServer = () => { fetched = true; return Promise.resolve({ events: [] }); };
+    await cal.fetchEvents();
+    expect(fetched).toBe(true);
+  });
 });

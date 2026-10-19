@@ -29,6 +29,15 @@ function getCacheKey(blockId, start, end) {
   return `${blockId}:${start}:${end}`;
 }
 
+// Drop every cached range for a block: a calendar or custom-event change makes
+// all of them stale, not only the range on screen.
+function clearBlockCache(blockId) {
+  const prefix = `${blockId}:`;
+  for (const key of [...eventCache.keys()]) {
+    if (key.startsWith(prefix)) eventCache.delete(key);
+  }
+}
+
 function getCacheEntry(key) {
   return eventCache.get(key);
 }
@@ -191,6 +200,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this._onBlockSaved = (e) => {
         if (e.detail?.blockId !== this.block.id || !this._refetchOnSave) return;
         this._refetchOnSave = false;
+        clearBlockCache(this.block.id);
         this.fetchEvents(true);
       };
       window.addEventListener('mah:block-saved', this._onBlockSaved);
@@ -213,6 +223,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
           return;
         }
         this._refetchOnSave = false;
+        clearBlockCache(this.block.id);
         this.fetchEvents(true);
       });
     },
@@ -701,6 +712,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       // Wait for state to be saved before fetching
       await this.saveState();
       this.closeEventModal();
+      clearBlockCache(this.block.id);
       // Refresh events from server to get merged list
       await this.fetchEvents(true);
     },
@@ -713,6 +725,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       // Wait for state to be saved before fetching
       await this.saveState();
       this.closeEventModal();
+      clearBlockCache(this.block.id);
       // Refresh events from server to get updated list
       await this.fetchEvents(true);
     },

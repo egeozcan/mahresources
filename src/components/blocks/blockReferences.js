@@ -10,6 +10,7 @@ export function blockReferences(block, saveContentFn, getEditMode) {
     groupIds: [...(block?.content?.groupIds || [])],
     groupMeta: {},
     loadingMeta: false,
+    _metaGeneration: 0,
 
     get editMode() {
       return this.getEditMode ? this.getEditMode() : false;
@@ -22,11 +23,16 @@ export function blockReferences(block, saveContentFn, getEditMode) {
     async fetchGroupMeta() {
       if (this.groupIds.length === 0) return;
 
+      // A slower, older response is dropped: it could only mark a group added
+      // since as unavailable and overwrite that group's real metadata.
+      const generation = ++this._metaGeneration;
+      const requested = [...this.groupIds];
       this.loadingMeta = true;
       try {
-        const meta = await fetchEntityMeta('group', this.groupIds);
+        const meta = await fetchEntityMeta('group', requested);
+        if (generation !== this._metaGeneration) return;
         // Mark groups that were fetched but returned no data (deleted / 404) as unavailable
-        for (const id of this.groupIds) {
+        for (const id of requested) {
           if (!meta[id]) {
             meta[id] = { __unavailable: true };
           }
@@ -35,7 +41,7 @@ export function blockReferences(block, saveContentFn, getEditMode) {
       } catch (err) {
         console.warn('Failed to fetch group metadata:', err);
       } finally {
-        this.loadingMeta = false;
+        if (generation === this._metaGeneration) this.loadingMeta = false;
       }
     },
 
