@@ -2,10 +2,13 @@ package fts
 
 import (
 	"fmt"
-	"log"
 	"strings"
+	"time"
+	"unicode"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // PostgresFTS implements FTSProvider for PostgreSQL using tsvector and pg_trgm
@@ -28,17 +31,6 @@ func (p *PostgresFTS) Setup(db *gorm.DB) error {
 			return fmt.Errorf("failed to setup FTS for %s: %w", entityType, err)
 		}
 	}
-	// Built in the background: on a large existing table the build takes a
-	// while, and prefix search is correct without the index, only slower.
-	go func() {
-		for _, config := range EntityConfigs {
-			if err := p.setupSimpleIndex(db, config); err != nil {
-				// The next startup retries. Prefix search works meanwhile.
-				log.Printf("FTS: %v", err)
-				return
-			}
-		}
-	}()
 	return nil
 }
 
@@ -59,26 +51,97 @@ func simpleVectorExpr(config EntityFTSConfig, qualifier string) string {
 	return fmt.Sprintf("to_tsvector('simple', %s)", strings.Join(cols, " || ' ' || "))
 }
 
-// setupSimpleIndex builds the GIN index on simpleVectorExpr with CREATE INDEX
-// CONCURRENTLY, which blocks neither reads nor writes. A build that failed
-// part way leaves an invalid index that IF NOT EXISTS would keep skipping, so
-// that one is dropped and rebuilt.
-func (p *PostgresFTS) setupSimpleIndex(db *gorm.DB, config EntityFTSConfig) error {
+// simpleIndexLockKey is the advisory lock held while the unstemmed prefix
+// indexes are checked and built ("MRFTSSMP").
+const simpleIndexLockKey = int64(0x4D52465453534D50)
+
+// EnsureSimpleIndexes builds the GIN indexes on simpleVectorExpr that are
+// missing, with CREATE INDEX CONCURRENTLY, which blocks neither reads nor
+// writes; prefix search is correct without them, only slower. Like
+// models.EnsureJobFilterIndexes, a build that failed leaves an invalid index
+// that IF NOT EXISTS would skip forever, so an invalid one is dropped and
+// rebuilt; and since a build in progress also reads as invalid, the pass runs
+// under an advisory lock on one reserved connection, so a server that finds
+// another one building waits for it instead of dropping its work.
+func EnsureSimpleIndexes(db *gorm.DB) error {
+	return db.Connection(func(conn *gorm.DB) error {
+		conn = conn.Session(&gorm.Session{})
+		if err := pollAdvisoryLock(conn, simpleIndexLockKey); err != nil {
+			return fmt.Errorf("lock FTS prefix indexes: %w", err)
+		}
+		defer conn.Exec("SELECT pg_advisory_unlock(?)", simpleIndexLockKey)
+		for _, config := range EntityConfigs {
+			if err := ensureSimpleIndex(conn, config); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// pollAdvisoryLock takes a session advisory lock by polling pg_try_advisory_lock
+// rather than blocking in pg_advisory_lock. CREATE INDEX CONCURRENTLY waits for
+// every transaction older than its own, and a session blocked in
+// pg_advisory_lock is one: a second server waiting for the lock and the first
+// server's build then wait on each other until Postgres aborts one as a
+// deadlock. Between polls the waiter has no statement running.
+func pollAdvisoryLock(conn *gorm.DB, key int64) error {
+	for {
+		var locked bool
+		if err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error; err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		time.Sleep(advisoryLockPoll)
+	}
+}
+
+// advisoryLockPoll is how often a server waiting for another one's index
+// build tries the lock again.
+const advisoryLockPoll = 250 * time.Millisecond
+
+// EnsureSimpleIndexesOnOwnConnection is EnsureSimpleIndexes through a
+// one-connection handle of its own, opened from dsn and closed when the pass
+// ends, so a build that takes minutes holds none of the application's pool
+// (with -max-db-connections=1, all of it).
+func EnsureSimpleIndexesOnOwnConnection(dsn string) error {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		return fmt.Errorf("open the FTS prefix index connection: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("open the FTS prefix index connection: %w", err)
+	}
+	defer sqlDB.Close()
+	sqlDB.SetMaxOpenConns(1)
+	return EnsureSimpleIndexes(db)
+}
+
+func ensureSimpleIndex(conn *gorm.DB, config EntityFTSConfig) error {
 	name := fmt.Sprintf("idx_%s_fts_simple", config.TableName)
-	var invalid int64
-	db.Raw(`
-		SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-		WHERE c.relname = ? AND NOT i.indisvalid
-	`, name).Scan(&invalid)
-	if invalid > 0 {
-		if err := db.Exec(fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s", name)).Error; err != nil {
-			return fmt.Errorf("failed to drop invalid index %s: %w", name, err)
+	var found []struct{ Valid bool }
+	if err := conn.Raw(`SELECT i.indisvalid AS valid FROM pg_class c
+		JOIN pg_index i ON i.indexrelid = c.oid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = ? AND n.nspname = current_schema()`, name).Scan(&found).Error; err != nil {
+		return fmt.Errorf("inspect %s: %w", name, err)
+	}
+	if len(found) == 1 && found[0].Valid {
+		return nil
+	}
+	if len(found) == 1 {
+		// Invalid, and this server holds the lock: a failed build's leftover.
+		if err := conn.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + name).Error; err != nil {
+			return fmt.Errorf("drop %s: %w", name, err)
 		}
 	}
-	sql := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s USING GIN((%s))",
+	statement := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s USING GIN((%s))",
 		name, config.TableName, simpleVectorExpr(config, ""))
-	if err := db.Exec(sql).Error; err != nil {
-		return fmt.Errorf("failed to create index %s: %w", name, err)
+	if err := conn.Exec(statement).Error; err != nil {
+		return fmt.Errorf("create %s: %w", name, err)
 	}
 	return nil
 }
@@ -183,8 +246,13 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 			if config == nil {
 				return db.Where("1 = 0")
 			}
+			words := prefixWords(rawTerm)
+			if len(words) == 0 {
+				return db.Where("1 = 0")
+			}
+			all := strings.Join(words, " ")
 			simple := simpleVectorExpr(*config, tableName+".")
-			for _, word := range strings.Fields(rawTerm) {
+			for _, word := range words {
 				db = db.Where(
 					fmt.Sprintf(`(%s.search_vector @@ to_tsquery('simple', (
 						SELECT string_agg(lexeme || ':*', ' & ')
@@ -194,7 +262,7 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 						FROM unnest(to_tsvector('simple', ?))
 					)) OR (to_tsvector('english', ?) = ''::tsvector AND to_tsvector('english', ?) <> ''::tsvector))`,
 						tableName, simple),
-					word, word, word, rawTerm,
+					word, word, word, all,
 				)
 			}
 			return db
@@ -261,6 +329,39 @@ func (p *PostgresFTS) SupportsFeature(feature string) bool {
 	default:
 		return false
 	}
+}
+
+// Bounds on a prefix query, which repeats each word in its SQL: past them a
+// query is no more selective, only larger.
+const (
+	maxPrefixWords   = 16
+	maxPrefixWordLen = 100
+)
+
+// prefixWords splits a prefix query into the words it matches on: distinct,
+// each holding a letter or digit (a word of punctuation has no lexemes and
+// would only make the query match nothing), at most maxPrefixWords of them,
+// each cut to maxPrefixWordLen runes (a shorter prefix still matches).
+func prefixWords(term string) []string {
+	seen := make(map[string]bool)
+	var words []string
+	for _, word := range strings.Fields(term) {
+		if !strings.ContainsFunc(word, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+			continue
+		}
+		if runes := []rune(word); len(runes) > maxPrefixWordLen {
+			word = string(runes[:maxPrefixWordLen])
+		}
+		if seen[word] {
+			continue
+		}
+		seen[word] = true
+		words = append(words, word)
+		if len(words) == maxPrefixWords {
+			break
+		}
+	}
+	return words
 }
 
 // configForTable returns the FTS config whose table is tableName.

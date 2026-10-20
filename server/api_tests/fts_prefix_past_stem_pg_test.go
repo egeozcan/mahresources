@@ -3,10 +3,11 @@
 package api_tests
 
 import (
+	"mahresources/fts"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,7 @@ func TestFTSPostgresPrefixLongerThanStemMatches(t *testing.T) {
 
 	require.NoError(t, tc.DB.Create(&models.Note{Name: "Running Mentionable"}).Error)
 	require.NoError(t, tc.DB.Create(&models.Note{Name: "Theory notes"}).Error)
+	require.NoError(t, tc.DB.Create(&models.Note{Name: "The - A"}).Error)
 
 	search := func(query string) []query_models.SearchResultItem {
 		t.Helper()
@@ -55,6 +57,9 @@ func TestFTSPostgresPrefixLongerThanStemMatches(t *testing.T) {
 		{"the mentionab", "Mentionable widget"},
 		// ...and is matched as a prefix when it is the whole query.
 		{"the", "Theory notes"},
+		// A word of punctuation has no lexemes and is left out.
+		{"the .", "Theory notes"},
+		{"The - A", "The - A"},
 	} {
 		results := search(c.query)
 		require.True(t, ftsResultsContain(results, c.want),
@@ -64,13 +69,30 @@ func TestFTSPostgresPrefixLongerThanStemMatches(t *testing.T) {
 	// Every word must match: "runs mentionab" is not "runs" alone.
 	require.False(t, ftsResultsContain(search("runs mentionab"), "Running shoes"))
 
-	// The unstemmed index is built in the background and ends up valid.
-	require.Eventually(t, func() bool {
-		var valid int64
-		tc.DB.Raw(`
-			SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-			WHERE c.relname = 'idx_notes_fts_simple' AND i.indisvalid
-		`).Scan(&valid)
-		return valid == 1
-	}, 10*time.Second, 50*time.Millisecond)
+	// Punctuation alone matches nothing, rather than everything.
+	require.Empty(t, search("- ."))
+
+	// Two servers building the unstemmed indexes at once: the advisory lock
+	// makes the second wait instead of dropping the first one's build.
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = fts.EnsureSimpleIndexes(tc.DB)
+		}(i)
+	}
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	var valid int64
+	tc.DB.Raw(`
+		SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relname = 'idx_notes_fts_simple' AND i.indisvalid
+	`).Scan(&valid)
+	require.EqualValues(t, 1, valid)
+
+	// With the index in place the results are the same.
+	require.True(t, ftsResultsContain(search("runs mentionab"), "Running Mentionable"))
 }

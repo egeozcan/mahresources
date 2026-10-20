@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/fts"
 	"mahresources/hash_worker"
 	"mahresources/hostfetch"
 	"mahresources/jobs"
@@ -867,6 +868,13 @@ func main() {
 	if !*skipFTS {
 		if err := context.InitFTS(); err != nil {
 			log.Printf("Warning: FTS setup failed, falling back to LIKE-based search: %v", err)
+		} else if db.Dialector.Name() == "postgres" {
+			// The unstemmed prefix indexes, built CONCURRENTLY beside the
+			// server on a connection of their own, as the Job filter indexes
+			// are; prefix search is correct, only slower, until they exist.
+			go ensureIndexesUntilBuilt("FTS prefix indexes", func() error {
+				return fts.EnsureSimpleIndexesOnOwnConnection(context.Config.DbDsn)
+			}, jobFilterIndexRetryInterval)
 		}
 	} else {
 		log.Println("FTS setup skipped (-skip-fts flag or SKIP_FTS=1)")
@@ -1121,7 +1129,7 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 		// application's — and it keeps trying until the indexes exist, because a
 		// build that failed (here or on the server it waited for) would otherwise
 		// leave them missing until the next restart.
-		go ensureJobFilterIndexesUntilBuilt(func() error {
+		go ensureIndexesUntilBuilt("Job list filter indexes", func() error {
 			return models.EnsureJobFilterIndexesOnOwnConnection(postgresDSN)
 		}, jobFilterIndexRetryInterval)
 	} else if err := models.EnsureJobFilterIndexes(db); err != nil {
@@ -1132,17 +1140,17 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 	return models.EnsureJobWriterEpoch(db)
 }
 
-// jobFilterIndexRetryInterval is how long a failed filter-index build waits
-// before it is tried again.
+// jobFilterIndexRetryInterval is how long a failed concurrent index build (the
+// Job filter indexes, the FTS prefix indexes) waits before it is tried again.
 const jobFilterIndexRetryInterval = 5 * time.Minute
 
-func ensureJobFilterIndexesUntilBuilt(build func() error, retry time.Duration) {
+func ensureIndexesUntilBuilt(what string, build func() error, retry time.Duration) {
 	for {
 		err := build()
 		if err == nil {
 			return
 		}
-		log.Printf("warning: the Job list filter indexes could not be built; retrying in %s: %v", retry, err)
+		log.Printf("warning: the %s could not be built; retrying in %s: %v", what, retry, err)
 		time.Sleep(retry)
 	}
 }
