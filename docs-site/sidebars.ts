@@ -37,6 +37,7 @@ const sidebars: SidebarsConfig = {
         'user-guide/organizing-with-groups',
         'user-guide/search',
         'user-guide/bulk-operations',
+        'user-guide/editing-descriptions',
       ],
     },
     {

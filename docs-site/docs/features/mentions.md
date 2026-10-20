@@ -22,22 +22,15 @@ Examples:
 
 ## Autocomplete
 
-Typing `@` followed by 2+ characters in a description textarea or a note text block opens an autocomplete dropdown. Results are grouped by entity type with icons and description previews.
+Typing `@` at the start of a line or after a space, followed by 2+ characters, in a Description field (except the lightbox's description box) or a note text block opens an autocomplete list of up to 10 matching Resources, Notes, Groups and Tags. Each suggestion shows the entity's name and type. The number of results is announced to screen readers.
 
 | Key | Action |
 |-----|--------|
 | Arrow Up / Arrow Down | Navigate results |
 | Enter | Insert selected mention |
-| Escape | Close dropdown |
+| Escape | Close the list |
 
-Available entity types vary by context:
-
-| Entity | Mentionable Types |
-|--------|-------------------|
-| Note | resources, groups, tags |
-| Group | resources, notes, groups, tags |
-| Resource | notes, groups, tags |
-| Note text block | resources, groups, tags |
+See [Editing Descriptions](../user-guide/editing-descriptions.md) for the editor these fields use.
 
 ## Relation Syncing
 

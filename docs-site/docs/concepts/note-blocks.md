@@ -36,7 +36,7 @@ Eight built-in block types ship with Mahresources. Plugins can register addition
 
 ### Text
 
-Rich text content. The first text block syncs bidirectionally with the Note's `description` field.
+Markdown text, rendered on the server for display (shortcodes included) and edited in the [Markdown editor](../user-guide/editing-descriptions.md#text-blocks). The first text block syncs bidirectionally with the Note's `description` field.
 
 ```json
 {"text": "This is a paragraph of text."}
@@ -244,6 +244,7 @@ The Note's `description` field and the first text block stay in sync:
 |--------|----------|-------------|
 | `GET` | `/v1/note/block/table/query?blockId={id}` | Execute table block's saved Query |
 | `GET` | `/v1/note/block/calendar/events?blockId={id}&start={date}&end={date}` | Fetch calendar events (YYYY-MM-DD dates) |
+| `GET` | `/v1/note/renderedTextBlocks?noteId={id}` | A Note's text blocks rendered for display (HTML) |
 | `GET` | `/v1/plugins/{pluginName}/block/render?blockId={id}&mode=view\|edit` | Render a plugin block type's HTML (see [Custom Block Types](../features/custom-block-types.md#plugin-block-render-endpoint)) |
 
 For full API examples and response formats, see [API: Notes](../api/notes.md).

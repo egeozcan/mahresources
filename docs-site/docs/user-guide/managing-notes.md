@@ -277,7 +277,7 @@ The block editor supports eight built-in block types. Plugins can register addit
 
 Each block type has its own editing interface:
 
-**Text blocks**: A textarea appears for entering Markdown-formatted text.
+**Text blocks**: A Markdown editor with a formatting toolbar, @-mention and shortcode autocomplete. Changes save 500 ms after you stop typing. See [Editing Descriptions](./editing-descriptions.md#text-blocks).
 
 **Heading blocks**: A dropdown to select the heading level (H1-H6) and a text input for the heading text.
 

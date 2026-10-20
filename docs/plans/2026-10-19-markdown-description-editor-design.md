@@ -1,6 +1,6 @@
 # Markdown editor for Descriptions
 
-Status: design agreed with the user (2026-10-19), awaiting review. Not started.
+Status: implemented (slices 1-7, 2026-10-20). Design agreed with the user 2026-10-19.
 
 ## Goal
 

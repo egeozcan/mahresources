@@ -258,9 +258,17 @@ Navigation and page layout share one breakpoint, 900px.
 
 Opening the lightbox adds a history entry, as running an MRQL query does, so any pages ahead of the current one in the browser's Forward history are dropped.
 
-### @-Mention Autocomplete
+### Markdown Editor
 
-Type `@` in description textareas (on note, group, and resource create/edit forms) to search and link entities. See [Mentions](../features/mentions.md).
+| Shortcut | Action |
+|----------|--------|
+| Ctrl/Cmd + B | Bold |
+| Ctrl/Cmd + I | Italic |
+| Ctrl/Cmd + Shift + K | Insert a link |
+| Ctrl/Cmd + Enter | Save (when editing a Description in place on a detail page) |
+| Escape | Close the autocomplete popup; with none open, cancel an in-place edit |
+
+Type `@` in a Description field or text block to search and link entities. See [Editing Descriptions](./editing-descriptions.md) and [Mentions](../features/mentions.md).
 
 ### Autocomplete Dropdowns
 

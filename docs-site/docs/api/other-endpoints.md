@@ -634,6 +634,32 @@ POST /v1/query/editDescription?id={id}
 
 ---
 
+## Description Preview API
+
+Renders Description text the way the entity's detail page renders its Description (Markdown, then mentions, then shortcodes) and saves nothing. The [Markdown editor](../user-guide/editing-descriptions.md#preview) uses it for **Preview**.
+
+```
+POST /v1/{entity}/previewDescription[?id={id}]
+```
+
+`{entity}` is one of `resource`, `note`, `group`, `tag`, `category`, `resourceCategory`, `noteType`, `query`, `relation`, `relationType` or `templatePartial`. Each route needs the same permission as that entity's `editDescription` route; a user without it gets 403.
+
+| Parameter | In | Description |
+|-----------|----|-------------|
+| `text` | body (form or JSON) | The Description text to render |
+| `id` | query | Optional. The entity being edited. Without it, shortcodes stay literal text, as on a create form. |
+
+Response:
+
+```json
+{"html": "<p><strong>Hello</strong></p>"}
+```
+
+- Shortcodes run only for `resource`, `note`, `group`, `category`, `resourceCategory` and `noteType`, and only with an `id`. Other types return shortcodes as literal text, as their detail pages do.
+- An `id` that does not exist returns 404, as does a Resource, Note or Group outside a group-limited user's scope.
+
+---
+
 ## Global Search API
 
 Search across entity types: resources, notes, groups, tags, categories, queries, relation types, note types, resource categories, and saved MRQL queries.
