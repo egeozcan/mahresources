@@ -346,11 +346,12 @@ func prefixWords(term string) []string {
 	seen := make(map[string]bool)
 	var words []string
 	for _, word := range strings.Fields(term) {
-		if !strings.ContainsFunc(word, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
-			continue
-		}
+		// Cut first, then check: the letters may all lie past the cut.
 		if runes := []rune(word); len(runes) > maxPrefixWordLen {
 			word = string(runes[:maxPrefixWordLen])
+		}
+		if !strings.ContainsFunc(word, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+			continue
 		}
 		if seen[word] {
 			continue
