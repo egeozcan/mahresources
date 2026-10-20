@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -79,7 +80,7 @@ func EnsureJobFilterIndexes(db *gorm.DB) error {
 	case "postgres":
 		return db.Connection(func(conn *gorm.DB) error {
 			conn = conn.Session(&gorm.Session{})
-			if err := conn.Exec("SELECT pg_advisory_lock(?)", jobFilterIndexLockKey).Error; err != nil {
+			if err := pollAdvisoryLock(conn, jobFilterIndexLockKey); err != nil {
 				return fmt.Errorf("lock job filter indexes: %w", err)
 			}
 			defer conn.Exec("SELECT pg_advisory_unlock(?)", jobFilterIndexLockKey)
@@ -115,6 +116,29 @@ func EnsureJobFilterIndexes(db *gorm.DB) error {
 		return nil
 	}
 }
+
+// pollAdvisoryLock takes a session advisory lock by polling pg_try_advisory_lock
+// rather than blocking in pg_advisory_lock. CREATE INDEX CONCURRENTLY waits for
+// every transaction older than its own, and a session blocked in
+// pg_advisory_lock is one: a second server waiting for the lock and the first
+// server's build then wait on each other until Postgres aborts one as a
+// deadlock. Between polls the waiter has no statement running.
+func pollAdvisoryLock(conn *gorm.DB, key int64) error {
+	for {
+		var locked bool
+		if err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error; err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		time.Sleep(advisoryLockPoll)
+	}
+}
+
+// advisoryLockPoll is how often a server waiting for another one's index
+// build tries the lock again.
+const advisoryLockPoll = 250 * time.Millisecond
 
 // EnsureJobFilterIndexesOnOwnConnection is EnsureJobFilterIndexes on PostgreSQL
 // through a one-connection handle of its own, opened from dsn and closed when the

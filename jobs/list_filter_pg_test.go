@@ -276,6 +276,35 @@ func TestJobFilterIndexesWaitForAnotherBuilderOnPostgres(t *testing.T) {
 	}
 }
 
+// TestJobFilterIndexesTwoBuildersAtOnceOnPostgres is two servers starting
+// together with the indexes missing. CREATE INDEX CONCURRENTLY waits for every
+// older transaction, the second server's lock wait included, so a server that
+// blocked in pg_advisory_lock deadlocked the builder it was waiting for.
+func TestJobFilterIndexesTwoBuildersAtOnceOnPostgres(t *testing.T) {
+	deps := newPGDeps(t)
+	for _, name := range []string{"idx_jobs_state_phase", "idx_jobs_visible_phase", "idx_job_links_inbound",
+		"idx_jobs_state_entered", "idx_jobs_visible_state_entered", "idx_jobs_state_phase_entered",
+		"idx_jobs_visible_phase_entered", "idx_jobs_owner_state_entered"} {
+		if err := deps.DB.Exec("DROP INDEX IF EXISTS " + name).Error; err != nil {
+			t.Fatalf("drop: %v", err)
+		}
+	}
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { done <- models.EnsureJobFilterIndexes(deps.DB) }()
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("EnsureJobFilterIndexes beside another builder: %v", err)
+			}
+		case <-time.After(60 * time.Second):
+			t.Fatal("the passes did not finish")
+		}
+	}
+}
+
 // TestJobFilterIndexPassLeavesAOneConnectionPoolFree is the pass on its own
 // connection: while it waits for another server's build, an application whose
 // pool is a single connection (-max-db-connections=1) still answers.
