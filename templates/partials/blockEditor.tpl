@@ -78,33 +78,27 @@
                         <div>
                             <template x-if="!editMode">
                                 {# paintRenderedText, not x-html: x-html rebuilds whenever anything it reads changes, the block object included, which discards a widget someone is typing in. It initializes Alpine markup like x-html and, like it, runs no <script>. #}
-                                <div class="prose max-w-none font-sans" data-text-block-rendered x-effect="paintRenderedText($el, renderedText[block.id], block.content?.text)"></div>
+                                <div class="prose max-w-none font-sans" data-text-block-rendered x-effect="paintRenderedText($el, renderedText[block.id], block.content?.text, renderedSource[block.id])"></div>
                             </template>
                             <template x-if="editMode">
-                                <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
-                                    <div class="relative" x-data="mentionTextarea('resource,group,tag')" @input="onInput($event)">
+                                {# Saves at once when focus leaves the block's editor, not when it moves to the toolbar (whose buttons keep focus anyway) or a completion popup (inside the editor). #}
+                                <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))"
+                                     @focusout="if (!$el.contains($event.relatedTarget)) saveBlock()">
+                                    {# The markup of partials/form/markdownEditorCore.tpl, minus the preview pane: leaving edit mode is the preview. CodeMirror's own listbox ids are unique per editor. #}
+                                    <div x-data="markdownEditor({ shortcodes: true })" data-markdown-field="block-text">
+                                        {% include "/partials/form/markdownToolbar.tpl" with toolbar_label="Text block" %}
                                         <textarea
-                                            x-ref="mentionInput"
+                                            x-ref="source"
                                             x-model="text"
                                             @input="onBlockInput()"
-                                            @keydown="onKeydown($event)"
-                                            @blur="saveBlock()"
-                                            class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
+                                            aria-label="Text block"
                                             placeholder="Enter text..."
-                                            {# Deferred-work item 8: role="combobox" and :aria-expanded    #}
-                                            {# dropped so the textarea keeps its implicit textbox role,   #}
-                                            {# and with it aria-multiline. See the long note in           #}
-                                            {# partials/form/createFormTextareaInput.tpl.                 #}
-                                            aria-autocomplete="list"
-                                            aria-haspopup="listbox"
-                                            {# Finding 133: aria-controls was absent. The id is per block  #}
-                                            {# because a note renders one mention textarea per text block, #}
-                                            {# and a shared id would be a duplicate-id axe violation.      #}
-                                            :aria-controls="'block-' + block.id + '-mention-listbox'"
-                                            :aria-owns="'block-' + block.id + '-mention-listbox'"
-                                            :aria-activedescendant="activeDescendantId"
+                                            rows="6"
+                                            style="field-sizing: content; min-height: calc(9rem + 2px); max-height: 60vh; font-size: 0.875rem; line-height: 1.5; padding: 0.5rem 0.75rem;"
+                                            class="block w-full border border-stone-300 rounded-md font-sans"
                                         ></textarea>
-                                        {% include "/partials/form/mentionDropdown.tpl" with dynamicListboxId=true %}
+                                        <div x-ref="mdContainer" hidden data-markdown-editor
+                                             class="border border-stone-300 rounded-md overflow-hidden max-w-full bg-white"></div>
                                     </div>
                                 </div>
                             </template>

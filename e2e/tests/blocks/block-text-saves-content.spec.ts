@@ -49,12 +49,12 @@ test.describe('Text block content saves via UI', () => {
     await page.locator('[data-testid="add-block-trigger"]').click();
     await page.locator('[role="option"][data-block-type="text"]').click();
 
-    // Type content into the textarea
-    const textarea = page.locator('textarea[placeholder="Enter text..."]');
+    // Type content into the text block's markdown editor
+    const textarea = page.locator('[data-markdown-field="block-text"] .cm-content');
     await expect(textarea).toBeVisible({ timeout: 5000 });
     await textarea.fill('This content should be saved');
 
-    // Blur the textarea to trigger save
+    // Leave the editor to trigger save
     await page.locator('h1').first().click();
 
     // Wait for the save API call to persist the block content

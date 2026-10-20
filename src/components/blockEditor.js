@@ -46,16 +46,10 @@ export function blockEditor(noteId, initialBlocks = []) {
     // The message a failed render put in `error`, so a later successful render
     // clears it and nothing else.
     _renderError: null,
-    // New renderings held back for blocks that had focus when they arrived,
-    // by block id; applied when focus leaves the block.
-    _deferredRender: {},
-    // Interactions inside a rendered block (a click, an input, a change), by
-    // block id: the sequence number of the latest. A rendering requested
-    // before the latest interaction may predate what it saved (an inline
-    // [meta] edit), so it is not applied to that block; a fresh one is asked
-    // for instead.
-    _lastInteraction: {},
-    _interactionSeq: 0,
+    // The block text each entry of renderedText was rendered from, by block
+    // id. A block whose saved text differs is showing a rendering of older
+    // text: it is shown inert until its new rendering arrives.
+    renderedSource: {},
     _blockTypesLoaded: false,
 
     async init() {
@@ -75,17 +69,22 @@ export function blockEditor(noteId, initialBlocks = []) {
       // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
       this._root = this.$el;
       this.renderedText = this._readRenderedText(this._root.querySelector('[data-rendered-text-blocks]'));
-      const noteInteraction = (event) => {
+      // The page rendered these from the blocks it was given.
+      for (const block of this.blocks) {
+        if (block.id in this.renderedText) this.renderedSource[block.id] = block.content?.text || '';
+      }
+      // A rendering the user has touched is theirs: a widget in it may hold a
+      // draft or be saving one, by whatever means it saves (a click, a key, a
+      // request still in flight). A background render never replaces it; see
+      // _applyRenderedText. The mark lives on the element, which leaving edit
+      // mode creates afresh.
+      const touch = (event) => {
         const rendered = event.target.closest?.('[data-text-block-rendered]');
-        const card = rendered && rendered.closest('[data-block-id]');
-        if (!card) return;
-        const id = card.dataset.blockId;
-        this._lastInteraction[id] = ++this._interactionSeq;
-        // A rendering already held for this block predates the interaction:
-        // ask for a fresh one when the user leaves the block instead.
-        if (this._deferredRender[id]) this._deferredRender[id] = { refresh: true };
+        if (rendered) rendered._touched = true;
       };
-      for (const type of ['click', 'input', 'change']) this._root.addEventListener(type, noteInteraction, true);
+      for (const type of ['pointerdown', 'keydown', 'focusin', 'input', 'change', 'click']) {
+        this._root.addEventListener(type, touch, true);
+      }
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -385,31 +384,18 @@ export function blockEditor(noteId, initialBlocks = []) {
     // the blocks show their saved text rather than a stale rendering, and say so.
     async refreshRenderedText() {
       const generation = ++this._renderGeneration;
-      const interactionsAtStart = this._interactionSeq;
+      // What the server renders from: leaving edit mode and the structural
+      // mutations that trigger a refresh have finished saving by now.
+      const sources = {};
+      for (const block of this.blocks) {
+        if (block.type === 'text') sources[block.id] = block.content?.text || '';
+      }
       try {
         const res = await fetch(`/v1/note/renderedTextBlocks?noteId=${this.noteId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
-        const next = this._readRenderedText(doc);
-        const stale = [];
-        for (const [id, seq] of Object.entries(this._lastInteraction)) {
-          if (seq <= interactionsAtStart || !(id in next)) continue;
-          // This rendering may predate what the interaction saved: keep what
-          // is shown, and get a fresh one, now or (if the user is still in
-          // the block, perhaps mid-save) once they leave it.
-          next[id] = this.renderedText[id];
-          stale.push(id);
-        }
-        this._applyRenderedText(next);
-        // After applying, which drops a held update for an unchanged block.
-        let refreshNow = false;
-        for (const id of stale) {
-          const el = this._renderedEl(id);
-          if (el && el.contains(document.activeElement)) this._deferRenderUntilLeft(id, { refresh: true }, el);
-          else refreshNow = true;
-        }
-        if (refreshNow) this.refreshRenderedText();
+        this._applyRenderedText(this._readRenderedText(doc), sources);
         if (this.error === this._renderError) this.error = null;
         this._renderError = null;
       } catch (err) {
@@ -417,35 +403,34 @@ export function blockEditor(noteId, initialBlocks = []) {
         console.error('Error rendering text blocks:', err);
         // Every block falls back to its saved text: a stale rendering would
         // claim to show text it does not.
-        this._applyRenderedText({});
+        this._applyRenderedText({}, {});
         this._renderError = `Could not render the text blocks (${err.message}); showing their text. Reload the page to try again.`;
         this.error = this._renderError;
       }
     },
 
-    // Update the blocks whose rendering changed. x-html rebuilds its element
-    // whenever its value is assigned, discarding whatever someone was doing in
-    // it (a draft in an inline [meta] editor, and the focus with it), so:
-    //   - an unchanged value is not assigned (a reactive key then triggers
-    //     nothing);
-    //   - a block that has focus keeps its current rendering until focus
-    //     leaves it. Comparing HTML is not enough: [reload], [lazy] and
-    //     [details] mint a fresh token on every render.
+    // Update the blocks whose rendering changed, except one the user has
+    // touched. Replacing a rendering discards whatever a widget in it holds (a
+    // draft, an inline [meta] editor mid-save), and comparing HTML cannot tell
+    // when that is safe: [reload], [lazy] and [details] mint a fresh token on
+    // every render. A touched block was painted from its current text (an
+    // outdated one is inert, so it cannot be touched), so it keeps showing a
+    // rendering of the right text; what it may miss is a value that changed
+    // elsewhere, until its own [reload] or the next time the note leaves
+    // edit mode.
     // `next` lacking a block means "no rendering": it shows its saved text.
-    _applyRenderedText(next) {
+    _applyRenderedText(next, sources) {
       const ids = new Set([...Object.keys(this.renderedText), ...Object.keys(next)]);
       for (const id of ids) {
         const html = next[id];
-        if (this.renderedText[id] === html) {
-          // What is shown is current again: a held update is obsolete.
-          delete this._deferredRender[id];
-          continue;
-        }
-        const el = this._renderedEl(id);
-        if (el && el.contains(document.activeElement)) {
-          this._deferRenderUntilLeft(id, { html }, el);
+        if (this.renderedText[id] === html) continue;
+        if (this._renderedEl(id)?._touched) continue;
+        if (html === undefined) {
+          delete this.renderedText[id];
+          delete this.renderedSource[id];
         } else {
-          this._setRenderedText(id, html);
+          this.renderedText[id] = html;
+          this.renderedSource[id] = sources[id];
         }
       }
     },
@@ -459,7 +444,15 @@ export function blockEditor(noteId, initialBlocks = []) {
      * block re-renders in place, and re-running scripts on each refresh
      * duplicated listeners and let document.write replace the page.
      */
-    paintRenderedText(el, html, text) {
+    paintRenderedText(el, html, text, source) {
+      // A rendering of text the block no longer has (edited, its new
+      // rendering not here yet) is shown but cannot be used: a widget in it
+      // would act on the old text, and its rendering is about to be replaced.
+      const outdated = html !== undefined && source !== undefined && source !== (text || '');
+      el.inert = outdated;
+      if (outdated) el.setAttribute('aria-busy', 'true');
+      else el.removeAttribute('aria-busy');
+      el.classList.toggle('opacity-60', outdated);
       const painted = html === undefined ? { text: text || '' } : { html };
       if (el._painted && el._painted.html === painted.html && el._painted.text === painted.text) return;
       el._painted = painted;
@@ -481,40 +474,6 @@ export function blockEditor(noteId, initialBlocks = []) {
 
     _renderedEl(id) {
       return this._root?.querySelector(`[data-block-id="${id}"] [data-text-block-rendered]`) || null;
-    },
-
-    _setRenderedText(id, html) {
-      delete this._deferredRender[id];
-      if (html === undefined) delete this.renderedText[id];
-      else this.renderedText[id] = html;
-    },
-
-    // Hold an update for block `id` until the user is done with it: focus or a
-    // pointer press lands outside `el`. Not focusout: WebKit does not focus a
-    // clicked button, so pressing a widget's own Save blurs to <body> first,
-    // and applying then would replace the widget before its click handler ran.
-    // `entry` is { html } to apply, or { refresh: true } to fetch a fresh
-    // rendering (the held one predates an interaction).
-    _deferRenderUntilLeft(id, entry, el) {
-      this._deferredRender[id] = entry;
-      if (el._renderDeferred) return;
-      el._renderDeferred = true;
-      const onAway = (event) => {
-        if (el.isConnected && el.contains(event.target)) return;
-        document.removeEventListener('focusin', onAway, true);
-        document.removeEventListener('pointerdown', onAway, true);
-        el._renderDeferred = false;
-        const pending = this._deferredRender[id];
-        if (!pending) return;
-        if (pending.refresh) {
-          delete this._deferredRender[id];
-          this.refreshRenderedText();
-        } else {
-          this._setRenderedText(id, pending.html);
-        }
-      };
-      document.addEventListener('focusin', onAway, true);
-      document.addEventListener('pointerdown', onAway, true);
     },
 
     _track(promise) {

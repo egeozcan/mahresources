@@ -335,8 +335,8 @@ test.describe('Block Editor UI', () => {
     // Enter edit mode
     await page.locator('button:has-text("Edit Blocks")').click();
 
-    // Find the textarea for the text block and edit it
-    const textarea = page.locator('textarea[placeholder="Enter text..."]').first();
+    // Find the text block's markdown editor and edit it
+    const textarea = page.locator('[data-markdown-field="block-text"] .cm-content').first();
     await expect(textarea).toBeVisible();
     await textarea.fill('Edited text content');
     await textarea.blur(); // Trigger save on blur

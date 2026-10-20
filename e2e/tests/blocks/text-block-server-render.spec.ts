@@ -55,7 +55,7 @@ test.describe('Text blocks render on the server', () => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: 'plain' })).id;
     await page.goto(`/note?id=${noteId}`);
     await page.getByText('Edit Blocks').click();
-    await card(page, block).locator('textarea').fill('## Now a heading');
+    await card(page, block).locator('.cm-content').fill('## Now a heading');
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(rendered(page, block).locator('h2')).toHaveText('Now a heading');
   });
@@ -66,7 +66,7 @@ test.describe('Text blocks render on the server', () => {
     await page.goto(`/note?id=${noteId}`);
     await expect(rendered(page, second)).toContainText('Desc: old text');
     await page.getByText('Edit Blocks').click();
-    await card(page, first).locator('textarea').fill('new text');
+    await card(page, first).locator('.cm-content').fill('new text');
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(rendered(page, second)).toContainText('Desc: new text');
   });
@@ -107,7 +107,7 @@ test.describe('Text blocks render on the server', () => {
     await page.route(/\/v1\/note\/renderedTextBlocks/, (route) =>
       route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' }));
     await page.getByText('Edit Blocks').click();
-    await card(page, block).locator('textarea').fill('**after**');
+    await card(page, block).locator('.cm-content').fill('**after**');
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.locator('.block-editor [role="alert"]')).toContainText(/render/i);
     await expect(rendered(page, block)).toHaveText('**after**');
@@ -145,7 +145,7 @@ test.describe('Text blocks render on the server', () => {
       await route.continue();
     });
     await page.getByText('Edit Blocks').click();
-    await card(page, other).locator('textarea').fill('other changed');
+    await card(page, other).locator('.cm-content').fill('other changed');
     await page.getByRole('button', { name: 'Done' }).click();
     const draft = rendered(page, block).locator('input.draft');
     await draft.fill('my draft');
@@ -175,7 +175,7 @@ test.describe('Text blocks render on the server', () => {
         }
       });
       await page.getByText('Edit Blocks').click();
-      await card(page, other).locator('textarea').fill('other changed');
+      await card(page, other).locator('.cm-content').fill('other changed');
       await page.getByRole('button', { name: 'Done' }).click();
       const draft = rendered(page, block).locator('input.draft');
       await draft.fill('my draft');
@@ -183,16 +183,14 @@ test.describe('Text blocks render on the server', () => {
       await expect(rendered(page, other)).toHaveText('other changed');
       await expect(draft).toHaveValue('my draft');
       await expect(draft).toBeFocused();
-      // Once focus leaves the block it is brought up to date. Typing in it
-      // made the held rendering stale, so a fresh one is fetched and lands: a
-      // failure falls back to the saved text again; a success replaces the
-      // block (its [reload] token is new on every render), so the unsaved
-      // local draft goes with it.
+      // A block the user touched stays theirs after they leave it too: its
+      // rendering is of its current text, and a widget in it may still be
+      // saving. A failure is reported, not painted over it.
       await page.locator('h1').first().click();
+      await page.waitForTimeout(500);
+      await expect(draft).toHaveValue('my draft');
       if (outcome === 'a failed render') {
-        await expect(rendered(page, block)).toContainText('[reload label="Refresh"]');
-      } else {
-        await expect(rendered(page, block).locator('input.draft')).toHaveValue('');
+        await expect(page.locator('.block-editor [role="alert"]')).toContainText(/render/i);
       }
     });
   }
@@ -228,7 +226,7 @@ test.describe('Text blocks render on the server', () => {
       await route.continue();
     });
     await page.getByText('Edit Blocks').click();
-    await card(page, other).locator('textarea').fill('other changed');
+    await card(page, other).locator('.cm-content').fill('other changed');
     await page.getByRole('button', { name: 'Done' }).click();
     const draft = rendered(page, block).locator('input.draft');
     await draft.fill('kept');
@@ -283,7 +281,7 @@ test.describe('Text blocks render on the server', () => {
       await route.fulfill({ response: resp });
     });
     await page.getByText('Edit Blocks').click();
-    await card(page, other).locator('textarea').fill('other changed');
+    await card(page, other).locator('.cm-content').fill('other changed');
     await page.getByRole('button', { name: 'Done' }).click();
     await rendered(page, block).locator('button.rename').click();
     await expect(rendered(page, block).locator('.name')).toHaveText('Renamed B');
@@ -310,7 +308,7 @@ test.describe('Text blocks render on the server', () => {
       await route.continue();
     });
     await page.getByText('Edit Blocks').click();
-    await card(page, other).locator('textarea').fill('other changed');
+    await card(page, other).locator('.cm-content').fill('other changed');
     await page.getByRole('button', { name: 'Done' }).click();
     // Focus sits in the block (no interaction yet) while the rendering lands: it is held.
     await rendered(page, block).locator('input.draft').focus();
@@ -322,5 +320,92 @@ test.describe('Text blocks render on the server', () => {
     await page.locator('h1').first().click();
     await page.waitForTimeout(500);
     await expect(rendered(page, block).locator('.name')).toHaveText('Renamed C');
+  });
+
+  test('a rendering that arrives while a widget save is in flight does not replace the widget', async ({ page, apiClient }) => {
+    // The save button disables itself while saving, which drops focus to
+    // <body>, as an inline [meta] editor's Save does; the request then fails.
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: `<div x-data="{ draft: '', saving: false, error: '' }"><input class="draft" x-model="draft"> <button type="button" class="save" :disabled="saving" x-on:click="saving = true; fetch('/v1/held-save', { method: 'POST' }).then((r) => { if (!r.ok) throw new Error('nope'); }).catch(() => { error = 'Could not save'; }).finally(() => { saving = false; })">save</button> <span class="error" x-text="error"></span></div>\n\n[reload label="Refresh"]`,
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let releaseRender!: () => void;
+    const renderHeld = new Promise<void>((r) => { releaseRender = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await renderHeld;
+      await route.continue();
+    });
+    let releaseSave!: () => void;
+    const saveHeld = new Promise<void>((r) => { releaseSave = r; });
+    await page.route(/\/v1\/held-save/, async (route) => {
+      await saveHeld;
+      await route.fulfill({ status: 500, body: 'boom' });
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await rendered(page, block).locator('input.draft').fill('my draft');
+    await rendered(page, block).locator('button.save').click();
+    await expect(rendered(page, block).locator('button.save')).toBeDisabled();
+    releaseRender();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    releaseSave();
+    await expect(rendered(page, block).locator('.error')).toHaveText('Could not save');
+    await expect(rendered(page, block).locator('input.draft')).toHaveValue('my draft');
+  });
+
+  test('a keyboard-only widget save is not undone by a held rendering', async ({ page, apiClient }) => {
+    // Arrow keys change and save the value with no click, input or change
+    // event, as the [pills] widget does.
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: `<span class="name">[property path="Name"]</span> <button type="button" class="pill" x-on:keydown.arrow-right="fetch('/v1/note/editName?id=${noteId}', { method: 'POST', body: new URLSearchParams({ name: 'Renamed D' }) }).then(() => { $el.parentElement.querySelector('.name').textContent = 'Renamed D'; })">pill</button>\n\n[reload label="Refresh"]`,
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let first = true;
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      if (!first) return route.continue();
+      first = false;
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await rendered(page, block).locator('button.pill').focus();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.keyboard.press('ArrowRight');
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed D');
+    await page.locator('h1').first().click();
+    await page.waitForTimeout(500);
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed D');
+  });
+
+  test('an edited block shows its old rendering inert until the new one arrives', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<button type="button" class="old">old widget</button>',
+    })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, block).locator('.cm-content').fill('<button type="button" class="new">new widget</button>');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(rendered(page, block).locator('button.old')).toBeVisible();
+    await expect(rendered(page, block)).toHaveAttribute('aria-busy', 'true');
+    expect(await rendered(page, block).evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+    release();
+    await expect(rendered(page, block).locator('button.new')).toBeVisible();
+    await expect(rendered(page, block)).not.toHaveAttribute('aria-busy', 'true');
+    expect(await rendered(page, block).evaluate((el) => (el as HTMLElement).inert)).toBe(false);
   });
 });

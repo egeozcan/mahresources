@@ -48,10 +48,10 @@ test.describe('BH-021: block-editor text block — expanded markdown tokens', ()
     await page.locator('[role="option"][data-block-type="text"]').click();
 
     // Fill with BH-021 markdown tokens
-    const textarea = page.locator('textarea[placeholder="Enter text..."]');
-    await expect(textarea).toBeVisible({ timeout: 5000 });
+    const editor = page.locator('[data-markdown-field="block-text"] .cm-content');
+    await expect(editor).toBeVisible({ timeout: 5000 });
     const md = 'hello _world_ and `code` and ~~strike~~ also **bold**';
-    await textarea.fill(md);
+    await editor.fill(md);
 
     // Blur to trigger save, then wait for the block content to persist
     await page.locator('h1').first().click();

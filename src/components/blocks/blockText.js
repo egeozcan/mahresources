@@ -7,15 +7,15 @@ export function blockText(block, saveFn, saveDebouncedFn) {
     saveDebouncedFn,
     text: block?.content?.text || '',
 
-    // Called on input for debounced auto-save
-    // Named onBlockInput to avoid collision with mentionTextarea's onInput
+    // Called on input for debounced auto-save. markdownEditor writes every
+    // edit back to the textarea and fires input there.
     onBlockInput() {
       if (this.saveDebouncedFn) {
         this.saveDebouncedFn(this.block.id, { text: this.text });
       }
     },
 
-    // Called on blur for immediate save
+    // Called when focus leaves the block's editor, for an immediate save.
     // Named saveBlock to avoid collision with inner scope names
     saveBlock() {
       this.saveFn(this.block.id, { text: this.text });

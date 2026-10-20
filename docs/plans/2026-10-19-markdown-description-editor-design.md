@@ -177,10 +177,26 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
       issued, so a GET that snapshotted a since-deleted block cannot bring it
       back.
     - Until the response arrives the blocks keep their previous rendering.
+      A block whose text was edited shows that older rendering inert and
+      `aria-busy` until its new one arrives, so no widget in it can start a
+      save that the new rendering would then discard.
+    - **A rendering the user has touched is not replaced.** A pointer press,
+      key, focus, input or change inside a block's rendering marks it, and
+      no later render replaces it, success or failure, until leaving edit
+      mode next creates it afresh. Replacing a rendering discards whatever a
+      widget in it holds: a draft, or an inline `[meta]` editor whose save is
+      still in flight. Comparing HTML cannot tell when replacing is safe,
+      because `[reload]`, `[lazy]` and `[details]` mint a fresh token on every
+      render, and inferring widget saves from events missed saves made by key
+      or with focus on `<body>` (slice 5 review, rounds 5 to 8). The cost: a
+      touched block can show a value another block changed, such as
+      `[property path="Description"]`, until its own `[reload]` or the next
+      time the note leaves edit mode.
     - This HTML goes into the page directly, as the Description does on the
       detail page today; the sandboxed iframe is only for the form preview.
-    - It goes in with `x-html`, which initializes Alpine markup but runs no
-      `<script>`. This is the one rendering difference from a Description,
+    - It goes in the way `x-html` puts HTML in (`paintRenderedText` in
+      `src/components/blockEditor.js`, which writes only when the rendering
+      changes): Alpine markup is initialized, and no `<script>` runs. This is the one rendering difference from a Description,
       whose scripts run once while the page parses: a block re-renders in
       place on every refresh, and re-running its scripts there duplicated
       listeners, broke top-level `const` declarations, and let a

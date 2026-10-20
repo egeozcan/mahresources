@@ -80,10 +80,10 @@ test.describe('Block save ordering', () => {
 
     await page.goto(`/note?id=${noteId}`);
     await page.getByText('Edit Blocks').click();
-    const textarea = card(page, blockA).locator('textarea');
-    await textarea.fill('first');
+    const editor = card(page, blockA).locator('.cm-content');
+    await editor.fill('first');
     await blurEditor(page);
-    await textarea.fill('first second');
+    await editor.fill('first second');
     await blurEditor(page);
 
     await firstPutDone.promise;
@@ -103,13 +103,13 @@ test.describe('Block save ordering', () => {
 
     await page.goto(`/note?id=${noteId}`);
     await page.getByText('Edit Blocks').click();
-    const textarea = card(page, blockA).locator('textarea');
-    await textarea.fill('unsaved text');
+    const editor = card(page, blockA).locator('.cm-content');
+    await editor.fill('unsaved text');
     await page.getByRole('button', { name: 'Done' }).click();
 
     await expect(page.locator('.block-editor [role="alert"]')).toContainText('disk full');
     await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
-    await expect(textarea).toHaveValue('unsaved text');
+    await expect(editor).toHaveText('unsaved text');
     expect((await apiClient.getBlock(blockA)).content.text).toBe('old A');
   });
 
@@ -139,8 +139,8 @@ test.describe('Block save ordering', () => {
 
     await page.goto(`/note?id=${noteId}`);
     await page.getByText('Edit Blocks').click();
-    await card(page, blockA).locator('textarea').fill('new A');
-    // Clicking Move down blurs the textarea (save) and reorders (reload).
+    await card(page, blockA).locator('.cm-content').fill('new A');
+    // Clicking Move down leaves the editor (save) and reorders (reload).
     await card(page, blockA).locator('[data-block-control="move-down"]').click();
 
     await getFulfilled.promise;
@@ -153,7 +153,7 @@ test.describe('Block save ordering', () => {
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(card(page, blockA).locator('.block-content .prose')).toHaveText('new A');
     await page.getByText('Edit Blocks').click();
-    await card(page, blockA).locator('textarea').focus();
+    await card(page, blockA).locator('.cm-content').focus();
     await blurEditor(page);
     await delay(800);
     expect((await apiClient.getBlock(blockA)).content.text).toBe('new A');
