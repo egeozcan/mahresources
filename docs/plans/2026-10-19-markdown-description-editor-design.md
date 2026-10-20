@@ -187,9 +187,11 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
     - **A rendering the user has touched is not replaced.** A pointer press,
       key, focus, input or change inside a block's rendering marks it, as
       does holding focus. Events inside an iframe never reach the page, and
-      moving from one frame straight to another fires nothing there, so
-      focus entering any frame marks every rendering that contains one. An
-      outdated rendering is never marked, and is always replaced. No later
+      moving from one frame straight to another fires nothing there, and a
+      frame can load later (`[lazy]`), so once focus has entered any frame,
+      every rendering painted before that which contains a frame when a
+      render arrives counts as touched. An outdated rendering is never
+      treated as touched, and is always replaced. No later
       render replaces a marked rendering, success or failure, until leaving
       edit mode next creates it afresh. Replacing a rendering discards
       whatever a widget in it holds: a draft, or an inline `[meta]` editor

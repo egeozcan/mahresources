@@ -462,6 +462,38 @@ test.describe('Text blocks render on the server', () => {
     await expect(draftB).toHaveValue('draft B');
   });
 
+  test('a frame that appears after focus entered another frame still protects its draft', async ({ page, apiClient }) => {
+    const a = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<iframe class="frame" srcdoc="<input class=draft>"></iframe>',
+    })).id;
+    const b = (await apiClient.createBlock(noteId, 'text', 'h', {
+      text: '<div class="slot"></div>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'p', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await rendered(page, a).frameLocator('iframe.frame').locator('input.draft').fill('draft A');
+    // B's frame arrives late, as [lazy] content does, while focus is in A's frame.
+    await rendered(page, b).locator('.slot').evaluate((slot) => {
+      slot.innerHTML = '<iframe class="frame" srcdoc="<input class=draft>"></iframe>';
+    });
+    const draftB = rendered(page, b).frameLocator('iframe.frame').locator('input.draft');
+    await draftB.fill('draft B');
+    await page.locator('h1').first().click();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(draftB).toHaveValue('draft B');
+  });
+
   test('entering a frame does not keep an edited block on its outdated rendering', async ({ page, apiClient }) => {
     const a = (await apiClient.createBlock(noteId, 'text', 'd', {
       text: '<iframe class="frame" srcdoc="<p>old</p>"></iframe>',
