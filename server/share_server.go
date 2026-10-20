@@ -273,7 +273,7 @@ func (s *ShareServer) registerShareRoutes(router *mux.Router) {
 	router.Methods(http.MethodGet).Path("/s/{token}/resource/{hash}").HandlerFunc(s.handleSharedResource)
 
 	// Static assets
-	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("public")))))
+	router.PathPrefix("/public/").Handler(compressStatic(cacheHashedBuildAssets(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("public")))))))
 }
 
 // handleSharedNote serves a shared note by its token

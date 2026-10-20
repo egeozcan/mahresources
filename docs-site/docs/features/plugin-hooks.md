@@ -373,6 +373,21 @@ end)
 This is what replaces embedding browser code in Lua long strings, where every
 page render re-sends the same bytes through the VM lock.
 
+Text files (scripts, stylesheets, HTML, JSON, XML, SVG) and WebAssembly of 1 KB
+or more are sent gzip-compressed to browsers that accept it.
+
+Plugin files carry a `Last-Modified` header and no `Cache-Control` header, so
+the browser decides how long to reuse its copy before asking again. Browsers
+commonly reuse it for a tenth of the time the file had gone unchanged when they
+fetched it: a script unchanged for 100 days is reused for about 10 more, and
+an updated plugin's old script keeps running in that browser until then. To
+make an update reach browsers on their next page load, change the URL with it,
+for example with the plugin's version:
+
+```lua
+return [[<script src="/plugins/my-plugin/public/app.js?v=1.0.1"></script>]]
+```
+
 :::caution Do not add `defer` or `type="module"`
 
 `main.js` is a module and therefore deferred, and the `head` slot is emitted

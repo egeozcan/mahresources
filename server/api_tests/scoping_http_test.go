@@ -55,9 +55,9 @@ func buildScopingFixture(t *testing.T, tc *TestContext) scopeFixture {
 	tc.DB.Create(nOut)
 
 	// The raw /files server guard (FilePathInScope) is proven by a unit test in
-	// the application_context package; the bare-MemMapFs test harness here cannot
-	// serve file bytes over HTTP (it works only in the real ephemeral server's
-	// storage fs), so we do not assert byte serving at this layer.
+	// the application_context package and over HTTP, across storage mounts, by
+	// TestRawFileGuardMatchesTheMount; this fixture writes no file bytes, so it
+	// does not assert byte serving.
 
 	return scopeFixture{
 		bearer: scopedUserBearer(t, tc, root.ID),

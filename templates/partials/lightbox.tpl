@@ -161,10 +161,14 @@
 
         <!-- Media content -->
         <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.consumeDragClick() || $store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
+            {# Each media branch is gated on isOpen: the viewer is in every list page, its  #}
+            {# items are collected when the page loads, and an x-if renders while the      #}
+            {# outer x-show only hides it, so a closed viewer downloaded the first item's   #}
+            {# full original on every page view, however large.                            #}
             {# Historical SVG files are attachments: render them as images rather than #}
             {# embedded documents, which the browser refuses to display as attachments. #}
             <!-- Image display -->
-            <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType) || ($store.lightbox.isHistoricalVersion() && $store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType))">
+            <template x-if="$store.lightbox.isOpen && ($store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType) || ($store.lightbox.isHistoricalVersion() && $store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType)))">
                 <img
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
@@ -180,7 +184,7 @@
 
             <!-- SVG display - use object tag for better SVG rendering with proper sizing -->
             <!-- Wrapped in a div with overlay to prevent the embedded SVG from stealing focus -->
-            <template x-if="$store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType) && !$store.lightbox.isHistoricalVersion()">
+            <template x-if="$store.lightbox.isOpen && $store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType) && !$store.lightbox.isHistoricalVersion()">
                 <div class="relative">
                     <object
                         :data="$store.lightbox.getCurrentItem()?.viewUrl"
@@ -208,7 +212,7 @@
             </template>
 
             <!-- Video display -->
-            <template x-if="$store.lightbox.isVideo($store.lightbox.getCurrentItem()?.contentType)">
+            <template x-if="$store.lightbox.isOpen && $store.lightbox.isVideo($store.lightbox.getCurrentItem()?.contentType)">
                 <video
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :key="$store.lightbox.getCurrentItem()?.id"
@@ -216,6 +220,7 @@
                     class="max-h-[90vh] transition-all duration-300"
                     :class="$store.lightbox._mediaMaxWidthClass()"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                    @loadedmetadata="$store.lightbox.restoreClosedVideo($el)"
                     @loadeddata="$store.lightbox.onMediaLoaded($event)"
                     @error="$store.lightbox.onMediaError($event)"
                 >

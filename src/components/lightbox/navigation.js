@@ -79,6 +79,9 @@ export const navigationState = {
   _preloadedUrls: new Set(),
   _preloadedImages: [],
   _preloadAheadCount: 5,
+
+  // The video a close dropped, for its reopen to resume. See _rememberClosedVideo.
+  _closedVideo: null,
 };
 
 export const navigationMethods = {
@@ -676,6 +679,7 @@ export const navigationMethods = {
       this.detailsAborter = null;
     }
     this.pauseCurrentVideo();
+    this._rememberClosedVideo();
 
     if (this.isFullscreen) {
       if (document.exitFullscreen) {
@@ -1259,5 +1263,40 @@ export const navigationMethods = {
     if (video && !video.paused) {
       video.pause();
     }
+  },
+
+  // The media only renders while the viewer is open (lightbox.tpl), so closing
+  // drops the video element and a reopen builds a new one. These carry across
+  // what the kept element did: its volume and mute to whatever video opens
+  // next, and, reopening the same file, its position and speed too (a media
+  // load resets the speed, so another file starts at normal speed as it did).
+  _rememberClosedVideo() {
+    const video = document.querySelector('[x-show="$store.lightbox.isOpen"] video');
+    // A saved state that is still here was never restored onto this element
+    // (restoreClosedVideo takes it once the element's metadata loads), so the
+    // element holds only defaults: keep the saved one. An element merely loading
+    // its next file after a navigation has none waiting and holds the live
+    // volume and mute. With no video showing there is nothing newer to save.
+    if (!video || this._closedVideo) return;
+    this._closedVideo = this._mediaElementUrl(video)
+      ? {
+          url: this._mediaElementUrl(video),
+          currentTime: video.currentTime,
+          volume: video.volume,
+          muted: video.muted,
+          playbackRate: video.playbackRate,
+        }
+      : null;
+  },
+
+  restoreClosedVideo(video) {
+    const saved = this._closedVideo;
+    this._closedVideo = null;
+    if (!saved) return;
+    video.volume = saved.volume;
+    video.muted = saved.muted;
+    if (this._mediaElementUrl(video) !== saved.url) return;
+    video.playbackRate = saved.playbackRate;
+    video.currentTime = saved.currentTime;
   },
 };
