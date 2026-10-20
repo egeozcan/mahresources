@@ -85,6 +85,12 @@ export function blockEditor(noteId, initialBlocks = []) {
       for (const type of ['pointerdown', 'keydown', 'focusin', 'input', 'change', 'click']) {
         this._root.addEventListener(type, touch, true);
       }
+      // Events inside an iframe never reach this document. Focus moving into
+      // one blurs the window with the <iframe> left as the active element.
+      window.addEventListener('blur', () => {
+        const frame = document.activeElement;
+        if (frame?.tagName === 'IFRAME') touch({ target: frame });
+      });
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -429,7 +435,9 @@ export function blockEditor(noteId, initialBlocks = []) {
           if (html !== undefined && id in sources) this.renderedSource[id] = sources[id];
           continue;
         }
-        if (this._renderedEl(id)?._touched) continue;
+        const el = this._renderedEl(id);
+        // Focus inside counts as touched even if no event said so.
+        if (el && (el._touched || el.contains(document.activeElement))) continue;
         if (html === undefined) {
           delete this.renderedText[id];
           delete this.renderedSource[id];

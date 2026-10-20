@@ -181,7 +181,8 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
       `aria-busy` until its new one arrives, so no widget in it can start a
       save that the new rendering would then discard.
     - **A rendering the user has touched is not replaced.** A pointer press,
-      key, focus, input or change inside a block's rendering marks it, and
+      key, focus, input or change inside a block's rendering (focus moving
+      into an iframe in it included) marks it, as does holding focus, and
       no later render replaces it, success or failure, until leaving edit
       mode next creates it afresh. Replacing a rendering discards whatever a
       widget in it holds: a draft, or an inline `[meta]` editor whose save is

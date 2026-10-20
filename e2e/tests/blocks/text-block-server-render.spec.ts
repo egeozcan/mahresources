@@ -409,6 +409,31 @@ test.describe('Text blocks render on the server', () => {
     expect(await rendered(page, block).evaluate((el) => (el as HTMLElement).inert)).toBe(false);
   });
 
+  test('a draft typed inside an iframe in a block survives a background render', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<iframe class="frame" srcdoc="<input class=draft placeholder=Draft>"></iframe>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    const draft = rendered(page, block).frameLocator('iframe.frame').locator('input.draft');
+    await draft.fill('iframe draft');
+    // Then leave the frame: the block stays touched.
+    await page.locator('h1').first().click();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(draft).toHaveValue('iframe draft');
+  });
+
   test('an edit that renders to the same HTML does not leave the block inert', async ({ page, apiClient }) => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: '**bold** [link](/notes)' })).id;
     await page.goto(`/note?id=${noteId}`);
