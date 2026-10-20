@@ -31,50 +31,17 @@ func (p *PostgresFTS) Setup(db *gorm.DB) error {
 }
 
 func (p *PostgresFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
-	// Build tsvector column expression with weights
-	// setweight(to_tsvector('english', coalesce(name,'')), 'A') ||
-	// setweight(to_tsvector('english', coalesce(description,'')), 'B')
-	var parts []string
-	for _, col := range config.Columns {
-		weight := config.WeightedCols[col]
-		if weight == "" {
-			weight = "D" // default lowest weight
+	// search_vector holds English stems for exact and stemmed matching.
+	// search_vector_simple holds the same words unstemmed: prefix search needs
+	// it, because a typed prefix longer than a word's stem ("Mentionab" for
+	// 'mention', "runni" for 'run') matches no stem.
+	for _, v := range []struct{ column, config, index string }{
+		{"search_vector", "english", "fts"},
+		{"search_vector_simple", "simple", "fts_simple"},
+	} {
+		if err := p.setupVector(db, config, v.column, v.config, v.index); err != nil {
+			return err
 		}
-		parts = append(parts, fmt.Sprintf(
-			"setweight(to_tsvector('english', coalesce(%s,'')), '%s')",
-			col, weight,
-		))
-	}
-	tsvectorExpr := strings.Join(parts, " || ")
-
-	// Check if search_vector column already exists
-	var count int64
-	db.Raw(`
-		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name = ? AND column_name = 'search_vector'
-	`, config.TableName).Scan(&count)
-
-	if count == 0 {
-		// Add generated tsvector column
-		alterSQL := fmt.Sprintf(`
-			ALTER TABLE %s
-			ADD COLUMN search_vector tsvector
-			GENERATED ALWAYS AS (%s) STORED`,
-			config.TableName, tsvectorExpr,
-		)
-		if err := db.Exec(alterSQL).Error; err != nil {
-			return fmt.Errorf("failed to add search_vector column to %s: %w", config.TableName, err)
-		}
-	}
-
-	// Create GIN index on search_vector (idempotent with IF NOT EXISTS)
-	indexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_fts
-		ON %s USING GIN(search_vector)`,
-		config.TableName, config.TableName,
-	)
-	if err := db.Exec(indexSQL).Error; err != nil {
-		return fmt.Errorf("failed to create FTS index on %s: %w", config.TableName, err)
 	}
 
 	// Create trigram index for fuzzy search on name column
@@ -87,6 +54,59 @@ func (p *PostgresFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
 		return fmt.Errorf("failed to create trigram index on %s: %w", config.TableName, err)
 	}
 
+	return nil
+}
+
+// setupVector adds a generated, weighted tsvector column built with the given
+// text search configuration, and a GIN index on it. Adding the column
+// computes it for every existing row.
+func (p *PostgresFTS) setupVector(db *gorm.DB, config EntityFTSConfig, column, tsConfig, indexSuffix string) error {
+	// setweight(to_tsvector('<config>', coalesce(name,'')), 'A') ||
+	// setweight(to_tsvector('<config>', coalesce(description,'')), 'B')
+	var parts []string
+	for _, col := range config.Columns {
+		weight := config.WeightedCols[col]
+		if weight == "" {
+			weight = "D" // default lowest weight
+		}
+		parts = append(parts, fmt.Sprintf(
+			"setweight(to_tsvector('%s', coalesce(%s,'')), '%s')",
+			tsConfig, col, weight,
+		))
+	}
+	tsvectorExpr := strings.Join(parts, " || ")
+
+	var count int64
+	db.Raw(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = ? AND column_name = ?
+	`, config.TableName, column).Scan(&count)
+
+	if count == 0 {
+		alterSQL := fmt.Sprintf(`
+			ALTER TABLE %s
+			ADD COLUMN %s tsvector
+			GENERATED ALWAYS AS (%s) STORED`,
+			config.TableName, column, tsvectorExpr,
+		)
+		if err := db.Exec(alterSQL).Error; err != nil {
+			return fmt.Errorf("failed to add %s column to %s: %w", column, config.TableName, err)
+		}
+		// Fresh statistics for the new column, so the planner uses its index
+		// rather than estimating from none.
+		if err := db.Exec(fmt.Sprintf("ANALYZE %s", config.TableName)).Error; err != nil {
+			return fmt.Errorf("failed to analyze %s: %w", config.TableName, err)
+		}
+	}
+
+	indexSQL := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_%s_%s
+		ON %s USING GIN(%s)`,
+		config.TableName, indexSuffix, config.TableName, column,
+	)
+	if err := db.Exec(indexSQL).Error; err != nil {
+		return fmt.Errorf("failed to create %s index on %s: %w", column, config.TableName, err)
+	}
 	return nil
 }
 
@@ -120,12 +140,19 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 			// to avoid stemming them a second time. The subquery depends only on
 			// the bind parameter, so Postgres evaluates it once (InitPlan) and
 			// still uses the GIN index on search_vector.
+			//
+			// The same query over unstemmed words catches a prefix longer than
+			// its word's stem ("runni" for "running", stored as 'run'). The
+			// stemmed side stays for the opposite case ("runs" for "running").
 			return db.Where(
-				fmt.Sprintf(`%s.search_vector @@ to_tsquery('simple', (
+				fmt.Sprintf(`(%[1]s.search_vector @@ to_tsquery('simple', (
 					SELECT string_agg(lexeme || ':*', ' & ')
 					FROM unnest(to_tsvector('english', ?))
-				))`, tableName),
-				rawTerm,
+				)) OR %[1]s.search_vector_simple @@ to_tsquery('simple', (
+					SELECT string_agg(lexeme || ':*', ' & ')
+					FROM unnest(to_tsvector('simple', ?))
+				)))`, tableName),
+				rawTerm, rawTerm,
 			)
 
 		case ModeFuzzy:
@@ -170,9 +197,9 @@ func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query Pars
 		}
 		tsquery := strings.Join(tsqueryParts, " & ")
 		return fmt.Sprintf(
-			"ts_rank(%s.search_vector, to_tsquery('english', ?))",
+			"GREATEST(ts_rank(%[1]s.search_vector, to_tsquery('english', ?)), ts_rank(%[1]s.search_vector_simple, to_tsquery('simple', ?)))",
 			tableName,
-		), []interface{}{tsquery}
+		), []interface{}{tsquery, tsquery}
 
 	default: // ModeExact
 		return fmt.Sprintf(
