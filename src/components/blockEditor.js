@@ -423,7 +423,12 @@ export function blockEditor(noteId, initialBlocks = []) {
       const ids = new Set([...Object.keys(this.renderedText), ...Object.keys(next)]);
       for (const id of ids) {
         const html = next[id];
-        if (this.renderedText[id] === html) continue;
+        if (this.renderedText[id] === html) {
+          // Nothing to repaint, but it is now the rendering of this text (an
+          // edit can render identically), so the block is no longer outdated.
+          if (html !== undefined && id in sources) this.renderedSource[id] = sources[id];
+          continue;
+        }
         if (this._renderedEl(id)?._touched) continue;
         if (html === undefined) {
           delete this.renderedText[id];

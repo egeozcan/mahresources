@@ -408,4 +408,15 @@ test.describe('Text blocks render on the server', () => {
     await expect(rendered(page, block)).not.toHaveAttribute('aria-busy', 'true');
     expect(await rendered(page, block).evaluate((el) => (el as HTMLElement).inert)).toBe(false);
   });
+
+  test('an edit that renders to the same HTML does not leave the block inert', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: '**bold** [link](/notes)' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await page.getByText('Edit Blocks').click();
+    await card(page, block).locator('.cm-content').fill('__bold__ [link](/notes)');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(rendered(page, block).locator('strong')).toHaveText('bold');
+    await expect(rendered(page, block)).not.toHaveAttribute('aria-busy', 'true');
+    expect(await rendered(page, block).evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+  });
 });
