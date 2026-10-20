@@ -434,6 +434,93 @@ test.describe('Text blocks render on the server', () => {
     await expect(draft).toHaveValue('iframe draft');
   });
 
+  test('a draft typed after moving straight from one block iframe to another survives', async ({ page, apiClient }) => {
+    const frameText = '<iframe class="frame" srcdoc="<input class=draft placeholder=Draft>"></iframe>\n\n[reload label="Refresh"]';
+    const a = (await apiClient.createBlock(noteId, 'text', 'd', { text: frameText })).id;
+    const b = (await apiClient.createBlock(noteId, 'text', 'h', { text: frameText })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'p', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    const draftA = rendered(page, a).frameLocator('iframe.frame').locator('input.draft');
+    const draftB = rendered(page, b).frameLocator('iframe.frame').locator('input.draft');
+    await draftA.fill('draft A');
+    // Frame to frame: the page sees no event at all.
+    await draftB.fill('draft B');
+    await page.locator('h1').first().click();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(draftA).toHaveValue('draft A');
+    await expect(draftB).toHaveValue('draft B');
+  });
+
+  test('entering a frame does not keep an edited block on its outdated rendering', async ({ page, apiClient }) => {
+    const a = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<iframe class="frame" srcdoc="<p>old</p>"></iframe>',
+    })).id;
+    const b = (await apiClient.createBlock(noteId, 'text', 'h', {
+      text: '<iframe class="frame" srcdoc="<input class=draft>"></iframe>',
+    })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, a).locator('.cm-content').fill('**new text**');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(rendered(page, a)).toHaveAttribute('aria-busy', 'true');
+    await rendered(page, b).frameLocator('iframe.frame').locator('input.draft').fill('typing');
+    release();
+    await expect(rendered(page, a).locator('strong')).toHaveText('new text');
+    await expect(rendered(page, a)).not.toHaveAttribute('aria-busy', 'true');
+  });
+
+  test('a render made while a save is in flight is not taken for a rendering of the unsaved text', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: 'one' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await page.getByText('Edit Blocks').click();
+    let releasePut!: () => void;
+    const putHeld = new Promise<void>((r) => { releasePut = r; });
+    let putSeen = false;
+    await page.route(/\/v1\/note\/block\?/, async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      putSeen = true;
+      await putHeld;
+      await route.continue();
+    });
+    await card(page, block).locator('.cm-content').fill('two');
+    await expect.poll(() => putSeen).toBe(true);
+    // A refresh while the save is pending: the server renders the saved 'one'.
+    await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('.block-editor')).refreshRenderedText());
+    await page.waitForTimeout(300);
+    releasePut();
+    await expect.poll(async () => (await apiClient.getBlock(block)).content.text).toBe('two');
+    let releaseRender!: () => void;
+    const renderHeld = new Promise<void>((r) => { releaseRender = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await renderHeld;
+      await route.continue();
+    });
+    await page.getByRole('button', { name: 'Done' }).click();
+    // What is shown is the rendering of 'one': outdated, so inert.
+    await expect(rendered(page, block)).toHaveText('one');
+    await expect(rendered(page, block)).toHaveAttribute('aria-busy', 'true');
+    releaseRender();
+    await expect(rendered(page, block)).toHaveText('two');
+    await expect(rendered(page, block)).not.toHaveAttribute('aria-busy', 'true');
+  });
+
   test('an edit that renders to the same HTML does not leave the block inert', async ({ page, apiClient }) => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', { text: '**bold** [link](/notes)' })).id;
     await page.goto(`/note?id=${noteId}`);

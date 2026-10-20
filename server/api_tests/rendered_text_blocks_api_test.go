@@ -3,6 +3,7 @@ package api_tests
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"mahresources/application_context"
 	"mahresources/models"
 	"net/http"
@@ -35,7 +36,7 @@ func getRenderedTextBlocks(tc *TestContext, bearer string, noteID uint) *httptes
 	return doReq(tc, http.MethodGet, fmt.Sprintf("/v1/note/renderedTextBlocks?noteId=%d", noteID), headers, nil, nil)
 }
 
-var renderedBlockRe = regexp.MustCompile(`(?s)<template data-rendered-text-block="(\d+)">(.*?)</template>`)
+var renderedBlockRe = regexp.MustCompile(`(?s)<template data-rendered-text-block="(\d+)"[^>]*>(.*?)</template>`)
 
 func renderedBlocks(t *testing.T, rr *httptest.ResponseRecorder) map[string]string {
 	t.Helper()
@@ -73,6 +74,26 @@ func TestRenderedTextBlocks_RenderLikeTheDescription(t *testing.T) {
 	}
 	if !strings.Contains(b, fmt.Sprintf("/group?id=%d", group.ID)) {
 		t.Errorf("mention not rendered: %s", b)
+	}
+}
+
+// Each <template> says which text it was rendered from, escaped for an
+// attribute, so the client can tell an outdated rendering from a current one
+// even while its own copy of a block holds text not saved yet.
+func TestRenderedTextBlocks_CarryTheirSourceText(t *testing.T) {
+	tc := SetupTestEnv(t)
+	note := &models.Note{Name: "Source Host"}
+	tc.DB.Create(note)
+	text := "a \"quoted\" <b>tag</b> & 'apostrophe'\r\nnext line"
+	block := tc.CreateDummyBlock(note.ID, "text", textBlockJSON(t, text), "d")
+
+	body := getRenderedTextBlocks(tc, "", note.ID).Body.String()
+	m := regexp.MustCompile(fmt.Sprintf(`<template data-rendered-text-block="%d" data-source="([^"]*)">`, block.ID)).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no data-source attribute: %s", body)
+	}
+	if got := html.UnescapeString(m[1]); got != text {
+		t.Errorf("data-source = %q, want %q", got, text)
 	}
 }
 

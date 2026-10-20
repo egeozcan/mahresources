@@ -628,7 +628,8 @@ func registerBlockRoutes(r *openapi.Registry) {
 		WithDescription(`Every text block of the note, rendered the way the note page renders
 them: markdown, then @-mentions, then shortcodes against the note, sharing one
 page render context (MRQL cache, query budget, deadline). The response is HTML,
-one <template data-rendered-text-block="ID"> element per text block. Confined
+one <template data-rendered-text-block="ID" data-source="TEXT"> element per
+text block, where data-source is the block text it was rendered from. Confined
 to a group-limited principal's subtree.`))
 
 	noteBlockType := reflect.TypeOf(models.NoteBlock{})

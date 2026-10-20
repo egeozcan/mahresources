@@ -4,6 +4,10 @@ const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
 const SAVE_DEBOUNCE_MS = 500;
 
+// A string as it reads back from an HTML attribute: the parser turns CR LF
+// and lone CR into LF, and NUL into U+FFFD. renderedSource comes from one.
+const asParsed = (str) => str.replace(/\r\n?/g, '\n').replace(/\0/g, '\uFFFD');
+
 export function blockEditor(noteId, initialBlocks = []) {
   return {
     noteId,
@@ -68,11 +72,9 @@ export function blockEditor(noteId, initialBlocks = []) {
       //
       // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
       this._root = this.$el;
-      this.renderedText = this._readRenderedText(this._root.querySelector('[data-rendered-text-blocks]'));
-      // The page rendered these from the blocks it was given.
-      for (const block of this.blocks) {
-        if (block.id in this.renderedText) this.renderedSource[block.id] = block.content?.text || '';
-      }
+      const onPage = this._root.querySelector('[data-rendered-text-blocks]');
+      this.renderedText = this._readRenderedText(onPage);
+      this.renderedSource = this._readRenderedSources(onPage);
       // A rendering the user has touched is theirs: a widget in it may hold a
       // draft or be saving one, by whatever means it saves (a click, a key, a
       // request still in flight). A background render never replaces it; see
@@ -85,11 +87,17 @@ export function blockEditor(noteId, initialBlocks = []) {
       for (const type of ['pointerdown', 'keydown', 'focusin', 'input', 'change', 'click']) {
         this._root.addEventListener(type, touch, true);
       }
-      // Events inside an iframe never reach this document. Focus moving into
-      // one blurs the window with the <iframe> left as the active element.
+      // Events inside an iframe never reach this document. Focus entering one
+      // blurs the window, but moving on from one frame straight to another
+      // fires nothing here at all, so once focus is in any frame, every
+      // rendering with a frame in it counts as touched.
+      // An outdated (inert) rendering is left out: nobody can be typing in it,
+      // and marking it would keep its replacement out.
       window.addEventListener('blur', () => {
-        const frame = document.activeElement;
-        if (frame?.tagName === 'IFRAME') touch({ target: frame });
+        if (document.activeElement?.tagName !== 'IFRAME') return;
+        for (const rendered of this._root.querySelectorAll('[data-text-block-rendered]')) {
+          if (!rendered.inert && rendered.querySelector('iframe')) rendered._touched = true;
+        }
       });
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
@@ -385,23 +393,28 @@ export function blockEditor(noteId, initialBlocks = []) {
       return rendered;
     },
 
+    // The block text each rendering was made from, as the server says: the
+    // client's copy of a block can hold text not saved yet.
+    _readRenderedSources(container) {
+      const sources = {};
+      if (!container) return sources;
+      for (const tpl of container.querySelectorAll('template[data-rendered-text-block]')) {
+        sources[tpl.dataset.renderedTextBlock] = tpl.dataset.source ?? '';
+      }
+      return sources;
+    },
+
     // Until the response arrives the blocks keep their previous rendering; an
     // older response than the latest request is dropped. If rendering fails,
     // the blocks show their saved text rather than a stale rendering, and say so.
     async refreshRenderedText() {
       const generation = ++this._renderGeneration;
-      // What the server renders from: leaving edit mode and the structural
-      // mutations that trigger a refresh have finished saving by now.
-      const sources = {};
-      for (const block of this.blocks) {
-        if (block.type === 'text') sources[block.id] = block.content?.text || '';
-      }
       try {
         const res = await fetch(`/v1/note/renderedTextBlocks?noteId=${this.noteId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
-        this._applyRenderedText(this._readRenderedText(doc), sources);
+        this._applyRenderedText(this._readRenderedText(doc), this._readRenderedSources(doc));
         if (this.error === this._renderError) this.error = null;
         this._renderError = null;
       } catch (err) {
@@ -436,8 +449,9 @@ export function blockEditor(noteId, initialBlocks = []) {
           continue;
         }
         const el = this._renderedEl(id);
-        // Focus inside counts as touched even if no event said so.
-        if (el && (el._touched || el.contains(document.activeElement))) continue;
+        // Focus inside counts as touched even if no event said so. An outdated
+        // (inert) rendering is always replaced.
+        if (el && !el.inert && (el._touched || el.contains(document.activeElement))) continue;
         if (html === undefined) {
           delete this.renderedText[id];
           delete this.renderedSource[id];
@@ -461,7 +475,7 @@ export function blockEditor(noteId, initialBlocks = []) {
       // A rendering of text the block no longer has (edited, its new
       // rendering not here yet) is shown but cannot be used: a widget in it
       // would act on the old text, and its rendering is about to be replaced.
-      const outdated = html !== undefined && source !== undefined && source !== (text || '');
+      const outdated = html !== undefined && source !== undefined && asParsed(source) !== asParsed(text || '');
       el.inert = outdated;
       if (outdated) el.setAttribute('aria-busy', 'true');
       else el.removeAttribute('aria-busy');

@@ -179,14 +179,21 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
     - Until the response arrives the blocks keep their previous rendering.
       A block whose text was edited shows that older rendering inert and
       `aria-busy` until its new one arrives, so no widget in it can start a
-      save that the new rendering would then discard.
+      save that the new rendering would then discard. Each rendering
+      carries the text it was rendered from (`data-source` on its
+      `<template>`), because the client's copy of a block can hold text not
+      saved yet; a rendering whose source differs from the saved text is the
+      outdated one.
     - **A rendering the user has touched is not replaced.** A pointer press,
-      key, focus, input or change inside a block's rendering (focus moving
-      into an iframe in it included) marks it, as does holding focus, and
-      no later render replaces it, success or failure, until leaving edit
-      mode next creates it afresh. Replacing a rendering discards whatever a
-      widget in it holds: a draft, or an inline `[meta]` editor whose save is
-      still in flight. Comparing HTML cannot tell when replacing is safe,
+      key, focus, input or change inside a block's rendering marks it, as
+      does holding focus. Events inside an iframe never reach the page, and
+      moving from one frame straight to another fires nothing there, so
+      focus entering any frame marks every rendering that contains one. An
+      outdated rendering is never marked, and is always replaced. No later
+      render replaces a marked rendering, success or failure, until leaving
+      edit mode next creates it afresh. Replacing a rendering discards
+      whatever a widget in it holds: a draft, or an inline `[meta]` editor
+      whose save is still in flight. Comparing HTML cannot tell when replacing is safe,
       because `[reload]`, `[lazy]` and `[details]` mint a fresh token on every
       render, and inferring widget saves from events missed saves made by key
       or with focus on `<body>` (slice 5 review, rounds 5 to 8). The cost: a
