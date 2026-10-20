@@ -2,6 +2,7 @@ package fts
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"gorm.io/gorm"
@@ -27,21 +28,106 @@ func (p *PostgresFTS) Setup(db *gorm.DB) error {
 			return fmt.Errorf("failed to setup FTS for %s: %w", entityType, err)
 		}
 	}
+	// Built in the background: on a large existing table the build takes a
+	// while, and prefix search is correct without the index, only slower.
+	go func() {
+		for _, config := range EntityConfigs {
+			if err := p.setupSimpleIndex(db, config); err != nil {
+				// The next startup retries. Prefix search works meanwhile.
+				log.Printf("FTS: %v", err)
+				return
+			}
+		}
+	}()
+	return nil
+}
+
+// simpleVectorExpr is the unstemmed tsvector of a table's search columns.
+// Prefix search matches it as well as the stemmed search_vector, because a
+// typed prefix longer than a word's English stem ("Mentionab" for 'mention',
+// "runni" for 'run') matches no stem. It is an expression index rather than a
+// stored column so that adding it rewrites no table; the query must use this
+// exact expression for the index to apply.
+//
+// qualifier, when not empty, prefixes each column ("resources."); the index
+// still applies, as Postgres matches the columns, not the text.
+func simpleVectorExpr(config EntityFTSConfig, qualifier string) string {
+	cols := make([]string, 0, len(config.Columns))
+	for _, col := range config.Columns {
+		cols = append(cols, fmt.Sprintf("coalesce(%s%s,'')", qualifier, col))
+	}
+	return fmt.Sprintf("to_tsvector('simple', %s)", strings.Join(cols, " || ' ' || "))
+}
+
+// setupSimpleIndex builds the GIN index on simpleVectorExpr with CREATE INDEX
+// CONCURRENTLY, which blocks neither reads nor writes. A build that failed
+// part way leaves an invalid index that IF NOT EXISTS would keep skipping, so
+// that one is dropped and rebuilt.
+func (p *PostgresFTS) setupSimpleIndex(db *gorm.DB, config EntityFTSConfig) error {
+	name := fmt.Sprintf("idx_%s_fts_simple", config.TableName)
+	var invalid int64
+	db.Raw(`
+		SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relname = ? AND NOT i.indisvalid
+	`, name).Scan(&invalid)
+	if invalid > 0 {
+		if err := db.Exec(fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s", name)).Error; err != nil {
+			return fmt.Errorf("failed to drop invalid index %s: %w", name, err)
+		}
+	}
+	sql := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s USING GIN((%s))",
+		name, config.TableName, simpleVectorExpr(config, ""))
+	if err := db.Exec(sql).Error; err != nil {
+		return fmt.Errorf("failed to create index %s: %w", name, err)
+	}
 	return nil
 }
 
 func (p *PostgresFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
-	// search_vector holds English stems for exact and stemmed matching.
-	// search_vector_simple holds the same words unstemmed: prefix search needs
-	// it, because a typed prefix longer than a word's stem ("Mentionab" for
-	// 'mention', "runni" for 'run') matches no stem.
-	for _, v := range []struct{ column, config, index string }{
-		{"search_vector", "english", "fts"},
-		{"search_vector_simple", "simple", "fts_simple"},
-	} {
-		if err := p.setupVector(db, config, v.column, v.config, v.index); err != nil {
-			return err
+	// Build tsvector column expression with weights
+	// setweight(to_tsvector('english', coalesce(name,'')), 'A') ||
+	// setweight(to_tsvector('english', coalesce(description,'')), 'B')
+	var parts []string
+	for _, col := range config.Columns {
+		weight := config.WeightedCols[col]
+		if weight == "" {
+			weight = "D" // default lowest weight
 		}
+		parts = append(parts, fmt.Sprintf(
+			"setweight(to_tsvector('english', coalesce(%s,'')), '%s')",
+			col, weight,
+		))
+	}
+	tsvectorExpr := strings.Join(parts, " || ")
+
+	// Check if search_vector column already exists
+	var count int64
+	db.Raw(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = ? AND column_name = 'search_vector'
+	`, config.TableName).Scan(&count)
+
+	if count == 0 {
+		// Add generated tsvector column
+		alterSQL := fmt.Sprintf(`
+			ALTER TABLE %s
+			ADD COLUMN search_vector tsvector
+			GENERATED ALWAYS AS (%s) STORED`,
+			config.TableName, tsvectorExpr,
+		)
+		if err := db.Exec(alterSQL).Error; err != nil {
+			return fmt.Errorf("failed to add search_vector column to %s: %w", config.TableName, err)
+		}
+	}
+
+	// Create GIN index on search_vector (idempotent with IF NOT EXISTS)
+	indexSQL := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_%s_fts
+		ON %s USING GIN(search_vector)`,
+		config.TableName, config.TableName,
+	)
+	if err := db.Exec(indexSQL).Error; err != nil {
+		return fmt.Errorf("failed to create FTS index on %s: %w", config.TableName, err)
 	}
 
 	// Create trigram index for fuzzy search on name column
@@ -54,59 +140,6 @@ func (p *PostgresFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
 		return fmt.Errorf("failed to create trigram index on %s: %w", config.TableName, err)
 	}
 
-	return nil
-}
-
-// setupVector adds a generated, weighted tsvector column built with the given
-// text search configuration, and a GIN index on it. Adding the column
-// computes it for every existing row.
-func (p *PostgresFTS) setupVector(db *gorm.DB, config EntityFTSConfig, column, tsConfig, indexSuffix string) error {
-	// setweight(to_tsvector('<config>', coalesce(name,'')), 'A') ||
-	// setweight(to_tsvector('<config>', coalesce(description,'')), 'B')
-	var parts []string
-	for _, col := range config.Columns {
-		weight := config.WeightedCols[col]
-		if weight == "" {
-			weight = "D" // default lowest weight
-		}
-		parts = append(parts, fmt.Sprintf(
-			"setweight(to_tsvector('%s', coalesce(%s,'')), '%s')",
-			tsConfig, col, weight,
-		))
-	}
-	tsvectorExpr := strings.Join(parts, " || ")
-
-	var count int64
-	db.Raw(`
-		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name = ? AND column_name = ?
-	`, config.TableName, column).Scan(&count)
-
-	if count == 0 {
-		alterSQL := fmt.Sprintf(`
-			ALTER TABLE %s
-			ADD COLUMN %s tsvector
-			GENERATED ALWAYS AS (%s) STORED`,
-			config.TableName, column, tsvectorExpr,
-		)
-		if err := db.Exec(alterSQL).Error; err != nil {
-			return fmt.Errorf("failed to add %s column to %s: %w", column, config.TableName, err)
-		}
-		// Fresh statistics for the new column, so the planner uses its index
-		// rather than estimating from none.
-		if err := db.Exec(fmt.Sprintf("ANALYZE %s", config.TableName)).Error; err != nil {
-			return fmt.Errorf("failed to analyze %s: %w", config.TableName, err)
-		}
-	}
-
-	indexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_%s
-		ON %s USING GIN(%s)`,
-		config.TableName, indexSuffix, config.TableName, column,
-	)
-	if err := db.Exec(indexSQL).Error; err != nil {
-		return fmt.Errorf("failed to create %s index on %s: %w", column, config.TableName, err)
-	}
 	return nil
 }
 
@@ -141,19 +174,30 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 			// the bind parameter, so Postgres evaluates it once (InitPlan) and
 			// still uses the GIN index on search_vector.
 			//
-			// The same query over unstemmed words catches a prefix longer than
-			// its word's stem ("runni" for "running", stored as 'run'). The
-			// stemmed side stays for the opposite case ("runs" for "running").
-			return db.Where(
-				fmt.Sprintf(`(%[1]s.search_vector @@ to_tsquery('simple', (
-					SELECT string_agg(lexeme || ':*', ' & ')
-					FROM unnest(to_tsvector('english', ?))
-				)) OR %[1]s.search_vector_simple @@ to_tsquery('simple', (
-					SELECT string_agg(lexeme || ':*', ' & ')
-					FROM unnest(to_tsvector('simple', ?))
-				)))`, tableName),
-				rawTerm, rawTerm,
-			)
+			// Each word must match, stemmed or unstemmed (simpleVectorExpr):
+			// "runs mentionab" finds "Running Mentionable" though only the
+			// stemmed side matches "runs" and only the unstemmed side
+			// "mentionab". A word English ignores (a stopword like "the")
+			// constrains nothing unless every word is one.
+			config := configForTable(tableName)
+			if config == nil {
+				return db.Where("1 = 0")
+			}
+			simple := simpleVectorExpr(*config, tableName+".")
+			for _, word := range strings.Fields(rawTerm) {
+				db = db.Where(
+					fmt.Sprintf(`(%s.search_vector @@ to_tsquery('simple', (
+						SELECT string_agg(lexeme || ':*', ' & ')
+						FROM unnest(to_tsvector('english', ?))
+					)) OR %s @@ to_tsquery('simple', (
+						SELECT string_agg(lexeme || ':*', ' & ')
+						FROM unnest(to_tsvector('simple', ?))
+					)) OR (to_tsvector('english', ?) = ''::tsvector AND to_tsvector('english', ?) <> ''::tsvector))`,
+						tableName, simple),
+					word, word, word, rawTerm,
+				)
+			}
+			return db
 
 		case ModeFuzzy:
 			// Use trigram % operator which can use the GIN index
@@ -197,9 +241,9 @@ func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query Pars
 		}
 		tsquery := strings.Join(tsqueryParts, " & ")
 		return fmt.Sprintf(
-			"GREATEST(ts_rank(%[1]s.search_vector, to_tsquery('english', ?)), ts_rank(%[1]s.search_vector_simple, to_tsquery('simple', ?)))",
+			"ts_rank(%s.search_vector, to_tsquery('english', ?))",
 			tableName,
-		), []interface{}{tsquery, tsquery}
+		), []interface{}{tsquery}
 
 	default: // ModeExact
 		return fmt.Sprintf(
@@ -217,4 +261,14 @@ func (p *PostgresFTS) SupportsFeature(feature string) bool {
 	default:
 		return false
 	}
+}
+
+// configForTable returns the FTS config whose table is tableName.
+func configForTable(tableName string) *EntityFTSConfig {
+	for _, config := range EntityConfigs {
+		if config.TableName == tableName {
+			return &config
+		}
+	}
+	return nil
 }
