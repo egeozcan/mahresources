@@ -78,7 +78,12 @@ export function blockEditor(noteId, initialBlocks = []) {
       const noteInteraction = (event) => {
         const rendered = event.target.closest?.('[data-text-block-rendered]');
         const card = rendered && rendered.closest('[data-block-id]');
-        if (card) this._lastInteraction[card.dataset.blockId] = ++this._interactionSeq;
+        if (!card) return;
+        const id = card.dataset.blockId;
+        this._lastInteraction[id] = ++this._interactionSeq;
+        // A rendering already held for this block predates the interaction:
+        // ask for a fresh one when the user leaves the block instead.
+        if (this._deferredRender[id]) this._deferredRender[id] = { refresh: true };
       };
       for (const type of ['click', 'input', 'change']) this._root.addEventListener(type, noteInteraction, true);
 
@@ -387,15 +392,24 @@ export function blockEditor(noteId, initialBlocks = []) {
         const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
         if (generation !== this._renderGeneration) return;
         const next = this._readRenderedText(doc);
-        let stale = false;
+        const stale = [];
         for (const [id, seq] of Object.entries(this._lastInteraction)) {
-          if (seq > interactionsAtStart && id in next) {
-            next[id] = this.renderedText[id];
-            stale = true;
-          }
+          if (seq <= interactionsAtStart || !(id in next)) continue;
+          // This rendering may predate what the interaction saved: keep what
+          // is shown, and get a fresh one, now or (if the user is still in
+          // the block, perhaps mid-save) once they leave it.
+          next[id] = this.renderedText[id];
+          stale.push(id);
         }
         this._applyRenderedText(next);
-        if (stale) this.refreshRenderedText();
+        // After applying, which drops a held update for an unchanged block.
+        let refreshNow = false;
+        for (const id of stale) {
+          const el = this._renderedEl(id);
+          if (el && el.contains(document.activeElement)) this._deferRenderUntilLeft(id, { refresh: true }, el);
+          else refreshNow = true;
+        }
+        if (refreshNow) this.refreshRenderedText();
         if (this.error === this._renderError) this.error = null;
         this._renderError = null;
       } catch (err) {
@@ -427,9 +441,9 @@ export function blockEditor(noteId, initialBlocks = []) {
           delete this._deferredRender[id];
           continue;
         }
-        const el = this._root?.querySelector(`[data-block-id="${id}"] [data-text-block-rendered]`);
+        const el = this._renderedEl(id);
         if (el && el.contains(document.activeElement)) {
-          this._deferRenderUntilLeft(id, html, el);
+          this._deferRenderUntilLeft(id, { html }, el);
         } else {
           this._setRenderedText(id, html);
         }
@@ -465,18 +479,24 @@ export function blockEditor(noteId, initialBlocks = []) {
       });
     },
 
+    _renderedEl(id) {
+      return this._root?.querySelector(`[data-block-id="${id}"] [data-text-block-rendered]`) || null;
+    },
+
     _setRenderedText(id, html) {
       delete this._deferredRender[id];
       if (html === undefined) delete this.renderedText[id];
       else this.renderedText[id] = html;
     },
 
-    // Hold `html` for block `id` until the user is done with it: focus or a
+    // Hold an update for block `id` until the user is done with it: focus or a
     // pointer press lands outside `el`. Not focusout: WebKit does not focus a
     // clicked button, so pressing a widget's own Save blurs to <body> first,
     // and applying then would replace the widget before its click handler ran.
-    _deferRenderUntilLeft(id, html, el) {
-      this._deferredRender[id] = { html };
+    // `entry` is { html } to apply, or { refresh: true } to fetch a fresh
+    // rendering (the held one predates an interaction).
+    _deferRenderUntilLeft(id, entry, el) {
+      this._deferredRender[id] = entry;
       if (el._renderDeferred) return;
       el._renderDeferred = true;
       const onAway = (event) => {
@@ -485,7 +505,13 @@ export function blockEditor(noteId, initialBlocks = []) {
         document.removeEventListener('pointerdown', onAway, true);
         el._renderDeferred = false;
         const pending = this._deferredRender[id];
-        if (pending) this._setRenderedText(id, pending.html);
+        if (!pending) return;
+        if (pending.refresh) {
+          delete this._deferredRender[id];
+          this.refreshRenderedText();
+        } else {
+          this._setRenderedText(id, pending.html);
+        }
       };
       document.addEventListener('focusin', onAway, true);
       document.addEventListener('pointerdown', onAway, true);

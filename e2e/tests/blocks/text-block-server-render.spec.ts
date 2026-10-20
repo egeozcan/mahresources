@@ -183,7 +183,11 @@ test.describe('Text blocks render on the server', () => {
       await expect(rendered(page, other)).toHaveText('other changed');
       await expect(draft).toHaveValue('my draft');
       await expect(draft).toBeFocused();
-      // Held, not dropped: once focus leaves the block, the update lands.
+      // Once focus leaves the block it is brought up to date. Typing in it
+      // made the held rendering stale, so a fresh one is fetched and lands: a
+      // failure falls back to the saved text again; a success replaces the
+      // block (its [reload] token is new on every render), so the unsaved
+      // local draft goes with it.
       await page.locator('h1').first().click();
       if (outcome === 'a failed render') {
         await expect(rendered(page, block)).toContainText('[reload label="Refresh"]');
@@ -288,5 +292,35 @@ test.describe('Text blocks render on the server', () => {
     await page.locator('h1').first().click();
     await page.waitForTimeout(500);
     await expect(rendered(page, block).locator('.name')).toHaveText('Renamed B');
+  });
+
+  test('a widget save after a rendering was held is not undone on leaving the block', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: `<span class="name">[property path="Name"]</span> <input class="draft"> <button type="button" class="rename" x-on:click="fetch('/v1/note/editName?id=${noteId}', { method: 'POST', body: new URLSearchParams({ name: 'Renamed C' }) }).then(() => { $el.parentElement.querySelector('.name').textContent = 'Renamed C'; })">rename</button>\n\n[reload label="Refresh"]`,
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let first = true;
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      if (!first) return route.continue();
+      first = false;
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('textarea').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    // Focus sits in the block (no interaction yet) while the rendering lands: it is held.
+    await rendered(page, block).locator('input.draft').focus();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    // Now save from inside the block, then leave it.
+    await rendered(page, block).locator('button.rename').click();
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed C');
+    await page.locator('h1').first().click();
+    await page.waitForTimeout(500);
+    await expect(rendered(page, block).locator('.name')).toHaveText('Renamed C');
   });
 });
