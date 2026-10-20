@@ -1,5 +1,5 @@
 {# with noteId= blocks= note= #}
-<div x-data="blockEditor({{ noteId }}, {{ blocks|json }})" x-init="init()" class="block-editor">
+<div x-data="blockEditor({{ noteId }}, {{ blocks|json }})" class="block-editor">
     {# Text blocks rendered on the server for display; blockEditor.js reads them on init and refetches them after edits. #}
     <div hidden data-rendered-text-blocks>{% include "/partials/renderedTextBlocks.tpl" with note=note blocks=blocks %}</div>
     {# Edit mode toggle #}

@@ -91,18 +91,15 @@ export function blockEditor(noteId, initialBlocks = []) {
       // reliably says when focus enters or leaves one (Firefox fires no window
       // blur, frame to frame fires nothing). So a rendering that has ever held
       // a frame counts as touched, including one arriving later ([lazy]) or
-      // one that has since removed itself. The rendering is found from where
-      // the frame was added, not from the frame, which may already be gone.
+      // one that has since removed itself. By the time records arrive a frame
+      // and the nodes around it may be detached or emptied, so a record counts
+      // if it added or removed a frame, and the rendering is found from its
+      // target: some record of the change has a target still in place. The
+      // latch is _heldFrame, which a paint resets for its new content.
       // _applyRenderedText also checks for a frame directly, for a render
       // landing before this observer runs.
-      new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          const added = [...m.addedNodes].some((node) => node.nodeType === 1 && (node.tagName === 'IFRAME' || node.querySelector('iframe')));
-          if (!added) continue;
-          const rendered = m.target.closest?.('[data-text-block-rendered]');
-          if (rendered) rendered._touched = true;
-        }
-      }).observe(this._root, { childList: true, subtree: true });
+      this._frameObserver = new MutationObserver((mutations) => this._latchFrames(mutations));
+      this._frameObserver.observe(this._root, { childList: true, subtree: true });
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -456,8 +453,8 @@ export function blockEditor(noteId, initialBlocks = []) {
         // Focus inside or a frame counts as touched even if no event said so.
         // An outdated (inert) rendering is always replaced: nobody can be
         // using it.
-        if (el && !el.inert && el.querySelector('iframe')) el._touched = true;
-        if (el && !el.inert && (el._touched || el.contains(document.activeElement))) continue;
+        if (el && !el.inert && el.querySelector('iframe')) el._heldFrame = true;
+        if (el && !el.inert && (el._touched || el._heldFrame || el.contains(document.activeElement))) continue;
         if (html === undefined) {
           delete this.renderedText[id];
           delete this.renderedSource[id];
@@ -503,6 +500,19 @@ export function blockEditor(noteId, initialBlocks = []) {
         Alpine.initTree(el);
         delete el._x_ignoreSelf;
       });
+      // The frames this paint removed belonged to the replaced content. Other
+      // blocks' pending records are latched as usual.
+      this._latchFrames(this._frameObserver?.takeRecords() ?? []);
+      el._heldFrame = el.querySelector('iframe') !== null;
+    },
+
+    _latchFrames(mutations) {
+      const hasFrame = (node) => node.nodeType === 1 && (node.tagName === 'IFRAME' || node.querySelector('iframe') !== null);
+      for (const m of mutations) {
+        if (![...m.addedNodes, ...m.removedNodes].some(hasFrame)) continue;
+        const rendered = m.target.closest?.('[data-text-block-rendered]');
+        if (rendered) rendered._heldFrame = true;
+      }
     },
 
     _renderedEl(id) {
