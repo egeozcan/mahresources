@@ -494,6 +494,64 @@ test.describe('Text blocks render on the server', () => {
     await expect(draftB).toHaveValue('draft B');
   });
 
+  test('a draft in a block iframe survives where the window gets no blur on entering it', async ({ page, apiClient }) => {
+    // Firefox fires no window blur when focus moves into an iframe.
+    await page.addInitScript(() => {
+      const add = window.addEventListener.bind(window);
+      window.addEventListener = ((type: string, ...rest: any[]) => {
+        if (type !== 'blur') (add as any)(type, ...rest);
+      }) as typeof window.addEventListener;
+    });
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<iframe class="frame" srcdoc="<input class=draft>"></iframe>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    const draft = rendered(page, block).frameLocator('iframe.frame').locator('input.draft');
+    await draft.fill('iframe draft');
+    await page.locator('h1').first().click();
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(draft).toHaveValue('iframe draft');
+  });
+
+  test('a rendering whose frame removed itself is still not replaced', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div class="slot"><iframe class="frame" srcdoc="<input class=draft>"></iframe></div>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await rendered(page, block).frameLocator('iframe.frame').locator('input.draft').fill('handed over');
+    // The frame hands its draft to the page and removes itself, firing no
+    // event the page counts as a touch.
+    await rendered(page, block).locator('.slot').evaluate((slot) => {
+      slot.innerHTML = '<input class="handed" value="handed over">';
+    });
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(rendered(page, block).locator('input.handed')).toHaveValue('handed over');
+  });
+
   test('entering a frame does not keep an edited block on its outdated rendering', async ({ page, apiClient }) => {
     const a = (await apiClient.createBlock(noteId, 'text', 'd', {
       text: '<iframe class="frame" srcdoc="<p>old</p>"></iframe>',

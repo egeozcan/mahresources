@@ -54,8 +54,6 @@ export function blockEditor(noteId, initialBlocks = []) {
     // id. A block whose saved text differs is showing a rendering of older
     // text: it is shown inert until its new rendering arrives.
     renderedSource: {},
-    // Times focus entered a frame; see init.
-    _frameEntries: 0,
     _blockTypesLoaded: false,
 
     async init() {
@@ -89,15 +87,21 @@ export function blockEditor(noteId, initialBlocks = []) {
       for (const type of ['pointerdown', 'keydown', 'focusin', 'input', 'change', 'click']) {
         this._root.addEventListener(type, touch, true);
       }
-      // Events inside an iframe never reach this document. Focus entering one
-      // blurs the window, but moving on from one frame straight to another
-      // fires nothing here at all, and a frame can appear later ([lazy]). So
-      // entering any frame is counted, and _applyRenderedText treats a
-      // rendering that holds a frame and was painted before the latest entry
-      // as touched.
-      window.addEventListener('blur', () => {
-        if (document.activeElement?.tagName === 'IFRAME') this._frameEntries++;
-      });
+      // Events inside an iframe never reach this document, and no browser
+      // reliably says when focus enters or leaves one (Firefox fires no window
+      // blur, frame to frame fires nothing). So a rendering that has ever held
+      // a frame counts as touched, including one arriving later ([lazy]) or
+      // one that has since removed itself. _applyRenderedText also checks for a
+      // frame directly, for a render landing before this observer runs.
+      new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType !== 1 || !(node.tagName === 'IFRAME' || node.querySelector('iframe'))) continue;
+            const rendered = node.closest('[data-text-block-rendered]');
+            if (rendered) rendered._touched = true;
+          }
+        }
+      }).observe(this._root, { childList: true, subtree: true });
 
       // Set up the JS bridge for plugin blocks BEFORE the awaits below.
       //
@@ -448,9 +452,10 @@ export function blockEditor(noteId, initialBlocks = []) {
           continue;
         }
         const el = this._renderedEl(id);
-        // Focus inside counts as touched even if no event said so. An outdated
-        // (inert) rendering is always replaced: nobody can be using it.
-        if (el && !el.inert && (el._touched || el.contains(document.activeElement) || this._frameEnteredSincePaint(el))) continue;
+        // Focus inside or a frame counts as touched even if no event said so.
+        // An outdated (inert) rendering is always replaced: nobody can be
+        // using it.
+        if (el && !el.inert && (el._touched || el.contains(document.activeElement) || el.querySelector('iframe'))) continue;
         if (html === undefined) {
           delete this.renderedText[id];
           delete this.renderedSource[id];
@@ -482,7 +487,6 @@ export function blockEditor(noteId, initialBlocks = []) {
       const painted = html === undefined ? { text: text || '' } : { html };
       if (el._painted && el._painted.html === painted.html && el._painted.text === painted.text) return;
       el._painted = painted;
-      el._frameEntriesAtPaint = this._frameEntries;
       const Alpine = window.Alpine;
       Alpine.mutateDom(() => {
         for (const child of [...el.children]) Alpine.destroyTree(child);
@@ -497,10 +501,6 @@ export function blockEditor(noteId, initialBlocks = []) {
         Alpine.initTree(el);
         delete el._x_ignoreSelf;
       });
-    },
-
-    _frameEnteredSincePaint(el) {
-      return this._frameEntries > (el._frameEntriesAtPaint ?? 0) && el.querySelector('iframe') !== null;
     },
 
     _renderedEl(id) {
