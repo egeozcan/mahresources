@@ -552,6 +552,32 @@ test.describe('Text blocks render on the server', () => {
     await expect(rendered(page, block).locator('input.handed')).toHaveValue('handed over');
   });
 
+  test('a frame inserted and removed in one task still protects its rendering', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: '<div class="slot"></div>\n\n[reload label="Refresh"]',
+    })).id;
+    const other = (await apiClient.createBlock(noteId, 'text', 'h', { text: 'other' })).id;
+    await page.goto(`/note?id=${noteId}`);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/note\/renderedTextBlocks/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByText('Edit Blocks').click();
+    await card(page, other).locator('.cm-content').fill('other changed');
+    await page.getByRole('button', { name: 'Done' }).click();
+    // The frame is gone before any observer callback sees it attached.
+    await rendered(page, block).locator('.slot').evaluate((slot) => {
+      slot.innerHTML = '<iframe class="frame"></iframe>';
+      slot.innerHTML = '<input class="handed" value="handed over">';
+    });
+    release();
+    await expect(rendered(page, other)).toHaveText('other changed');
+    await page.waitForTimeout(300);
+    await expect(rendered(page, block).locator('input.handed')).toHaveValue('handed over');
+  });
+
   test('entering a frame does not keep an edited block on its outdated rendering', async ({ page, apiClient }) => {
     const a = (await apiClient.createBlock(noteId, 'text', 'd', {
       text: '<iframe class="frame" srcdoc="<p>old</p>"></iframe>',

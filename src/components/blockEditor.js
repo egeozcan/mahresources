@@ -91,15 +91,16 @@ export function blockEditor(noteId, initialBlocks = []) {
       // reliably says when focus enters or leaves one (Firefox fires no window
       // blur, frame to frame fires nothing). So a rendering that has ever held
       // a frame counts as touched, including one arriving later ([lazy]) or
-      // one that has since removed itself. _applyRenderedText also checks for a
-      // frame directly, for a render landing before this observer runs.
+      // one that has since removed itself. The rendering is found from where
+      // the frame was added, not from the frame, which may already be gone.
+      // _applyRenderedText also checks for a frame directly, for a render
+      // landing before this observer runs.
       new MutationObserver((mutations) => {
         for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType !== 1 || !(node.tagName === 'IFRAME' || node.querySelector('iframe'))) continue;
-            const rendered = node.closest('[data-text-block-rendered]');
-            if (rendered) rendered._touched = true;
-          }
+          const added = [...m.addedNodes].some((node) => node.nodeType === 1 && (node.tagName === 'IFRAME' || node.querySelector('iframe')));
+          if (!added) continue;
+          const rendered = m.target.closest?.('[data-text-block-rendered]');
+          if (rendered) rendered._touched = true;
         }
       }).observe(this._root, { childList: true, subtree: true });
 
@@ -455,7 +456,8 @@ export function blockEditor(noteId, initialBlocks = []) {
         // Focus inside or a frame counts as touched even if no event said so.
         // An outdated (inert) rendering is always replaced: nobody can be
         // using it.
-        if (el && !el.inert && (el._touched || el.contains(document.activeElement) || el.querySelector('iframe'))) continue;
+        if (el && !el.inert && el.querySelector('iframe')) el._touched = true;
+        if (el && !el.inert && (el._touched || el.contains(document.activeElement))) continue;
         if (html === undefined) {
           delete this.renderedText[id];
           delete this.renderedSource[id];
