@@ -1654,8 +1654,8 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 	}
 	result.Job = job
 	result.Row = downloadRowFromEntry(job, legacyID, admission.Accepted.ID)
-	ctx.ownQueueExecution(admission, job, func(snap *download_queue.DownloadJob) error {
-		return (&downloadJobAdapter{ctx: ctx, kind: JobKindRemoteDownload}).publishOutcome(admission.Execution, snap)
+	ctx.ownQueueExecution(admission, job, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+		return (&downloadJobAdapter{ctx: owner, kind: JobKindRemoteDownload}).publishOutcome(admission.Execution, snap)
 	})
 	return result
 }

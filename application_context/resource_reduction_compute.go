@@ -140,8 +140,8 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		return nil, err
 	}
 	if admission.Owned() {
-		ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
-			return (&reductionComputeAdapter{ctx: ctx, kind: JobKindReductionCompute}).publishOutcome(admission.Execution, clusterInput, snap)
+		ctx.ownQueueExecution(admission, entry, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+			return (&reductionComputeAdapter{ctx: owner, kind: JobKindReductionCompute}).publishOutcome(admission.Execution, clusterInput, snap)
 		})
 	}
 

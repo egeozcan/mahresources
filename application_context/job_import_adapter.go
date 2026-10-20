@@ -1574,8 +1574,8 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath, fileNa
 		return result
 	}
 	result.QueueJobID = entry.ID
-	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
-		return (&importParseAdapter{ctx: ctx, kind: JobKindGroupImportParse}).publishOutcome(admission.Execution, parseInput, snap)
+	ctx.ownQueueExecution(admission, entry, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+		return (&importParseAdapter{ctx: owner, kind: JobKindGroupImportParse}).publishOutcome(admission.Execution, parseInput, snap)
 	})
 	return result
 }
@@ -1705,8 +1705,8 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		return result
 	}
 	result.QueueJobID = entry.ID
-	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
-		return (&importApplyAdapter{ctx: ctx, kind: JobKindGroupImportApply}).publishOutcome(admission.Execution, applyInput, snap)
+	ctx.ownQueueExecution(admission, entry, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+		return (&importApplyAdapter{ctx: owner, kind: JobKindGroupImportApply}).publishOutcome(admission.Execution, applyInput, snap)
 	})
 	return result
 }

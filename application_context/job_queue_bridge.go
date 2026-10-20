@@ -258,11 +258,18 @@ func (ctx *MahresourcesContext) queueJobClaimLease(service *jobs.Service, kind s
 // evidence the executor left behind. Recording `cancelled` there would end a Job the
 // process taking over could still settle from its archive, its plan or the row it
 // wrote.
-func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, entry *download_queue.DownloadJob, publish func(*download_queue.DownloadJob) error) {
-	service := ctx.JobService()
-	if service == nil || !admission.Owned() || entry == nil {
+//
+// The goroutines outlive the submission, which is often a request whose context
+// ends when its handler returns. They run on detachedFromRequest's copy, and
+// publish is handed that copy rather than closing over the caller's: on the
+// request's handle every write failed with "context canceled", which the retry
+// loops took for a transient refusal and offered again for good.
+func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, entry *download_queue.DownloadJob, publish func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error) {
+	if ctx.JobService() == nil || !admission.Owned() || entry == nil {
 		return
 	}
+	ctx = ctx.detachedFromRequest()
+	service := ctx.JobService()
 	execution := admission.Execution
 	followers := ctx.queueFollowers
 	if !followers.start(2) {
@@ -293,10 +300,25 @@ func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, e
 		// for as long as the publication takes: the queue evicts the entry and the process
 		// may be asked for the outcome long after its worker returned, so "the executor
 		// ended" and "the Job says so" are two facts and only the second is durable.
-		if ctx.publishTerminalOutcome(execution, snap, publish) == publicationAcknowledged {
+		if ctx.publishTerminalOutcome(execution, snap, func(snap *download_queue.DownloadJob) error {
+			return publish(ctx, snap)
+		}) == publicationAcknowledged {
 			ctx.finishOwnedExecution(service, execution, nil)
 		}
 	}()
+}
+
+// detachedFromRequest is this context for work that outlives the request it
+// came from: the same acting user, scope and principal, on a handle whose
+// context is never canceled, with no request attached (callerContext would
+// otherwise hand a hook wait the request's ended context).
+func (ctx *MahresourcesContext) detachedFromRequest() *MahresourcesContext {
+	detached := *ctx
+	detached.currentRequest = nil
+	if ctx.db != nil && ctx.db.Statement != nil && ctx.db.Statement.Context != nil {
+		detached.db = ctx.db.WithContext(context.WithoutCancel(ctx.db.Statement.Context))
+	}
+	return &detached
 }
 
 // terminalPublication says what became of one queue-backed terminal publication.
@@ -355,6 +377,12 @@ func (ctx *MahresourcesContext) publishTerminalOutcome(execution jobs.Execution,
 			// The fence working, the state machine refusing, or the Job gone: the
 			// outcome cannot be recorded and offering it again would be a second one.
 			return publicationFenced
+		}
+		if errors.Is(err, context.Canceled) {
+			// The handle's context is gone and no retry can bring it back.
+			log.Printf("warning: the outcome of queue job %s could not be published: its context was canceled; the next process reconciles it",
+				execution.JobID)
+			return publicationUnfinished
 		}
 		if ctx.queueIsShuttingDown() {
 			log.Printf("warning: the outcome of queue job %s was not durable before shutdown; the next process reconciles it",
@@ -424,6 +452,10 @@ func (ctx *MahresourcesContext) mirrorTerminalQueueProgress(execution jobs.Execu
 			}
 		case mirrorRefusalIsSilent(err):
 			return publicationFenced
+		case errors.Is(err, context.Canceled):
+			// As in publishTerminalOutcome: nothing a retry can repair.
+			log.Printf("warning: final progress for queue job %s could not be written: its context was canceled; the next process reconciles it", execution.JobID)
+			return publicationUnfinished
 		default:
 			if !logged {
 				log.Printf("warning: final progress for queue job %s was refused (%v); retaining the outcome to retry", execution.JobID, err)

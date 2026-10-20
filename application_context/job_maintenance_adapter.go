@@ -396,8 +396,8 @@ func (ctx *MahresourcesContext) SubmitSimilarityRecompute() (string, error) {
 		ctx.failUndispatchedQueueJob(admission, err)
 		return "", err
 	}
-	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
-		return (&similarityRecomputeAdapter{ctx: ctx, kind: JobKindSimilarityRecompute}).publishOutcome(admission.Execution, snap)
+	ctx.ownQueueExecution(admission, entry, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+		return (&similarityRecomputeAdapter{ctx: owner, kind: JobKindSimilarityRecompute}).publishOutcome(admission.Execution, snap)
 	})
 	return entry.ID, nil
 }

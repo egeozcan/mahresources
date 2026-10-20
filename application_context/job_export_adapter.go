@@ -1047,8 +1047,8 @@ func (ctx *MahresourcesContext) SubmitGroupExport(request *ExportRequest, origin
 		return result
 	}
 	result.QueueJobID = entry.ID
-	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
-		return (&groupExportAdapter{ctx: ctx, kind: JobKindGroupExport}).publishOutcome(admission.Execution, request, snap)
+	ctx.ownQueueExecution(admission, entry, func(owner *MahresourcesContext, snap *download_queue.DownloadJob) error {
+		return (&groupExportAdapter{ctx: owner, kind: JobKindGroupExport}).publishOutcome(admission.Execution, request, snap)
 	})
 	return result
 }
