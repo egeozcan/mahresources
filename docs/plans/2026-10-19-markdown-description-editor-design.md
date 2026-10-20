@@ -193,7 +193,12 @@ strikethrough and links but no headings or lists, and runs no shortcodes.
       loaded later (`[lazy]`) or has since removed itself. Known limit: a
       block holding a frame is not refreshed by a background render (such
       as one following another block's edit); editing that block or
-      reloading the page shows its newer rendering. An outdated rendering is never
+      reloading the page shows its newer rendering. A frame is seen through
+      mutation records, which arrive after the task that made them, so one
+      gap remains: a frame added to a wrapper that is then detached and
+      emptied in the same task leaves no record that both holds the frame
+      and points into the rendering, and protects nothing (pi round 17). An
+      outdated rendering is never
       treated as touched, and is always replaced. No later
       render replaces a marked rendering, success or failure, until leaving
       edit mode next creates it afresh. Replacing a rendering discards

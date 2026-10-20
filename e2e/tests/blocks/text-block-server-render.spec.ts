@@ -611,6 +611,18 @@ test.describe('Text blocks render on the server', () => {
     });
   }
 
+  test('a frame that its rendering replaces while initializing still protects it', async ({ page, apiClient }) => {
+    const block = (await apiClient.createBlock(noteId, 'text', 'd', {
+      text: `<div x-data x-init="$el.innerHTML = '<input class=handed>'"><iframe class="frame"></iframe></div>\n\n[reload label="Refresh"]`,
+    })).id;
+    await page.goto(`/note?id=${noteId}`);
+    await expect(rendered(page, block).locator('input.handed')).toBeAttached();
+    await rendered(page, block).locator('input.handed').evaluate((el) => { (el as HTMLElement).dataset.mark = 'kept'; });
+    await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('.block-editor')).refreshRenderedText());
+    await page.waitForTimeout(500);
+    await expect(rendered(page, block).locator('input.handed')).toHaveAttribute('data-mark', 'kept');
+  });
+
   test('a block edited out of its frame refreshes again once its new rendering lands', async ({ page, apiClient }) => {
     const block = (await apiClient.createBlock(noteId, 'text', 'd', {
       text: '<iframe class="frame"></iframe>',

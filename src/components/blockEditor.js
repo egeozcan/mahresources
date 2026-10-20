@@ -489,6 +489,13 @@ export function blockEditor(noteId, initialBlocks = []) {
       const Alpine = window.Alpine;
       Alpine.mutateDom(() => {
         for (const child of [...el.children]) Alpine.destroyTree(child);
+        el.replaceChildren();
+        // The frames just removed belonged to the replaced content, so its
+        // latch goes with them. Other blocks' pending records latch as usual,
+        // and so do frames the new content adds, even ones its own
+        // initialization replaces at once.
+        this._latchFrames(this._frameObserver?.takeRecords() ?? []);
+        el._heldFrame = false;
         if (painted.html === undefined) {
           el.classList.add('whitespace-pre-wrap');
           el.textContent = painted.text;
@@ -500,10 +507,6 @@ export function blockEditor(noteId, initialBlocks = []) {
         Alpine.initTree(el);
         delete el._x_ignoreSelf;
       });
-      // The frames this paint removed belonged to the replaced content. Other
-      // blocks' pending records are latched as usual.
-      this._latchFrames(this._frameObserver?.takeRecords() ?? []);
-      el._heldFrame = el.querySelector('iframe') !== null;
     },
 
     _latchFrames(mutations) {
