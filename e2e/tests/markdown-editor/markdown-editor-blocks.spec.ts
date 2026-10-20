@@ -115,6 +115,8 @@ test.describe('Markdown editor in text blocks', () => {
     await expect(editor(page, block)).toHaveText(`see @[note:${target.ID}:${target.Name}]`);
     await expect(editor(page, block)).toBeFocused();
     await page.getByRole('button', { name: 'Done' }).click();
+    // Done leaves edit mode only once the save has landed.
+    await expect(page.getByRole('button', { name: 'Edit Blocks' })).toBeVisible();
     expect((await apiClient.getBlock(block)).content.text).toBe(`see @[note:${target.ID}:${target.Name}]`);
     await apiClient.deleteNote(target.ID);
   });
@@ -137,6 +139,7 @@ test.describe('Markdown editor in text blocks', () => {
     await page.keyboard.press('End');
     await page.keyboard.type(' more');
     await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByRole('button', { name: 'Edit Blocks' })).toBeVisible();
     expect((await apiClient.getBlock(a)).content.text).toBe('first');
     expect((await apiClient.getBlock(b)).content.text).toBe('second more');
   });
