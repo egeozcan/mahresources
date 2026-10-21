@@ -178,6 +178,22 @@ describe('cardActionMenu action lookup', () => {
         expect(last.detail.action).toBe('upscale');
     });
 
+    it('refetches when a menu opens again, so a changed definition is not served stale', async () => {
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(new Response(JSON.stringify([colorize])))
+            .mockResolvedValueOnce(new Response(JSON.stringify([{ ...colorize, params: [{ name: 'strength' }] }])));
+        const { component } = menuFor();
+
+        component.openAndFocus('first');
+        await component.runAction(button());
+        component.openAndFocus('first');
+        await component.runAction(button());
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+        const last = vi.mocked(window.dispatchEvent).mock.calls.at(-1)![0] as CustomEvent;
+        expect(last.detail.params).toEqual([{ name: 'strength' }]);
+    });
+
     it('retries a failed fetch on the next click instead of caching the failure', async () => {
         vi.mocked(fetch).mockResolvedValueOnce(new Response('nope', { status: 500 }));
         vi.spyOn(console, 'error').mockImplementation(() => {});

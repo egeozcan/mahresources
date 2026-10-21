@@ -67,7 +67,9 @@ export function cardActionMenu() {
         },
         openAndFocus(position = 'first') {
             this.open = true;
-            loadActionDefinitions(this.$refs.trigger?.dataset?.actionEntityType).catch(() => {});
+            // Fresh on every open: a list refreshed in place can follow a plugin
+            // update that changed an action's parameters under the same id.
+            loadActionDefinitions(this.$refs.trigger?.dataset?.actionEntityType, { refresh: true }).catch(() => {});
             this.$nextTick(() => {
                 const items = this.menuItems();
                 const item = position === 'last' ? items.at(-1) : items[0];

@@ -115,6 +115,8 @@ func TestCardEntity_KeepsTheFullEntityWhenTheRenderedCardReadsIt(t *testing.T) {
 		"optional $data":    `<span x-text="$data?.entity.Meta.info"></span>`,
 		"plugin opt-in":     `<div x-data="scoreWidget()" data-uses-entity></div>`,
 		"data minus entity": `<div x-data="{data:100}"><span x-text="data-entity.Meta.score"></span></div>`,
+		"spaced minus":      `<span x-text="data-entity .Meta.score"></span>`,
+		"entity-encoded":    `<span x-text="&#101;ntity.Meta.score"></span>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := &models.Resource{ID: 1, Meta: bigMeta(), ResourceCategory: &models.ResourceCategory{ID: 2}}

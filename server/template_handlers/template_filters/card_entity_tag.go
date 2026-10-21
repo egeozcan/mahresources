@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
@@ -94,7 +95,9 @@ func (node *cardEntityNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 	}
 	card := body.String()
 	entity := value.Interface()
-	if !markupReadsEntity(strings.ReplaceAll(card, cardEntityScope, "")) {
+	// Alpine reads attribute values after the HTML parser has decoded them, so
+	// an expression written as &#101;ntity is a read of entity.
+	if !markupReadsEntity(html.UnescapeString(strings.ReplaceAll(card, cardEntityScope, ""))) {
 		entity = cardEntityProjection(entity)
 	}
 	encoded, jsonErr := json.Marshal(entity)
@@ -157,7 +160,8 @@ func markupReadsEntity(markup string) bool {
 		}
 		// data-entity as an attribute name or a [data-entity] selector, not
 		// data-entity.Meta, which subtracts the entity from a variable `data`.
-		if strings.HasSuffix(markup[:start], "data-") && !(end < len(markup) && strings.IndexByte(".?[", markup[end]) >= 0) {
+		next := strings.TrimLeft(markup[end:], " \t\r\n")
+		if strings.HasSuffix(markup[:start], "data-") && !(next != "" && strings.IndexByte(".?[", next[0]) >= 0) {
 			continue
 		}
 		return true
