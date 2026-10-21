@@ -17,3 +17,10 @@ var MaxThumbWidth float64 = 600
 var MaxThumbHeight float64 = 600
 
 var ThumbFileSuffix = ".thumbnail.jpg"
+
+// ResourceTableIndexBuildLockKey is the PostgreSQL advisory lock a server holds
+// while it builds indexes CONCURRENTLY on the resources table: the FTS prefix
+// indexes and the resource list indexes ("MRFTSSMP", the value the FTS prefix
+// build used alone before). Two such builds on one table from different servers
+// deadlock rather than wait for each other, so they share this lock.
+const ResourceTableIndexBuildLockKey = int64(0x4D52465453534D50)

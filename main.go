@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -835,6 +836,22 @@ func main() {
 		fail("Error when creating supplemental indexes: %v", err)
 		return
 	}
+	// Concurrent index builds on the resources table, started on PostgreSQL
+	// after the synchronous FTS setup below.
+	var resourceIndexBuilds []func()
+	if db.Dialector.Name() == "postgres" {
+		// Built CONCURRENTLY beside the server, on a connection of its own, as the
+		// Job filter indexes are: on a large library the build takes minutes, and
+		// the owner-filtered list is correct, only slower, until it finishes.
+		resourceIndexBuilds = append(resourceIndexBuilds, func() {
+			ensureIndexesUntilBuilt("resource list indexes", oneResourceIndexBuildAtATime(func() error {
+				return models.EnsureResourceListIndexesOnOwnConnection(context.Config.DbDsn)
+			}), jobFilterIndexRetryInterval)
+		})
+	} else if err := models.EnsureResourceListIndexes(db); err != nil {
+		fail("Error when creating resource list indexes: %v", err)
+		return
+	}
 
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
 	if !*skipVersionMigration {
@@ -872,12 +889,20 @@ func main() {
 			// The unstemmed prefix indexes, built CONCURRENTLY beside the
 			// server on a connection of their own, as the Job filter indexes
 			// are; prefix search is correct, only slower, until they exist.
-			go ensureIndexesUntilBuilt("FTS prefix indexes", func() error {
-				return fts.EnsureSimpleIndexesOnOwnConnection(context.Config.DbDsn)
-			}, jobFilterIndexRetryInterval)
+			resourceIndexBuilds = append(resourceIndexBuilds, func() {
+				ensureIndexesUntilBuilt("FTS prefix indexes", oneResourceIndexBuildAtATime(func() error {
+					return fts.EnsureSimpleIndexesOnOwnConnection(context.Config.DbDsn)
+				}), jobFilterIndexRetryInterval)
+			})
 		}
 	} else {
 		log.Println("FTS setup skipped (-skip-fts flag or SKIP_FTS=1)")
+	}
+	// Started only now: InitFTS issues plain CREATE INDEX IF NOT EXISTS on the
+	// resources table, which takes a lock that conflicts with a concurrent build
+	// and would queue every upload behind it, or deadlock with it.
+	for _, build := range resourceIndexBuilds {
+		go build()
 	}
 
 	// Cleanup old logs if configured
@@ -1141,8 +1166,25 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 }
 
 // jobFilterIndexRetryInterval is how long a failed concurrent index build (the
-// Job filter indexes, the FTS prefix indexes) waits before it is tried again.
+// Job filter indexes, the resource list indexes, the FTS prefix indexes) waits
+// before it is tried again.
 const jobFilterIndexRetryInterval = 5 * time.Minute
+
+// resourceIndexBuild serializes this server's concurrent index builds on the
+// resources table: two CREATE INDEX CONCURRENTLY on one table conflict, and each
+// waits out the other's transaction.
+var resourceIndexBuild sync.Mutex
+
+// oneResourceIndexBuildAtATime wraps one build attempt in resourceIndexBuild. The
+// lock covers the attempt only, never ensureIndexesUntilBuilt's wait before a
+// retry, so a build that keeps failing does not hold up the others.
+func oneResourceIndexBuildAtATime(build func() error) func() error {
+	return func() error {
+		resourceIndexBuild.Lock()
+		defer resourceIndexBuild.Unlock()
+		return build()
+	}
+}
 
 func ensureIndexesUntilBuilt(what string, build func() error, retry time.Duration) {
 	for {

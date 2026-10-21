@@ -6,6 +6,8 @@ import (
 	"time"
 	"unicode"
 
+	"mahresources/constants"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -52,8 +54,8 @@ func simpleVectorExpr(config EntityFTSConfig, qualifier string) string {
 }
 
 // simpleIndexLockKey is the advisory lock held while the unstemmed prefix
-// indexes are checked and built ("MRFTSSMP").
-const simpleIndexLockKey = int64(0x4D52465453534D50)
+// indexes are checked and built; the resource list indexes share it.
+const simpleIndexLockKey = constants.ResourceTableIndexBuildLockKey
 
 // EnsureSimpleIndexes builds the GIN indexes on simpleVectorExpr that are
 // missing, with CREATE INDEX CONCURRENTLY, which blocks neither reads nor
@@ -122,11 +124,18 @@ func EnsureSimpleIndexesOnOwnConnection(dsn string) error {
 
 func ensureSimpleIndex(conn *gorm.DB, config EntityFTSConfig) error {
 	name := fmt.Sprintf("idx_%s_fts_simple", config.TableName)
-	var found []struct{ Valid bool }
-	if err := conn.Raw(`SELECT i.indisvalid AS valid FROM pg_class c
-		JOIN pg_index i ON i.indexrelid = c.oid
+	var found []struct {
+		Valid     bool
+		Qualified string
+	}
+	// In the table's own schema, which current_schema() need not be (see
+	// PostgresIndexExistsOn), and dropped by its schema-qualified name so the
+	// DROP cannot resolve to a same-named index in another schema.
+	if err := conn.Raw(`SELECT i.indisvalid AS valid, format('%I.%I', n.nspname, c.relname) AS qualified FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relname = ? AND n.nspname = current_schema()`, name).Scan(&found).Error; err != nil {
+		JOIN pg_index i ON i.indexrelid = c.oid
+		JOIN pg_class t ON t.oid = ?::regclass
+		WHERE c.relname = ? AND c.relnamespace = t.relnamespace`, config.TableName, name).Scan(&found).Error; err != nil {
 		return fmt.Errorf("inspect %s: %w", name, err)
 	}
 	if len(found) == 1 && found[0].Valid {
@@ -134,7 +143,7 @@ func ensureSimpleIndex(conn *gorm.DB, config EntityFTSConfig) error {
 	}
 	if len(found) == 1 {
 		// Invalid, and this server holds the lock: a failed build's leftover.
-		if err := conn.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + name).Error; err != nil {
+		if err := conn.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + found[0].Qualified).Error; err != nil {
 			return fmt.Errorf("drop %s: %w", name, err)
 		}
 	}
@@ -183,27 +192,54 @@ func (p *PostgresFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
 		}
 	}
 
-	// Create GIN index on search_vector (idempotent with IF NOT EXISTS)
-	indexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_fts
-		ON %s USING GIN(search_vector)`,
-		config.TableName, config.TableName,
-	)
-	if err := db.Exec(indexSQL).Error; err != nil {
-		return fmt.Errorf("failed to create FTS index on %s: %w", config.TableName, err)
+	// Each index is looked up before it is created. CREATE INDEX IF NOT EXISTS
+	// takes a ShareLock on the table before it finds the index, and that waits
+	// on another server's CREATE INDEX CONCURRENTLY on the same table (the
+	// resource list and FTS prefix builds) for as long as the build runs, with
+	// every upload queued behind the pending lock.
+	ftsIndex := "idx_" + config.TableName + "_fts"
+	if exists, err := PostgresIndexExistsOn(db, config.TableName, ftsIndex); err != nil {
+		return fmt.Errorf("failed to inspect FTS index on %s: %w", config.TableName, err)
+	} else if !exists {
+		indexSQL := fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS %s
+			ON %s USING GIN(search_vector)`,
+			ftsIndex, config.TableName,
+		)
+		if err := db.Exec(indexSQL).Error; err != nil {
+			return fmt.Errorf("failed to create FTS index on %s: %w", config.TableName, err)
+		}
 	}
 
-	// Create trigram index for fuzzy search on name column
-	trigramSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_trgm
-		ON %s USING GIN(name gin_trgm_ops)`,
-		config.TableName, config.TableName,
-	)
-	if err := db.Exec(trigramSQL).Error; err != nil {
-		return fmt.Errorf("failed to create trigram index on %s: %w", config.TableName, err)
+	// Trigram index for fuzzy search on the name column.
+	trigramIndex := "idx_" + config.TableName + "_trgm"
+	if exists, err := PostgresIndexExistsOn(db, config.TableName, trigramIndex); err != nil {
+		return fmt.Errorf("failed to inspect trigram index on %s: %w", config.TableName, err)
+	} else if !exists {
+		trigramSQL := fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS %s
+			ON %s USING GIN(name gin_trgm_ops)`,
+			trigramIndex, config.TableName,
+		)
+		if err := db.Exec(trigramSQL).Error; err != nil {
+			return fmt.Errorf("failed to create trigram index on %s: %w", config.TableName, err)
+		}
 	}
 
 	return nil
+}
+
+// PostgresIndexExistsOn reports whether an index of that name exists in the
+// schema of table, which is where CREATE INDEX on table puts it. The table
+// resolves through search_path as the CREATE INDEX would; current_schema() need
+// not be its schema, since a search_path can name an existing schema ahead of
+// the one holding the tables. The catalog read takes no lock on the table.
+func PostgresIndexExistsOn(db *gorm.DB, table, name string) (bool, error) {
+	var count int64
+	err := db.Raw(`SELECT COUNT(*) FROM pg_class c
+		JOIN pg_class t ON t.oid = ?::regclass
+		WHERE c.relkind = 'i' AND c.relname = ? AND c.relnamespace = t.relnamespace`, table, name).Scan(&count).Error
+	return count > 0, err
 }
 
 // BuildSearchScope returns a GORM scope for FTS search

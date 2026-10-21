@@ -5,14 +5,16 @@ import (
 	"strings"
 	"time"
 
+	"mahresources/constants"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// jobFilterIndex is one index the Job list filters are planned around, created
-// outside AutoMigrate.
-type jobFilterIndex struct {
+// plannedIndex is one index a list query is planned around, created outside
+// AutoMigrate (see EnsureJobFilterIndexes for why).
+type plannedIndex struct {
 	name    string
 	table   string
 	columns string
@@ -41,7 +43,7 @@ type jobFilterIndex struct {
 //     which is a sliver of the succeeded Jobs, and idx_jobs_owner_state_entered
 //     serves an administrator's own Jobs (owner=me), whose reads carry no
 //     visibility predicate to lead with.
-var jobFilterIndexes = []jobFilterIndex{
+var jobFilterIndexes = []plannedIndex{
 	{"idx_jobs_state_phase", "jobs", "state, phase, accepted_at, id"},
 	{"idx_jobs_visible_phase", "jobs", "visibility_class, owner_user_id, state, phase, accepted_at, id"},
 	{"idx_job_links_inbound", "job_links", "to_job_id, type, from_job_id"},
@@ -76,23 +78,29 @@ const jobFilterIndexLockKey = int64(0x4D524A4F42494458)
 // (EnsureJobFilterIndexesOnOwnConnection, from main's migrateJobCore); the
 // filters are correct, only slower, until it finishes.
 func EnsureJobFilterIndexes(db *gorm.DB) error {
+	return ensurePlannedIndexes(db, "job filter indexes", jobFilterIndexLockKey, jobFilterIndexes)
+}
+
+// ensurePlannedIndexes is EnsureJobFilterIndexes for any set of planned
+// indexes; each set takes its own advisory lock.
+func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []plannedIndex) error {
 	switch db.Dialector.Name() {
 	case "postgres":
 		return db.Connection(func(conn *gorm.DB) error {
 			conn = conn.Session(&gorm.Session{})
-			if err := pollAdvisoryLock(conn, jobFilterIndexLockKey); err != nil {
-				return fmt.Errorf("lock job filter indexes: %w", err)
+			if err := pollAdvisoryLock(conn, lockKey); err != nil {
+				return fmt.Errorf("lock %s: %w", what, err)
 			}
-			defer conn.Exec("SELECT pg_advisory_unlock(?)", jobFilterIndexLockKey)
-			for _, index := range jobFilterIndexes {
-				if err := ensurePostgresJobFilterIndex(conn, index); err != nil {
+			defer conn.Exec("SELECT pg_advisory_unlock(?)", lockKey)
+			for _, index := range indexes {
+				if err := ensurePostgresPlannedIndex(conn, index); err != nil {
 					return err
 				}
 			}
 			return nil
 		})
 	default:
-		for _, index := range jobFilterIndexes {
+		for _, index := range indexes {
 			var table []string
 			if err := db.Raw("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?", index.name).Scan(&table).Error; err != nil {
 				return fmt.Errorf("inspect %s: %w", index.name, err)
@@ -101,10 +109,20 @@ func EnsureJobFilterIndexes(db *gorm.DB) error {
 			if err := db.Raw("SELECT name FROM pragma_index_info(?) ORDER BY seqno", index.name).Scan(&columns).Error; err != nil {
 				return fmt.Errorf("inspect %s: %w", index.name, err)
 			}
-			if len(table) == 1 && table[0] == index.table && strings.Join(columns, ", ") == index.columns {
+			// A unique or partial index on the right columns is not the index
+			// either, as the PostgreSQL check below also refuses: a partial one
+			// serves only the rows its WHERE admits.
+			var plain []bool
+			if len(table) == 1 {
+				if err := db.Raw(`SELECT "unique" = 0 AND partial = 0 FROM pragma_index_list(?) WHERE name = ?`, table[0], index.name).Scan(&plain).Error; err != nil {
+					return fmt.Errorf("inspect %s: %w", index.name, err)
+				}
+			}
+			if len(table) == 1 && table[0] == index.table && strings.Join(columns, ", ") == index.columns && len(plain) == 1 && plain[0] {
 				continue
 			}
-			// Missing, or under the name on another table or other columns.
+			// Missing, or under the name on another table, other columns, or with a
+			// UNIQUE or a WHERE.
 			if err := db.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
 				return fmt.Errorf("drop %s: %w", index.name, err)
 			}
@@ -147,28 +165,73 @@ const advisoryLockPoll = 250 * time.Millisecond
 // pool, that is a connection requests cannot have for minutes, and with a pool
 // of one (-max-db-connections=1) it is all of them.
 func EnsureJobFilterIndexesOnOwnConnection(dsn string) error {
+	return onOwnConnection(dsn, "job filter index", EnsureJobFilterIndexes)
+}
+
+func onOwnConnection(dsn, what string, ensure func(*gorm.DB) error) error {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
-		return fmt.Errorf("open the job filter index connection: %w", err)
+		return fmt.Errorf("open the %s connection: %w", what, err)
 	}
 	sqlDB, err := db.DB()
 	if err != nil {
-		return fmt.Errorf("open the job filter index connection: %w", err)
+		return fmt.Errorf("open the %s connection: %w", what, err)
 	}
 	defer sqlDB.Close()
 	sqlDB.SetMaxOpenConns(1)
-	return EnsureJobFilterIndexes(db)
+	return ensure(db)
 }
 
-func ensurePostgresJobFilterIndex(conn *gorm.DB, index jobFilterIndex) error {
+// resourceListIndexes serve the resource list:
+//
+//   - idx_resources_owner_created reads one owner's resources newest first,
+//     which is the default list order filtered by owner and the order of a
+//     group's own resources. With only owner_id and created_at indexed, the
+//     planner walks created_at and discards every other owner's rows; on a
+//     library of 2.2M resources that was 639k rows, 401 ms, before the first
+//     page of its largest owner.
+var resourceListIndexes = []plannedIndex{
+	{"idx_resources_owner_created", "resources", "owner_id, created_at"},
+}
+
+// resourceListIndexLockKey is the PostgreSQL advisory lock one server holds
+// while it builds resourceListIndexes. It is the FTS prefix indexes' lock, so a
+// server building one set waits for another server building the other: both
+// build CONCURRENTLY on the resources table, and two such builds deadlock, which
+// aborts one of them until its retry minutes later.
+const resourceListIndexLockKey = constants.ResourceTableIndexBuildLockKey
+
+// EnsureResourceListIndexes creates the resource list indexes that are missing,
+// the way EnsureJobFilterIndexes does: CONCURRENTLY on PostgreSQL, so a build on
+// a large resources table does not block uploads, and before serving on SQLite.
+func EnsureResourceListIndexes(db *gorm.DB) error {
+	return ensurePlannedIndexes(db, "resource list indexes", resourceListIndexLockKey, resourceListIndexes)
+}
+
+// EnsureResourceListIndexesOnOwnConnection is EnsureResourceListIndexes on
+// PostgreSQL through a one-connection handle of its own, for the reason
+// EnsureJobFilterIndexesOnOwnConnection gives.
+func EnsureResourceListIndexesOnOwnConnection(dsn string) error {
+	return onOwnConnection(dsn, "resource list index", EnsureResourceListIndexes)
+}
+
+func ensurePostgresPlannedIndex(conn *gorm.DB, index plannedIndex) error {
 	var found []struct {
-		Valid bool
-		Def   string
+		Valid     bool
+		Def       string
+		Qualified string
 	}
-	if err := conn.Raw(`SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def FROM pg_class c
-		JOIN pg_index i ON i.indexrelid = c.oid
+	// Looked up in the table's own schema, where CREATE INDEX puts it, which
+	// current_schema() need not be: a search_path can name an existing schema
+	// ahead of the one holding the tables. For the same reason a repair drops
+	// it by its schema-qualified name: unqualified, the DROP would resolve
+	// through search_path to a same-named index in another schema.
+	if err := conn.Raw(`SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def,
+		format('%I.%I', n.nspname, c.relname) AS qualified FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relname = ? AND n.nspname = current_schema()`, index.name).Scan(&found).Error; err != nil {
+		JOIN pg_index i ON i.indexrelid = c.oid
+		JOIN pg_class t ON t.oid = ?::regclass
+		WHERE c.relname = ? AND c.relnamespace = t.relnamespace`, index.table, index.name).Scan(&found).Error; err != nil {
 		return fmt.Errorf("inspect %s: %w", index.name, err)
 	}
 	// The expected shape is a plain btree on the table over exactly these
@@ -183,7 +246,7 @@ func ensurePostgresJobFilterIndex(conn *gorm.DB, index jobFilterIndex) error {
 		// Invalid — left behind by a concurrent build that failed, and this
 		// server holds the lock, so nothing else is building it — or valid on
 		// other columns, which is not the index the filters are planned around.
-		if err := conn.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + index.name).Error; err != nil {
+		if err := conn.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + found[0].Qualified).Error; err != nil {
 			return fmt.Errorf("drop %s: %w", index.name, err)
 		}
 	}
