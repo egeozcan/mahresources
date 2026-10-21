@@ -36,7 +36,8 @@
             </thead>
             <tbody>
                 {% for entity in resources %}
-                    <tr data-entity='{{ entity|cardEntity }}' x-data="selectableItem({ itemId: {{ entity.ID }} })">
+                    {% card_entity entity %}
+                    <tr data-entity='{% card_entity_attr %}' x-data="selectableItem({ itemId: {{ entity.ID }} })">
                         <td>
                             <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="detail-table-checkbox focus:ring-amber-600 text-amber-700 border-stone-300 rounded">
                         </td>
@@ -68,6 +69,7 @@
                         <td class="detail-table-secondary detail-table-truncate">{{ entity.OriginalLocation }}</td>
                         {% if listHeaderCarrier && listHeaderCarrier.CustomCell %}<td class="detail-table-custom">{% process_shortcodes listHeaderCarrier.CustomCell entity %}</td>{% endif %}
                     </tr>
+                    {% endcard_entity %}
                 {% empty %}
                     {# The empty state has to live inside a row here, not beside #}
                     {# the table: a bare <div> between <tbody> and <tr> is       #}

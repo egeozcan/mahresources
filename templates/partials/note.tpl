@@ -1,10 +1,11 @@
 {% with cardSc=entity.NoteType.SectionConfig|sectionConfig:"note" %}
+{% card_entity entity %}
 <article class="card note-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>
     {% if selectable %}
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div data-entity='{{ entity|cardEntity }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
+    <div data-entity='{% card_entity_attr %}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
         <header class="card-header">
             <div class="card-avatar">
                 {% process_shortcodes entity.NoteType.CustomAvatar entity %}
@@ -38,4 +39,5 @@
         {% include "partials/pluginActionsCard.tpl" with entityType="note" %}
     </div>
 </article>
+{% endcard_entity %}
 {% endwith %}
