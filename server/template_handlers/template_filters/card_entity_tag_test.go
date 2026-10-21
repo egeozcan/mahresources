@@ -103,17 +103,18 @@ func TestCardEntity_ResourceCardThatNeverReadsEntityIsSlim(t *testing.T) {
 // description rendered with shortcodes.
 func TestCardEntity_KeepsTheFullEntityWhenTheRenderedCardReadsIt(t *testing.T) {
 	for name, inner := range map[string]string{
-		"property read":    `<span x-text="entity.Meta.info"></span>`,
-		"optional chain":   `<span x-show="entity?.Meta?.info"></span>`,
-		"whole entity":     `<pre x-text="JSON.stringify(entity)"></pre>`,
-		"$data":            `<span x-text="$data.entity.Name"></span>`,
-		"dataset":          `<span x-init="console.log($el.closest('[data-entity]').dataset.entity)"></span>`,
-		"index expression": `<span x-text="entity['Meta']"></span>`,
-		"subtraction":      `<span x-text="100-entity.Meta.score"></span>`,
-		"spread":           `<div x-data="{...entity.Meta}"></div>`,
-		"alias":            `<div x-data="{card: $data}"><span x-text="card.entity.Meta.info"></span></div>`,
-		"optional $data":   `<span x-text="$data?.entity.Meta.info"></span>`,
-		"plugin opt-in":    `<div x-data="scoreWidget()" data-uses-entity></div>`,
+		"property read":     `<span x-text="entity.Meta.info"></span>`,
+		"optional chain":    `<span x-show="entity?.Meta?.info"></span>`,
+		"whole entity":      `<pre x-text="JSON.stringify(entity)"></pre>`,
+		"$data":             `<span x-text="$data.entity.Name"></span>`,
+		"dataset":           `<span x-init="console.log($el.closest('[data-entity]').dataset.entity)"></span>`,
+		"index expression":  `<span x-text="entity['Meta']"></span>`,
+		"subtraction":       `<span x-text="100-entity.Meta.score"></span>`,
+		"spread":            `<div x-data="{...entity.Meta}"></div>`,
+		"alias":             `<div x-data="{card: $data}"><span x-text="card.entity.Meta.info"></span></div>`,
+		"optional $data":    `<span x-text="$data?.entity.Meta.info"></span>`,
+		"plugin opt-in":     `<div x-data="scoreWidget()" data-uses-entity></div>`,
+		"data minus entity": `<div x-data="{data:100}"><span x-text="data-entity.Meta.score"></span></div>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := &models.Resource{ID: 1, Meta: bigMeta(), ResourceCategory: &models.ResourceCategory{ID: 2}}

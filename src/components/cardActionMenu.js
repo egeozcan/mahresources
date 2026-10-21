@@ -6,8 +6,9 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 // run to kilobytes) and gave Alpine one handler to compile per card per action.
 const actionDefinitions = new Map();
 
-function loadActionDefinitions(entityType) {
+function loadActionDefinitions(entityType, { refresh = false } = {}) {
     if (!entityType) return Promise.resolve(new Map());
+    if (refresh) actionDefinitions.delete(entityType);
     let pending = actionDefinitions.get(entityType);
     if (!pending) {
         pending = fetch(`/v1/plugin/actions?entity=${encodeURIComponent(entityType)}`)
@@ -28,9 +29,17 @@ function loadActionDefinitions(entityType) {
 
 // Every activation takes a number; only the newest may open a dialog. Lookups for
 // different entity types answer in any order, and an older one arriving late
-// would otherwise replace the dialog the reader is already filling in.
+// would otherwise replace the dialog the reader is already filling in. A dialog
+// opened by anything else (a bulk action, a detail-page sidebar) counts too.
 let latestActivation = 0;
 let failureRegion = null;
+const watchedWindows = new WeakSet();
+
+function watchOtherDialogOpeners() {
+    if (watchedWindows.has(window)) return;
+    watchedWindows.add(window);
+    window.addEventListener('plugin-action-open', () => { latestActivation++; }, true);
+}
 
 function announceFailure(message) {
     failureRegion ??= createLiveRegion(document.body, { assertive: true });
@@ -99,11 +108,16 @@ export function cardActionMenu() {
             const entityType = trigger?.dataset?.actionEntityType;
             const { actionPlugin, actionId, actionEntityId } = item.dataset;
             const label = item.textContent?.trim() || actionId;
+            watchOtherDialogOpeners();
             const activation = ++latestActivation;
             this.close();
+            const key = `${actionPlugin}\u0000${actionId}`;
             let action;
             try {
-                action = (await loadActionDefinitions(entityType)).get(`${actionPlugin}\u0000${actionId}`);
+                action = (await loadActionDefinitions(entityType)).get(key);
+                // A list refreshed in place can list an action enabled after the
+                // definitions were fetched; ask once more before giving up.
+                if (!action) action = (await loadActionDefinitions(entityType, { refresh: true })).get(key);
             } catch (error) {
                 console.error('Could not load plugin actions:', error);
             }

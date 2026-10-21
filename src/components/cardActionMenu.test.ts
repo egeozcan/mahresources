@@ -84,7 +84,7 @@ describe('cardActionMenu action lookup', () => {
     beforeEach(() => {
         resetCardActionDefinitions();
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([colorize]))));
-        vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+        vi.stubGlobal('window', { dispatchEvent: vi.fn(), addEventListener: vi.fn() });
     });
 
     afterEach(() => {
@@ -143,6 +143,39 @@ describe('cardActionMenu action lookup', () => {
 
         expect(trigger.focus).toHaveBeenCalledOnce();
         expect(announce).toHaveBeenCalledWith(expect.stringContaining('could not be opened'));
+    });
+
+    it('does not replace a dialog another producer opened while its lookup was pending', async () => {
+        const listeners: Array<(e: Event) => void> = [];
+        vi.stubGlobal('window', {
+            dispatchEvent: vi.fn(),
+            addEventListener: vi.fn((type: string, fn: (e: Event) => void) => { if (type === 'plugin-action-open') listeners.push(fn); }),
+        });
+        let answer!: (r: Response) => void;
+        vi.mocked(fetch).mockImplementation(() => new Promise<Response>(resolve => { answer = resolve; }));
+
+        const pending = menuFor().component.runAction(button());
+        // A bulk or sidebar action opens the shared dialog in the meantime.
+        listeners.forEach(fn => fn(new CustomEvent('plugin-action-open')));
+        answer(new Response(JSON.stringify([colorize])));
+        await pending;
+
+        expect(window.dispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it('refetches once when the cached definitions do not know a newly listed action', async () => {
+        const fresh = { ...colorize, id: 'upscale', label: 'Upscale' };
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(new Response(JSON.stringify([colorize])))
+            .mockResolvedValueOnce(new Response(JSON.stringify([colorize, fresh])));
+        const { component } = menuFor();
+
+        await component.runAction(button());
+        await component.runAction(button('upscale'));
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+        const last = vi.mocked(window.dispatchEvent).mock.calls.at(-1)![0] as CustomEvent;
+        expect(last.detail.action).toBe('upscale');
     });
 
     it('retries a failed fetch on the next click instead of caching the failure', async () => {

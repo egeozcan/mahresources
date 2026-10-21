@@ -155,7 +155,9 @@ func markupReadsEntity(markup string) bool {
 		if start > 0 && isIdentifierByte(markup[start-1]) {
 			continue
 		}
-		if strings.HasSuffix(markup[:start], "data-") {
+		// data-entity as an attribute name or a [data-entity] selector, not
+		// data-entity.Meta, which subtracts the entity from a variable `data`.
+		if strings.HasSuffix(markup[:start], "data-") && !(end < len(markup) && strings.IndexByte(".?[", markup[end]) >= 0) {
 			continue
 		}
 		return true

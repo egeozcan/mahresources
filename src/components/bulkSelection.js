@@ -330,6 +330,13 @@ export function createBulkSelection(scope = null) {
       if (!form.hasAttribute("x-collapse")) form.setAttribute("x-collapse", "");
       if (!form.hasAttribute(":class")) form.setAttribute(":class", "$selection.isActiveEditor($el) && 'active'");
       form.insertAdjacentElement("beforebegin", btn);
+      // On page load Alpine's walk reaches the inserted button on its own. The
+      // editors render through an x-if on the first selection, and that walk does
+      // not, so the x-effect above would never run. initTree skips an element
+      // already initialised, so asking again after the walk is harmless.
+      queueMicrotask(() => {
+        if (btn.isConnected && !btn._x_marker) window.Alpine?.initTree(btn);
+      });
 
       this.editors.push(form);
     },
