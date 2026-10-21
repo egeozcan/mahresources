@@ -85,6 +85,7 @@ describe('cardActionMenu action lookup', () => {
         resetCardActionDefinitions();
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([colorize]))));
         vi.stubGlobal('window', { dispatchEvent: vi.fn(), addEventListener: vi.fn() });
+        vi.stubGlobal('document', { querySelectorAll: () => [] });
     });
 
     afterEach(() => {
@@ -139,7 +140,7 @@ describe('cardActionMenu action lookup', () => {
         const announce = vi.fn();
         const { component, trigger } = menuFor();
 
-        await component.runAction(button(), { announce });
+        await component.runAction(button(), { announce, otherModal: () => null });
 
         expect(trigger.focus).toHaveBeenCalledOnce();
         expect(announce).toHaveBeenCalledWith(expect.stringContaining('could not be opened'));
@@ -194,12 +195,18 @@ describe('cardActionMenu action lookup', () => {
         expect(last.detail.params).toEqual([{ name: 'strength' }]);
     });
 
+    it('does not open over a dialog that opened while its lookup was pending', async () => {
+        const { component } = menuFor();
+        await component.runAction(button(), { otherModal: () => ({}) });
+        expect(window.dispatchEvent).not.toHaveBeenCalled();
+    });
+
     it('retries a failed fetch on the next click instead of caching the failure', async () => {
         vi.mocked(fetch).mockResolvedValueOnce(new Response('nope', { status: 500 }));
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const { component } = menuFor();
 
-        await component.runAction(button(), { announce: vi.fn() });
+        await component.runAction(button(), { announce: vi.fn(), otherModal: () => null });
         expect(window.dispatchEvent).not.toHaveBeenCalled();
 
         await component.runAction(button());

@@ -1,4 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { blockingModal } from '../utils/modality.js';
 
 // Plugin action definitions for card menus, one request per entity type per page. A
 // card's menu items carry only the plugin and action ids: inlining each definition
@@ -100,7 +101,7 @@ export function cardActionMenu() {
                 items[nextIndex].focus();
             }
         },
-        async runAction(item, { announce = announceFailure } = {}) {
+        async runAction(item, { announce = announceFailure, otherModal = blockingModal } = {}) {
             // The trigger, captured before close() hides the menu. The menu item the
             // reader activated stays in the document but goes display:none, so it
             // cannot take focus back when the action modal closes; the button that
@@ -123,7 +124,10 @@ export function cardActionMenu() {
             } catch (error) {
                 console.error('Could not load plugin actions:', error);
             }
-            if (activation !== latestActivation) return;
+            // Superseded by a newer activation, or another dialog (search, a
+            // confirm) opened while the definitions loaded: opening now would
+            // stack a second focus trap over it.
+            if (activation !== latestActivation || otherModal()) return;
             if (!action) {
                 // The menu item that had focus is hidden now; put the reader back
                 // on the button they opened the menu from, and say why nothing opened.

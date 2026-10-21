@@ -158,11 +158,15 @@ func markupReadsEntity(markup string) bool {
 		if start > 0 && isIdentifierByte(markup[start-1]) {
 			continue
 		}
-		// data-entity as an attribute name or a [data-entity] selector, not
-		// data-entity.Meta, which subtracts the entity from a variable `data`.
-		next := strings.TrimLeft(markup[end:], " \t\r\n")
-		if strings.HasSuffix(markup[:start], "data-") && !(next != "" && strings.IndexByte(".?[", next[0]) >= 0) {
-			continue
+		// data-entity as an attribute name (followed by =, > or the next
+		// attribute) or a [data-entity] selector. Anything else after it, such
+		// as data-entity.Meta or data-entity /* c */ .Meta, is an expression
+		// subtracting the entity from a variable `data`.
+		if strings.HasSuffix(markup[:start], "data-") && (end == len(markup) || strings.IndexByte("=]>'\" \t\r\n", markup[end]) >= 0) {
+			next := strings.TrimLeft(markup[end:], " \t\r\n")
+			if next == "" || strings.IndexByte("=]>'\"", next[0]) >= 0 || isIdentifierByte(next[0]) {
+				continue
+			}
 		}
 		return true
 	}
