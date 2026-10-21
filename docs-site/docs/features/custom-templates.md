@@ -90,6 +90,8 @@ It keeps the value inside a quoted attribute. It does **not** make a `javascript
 
 Alpine is the other route, for anything that should react in the browser: every entity-bound slot is wrapped in `x-data="{ entity: … }"`, so `:class`, `:href` and `:title` can read `entity.Meta.*` directly.
 
+On list cards, the full entity is embedded only when one of the category's card templates (CustomAvatar, CustomSummary or CustomMRQLResult), or the entity's own description, contains the word `entity`, a `[partial` shortcode, a `[plugin:` shortcode or `raw=`. Any other card carries a smaller copy: its scalar fields, tag and owner IDs and names, and the category's ID and name, with `Meta` and `ownMeta` as empty objects and no series. Large metadata on every card made list pages many megabytes long.
+
 ## Accessing Entity Data
 
 The entity is already available as `entity` in the Alpine.js scope. You do not need to add an `x-data` wrapper -- the outer template provides it.

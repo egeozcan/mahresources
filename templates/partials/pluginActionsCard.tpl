@@ -1,6 +1,6 @@
 {% if pluginCardActions %}
 <div x-data="cardActionMenu()" x-id="['plugin-actions-menu']" @click.outside="close()" class="inline-block relative">
-    <button type="button" x-ref="trigger" @click="toggle()"
+    <button type="button" x-ref="trigger" @click="toggle()" data-action-entity-type="{{ entityType }}"
             @keydown.arrow-down.prevent="openAndFocus('first')"
             @keydown.arrow-up.prevent="openAndFocus('last')"
             class="card-badge card-badge--action focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
@@ -11,8 +11,9 @@
          @keydown="onMenuKeydown($event)" @keydown.tab="close()"
          class="absolute right-0 mt-1 w-48 overflow-hidden bg-white text-stone-900 dark:bg-stone-800 dark:text-stone-100 shadow-lg rounded-md z-50 border border-stone-200 dark:border-stone-600"
          role="menu" aria-label="Plugin actions">
+        {# Ids only: the menu fetches each definition once per page (cardActionMenu.js). #}
         {% for action in pluginCardActions %}
-        <button type="button" @click="runAction({{ action|json }}, {{ entity.ID }}, '{{ entityType }}')"
+        <button type="button" @click="runAction($el)" data-action-plugin="{{ action.PluginName }}" data-action-id="{{ action.ID }}" data-action-entity-id="{{ entity.ID }}"
                 class="block w-full text-left px-4 py-2 text-sm font-mono text-stone-900 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-700 focus-visible:outline-hidden focus-visible:bg-amber-100 focus-visible:text-stone-950 dark:focus-visible:bg-amber-300 dark:focus-visible:text-stone-950"
                 role="menuitem">
             {{ action.Label }}

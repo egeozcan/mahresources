@@ -4,7 +4,7 @@
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div data-entity='{{ entity|json }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
+    <div data-entity='{{ entity|cardEntity }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
         {% if cardSc.PreviewImage %}
         <div class="card-image">
             <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
