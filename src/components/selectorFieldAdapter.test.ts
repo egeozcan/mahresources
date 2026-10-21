@@ -84,6 +84,18 @@ describe('selector rendering adapter and registry integration', () => {
         vi.unstubAllGlobals();
     });
 
+    // Inside another x-data, Alpine writes a field the component never declared to the
+    // outermost scope, so sibling selectors share it. A shared `_repositionHandler` let one
+    // selector's destroy() remove another's window listeners and leak its own; a shared
+    // `_liveRegion` sent every selector's announcements to the last one created.
+    test('init() assigns only fields the component declares', () => {
+        const { selector } = createSelector();
+        const declared = new Set(Object.keys(selector));
+        selector.init();
+        expect(Object.keys(selector).filter(key => !declared.has(key))).toEqual([]);
+        selector.destroy();
+    });
+
     test('browser confirmation uses one ordinary registry change and no association write', async () => {
         const { selector, form } = createSelector();
         selector.init();

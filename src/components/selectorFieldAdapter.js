@@ -67,6 +67,10 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         _fieldElement: null,
         _popover: null,
         _popoverMouseDownHandler: null,
+        // Declared so each field keeps its own: inside another x-data, an undeclared field
+        // is written to the outermost scope and shared by every sibling selector.
+        _repositionHandler: null,
+        _liveRegion: null,
         // The form this field publishes atomic changes under. Set only when the field is
         // registered, so an unnamed or form-less selector notifies nobody.
         _registeredForm: null,

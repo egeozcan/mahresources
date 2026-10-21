@@ -11,6 +11,12 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
     fromJSON,
     remoteFields: [],
     jsonText: "",
+    // Declared so they stay per instance: an undeclared field written from init() lands on
+    // the outermost x-data scope. The create forms rebuild this component whenever the
+    // category changes, so destroy() takes back what init() put on the window.
+    _removedBySchema: [],
+    _onSchemaFieldsClaimed: null,
+    _jsonEffect: null,
 
     async init() {
       // Listen for schema fields claiming MetaQuery paths — must be registered
@@ -18,7 +24,7 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
       // Only search-sidebar freeFields (name="MetaQuery") should respond; bulk-edit
       // and create/edit forms (name="Meta", jsonOutput=true) must not be affected.
       this._removedBySchema = [];
-      window.addEventListener('schema-fields-claimed', (e) => {
+      this._onSchemaFieldsClaimed = (e) => {
         if (this.name !== 'MetaQuery') return;
         const claimed = new Set(e.detail.paths || []);
         if (!this.fields) return;
@@ -41,10 +47,11 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
           }
           this.fields = kept;
         }
-      });
+      };
+      window.addEventListener('schema-fields-claimed', this._onSchemaFieldsClaimed);
 
       if (this.jsonOutput) {
-        window.Alpine.effect(() => {
+        this._jsonEffect = window.Alpine.effect(() => {
           this.jsonText = JSON.stringify(
             Object.fromEntries(
               this.fields
@@ -117,6 +124,17 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
         }
       }
 
+    },
+
+    destroy() {
+      if (this._onSchemaFieldsClaimed) {
+        window.removeEventListener('schema-fields-claimed', this._onSchemaFieldsClaimed);
+        this._onSchemaFieldsClaimed = null;
+      }
+      if (this._jsonEffect) {
+        window.Alpine.release(this._jsonEffect);
+        this._jsonEffect = null;
+      }
     },
 
     inputEvents: {},
