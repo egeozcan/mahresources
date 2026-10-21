@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 func ResourceListContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
@@ -47,17 +48,7 @@ func ResourceListContextProvider(context ResourcePageContext) func(request *http
 		var resourceCount int64
 		var popularTags []application_context.PopularTag
 		if mrqlError == "" {
-			resources, err = context.GetResources(int(offset), resultsPerPage, &query)
-			if err != nil {
-				return addErrContext(err, baseContext)
-			}
-
-			resourceCount, err = context.GetResourceCount(&query)
-			if err != nil {
-				return addErrContext(err, baseContext)
-			}
-
-			popularTags, err = context.GetPopularResourceTags(&query)
+			resources, resourceCount, popularTags, err = loadResourceList(context, &query, int(offset), resultsPerPage, true)
 			if err != nil {
 				return addErrContext(err, baseContext)
 			}
@@ -148,6 +139,59 @@ func ResourceListContextProvider(context ResourcePageContext) func(request *http
 			}),
 		}.Update(baseContext)
 	}
+}
+
+// loadResourceList runs a resource list's queries at the same time: the page of
+// resources (when withResources is set), the total count and the popular tags.
+// They do not depend on each other, and on a large library the count and the tag
+// aggregate each scan the whole table, so run in sequence they add up. Errors
+// are reported in that order, and a panic is raised again on the caller's
+// goroutine, where the server's recovery can see it.
+func loadResourceList(context ResourcePageContext, query *query_models.ResourceSearchQuery, offset, limit int, withResources bool) ([]models.Resource, int64, []application_context.PopularTag, error) {
+	var (
+		resources   []models.Resource
+		count       int64
+		popularTags []application_context.PopularTag
+		errs        [3]error
+		panics      [3]any
+		wg          sync.WaitGroup
+	)
+	run := func(i int, f func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { panics[i] = recover() }()
+			errs[i] = f()
+		}()
+	}
+
+	if withResources {
+		run(0, func() (err error) {
+			resources, err = context.GetResources(offset, limit, query)
+			return err
+		})
+	}
+	run(1, func() (err error) {
+		count, err = context.GetResourceCount(query)
+		return err
+	})
+	run(2, func() (err error) {
+		popularTags, err = context.GetPopularResourceTags(query)
+		return err
+	})
+	wg.Wait()
+
+	for _, p := range panics {
+		if p != nil {
+			panic(p)
+		}
+	}
+	for _, err := range errs {
+		if err != nil {
+			return nil, 0, nil, err
+		}
+	}
+	return resources, count, popularTags, nil
 }
 
 func ResourceCreateContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
@@ -276,12 +320,7 @@ func ResourceTimelineContextProvider(context ResourcePageContext) func(request *
 		var resourceCount int64
 		var popularTags []application_context.PopularTag
 		if mrqlError == "" {
-			resourceCount, err = context.GetResourceCount(&query)
-			if err != nil {
-				return addErrContext(err, baseContext)
-			}
-
-			popularTags, err = context.GetPopularResourceTags(&query)
+			_, resourceCount, popularTags, err = loadResourceList(context, &query, 0, 0, false)
 			if err != nil {
 				return addErrContext(err, baseContext)
 			}
