@@ -286,7 +286,7 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery) ([]PopularTag, error) {
 	var res []PopularTag
 
-	db := ctx.db.Table("notes").
+	db := ctx.db.Model(&models.Note{}).
 		Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
 		Joins("INNER JOIN note_tags pt ON pt.note_id = notes.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
@@ -300,7 +300,11 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 		return nil, err
 	}
 
-	return res, db.Scan(&res).Error
+	// Model and Find, not Table and Scan: Scan runs GORM's Row chain, and Find into
+	// PopularTag without a Model names the table popular_tags. Either way the
+	// subtree scope callback never matched, so a scoped user saw tags from
+	// outside their subtree.
+	return res, db.Find(&res).Error
 }
 
 // noteDeleteEffect is the after-commit payload for one deleted note, mirroring

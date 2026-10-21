@@ -498,7 +498,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQuery) ([]PopularTag, error) {
 	var res []PopularTag
 
-	db := ctx.db.Table("groups").
+	db := ctx.db.Model(&models.Group{}).
 		Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
 		Joins("INNER JOIN group_tags pt ON pt.group_id = groups.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
@@ -512,7 +512,11 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 		return nil, err
 	}
 
-	return res, db.Scan(&res).Error
+	// Model and Find, not Table and Scan: Scan runs GORM's Row chain, and Find into
+	// PopularTag without a Model names the table popular_tags. Either way the
+	// subtree scope callback never matched, so a scoped user saw tags from
+	// outside their subtree.
+	return res, db.Find(&res).Error
 }
 
 type groupDeleteEffect struct {

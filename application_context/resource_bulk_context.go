@@ -847,7 +847,7 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.ResourceSearchQuery) ([]PopularTag, error) {
 	var res []PopularTag
 
-	db := ctx.db.Table("resources").
+	db := ctx.db.Model(&models.Resource{}).
 		Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
 		Joins("INNER JOIN resource_tags pt ON pt.resource_id = resources.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
@@ -863,7 +863,11 @@ func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.Resou
 		return nil, err
 	}
 
-	return res, db.Scan(&res).Error
+	// Model and Find, not Table and Scan: Scan runs GORM's Row chain, and Find into
+	// PopularTag without a Model names the table popular_tags. Either way the
+	// subtree scope callback never matched, so a scoped user saw tags from
+	// outside their subtree.
+	return res, db.Find(&res).Error
 }
 
 func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, keepAsVersion bool) error {
