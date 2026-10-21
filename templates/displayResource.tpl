@@ -328,7 +328,7 @@
            data-resource-width="{{ resource.Width }}"
            data-resource-height="{{ resource.Height }}"
            {% if resource.Owner %}data-owner-name="{{ resource.Owner.Name }}" data-owner-id="{{ resource.Owner.ID }}"{% endif %}>
-            <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}" loading="lazy">
+            <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}" fetchpriority="high" decoding="async">
         </a>
         {# py-1 lifts the hit box to 28px, clearing WCAG 2.2's 24px target minimum, #}
         {# without the px-3 that would misalign it from the image's left edge. The  #}

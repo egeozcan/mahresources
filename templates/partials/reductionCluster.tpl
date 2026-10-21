@@ -174,7 +174,7 @@
                    data-resource-width="{{ member.Resource.Width }}"
                    data-resource-height="{{ member.Resource.Height }}">
                     <img height="120" src="/v1/resource/preview?id={{ member.Resource.ID }}&height=120&v={{ member.Resource.Hash }}"
-                         alt="Preview of {{ member.Resource.Name }}" loading="lazy">
+                         alt="Preview of {{ member.Resource.Name }}" loading="lazy" decoding="async">
                 </a>
                 <p class="text-xs text-stone-700 mt-1 max-w-[10rem] truncate">
                     <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>

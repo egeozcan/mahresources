@@ -1,5 +1,6 @@
 {# Paste/Drop Upload Modal #}
-<div x-data
+<div x-data="{ rendered: false }"
+     x-effect="if ($store.pasteUpload.isOpen) rendered = true"
      x-show="$store.pasteUpload.isOpen"
      x-cloak
      x-transition:enter="transition ease-out duration-200"
@@ -14,6 +15,11 @@
      aria-labelledby="paste-upload-title"
      data-upload-concurrency="{{ uploadConcurrency }}"
      @keydown.escape.window="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()">
+    {# The dialog's contents are rendered on its first open, not with the page:    #}
+    {# binding them made every page's Alpine start slower, and most pages never     #}
+    {# open it. Once rendered they stay, hidden by x-show, exactly as before. The   #}
+    {# display:contents wrapper keeps min-h-full below measuring against the root.  #}
+    <template x-if="rendered"><div class="contents">
     {# Backdrop #}
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
          tabindex="-1"
@@ -84,7 +90,7 @@
                         {# Preview column #}
                         <div class="w-16 h-16 flex-shrink-0 bg-stone-100 rounded overflow-hidden flex items-center justify-center">
                             <template x-if="item.type === 'image'">
-                                <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover" loading="lazy">
+                                <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover" loading="lazy" decoding="async">
                             </template>
                             <template x-if="item.type === 'file'">
                                 <svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -325,6 +331,7 @@
             </div>
         </div>
     </div>
+    </div></template>
 </div>
 
 {# Drop overlay: decorative. The modal that opens on drop announces the result. #}

@@ -1,5 +1,6 @@
 <div
     x-data="{
+        rendered: false,
         canNavigate(paging = false) {
             // The crop overlay owns the keyboard while open — block viewer navigation.
             if (this.$store.lightbox.cropOpen) return false;
@@ -49,6 +50,7 @@
             return true;
         }
     }"
+    x-effect="if ($store.lightbox.isOpen) rendered = true"
     x-show="$store.lightbox.isOpen"
     x-cloak
     {# .noreturn (WS4 finding 74): the trap records whatever had focus when it #}
@@ -116,6 +118,11 @@
     tabindex="-1"
     :aria-label="$store.lightbox.getCurrentItem()?.name || 'Media viewer'"
 >
+    {# The viewer's contents are rendered on its first open, not with the page:    #}
+    {# hidden by x-show alone, they were ~300 bindings Alpine set up on every page  #}
+    {# that never opened it. Once rendered they stay, hidden by x-show as before.    #}
+    {# display:contents keeps the children flex items of the root, as before.       #}
+    <template x-if="rendered"><div class="contents">
     <!-- Backdrop -->
     <div
         class="absolute inset-0 h-full w-full bg-black/90"
@@ -1437,4 +1444,5 @@
 
     <!-- Zoom preset popover (top layer, no clipping) -->
     <div id="zoom-preset-popover" popover></div>
+    </div></template>
 </div>

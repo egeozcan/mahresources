@@ -216,7 +216,7 @@
                                                    class="block w-full h-full cursor-pointer hover:opacity-90 transition-opacity">
                                                     <img :src="'/v1/resource/preview?id=' + resId"
                                                          :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
-                                                         class="w-full h-full object-cover" loading="lazy">
+                                                         class="w-full h-full object-cover" loading="lazy" decoding="async">
                                                 </a>
                                             </template>
                                             <template x-if="resourceMeta[resId]?.__unavailable">
@@ -244,7 +244,7 @@
                                                 <div class="relative group aspect-square bg-stone-100 rounded overflow-hidden">
                                                     <img :src="'/v1/resource/preview?id=' + resId"
                                                          :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
-                                                         class="w-full h-full object-cover" loading="lazy">
+                                                         class="w-full h-full object-cover" loading="lazy" decoding="async">
                                                     {# Finding 48/99: named "Remove" with no object, and a 20x20 target #}
                                                     {# revealed only on hover — unreachable on a touch device.          #}
                                                     {# Deferred-work item 8: only the hit-area half of that was fixed.  #}

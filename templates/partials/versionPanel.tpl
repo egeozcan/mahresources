@@ -12,7 +12,7 @@
                             @click="$store.lightbox.openResourceAtVersion({{ resourceId }}, {{ version.ID }}, '{{ version.ContentType|escapejs }}', {{ version.Width }}, {{ version.Height }})">
                         {% if version.ContentType|slice:":6" == "image/" %}
                         <img src="{% if version.ID %}/v1/resource/version/preview?versionId={{ version.ID }}{% else %}/v1/resource/preview?id={{ resourceId }}{% endif %}&height=64&v={{ version.Hash }}"
-                             alt="" loading="lazy" class="h-16 w-16 object-contain rounded">
+                             alt="" loading="lazy" decoding="async" class="h-16 w-16 object-contain rounded">
                         {% else %}
                         <svg aria-hidden="true" class="h-16 w-16 p-3 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4" stroke-width="2"/>

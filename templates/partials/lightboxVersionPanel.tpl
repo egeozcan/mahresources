@@ -29,7 +29,7 @@
                 <template x-if="version.contentType?.startsWith('image/')">
                     <picture>
                         <source media="(min-width: 768px)" :srcset="$store.lightbox.versionThumbnailUrl(version, 96)">
-                        <img :src="$store.lightbox.versionThumbnailUrl(version, 64)" alt="" loading="lazy" class="h-16 w-16 md:h-24 md:w-24 object-contain mx-auto">
+                        <img :src="$store.lightbox.versionThumbnailUrl(version, 64)" alt="" loading="lazy" decoding="async" class="h-16 w-16 md:h-24 md:w-24 object-contain mx-auto">
                     </picture>
                 </template>
                 <template x-if="!version.contentType?.startsWith('image/')">

@@ -46,6 +46,8 @@ the code wins. For how the system is actually put together see
 - [2026-10-12-location-history-plugin-map.md](2026-10-12-location-history-plugin-map.md)
 - [2026-10-12-location-history-tile-referrer.md](2026-10-12-location-history-tile-referrer.md)
 - [2026-10-13-category-template-card-visibility.md](2026-10-13-category-template-card-visibility.md)
+- [2026-10-19-markdown-description-editor-design.md](2026-10-19-markdown-description-editor-design.md)
+- [2026-10-20-frontend-tti-low-hanging-fruit.md](2026-10-20-frontend-tti-low-hanging-fruit.md)
 
 ## Archive
 

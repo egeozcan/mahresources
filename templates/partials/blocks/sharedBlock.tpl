@@ -43,7 +43,7 @@
                 src="/s/{{ shareToken }}/resource/{{ resourceHashMap|lookup:resourceId }}"
                 alt="{{ resourceNameMap|lookup:resourceId|default:"Gallery image" }}"
                 class="w-full h-full object-cover"
-                loading="lazy"
+                loading="lazy" decoding="async"
             >
         </a>
         {% endfor %}

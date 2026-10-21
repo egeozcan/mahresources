@@ -2067,7 +2067,7 @@ html {
 /* Hide synchronously: cascading x-show waits on child editor transitions
    that can be interrupted when an ordinary list is refreshed. */
 .bulk-editors[hidden] { display: none; }
-.bulk-editors > *, .bulk-editors button { order: 1; }
+.bulk-editors > *, .bulk-editors-items > *, .bulk-editors button { order: 1; }
 
 /* Form controls participate in the toolbar flex layout through Alpine scopes. */
 .bulk-action:has(> fieldset > [x-data="bulkSelectionForms"]),

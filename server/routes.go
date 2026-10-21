@@ -516,7 +516,7 @@ func registerJobCenterRoutes(router *mux.Router, appContext *application_context
 			scoped := scopedCtx(appContext, request)
 			return wrapContextWithPlugins(scoped, info.contextFn(scoped))(request)
 		}
-		handler := template_handlers.RenderTemplate(info.templateName, contextForRequest)
+		handler := compressPage(template_handlers.RenderTemplate(info.templateName, contextForRequest))
 		for _, suffix := range []string{"", ".json", ".body"} {
 			router.Methods(http.MethodGet).Path(path + suffix).HandlerFunc(handler)
 		}
@@ -535,14 +535,14 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			return wrapContextWithPlugins(sc, info.contextFn(sc))(request)
 		}
 
-		pageHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
+		pageHandler := compressPage(template_handlers.RenderTemplate(info.templateName, scopedCtxFn))
 		router.Methods(info.method).Path(path).HandlerFunc(pageHandler)
 
-		jsonHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
+		jsonHandler := compressPage(template_handlers.RenderTemplate(info.templateName, scopedCtxFn))
 		router.Methods(info.method).Path(path + ".json").HandlerFunc(jsonHandler)
 
 		router.Methods(info.method).Path(path + ".body").HandlerFunc(
-			template_handlers.RenderTemplate(info.templateName, scopedCtxFn),
+			compressPage(template_handlers.RenderTemplate(info.templateName, scopedCtxFn)),
 		)
 	}
 	registerJobCenterRoutes(router, appContext, template_context_providers.JobCenterCutoverEnabled)

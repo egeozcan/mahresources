@@ -6,7 +6,12 @@
     <title>{% if pageTitle %}{{ pageTitle }} - {% endif %}{{ title }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    {# Loaded as a non-blocking stylesheet: a render-blocking one also holds back #}
+    {# main.js, which waits for every pending stylesheet, so a slow or unreachable  #}
+    {# Google (a private network with no internet) delayed every page's scripts    #}
+    {# until the request gave up. Text paints in the fallback font meanwhile, as    #}
+    {# display=swap already allowed.                                               #}
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/public/index.css?v={{ assetVersion }}">
     <link rel="stylesheet" href="/public/tailwind.css?v={{ assetVersion }}">
     <link rel="stylesheet" href="/public/jsonTable.css?v={{ assetVersion }}">

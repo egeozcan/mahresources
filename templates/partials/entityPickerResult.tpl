@@ -1,6 +1,6 @@
 <div class="flex items-start gap-3 min-w-0">
     {% if entityType == 'resource' %}
-    <img src="/v1/resource/preview?id={{ id }}" alt="" loading="lazy" class="w-20 h-20 object-contain bg-stone-100 flex-shrink-0">
+    <img src="/v1/resource/preview?id={{ id }}" alt="" loading="lazy" decoding="async" class="w-20 h-20 object-contain bg-stone-100 flex-shrink-0">
     {% endif %}
     <div class="min-w-0">
         <a href="/{{ entityType }}?id={{ id }}" target="_blank" rel="noopener noreferrer" class="font-medium text-amber-800 underline break-words">{{ name }}<span class="sr-only"> (opens in a new tab)</span></a>

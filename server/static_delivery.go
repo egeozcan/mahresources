@@ -79,6 +79,25 @@ func compressStatic(next http.Handler) http.Handler {
 	})
 }
 
+// compressPage gzips a rendered template page (the HTML, its .json and its
+// .body fragment) for clients that accept gzip. Unlike the API, a page is
+// never streamed: pongo2 renders it whole before writing, so there is no
+// flush or long-lived response for compression to hold back. Only a 200 is
+// compressed (see gzipResponseWriter), so a redirect or an error page goes out
+// as is.
+func compressPage(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			next(w, r)
+			return
+		}
+		gw := &gzipResponseWriter{ResponseWriter: w, head: r.Method == http.MethodHead}
+		defer gw.finish()
+		next(gw, r)
+	}
+}
+
 // acceptsGzip reports whether an Accept-Encoding header allows gzip, honoring
 // an explicit q=0 refusal.
 func acceptsGzip(header string) bool {
