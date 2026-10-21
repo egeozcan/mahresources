@@ -2098,7 +2098,7 @@ The `render` function receives a single `ctx` table:
 |-------|-------------|
 | `ctx.entity_type` | `"group"`, `"resource"`, or `"note"` |
 | `ctx.entity_id` | Entity ID |
-| `ctx.value` | Entity's full Meta as a Lua table |
+| `ctx.value` | Entity's full Meta as a Lua table. It is an empty table when the Meta is not a JSON object or does not decode completely, for example when it holds a number too large for a 64-bit float. The built-in `[meta]`, `[each]` and `[conditional]` shortcodes treat such a Meta the same way |
 | `ctx.read_only`, `ctx.can_write` | Opposite booleans derived from the request write capability. Forced read-only rendering overrides permission; a missing principal is read-only. |
 | `ctx.attrs` | Shortcode attributes as a key-value table |
 | `ctx.settings` | Plugin settings key-value pairs |

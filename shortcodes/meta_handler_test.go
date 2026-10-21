@@ -1020,3 +1020,35 @@ func TestPartiallyDecodableMetaReadsAsNothing(t *testing.T) {
 		Shortcode{Name: "each", Attrs: map[string]string{"path": "tags"}, InnerContent: "[item]|[else]none", IsBlock: true},
 		ctx, nil, nil, 0))
 }
+
+// A [plugin:*] shortcode reads the same parsed Meta as the built-in readers. The
+// plugin bridge used to unmarshal the blob again for every slot, which for a
+// list of cards with large Meta was the largest single cost of rendering them.
+func TestPluginRendererReadsMetaThroughTheMemo(t *testing.T) {
+	ctx := MetaShortcodeContext{
+		EntityType:  "resource",
+		EntityID:    1,
+		Meta:        json.RawMessage(`{"a":"from-blob"}`),
+		decodedMeta: &decodedMetaCache{},
+	}
+	ctx.decodedMeta.once.Do(func() { ctx.decodedMeta.value = map[string]any{"a": "from-memo"} })
+
+	var seen any
+	renderer := func(_ string, _ Shortcode, mctx MetaShortcodeContext) (string, error) {
+		seen = mctx.MetaObject()["a"]
+		return "", nil
+	}
+	Process(context.Background(), `[plugin:p:x]`, ctx, renderer, nil)
+	assert.Equal(t, "from-memo", seen)
+}
+
+// MetaObject answers like the other readers: nothing for a blob that is not an
+// object or only partly decodes.
+func TestMetaObjectIsNilForANonObjectOrPartlyDecodableBlob(t *testing.T) {
+	for _, raw := range []string{`[1,2]`, `{"tags":["a"],"huge":1e400}`, `not json`} {
+		ctx := MetaShortcodeContext{Meta: json.RawMessage(raw), decodedMeta: &decodedMetaCache{}}
+		assert.Nil(t, ctx.MetaObject(), raw)
+	}
+	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"a":1}`)}
+	assert.Equal(t, map[string]any{"a": float64(1)}, ctx.MetaObject())
+}

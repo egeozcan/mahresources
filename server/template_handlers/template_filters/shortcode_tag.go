@@ -12,6 +12,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/deferredtoken"
+	"mahresources/models/types"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
@@ -53,7 +54,11 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 
 	appCtx := pageRenderContext(ctx.Public["_appContext"])
 
-	metaCtx := buildMetaContext(entity, appCtx)
+	var scopeResolver MetaScopeResolver
+	if appCtx != nil {
+		scopeResolver = pageMetaScopeResolver(ctx, appCtx)
+	}
+	metaCtx := buildMetaContext(entity, scopeResolver)
 	if metaCtx == nil {
 		_, _ = writer.WriteString(content)
 		return nil
@@ -206,7 +211,12 @@ func buildMetaContext(entity any, appCtx MetaScopeResolver) *shortcodes.MetaShor
 	var metaJSON json.RawMessage
 	metaField := v.FieldByName("Meta")
 	if metaField.IsValid() {
-		if raw, err := json.Marshal(metaField.Interface()); err == nil {
+		if stored, ok := metaField.Interface().(types.JSON); ok && len(stored) > 0 {
+			// Already JSON from the database. Re-encoding it only validated and
+			// compacted it, a full pass over every card's blob; the shortcode
+			// readers parse it anyway, and treat it as read-only.
+			metaJSON = json.RawMessage(stored)
+		} else if raw, err := json.Marshal(metaField.Interface()); err == nil {
 			metaJSON = raw
 		}
 	}

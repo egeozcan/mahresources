@@ -60,7 +60,7 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 	var metaResolver MetaScopeResolver
 	if appCtx != nil {
 		executor = BuildQueryExecutor(appCtx)
-		metaResolver = appCtx
+		metaResolver = pageMetaScopeResolver(ctx, appCtx)
 	}
 
 	for _, e := range entities {

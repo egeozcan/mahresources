@@ -747,6 +747,13 @@ type decodedMetaCache struct {
 // blob is absent, malformed, or not an object at its top level — the three cases
 // the previous per-call json.Unmarshal into a map[string]any also produced nil
 // for.
+// MetaObject is decodeMetaObject for readers outside this package: the parsed
+// Meta shared by every reader of this render, so callers must not modify it.
+// The plugin bridge reads it rather than unmarshalling the blob again per slot.
+func (ctx MetaShortcodeContext) MetaObject() map[string]any {
+	return ctx.decodeMetaObject()
+}
+
 func (ctx MetaShortcodeContext) decodeMetaObject() map[string]any {
 	obj, _ := ctx.decodeMeta().(map[string]any)
 	return obj

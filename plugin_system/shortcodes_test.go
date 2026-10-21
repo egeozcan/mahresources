@@ -432,3 +432,34 @@ func TestHtmlEscapeNeutralisesShortcodeSyntax(t *testing.T) {
 	// themselves, so the page shows what was typed.
 	assert.Contains(t, out, "&#91;property", "the value stopped being printed: %s", out)
 }
+
+// A plugin shortcode gets no part of a Meta that only partly decodes, as the
+// built-in readers do: a key whose number overflows a float64 would otherwise
+// reach the plugin as nil beside its populated siblings, and an editable widget
+// bound to it would offer that nil back for writing.
+func TestPluginShortcodeSeesPartlyDecodableMetaAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-partial", `
+		plugin = { name = "sc-partial", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "tags",
+				label = "Tags",
+				render = function(ctx)
+					return "<span>" .. tostring(ctx.value.tags) .. "|" .. type(ctx.value) .. "</span>"
+				end
+			})
+		end
+	`)
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("sc-partial"))
+
+	render := func(meta string) string {
+		ctx := shortcodes.MetaShortcodeContext{EntityType: "resource", EntityID: 1, Meta: json.RawMessage(meta)}
+		return shortcodes.Process(context.Background(), `[plugin:sc-partial:tags]`, ctx, bundledRenderer(pm), nil)
+	}
+	assert.Contains(t, render(`{"tags":["a"],"huge":1e400}`), "<span>nil|table</span>")
+	assert.Contains(t, render(`{"tags":["a"]}`), "<span>table:")
+}

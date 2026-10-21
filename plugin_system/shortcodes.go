@@ -233,10 +233,10 @@ func (pm *PluginManager) RenderShortcodeContext(reqCtx context.Context, pluginNa
 	}
 	defer mu.Unlock()
 
-	var metaMap map[string]any
-	if len(mctx.Meta) > 0 {
-		_ = json.Unmarshal(mctx.Meta, &metaMap)
-	}
+	// The tree the shortcode processor already parsed for this render, shared
+	// with every other reader and only read here: goToLuaTable copies it into
+	// Lua tables. A Meta that is not an object, or only partly decodes, is empty.
+	metaMap := mctx.MetaObject()
 	if metaMap == nil {
 		metaMap = map[string]any{}
 	}
