@@ -62,7 +62,7 @@ func TestTemplatePromptsShareByteIdenticalReferencePrefix(t *testing.T) {
 	}
 	for name, in := range promptCases() {
 		t.Run(name, func(t *testing.T) {
-			system, user, _ := buildTemplateGenerationPrompt(in, promptSentinel+"-request")
+			system, user := buildTemplateGenerationPrompt(in, promptSentinel+"-request")
 			if system != templateAuthoringSystemPrompt {
 				t.Errorf("system prompt differs from the shared one: %q", system)
 			}
@@ -89,8 +89,8 @@ func TestTemplatePairPromptsShareEverythingBeforeTheSlotRole(t *testing.T) {
 	header.Target, header.BundleSlots = TemplateTargetBundle, []string{"CustomHeader", "CustomHeaderCSS"}
 	sidebar := header
 	sidebar.BundleSlots = []string{"CustomSidebar", "CustomSidebarCSS"}
-	_, a, _ := buildTemplateGenerationPrompt(header, "make it")
-	_, b, _ := buildTemplateGenerationPrompt(sidebar, "make it")
+	_, a := buildTemplateGenerationPrompt(header, "make it")
+	_, b := buildTemplateGenerationPrompt(sidebar, "make it")
 	const role = "\nTask: fill these slot fields"
 	i, j := strings.Index(a, role), strings.Index(b, role)
 	if i < 0 || i != j || a[:i] != b[:j] {
@@ -148,7 +148,7 @@ func TestReferenceBlocksFenceUntrustedData(t *testing.T) {
 	}
 	for name, input := range map[string]TemplateGenerationInput{"bundle": in, "metaschema": metaschema} {
 		t.Run(name, func(t *testing.T) {
-			system, user, _ := buildTemplateGenerationPrompt(input, "make it")
+			system, user := buildTemplateGenerationPrompt(input, "make it")
 			for _, label := range labels[name] {
 				for _, marker := range []string{"<<<BEGIN " + label + ">>>", "<<<END " + label + ">>>"} {
 					if n := strings.Count(strings.ToLower(user), strings.ToLower(marker)); n != 1 {
@@ -187,7 +187,7 @@ func TestReferencePrefixPlacementIsIndependentOfTheBuilder(t *testing.T) {
 	}
 	for name, in := range promptCases() {
 		t.Run(name, func(t *testing.T) {
-			_, user, _ := buildTemplateGenerationPrompt(in, "make it")
+			_, user := buildTemplateGenerationPrompt(in, "make it")
 			at := -1
 			for _, marker := range markers {
 				i := strings.Index(user, marker)

@@ -82,12 +82,12 @@ func TestTemplateGenerationEval(t *testing.T) {
 		model,
 		&http.Client{Transport: recorder},
 	)
-	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{
-		APIKey:   apiKey,
-		Model:    model,
-		Timeout:  timeout,
-		Postgres: tc.AppCtx.MRQLStaticEnv().Postgres,
-	}))
+	generationConfig, err := application_context.TemplateGenerationConfigFromEnv(apiKey, os.Getenv, model, timeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationConfig.Postgres = tc.AppCtx.MRQLStaticEnv().Postgres
+	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, generationConfig))
 	// SetupTestEnv runs no plugin manager, so the server lints against the
 	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
 	// handler's seam; keep it in step when the handler's changes.

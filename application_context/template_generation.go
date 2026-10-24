@@ -20,11 +20,10 @@ const (
 	MaxTemplateGeneratedContentLength = 20000
 	// MaxTemplateGeneratedExplanationLength caps the human explanation.
 	MaxTemplateGeneratedExplanationLength = 1000
-	// DefaultTemplateGenerationMaxTokens bounds a single-slot / metaschema call.
-	DefaultTemplateGenerationMaxTokens = 1600
-	// DefaultTemplateBundleMaxTokens bounds a whole-template call (several slots
-	// in one response).
-	DefaultTemplateBundleMaxTokens = 4000
+	// DefaultTemplateGenerationMaxTokens is the provider's fallback budget for
+	// a request that names none. Generation always names one, from the kind's
+	// profile (templateTokenBudget).
+	DefaultTemplateGenerationMaxTokens = 4000
 )
 
 // Generation targets.
@@ -54,6 +53,14 @@ type TemplateGenerationConfig struct {
 	// Postgres gates dialect-specific MRQL in the prompt's reference, as
 	// MRQLGenerationConfig.Postgres does for the MRQL generator.
 	Postgres bool
+	// Overrides are the per-kind deviations from the shipped profiles, by
+	// TemplateKind*. Model and Timeout above are their fallbacks.
+	Overrides map[string]TemplateCallOverride
+	// RepairDisabled turns off the automatic repair round.
+	RepairDisabled bool
+	// ProviderSlots bounds the provider calls in flight across the process
+	// (DefaultTemplateProviderSlots when 0).
+	ProviderSlots int
 	// Logf receives one line per provider call (log.Printf when nil).
 	Logf func(format string, args ...any)
 }
@@ -185,6 +192,9 @@ type TemplateDraftProvider interface {
 type defaultTemplateGenerator struct {
 	provider TemplateDraftProvider
 	config   TemplateGenerationConfig
+	// slots is the process-wide provider semaphore (decision 4 of the plan). It
+	// is created with the generator, which the context copies share.
+	slots chan struct{}
 }
 
 func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGenerationConfig) TemplateGenerator {
@@ -197,7 +207,10 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
 	}
-	return &defaultTemplateGenerator{provider: provider, config: cfg}
+	if cfg.ProviderSlots <= 0 {
+		cfg.ProviderSlots = DefaultTemplateProviderSlots
+	}
+	return &defaultTemplateGenerator{provider: provider, config: cfg, slots: make(chan struct{}, cfg.ProviderSlots)}
 }
 
 func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
@@ -242,11 +255,14 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		}
 	}
 
-	sections, maxTokens := buildTemplatePromptSections(in, prompt)
+	sections := buildTemplatePromptSections(in, prompt)
+	kind := templateCallKind(in)
+	profile := g.config.profileFor(kind)
 	disclosure := newTemplateDisclosure(g.provider.Endpoint(), []TemplateDisclosedProfile{{
-		Kind:      templateCallKind(in),
-		Model:     g.config.Model,
-		MaxTokens: maxTokens,
+		Kind:      kind,
+		Model:     profile.Model,
+		Thinking:  profile.Thinking,
+		MaxTokens: profile.MaxTokens,
 		MaxCalls:  1,
 	}}, sections)
 	return in, prompt, disclosure, nil
@@ -264,30 +280,51 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 		return nil, ErrTemplateGenerationGroundingChanged
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, g.config.Timeout)
-	defer cancel()
-
 	profile := disclosure.Destination.Profiles[0]
-	start := time.Now()
-	resp, err := g.provider.GenerateDraft(callCtx, TemplateDraftRequest{
+	resp, err := g.callProvider(ctx, g.config.profileFor(profile.Kind), TemplateDraftRequest{
 		System:    promptMessage(disclosure.Sections, 0, promptRoleSystem),
 		User:      promptMessage(disclosure.Sections, 0, promptRoleUser),
 		Model:     profile.Model,
 		Thinking:  profile.Thinking,
 		MaxTokens: profile.MaxTokens,
-	})
-	g.logCall("draft", in, resp, err, time.Since(start))
+	}, "draft", in)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			return nil, ErrTemplateGenerationTimeout
-		}
-		return nil, fmt.Errorf("%w: %v", ErrTemplateGenerationProvider, err)
+		return nil, err
 	}
 
 	if in.Target == TemplateTargetBundle {
 		return finishBundle(in, resp)
 	}
 	return finishSingle(in, in.Target, resp)
+}
+
+// callProvider makes one provider call under its profile's timeout and the
+// process-wide slot semaphore. The deadline covers the wait for a slot, so a
+// call that cannot get one in time is a timeout.
+func (g *defaultTemplateGenerator) callProvider(ctx context.Context, profile TemplateCallProfile, req TemplateDraftRequest, phase string, in TemplateGenerationInput) (TemplateDraftResponse, error) {
+	callCtx, cancel := context.WithTimeout(ctx, profile.Timeout)
+	defer cancel()
+	select {
+	case g.slots <- struct{}{}:
+		defer func() { <-g.slots }()
+	case <-callCtx.Done():
+		return TemplateDraftResponse{}, templateCallError(callCtx, callCtx.Err())
+	}
+	start := time.Now()
+	resp, err := g.provider.GenerateDraft(callCtx, req)
+	g.logCall(phase, in, resp, err, time.Since(start))
+	if err != nil {
+		return resp, templateCallError(callCtx, err)
+	}
+	return resp, nil
+}
+
+// templateCallError sorts a failed call into the generator's two errors.
+func templateCallError(callCtx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+		return ErrTemplateGenerationTimeout
+	}
+	return fmt.Errorf("%w: %v", ErrTemplateGenerationProvider, err)
 }
 
 // logCall writes the one line per provider call. Usage stays out of the HTTP
@@ -302,22 +339,6 @@ func (g *defaultTemplateGenerator) logCall(phase string, in TemplateGenerationIn
 	u := resp.Usage
 	g.config.Logf("template generation: phase=%s kind=%s carrier=%s prompt=%d cache_hit=%d cache_miss=%d completion=%d reasoning=%d finish=%s dur=%dms",
 		phase, templateCallKind(in), in.EntityType, u.Prompt, u.CacheHit, u.CacheMiss, u.Completion, u.Reasoning, finish, dur.Milliseconds())
-}
-
-// templateCallKind names the kind of call a request makes: CustomCSS is a slot,
-// an HTML slot with its companion a pair, and any other bundle a bundle.
-func templateCallKind(in TemplateGenerationInput) string {
-	switch in.Target {
-	case TemplateTargetMetaSchema:
-		return "metaschema"
-	case TemplateTargetBundle:
-		if len(in.BundleSlots) == 2 && in.BundleSlots[0]+"CSS" == in.BundleSlots[1] {
-			return "pair"
-		}
-		return "bundle"
-	default:
-		return "slot"
-	}
 }
 
 // finishSingle parses a {content, explanation} draft for a slot or metaschema

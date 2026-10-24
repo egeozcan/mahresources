@@ -106,7 +106,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 			t.Errorf("%s is disclosed but has no value check here", name)
 			continue
 		}
-		sections, _ := buildTemplatePromptSections(v.in, "a request")
+		sections := buildTemplatePromptSections(v.in, "a request")
 		if !strings.Contains(sectionText(sections, c.section), v.value) {
 			t.Errorf("%s's value %q is not in the %q section", name, v.value, c.section)
 		}

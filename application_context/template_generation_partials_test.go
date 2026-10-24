@@ -107,14 +107,14 @@ func TestPromptNamesPartialsTheContentAlreadyIncludes(t *testing.T) {
 	pair.Target, pair.Slot, pair.BundleSlots = TemplateTargetBundle, "", []string{"CustomHeader", "CustomHeaderCSS"}
 	pair.CurrentContent = `{"CustomHeader":"[conditional path=\"x\"][partial name=\"badge\"][/conditional][partial name=\"avatar\"]","CustomHeaderCSS":""}`
 	pair.Partials = []TemplatePartialSummary{{Name: "avatar"}, {Name: "badge"}, {Name: "card"}}
-	_, user, _ := buildTemplateGenerationPrompt(pair, "make it")
+	_, user := buildTemplateGenerationPrompt(pair, "make it")
 	prefix := buildTemplateReferencePrefix(pair)
 	tail := user[len(prefix):]
 	if !strings.Contains(tail, "<<<BEGIN included partials>>>\navatar, badge\n<<<END included partials>>>") {
 		t.Fatalf("tail does not name the included partials:\n%s", tail)
 	}
 	pair.CurrentContent = `{"CustomHeader":"<h1>x</h1>"}`
-	if _, user, _ := buildTemplateGenerationPrompt(pair, "make it"); strings.Contains(user, "included partials") {
+	if _, user := buildTemplateGenerationPrompt(pair, "make it"); strings.Contains(user, "included partials") {
 		t.Fatal("content with no partial still lists included partials")
 	}
 }

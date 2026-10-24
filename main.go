@@ -315,6 +315,11 @@ func main() {
 		fail("invalid DEEPSEEK_TIMEOUT=%q: %v", deepSeekTimeoutRaw, err)
 		return
 	}
+	templateGenerationConfig, err := application_context.TemplateGenerationConfigFromEnv(deepSeekAPIKey, os.Getenv, deepSeekModel, deepSeekTimeout)
+	if err != nil {
+		fail("%v", err)
+		return
+	}
 
 	// Build alt file systems map from flags or fall back to env vars
 	altFileSystems := make(map[string]string)
@@ -522,12 +527,8 @@ func main() {
 			context.Config.DeepSeekModel,
 			nil,
 		)
-		context.SetTemplateGenerator(application_context.NewTemplateGenerator(templateProvider, application_context.TemplateGenerationConfig{
-			APIKey:   context.Config.DeepSeekAPIKey,
-			Model:    context.Config.DeepSeekModel,
-			Timeout:  context.Config.DeepSeekTimeout,
-			Postgres: context.Config.DbType == constants.DbTypePosgres,
-		}))
+		templateGenerationConfig.Postgres = context.Config.DbType == constants.DbTypePosgres
+		context.SetTemplateGenerator(application_context.NewTemplateGenerator(templateProvider, templateGenerationConfig))
 	}
 
 	// Register process-lifetime teardown before any later startup failure can

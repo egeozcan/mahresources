@@ -62,10 +62,9 @@ func promptMessage(sections []PromptSection, call int, role string) string {
 	return strings.Join(parts, "\n")
 }
 
-// buildTemplatePromptSections returns one call's sections and its token budget:
-// the system prompt, then for a docs-bearing call the shared reference prefix
+// buildTemplatePromptSections returns one call's sections: the system prompt, then for a docs-bearing call the shared reference prefix
 // and the request-specific tail.
-func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) ([]PromptSection, int) {
+func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) []PromptSection {
 	var p promptSections
 	switch in.Target {
 	case TemplateTargetMetaSchema:
@@ -82,7 +81,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
 		p.add(promptRoleUser, "output", "Output format", true, "Return the JSON Schema document as the content value (a JSON string).")
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
-		return p, DefaultTemplateGenerationMaxTokens
+		return p
 	case TemplateTargetBundle:
 		p.add(promptRoleSystem, "system", "System prompt", true, templateAuthoringSystemPrompt)
 		addTemplateReferencePrefix(&p, in)
@@ -107,7 +106,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 			"Preserve existing content and styles unless the request requires changing them.",
 			`Output format: one JSON object with exactly the keys slots and explanation, like {"slots":{"CustomHeader":"<h1 class=\"tmpl-title\">[property path=\"Name\"]</h1>","CustomHeaderCSS":".tmpl-title{margin:0}"},"explanation":"..."}. slots maps each requested slot field name to its template string; include only the requested slot names. Always return an HTML slot and its companion CSS together, never only one member of a pair, and include an empty CSS value when no styles are needed.`,
 		)
-		return p, DefaultTemplateBundleMaxTokens
+		return p
 	default:
 		// The handler upgrades every HTML slot into a pair, so in practice this
 		// is the CustomCSS slot.
@@ -135,15 +134,15 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		p.add(promptRoleUser, "current", "Current content", false, currentContentLines(in.CurrentContent, "slot")...)
 		p.add(promptRoleUser, "included-partials", "Partials already included", false, includedPartialLines(in)...)
 		p.add(promptRoleUser, "output", "Output format", true, slotOutputFormatLine(in.Mode))
-		return p, DefaultTemplateGenerationMaxTokens
+		return p
 	}
 }
 
-// buildTemplateGenerationPrompt returns the system prompt, the user message
-// and the token budget for one call, joined from its sections.
-func buildTemplateGenerationPrompt(in TemplateGenerationInput, userPrompt string) (systemPrompt, userMessage string, maxTokens int) {
-	sections, maxTokens := buildTemplatePromptSections(in, userPrompt)
-	return promptMessage(sections, 0, promptRoleSystem), promptMessage(sections, 0, promptRoleUser), maxTokens
+// buildTemplateGenerationPrompt returns the system prompt and the user message
+// for one call, joined from its sections.
+func buildTemplateGenerationPrompt(in TemplateGenerationInput, userPrompt string) (systemPrompt, userMessage string) {
+	sections := buildTemplatePromptSections(in, userPrompt)
+	return promptMessage(sections, 0, promptRoleSystem), promptMessage(sections, 0, promptRoleUser)
 }
 
 // addTemplateReferencePrefix adds the start of every docs-bearing user message.

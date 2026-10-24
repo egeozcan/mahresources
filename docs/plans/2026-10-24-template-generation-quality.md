@@ -302,21 +302,21 @@ Eval evidence after phase 1 (2026-10-24, `baselines/phase1-2026-10-24.json`): ca
 
 Profiles land first: the repair budget is defined in terms of `profile.Timeout`.
 
-- [ ] `application_context/template_generation_config.go`:
+- [x] `application_context/template_generation_config.go`:
   - `templateCallKind(in)` maps CustomCSS to slot, `{X, XCSS}` to pair, metaschema to metaschema, and anything else to bundle; plan is set by the fan-out;
   - `TemplateCallProfile{Model, Thinking, Timeout, MaxTokens}`;
   - `profileFor(kind)` applies the decision 6 table;
   - `TemplateGenerationConfigFromEnv(apiKey, lookup, fallbackModel, fallbackTimeout)`.
-- [ ] Env vars `DEEPSEEK_TEMPLATE_{SLOT,PAIR,PLAN,BUNDLE,METASCHEMA}_{MODEL,THINKING,TIMEOUT}`:
+- [x] Env vars `DEEPSEEK_TEMPLATE_{SLOT,PAIR,PLAN,BUNDLE,METASCHEMA}_{MODEL,THINKING,TIMEOUT}`:
   - the model and timeout fall back to `DEEPSEEK_MODEL` and `DEEPSEEK_TIMEOUT`;
   - when thinking is on, the timeout defaults to 60s, and to 120s for a single-call bundle;
   - an invalid value fails startup;
   - MRQL configuration is untouched;
   - document them in `docs/architecture/configuration.md:70-72`.
-- [ ] Verify with one real call that `response_format: json_object` works together with `thinking: enabled`. If the API rejects it, add `JSONMode` to the options, turned off when thinking is on.
-- [ ] Tests: the profile table with no env; per-kind overrides; fallbacks; invalid values; `TestTemplateCallKind`; the fake records model, thinking and max tokens per kind; a per-kind timeout is honoured.
+- [x] Verify with one real call that `response_format: json_object` works together with `thinking: enabled`. If the API rejects it, add `JSONMode` to the options, turned off when thinking is on. (2026-10-24: `deepseek-flash` answered HTTP 200 with a valid JSON object and reasoning tokens; no `JSONMode` option was needed.)
+- [x] Tests: the profile table with no env; per-kind overrides; fallbacks; invalid values; `TestTemplateCallKind`; the fake records model, thinking and max tokens per kind; a per-kind timeout is honoured.
 - [ ] Eval: run with the defaults and record it.
-- [ ] The process-wide provider semaphore (decision 4) lands here, before fan-out needs it. Test: with 2 slots, a third concurrent call waits, and times out at its deadline.
+- [x] The process-wide provider semaphore (decision 4) lands here, before fan-out needs it. Test: with 2 slots, a third concurrent call waits, and times out at its deadline.
 
 ### 3b. Repair round (item 1)
 
