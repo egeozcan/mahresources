@@ -267,6 +267,20 @@ func runMRQLJoinsStayInsideTheSubtree(t *testing.T, tc *TestContext) {
 		{`count:type = resource`, "total=4", "total=5"},
 		{`count:type = resource AND groups IS NOT EMPTY`, "total=0", "total=1"},
 		{`count:type = note AND groups = "OUTSIDE-O"`, "total=0", "total=1"},
+		// A foreign key to a hidden group counts as missing in every form:
+		// IS NULL, IS EMPTY, = and != agree with parent.name IS NULL.
+		{`type = group AND parent IS NULL`, "inside-root", "OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P"},
+		{`type = group AND parent IS EMPTY`, "inside-root", "OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P"},
+		{`type = group AND parent.name IS NULL`, "inside-root", "OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P"},
+		{`type = group AND parent IS NOT NULL`, "inside-child", "inside-child,inside-root"},
+		{`type = group AND parent IS NOT EMPTY`, "inside-child", "inside-child,inside-root"},
+		{fmt.Sprintf(`type = group AND parent = %d`, parent.ID), "", "inside-root"},
+		{fmt.Sprintf(`type = group AND parent != %d`, parent.ID), "inside-child", "inside-child"},
+		{fmt.Sprintf(`type = group AND parent = %d`, root.ID), "inside-child", "inside-child"},
+		{`type = resource AND owner IS NULL`, "", ""},
+		{fmt.Sprintf(`type = resource AND owner = %d`, root.ID), allRes, allRes},
+		{fmt.Sprintf(`type = note AND owner = %d`, other.ID), "", "OUTSIDE-note"},
+		{`type = note AND owner IS NOT EMPTY`, "inside-note", "OUTSIDE-note,inside-note"},
 		// Cross-entity: the merged order.
 		{`name ~ "inside-r*" ORDER BY name ASC`, "order:" + allRes + ",inside-root", "order:" + allRes + ",inside-root"},
 		{`name ~ "OUTSIDE*" ORDER BY name ASC`, "", "order:OUTSIDE-note,OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P,OUTSIDE-res"},

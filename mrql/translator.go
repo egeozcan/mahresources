@@ -1201,14 +1201,16 @@ func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef
 	switch fd.Column {
 	case "owner_id":
 		if isNumericValue(val) {
-			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?", val), nil
+			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?"+tc.visibleRelated(tc.qualifiedColumn("owner_id"), "groups"), val), nil
 		}
 		// owner = "name" → find entities whose owner group has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "owner"}, {Value: "name"}})
 		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "parent_id":
 		if isNumericValue(val) {
-			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?", val), nil
+			// A parent the caller cannot see compares like a missing one: never
+			// equal, never unequal, as NULL is.
+			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?"+tc.visibleRelated(tc.qualifiedColumn("owner_id"), "groups"), val), nil
 		}
 		// parent = "name" → find groups whose parent has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "parent"}, {Value: "name"}})
@@ -1714,11 +1716,15 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 
 	switch fd.Column {
 	case "owner_id", "parent_id":
-		// owner/parent IS EMPTY → owner_id IS NULL
-		if negated {
-			db = db.Where(tc.tableName + ".owner_id IS NOT NULL")
+		// owner/parent IS EMPTY → owner_id IS NULL, where a group the caller
+		// cannot see counts as missing, as in the traversal paths.
+		fk := tc.tableName + ".owner_id"
+		if negated && tc.visibleRoot == 0 {
+			db = db.Where(fk + " IS NOT NULL")
+		} else if negated {
+			db = db.Where("NOT " + tc.missingGroup(fk))
 		} else {
-			db = db.Where(tc.tableName + ".owner_id IS NULL")
+			db = db.Where(tc.missingGroup(fk))
 		}
 
 	case "children":

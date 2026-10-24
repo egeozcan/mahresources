@@ -11,3 +11,7 @@ func TestMRQLConfinedSeesTheWholeSubtreePostgres(t *testing.T) {
 func TestMRQLConfinedRankIgnoresHiddenDocumentsPostgres(t *testing.T) {
 	runMRQLConfinedRankIgnoresHiddenDocuments(t, SetupPostgresTestEnv(t))
 }
+
+func TestMRQLScopeReachesTheWholeSubtreePostgres(t *testing.T) {
+	runMRQLScopeReachesTheWholeSubtree(t, SetupPostgresTestEnv(t))
+}

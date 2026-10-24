@@ -60,7 +60,7 @@ editable at runtime as `mrql_default_limit`.
 
 ## Fields (by entity type)
 
-**Common to all types:** `id`, `name`, `description`, `created`, `updated`, `tags`, `guid` (stable UUIDv7), `meta.<key>`, `TEXT` (full-text search).
+**Common to all types:** `id`, `name`, `description`, `created`, `updated`, `tags`, `guid` (stable UUIDv7), `meta.<key>`, `TEXT` (full-text search). `TEXT` searches one index shared by every account, so for a user confined to a group's subtree, how long a query takes can reflect content outside that subtree.
 
 **Resources only:** `groups` (alias `group`), `owner`, `category`, `contentType`, `fileSize`, `width`, `height`, `originalName`, `originalLocation`, `hash`, `notes`, `similarImages`.
 

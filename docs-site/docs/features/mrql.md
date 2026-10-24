@@ -396,7 +396,7 @@ text extraction alone does not match MRQL's numeric comparison expressions.
 type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
 ```
 
-`RANK` requires exactly one `TEXT ~` predicate (its term defines the relevance), a single entity type, and no `GROUP BY`. It errors if the server was started with full-text search disabled (`-skip-fts`) -- a relevance sort over the non-indexed fallback would be meaningless.
+`RANK` requires exactly one `TEXT ~` predicate (its term defines the relevance), a single entity type, and no `GROUP BY`. It errors if the server was started with full-text search disabled (`-skip-fts`) -- a relevance sort over the non-indexed fallback would be meaningless. On SQLite, a user confined to a group's subtree gets matching rows newest first instead, because SQLite's relevance score depends on documents that user cannot see.
 
 ## Scope
 

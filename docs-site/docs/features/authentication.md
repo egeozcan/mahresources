@@ -74,7 +74,7 @@ Every account has exactly one role. Capabilities are cumulative from guest up to
 
 Accounts with the **user** or **guest** role can be confined to a single Group and everything beneath it. A guest is *always* scoped; a user is scoped *optionally*. The scope is set per account via the `ScopeGroupId` field on the user.
 
-Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. What it confines are the entities that carry an owner, Groups, Resources and Notes, and every path that reads them.
+Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. What it confines are the entities that carry an owner, Groups, Resources and Notes, and every path that reads them. Full-text search uses one index shared by every account, so for a scoped account, how long a search takes can reflect content outside its subtree.
 
 Tags, Categories, Note Types, Series, Saved Queries and Relation Types carry no owner. They are global, and every authenticated account can read them; what limits a scoped account there is its role, not its scope group.
 
