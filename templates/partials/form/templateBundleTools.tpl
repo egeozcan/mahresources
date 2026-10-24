@@ -44,7 +44,7 @@
 
     <div class="border-t border-stone-200 pt-4">
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
-        <p class="text-xs text-stone-500 mb-2">Sends this description, the metadata schema, and a sample entity to the configured AI provider, then fills every slot. Review before saving.</p>
+        <p class="text-xs text-stone-500 mb-2">Sends this description, the metadata schema, and a sample entity to the configured AI provider, then shows the draft for review. Nothing is filled until you press Apply.</p>
         <div class="flex flex-wrap gap-2">
             <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2"
                       data-testid="template-bundle-generate-prompt"
@@ -57,6 +57,37 @@
                 <span x-text="generating ? 'Generating…' : 'Generate'"></span>
             </button>
         </div>
+        {# A generated draft is held here until Apply; nothing reaches an editor before. #}
+        <template x-if="pendingDraft">
+            <section class="mt-3 rounded-md border border-stone-300 bg-white p-3 space-y-3" data-testid="template-bundle-review" aria-labelledby="tb-review-heading">
+                <p id="tb-review-heading" class="text-sm font-semibold font-mono text-stone-800">Generated draft (not applied)</p>
+                <p x-show="pendingDraft.explanation" class="text-xs text-stone-600" x-text="pendingDraft.explanation"></p>
+                <ul x-show="pendingDraft.issues.length" class="text-xs font-mono text-red-700 list-disc pl-5" data-testid="template-bundle-review-issues">
+                    <template x-for="(issue, i) in pendingDraft.issues" :key="i">
+                        <li x-text="issue.message"></li>
+                    </template>
+                </ul>
+                <ul class="space-y-2">
+                    <template x-for="field in pendingDraft.fields" :key="field">
+                        <li :data-testid="'template-bundle-review-slot-' + field" class="min-w-0">
+                            <p class="text-xs font-mono font-medium text-stone-700" x-text="field"></p>
+                            <ul x-show="(pendingDraft.slotIssues[field] || []).length" class="text-xs font-mono text-red-700 list-disc pl-5">
+                                <template x-for="(issue, i) in (pendingDraft.slotIssues[field] || [])" :key="i">
+                                    <li x-text="issue.message"></li>
+                                </template>
+                            </ul>
+                            <pre class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all" x-text="pendingDraft.slots[field] || '(empty)'"></pre>
+                        </li>
+                    </template>
+                </ul>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" @click="applyPendingDraft()" data-testid="template-bundle-apply"
+                            class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Apply</button>
+                    <button type="button" @click="discardPendingDraft()" data-testid="template-bundle-discard"
+                            class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Discard</button>
+                </div>
+            </section>
+        </template>
     </div>
 
     <div class="flex flex-wrap items-center gap-3 pt-1">

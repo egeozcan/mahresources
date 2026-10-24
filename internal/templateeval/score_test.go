@@ -220,13 +220,24 @@ func TestScoreChecks(t *testing.T) {
 			},
 		},
 		{
-			name: "a bundle slot cut at the content cap is truncated", c: bundleCase,
-			draft: Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{
-				"CustomHeader": "<p>" + strings.Repeat("x", application_context.MaxTemplateGeneratedContentLength-3), "CustomHeaderCSS": ""}},
+			name: "the oversize issue is truncation, not a lint error", c: bundleCase,
+			draft: Draft{Status: 200, Target: "bundle", Slots: map[string]string{
+				"CustomHeader": "<p>" + strings.Repeat("x", application_context.MaxTemplateGeneratedContentLength), "CustomHeaderCSS": ""},
+				Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Output exceeded 20000 bytes in CustomHeader (20003 bytes). Nothing was cut; shorten it before saving."}}},
+			calls:    []Call{{FinishReason: "stop"}},
 			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>x</p>"}},
 			check: func(t *testing.T, got Checks, details Details) {
-				if !got.Truncated {
-					t.Fatal("a sliced slot was not counted as truncated")
+				if !got.Truncated || got.LintErrors != 0 {
+					t.Fatalf("truncated=%v lint=%d", got.Truncated, got.LintErrors)
+				}
+			},
+		},
+		{
+			name: "the truncation issue is truncation, not a lint error", c: cssCase,
+			draft: Draft{Status: 200, Target: "slot", Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "The model's reply was cut off at its output limit, so this draft is incomplete. Try a shorter request, or generate fewer slots at once."}}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.Truncated || got.LintErrors != 0 || got.Malformed {
+					t.Fatalf("truncated=%v lint=%d malformed=%v", got.Truncated, got.LintErrors, got.Malformed)
 				}
 			},
 		},
@@ -692,8 +703,8 @@ func TestLintMessagePrefixesStayClassified(t *testing.T) {
 
 type malformedProvider struct{}
 
-func (malformedProvider) GenerateDraft(context.Context, string, string, int) (string, error) {
-	return `{"slots":{"CustomHeader":"<p>`, nil
+func (malformedProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{Content: `{"slots":{"CustomHeader":"<p>`, FinishReason: "stop"}, nil
 }
 
 // TestBundleDegradeMessageStaysClassified drives the real generator into its
@@ -720,31 +731,50 @@ func TestBundleDegradeMessageStaysClassified(t *testing.T) {
 
 type fixedProvider string
 
-func (p fixedProvider) GenerateDraft(context.Context, string, string, int) (string, error) {
-	return string(p), nil
+func (p fixedProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "stop"}, nil
 }
 
-// TestSlicedSlotEndingInWhitespaceIsTruncated runs the production generator on
-// a reply whose header is over the cap with whitespace at the cut, so the slot
-// it returns is sliced to exactly the cap and ends in spaces.
-func TestSlicedSlotEndingInWhitespaceIsTruncated(t *testing.T) {
-	max := application_context.MaxTemplateGeneratedContentLength
-	header := strings.Repeat("x", max-2) + "    " + strings.Repeat("y", 100)
-	reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": header, "CustomHeaderCSS": ""}, "explanation": "e"})
-	generator := application_context.NewTemplateGenerator(fixedProvider(reply), application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
-	result, err := generator.GenerateTemplate(context.Background(), application_context.TemplateGenerationInput{
+type lengthProvider string
+
+func (p lengthProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "length"}, nil
+}
+
+// TestTruncationAndOversizeIssuesStayClassified drives the real generator into
+// its truncation and oversize branches, so a rewording of either message fails
+// here instead of zeroing the truncation count.
+func TestTruncationAndOversizeIssuesStayClassified(t *testing.T) {
+	in := application_context.TemplateGenerationInput{
 		Target: application_context.TemplateTargetBundle, EntityType: "group", BundleSlots: []string{"CustomHeader", "CustomHeaderCSS"},
-	}, "a header")
-	if err != nil {
-		t.Fatal(err)
 	}
-	if got := result.Slots["CustomHeader"]; len(got) != max || !strings.HasSuffix(got, "  ") {
-		t.Fatalf("the generator no longer slices this way (len %d); revisit the truncation check", len(got))
-	}
-	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
-	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), nil, testEnv())
-	if !got.Truncated {
-		t.Fatal("a slot sliced at the cap was not counted as truncated")
+	oversize, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": strings.Repeat("x", application_context.MaxTemplateGeneratedContentLength+1), "CustomHeaderCSS": ""}, "explanation": "e"})
+	for name, tc := range map[string]struct {
+		provider application_context.TemplateDraftProvider
+		want     issueClass
+	}{
+		"truncated": {lengthProvider(""), classTruncated},
+		"oversize":  {fixedProvider(oversize), classOversize},
+	} {
+		t.Run(name, func(t *testing.T) {
+			generator := application_context.NewTemplateGenerator(tc.provider, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
+			result, err := generator.GenerateTemplate(context.Background(), in, "a header")
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, issue := range result.Issues {
+				found = found || classifyIssue(issue) == tc.want
+			}
+			if !found {
+				t.Fatalf("no issue classified %s in %#v", tc.want, result.Issues)
+			}
+			draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
+			got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), nil, testEnv())
+			if !got.Truncated || got.LintErrors != 0 {
+				t.Fatalf("truncated=%v lint=%d", got.Truncated, got.LintErrors)
+			}
+		})
 	}
 }
 

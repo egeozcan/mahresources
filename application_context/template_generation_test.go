@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,20 +15,28 @@ import (
 
 type fakeTemplateDraftProvider struct {
 	response   string
+	finish     string
+	usage      TemplateTokenUsage
 	err        error
+	seen       TemplateDraftRequest
 	seenSystem string
 	seenUser   string
 	seenTokens int
 }
 
-func (f *fakeTemplateDraftProvider) GenerateDraft(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
-	f.seenSystem = systemPrompt
-	f.seenUser = userPrompt
-	f.seenTokens = maxTokens
+func (f *fakeTemplateDraftProvider) GenerateDraft(ctx context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error) {
+	f.seen = req
+	f.seenSystem = req.System
+	f.seenUser = req.User
+	f.seenTokens = req.MaxTokens
 	if f.err != nil {
-		return "", f.err
+		return TemplateDraftResponse{}, f.err
 	}
-	return f.response, nil
+	finish := f.finish
+	if finish == "" {
+		finish = "stop"
+	}
+	return TemplateDraftResponse{Content: f.response, FinishReason: finish, Usage: f.usage}, nil
 }
 
 func templateGenConfig() TemplateGenerationConfig {
@@ -650,4 +659,197 @@ func TestTemplateGeneratorRejectsIncompletePairs(t *testing.T) {
 			t.Fatalf("must reject entire incomplete draft: %#v, %v", got, err)
 		}
 	}
+}
+
+func TestTemplateGeneratorRequestCarriesModelAndBudget(t *testing.T) {
+	provider := &fakeTemplateDraftProvider{response: `{"content":"<p>x</p>","explanation":"y"}`}
+	cfg := templateGenConfig()
+	cfg.Model = "deepseek-v4-flash"
+	if _, err := NewTemplateGenerator(provider, cfg).GenerateTemplate(context.Background(), slotInput(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.seen.Model != "deepseek-v4-flash" || provider.seen.Thinking || provider.seen.MaxTokens != DefaultTemplateGenerationMaxTokens {
+		t.Fatalf("request = model %q thinking %t max_tokens %d", provider.seen.Model, provider.seen.Thinking, provider.seen.MaxTokens)
+	}
+}
+
+func TestTemplateGeneratorLogsOneLinePerCall(t *testing.T) {
+	var lines []string
+	cfg := templateGenConfig()
+	cfg.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	provider := &fakeTemplateDraftProvider{
+		response: `{"content":"<p>x</p>","explanation":"y"}`,
+		usage:    TemplateTokenUsage{Prompt: 900, Completion: 120, Reasoning: 7, CacheHit: 768, CacheMiss: 132},
+	}
+	in := slotInput()
+	in.Target = TemplateTargetBundle
+	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
+	provider.response = `{"slots":{"CustomHeader":"<p>x</p>","CustomHeaderCSS":""},"explanation":"y"}`
+	if _, err := NewTemplateGenerator(provider, cfg).GenerateTemplate(context.Background(), in, "x"); err != nil {
+		t.Fatal(err)
+	}
+	failing := NewTemplateGenerator(&fakeTemplateDraftProvider{err: errors.New("boom")}, cfg)
+	if _, err := failing.GenerateTemplate(context.Background(), slotInput(), "x"); err == nil {
+		t.Fatal("expected a provider error")
+	}
+	if len(lines) != 2 {
+		t.Fatalf("want one line per call, got %q", lines)
+	}
+	want := "template generation: phase=draft kind=pair carrier=group prompt=900 cache_hit=768 cache_miss=132 completion=120 reasoning=7 finish=stop dur="
+	if !strings.HasPrefix(lines[0], want) || !strings.HasSuffix(lines[0], "ms") {
+		t.Errorf("line = %q, want prefix %q", lines[0], want)
+	}
+	if !strings.Contains(lines[1], " kind=slot ") || !strings.Contains(lines[1], " finish=error ") {
+		t.Errorf("error line = %q", lines[1])
+	}
+}
+
+func hasTruncationIssue(issues []shortcodes.LintIssue) bool {
+	for _, issue := range issues {
+		if issue.Message == templateTruncationMessage && issue.Severity == shortcodes.SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTemplateGeneratorTruncationDegradesForEveryTarget pins decision 7: a
+// reply cut off at max_tokens is a reviewable invalid result with the
+// truncation issue for every target, whether nothing arrived, the JSON stops
+// mid-value, or the JSON happens to be complete.
+func TestTemplateGeneratorTruncationDegradesForEveryTarget(t *testing.T) {
+	targets := map[string]struct {
+		in       func() TemplateGenerationInput
+		complete string
+	}{
+		"css slot": {
+			in: func() TemplateGenerationInput {
+				in := slotInput()
+				in.Slot, in.Mode = "CustomCSS", "css"
+				return in
+			},
+			complete: `{"content":".card{padding:1rem}","explanation":"Pads."}`,
+		},
+		"pair": {
+			in: func() TemplateGenerationInput {
+				in := slotInput()
+				in.Target, in.BundleSlots = TemplateTargetBundle, []string{"CustomHeader", "CustomHeaderCSS"}
+				return in
+			},
+			complete: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"A header."}`,
+		},
+		"bundle": {
+			in: func() TemplateGenerationInput {
+				in := slotInput()
+				in.Target, in.Slot = TemplateTargetBundle, ""
+				in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomCSS"}
+				return in
+			},
+			complete: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":"","CustomCSS":".x{}"},"explanation":"A template."}`,
+		},
+		"metaschema": {
+			in: func() TemplateGenerationInput {
+				in := slotInput()
+				in.Target, in.Slot, in.Mode = TemplateTargetMetaSchema, "", "json"
+				return in
+			},
+			complete: `{"content":"{\"type\":\"object\",\"properties\":{\"rating\":{\"type\":\"number\"}}}","explanation":"A rating."}`,
+		},
+	}
+	for name, target := range targets {
+		replies := map[string]string{
+			"empty":     "",
+			"malformed": target.complete[:len(target.complete)/2],
+			"parseable": target.complete,
+		}
+		for kind, reply := range replies {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				provider := &fakeTemplateDraftProvider{response: reply, finish: "length"}
+				got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), target.in(), "make it")
+				if err != nil {
+					t.Fatalf("a truncated reply must degrade, not error: %v", err)
+				}
+				if got.Valid || !hasTruncationIssue(got.Issues) {
+					t.Fatalf("want valid:false with the truncation issue, got %#v", got)
+				}
+				if kind == "parseable" && got.Content == "" && len(got.Slots) == 0 {
+					t.Fatalf("a parseable truncated draft must still be returned for review: %#v", got)
+				}
+			})
+		}
+	}
+}
+
+// TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError: a reply cut off
+// part way through a pair ran out, it did not break the pair contract, so it is
+// a diagnostic result. The half pair is dropped, because a pair is applied
+// whole or not at all; complete pairs are kept.
+func TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError(t *testing.T) {
+	in := slotInput()
+	in.Target = TemplateTargetBundle
+	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}
+	provider := &fakeTemplateDraftProvider{
+		response: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":".x{}","CustomSidebar":"<p>y</p>"},"explanation":"Cut."}`,
+		finish:   "length",
+	}
+	got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it")
+	if err != nil {
+		t.Fatalf("must not be the pair-mismatch provider error: %v", err)
+	}
+	if got.Valid || !hasTruncationIssue(got.Issues) {
+		t.Fatalf("want the truncation issue: %#v", got)
+	}
+	if _, ok := got.Slots["CustomSidebar"]; ok || got.Slots["CustomHeader"] != "<h1>x</h1>" || got.Slots["CustomHeaderCSS"] != ".x{}" {
+		t.Fatalf("slots = %#v, want the complete Header pair only", got.Slots)
+	}
+
+	// The same half pair from a model that stopped on its own is still an error.
+	provider.finish = "stop"
+	if _, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it"); !errors.Is(err, ErrTemplateGenerationProvider) {
+		t.Fatalf("an untruncated half pair must stay a provider error, got %v", err)
+	}
+}
+
+func hasOversizeIssue(issues []shortcodes.LintIssue, field string) bool {
+	for _, issue := range issues {
+		if strings.HasPrefix(issue.Message, "Output exceeded ") && strings.Contains(issue.Message, " in "+field+" ") && issue.Severity == shortcodes.SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTemplateGeneratorOversizeIsInvalidAndUnsliced pins decision 7's oversize
+// rule: content over the cap is returned whole and invalid, never sliced and
+// never a 502.
+func TestTemplateGeneratorOversizeIsInvalidAndUnsliced(t *testing.T) {
+	big := ".a{color:red}" + strings.Repeat(" ", 10) + strings.Repeat("/*x*/", MaxTemplateGeneratedContentLength/5+10)
+	t.Run("single", func(t *testing.T) {
+		in := slotInput()
+		in.Slot, in.Mode = "CustomCSS", "css"
+		reply, _ := json.Marshal(map[string]string{"content": big, "explanation": "Big."})
+		got, err := NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()).GenerateTemplate(context.Background(), in, "x")
+		if err != nil {
+			t.Fatalf("an oversize draft must not be an error: %v", err)
+		}
+		if got.Valid || got.Content != big || !hasOversizeIssue(got.Issues, "CustomCSS") {
+			t.Fatalf("valid=%t len=%d issues=%#v", got.Valid, len(got.Content), got.Issues)
+		}
+	})
+	t.Run("bundle slot", func(t *testing.T) {
+		in := slotInput()
+		in.Target = TemplateTargetBundle
+		in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
+		reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": "<p>x</p>", "CustomHeaderCSS": big}, "explanation": "Big."})
+		got, err := NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()).GenerateTemplate(context.Background(), in, "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Valid || got.Slots["CustomHeaderCSS"] != big || !hasOversizeIssue(got.Issues, "CustomHeaderCSS") || !hasOversizeIssue(got.SlotIssues["CustomHeaderCSS"], "CustomHeaderCSS") {
+			t.Fatalf("valid=%t len=%d issues=%#v", got.Valid, len(got.Slots["CustomHeaderCSS"]), got.Issues)
+		}
+		if len(got.SlotIssues["CustomHeader"]) != 0 {
+			t.Fatalf("a clean slot gained issues: %#v", got.SlotIssues)
+		}
+	})
 }

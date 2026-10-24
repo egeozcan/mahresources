@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ type TemplateGenerationConfig struct {
 	APIKey  string
 	Model   string
 	Timeout time.Duration
+	// Logf receives one line per provider call (log.Printf when nil).
+	Logf func(format string, args ...any)
 }
 
 // TemplateGenerationInput is the pure, DB-free grounding assembled by the
@@ -76,17 +79,60 @@ type TemplateGenerationResult struct {
 	Explanation string                 `json:"explanation"`
 	Valid       bool                   `json:"valid"`
 	Issues      []shortcodes.LintIssue `json:"issues,omitempty"`
+	// SlotIssues groups a bundle's slot issues by slot, for the review panel.
+	// Issues still lists every issue, plus those about the reply as a whole
+	// (truncation), which belong to no slot.
+	SlotIssues map[string][]shortcodes.LintIssue `json:"slotIssues,omitempty"`
+}
+
+// templateTruncationMessage is the issue for a reply cut off at max_tokens.
+// internal/templateeval classifies it by this text.
+const templateTruncationMessage = "The model's reply was cut off at its output limit, so this draft is incomplete. Try a shorter request, or generate fewer slots at once."
+
+func templateTruncationIssue() shortcodes.LintIssue {
+	return shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: templateTruncationMessage}
+}
+
+// templateOversizeIssue reports content over MaxTemplateGeneratedContentLength.
+// It is returned whole and marked invalid, never sliced: a cut draft looks
+// complete. internal/templateeval classifies the issue by its "Output exceeded"
+// prefix.
+func templateOversizeIssue(field string, size int) shortcodes.LintIssue {
+	return shortcodes.LintIssue{
+		Severity: shortcodes.SeverityError,
+		Message:  fmt.Sprintf("Output exceeded %d bytes in %s (%d bytes). Nothing was cut; shorten it before saving.", MaxTemplateGeneratedContentLength, field, size),
+	}
 }
 
 type TemplateGenerator interface {
 	GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateGenerationResult, error)
 }
 
+// TemplateDraftRequest is one provider call.
+type TemplateDraftRequest struct {
+	System, User string
+	Model        string
+	Thinking     bool
+	MaxTokens    int
+}
+
+// TemplateTokenUsage is the provider's token accounting for one call.
+type TemplateTokenUsage struct {
+	Prompt, Completion, Reasoning, CacheHit, CacheMiss int
+}
+
+// TemplateDraftResponse is one provider reply. Content is the raw JSON string
+// and may be empty when FinishReason is "length".
+type TemplateDraftResponse struct {
+	Content, FinishReason string
+	Usage                 TemplateTokenUsage
+}
+
 // TemplateDraftProvider returns the raw JSON content string from the model; the
 // generator unmarshals it per target (templates have three output shapes, so —
 // unlike the MRQL provider — the provider does not decode a fixed struct).
 type TemplateDraftProvider interface {
-	GenerateDraft(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error)
+	GenerateDraft(ctx context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error)
 }
 
 type defaultTemplateGenerator struct {
@@ -100,6 +146,9 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = DefaultDeepSeekMRQLGenerationTimeout
+	}
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
 	}
 	return &defaultTemplateGenerator{provider: provider, config: cfg}
 }
@@ -143,7 +192,14 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	defer cancel()
 
 	systemPrompt, userMessage, maxTokens := buildTemplateGenerationPrompt(in, prompt)
-	raw, err := g.provider.GenerateDraft(callCtx, systemPrompt, userMessage, maxTokens)
+	start := time.Now()
+	resp, err := g.provider.GenerateDraft(callCtx, TemplateDraftRequest{
+		System:    systemPrompt,
+		User:      userMessage,
+		Model:     g.config.Model,
+		MaxTokens: maxTokens,
+	})
+	g.logCall("draft", in, resp, err, time.Since(start))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
 			return nil, ErrTemplateGenerationTimeout
@@ -152,31 +208,82 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	}
 
 	if target == TemplateTargetBundle {
-		return finishBundle(in, raw)
+		return finishBundle(in, resp)
 	}
-	return finishSingle(in, target, raw)
+	return finishSingle(in, target, resp)
+}
+
+// logCall writes the one line per provider call. Usage stays out of the HTTP
+// response; this line is where cache hits are observed.
+func (g *defaultTemplateGenerator) logCall(phase string, in TemplateGenerationInput, resp TemplateDraftResponse, err error, dur time.Duration) {
+	finish := resp.FinishReason
+	if err != nil {
+		finish = "error"
+	} else if finish == "" {
+		finish = "none"
+	}
+	u := resp.Usage
+	g.config.Logf("template generation: phase=%s kind=%s carrier=%s prompt=%d cache_hit=%d cache_miss=%d completion=%d reasoning=%d finish=%s dur=%dms",
+		phase, templateCallKind(in), in.EntityType, u.Prompt, u.CacheHit, u.CacheMiss, u.Completion, u.Reasoning, finish, dur.Milliseconds())
+}
+
+// templateCallKind names the kind of call a request makes: CustomCSS is a slot,
+// an HTML slot with its companion a pair, and any other bundle a bundle.
+func templateCallKind(in TemplateGenerationInput) string {
+	switch in.Target {
+	case TemplateTargetMetaSchema:
+		return "metaschema"
+	case TemplateTargetBundle:
+		if len(in.BundleSlots) == 2 && in.BundleSlots[0]+"CSS" == in.BundleSlots[1] {
+			return "pair"
+		}
+		return "bundle"
+	default:
+		return "slot"
+	}
 }
 
 // finishSingle parses a {content, explanation} draft for a slot or metaschema
 // target and validates it. Malformed JSON is a provider error (mirrors MRQL);
 // a syntactically-valid but semantically-invalid draft is returned with
-// valid:false so the user can review and apply anyway.
-func finishSingle(in TemplateGenerationInput, target, raw string) (*TemplateGenerationResult, error) {
+// valid:false so the user can review and apply anyway. A reply cut off at
+// max_tokens is never an error: whatever arrived is returned with valid:false
+// and the truncation issue.
+func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftResponse) (*TemplateGenerationResult, error) {
+	truncated := resp.FinishReason == "length"
 	var draft struct {
 		Content     string `json:"content"`
 		Explanation string `json:"explanation"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &draft); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Content)), &draft); err != nil {
+		if truncated {
+			return truncatedTemplateResult(target), nil
+		}
 		return nil, fmt.Errorf("%w: provider returned invalid JSON", ErrTemplateGenerationProvider)
 	}
 	content := strings.TrimSpace(draft.Content)
 	explanation := strings.TrimSpace(draft.Explanation)
-	if content == "" || len(content) > MaxTemplateGeneratedContentLength ||
-		explanation == "" || len(explanation) > MaxTemplateGeneratedExplanationLength {
+	if !truncated && (content == "" || explanation == "" || len(explanation) > MaxTemplateGeneratedExplanationLength) {
 		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
 	}
+	if len(explanation) > MaxTemplateGeneratedExplanationLength {
+		explanation = explanation[:MaxTemplateGeneratedExplanationLength]
+	}
 
-	issues := validateTemplateContent(target, in, content, singleSlotIsCSS(in))
+	issues := []shortcodes.LintIssue{}
+	if truncated {
+		issues = append(issues, templateTruncationIssue())
+	}
+	if len(content) > MaxTemplateGeneratedContentLength {
+		field := in.Slot
+		if target == TemplateTargetMetaSchema {
+			field = "MetaSchema"
+		}
+		issues = append(issues, templateOversizeIssue(field, len(content)))
+	}
+	if content != "" {
+		issues = append(issues, validateTemplateContent(target, in, content, singleSlotIsCSS(in))...)
+	}
 	return &TemplateGenerationResult{
 		Target:      target,
 		Content:     content,
@@ -186,15 +293,30 @@ func finishSingle(in TemplateGenerationInput, target, raw string) (*TemplateGene
 	}, nil
 }
 
-// finishBundle parses a {slots, explanation} draft. A whole-template response
-// can overflow max_tokens and arrive truncated; rather than 502, we degrade to
-// a reviewable invalid result telling the user to generate slots individually.
-func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationResult, error) {
+// truncatedTemplateResult is the result for a reply cut off before anything
+// usable arrived: empty, or JSON that stops mid-value.
+func truncatedTemplateResult(target string) *TemplateGenerationResult {
+	return &TemplateGenerationResult{
+		Target: target,
+		Valid:  false,
+		Issues: []shortcodes.LintIssue{templateTruncationIssue()},
+	}
+}
+
+// finishBundle parses a {slots, explanation} draft. A reply cut off at
+// max_tokens degrades to a reviewable invalid result with the truncation
+// issue; one that is malformed although the model stopped on its own degrades
+// with a message telling the user to generate slots individually.
+func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*TemplateGenerationResult, error) {
+	truncated := resp.FinishReason == "length"
 	var draft struct {
 		Slots       map[string]string `json:"slots"`
 		Explanation string            `json:"explanation"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &draft); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Content)), &draft); err != nil {
+		if truncated {
+			return truncatedTemplateResult(TemplateTargetBundle), nil
+		}
 		return &TemplateGenerationResult{
 			Target: TemplateTargetBundle,
 			Valid:  false,
@@ -205,6 +327,9 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 		}, nil
 	}
 	if len(draft.Slots) == 0 {
+		if truncated {
+			return truncatedTemplateResult(TemplateTargetBundle), nil
+		}
 		return nil, fmt.Errorf("%w: provider returned no slots", ErrTemplateGenerationProvider)
 	}
 
@@ -218,6 +343,10 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 		Slots:       map[string]string{},
 		Explanation: explanation,
 		Issues:      []shortcodes.LintIssue{},
+		SlotIssues:  map[string][]shortcodes.LintIssue{},
+	}
+	if truncated {
+		result.Issues = append(result.Issues, templateTruncationIssue())
 	}
 	// Only keep slots the handler asked for, in a stable order, and lint each.
 	allowed := in.BundleSlots
@@ -230,6 +359,11 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 	for _, slotName := range allowed {
 		requested[slotName] = true
 	}
+	// A pair is applied whole or not at all. A model that stopped on its own and
+	// returned half a pair broke the contract; a reply cut off part way through
+	// a pair merely ran out, so that pair is dropped and the truncation issue
+	// says why.
+	dropped := map[string]bool{}
 	for _, slotName := range allowed {
 		if strings.HasSuffix(slotName, "CSS") || !requested[slotName+"CSS"] {
 			continue
@@ -237,25 +371,33 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 		_, htmlPresent := draft.Slots[slotName]
 		_, cssPresent := draft.Slots[slotName+"CSS"]
 		if htmlPresent != cssPresent {
-			return nil, fmt.Errorf("%w: provider must return %s and %s together", ErrTemplateGenerationProvider, slotName, slotName+"CSS")
+			if !truncated {
+				return nil, fmt.Errorf("%w: provider must return %s and %s together", ErrTemplateGenerationProvider, slotName, slotName+"CSS")
+			}
+			dropped[slotName], dropped[slotName+"CSS"] = true, true
 		}
 	}
 	for _, slotName := range allowed {
 		content, ok := draft.Slots[slotName]
-		if !ok {
+		if !ok || dropped[slotName] {
 			continue
 		}
 		content = strings.TrimSpace(content)
 		// An explicitly empty slot clears its editor; an absent key leaves it unspecified.
-		if len(content) > MaxTemplateGeneratedContentLength {
-			content = content[:MaxTemplateGeneratedContentLength]
-		}
 		result.Slots[slotName] = content
+		var issues []shortcodes.LintIssue
+		if len(content) > MaxTemplateGeneratedContentLength {
+			issues = append(issues, templateOversizeIssue(slotName, len(content)))
+		}
 		// One input covers every slot of a bundle, so its Mode says nothing
 		// about the slot in hand: CustomCSS and its companions are stylesheets.
-		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content, strings.HasSuffix(slotName, "CSS"))...)
+		issues = append(issues, validateTemplateContent(TemplateTargetSlot, in, content, strings.HasSuffix(slotName, "CSS"))...)
+		if len(issues) > 0 {
+			result.SlotIssues[slotName] = issues
+		}
+		result.Issues = append(result.Issues, issues...)
 	}
-	if len(result.Slots) == 0 {
+	if len(result.Slots) == 0 && !truncated {
 		return nil, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
 	}
 	result.Valid = !hasErrorIssue(result.Issues)

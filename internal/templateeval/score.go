@@ -49,8 +49,9 @@ type Checks struct {
 	Adversarial bool `json:"adversarial,omitempty"`
 
 	HTTPStatus int `json:"httpStatus"`
-	// Truncated is a reply cut by max_tokens (finish_reason "length"), or a slot
-	// at or over MaxTemplateGeneratedContentLength. Malformed is a reply that is
+	// Truncated is a reply cut by max_tokens (finish_reason "length"), or
+	// content over MaxTemplateGeneratedContentLength (the server's oversize
+	// issue). Malformed is a reply that is
 	// not valid JSON although the model stopped on its own; WrongShape is valid
 	// JSON that is not the object the target asks for.
 	Truncated  bool `json:"truncated,omitempty"`
@@ -123,16 +124,20 @@ const (
 	classMRQL
 	classUnknownShortcode
 	classBundleDegraded
+	classTruncated
+	classOversize
 )
 
 func (c issueClass) String() string {
-	return [...]string{"other", "unknown-attribute", "mrql", "unknown-shortcode", "bundle-degraded"}[c]
+	return [...]string{"other", "unknown-attribute", "mrql", "unknown-shortcode", "bundle-degraded", "truncated", "oversize"}[c]
 }
 
 // classifyIssue sorts an issue by its message prefix. The prefixes come from
 // shortcodes/lint.go (pinned by TestLintMessagePrefixesStayClassified) and the
-// bundle degrade message in application_context/template_generation.go (pinned
-// by TestBundleDegradeMessageStaysClassified).
+// bundle degrade, truncation and oversize messages in
+// application_context/template_generation.go (pinned by
+// TestBundleDegradeMessageStaysClassified and
+// TestTruncationAndOversizeIssuesStayClassified).
 func classifyIssue(issue shortcodes.LintIssue) issueClass {
 	switch {
 	case strings.HasPrefix(issue.Message, "MRQL error in "):
@@ -143,6 +148,10 @@ func classifyIssue(issue shortcodes.LintIssue) issueClass {
 		return classUnknownShortcode
 	case strings.HasPrefix(issue.Message, "The whole-template response was too large or malformed"):
 		return classBundleDegraded
+	case strings.HasPrefix(issue.Message, "The model's reply was cut off at its output limit"):
+		return classTruncated
+	case strings.HasPrefix(issue.Message, "Output exceeded "):
+		return classOversize
 	}
 	return classOther
 }
@@ -184,6 +193,11 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		case classBundleDegraded:
 			// Emitted for any bundle reply that does not decode, cut off or not.
 			degraded = true
+			continue
+		case classTruncated, classOversize:
+			// The server's own word that the draft is cut off or over the
+			// content cap; counted as truncation, not as a lint error.
+			checks.Truncated = true
 			continue
 		case classUnknownAttribute:
 			checks.UnknownAttributes++
@@ -230,16 +244,6 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		}
 		checks.IncompletePairs = pairGaps(requested, texts)
 	}
-	for _, text := range texts {
-		// finishBundle trims a slot, then slices it to the cap without saying so
-		// (application_context/template_generation.go), so a sliced slot is
-		// exactly the cap long and may end in whitespace. Measure it untrimmed.
-		// Phase 1 makes this an issue instead.
-		if len(text) >= application_context.MaxTemplateGeneratedContentLength {
-			checks.Truncated = true
-		}
-	}
-
 	unknown := map[string]bool{}
 	var all strings.Builder
 	for slot, text := range texts {

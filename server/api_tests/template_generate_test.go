@@ -290,8 +290,8 @@ func TestTemplateGenerateSlotAlwaysRequestsPair(t *testing.T) {
 
 type apiPairDraftProvider string
 
-func (p apiPairDraftProvider) GenerateDraft(context.Context, string, string, int) (string, error) {
-	return string(p), nil
+func (p apiPairDraftProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "stop"}, nil
 }
 
 func TestTemplateGenerateEnforcesPairsEndToEnd(t *testing.T) {

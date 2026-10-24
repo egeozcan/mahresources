@@ -122,29 +122,31 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           return;
         }
 
-        if (target === 'cluster' && (!data?.slots || !pair.every((name) => typeof data.slots[name] === 'string'))) {
+        // Issues are read first: a truncated reply can arrive with half a pair or
+        // nothing at all, and its diagnostic is what the reader needs to see.
+        this.generatedIssues = data && Array.isArray(data.issues) ? data.issues : [];
+        const issueText = this.generatedIssues.map((i) => i.message).filter(Boolean).join('; ');
+        const completePair = target === 'cluster' && data?.slots && pair.every((name) => typeof data.slots[name] === 'string');
+        if (target === 'cluster' && !completePair && !issueText) {
           this.generationError = 'The model must return both the template and its CSS.';
           this.generationStatus = '';
           return;
         }
-        if (target === 'cluster') {
+        if (completePair) {
           this.generatedSlots = Object.fromEntries(pair.map((name) => [name, data.slots[name]]));
         }
-        this.generatedContent = this.generatedSlots ? this.generatedSlots[fieldName] : (data && data.content) || '';
+        this.generatedContent = this.generatedSlots ? this.generatedSlots[fieldName] : (target !== 'cluster' && data && data.content) || '';
         this.generatedValid = !!(data && data.valid);
-        this.generatedIssues = data && Array.isArray(data.issues) ? data.issues : [];
 
         if (!this.generatedContent && !this.generatedSlots) {
-          this.generationError = 'The model returned no content.';
+          this.generationError = issueText || 'The model returned no content.';
           this.generationStatus = '';
           return;
         }
 
         if (!this.generatedValid) {
           this.generationStatus = 'Generated content needs review.';
-          this.generationError =
-            this.generatedIssues.map((i) => i.message).filter(Boolean).join('; ') ||
-            'Generated content has issues.';
+          this.generationError = issueText || 'Generated content has issues.';
           return;
         }
 

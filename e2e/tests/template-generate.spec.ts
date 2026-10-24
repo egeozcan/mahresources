@@ -161,8 +161,123 @@ test.describe('Template section generation', () => {
     await page.getByTestId('template-bundle-generate-prompt').fill('a compact card');
     await bundleButton.click();
 
+    // The draft is listed for review; nothing reaches an editor before Apply.
+    const review = page.getByTestId('template-bundle-review');
+    await expect(review).toBeVisible({ timeout: 10000 });
+    await expect(review.getByTestId('template-bundle-review-slot-CustomHeader')).toContainText('<h1>Card</h1>');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
+
+    await page.getByTestId('template-bundle-apply').click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Card</h1>', { timeout: 10000 });
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('.card{padding:1rem}');
+    await expect(review).toHaveCount(0);
+  });
+});
+
+// The server's issue for a reply cut off at max_tokens
+// (application_context/template_generation.go). An empty reply and JSON that
+// stops mid-value both reach the client as this result with nothing to apply;
+// the Go tests cover the server telling them apart from a clean stop.
+const truncationIssue = {
+  severity: 'error',
+  message: "The model's reply was cut off at its output limit, so this draft is incomplete. Try a shorter request, or generate fewer slots at once.",
+};
+
+test.describe('Truncated and oversize drafts', () => {
+  for (const reply of ['empty-length', 'malformed-length']) {
+    test(`${reply}: every generate surface shows the truncation issue and applies nothing`, async ({ page }) => {
+      await page.route('**/v1/category/generateTemplate', async (route) => {
+        const body = route.request().postDataJSON();
+        const target = body.target === 'metaschema' ? 'metaschema' : body.target === 'slot' ? 'slot' : 'bundle';
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ target, explanation: '', valid: false, issues: [truncationIssue] }),
+        });
+      });
+      await page.goto('/category/new');
+      await page.waitForLoadState('load');
+
+      // CustomCSS, a pair, and the MetaSchema each use the shared controls.
+      for (const field of ['CustomCSS', 'CustomHeader', 'MetaSchema']) {
+        await expect(page.getByTestId(`generate-button-${field}`)).toBeVisible({ timeout: 10000 });
+        await page.getByTestId(`generate-prompt-${field}`).fill('something long');
+        await page.getByTestId(`generate-button-${field}`).click();
+        await expect(page.getByTestId(`generate-error-${field}`)).toContainText('cut off at its output limit');
+        await expect(page.getByTestId(`generate-error-${field}`)).not.toContainText('must return both');
+        await expect(page.getByTestId(`generate-apply-${field}`)).toHaveCount(0);
+        await expect(page.locator(`input[name="${field}"]`)).toHaveValue('');
+      }
+      await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
+
+      // The whole-template panel.
+      await page.getByTestId('template-bundle-generate-prompt').fill('something long');
+      await page.getByTestId('template-bundle-generate-button').click();
+      await expect(page.getByTestId('template-bundle-tools').getByRole('status')).toContainText('cut off at its output limit');
+      await expect(page.getByTestId('template-bundle-review')).toHaveCount(0);
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    });
+  }
+
+  test('a parseable truncated bundle draft is listed with its issue and applied only on Apply', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          target: 'bundle',
+          slots: { CustomHeader: '<h1>Cut short</h1>', CustomHeaderCSS: '' },
+          explanation: 'Partial.',
+          valid: false,
+          issues: [truncationIssue],
+        }),
+      });
+    });
+    await page.goto('/category/new');
+    await page.waitForLoadState('load');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a long template');
+    await page.getByTestId('template-bundle-generate-button').click();
+
+    const review = page.getByTestId('template-bundle-review');
+    await expect(review.getByTestId('template-bundle-review-issues')).toContainText('cut off at its output limit');
+    await expect(review.getByTestId('template-bundle-review-slot-CustomHeader')).toContainText('<h1>Cut short</h1>');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+
+    await page.getByTestId('template-bundle-apply').click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Cut short</h1>');
+  });
+
+  test('an over-cap bundle slot is listed with its issue, unsliced, and applied only on Apply', async ({ page }) => {
+    const big = `<p>${'x'.repeat(20001)}</p>`;
+    const oversize = { severity: 'error', message: `Output exceeded 20000 bytes in CustomHeader (${big.length} bytes). Nothing was cut; shorten it before saving.` };
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          target: 'bundle',
+          slots: { CustomHeader: big, CustomHeaderCSS: '' },
+          explanation: 'Too big.',
+          valid: false,
+          issues: [oversize],
+          slotIssues: { CustomHeader: [oversize] },
+        }),
+      });
+    });
+    await page.goto('/category/new');
+    await page.waitForLoadState('load');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a huge header');
+    await page.getByTestId('template-bundle-generate-button').click();
+
+    const slot = page.getByTestId('template-bundle-review-slot-CustomHeader');
+    await expect(slot).toContainText('Output exceeded 20000 bytes');
+    // A slot's issue is listed with the slot, not again as a draft-wide issue.
+    await expect(page.getByTestId('template-bundle-review-issues')).toBeHidden();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+
+    await page.getByTestId('template-bundle-apply').click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue(big);
   });
 });
 

@@ -820,7 +820,7 @@ When a DeepSeek key is configured (`DEEPSEEK_API_KEY`, the same setting that pow
 
 A generated slot is linted before it is returned. A clean draft is applied to the editor automatically (and the live preview refreshes); a draft with problems is held back with its issues listed, and a **Use anyway** button applies it after you review. The **Meta JSON Schema** editor has its own Generate button that drafts a JSON Schema from a description and validates that it compiles.
 
-The **Reuse & Presets** panel adds a **Generate whole template** box that designs every slot at once from one description, filling the whole form for review.
+The **Reuse & Presets** panel adds a **Generate whole template** box that designs every slot at once from one description. The draft is listed for review, each returned slot with its text and issues, and nothing is written to the form until you press **Apply**. A reply cut off at the model's output limit, or a slot over 20,000 bytes, is marked invalid with that issue and is never shortened.
 
 Generation is available only when a key is configured (the button returns "not configured" otherwise), is rate-limited per client, and is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. Only the prompt, the schema, one sample entity's metadata, and the shortcode docs are sent to the provider.
 

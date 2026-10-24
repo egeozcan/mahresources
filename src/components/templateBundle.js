@@ -114,6 +114,9 @@ export function templateBundle({ carrier } = {}) {
     loading: false,
     generationPrompt: '',
     generating: false,
+    // A generated draft waiting for review: { slots, issues, slotIssues,
+    // explanation, valid }. Nothing reaches an editor until applyPendingDraft.
+    pendingDraft: null,
 
     async init() {
       await Promise.all([this.loadSources(), this.loadPresets()]);
@@ -418,9 +421,10 @@ export function templateBundle({ carrier } = {}) {
     // ---- Whole-template generation -----------------------------------------
 
     // generateBundle asks the server to design a full template from the prompt
-    // and fills every returned slot editor. The generate route matches the
-    // carrier prefix (/v1/{carrier}/generateTemplate); the sample entity comes
-    // from the shared templatePreview store.
+    // and holds the returned slots as a pending draft, listed per slot with its
+    // issues. Nothing is written to an editor until the user presses Apply. The
+    // generate route matches the carrier prefix (/v1/{carrier}/generateTemplate);
+    // the sample entity comes from the shared templatePreview store.
     async generateBundle() {
       const prompt = (this.generationPrompt || '').trim();
       if (!prompt) {
@@ -430,6 +434,7 @@ export function templateBundle({ carrier } = {}) {
       const store = (window.Alpine && window.Alpine.store('templatePreview')) || {};
       const generatePath = `/v1/${this.carrier}/generateTemplate`;
       this.generating = true;
+      this.pendingDraft = null;
       this.notify('Generating the whole template…', 'info');
       try {
         const resp = await fetch(generatePath, {
@@ -450,7 +455,8 @@ export function templateBundle({ carrier } = {}) {
           return;
         }
         const slots = (data && data.slots) || {};
-        // Reject incomplete pairs before applying any part of the draft.
+        const issues = data && Array.isArray(data.issues) ? data.issues : [];
+        // Reject incomplete pairs before offering any part of the draft.
         for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
           const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
           const cssPresent = Object.prototype.hasOwnProperty.call(slots, `${field}CSS`);
@@ -459,27 +465,48 @@ export function templateBundle({ carrier } = {}) {
             return;
           }
         }
-        let filled = 0;
-        for (const field of Object.values(SLOT_FIELDS)) {
-          if (Object.prototype.hasOwnProperty.call(slots, field)) {
-            this.setEditor(field, slots[field] || '');
-            filled++;
-          }
-        }
-        if (!filled) {
-          this.notify((data && data.explanation) || 'The model returned no slots.', 'warn');
+        const returned = Object.values(SLOT_FIELDS).filter((field) => Object.prototype.hasOwnProperty.call(slots, field));
+        if (!returned.length) {
+          // A truncated reply has nothing to apply; its issue says why.
+          const issueText = issues.map((i) => i.message).filter(Boolean).join(' ');
+          this.notify(issueText || (data && data.explanation) || 'The model returned no slots.', 'warn');
           return;
         }
-        if (data && data.valid === false) {
-          this.notify(`Filled ${filled} slot(s), but the draft has issues — review before saving.`, 'warn');
+        const slotIssues = (data && data.slotIssues) || {};
+        // Issues about the reply as a whole (truncation) belong to no slot.
+        const slotIssueKeys = new Set(Object.values(slotIssues).flat().map((i) => `${i.severity}:${i.message}`));
+        this.pendingDraft = {
+          slots: Object.fromEntries(returned.map((field) => [field, slots[field]])),
+          fields: returned,
+          valid: !(data && data.valid === false),
+          explanation: (data && data.explanation) || '',
+          issues: issues.filter((i) => !slotIssueKeys.has(`${i.severity}:${i.message}`)),
+          slotIssues,
+        };
+        if (this.pendingDraft.valid) {
+          this.notify(`Generated ${returned.length} slot(s). Review the draft below, then Apply.`, 'info');
         } else {
-          this.notify(`Filled ${filled} slot(s) from your description. Review, then save.`, 'info');
+          this.notify(`Generated ${returned.length} slot(s), but the draft has issues. Review it below before applying.`, 'warn');
         }
       } catch (err) {
         this.notify(err.message || 'Network error', 'warn');
       } finally {
         this.generating = false;
       }
+    },
+
+    // applyPendingDraft writes the reviewed draft into the editors.
+    applyPendingDraft() {
+      const draft = this.pendingDraft;
+      if (!draft) return;
+      for (const field of draft.fields) this.setEditor(field, draft.slots[field] || '');
+      this.pendingDraft = null;
+      this.notify(`Filled ${draft.fields.length} slot(s) from your description. Review, then save.`, 'info');
+    },
+
+    discardPendingDraft() {
+      this.pendingDraft = null;
+      this.notify('Discarded the generated draft.', 'info');
     },
   };
 }

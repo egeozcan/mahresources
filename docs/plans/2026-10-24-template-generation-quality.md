@@ -116,11 +116,11 @@ Run: `DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api
 
 ### 1a. Provider refactor (items 8a and 7, decision 1)
 
-- [ ] `application_context/deepseek_client.go`: options struct, decode `usage`, and return empty content with `length` as `("", "length", usage, nil)` instead of an error.
-- [ ] `deepseek_template_client.go`, `template_generation.go`: the new interface. The generator logs one line per call through an injectable `logf`: `template generation: phase=… kind=… carrier=… prompt=N cache_hit=N cache_miss=N completion=N reasoning=N finish=… dur=Nms`. Usage stays out of the HTTP response.
-- [ ] Truncation degrades for every target (decision 7).
-- [ ] Oversize handling, client display and the bundle's pending-draft review per decision 7 (`templateGeneration.js:125-143`, `templateBundle.js:462-474`); rebuild `public/dist`.
-- [ ] Tests: the request body carries model, thinking and max_tokens; usage is parsed and a missing usage decodes to zeros; empty+length is truncation, not an error; MRQL still sends thinking disabled (`deepseek_client_test.go:43`); a truncated metaschema returns `valid:false`; parseable JSON with `length` is `valid:false`; an over-cap single result and an over-cap bundle slot are `valid:false` and unsliced. E2E: empty-length and malformed-length stubs for CSS, pair, bundle and MetaSchema each show the truncation issue and apply nothing. Non-empty `valid:false` bundle stubs (a parseable truncated draft, an over-cap slot) leave every editor unchanged, list the issues, and apply only on Apply. (The edit-during-generation case is tested with decision 10 in 1c.)
+- [x] `application_context/deepseek_client.go`: options struct, decode `usage`, and return empty content with `length` as `("", "length", usage, nil)` instead of an error.
+- [x] `deepseek_template_client.go`, `template_generation.go`: the new interface. The generator logs one line per call through an injectable `logf`: `template generation: phase=… kind=… carrier=… prompt=N cache_hit=N cache_miss=N completion=N reasoning=N finish=… dur=Nms`. Usage stays out of the HTTP response.
+- [x] Truncation degrades for every target (decision 7).
+- [x] Oversize handling, client display and the bundle's pending-draft review per decision 7 (`templateGeneration.js:125-143`, `templateBundle.js:462-474`); rebuild `public/dist`.
+- [x] Tests: the request body carries model, thinking and max_tokens; usage is parsed and a missing usage decodes to zeros; empty+length is truncation, not an error; MRQL still sends thinking disabled (`deepseek_client_test.go:43`); a truncated metaschema returns `valid:false`; parseable JSON with `length` is `valid:false`; an over-cap single result and an over-cap bundle slot are `valid:false` and unsliced. E2E: empty-length and malformed-length stubs for CSS, pair, bundle and MetaSchema each show the truncation issue and apply nothing. Non-empty `valid:false` bundle stubs (a parseable truncated draft, an over-cap slot) leave every editor unchanged, list the issues, and apply only on Apply. (The edit-during-generation case is tested with decision 10 in 1c.)
 
 ### 1b. Shared prefix (item 7)
 

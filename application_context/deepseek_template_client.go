@@ -14,7 +14,8 @@ type deepSeekTemplateDraftProvider struct {
 }
 
 // NewDeepSeekTemplateDraftProvider builds a TemplateDraftProvider over the same
-// DeepSeek chat-completions transport used for MRQL generation.
+// DeepSeek chat-completions transport used for MRQL generation. model is the
+// fallback for a request that names none.
 func NewDeepSeekTemplateDraftProvider(url, apiKey, model string, client *http.Client) TemplateDraftProvider {
 	if url == "" {
 		url = DefaultDeepSeekChatCompletionsURL
@@ -30,20 +31,25 @@ func NewDeepSeekTemplateDraftProvider(url, apiKey, model string, client *http.Cl
 
 // GenerateDraft returns the raw JSON content string; the generator unmarshals it
 // per target. Unlike the MRQL provider it tolerates a truncated ("length")
-// response, so a whole-template answer that overflows max_tokens degrades to a
-// reviewable invalid result instead of a transport error.
-func (p *deepSeekTemplateDraftProvider) GenerateDraft(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
-	if maxTokens <= 0 {
-		maxTokens = DefaultTemplateGenerationMaxTokens
+// response, including one with no content at all, so a draft that overflows
+// max_tokens degrades to a reviewable invalid result instead of a transport
+// error.
+func (p *deepSeekTemplateDraftProvider) GenerateDraft(ctx context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error) {
+	opts := deepSeekChatOptions{Model: req.Model, MaxTokens: req.MaxTokens, Thinking: req.Thinking}
+	if opts.Model == "" {
+		opts.Model = p.model
 	}
-	content, finishReason, err := postDeepSeekChatJSON(ctx, p.client, p.url, p.apiKey, p.model, systemPrompt, userPrompt, maxTokens)
+	if opts.MaxTokens <= 0 {
+		opts.MaxTokens = DefaultTemplateGenerationMaxTokens
+	}
+	content, finishReason, usage, err := postDeepSeekChatJSON(ctx, p.client, p.url, p.apiKey, req.System, req.User, opts)
 	if err != nil {
-		return "", err
+		return TemplateDraftResponse{}, err
 	}
 	switch finishReason {
 	case "", "stop", "length":
 	default:
-		return "", fmt.Errorf("provider did not finish cleanly (%s)", finishReason)
+		return TemplateDraftResponse{}, fmt.Errorf("provider did not finish cleanly (%s)", finishReason)
 	}
-	return content, nil
+	return TemplateDraftResponse{Content: content, FinishReason: finishReason, Usage: usage}, nil
 }
