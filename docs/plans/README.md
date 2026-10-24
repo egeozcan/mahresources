@@ -48,6 +48,7 @@ the code wins. For how the system is actually put together see
 - [2026-10-13-category-template-card-visibility.md](2026-10-13-category-template-card-visibility.md)
 - [2026-10-19-markdown-description-editor-design.md](2026-10-19-markdown-description-editor-design.md)
 - [2026-10-20-frontend-tti-low-hanging-fruit.md](2026-10-20-frontend-tti-low-hanging-fruit.md)
+- [2026-10-24-template-generation-quality.md](2026-10-24-template-generation-quality.md)
 
 ## Archive
 
