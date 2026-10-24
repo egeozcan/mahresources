@@ -259,7 +259,10 @@ export class SchemaSearchMode extends LitElement {
           enumValues = [existing.boolValue];
         }
       }
-      if (field.enum && !current) {
+      // Re-match on every rebuild, in-progress values included: a value typed
+      // into a plain field arrives as text ("2"), and the hidden input must
+      // still encode the choice it names (2), not a quoted string.
+      if (field.enum) {
         enumValues = enumValues.map(v => matchChoice(field.enum!, v));
       }
 

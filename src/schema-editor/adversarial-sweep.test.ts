@@ -13,7 +13,7 @@ import './modes/search-mode';
 import './schema-editor';
 import './tree/detail-panel';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas } from './schema-core';
 import { schemaToTree } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
 
@@ -286,6 +286,125 @@ describe('x-color allowlist', () => {
     for (const bad of ['red;x', 'a{b}', 'a<b', 'a>b', 'a"b', "a'b", 'a\\b', 'a:b']) {
       expect(safeColor(bad)).toBeUndefined();
     }
+  });
+});
+
+describe('keyword types across drafts', () => {
+  // Every keyword withTypedKeywords checks, at a type each draft allows.
+  const common = {
+    type: ['number', 'null'], title: 'T', description: 'D', pattern: '^a', format: 'date',
+    maximum: 9, multipleOf: 2, minLength: 1, maxLength: 5, minItems: 0, maxItems: 3,
+    minProperties: 0, maxProperties: 4, 'x-display': 'raw',
+  };
+
+  it('draft-04: a boolean exclusive bound becomes the exclusive numeric bound', () => {
+    const s = { $schema: 'http://json-schema.org/draft-04/schema#', ...common, minimum: 0, exclusiveMinimum: true, exclusiveMaximum: true };
+    const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, ...rest } = s;
+    expect(withTypedKeywords(s)).toEqual({ ...rest, exclusiveMinimum: 0, exclusiveMaximum: 9 });
+    expect(withTypedKeywords({ minimum: 0, exclusiveMinimum: false })).toEqual({ minimum: 0 });
+    expect(withTypedKeywords({ exclusiveMinimum: true })).toEqual({});
+  });
+
+  it('draft-07 and 2020-12: numeric exclusive bounds and every other keyword survive', () => {
+    for (const $schema of ['http://json-schema.org/draft-07/schema#', 'https://json-schema.org/draft/2020-12/schema']) {
+      const s = { $schema, ...common, minimum: -1, exclusiveMinimum: 0, exclusiveMaximum: 10 };
+      expect(withTypedKeywords(s)).toEqual(s);
+    }
+  });
+
+  it('form: a draft-04 exclusive minimum still rejects the bound', async () => {
+    const el = await mountEl('schema-form-mode', {
+      schema: { type: 'object', properties: { v: { type: 'number', minimum: 0, exclusiveMinimum: true } } }, value: {},
+    });
+    expect(el.textContent).toContain('>0');
+    const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+    input.value = '0';
+    input.dispatchEvent(new Event('blur'));
+    await settle(el);
+    expect(el.textContent).toContain('Must be greater than 0');
+  });
+});
+
+describe('deep equality ignores key order', () => {
+  it('canonicalises object keys, keeps array order and primitive types', () => {
+    expect(sameValue({ b: 2, a: { d: 1, c: [1, 2] } }, { a: { c: [1, 2], d: 1 }, b: 2 })).toBe(true);
+    expect(sameValue([1, 2], [2, 1])).toBe(false);
+    expect(sameValue('1', 1)).toBe(false);
+    expect(sameValue({ a: '1' }, { a: 1 })).toBe(false);
+  });
+
+  it('form: a stored object with other key order selects its choice', async () => {
+    const el = await mountEl('schema-form-mode', {
+      schema: { type: 'object', properties: { v: { enum: [{ b: 2, a: 1 }, 'x'] } } }, value: { v: { a: 1, b: 2 } },
+    });
+    expect(el.querySelector('select')!.textContent).not.toContain('(current)');
+  });
+
+  it('multi-category: equivalent enums with other key order keep their enum', () => {
+    const lists = [{ b: 2, a: 1 }, { a: 1, b: 2 }].map(o => flattenSchema({ type: 'object', properties: { v: { type: 'string', enum: [o] } } }));
+    expect(intersectFields(lists)[0].enum).toHaveLength(1);
+  });
+});
+
+describe('merging never lets an invalid annotation erase a valid one', () => {
+  const root = { $defs: { d: { type: 'object', 'x-display': 'dimensions', title: 'T', description: 'D' } } } as any;
+
+  it('$ref siblings', () => {
+    const r = resolveSchema({ $ref: '#/$defs/d', 'x-display': 7, title: {}, description: [] }, root)!;
+    expect(r['x-display']).toBe('dimensions');
+    expect(r.title).toBe('T');
+    expect(r.description).toBe('D');
+  });
+
+  it('allOf branches and x-color', () => {
+    const r = resolveSchema({ allOf: [{ 'x-display': 'dimensions', title: 'T' }, { 'x-display': 7, title: 5 }] }, {})!;
+    expect(r['x-display']).toBe('dimensions');
+    expect(r.title).toBe('T');
+    expect(mergeSchemas({ 'x-color': '#abc' }, { 'x-color': { toString: null } })['x-color']).toBe('#abc');
+  });
+
+  it('[meta] still renders the inherited renderer', async () => {
+    const el = await mountEl('meta-shortcode', {}, {
+      // Geo would win auto-detection, so only the inherited forced renderer gives 3 × 4.
+      'data-path': 'v', 'data-value': JSON.stringify({ latitude: 1, longitude: 2, width: 3, height: 4 }),
+      'data-schema': JSON.stringify({ $ref: '#/$defs/d', 'x-display': 7, $defs: { d: { type: 'object', 'x-display': 'dimensions' } } }),
+    });
+    expect(el.textContent).toContain('3 × 4');
+  });
+});
+
+describe('search: stored values are re-matched on every rebuild', () => {
+  function hidden(el: HTMLElement) {
+    return [...el.querySelectorAll<HTMLInputElement>('input[type="hidden"]')].map(i => i.value);
+  }
+  const schemaOf = (prop: any) => JSON.stringify({ type: 'object', properties: { v: prop } });
+
+  it('keeps the exact encoding of numbers, booleans and strings across a rebuild', async () => {
+    for (const [prop, stored, expected] of [
+      [{ enum: [1, 2] }, 2, 'v:EQ:2'],
+      [{ enum: [true, false] }, true, 'v:EQ:true'],
+      [{ enum: ['a', 'b'] }, 'a', 'v:EQ:"a"'],
+    ] as const) {
+      const el = await mountEl('schema-search-mode', { schema: schemaOf(prop), metaQuery: JSON.stringify([{ name: 'v', value: stored, operation: 'EQ' }]) });
+      expect(hidden(el)).toEqual([expected]);
+      el.schema = schemaOf({ ...prop, title: 'Rebuilt' });
+      await settle(el);
+      expect(hidden(el)).toEqual([expected]);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a number typed into a plain field matches the choice when the field becomes an enum', async () => {
+    const el = await mountEl('schema-search-mode', { schema: schemaOf({ type: 'number' }), metaQuery: '[]' });
+    const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+    input.value = '2';
+    input.dispatchEvent(new Event('input'));
+    await settle(el);
+    expect(hidden(el)).toEqual(['v:EQ:2']);
+    el.schema = schemaOf({ type: 'number', enum: [1, 2] });
+    await settle(el);
+    expect(hidden(el)).toEqual(['v:EQ:2']);
+    expect([...el.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].map(b => b.checked)).toEqual([false, true]);
   });
 });
 

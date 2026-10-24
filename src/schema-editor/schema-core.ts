@@ -43,6 +43,9 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
 export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect'): JSONSchema {
   const merged: JSONSchema = { ...base };
   for (const key in extension) {
+    // A keyword value of a type no draft allows (an x-display of 7, a title
+    // of {}) never erases the valid value the base already has.
+    if (!keywordValueValid(key, extension[key])) continue;
     if (key === 'properties') {
       const baseProps = base.properties || {};
       const extProps = extension.properties || {};
@@ -815,37 +818,74 @@ export function valueText(value: unknown): string {
   return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-const NUMBER_KEYWORDS = [
-  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
-  'minLength', 'maxLength', 'minItems', 'maxItems', 'minProperties', 'maxProperties',
-];
-const STRING_KEYWORDS = ['title', 'description', 'pattern', 'format'];
+const isNumber = (v: unknown) => typeof v === 'number';
+const isString = (v: unknown) => typeof v === 'string';
 
 /**
- * A shallow copy of schema without constraint or annotation keywords of the
- * wrong type: a non-number minimum or maxLength, a non-string title, pattern or
- * format, or a type that is not a string or an array of strings. A hand-written schema can hold any JSON there, and a renderer would
- * coerce it into text, an attribute, a comparison or a RegExp. Renderers read
- * a property schema through this; the tree editor, which edits the schema
- * itself, shows the raw values through inputText instead.
+ * The value type each checked keyword allows, as the union across draft-04,
+ * draft-07 and 2020-12 (where the drafts differ, both forms are allowed).
+ * Keywords not listed are never checked.
+ */
+const KEYWORD_TYPES: Record<string, (value: unknown) => boolean> = {
+  minimum: isNumber,
+  maximum: isNumber,
+  multipleOf: isNumber,
+  // A number from draft-06 on; a boolean modifier of minimum/maximum in draft-04.
+  exclusiveMinimum: v => isNumber(v) || typeof v === 'boolean',
+  exclusiveMaximum: v => isNumber(v) || typeof v === 'boolean',
+  minLength: isNumber,
+  maxLength: isNumber,
+  minItems: isNumber,
+  maxItems: isNumber,
+  minProperties: isNumber,
+  maxProperties: isNumber,
+  title: isString,
+  description: isString,
+  pattern: isString,
+  format: isString,
+  type: v => isString(v) || (Array.isArray(v) && v.every(isString)),
+  'x-display': isString,
+  'x-color': v => safeColor(v) !== undefined,
+};
+
+/** False only for a checked keyword holding a value of a type no draft allows. */
+export function keywordValueValid(key: string, value: unknown): boolean {
+  const check = KEYWORD_TYPES[key];
+  return !check || check(value);
+}
+
+/**
+ * A copy of schema that renderers can read safely.
+ *
+ * - Keywords holding a value of a type no draft allows are dropped: a
+ *   non-number minimum or maxLength, a non-string title, pattern, format or
+ *   x-display, a type that is not a string or an array of strings. A
+ *   hand-written schema can hold any JSON there, and a renderer would coerce
+ *   it into text, an attribute, a comparison or a RegExp.
+ * - A draft-04 boolean exclusiveMinimum/exclusiveMaximum is normalised to the
+ *   draft-06+ form: true with a numeric minimum becomes exclusiveMinimum set to
+ *   that bound; false, or true with no bound, leaves the inclusive bound alone.
+ *
+ * Renderers read a property schema through this; the tree editor, which edits
+ * the schema itself, shows the raw values through inputText instead.
  */
 export function withTypedKeywords(schema: JSONSchema): JSONSchema {
   if (!schema || typeof schema !== 'object') return schema;
   let copy: JSONSchema | null = null;
-  const drop = (key: string) => {
-    copy ??= { ...schema };
-    delete copy[key];
-  };
-  for (const key of NUMBER_KEYWORDS) {
-    if (key in schema && typeof schema[key] !== 'number') drop(key);
+  const edit = (): JSONSchema => (copy ??= { ...schema });
+  for (const key of Object.keys(KEYWORD_TYPES)) {
+    if (key in schema && !keywordValueValid(key, schema[key])) delete edit()[key];
   }
-  for (const key of STRING_KEYWORDS) {
-    if (key in schema && typeof schema[key] !== 'string') drop(key);
-  }
-  const type = schema.type;
-  if (type !== undefined && typeof type !== 'string'
-    && !(Array.isArray(type) && type.every(t => typeof t === 'string'))) {
-    drop('type');
+  for (const [flag, bound] of [['exclusiveMinimum', 'minimum'], ['exclusiveMaximum', 'maximum']] as const) {
+    const current = copy ?? schema;
+    if (typeof current[flag] !== 'boolean') continue;
+    const target = edit();
+    if (current[flag] && typeof current[bound] === 'number') {
+      target[flag] = current[bound];
+      delete target[bound];
+    } else {
+      delete target[flag];
+    }
   }
   return copy ?? schema;
 }
@@ -856,13 +896,25 @@ export function inputText(value: unknown): string {
 }
 
 /**
- * A type-tagged identity for a JSON value. Equal keys mean equal values, while
- * values that print alike stay apart: {"a":1} and the string '{"a":1}', or 1
- * and "1". Compare, sort and dedupe raw values through this, never directly.
+ * A type-tagged identity for a JSON value. Equal keys mean equal values, and
+ * object key order does not matter ({b:2,a:1} equals {a:1,b:2}), while values
+ * that print alike stay apart: {"a":1} and the string '{"a":1}', or 1 and "1".
+ * Compare, sort and dedupe raw values through this, never directly.
  */
 export function valueKey(value: unknown): string {
   const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-  return `${kind}:${valueText(value)}`;
+  return `${kind}:${canonicalJSON(value)}`;
+}
+
+/** JSON with every object's keys sorted, recursively; array order is kept. */
+function canonicalJSON(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.keys(value).sort()
+      .map(key => `${JSON.stringify(key)}:${canonicalJSON((value as Record<string, unknown>)[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? String(value);
 }
 
 /** Deep, type-aware equality of two JSON values. */
