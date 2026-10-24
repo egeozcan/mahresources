@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './modes/display-mode';
 import './modes/form-mode';
+import './__base__/modes/form-mode';
 import './modes/search-mode';
 import './schema-editor';
 import './tree/detail-panel';
@@ -1860,7 +1861,8 @@ describe('round 21: deferred work inside the boundary, settled initialisation, n
   }
 
   it('a deferred default that cannot be serialised falls back instead of throwing', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    logged.mockClear();
     const unserialisable = { toJSON() { throw new RangeError('Maximum call stack size exceeded'); } };
     for (const keyword of ['oneOf', 'anyOf']) {
       const { errors, stop } = collectUncaught();
@@ -1876,7 +1878,10 @@ describe('round 21: deferred work inside the boundary, settled initialisation, n
         stop();
       }
       expect(errors.map(String), keyword).toEqual([]);
-      expect(snapshot(el), keyword).toContain('showing the raw value');
+      // The failed assignment was caught at the boundary; a later deferred
+      // initialisation may then succeed and leave the fallback.
+      expect(logged.mock.calls.some(call => String(call[0]).includes('schema action failed')), keyword).toBe(true);
+      logged.mockClear();
       document.body.replaceChildren();
     }
   });
@@ -1928,33 +1933,24 @@ describe('round 21: deferred work inside the boundary, settled initialisation, n
     }
   });
 
-  it('a defined default initialises once per field for the same schema', async () => {
+  it('a defined default is put in place as at base, again once the field is emptied', async () => {
     const schema = { type: 'object', properties: { v: { oneOf: [{ type: 'object', properties: { a: { type: 'string', default: 'x' } } }] } } };
-    const el: any = document.createElement('schema-form-mode');
-    const values: unknown[] = [];
-    el.addEventListener('value-change', (e: CustomEvent) => { values.push(e.detail.value); });
-    el.schema = schema;
-    el.value = {};
-    document.body.append(el);
-    await settle(el);
-    await new Promise(r => setTimeout(r, 0));
-    await settle(el);
-    expect(values).toEqual([{ v: { a: 'x' } }]);
-    // The same schema with the field emptied again: the variant default is
-    // not put in place again (the object field may still set itself to {}).
-    const variantDefaults = () => values.filter((v: any) => v?.v?.a === 'x').length;
-    el.value = {};
-    await settle(el);
-    await new Promise(r => setTimeout(r, 0));
-    await settle(el);
-    expect(variantDefaults()).toBe(1);
-    // A new schema initialises afresh.
-    el.value = {};
-    el.schema = { ...schema };
-    await settle(el);
-    await new Promise(r => setTimeout(r, 0));
-    await settle(el);
-    expect(variantDefaults()).toBe(2);
+    const run = async (tag: string) => {
+      const el: any = document.createElement(tag);
+      const values: unknown[] = [];
+      el.addEventListener('value-change', (e: CustomEvent) => { values.push(JSON.parse(JSON.stringify(e.detail.value))); });
+      el.schema = schema;
+      el.value = {};
+      document.body.append(el);
+      for (let i = 0; i < 4; i++) { await settle(el); await new Promise(r => setTimeout(r, 0)); }
+      el.value = {};
+      for (let i = 0; i < 4; i++) { await settle(el); await new Promise(r => setTimeout(r, 0)); }
+      el.remove();
+      return values;
+    };
+    const head = await run('schema-form-mode');
+    expect(head.filter((v: any) => v?.v?.a === 'x').length).toBe(2);
+    expect(head).toEqual(await run('base-schema-form-mode'));
   });
 
   it('a budget error while registering expansion steps leaves none behind', () => {
@@ -1981,6 +1977,191 @@ describe('round 21: deferred work inside the boundary, settled initialisation, n
       expect(again, `spent ${spent}`).toEqual(fresh);
     }
     expect(probed).toBeGreaterThan(0);
+  });
+});
+
+describe('round 22: variant initialisation composes, keys on full paths, never touches the schema', () => {
+  // Mount tag with schema and value, let every deferred initialisation run,
+  // and return the settled value and the emitted ones.
+  async function settledForm(tag: string, schema: any, value: any) {
+    const el: any = document.createElement(tag);
+    const emitted: unknown[] = [];
+    el.addEventListener('value-change', (e: CustomEvent) => { emitted.push(JSON.parse(JSON.stringify(e.detail.value ?? null))); });
+    el.schema = schema;
+    el.value = value;
+    document.body.append(el);
+    for (let round = 0; round < 8; round++) {
+      await settle(el);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const final = JSON.parse(JSON.stringify(el.value ?? null));
+    el.remove();
+    return { el, final, emitted };
+  }
+
+  const S = (keyword: string) => ({ [keyword]: [{ type: 'string', default: 'hello' }, { type: 'number', default: 2 }] });
+
+  it('sibling variant defaults both land, as at base', async () => {
+    for (const keyword of ['oneOf', 'anyOf']) {
+      const schema = { type: 'object', properties: { a: S(keyword), b: S(keyword) } };
+      const head = await settledForm('schema-form-mode', schema, {});
+      const base = await settledForm('base-schema-form-mode', schema, {});
+      expect(head.final, keyword).toEqual({ a: 'hello', b: 'hello' });
+      expect(head.final, keyword).toEqual(base.final);
+      expect(head.emitted.at(-1), keyword).toEqual({ a: 'hello', b: 'hello' });
+    }
+  });
+
+  it('nested variants under different parents each initialise', async () => {
+    for (const keyword of ['oneOf', 'anyOf']) {
+      const O = { [keyword]: [{ type: 'object', properties: { choice: S(keyword) } }, { type: 'null' }] };
+      const schema = { type: 'object', properties: { a: O, b: O } };
+      const head = await settledForm('schema-form-mode', schema, { a: {}, b: {} });
+      const base = await settledForm('base-schema-form-mode', schema, { a: {}, b: {} });
+      expect(head.final, keyword).toEqual({ a: { choice: 'hello' }, b: { choice: 'hello' } });
+      expect(head.final, keyword).toEqual(base.final);
+    }
+  });
+
+  it('mounting and editing never change the schema\'s own default objects', async () => {
+    for (const keyword of ['oneOf', 'anyOf']) {
+      const variant = {
+        type: 'object',
+        default: { kind: 'a', other: 'keep' },
+        properties: { kind: { type: 'string' } },
+        if: { properties: { kind: { const: 'b' } } },
+        then: { properties: { other: { type: 'string' } } },
+      };
+      const schema: any = { type: 'object', properties: { v: { [keyword]: [variant, { type: 'null' }] } } };
+      const before = JSON.stringify(schema);
+      const el: any = await mountEl('schema-form-mode', { schema, value: {} });
+      for (let round = 0; round < 4; round++) { await settle(el); await new Promise(r => setTimeout(r, 0)); }
+      expect(JSON.stringify(schema), keyword).toBe(before);
+      const input = el.querySelector('input:not([type="hidden"])') as HTMLInputElement | null;
+      if (input) {
+        input.value = 'b';
+        input.dispatchEvent(new Event('input'));
+        input.dispatchEvent(new Event('blur'));
+        await settle(el);
+      }
+      expect(JSON.stringify(schema), keyword).toBe(before);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('schema defaults handed to editable data are copies everywhere', async () => {
+    const shared = { tags: ['x'] };
+    const schema: any = {
+      type: 'object',
+      properties: {
+        obj: { type: 'object', default: shared, properties: { tags: { type: 'array', items: { type: 'string' } } } },
+        list: { type: 'array', items: { type: 'object', default: { n: 1 }, properties: { n: { type: 'number' } } } },
+        // Conditional cleanup removes other from an added item: from a copy.
+        cleaned: { type: 'array', items: {
+          type: 'object', default: { kind: 'a', other: 'keep' }, properties: { kind: { type: 'string' } },
+          if: { properties: { kind: { const: 'b' } } }, then: { properties: { other: { type: 'string' } } },
+        } },
+      },
+    };
+    const before = JSON.stringify(schema);
+    const el: any = await mountEl('schema-form-mode', { schema, value: {} });
+    for (const button of [...el.querySelectorAll('button')] as HTMLButtonElement[]) {
+      if (/Add|Initialize/.test(button.textContent ?? '')) { button.click(); await settle(el); }
+    }
+    for (const input of [...el.querySelectorAll('input:not([type="hidden"])')] as HTMLInputElement[]) {
+      input.value = input.type === 'number' ? '5' : 'y';
+      input.dispatchEvent(new Event('input'));
+      input.dispatchEvent(new Event('blur'));
+      await settle(el);
+    }
+    expect(JSON.stringify(schema)).toBe(before);
+  });
+
+  it('no emitted value shares an object with the schema', async () => {
+    // A listener may edit what it receives; it must never be editing the
+    // schema's own default or const.
+    const variantDefault = { kind: 'a' };
+    const itemDefault = { n: 1 };
+    const constValue = { fixed: true };
+    const schema: any = {
+      type: 'object',
+      properties: {
+        v: { oneOf: [{ type: 'object', default: variantDefault, properties: { kind: { type: 'string' } } }] },
+        w: { anyOf: [{ type: 'object', default: variantDefault, properties: { kind: { type: 'string' } } }] },
+        c: { const: constValue },
+        list: { type: 'array', items: { type: 'object', default: itemDefault, properties: { n: { type: 'number' } } } },
+      },
+    };
+    const el: any = document.createElement('schema-form-mode');
+    const shared: string[] = [];
+    const schemaObjects = new Set<object>([variantDefault, itemDefault, constValue]);
+    const visit = (value: unknown, path: string) => {
+      if (value === null || typeof value !== 'object') return;
+      if (schemaObjects.has(value as object)) shared.push(path);
+      for (const [key, child] of Object.entries(value as object)) visit(child, `${path}.${key}`);
+    };
+    el.addEventListener('value-change', (e: CustomEvent) => visit(e.detail.value, 'value'));
+    el.schema = schema;
+    el.value = { list: [] };
+    document.body.append(el);
+    for (let i = 0; i < 4; i++) { await settle(el); await new Promise(r => setTimeout(r, 0)); }
+    ([...el.querySelectorAll('button')].find((b: HTMLButtonElement) => b.textContent?.includes('Add Item')) as HTMLButtonElement).click();
+    for (let i = 0; i < 4; i++) { await settle(el); await new Promise(r => setTimeout(r, 0)); }
+    expect(shared).toEqual([]);
+  });
+
+  it('an object const is assigned once, as a copy, and settles', async () => {
+    const schema: any = { type: 'object', properties: { c: { const: { kind: 'fixed', tags: ['t'] } } } };
+    const before = JSON.stringify(schema);
+    const head = await settledForm('schema-form-mode', schema, {});
+    expect(head.final).toEqual({ c: { kind: 'fixed', tags: ['t'] } });
+    expect(head.emitted.length).toBeLessThan(3);
+    expect(head.final).toEqual((await settledForm('base-schema-form-mode', JSON.parse(before), {})).final);
+    expect(JSON.stringify(schema)).toBe(before);
+  });
+
+  it('generated variant defaults settle to the same value as base', async () => {
+    let seed = 220022;
+    const random = () => {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(items: T[]): T => items[Math.floor(random() * items.length)];
+    const scalar = () => pick<any>([
+      { type: 'string', default: 'hello' }, { type: 'number', default: 2 }, { type: 'boolean', default: true },
+      { type: 'string' }, { type: 'integer', enum: [1, 2, 3] }, { const: 'k' }, { type: 'null' },
+    ]);
+    const variantSchema = (depth: number): any => {
+      const keyword = pick(['oneOf', 'anyOf']);
+      const branches = Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        depth > 0 && random() < 0.4 ? objectSchema(depth - 1) : scalar());
+      const out: any = { [keyword]: branches };
+      if (random() < 0.2) out.default = pick<any>(['d', 3, { x: 1 }]);
+      return out;
+    };
+    const objectSchema = (depth: number): any => {
+      const properties: Record<string, any> = {};
+      const count = 1 + Math.floor(random() * 3);
+      for (let i = 0; i < count; i++) properties[`p${i}`] = depth > 0 && random() < 0.6 ? variantSchema(depth - 1) : scalar();
+      const out: any = { type: 'object', properties };
+      if (random() < 0.25) out.default = { p0: 'given', extra: { keep: true } };
+      return out;
+    };
+    const failures: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const schema = objectSchema(3);
+      const value = pick<any>([{}, { p0: undefined }, { p1: {} }]);
+      const before = JSON.stringify(schema);
+      const head = await settledForm('schema-form-mode', schema, JSON.parse(JSON.stringify(value ?? {})));
+      const base = await settledForm('base-schema-form-mode', JSON.parse(before), JSON.parse(JSON.stringify(value ?? {})));
+      if (JSON.stringify(head.final) !== JSON.stringify(base.final)) {
+        failures.push(`case ${i}\n  schema ${before}\n  head ${JSON.stringify(head.final)}\n  base ${JSON.stringify(base.final)}`);
+      }
+      if (JSON.stringify(schema) !== before) failures.push(`case ${i}: head changed the schema\n  ${before}\n  ${JSON.stringify(schema)}`);
+    }
+    expect(failures).toEqual([]);
   });
 });
 

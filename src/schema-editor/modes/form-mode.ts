@@ -25,6 +25,7 @@ import {
   withSchemaBudget,
   compilePattern,
   countSchemaWork,
+  sameValue,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
@@ -85,6 +86,27 @@ function isMultipleOf(n: number, m: number): boolean {
   // Past that range a float n is a whole number, and % is exact for whole m.
   if (Number.isInteger(m)) return n % m === 0;
   return Math.abs(quotient - Math.round(quotient)) <= 4 * Number.EPSILON * Math.abs(quotient);
+}
+
+/** A variant default queued more often than this under one schema stops being queued. */
+const MAX_INIT_ATTEMPTS = 50;
+
+/**
+ * A deep copy of a default value before it becomes editable data:
+ * structuredClone, or a JSON round trip for a value it cannot clone, or the
+ * value itself when neither can copy it.
+ */
+function copyDefault<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  try {
+    return structuredClone(value);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return value;
+    }
+  }
 }
 
 /**
@@ -248,7 +270,7 @@ export class SchemaFormMode extends LitElement {
     }
     if (changed.has('schema')) {
       this._schemaError = null;
-      this._initialized = new Set();
+      this._initAttempts = new Map();
     }
     if (changed.has('value') || changed.has('schema')) {
       this._valueError = null;
@@ -351,18 +373,45 @@ export class SchemaFormMode extends LitElement {
     queueMicrotask(this._act(callback));
   }
 
-  /** Fields whose variant default was put in place, per schema (cleared when it changes). */
-  private _initialized = new Set<string>();
+  /**
+   * The paths of the variants being rendered, outermost first. A variant's
+   * fields render without its path (as at base, which decides ids and
+   * whether an optional object offers Initialize from it), so the
+   * initialisation key of a field inside one is prefixed with them: a.choice
+   * and b.choice must not share one.
+   */
+  private _variantPrefix = '';
+
+  /** Render the variant at path, with its path prefixed to the initialisation keys inside it. */
+  private _inVariant<T>(path: string | undefined, render: () => T): T {
+    const saved = this._variantPrefix;
+    this._variantPrefix = `${saved}${JSON.stringify(path ?? '')}/`;
+    try {
+      return render();
+    } finally {
+      this._variantPrefix = saved;
+    }
+  }
+
+  /** How often each field's variant default was queued, per schema (cleared when it changes). */
+  private _initAttempts = new Map<string, number>();
 
   /**
-   * Whether to put a variant default in place for key: once per field and
-   * schema in this mount, and never for an undefined default (a reference
-   * cycle). Assigning undefined left the field undefined, so every render
-   * queued it again, forever.
+   * Whether to queue a variant default for the field at key (its full path).
+   * Never for an undefined default (a reference cycle): assigning undefined
+   * left the field undefined, so every render queued it again, forever.
+   * Otherwise as at base: each deferred assignment goes through the onChange
+   * chain of the render that queued it, so sibling assignments can overwrite
+   * one another, and the next render queues the field that lost again until
+   * every field holds its default. A field queued MAX_INIT_ATTEMPTS times
+   * under one schema stops, only so that a value that can never stick
+   * cannot loop.
    */
-  private _initializeOnce(key: string, defaultVal: unknown): boolean {
-    if (defaultVal === undefined || this._initialized.has(key)) return false;
-    this._initialized.add(key);
+  private _shouldInitialize(key: string, defaultVal: unknown): boolean {
+    if (defaultVal === undefined) return false;
+    const attempts = this._initAttempts.get(key) ?? 0;
+    if (attempts >= MAX_INIT_ATTEMPTS) return false;
+    this._initAttempts.set(key, attempts + 1);
     return true;
   }
 
@@ -467,8 +516,10 @@ export class SchemaFormMode extends LitElement {
 
     // Handle const
     if (schema.const !== undefined) {
-      if (data !== schema.const) {
-        onChange(schema.const);
+      // Compared by value and assigned as a copy: the schema's own const
+      // object must never become editable data.
+      if (!sameValue(data, schema.const)) {
+        onChange(copyDefault(schema.const));
       }
       return html`<input type="text" .value=${valueText(schema.const)} disabled
         id=${fieldId || nothing}
@@ -534,19 +585,18 @@ export class SchemaFormMode extends LitElement {
       const merged = sharedProps
         ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.oneOf[activeIndex])
         : schema.oneOf[activeIndex];
-      const defaultVal = getDefaultValue(merged, rootSchema);
-      if (this._initializeOnce(`oneOf:${path ?? ''}`, defaultVal)) {
+      // A copy: the value becomes editable data, and the schema's own
+      // default object must never be changed through it.
+      const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
+      if (this._shouldInitialize(`${this._variantPrefix}oneOf:${path ?? ''}`, defaultVal)) {
         this._defer(() => onChange(defaultVal));
-        // Render the variant with the value it is about to hold, so its own
-        // fields do not queue a second, competing initialisation.
-        data = defaultVal;
       }
     }
 
     const onSelectChange = (e: Event) => {
       const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.oneOf[idx];
-      const variantDefault = getDefaultValue(optSchema, rootSchema);
+      const variantDefault = copyDefault(getDefaultValue(optSchema, rootSchema));
       // Preserve shared property data when switching variants
       if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
         const preserved: any = { ...variantDefault };
@@ -583,9 +633,9 @@ export class SchemaFormMode extends LitElement {
           })}
         </select>
         <div>
-          ${this._renderField(renderSchema, data, (val: any) => {
+          ${this._inVariant(path, () => this._renderField(renderSchema, data, (val: any) => {
             onChange(val);
-          }, rootSchema)}
+          }, rootSchema))}
         </div>
       </div>
     `;
@@ -613,19 +663,18 @@ export class SchemaFormMode extends LitElement {
       const merged = sharedProps
         ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.anyOf[activeIndex])
         : schema.anyOf[activeIndex];
-      const defaultVal = getDefaultValue(merged, rootSchema);
-      if (this._initializeOnce(`anyOf:${path ?? ''}`, defaultVal)) {
+      // A copy: the value becomes editable data, and the schema's own
+      // default object must never be changed through it.
+      const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
+      if (this._shouldInitialize(`${this._variantPrefix}anyOf:${path ?? ''}`, defaultVal)) {
         this._defer(() => onChange(defaultVal));
-        // Render the variant with the value it is about to hold, so its own
-        // fields do not queue a second, competing initialisation.
-        data = defaultVal;
       }
     }
 
     const onSelectChange = (e: Event) => {
       const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.anyOf[idx];
-      const variantDefault = getDefaultValue(optSchema, rootSchema);
+      const variantDefault = copyDefault(getDefaultValue(optSchema, rootSchema));
       if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
         const preserved: any = { ...variantDefault };
         for (const key of Object.keys(sharedProps)) {
@@ -660,9 +709,9 @@ export class SchemaFormMode extends LitElement {
           })}
         </select>
         <div>
-          ${this._renderField(renderSchema, data, (val: any) => {
+          ${this._inVariant(path, () => this._renderField(renderSchema, data, (val: any) => {
             onChange(val);
-          }, rootSchema)}
+          }, rootSchema))}
         </div>
       </div>
     `;
@@ -737,7 +786,7 @@ export class SchemaFormMode extends LitElement {
       const key = (e.target as HTMLSelectElement).value;
       const index = choiceIndex(key, choices.length);
       if (index >= 0) {
-        onChange(choices[index]);
+        onChange(copyDefault(choices[index]));
       } else if (key === CURRENT_CHOICE_KEY) {
         onChange(data);
       } else if (schema.type === 'integer' || schema.type === 'number') {
@@ -831,7 +880,7 @@ export class SchemaFormMode extends LitElement {
         const isBooleanType = ps.type === 'boolean' ||
           (Array.isArray(ps.type) && ps.type.includes('boolean'));
         if (ownValue(data, key) === undefined && isBooleanType && requiredSet.has(key)) {
-          data = { ...data, [key]: ps.default !== undefined ? ps.default : false };
+          data = { ...data, [key]: ps.default !== undefined ? copyDefault(ps.default) : false };
           needsUpdate = true;
         }
       }
@@ -1094,7 +1143,7 @@ export class SchemaFormMode extends LitElement {
 
     const onAddItem = () => {
       if (!canAdd) return;
-      onChange([...data, getDefaultValue(schema.items || { type: 'string' }, rootSchema)]);
+      onChange([...data, copyDefault(getDefaultValue(schema.items || { type: 'string' }, rootSchema))]);
     };
 
     return html`
