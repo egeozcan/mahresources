@@ -166,6 +166,20 @@ function flattenForDisplay(
   return fields;
 }
 
+/**
+ * x-display values that skip shape detection and the forced renderers. The Go
+ * side (shortcodes.DisplayOptOutValues) keeps a copy for the MetaSchema generator.
+ */
+export const DISPLAY_OPT_OUT: readonly string[] = ['raw', 'none'];
+
+/**
+ * String formats the panel draws specially, and how. The Go side
+ * (shortcodes.SchemaFormatsWithUI) keeps a copy for the MetaSchema generator.
+ */
+export const DISPLAY_FORMAT_KINDS: ReadonlyMap<string, 'link' | 'email' | 'date'> = new Map([
+  ['uri', 'link'], ['url', 'link'], ['email', 'email'], ['date', 'date'], ['date-time', 'date'],
+]);
+
 @customElement('schema-display-mode')
 export class SchemaDisplayMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
@@ -361,7 +375,7 @@ export class SchemaDisplayMode extends LitElement {
     }
 
     // 2. Forced built-in renderer (x-display: "url", "geo", etc.)
-    if (xd && xd !== 'raw' && xd !== 'none') {
+    if (xd && !DISPLAY_OPT_OUT.includes(xd)) {
       // Runs only when the value has the renderer's shape; otherwise the
       // value falls through to the type rendering below.
       const renderer = getBuiltinRenderer(xd);
@@ -444,19 +458,20 @@ export class SchemaDisplayMode extends LitElement {
 
     // String with format
     if (typeof val === 'string') {
-      if (field.format === 'uri' || field.format === 'url') {
+      const formatKind = DISPLAY_FORMAT_KINDS.get(field.format);
+      if (formatKind === 'link') {
         return html`<a href=${val} target="_blank" rel="noopener noreferrer"
           class="text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300"
           @click=${(e: Event) => e.stopPropagation()}
         >${val}</a>`;
       }
-      if (field.format === 'email') {
+      if (formatKind === 'email') {
         return html`<a href="mailto:${val}"
           class="text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300"
           @click=${(e: Event) => e.stopPropagation()}
         >${val}</a>`;
       }
-      if (field.format === 'date' || field.format === 'date-time') {
+      if (formatKind === 'date') {
         try {
           // A date that does not parse, or a calendar date that does not
           // exist, keeps its text rather than "Invalid Date" or a rollover.

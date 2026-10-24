@@ -8,9 +8,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import contract from '../../shortcodes/testdata/schema_extensions_contract.json';
 import { builtinRenderers } from './display-renderers';
-import { isLabeledEnum } from './schema-core';
-import './modes/display-mode';
-import './modes/form-mode';
+import { isLabeledEnum, LABELED_ENUM_COMPLEX_KEYS } from './schema-core';
+import { DISPLAY_FORMAT_KINDS, DISPLAY_OPT_OUT } from './modes/display-mode';
+import { FORMAT_INPUT_TYPES } from './modes/form-mode';
 import '../webcomponents/meta-shortcode';
 
 const WHERE = 'shortcodes/schema_extensions.go (shortcodes/testdata/schema_extensions_contract.json)';
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 type Kind = 'number' | 'string' | 'date';
-const conforming: Record<Kind, any> = { number: 1.5, string: 'x', date: '2024-03-15' };
+const conforming: Record<Kind, any> = { number: 1.5, string: 'https://x', date: '2024-03-15' };
 const wrong: Record<Kind, any> = { number: 'x', string: 5, date: 'not a date' };
 
 function valueOf(keys: string[], types: Record<string, string>): Record<string, any> {
@@ -104,6 +104,41 @@ async function meta(xDisplay: string | undefined, value: any) {
 
 const hasMap = (el: HTMLElement) => el.querySelector('a[href*="openstreetmap.org"]') !== null;
 
+// What each renderer draws for a conforming value, as seen in the text and links
+// of the consumer's output. A new renderer must add its marker here.
+const drawn: Record<string, (el: HTMLElement) => boolean> = {
+  url: el => el.querySelector('a[href="https://x"]') !== null && (el.textContent ?? '').includes('x'),
+  geo: el => hasMap(el),
+  daterange: el => (el.textContent ?? '').includes(' \u2014 '),
+  dimensions: el => (el.textContent ?? '').includes('1.5 \u00D7 1.5'),
+};
+
+async function forcedPanel(name: string, value: any) {
+  const el = document.createElement('schema-display-mode') as any;
+  el.schema = { type: 'object', properties: { loc: { type: 'object', 'x-display': name } } };
+  el.value = { loc: value };
+  document.body.append(el);
+  await el.updateComplete;
+  return el as HTMLElement;
+}
+
+describe('forced renderers draw through both consumers', () => {
+  for (const spec of contract.renderers) {
+    const types = spec.fieldTypes as Record<string, string>;
+    it(`${spec.name}: draws a conforming value and falls back when select fails`, async () => {
+      const marker = drawn[spec.name];
+      expect(marker, `add a drawn marker for renderer ${spec.name}; see ${WHERE}`).toBeDefined();
+      const shape = spec.shapes[0];
+      const ok = valueOf(shape, types);
+      const bad = valueOf(shape.slice(0, -1), types);
+      expect(marker(await forcedPanel(spec.name, ok)), `the panel does not draw a forced ${spec.name}`).toBe(true);
+      expect(marker(await meta(spec.name, ok)), `[meta] does not draw a forced ${spec.name}`).toBe(true);
+      expect(marker(await forcedPanel(spec.name, bad)), `the panel draws a forced ${spec.name} for a value without its shape`).toBe(false);
+      expect(marker(await meta(spec.name, bad)), `[meta] draws a forced ${spec.name} for a value without its shape`).toBe(false);
+    });
+  }
+});
+
 describe('x-display opt-outs match the Go contract', () => {
   it('detects the shape when x-display is unset (the control)', async () => {
     expect(hasMap(await panel(undefined, geoValue))).toBe(true);
@@ -121,6 +156,20 @@ describe('x-display opt-outs match the Go contract', () => {
     // It has no renderer, so it also draws as a plain object: the lint calls it unknown.
     expect(contract.optOut).not.toContain('map');
     expect(hasMap(await panel('map', geoValue))).toBe(false);
+  });
+});
+
+describe('exported production sets equal the Go contract', () => {
+  const sorted = (xs: Iterable<string>) => [...xs].sort();
+  it('opt-out values', () => {
+    expect(sorted(DISPLAY_OPT_OUT), `display-mode.ts DISPLAY_OPT_OUT differs from ${WHERE}`).toEqual(sorted(contract.optOut));
+  });
+  it('labeled-enum complex keys', () => {
+    expect(sorted(LABELED_ENUM_COMPLEX_KEYS), `schema-core.ts LABELED_ENUM_COMPLEX_KEYS differs from ${WHERE}`).toEqual(sorted(contract.complexKeys));
+  });
+  it('formats with their own form input and their own display', () => {
+    expect(sorted(FORMAT_INPUT_TYPES.keys()), `form-mode.ts FORMAT_INPUT_TYPES differs from ${WHERE}`).toEqual(sorted(contract.formats));
+    expect(sorted(DISPLAY_FORMAT_KINDS.keys()), `display-mode.ts DISPLAY_FORMAT_KINDS differs from ${WHERE}`).toEqual(sorted(contract.formats));
   });
 });
 

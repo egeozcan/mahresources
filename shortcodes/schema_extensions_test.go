@@ -38,7 +38,7 @@ func TestLintMetaSchema(t *testing.T) {
 		{"renderer without declared properties", `{"type":"object","properties":{"a":{"type":"object","x-display":"geo"}}}`, plugin, "", ""},
 		{"raw opt-out", `{"type":"object","properties":{"a":{"type":"object","x-display":"raw"}}}`, plugin, "", ""},
 		{"none opt-out", `{"type":"object","properties":{"a":{"type":"string","x-display":"none"}}}`, plugin, "", ""},
-		{"unknown x-display", `{"type":"object","properties":{"a":{"type":"object","x-display":"map"}}}`, plugin, SeverityWarning, `unknown x-display "map"`},
+		{"unknown x-display", `{"type":"object","properties":{"a":{"type":"object","x-display":"map"}}}`, plugin, SeverityWarning, `suppresses shape detection`},
 		{"malformed plugin x-display", `{"type":"object","properties":{"a":{"type":"object","x-display":"plugin:gallery"}}}`, plugin, SeverityWarning, `plugin:<plugin>:<type>`},
 		{"known plugin x-display", `{"type":"object","properties":{"a":{"type":"object","x-display":"plugin:gallery:image-grid"}}}`, plugin, "", ""},
 		{"unlisted plugin x-display", `{"type":"object","properties":{"a":{"type":"object","x-display":"plugin:gallery:other"}}}`, plugin, SeverityWarning, `no enabled plugin`},
@@ -111,6 +111,58 @@ func TestLintMetaSchemaResolvesComposedShapes(t *testing.T) {
 					t.Fatalf("want no issues, got %+v", issues)
 				}
 			})
+		}
+	}
+}
+
+// A shape or type check warns only when the outcome is certain. When the
+// annotated node is a branch of a composition, a referenced definition, or sits
+// under a node whose composition can add to it, the effective schema depends on
+// context the lint does not model, so it stays silent.
+func TestLintMetaSchemaSkipsWhatItCannotDecide(t *testing.T) {
+	geo := `"x-display":"geo","properties":{"lat":{"type":"number"}}`
+	cases := map[string]string{
+		"annotated allOf branch":    `{"type":"object","properties":{"a":{"allOf":[{` + geo + `},{"properties":{"lng":{"type":"number"}},"required":["lat","lng"]}]}}}`,
+		"annotated anyOf branch":    `{"type":"object","properties":{"a":{"anyOf":[{` + geo + `},{"type":"string"}]}}}`,
+		"annotated oneOf branch":    `{"type":"object","properties":{"a":{"oneOf":[{` + geo + `},{"type":"string"}]}}}`,
+		"referenced definition":     `{"type":"object","$defs":{"g":{` + geo + `}},"properties":{"a":{"$ref":"#/$defs/g","properties":{"lng":{"type":"number"}}}}}`,
+		"ancestor with allOf":       `{"type":"object","allOf":[{"properties":{"a":{"properties":{"lng":{"type":"number"}}}}}],"properties":{"a":{` + geo + `}}}`,
+		"ancestor with $ref":        `{"type":"object","$defs":{"base":{"properties":{"a":{"properties":{"lng":{"type":"number"}}}}}},"$ref":"#/$defs/base","properties":{"a":{` + geo + `}}}`,
+		"ancestor property in then": `{"type":"object","if":{},"then":{"properties":{"a":{` + geo + `}}}}`,
+	}
+	for name, schema := range cases {
+		t.Run(name, func(t *testing.T) {
+			if issues := LintMetaSchema(schema, MetaSchemaLintOptions{}); len(issues) != 0 {
+				t.Fatalf("want no issues, got %+v", issues)
+			}
+		})
+	}
+}
+
+// Keywords beside $ref are ignored up to draft-07 and apply from 2019-09, so
+// the field's effective type depends on $schema; with none, the lint is silent.
+func TestLintMetaSchemaReadsRefSiblingsByDraft(t *testing.T) {
+	build := func(schemaURI, defs string) string {
+		head := ""
+		if schemaURI != "" {
+			head = `"$schema":"` + schemaURI + `",`
+		}
+		return `{` + head + `"type":"object","` + defs + `":{"num":{"type":"number"}},"properties":{"a":{"type":"object","x-display":"dimensions","properties":{"width":{"$ref":"#/` + defs + `/num","type":"string"},"height":{"type":"number"}},"required":["width","height"]}}}`
+	}
+	for _, uri := range []string{"http://json-schema.org/draft-04/schema#", "http://json-schema.org/draft-06/schema#", "http://json-schema.org/draft-07/schema#"} {
+		if issues := LintMetaSchema(build(uri, "definitions"), MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Errorf("%s: the sibling type is ignored, want no issues, got %+v", uri, issues)
+		}
+	}
+	for _, uri := range []string{"https://json-schema.org/draft/2019-09/schema", "https://json-schema.org/draft/2020-12/schema"} {
+		issues := LintMetaSchema(build(uri, "$defs"), MetaSchemaLintOptions{})
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "typed number") {
+			t.Errorf("%s: the sibling type applies and no value fits, got %+v", uri, issues)
+		}
+	}
+	for _, uri := range []string{"", "https://example.com/my-dialect"} {
+		if issues := LintMetaSchema(build(uri, "$defs"), MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Errorf("%q: unknown semantics, want no issues, got %+v", uri, issues)
 		}
 	}
 }

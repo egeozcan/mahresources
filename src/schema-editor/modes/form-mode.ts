@@ -176,6 +176,14 @@ function optionText(value: any): any {
   return value !== null && typeof value === 'object' ? JSON.stringify(value) : value;
 }
 
+/**
+ * String formats that get their own <input type>. The Go side
+ * (shortcodes.SchemaFormatsWithUI) keeps a copy for the MetaSchema generator.
+ */
+export const FORMAT_INPUT_TYPES: ReadonlyMap<string, string> = new Map([
+  ['date', 'date'], ['date-time', 'datetime-local'], ['email', 'email'], ['uri', 'url'], ['url', 'url'],
+]);
+
 @customElement('schema-form-mode')
 export class SchemaFormMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
@@ -1425,11 +1433,7 @@ export class SchemaFormMode extends LitElement {
 
   private _renderStringInput(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const errorId = fieldId ? `${fieldId}-error` : undefined;
-    let inputType = 'text';
-    if (schema.format === 'date') inputType = 'date';
-    else if (schema.format === 'date-time') inputType = 'datetime-local';
-    else if (schema.format === 'email') inputType = 'email';
-    else if (schema.format === 'uri' || schema.format === 'url') inputType = 'url';
+    const inputType = FORMAT_INPUT_TYPES.get(schema.format as string) ?? 'text';
 
     let hintText = '';
     if (schema.minLength !== undefined && schema.maxLength !== undefined) {

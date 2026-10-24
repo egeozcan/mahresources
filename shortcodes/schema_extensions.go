@@ -128,6 +128,7 @@ var (
 	schemaSubschemaKeys = []string{"not", "if", "then", "else", "contains", "propertyNames", "additionalProperties", "unevaluatedProperties", "unevaluatedItems", "items", "additionalItems"}
 	schemaSchemaLists   = []string{"allOf", "anyOf", "oneOf", "prefixItems", "items"}
 	schemaSchemaMaps    = []string{"$defs", "definitions", "patternProperties", "dependentSchemas"}
+	compositionKeys     = map[string]bool{"allOf": true, "anyOf": true, "oneOf": true, "not": true, "if": true, "then": true, "else": true}
 	// rendererDraws says what a matching value looks like, for the messages.
 	rendererDraws = map[string]string{"url": "a link with its host", "geo": "a map link", "daterange": "a formatted date range", "dimensions": "a width \u00d7 height size"}
 )
@@ -147,15 +148,53 @@ func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {
 		return nil
 	}
-	l := &schemaLinter{opts: opts, root: root}
-	l.walk(root, "#")
+	l := &schemaLinter{opts: opts, root: root, refSiblings: refSiblingSemantics(root)}
+	l.walk(root, "#", true)
 	return l.issues
 }
 
 type schemaLinter struct {
-	opts   MetaSchemaLintOptions
-	root   any
-	issues []LintIssue
+	opts        MetaSchemaLintOptions
+	root        any
+	refSiblings refSiblingMode
+	issues      []LintIssue
+}
+
+// refSiblingMode says whether keywords next to a $ref apply: not up to
+// draft-07, yes from 2019-09, and unknown for any other or no $schema.
+type refSiblingMode int
+
+const (
+	refSiblingsUnknown refSiblingMode = iota
+	refSiblingsIgnored
+	refSiblingsApply
+)
+
+func refSiblingSemantics(root any) refSiblingMode {
+	obj, _ := root.(map[string]any)
+	uri, _ := obj["$schema"].(string)
+	for _, draft := range []string{"draft-04", "draft-06", "draft-07"} {
+		if strings.Contains(uri, "json-schema.org/"+draft) || strings.Contains(uri, "json-schema.org/draft/"+draft) {
+			return refSiblingsIgnored
+		}
+	}
+	for _, draft := range []string{"2019-09", "2020-12"} {
+		if strings.Contains(uri, "json-schema.org/draft/"+draft) {
+			return refSiblingsApply
+		}
+	}
+	return refSiblingsUnknown
+}
+
+// composesOthers reports whether a node's own composition can add to the
+// schemas of its properties and items from outside them.
+func composesOthers(obj map[string]any) bool {
+	for _, k := range []string{"$ref", "allOf", "anyOf", "oneOf", "if", "then", "else", "not"} {
+		if _, has := obj[k]; has {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *schemaLinter) warn(format string, args ...any) {
@@ -171,7 +210,10 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-func (l *schemaLinter) walk(node any, path string) {
+// walk visits a schema node. local is true while the node's effective schema is
+// decided by the path from the root alone: no enclosing composition, reference
+// or definition can add to it.
+func (l *schemaLinter) walk(node any, path string, local bool) {
 	obj, ok := node.(map[string]any)
 	if !ok {
 		return
@@ -180,30 +222,31 @@ func (l *schemaLinter) walk(node any, path string) {
 		l.warn("%s: $ref %q is not local; use a \"#/$defs/name\" reference inside the document.", path, ref)
 	}
 	if v, present := obj["x-display"]; present {
-		l.lintDisplay(obj, v, path)
+		l.lintDisplay(obj, v, path, local)
 	}
 	l.lintLabeledEnum(obj, path)
 
+	childLocal := local && !composesOthers(obj)
 	if props, ok := obj["properties"].(map[string]any); ok {
 		for _, key := range sortedKeys(props) {
 			l.lintPropertyKey(key, path)
-			l.walk(props[key], path+"/properties/"+key)
+			l.walk(props[key], path+"/properties/"+key, childLocal)
 		}
 	}
 	for _, name := range schemaSchemaMaps {
 		if m, ok := obj[name].(map[string]any); ok {
 			for _, key := range sortedKeys(m) {
-				l.walk(m[key], path+"/"+name+"/"+key)
+				l.walk(m[key], path+"/"+name+"/"+key, false)
 			}
 		}
 	}
 	for _, name := range schemaSubschemaKeys {
-		l.walk(obj[name], path+"/"+name)
+		l.walk(obj[name], path+"/"+name, childLocal && !compositionKeys[name])
 	}
 	for _, name := range schemaSchemaLists {
 		if list, ok := obj[name].([]any); ok {
 			for i, entry := range list {
-				l.walk(entry, path+"/"+name+"/"+strconv.Itoa(i))
+				l.walk(entry, path+"/"+name+"/"+strconv.Itoa(i), childLocal && !compositionKeys[name])
 			}
 		}
 	}
@@ -248,7 +291,7 @@ func (l *schemaLinter) lintLabeledEnum(obj map[string]any, path string) {
 	}
 }
 
-func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string) {
+func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string, local bool) {
 	name, ok := value.(string)
 	if !ok {
 		l.warn("%s: \"x-display\" must be a string, not %s; it is ignored and the value is drawn by shape or by its type.", path, jsonTypeName(value))
@@ -261,7 +304,9 @@ func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string) {
 	}
 	for _, r := range builtinDisplayRenderers {
 		if name == r.Name {
-			l.lintBuiltinDisplay(obj, r, path)
+			if local {
+				l.lintBuiltinDisplay(obj, r, path)
+			}
 			return
 		}
 	}
@@ -274,7 +319,7 @@ func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string) {
 		}
 		return
 	}
-	l.warn("%s: unknown x-display %q, so it has no effect; use %s, %s or an enabled plugin value.", path, name, builtinNames(), quoteJoin(DisplayOptOutValues, " or "))
+	l.warn("%s: unknown x-display %q suppresses shape detection and applies no renderer, so an object value is drawn as a plain object; use %s, %s or an enabled plugin value.", path, name, builtinNames(), quoteJoin(DisplayOptOutValues, " or "))
 }
 
 func builtinNames() string {
@@ -419,6 +464,14 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 			return nil, false
 		}
 		merge(sub)
+		if hasAnyKey(obj, "type", "properties", "required", "allOf") {
+			switch l.refSiblings {
+			case refSiblingsIgnored:
+				return eff, true // up to draft-07 the siblings of $ref do not apply
+			case refSiblingsUnknown:
+				return nil, false
+			}
+		}
 	}
 	if list, has := obj["allOf"].([]any); has {
 		for _, entry := range list {
@@ -487,6 +540,15 @@ func localRef(root any, ref string) (any, bool) {
 		}
 	}
 	return node, true
+}
+
+func hasAnyKey(obj map[string]any, keys ...string) bool {
+	for _, k := range keys {
+		if _, has := obj[k]; has {
+			return true
+		}
+	}
+	return false
 }
 
 func allIn(keys []string, ok func(string) bool) bool {

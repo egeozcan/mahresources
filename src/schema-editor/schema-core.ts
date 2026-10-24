@@ -1288,16 +1288,21 @@ export function titleCase(key: string): string {
 // ─── Labeled enum detection ─────────────────────────────────────────────────
 
 /**
+ * Keys that stop a oneOf entry from being a labeled-enum entry. The Go side
+ * (shortcodes.LabeledEnumComplexKeys) keeps a copy for the MetaSchema generator.
+ */
+export const LABELED_ENUM_COMPLEX_KEYS: ReadonlySet<string> = new Set(['type', 'properties', 'items', 'oneOf', 'anyOf', 'allOf', 'if', '$ref', 'enum']);
+
+/**
  * Returns true when a schema represents a "labeled enum" — a `oneOf` array
  * where every entry is a simple `{ const, title?, description? }` object
  * with no complex subschema keywords.
  */
 export function isLabeledEnum(schema: JSONSchema): boolean {
   if (!schema.oneOf || !Array.isArray(schema.oneOf) || schema.oneOf.length === 0) return false;
-  const complexKeys = new Set(['type', 'properties', 'items', 'oneOf', 'anyOf', 'allOf', 'if', '$ref', 'enum']);
   return schema.oneOf.every((entry: JSONSchema) => {
     if (!entry || typeof entry !== 'object' || entry.const === undefined) return false;
-    return !Object.keys(entry).some(k => complexKeys.has(k));
+    return !Object.keys(entry).some(k => LABELED_ENUM_COMPLEX_KEYS.has(k));
   });
 }
 
