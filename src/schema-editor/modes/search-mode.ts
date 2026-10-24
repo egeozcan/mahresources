@@ -1,8 +1,9 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
-import { flattenSchema, intersectFields } from '../schema-core';
+import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex, withSchemaBudget } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -18,16 +19,24 @@ interface HiddenInput {
 interface ExistingValue {
   operator: string;
   value: string;
-  enumValues: string[];
+  /** Selected enum values, raw. Compare with sameValue, never by text. */
+  enumValues: any[];
   boolValue: string;
   /** Original value before coercion — preserves null, false, 0, "" for enum restoration */
   rawValue?: any;
+  /**
+   * The value an in-progress typed field filters by (1 for "1" in a number
+   * field), kept across a schema rebuild so the enum choice it becomes is
+   * matched by value first, and by text only when there is none.
+   */
+  typed?: { value: unknown };
 }
 
 interface SearchField extends FlatField {
   operator: string;
   value: string;
-  enumValues: string[];
+  /** Selected enum values, raw. Compare with sameValue, never by text. */
+  enumValues: any[];
   boolValue: string;
   showOperator: boolean;
   operators: Operator[] | null;
@@ -40,6 +49,28 @@ interface MetaQueryEntry {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * The value a non-enum field filters by, by its type: a number field's text
+ * as a number, a string field's text, a boolean's choice. Undefined for an
+ * empty field or an untyped free-text one, which only text can match.
+ */
+function typedFieldValue(field: SearchField): { value: unknown } | undefined {
+  let value: unknown;
+  if (field.enum) {
+    value = undefined;
+  } else if (field.type === 'boolean') {
+    value = field.boolValue === 'any' ? undefined : field.boolValue === 'true';
+  } else if (field.value === '') {
+    value = undefined;
+  } else if (field.type === 'string') {
+    value = field.value;
+  } else if (field.type === 'number' || field.type === 'integer') {
+    const n = Number(field.value);
+    value = Number.isFinite(n) ? n : undefined;
+  }
+  return value === undefined ? undefined : { value };
+}
 
 function defaultOperator(field: FlatField): string {
   if (field.enum) return 'EQ';
@@ -77,6 +108,19 @@ function operatorSymbol(code: string): string {
   return OPERATOR_SYMBOLS[code] || code;
 }
 
+/**
+ * The enum choice a stored search value names. URL values arrive typed by the
+ * server's parse, so "2" may name the choice 2: an exact (typed) match wins,
+ * then a match by text, as the string comparison before it did. A value that
+ * names no choice is kept as it is.
+ */
+function matchChoice(choices: readonly unknown[], value: unknown): unknown {
+  const exact = findChoice(choices, value);
+  if (exact >= 0) return choices[exact];
+  const loose = choices.findIndex(choice => valueText(choice) === valueText(value));
+  return loose >= 0 ? choices[loose] : value;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 @customElement('schema-search-mode')
@@ -90,6 +134,8 @@ export class SchemaSearchMode extends LitElement {
   @state() private _fieldsCleared = false;
 
   private _existingMeta: MetaQueryEntry[] = [];
+  /** Set when the schema could not be turned into fields; render shows the fallback. */
+  private _schemaError: unknown = null;
 
   /** Replace URL/form metadata after an MRQL edit and rebuild visible schema controls. */
   setMetaQueryEntries(entries: MetaQueryEntry[]) {
@@ -97,7 +143,7 @@ export class SchemaSearchMode extends LitElement {
     this.metaQuery = JSON.stringify(this._existingMeta);
     // Discard in-progress values: MRQL is now the source of truth.
     this._fields = [];
-    this._rebuildFields();
+    this._rebuildFieldsSafely();
     this.requestUpdate();
   }
 
@@ -107,11 +153,24 @@ export class SchemaSearchMode extends LitElement {
   // ─── Lifecycle ──────────────────────────────────────────────────────────
 
   override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('schema') || changed.has('metaQuery')) clearSchemaActionError(this);
     if (changed.has('schema')) {
-      this._rebuildFields();
+      this._rebuildFieldsSafely();
     }
     if (changed.has('metaQuery')) {
       this._parseMetaQuery();
+    }
+  }
+
+  /** _rebuildFields under one work budget; a schema that cannot be used shows the fallback. */
+  private _rebuildFieldsSafely() {
+    try {
+      this._schemaError = null;
+      withSchemaBudget(() => this._rebuildFields());
+    } catch (error) {
+      this._schemaError = error;
+      this._fields = [];
+      this._hasFields = false;
     }
   }
 
@@ -128,18 +187,14 @@ export class SchemaSearchMode extends LitElement {
     const hadFields = this._hasFields;
 
     // Snapshot current field values so they survive schema changes
-    const currentValues = new Map<string, {
-      value: string;
-      operator: string;
-      enumValues: string[];
-      boolValue: string;
-    }>();
+    const currentValues = new Map<string, ExistingValue>();
     for (const f of this._fields) {
       currentValues.set(f.path, {
         value: f.value,
         operator: f.operator,
         enumValues: f.enumValues,
         boolValue: f.boolValue,
+        typed: typedFieldValue(f),
       });
     }
 
@@ -235,14 +290,24 @@ export class SchemaSearchMode extends LitElement {
       // _findExistingValue may place the value in .value, .boolValue, or .rawValue
       // depending on the original type. We check all sources.
       if (field.enum && existing && enumValues.length === 0) {
-        if (existing.rawValue !== undefined) {
+        if (existing.typed && findChoice(field.enum, existing.typed.value) >= 0) {
+          // The typed value names a choice exactly: 1 in a number field is
+          // the choice 1, never "1".
+          enumValues = [existing.typed.value];
+        } else if (existing.rawValue !== undefined) {
           // rawValue preserves the original value including null, false, 0, ""
-          enumValues = [String(existing.rawValue)];
+          enumValues = [existing.rawValue];
         } else if (existing.value != null && existing.value !== '') {
-          enumValues = [String(existing.value)];
+          enumValues = [existing.value];
         } else if (existing.boolValue !== 'any') {
           enumValues = [existing.boolValue];
         }
+      }
+      // Re-match on every rebuild, in-progress values included: a value typed
+      // into a plain field arrives as text ("2"), and the hidden input must
+      // still encode the choice it names (2), not a quoted string.
+      if (field.enum) {
+        enumValues = enumValues.map(v => matchChoice(field.enum!, v));
       }
 
       return {
@@ -286,7 +351,7 @@ export class SchemaSearchMode extends LitElement {
       return {
         operator: matches[0].operation || 'EQ',
         value: '',
-        enumValues: matches.map(m => String(m.value)),
+        enumValues: matches.map(m => m.value),
         boolValue: 'any',
       };
     }
@@ -304,7 +369,7 @@ export class SchemaSearchMode extends LitElement {
 
     return {
       operator: m.operation || 'EQ',
-      value: m.value != null ? String(m.value) : '',
+      value: m.value != null ? valueText(m.value) : '',
       enumValues: [],
       boolValue: 'any',
       rawValue: m.value,
@@ -320,26 +385,15 @@ export class SchemaSearchMode extends LitElement {
       // String values must be quoted to preserve coercible values like "007".
       // Numeric, boolean, and null values must NOT be quoted.
       // Use index-based lookup to avoid ambiguity between e.g., 1 and "1".
+      // enumValues holds the selected values themselves, so each one is quoted
+      // by its own type: a string is quoted (preserving coercible values like
+      // "007"); a number, boolean or null is not.
       return field.enumValues.map(v => {
-        // Match by index: enumValues stores String(enum[i]), so find the
-        // original by matching the stringified form at each index. If multiple
-        // enum entries stringify the same way (e.g., 1 and "1"), prefer the
-        // non-string original since strings get quoted and non-strings don't.
-        let isStringTyped = true;
-        for (const ev of field.enum!) {
-          if (String(ev) === v) {
-            if (typeof ev !== 'string') {
-              isStringTyped = false;
-              break;
-            }
-          }
-        }
-        // If no enum entry matched at all, treat as string (safe default)
-        if (isStringTyped) {
-          const escaped = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        if (typeof v === 'string') {
+          const escaped = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
           return { value: `${field.path}:EQ:"${escaped}"` };
         }
-        return { value: `${field.path}:EQ:${v}` };
+        return { value: `${field.path}:EQ:${valueText(v)}` };
       });
     }
 
@@ -363,13 +417,22 @@ export class SchemaSearchMode extends LitElement {
 
   // ─── Event handlers ─────────────────────────────────────────────────────
 
+  /**
+   * The rendered wrapper of field. Found by comparing the attribute, never by
+   * a selector built from the path: a property may be named source["id"].
+   */
+  private _fieldWrapper(field: SearchField): Element | undefined {
+    return [...this.querySelectorAll('[data-field-path]')].find(el => el.getAttribute('data-field-path') === field.path);
+  }
+
   private _toggleOperator(field: SearchField) {
     field.showOperator = !field.showOperator;
     this.requestUpdate();
 
-    // Focus the appropriate element after render
-    this.updateComplete.then(() => {
-      const wrapper = this.querySelector(`[data-field-path="${field.path}"]`);
+    // Focus the appropriate element after render. Returned, so the action
+    // boundary sees a failure in this deferred step too.
+    return this.updateComplete.then(() => {
+      const wrapper = this._fieldWrapper(field);
       if (!wrapper) return;
       const target = field.showOperator
         ? wrapper.querySelector('select')
@@ -383,8 +446,8 @@ export class SchemaSearchMode extends LitElement {
     field.showOperator = false;
     this.requestUpdate();
 
-    this.updateComplete.then(() => {
-      const wrapper = this.querySelector(`[data-field-path="${field.path}"]`);
+    return this.updateComplete.then(() => {
+      const wrapper = this._fieldWrapper(field);
       if (!wrapper) return;
       const btn = wrapper.querySelector('button[data-operator-toggle]');
       if (btn) (btn as HTMLElement).focus();
@@ -401,26 +464,45 @@ export class SchemaSearchMode extends LitElement {
     this.requestUpdate();
   }
 
-  private _onEnumCheckboxChange(field: SearchField, enumVal: string, checked: boolean) {
+  private _onEnumCheckboxChange(field: SearchField, enumVal: any, checked: boolean) {
     if (checked) {
-      if (!field.enumValues.includes(String(enumVal))) {
-        field.enumValues = [...field.enumValues, String(enumVal)];
+      if (!field.enumValues.some(v => sameValue(v, enumVal))) {
+        field.enumValues = [...field.enumValues, enumVal];
       }
     } else {
-      field.enumValues = field.enumValues.filter(v => v !== String(enumVal));
+      field.enumValues = field.enumValues.filter(v => !sameValue(v, enumVal));
     }
     this.requestUpdate();
   }
 
   private _onEnumSelectChange(field: SearchField, e: Event) {
     const select = e.target as HTMLSelectElement;
-    field.enumValues = Array.from(select.selectedOptions).map(o => o.value);
+    field.enumValues = Array.from(select.selectedOptions)
+      .map(o => choiceIndex(o.value, field.enum!.length))
+      .filter(i => i >= 0)
+      .map(i => field.enum![i]);
     this.requestUpdate();
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-search-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-search-mode', actionError);
+    if (this._schemaError) return schemaFallback('schema-search-mode', this._schemaError);
+    try {
+      return withSchemaBudget(() => this._renderFields());
+    } catch (error) {
+      return schemaFallback('schema-search-mode', error);
+    }
+  }
+
+  private _renderFields() {
     const srText = this._hasFields
       ? `${this._fields.length} schema filter fields available`
       : (this._fieldsCleared ? 'Schema filter fields cleared' : '');
@@ -466,19 +548,19 @@ export class SchemaSearchMode extends LitElement {
           <label class="text-sm flex items-center gap-1">
             <input type="radio" name=${radioName} value="any"
                    .checked=${field.boolValue === 'any'}
-                   @change=${() => this._onBoolChange(field, 'any')}>
+                   @change=${this._act(() => this._onBoolChange(field, 'any'))}>
             Any
           </label>
           <label class="text-sm flex items-center gap-1">
             <input type="radio" name=${radioName} value="true"
                    .checked=${field.boolValue === 'true'}
-                   @change=${() => this._onBoolChange(field, 'true')}>
+                   @change=${this._act(() => this._onBoolChange(field, 'true'))}>
             Yes
           </label>
           <label class="text-sm flex items-center gap-1">
             <input type="radio" name=${radioName} value="false"
                    .checked=${field.boolValue === 'false'}
-                   @change=${() => this._onBoolChange(field, 'false')}>
+                   @change=${this._act(() => this._onBoolChange(field, 'false'))}>
             No
           </label>
         </div>
@@ -492,12 +574,12 @@ export class SchemaSearchMode extends LitElement {
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
         <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
           ${field.enum!.map((enumVal, idx) => {
-            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
               <label class="text-sm flex items-center gap-1">
-                <input type="checkbox" .value=${String(enumVal)}
-                       .checked=${field.enumValues.includes(String(enumVal))}
-                       @change=${(e: Event) => this._onEnumCheckboxChange(field, String(enumVal), (e.target as HTMLInputElement).checked)}>
+                <input type="checkbox" .value=${choiceKey(idx)}
+                       .checked=${field.enumValues.some(v => sameValue(v, enumVal))}
+                       @change=${this._act((e: Event) => this._onEnumCheckboxChange(field, enumVal, (e.target as HTMLInputElement).checked))}>
                 <span>${displayLabel}</span>
               </label>
             `;
@@ -515,11 +597,11 @@ export class SchemaSearchMode extends LitElement {
         <select multiple
                 class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                 size=${selectSize}
-                @change=${(e: Event) => this._onEnumSelectChange(field, e)}>
+                @change=${this._act((e: Event) => this._onEnumSelectChange(field, e))}>
           ${field.enum!.map((enumVal, idx) => {
-            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
-              <option value=${String(enumVal)} ?selected=${field.enumValues.includes(String(enumVal))}>${displayLabel}</option>
+              <option value=${choiceKey(idx)} ?selected=${field.enumValues.some(v => sameValue(v, enumVal))}>${displayLabel}</option>
             `;
           })}
         </select>
@@ -527,7 +609,7 @@ export class SchemaSearchMode extends LitElement {
           <button type="button"
                   class="text-xs text-stone-400 hover:text-amber-700 mt-1 underline"
                   aria-label="Clear ${field.label} selection"
-                  @click=${() => { field.enumValues = []; this.requestUpdate(); }}>
+                  @click=${this._act(() => { field.enumValues = []; this.requestUpdate(); })}>
             Clear selection
           </button>
         ` : nothing}
@@ -551,14 +633,14 @@ export class SchemaSearchMode extends LitElement {
           ${!field.showOperator ? html`
             <button type="button"
                     data-operator-toggle
-                    @click=${() => this._toggleOperator(field)}
+                    @click=${this._act(() => this._toggleOperator(field))}
                     class="text-xs text-stone-400 hover:text-amber-700 underline cursor-pointer flex-shrink-0 w-5 text-center focus:outline-hidden focus:ring-1 focus:ring-amber-600 rounded"
                     aria-label=${'Change operator, currently ' + symbol}
                     title=${'Operator: ' + symbol}>
               ${symbol}
             </button>
           ` : html`
-            <select @change=${(e: Event) => this._selectOperator(field, e)}
+            <select @change=${this._act((e: Event) => this._selectOperator(field, e))}
                     aria-label=${'Operator for ' + field.label}
                     class="flex-shrink-0 w-16 text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600">
               ${field.operators!.map(op => html`
@@ -571,7 +653,7 @@ export class SchemaSearchMode extends LitElement {
                  .value=${field.value}
                  id=${inputId}
                  class="flex-grow w-full text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
-                 @input=${(e: Event) => this._onFieldValueInput(field, e)}>
+                 @input=${this._act((e: Event) => this._onFieldValueInput(field, e))}>
         </div>
       </div>
     `;

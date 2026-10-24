@@ -2,12 +2,13 @@
 import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
-import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
+import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords, ownValue, withSchemaBudget } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-editor/schema-fallback';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -42,7 +43,7 @@ export class MetaShortcode extends LitElement {
   // so the cache holds a single entry under a fixed key.
   private _pluginNodes = new PluginNodeCache();
 
-  private _metaUpdateHandler = (e: Event) => {
+  private _metaUpdateHandler = this._act((e: Event) => {
     const detail = (e as CustomEvent).detail;
     if (detail?.entityType === this.entityType && detail?.entityId === this.entityId && detail?.meta) {
       // Another meta-shortcode on the same entity saved — refresh our value
@@ -50,7 +51,7 @@ export class MetaShortcode extends LitElement {
       let current: any = detail.meta;
       for (const part of parts) {
         if (current == null || typeof current !== 'object') { current = undefined; break; }
-        current = current[part];
+        current = ownValue(current, part);
       }
       this._currentValue = current;
       this.valueStr = current !== undefined ? JSON.stringify(current) : '';
@@ -61,7 +62,7 @@ export class MetaShortcode extends LitElement {
       this._pluginNodes.clear();
       this._pluginFetchVersion++;
     }
-  };
+  });
 
   override connectedCallback() {
     super.connectedCallback();
@@ -81,6 +82,7 @@ export class MetaShortcode extends LitElement {
   // attributes after a background refresh), clear cached display state so the
   // next render uses the fresh attributes and plugin displays refetch.
   override willUpdate(changedProperties: PropertyValues) {
+    if (changedProperties.has('valueStr') || changedProperties.has('schemaStr')) clearSchemaActionError(this);
     const identityChanged =
       changedProperties.has('path') ||
       changedProperties.has('entityType') ||
@@ -130,7 +132,8 @@ export class MetaShortcode extends LitElement {
   private get _schema(): JSONSchema | null {
     if (!this.schemaStr) return null;
     try {
-      return JSON.parse(this.schemaStr);
+      const parsed = JSON.parse(this.schemaStr);
+      return parsed && typeof parsed === 'object' ? withTypedKeywords(parsed) : null;
     } catch {
       return null;
     }
@@ -162,7 +165,22 @@ export class MetaShortcode extends LitElement {
     return this.editable === 'true';
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'meta-shortcode', handler);
+  }
+
   override render(): TemplateResult | typeof nothing {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('meta-shortcode', actionError, this._value);
+    try {
+      return withSchemaBudget(() => this._renderShortcode());
+    } catch (error) {
+      return schemaFallback('meta-shortcode', error, this._value);
+    }
+  }
+
+  private _renderShortcode(): TemplateResult | typeof nothing {
     if (this._isEmpty && this.hideEmpty === 'true' && !this._editing) {
       return nothing;
     }
@@ -196,14 +214,14 @@ export class MetaShortcode extends LitElement {
                 aria-checked=${index === selected ? 'true' : 'false'}
                 aria-disabled=${!this._isEditable || this._saving ? 'true' : 'false'}
                 tabindex=${index === (selected < 0 ? 0 : selected) ? '0' : '-1'}
-                @click=${() => this._selectPill(option)}
-                @keydown=${(event: KeyboardEvent) => this._onPillKeyDown(event, index, options)}
+                @click=${this._act(() => this._selectPill(option))}
+                @keydown=${this._act((event: KeyboardEvent) => this._onPillKeyDown(event, index, options))}
               >${option.label}</button>
             `)}
           </span>
         ` : html`<span class="text-sm text-stone-600">No options configured for ${this._label}.</span>`}
         ${selected < 0 && !this._isEmpty
-          ? html`<span class="text-sm text-stone-600">Current: ${String(this._value)}</span>` : nothing}
+          ? html`<span class="text-sm text-stone-600">Current: ${valueText(this._value)}</span>` : nothing}
         <span role="status" class="text-sm ${this._pillError ? 'text-red-700' : 'text-stone-600'}">
           ${this._pillError ? 'Could not save. Try again.' : this._saving ? 'Saving…' : ''}
         </span>
@@ -212,7 +230,7 @@ export class MetaShortcode extends LitElement {
   }
 
   private _pillColors(color?: string): Record<string, string> {
-    if (typeof color !== 'string' || !CSS.supports('color', color)) return {};
+    if (!safeColor(color)) return {};
     // Match schema enum badges with a light tint and dark text. Binding the
     // properties separately also keeps a color from introducing declarations.
     return {
@@ -248,7 +266,7 @@ export class MetaShortcode extends LitElement {
           type="button"
           class="inline-flex items-center p-0.5 border-0 bg-transparent cursor-pointer"
           aria-label="Edit ${this._label}"
-          @click=${this._enterEditMode}
+          @click=${this._act(this._enterEditMode)}
         >${this._pencilIcon()}</button>`
       : nothing;
 
@@ -277,16 +295,35 @@ export class MetaShortcode extends LitElement {
     if (this.dateTime === 'true') {
       return dateTimeField(value, schema, this.inputLayout, this.layout).display;
     }
-    // Check built-in x-display on raw schema (these only use the value, not schema metadata).
-    const rawXDisplay = schema?.['x-display'] as string | undefined;
-    if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
-      const renderer = getBuiltinRenderer(rawXDisplay);
-      if (renderer) return html`<span>${renderer.render(value)}</span>`;
+    // The effective x-display is the raw schema's, else the resolved schema's.
+    // A non-string x-display is ignored. A forced built-in renderer runs only
+    // when the value has its shape; otherwise the value gets the normal
+    // rendering below. Auto-detection applies only when no x-display is set.
+    const resolved = schema ? resolveSchema(schema, schema) : null;
+    const resolvedSchema = resolved ? withTypedKeywords(resolved) : null;
+    const xDisplay = xDisplayOf(schema) || xDisplayOf(resolvedSchema);
+    if (xDisplay && !xDisplay.startsWith('plugin:')) {
+      const renderer = getBuiltinRenderer(xDisplay);
+      const rendered = renderer && renderBuiltin(renderer, value);
+      if (rendered) return html`<span>${rendered}</span>`;
     }
 
-    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+    if (!xDisplay && value != null && typeof value === 'object' && !Array.isArray(value)) {
       const shape = detectShape(value);
-      if (shape) return html`<span>${shape.render(value)}</span>`;
+      if (shape) return html`<span>${renderBuiltin(shape, value)}</span>`;
+    }
+
+    // The effective plugin x-display wins over enums, raw or resolved, as it
+    // does in the display panel. It receives the resolved schema.
+    if (xDisplay.startsWith('plugin:')) {
+      return this._renderPluginDisplay(value, xDisplay, resolvedSchema ?? schema);
+    }
+
+    // A non-primitive value renders as JSON whatever type the schema declares
+    // (a forced renderer may have rejected it), so it never reaches the scalar
+    // coercions below.
+    if (value !== null && typeof value === 'object') {
+      return JSON.stringify(value);
     }
 
     if (schema) {
@@ -295,16 +332,9 @@ export class MetaShortcode extends LitElement {
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
       // Resolve composition ($ref, allOf, oneOf, anyOf) for full metadata.
-      const resolved = resolveSchema(schema, schema);
-      if (resolved) schema = resolved;
+      if (resolvedSchema) schema = resolvedSchema;
 
-      // After resolution: x-display (including plugin), enums, then type.
-      const xDisplay = (rawXDisplay || schema['x-display']) as string | undefined;
-      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
-      if (xDisplay) {
-        const renderer = getBuiltinRenderer(xDisplay);
-        if (renderer) return html`<span>${renderer.render(value)}</span>`;
-      }
+      // After resolution: enums, then type.
       if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
@@ -312,7 +342,8 @@ export class MetaShortcode extends LitElement {
         ? schema.type.find((t: string) => t !== 'null') || 'string'
         : schema.type || 'string';
 
-      if (type === 'boolean') return value ? 'Yes' : 'No';
+      // Yes/No only for a real boolean; anything else shows as itself below.
+      if (type === 'boolean' && typeof value === 'boolean') return value ? 'Yes' : 'No';
       if (type === 'integer' || type === 'number') {
         return html`<span class="font-mono">${value}</span>`;
       }
@@ -327,8 +358,8 @@ export class MetaShortcode extends LitElement {
   private _renderLabeledEnum(value: any, schema: JSONSchema): TemplateResult {
     const entries = getLabeledEnumEntries(schema);
     const entry = entries.find(e => e.value === value);
-    const label = entry ? entry.label : String(value);
-    const tooltip = entry ? String(value) : '';
+    const label = entry ? entry.label : valueText(value);
+    const tooltip = entry ? valueText(value) : '';
     return html`<span
       class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
       title=${tooltip || nothing}
@@ -338,7 +369,7 @@ export class MetaShortcode extends LitElement {
   private _renderPlainEnum(value: any): TemplateResult {
     return html`<span
       class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
-    >${String(value)}</span>`;
+    >${valueText(value)}</span>`;
   }
 
   private _renderPluginDisplay(value: any, xDisplay: string, resolvedSchema?: JSONSchema | null): TemplateResult {
@@ -402,7 +433,7 @@ export class MetaShortcode extends LitElement {
               aria-label=${this._label}
               class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
               .value=${this._dateInput}
-              @input=${this._onDateInput}
+              @input=${this._act(this._onDateInput)}
             />`
           : schema
           ? html`<schema-editor
@@ -410,13 +441,13 @@ export class MetaShortcode extends LitElement {
               .schema=${JSON.stringify(schema)}
               .value=${JSON.stringify(value ?? getDefaultValue(schema))}
               name="_meta_shortcode_value"
-              @value-change=${this._onFormValueChange}
+              @value-change=${this._act(this._onFormValueChange)}
             ></schema-editor>`
           : html`<input
               type="text"
               class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
               .value=${value != null ? (typeof value === 'object' ? JSON.stringify(value) : String(value)) : ''}
-              @input=${this._onInputChange}
+              @input=${this._act(this._onInputChange)}
             />`
         }
         <div class="flex gap-2 mt-2">
@@ -424,13 +455,13 @@ export class MetaShortcode extends LitElement {
             type="button"
             class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
             ?disabled=${this._saving || this._dateInvalid}
-            @click=${this._save}
+            @click=${this._act(this._save)}
           >${this._saving ? 'Saving...' : 'Save'}</button>
           <button
             type="button"
             class="px-3 py-1 text-sm bg-stone-200 text-stone-700 rounded hover:bg-stone-300"
             ?disabled=${this._saving}
-            @click=${this._cancelEdit}
+            @click=${this._act(this._cancelEdit)}
           >Cancel</button>
         </div>
       </div>
@@ -511,7 +542,7 @@ export class MetaShortcode extends LitElement {
             current = undefined;
             break;
           }
-          current = current[part];
+          current = ownValue(current, part);
         }
         this._currentValue = current;
         this.valueStr = current !== undefined ? JSON.stringify(current) : '';
@@ -519,7 +550,7 @@ export class MetaShortcode extends LitElement {
 
       this._editing = false;
       this._flash = 'success';
-      setTimeout(() => { this._flash = null; }, 1000);
+      setTimeout(this._act(() => { this._flash = null; }), 1000);
 
       // Notify other meta-shortcode elements on the same entity to refresh
       document.dispatchEvent(new CustomEvent('meta-shortcode-updated', {
@@ -529,7 +560,7 @@ export class MetaShortcode extends LitElement {
       console.error('Meta shortcode save error:', err);
       this._flash = 'error';
       if (this.pills === 'true') this._pillError = true;
-      setTimeout(() => { this._flash = null; }, 1000);
+      setTimeout(this._act(() => { this._flash = null; }), 1000);
     } finally {
       this._saving = false;
     }

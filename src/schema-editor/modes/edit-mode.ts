@@ -4,9 +4,10 @@ import { sharedStyles } from '../styles';
 import { schemaToTree, treeToSchema, detectDraft, getDefsPrefix } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
-import { escapeJsonPointer } from '../schema-core';
+import { escapeJsonPointer, visitSubschemas, withSchemaBudget } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 @customElement('schema-edit-mode')
 export class SchemaEditMode extends LitElement {
@@ -33,6 +34,8 @@ export class SchemaEditMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
 
   @state() private _root: SchemaNode | null = null;
+  /** Set when the schema could not be turned into a tree; render shows the fallback. */
+  @state() private _schemaError: unknown = null;
   @state() private _selectedId = '';
   @state() private _draft: string | null = null;
 
@@ -40,16 +43,25 @@ export class SchemaEditMode extends LitElement {
   private _lastEmittedSchema = '';
 
   override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('schema')) clearSchemaActionError(this);
     if (changed.has('schema') && this.schema) {
       // Skip reparse when the incoming schema matches what we just emitted.
       // Internal edits mutate the tree in-place and then emit; the parent echoes
       // the schema back as a prop change, which would reparse and regenerate IDs,
       // causing the selected node to become unfindable.
-      const incoming = JSON.stringify(this.schema);
-      if (incoming === this._lastEmittedSchema) {
+      // Serialising the whole schema is inside the boundary too: a schema
+      // nested thousands of levels deep overflows JSON.stringify.
+      try {
+        // The echo shortcut needs a tree to keep: after a fallback, the
+        // same schema coming back must be parsed again.
+        if (this._root && !this._schemaError && JSON.stringify(this.schema) === this._lastEmittedSchema) return;
+        this._root = withSchemaBudget(() => schemaToTree(this.schema));
+        this._schemaError = null;
+      } catch (error) {
+        this._root = null;
+        this._schemaError = error;
         return;
       }
-      this._root = schemaToTree(this.schema);
       this._draft = detectDraft(this.schema);
       // Validate selection — if old ID doesn't exist in new tree, select root
       if (this._selectedId && !this._findNode(this._selectedId)) {
@@ -321,7 +333,7 @@ export class SchemaEditMode extends LitElement {
     }
     // Update raw $ref strings inside node.schema (e.g. if/then/else,
     // secondary composition keywords that weren't extracted into variants)
-    this._updateRefsInObject(node.schema, oldRef, newRef);
+    node.schema = this._updateRefsInObject(node.schema, oldRef, newRef);
     for (const child of node.children || []) {
       this._updateRefsInTree(child, oldRef, newRef);
     }
@@ -330,22 +342,23 @@ export class SchemaEditMode extends LitElement {
     }
   }
 
-  /** Recursively scan an object for $ref string values and replace matches */
-  private _updateRefsInObject(obj: any, oldRef: string, newRef: string) {
-    if (!obj || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) {
-      for (const item of obj) {
-        this._updateRefsInObject(item, oldRef, newRef);
-      }
-      return;
-    }
-    for (const [key, value] of Object.entries(obj)) {
-      if (key === '$ref' && value === oldRef) {
-        obj[key] = newRef;
-      } else if (typeof value === 'object' && value !== null) {
-        this._updateRefsInObject(value, oldRef, newRef);
-      }
-    }
+  /**
+   * Replace oldRef in obj and the subschemas it holds. Only schema-bearing
+   * keywords are followed: a "$ref" key inside examples, default or const is
+   * data and stays as written.
+   */
+  private _updateRefsInObject(obj: any, oldRef: string, newRef: string): any {
+    // node.schema is a shallow copy: its nested subschemas (if, then, ...)
+    // are still the caller's objects. Rename on a deep copy, and only when
+    // there is something to rename.
+    let found = false;
+    visitSubschemas(obj, subschema => { if (subschema.$ref === oldRef) found = true; });
+    if (!found) return obj;
+    const copy = structuredClone(obj);
+    visitSubschemas(copy, subschema => {
+      if (subschema.$ref === oldRef) subschema.$ref = newRef;
+    });
+    return copy;
   }
 
   private _handleAddProperty() {
@@ -601,7 +614,23 @@ export class SchemaEditMode extends LitElement {
     this._emitSchemaChange();
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-edit-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-edit-mode', actionError, this.schema);
+    if (this._schemaError) return schemaFallback('schema-edit-mode', this._schemaError, this.schema);
+    try {
+      return withSchemaBudget(() => this._renderEditor());
+    } catch (error) {
+      return schemaFallback('schema-edit-mode', error, this.schema);
+    }
+  }
+
+  private _renderEditor() {
     const selected = this._findNode(this._selectedId);
     const breadcrumb = this._buildBreadcrumb(this._selectedId);
     const isRoot = selected === this._root;
@@ -612,11 +641,11 @@ export class SchemaEditMode extends LitElement {
           .root=${this._root}
           .selectedId=${this._selectedId}
           .draft=${this._draft}
-          @node-select=${this._handleNodeSelect}
-          @add-property=${this._handleAddProperty}
-          @add-defs=${this._handleAddDefs}
-          @reorder=${this._handleReorder}
-          @context-action=${this._handleContextAction}
+          @node-select=${this._act(this._handleNodeSelect)}
+          @add-property=${this._act(this._handleAddProperty)}
+          @add-defs=${this._act(this._handleAddDefs)}
+          @reorder=${this._act(this._handleReorder)}
+          @context-action=${this._act(this._handleContextAction)}
         ></schema-tree-panel>
       </div>
       <div class="detail-side">
@@ -629,11 +658,11 @@ export class SchemaEditMode extends LitElement {
               ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
               : undefined)}
           .isRoot=${isRoot}
-          @node-change=${this._handleNodeChange}
-          @node-delete=${this._handleNodeDelete}
-          @node-duplicate=${this._handleNodeDuplicate}
-          @add-variant=${this._handleAddVariant}
-          @remove-variant=${this._handleRemoveVariant}
+          @node-change=${this._act(this._handleNodeChange)}
+          @node-delete=${this._act(this._handleNodeDelete)}
+          @node-duplicate=${this._act(this._handleNodeDuplicate)}
+          @add-variant=${this._act(this._handleAddVariant)}
+          @remove-variant=${this._act(this._handleRemoveVariant)}
         ></schema-detail-panel>
       </div>
     `;

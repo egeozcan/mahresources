@@ -173,7 +173,13 @@ export class SchemaEditor extends LitElement {
           .value=${this.value}
           .name=${this.name}
           @value-change=${(e: CustomEvent) => {
-            this.value = JSON.stringify(e.detail.value);
+            // A value too deep to serialise keeps the last text; the form
+            // already shows its fallback for it.
+            try {
+              this.value = JSON.stringify(e.detail.value);
+            } catch (error) {
+              console.error('schema-editor: value could not be serialised', error);
+            }
             this.dispatchEvent(new CustomEvent('value-change', { detail: e.detail, bubbles: true, composed: true }));
           }}
         ></schema-form-mode>`;

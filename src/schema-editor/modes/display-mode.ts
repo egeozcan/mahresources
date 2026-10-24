@@ -8,9 +8,15 @@ import {
   isLabeledEnum,
   getLabeledEnumEntries,
   titleCase,
+  withTypedKeywords,
+  ownValue,
+  setOwn,
+  withSchemaBudget,
+  countSchemaWork,
 } from '../schema-core';
-import { detectShape, getBuiltinRenderer } from '../display-renderers';
+import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 interface DisplayField {
   path: string;
@@ -32,8 +38,7 @@ function getNestedValue(obj: any, path: string): any {
   const parts = path.split('.');
   let current = obj;
   for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined;
-    current = current[part];
+    current = ownValue(current, part);
   }
   return current;
 }
@@ -91,17 +96,19 @@ function flattenForDisplay(
 
   const fields: DisplayField[] = [];
 
-  for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+  for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+    countSchemaWork();
     const path = prefix ? `${prefix}.${key}` : key;
-    const prop = resolveSchema(rawProp, root) || rawProp;
+    const rawProp = withTypedKeywords(rawPropIn);
+    const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);
     const rawLabel = rawProp.title || (!isLabeledEnum(rawProp) && prop.title) || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} \u203A ${rawLabel}` : rawLabel;
     const description = prop.description || '';
     const format = prop.format || '';
     const val = getNestedValue(value, path);
 
-    // Read x-display annotation
-    const xDisplay = (rawProp['x-display'] || prop['x-display'] || '') as string;
+    // Read x-display annotation (a non-string value is ignored)
+    const xDisplay = xDisplayOf(rawProp) || xDisplayOf(prop);
 
     // If x-display is set on an object, do NOT flatten — emit as whole field
     if (xDisplay && prop.properties) {
@@ -110,6 +117,9 @@ function flattenForDisplay(
       // If the value matches a known shape, keep it whole for the renderer pipeline
       if (val != null && typeof val === 'object' && !Array.isArray(val) && detectShape(val)) {
         // fall through to emit as single field (shape detection in _renderValue)
+      } else if (val != null && (typeof val !== 'object' || Array.isArray(val))) {
+        // A stored non-object (e.g. under type ["object","string"]) has no
+        // children to flatten into; emit it whole so it stays visible.
       } else {
         // Nested object with properties — flatten recursively
         fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
@@ -174,7 +184,7 @@ export class SchemaDisplayMode extends LitElement {
   // rather than replacing it. See PluginNodeCache.
   private _pluginNodes = new PluginNodeCache();
 
-  private _metaUpdateHandler = (e: Event) => {
+  private _metaUpdateHandler = this._act((e: Event) => {
     const meta = (e as CustomEvent).detail?.meta;
     if (meta != null) {
       this.value = meta;
@@ -184,7 +194,7 @@ export class SchemaDisplayMode extends LitElement {
       // both call one method so the two edges cannot drift apart.
       this._invalidatePluginState();
     }
-  };
+  });
 
   /**
    * The document event was the only thing that invalidated the plugin caches,
@@ -198,6 +208,7 @@ export class SchemaDisplayMode extends LitElement {
    * every parent re-render look like a change and drop the node cache.
    */
   override willUpdate(changed: PropertyValues) {
+    if (changed.has('value') || changed.has('schema')) clearSchemaActionError(this);
     if (
       changed.has('value') ||
       changed.has('schema') ||
@@ -246,7 +257,22 @@ export class SchemaDisplayMode extends LitElement {
     return this;
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-display-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-display-mode', actionError, this.value);
+    try {
+      return withSchemaBudget(() => this._renderPanel());
+    } catch (error) {
+      return schemaFallback('schema-display-mode', error, this.value);
+    }
+  }
+
+  private _renderPanel() {
     if (!this.schema?.properties || !this.value) return nothing;
 
     const allFields = flattenForDisplay(this.schema, this.value, this.schema);
@@ -279,7 +305,7 @@ export class SchemaDisplayMode extends LitElement {
             <div class="mt-3 pt-3 border-t border-stone-100">
               <button
                 class="text-xs font-mono text-stone-500 hover:text-stone-700 cursor-pointer bg-transparent border-none p-0"
-                @click=${() => { this._showEmpty = !this._showEmpty; }}
+                @click=${this._act(() => { this._showEmpty = !this._showEmpty; })}
               >${this._showEmpty
                 ? 'Hide empty fields'
                 : `Show ${emptyFields.length} hidden field${emptyFields.length !== 1 ? 's' : ''}`
@@ -297,10 +323,10 @@ export class SchemaDisplayMode extends LitElement {
         <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
-          @click=${() => this._copyText(field.path)}
+          @click=${this._act(() => this._copyText(field.path))}
         >${field.label}</div>
         <div class="text-sm text-stone-900 cursor-pointer break-all"
-          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+          @click=${this._act(() => this._copyValue(field.value))}>${this._renderValue(field)}</div>
       </div>
     `;
   }
@@ -311,10 +337,10 @@ export class SchemaDisplayMode extends LitElement {
         <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
-          @click=${() => this._copyText(field.path)}
+          @click=${this._act(() => this._copyText(field.path))}
         >${field.label}</div>
         <div class="text-sm text-stone-900 cursor-pointer break-all"
-          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+          @click=${this._act(() => this._copyValue(field.value))}>${this._renderValue(field)}</div>
       </div>
     `;
   }
@@ -336,8 +362,11 @@ export class SchemaDisplayMode extends LitElement {
 
     // 2. Forced built-in renderer (x-display: "url", "geo", etc.)
     if (xd && xd !== 'raw' && xd !== 'none') {
+      // Runs only when the value has the renderer's shape; otherwise the
+      // value falls through to the type rendering below.
       const renderer = getBuiltinRenderer(xd);
-      if (renderer) return renderer.render(val);
+      const rendered = renderer && renderBuiltin(renderer, val);
+      if (rendered) return rendered;
     }
 
     // 3. Opt-out: x-display "raw" or "none" skips shape detection
@@ -346,9 +375,36 @@ export class SchemaDisplayMode extends LitElement {
     // 4. Auto shape detection for objects (when no x-display set)
     if (!xd && typeof val === 'object' && val !== null && !Array.isArray(val)) {
       const detected = detectShape(val);
-      if (detected) return detected.render(val);
+      if (detected) return renderBuiltin(detected, val)!;
     }
     // ── End renderer pipeline ──────────────────────────────────────────
+
+    // A non-primitive value renders structurally whatever type the schema
+    // declares (a forced renderer may have rejected it), so it never reaches
+    // the String() coercions of the scalar branches below.
+    // Array
+    if (Array.isArray(val)) {
+      if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+      const allScalar = val.every(v => typeof v !== 'object' || v === null);
+      if (allScalar) {
+        return html`${val.map((v, i) => html`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(v)}</span>`)}`;
+      }
+      // Array of objects — render each object as a key-value sub-grid. Members
+      // can be mixed (null, scalars), e.g. a forced renderer's rejected value.
+      return html`${val.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${typeof item === 'object' && item !== null
+          ? this._renderObjectValue(item, 0, `${field.path}[${i}]`)
+          : html`<span>${String(item)}</span>`}
+      `)}`;
+    }
+
+    // Object — render as inline key-value grid
+    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+      return this._renderObjectValue(val, 0, field.path);
+    }
 
     // Enum with labels — pill with tooltip
     if (field.enumLabels && field.enum) {
@@ -376,8 +432,8 @@ export class SchemaDisplayMode extends LitElement {
       >${String(val)}</span>`;
     }
 
-    // Boolean
-    if (field.type === 'boolean') {
+    // Boolean — Yes/No only for a real boolean; anything else shows as itself
+    if (field.type === 'boolean' && typeof val === 'boolean') {
       return val ? 'Yes' : 'No';
     }
 
@@ -402,33 +458,15 @@ export class SchemaDisplayMode extends LitElement {
       }
       if (field.format === 'date' || field.format === 'date-time') {
         try {
-          const d = new Date(val);
+          // A date that does not parse, or a calendar date that does not
+          // exist, keeps its text rather than "Invalid Date" or a rollover.
+          const d = parseDisplayDate(val);
+          if (!d) return val;
           return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         } catch {
           return val;
         }
       }
-    }
-
-    // Array
-    if (field.type === 'array' && Array.isArray(val)) {
-      if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
-      const allScalar = val.every(v => typeof v !== 'object' || v === null);
-      if (allScalar) {
-        return html`${val.map((v, i) => html`<span
-          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
-        >${String(v)}</span>`)}`;
-      }
-      // Array of objects — render each as a key-value sub-grid
-      return html`${val.map((item, i) => html`
-        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
-        ${this._renderObjectValue(item, 0, `${field.path}[${i}]`)}
-      `)}`;
-    }
-
-    // Object — render as inline key-value grid
-    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-      return this._renderObjectValue(val, 0, field.path);
     }
 
     // Default — plain string
@@ -449,10 +487,10 @@ export class SchemaDisplayMode extends LitElement {
           return html`
             <span class="text-[10px] font-mono uppercase text-stone-500 tracking-wider self-baseline cursor-pointer hover:text-stone-700" style="letter-spacing:0.05em;"
               title=${keyPath}
-              @click=${(e: Event) => { e.stopPropagation(); this._copyText(keyPath); }}
+              @click=${this._act((e: Event) => { e.stopPropagation(); this._copyText(keyPath); })}
             >${titleCase(k)}</span>
             <span class="text-sm text-stone-700 break-all self-baseline cursor-pointer"
-              @click=${(e: Event) => { e.stopPropagation(); this._copyValue(v); }}
+              @click=${this._act((e: Event) => { e.stopPropagation(); this._copyValue(v); })}
             >${this._renderNestedValue(v, depth, keyPath)}</span>
           `;
         })}
@@ -503,12 +541,12 @@ export class SchemaDisplayMode extends LitElement {
   private _renderPluginDisplay(field: DisplayField): TemplateResult {
     const key = field.path;
 
-    const rendered = this._pluginHtml[key];
+    const rendered = ownValue(this._pluginHtml, key);
     if (rendered !== undefined) {
       return html`${this._pluginNodes.nodeFor(key, rendered)}`;
     }
 
-    if (this._pluginErrors[key]) {
+    if (ownValue(this._pluginErrors, key)) {
       if (typeof field.value === 'object' && field.value !== null) {
         return this._renderObjectValue(field.value, 0, field.path);
       }
@@ -528,7 +566,8 @@ export class SchemaDisplayMode extends LitElement {
   }
 
   private async _fetchPluginDisplay(key: string, pluginName: string, typeName: string, field: DisplayField) {
-    const version = (this._pluginFetchVersions[key] = (this._pluginFetchVersions[key] || 0) + 1);
+    const version = (ownValue(this._pluginFetchVersions, key) || 0) + 1;
+    setOwn(this._pluginFetchVersions, key, version);
     try {
       const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
         method: 'POST',
@@ -545,11 +584,11 @@ export class SchemaDisplayMode extends LitElement {
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const htmlStr = await resp.text();
-      if (version === this._pluginFetchVersions[key]) {
+      if (version === ownValue(this._pluginFetchVersions, key)) {
         this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
       }
     } catch {
-      if (version === this._pluginFetchVersions[key]) {
+      if (version === ownValue(this._pluginFetchVersions, key)) {
         this._pluginErrors = { ...this._pluginErrors, [key]: true };
       }
     }

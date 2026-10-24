@@ -162,12 +162,12 @@ Run: `DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api
 
 Lint only covers generated schemas; hand-written schemas and stored values reach the same renderers.
 
-- [ ] `src/schema-editor/display-renderers.ts`: detection and rendering use the same validated pair. `renderGeo` takes `latitude`/`longitude` only when both are numbers, else `lat`/`lng`; today `{latitude:"bad", longitude:"bad", lat:1, lng:2}` passes `isGeoShape` (`:40-45`) and `renderGeo` calls `.toFixed()` on the strings (`:49-54`). Each built-in renderer exposes a `select(value)` that returns the normalised fields or null, used by both `detect` and `render`.
-- [ ] Both consumers of `x-display` guard it the same way: `src/schema-editor/modes/display-mode.ts:104, 330-350` and `src/webcomponents/meta-shortcode.ts:281-284` (raw schema) and `:302-306` (resolved schema).
+- [x] `src/schema-editor/display-renderers.ts`: detection and rendering use the same validated pair. `renderGeo` takes `latitude`/`longitude` only when both are numbers, else `lat`/`lng`; today `{latitude:"bad", longitude:"bad", lat:1, lng:2}` passes `isGeoShape` (`:40-45`) and `renderGeo` calls `.toFixed()` on the strings (`:49-54`). Each built-in renderer exposes a `select(value)` that returns the normalised fields or null, used by both `detect` and `render`.
+- [x] Both consumers of `x-display` guard it the same way: `src/schema-editor/modes/display-mode.ts:104, 330-350` and `src/webcomponents/meta-shortcode.ts:281-284` (raw schema) and `:302-306` (resolved schema).
   - A non-string `x-display` is ignored.
   - A forced built-in renderer runs only when `select(value)` succeeds; otherwise the value falls through to the normal type rendering.
-- [ ] Vitest, red first, for each consumer: mixed aliases (`{latitude:"bad", longitude:"bad", lat:1, lng:2}`), a partial value (`{latitude:1}`), a non-object value under a forced renderer, a numeric `x-display`, and a resolved-schema (`$ref`/`allOf`) `x-display`. Each renders without throwing, and the valid pair renders as before.
-- [ ] One E2E: a meta schema with `x-display:"geo"` and a stored partial value renders the detail page and the `[meta]` element without a console error.
+- [x] Vitest, red first, for each consumer: mixed aliases (`{latitude:"bad", longitude:"bad", lat:1, lng:2}`), a partial value (`{latitude:1}`), a non-object value under a forced renderer, a numeric `x-display`, and a resolved-schema (`$ref`/`allOf`) `x-display`. Each renders without throwing, and the valid pair renders as before.
+- [x] One E2E: a meta schema with `x-display:"geo"` and a stored partial value renders the detail page and the `[meta]` element without a console error.
 
 ### 1e. MetaSchema compilation does no external I/O (existing bug)
 
@@ -261,7 +261,7 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
   - the `format` set (`form-mode.ts:1118-1121`);
   - the table in `docs-site/docs/features/meta-schemas.md`.
 - [ ] The browser-side crash fixes this lint backs up land earlier, in 1d.
-- [ ] Document, do not fix: `[meta]` ignores the `raw`/`none` opt-out (`src/webcomponents/meta-shortcode.ts:287-290`), and the display panel honours it.
+- [x] `[meta]` and the display panel now both honour the `raw`/`none` opt-out (fixed in step 1d, where `[meta]` gained the same effective-x-display rule as the panel); 2d's drift guard asserts both consumers agree.
 
 ### 2e. MRQL grounding and checks (item 6)
 

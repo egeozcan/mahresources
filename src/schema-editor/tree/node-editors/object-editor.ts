@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import type { JSONSchema } from '../../schema-core';
+import { inputText, typeChoice, type JSONSchema } from '../../schema-core';
 
 const PROP_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array'];
 
@@ -28,7 +28,7 @@ export class SchemaObjectEditor extends LitElement {
       if (pp && typeof pp === 'object') {
         this._patternProps = Object.entries(pp).map(([pattern, sub]: [string, any]) => ({
           pattern,
-          type: sub?.type || 'string',
+          type: typeChoice(sub?.type) || 'string',
         }));
       } else {
         this._patternProps = [];
@@ -98,14 +98,14 @@ export class SchemaObjectEditor extends LitElement {
           </div>
           <div>
             <label for="obj-min-props">Min Properties</label>
-            <input id="obj-min-props" type="number" min="0" .value=${this.schema.minProperties ?? ''} @change=${(e: Event) => {
+            <input id="obj-min-props" type="number" min="0" .value=${inputText(this.schema.minProperties)} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('minProperties', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>
             <label for="obj-max-props">Max Properties</label>
-            <input id="obj-max-props" type="number" min="0" .value=${this.schema.maxProperties ?? ''} @change=${(e: Event) => {
+            <input id="obj-max-props" type="number" min="0" .value=${inputText(this.schema.maxProperties)} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('maxProperties', v !== '' ? parseInt(v, 10) : undefined);
             }}>

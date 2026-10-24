@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { isLabeledEnum } from './schema-core';
+import { isLabeledEnum, isSchemaValue, countSchemaWork, typeChoice } from './schema-core';
 
 // ─── Schema Node ─────────────────────────────────────────────────────────────
 
@@ -71,14 +71,17 @@ export function getDefsPrefix(schemaUri: string | undefined, originalSchema?: JS
 // ─── Schema → Tree ───────────────────────────────────────────────────────────
 
 export function schemaToTree(schema: JSONSchema, name = '', parentRequired: string[] = []): SchemaNode {
+  countSchemaWork();
   // Handle nullable type arrays: ["string", "null"] → base type + preserved array
   let baseType: string = '';
   let nullableTypeArray: string[] | null = null;
   if (Array.isArray(schema.type)) {
     nullableTypeArray = schema.type;
-    baseType = schema.type.find((t: string) => t !== 'null') || '';
+    baseType = typeChoice(schema.type.find((t: unknown) => t !== 'null'));
   } else {
-    baseType = schema.type || '';
+    // node.type is shown and bound throughout the tree editor: only a
+    // string type is one (typeChoice), anything else is no type.
+    baseType = typeChoice(schema.type);
   }
 
   const node: SchemaNode = {
@@ -121,7 +124,7 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
       if (Array.isArray(schema[kw])) {
         node.compositionKeyword = kw;
         const variantNodes = (schema[kw] as JSONSchema[]).map((variant, i) =>
-          schemaToTree(variant, variant.title || `variant${i + 1}`),
+          schemaToTree(variant, (typeof variant.title === 'string' && variant.title) || `variant${i + 1}`),
         );
         node.variants = [...(node.variants || []), ...variantNodes];
         delete node.schema[kw];
@@ -144,9 +147,10 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   // Object with properties → children
   if (schema.properties) {
     const reqSet = schema.required || [];
-    const propChildren = Object.entries(schema.properties).map(([key, propSchema]) =>
-      schemaToTree(propSchema as JSONSchema, key, reqSet),
-    );
+    // A property schema that is not a schema (null, a number) is skipped.
+    const propChildren = Object.entries(schema.properties)
+      .filter(([, propSchema]) => isSchemaValue(propSchema))
+      .map(([key, propSchema]) => schemaToTree(propSchema as JSONSchema, key, reqSet));
     node.children = [...(node.children || []), ...propChildren];
   }
 

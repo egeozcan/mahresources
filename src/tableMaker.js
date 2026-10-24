@@ -368,8 +368,10 @@ function findTitledAncestor(el, table) {
     return null;
 }
 
+// True for a plain object, which can be a row of the column table. null is
+// excluded: typeof null is "object", and the column table reads el[title].
 function isRenderableAsArray(obj) {
-    return !(Array.isArray(obj) || typeof obj !== "object" || obj instanceof Date);
+    return !(obj === null || Array.isArray(obj) || typeof obj !== "object" || obj instanceof Date);
 }
 
 function escapeHTML(str) {

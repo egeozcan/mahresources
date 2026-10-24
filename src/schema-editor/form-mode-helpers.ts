@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth, onRefPath, followingSteps, expansionStep, mergeAllOf } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -16,15 +16,21 @@ import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum } from './
  * checking.
  */
 export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boolean {
+  // A $ref cycle is not a single control.
+  return withinDepth(false, () => isLeafSchemaUnguarded(schema, rootSchema));
+}
+
+function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boolean {
   // $ref: resolve and check the resolved schema
   if (schema.$ref) {
     if (!rootSchema) return false; // cannot resolve without root
+    if (onRefPath(schema)) return false; // a cycle
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (!resolved) return false;
     const siblings: JSONSchema = { ...schema };
     delete siblings.$ref;
     const merged = mergeSchemas(resolved, siblings);
-    return isLeafSchema(merged, rootSchema);
+    return followingSteps([expansionStep(schema)], () => isLeafSchema(merged, rootSchema));
   }
 
   // Labeled enum (oneOf with const+title) renders as a simple dropdown — it's a leaf
@@ -36,21 +42,8 @@ export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boole
 
   // allOf: merge all entries and check the merged result
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema | null;
-      if (sub.$ref) {
-        const refResult = rootSchema ? resolveRef(sub.$ref, rootSchema) : null;
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return isLeafSchema(merged, rootSchema);
+    const { merged, followed } = mergeAllOf(schema, rootSchema);
+    return followingSteps(followed, () => isLeafSchema(merged, rootSchema));
   }
 
   // Conditional schemas render nested sub-forms
@@ -102,6 +95,7 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
     if (resolved[keyword] && Array.isArray(resolved[keyword])) {
       let merged: JSONSchema = { ...resolved };
       delete merged[keyword];
+      const owned = new WeakSet<object>([merged]);
       for (const sub of resolved[keyword]) {
         let s: JSONSchema;
         if (sub.$ref && rootSchema) {
@@ -112,7 +106,7 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
         } else {
           s = sub;
         }
-        merged = mergeSchemas(merged, s);
+        merged = mergeSchemas(merged, s, 'intersect', owned);
       }
       resolved = merged;
       break; // Only process the first composition keyword found

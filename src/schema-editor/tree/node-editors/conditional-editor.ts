@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import type { JSONSchema } from '../../schema-core';
+import { safeJSON, type JSONSchema } from '../../schema-core';
 
 @customElement('schema-conditional-editor')
 export class SchemaConditionalEditor extends LitElement {
@@ -22,14 +22,14 @@ export class SchemaConditionalEditor extends LitElement {
         <div class="slot">
           <div class="slot-label" id="cond-if-label">if</div>
           <div class="slot-content" aria-labelledby="cond-if-label" role="region">
-            <pre><code>${JSON.stringify(this.schema.if, null, 2)}</code></pre>
+            <pre><code>${safeJSON(this.schema.if, 2)}</code></pre>
           </div>
         </div>
         ${this.schema.then ? html`
           <div class="slot">
             <div class="slot-label" id="cond-then-label">then</div>
             <div class="slot-content" aria-labelledby="cond-then-label" role="region">
-              <pre><code>${JSON.stringify(this.schema.then, null, 2)}</code></pre>
+              <pre><code>${safeJSON(this.schema.then, 2)}</code></pre>
             </div>
           </div>
         ` : ''}
@@ -37,7 +37,7 @@ export class SchemaConditionalEditor extends LitElement {
           <div class="slot">
             <div class="slot-label" id="cond-else-label">else</div>
             <div class="slot-content" aria-labelledby="cond-else-label" role="region">
-              <pre><code>${JSON.stringify(this.schema.else, null, 2)}</code></pre>
+              <pre><code>${safeJSON(this.schema.else, 2)}</code></pre>
             </div>
           </div>
         ` : ''}

@@ -23,13 +23,39 @@ export function unescapeJsonPointer(token: string): string {
 
 // ─── Ref resolution ──────────────────────────────────────────────────────────
 
+// ─── Own-property access ─────────────────────────────────────────────────────
+// Schema and data keys are arbitrary strings. obj[key] reads inherited members
+// ("constructor", "toString"), and assigning obj["__proto__"] sets the
+// prototype instead of a property. Use these wherever a key comes from a
+// schema or from stored data.
+
+/** Whether value can be a subschema: an object or a boolean (true/false schemas). */
+export function isSchemaValue(value: unknown): boolean {
+  return typeof value === 'boolean' || (value !== null && typeof value === 'object' && !Array.isArray(value));
+}
+
+/** Whether key is obj's own property. */
+export function hasOwn(obj: unknown, key: string): boolean {
+  return obj != null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/** obj[key] when key is obj's own property, else undefined. */
+export function ownValue(obj: unknown, key: string): any {
+  return hasOwn(obj, key) ? (obj as Record<string, unknown>)[key] : undefined;
+}
+
+/** Set key as an own data property of obj, "__proto__" included. */
+export function setOwn(obj: object, key: string, value: unknown): void {
+  Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
   if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
   const parts = ref.split('/').slice(1);
   let current: any = root;
   for (const part of parts) {
     const unescaped = unescapeJsonPointer(part);
-    if (current && typeof current === 'object' && unescaped in current) {
+    if (hasOwn(current, unescaped)) {
       current = current[unescaped];
     } else {
       return null;
@@ -38,30 +64,84 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
   return current;
 }
 
+// ─── Patterns ────────────────────────────────────────────────────────────────
+// JSON Schema patterns are ECMA-262 regular expressions with Unicode
+// semantics, so they compile with the u flag. A leading (?i), which the
+// server's Go regexp accepts, becomes the i flag. A pattern the u flag rejects
+// compiles without it, as at base, only when nothing in it means something
+// else there: \p, \P and \u{..} do. Anything else this browser cannot
+// compile is no constraint here (the server still enforces it), with one
+// warning per pattern; a pattern never gains a different meaning.
+
+const compiledPatterns = new Map<string, RegExp | null>();
+const MAX_COMPILED_PATTERNS = 500;
+const UNICODE_ONLY_ESCAPE = /\\[pP]|\\u\{/;
+
+function tryRegExp(source: string, flags: string): RegExp | null {
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+}
+
+/** pattern as a RegExp, or null when this browser cannot give it its meaning. Cached. */
+export function compilePattern(pattern: unknown): RegExp | null {
+  if (typeof pattern !== 'string') return null;
+  const cached = compiledPatterns.get(pattern);
+  if (cached !== undefined) return cached;
+  const caseless = pattern.startsWith('(?i)');
+  const source = caseless ? pattern.slice(4) : pattern;
+  const flags = caseless ? 'i' : '';
+  let compiled = tryRegExp(source, `u${flags}`);
+  if (!compiled && !UNICODE_ONLY_ESCAPE.test(source)) compiled = tryRegExp(source, flags);
+  if (!compiled) console.warn(`Ignoring a pattern this browser cannot compile: ${pattern}`);
+  if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear();
+  compiledPatterns.set(pattern, compiled);
+  return compiled;
+}
+
 // ─── Schema merging ──────────────────────────────────────────────────────────
 
-export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect'): JSONSchema {
-  const merged: JSONSchema = { ...base };
+/**
+ * base with extension merged over it. Neither argument is changed, except
+ * that a chain of merges (merged = mergeSchemas(merged, next, mode, owned))
+ * passes one owned set: the result and its properties object, both created by
+ * an earlier merge of the chain, are then updated in place instead of copied
+ * at every step, which made a long allOf quadratic.
+ */
+export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect', owned?: WeakSet<object>): JSONSchema {
+  countSchemaWork();
+  const merged: JSONSchema = owned?.has(base) ? base : { ...base };
+  owned?.add(merged);
   for (const key in extension) {
+    // A keyword value of a type no draft allows (an x-display of 7, a title
+    // of {}) never erases the valid value the base already has.
+    if (!keywordValueValid(key, extension[key])) continue;
     if (key === 'properties') {
       const baseProps = base.properties || {};
       const extProps = extension.properties || {};
-      merged.properties = { ...baseProps };
+      if (!(owned?.has(baseProps) && merged.properties === baseProps)) {
+        merged.properties = { ...baseProps };
+        owned?.add(merged.properties);
+      }
       for (const propKey in extProps) {
-        if (baseProps[propKey] && extProps[propKey]) {
-          const baseProp = baseProps[propKey];
-          const extProp = extProps[propKey];
+        const baseProp = ownValue(baseProps, propKey);
+        const extProp = extProps[propKey];
+        if (baseProp && extProp) {
 
           // Deep merge when both sides have nested properties or required
           if ((baseProp.properties && extProp.properties) ||
               (baseProp.required && extProp.required)) {
-            merged.properties[propKey] = mergeSchemas(baseProp, extProp, mode);
+            setOwn(merged.properties, propKey, mergeSchemas(baseProp, extProp, mode));
           } else {
             // Shallow merge with type/enum conflict resolution
             const baseType = baseProp.type;
             const extType = extProp.type;
             const numericTypes = new Set(['number', 'integer']);
-            const mergedProp = { ...baseProp, ...extProp };
+            // The same filter as the top level: an invalid value in extProp
+            // never erases a valid one in baseProp.
+            const mergedProp = { ...baseProp, ...validKeywords(extProp) };
             // Resolve type conflicts
             if (baseType && extType && baseType !== extType) {
               mergedProp.type = (numericTypes.has(baseType) && numericTypes.has(extType))
@@ -95,13 +175,16 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
             // exists on mergedProp. This is correct for allOf (the constraint
             // applies). For oneOf/anyOf, resolveSchema handles enum dropping
             // after merging all branches.
-            merged.properties[propKey] = mergedProp;
+            setOwn(merged.properties, propKey, mergedProp);
           }
         } else {
-          merged.properties[propKey] = extProps[propKey];
+          setOwn(merged.properties, propKey, extProp);
         }
       }
     } else if (key === 'required') {
+      // Charged like the composition copy below: a long chain of required
+      // lists is copied at every step.
+      countSchemaWork(Math.ceil(((base.required?.length ?? 0) + (extension.required?.length ?? 0)) / 64));
       merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
     } else if (key === '$ref') {
       // $ref is never copied — it must be resolved before merging
@@ -110,12 +193,16 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       // Otherwise copy from extension. This preserves nested constraints
       // like spec.allOf:[{required:['height']}] during deep property merge.
       if (merged[key] && Array.isArray(merged[key])) {
+        // Copying a branch costs far less than visiting a node, so it counts
+        // as 1/64 of a visit: a doubling list still reaches the budget in
+        // about a tenth of a second instead of copying for seconds first.
+        countSchemaWork(Math.ceil((merged[key].length + extension[key].length) / 64));
         merged[key] = [...merged[key], ...extension[key]];
       } else {
         merged[key] = extension[key];
       }
     } else {
-      merged[key] = extension[key];
+      setOwn(merged, key, extension[key]);
     }
   }
   return merged;
@@ -123,10 +210,410 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
 
 // ─── Schema resolution (composition keywords) ───────────────────────────────
 
+// ─── Reference cycles ────────────────────────────────────────────────────────
+// A $ref cycle (a definition that refers to itself, directly, through another
+// definition or through allOf) is valid JSON Schema.
+//
+// Every walker shares one mechanism: the live ancestry of the expansion steps
+// it is in. A step is a $ref being expanded, or a composition branch's $ref
+// resolved within the schema holding it; it is pushed when its expansion
+// starts and popped when it returns (followingSteps), so sibling expansions
+// never share entries, and references merged in from sibling branches are not
+// ancestors of one another.
+//
+// A step is identified by the schema it expands, by content: the
+// referencing node with every sibling merged into it ({$ref Node} at an items
+// position and {$ref Node, properties: {kind: {default: "leaf"}}} in a then
+// are different steps), and for a composition branch the schema holding the
+// composition as well (its other keywords and its distinct branches as a set:
+// merging concatenates allOf lists into [a, a, a, a]). Every walker is a
+// function of that schema, so a step that repeats on the ancestry would repeat
+// forever; it is a cycle and left unresolved (resolveSchema: null, the default
+// builders: the node's own default, evaluateCondition: true, isLeafSchema:
+// false, the form: its unresolved-reference message). A reference reused
+// finitely, by a sibling or through a merge, is a different step and is
+// expanded, as at base. A walker that descends into a stored value (null
+// included) starts a fresh ancestry there (onFreshRefPath), because the
+// data's own depth bounds that recursion. The work budget stays the backstop
+// for an expansion that grows instead of repeating. canonicalJSON charges each
+// node it reads and caches each object within the operation.
+
+/** A step: its key, and the $ref it expands. */
+export type ExpansionStep = readonly [key: string, ref: unknown];
+
+/** The live ancestry: step key → the $ref the step expands. */
+let stepPath = new Map<string, unknown>();
+
+// Per root, within one top-level operation only (like canonicalKeys): the
+// tree editor edits a root in place, so a classification kept across
+// operations would describe a schema that no longer exists.
+let recursiveRefsByRoot: WeakMap<object, Set<unknown>> | null = null;
+
+// Keywords whose values are subschemas. Annotation and data keywords
+// (examples, default, const, enum, unknown x-* keywords) are never followed: a
+// "$ref" key inside them is data, not a reference.
+const SUBSCHEMA_KEYWORDS = ['additionalProperties', 'items', 'contains', 'not', 'if', 'then', 'else', 'contentSchema',
+  'propertyNames', 'additionalItems', 'unevaluatedItems', 'unevaluatedProperties'];
+const SUBSCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems', 'items'];
+// dependencies (draft-04 to 07) maps a property either to a schema or to an
+// array of property names; only the schema values are followed.
+const SUBSCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
+
+/**
+ * Call visit on schema and on every subschema it holds, at schema-bearing
+ * keywords only, depth first in keyword order. Iterative, so a deeply nested
+ * schema cannot overflow the stack.
+ */
+export function visitSubschemas(schema: unknown, visit: (subschema: JSONSchema) => void): void {
+  const pending: unknown[] = [schema];
+  while (pending.length) {
+    const next = pending.pop();
+    if (next === null || typeof next !== 'object' || Array.isArray(next)) continue;
+    const s = next as JSONSchema;
+    visit(s);
+    const children: unknown[] = [];
+    for (const key of SUBSCHEMA_KEYWORDS) children.push(ownValue(s, key));
+    for (const key of SUBSCHEMA_LIST_KEYWORDS) {
+      const list = ownValue(s, key);
+      if (Array.isArray(list)) children.push(...list);
+    }
+    for (const key of SUBSCHEMA_MAP_KEYWORDS) {
+      const map = ownValue(s, key);
+      if (map !== null && typeof map === 'object' && !Array.isArray(map)) children.push(...Object.values(map));
+    }
+    for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]);
+  }
+}
+
+/** Every $ref of schema and of the subschemas it holds; each subschema visited counts as work. */
+function refsWithin(schema: unknown, into: Set<string>): Set<string> {
+  visitSubschemas(schema, s => {
+    countSchemaWork();
+    if (typeof s.$ref === 'string') into.add(s.$ref);
+  });
+  return into;
+}
+
+/**
+ * The references of root that can reach themselves through its $ref graph: a
+ * reference with an edge to itself, or one in a strongly connected component
+ * of more than one reference. One iterative Tarjan pass, linear in the graph
+ * and charged to the work budget per reference and per edge.
+ */
+function recursiveRefs(root: JSONSchema): Set<unknown> {
+  const cached = recursiveRefsByRoot?.get(root);
+  if (cached) return cached;
+  const edges = new Map<string, Set<string>>();
+  const pending = [...refsWithin(root, new Set())];
+  while (pending.length) {
+    const ref = pending.pop()!;
+    if (edges.has(ref)) continue;
+    const next = refsWithin(resolveRef(ref, root), new Set());
+    countSchemaWork(1 + next.size);
+    edges.set(ref, next);
+    pending.push(...next);
+  }
+
+  const recursive = new Set<unknown>();
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const component: string[] = [];
+  let counter = 0;
+  const enter = (ref: string, frames: Array<[string, Iterator<string>]>) => {
+    index.set(ref, counter);
+    low.set(ref, counter);
+    counter++;
+    component.push(ref);
+    onStack.add(ref);
+    frames.push([ref, edges.get(ref)!.values()]);
+  };
+  for (const start of edges.keys()) {
+    if (index.has(start)) continue;
+    const frames: Array<[string, Iterator<string>]> = [];
+    enter(start, frames);
+    while (frames.length) {
+      const [ref, targets] = frames[frames.length - 1];
+      const step = targets.next();
+      if (!step.done) {
+        const target = step.value;
+        if (target === ref) recursive.add(ref);
+        if (!index.has(target)) enter(target, frames);
+        else if (onStack.has(target)) low.set(ref, Math.min(low.get(ref)!, index.get(target)!));
+        continue;
+      }
+      frames.pop();
+      if (frames.length) {
+        const parent = frames[frames.length - 1][0];
+        low.set(parent, Math.min(low.get(parent)!, low.get(ref)!));
+      }
+      if (low.get(ref) !== index.get(ref)) continue;
+      const members: string[] = [];
+      let member: string;
+      do {
+        member = component.pop()!;
+        onStack.delete(member);
+        members.push(member);
+      } while (member !== ref);
+      if (members.length > 1) members.forEach(m => recursive.add(m));
+    }
+  }
+  recursiveRefsByRoot?.set(root, recursive);
+  return recursive;
+}
+
+/**
+ * The identity of a schema holding a composition (keyword), for its branch
+ * steps: its other keywords, and its distinct branches as a set.
+ */
+export function compositionKey(container: JSONSchema, keyword: 'allOf' | 'anyOf' | 'oneOf' = 'allOf'): string {
+  return `${keyword}\u0000${stepContent(container)}`;
+}
+
+const COMPOSITION_KEYWORDS = ['allOf', 'anyOf', 'oneOf'];
+
+/**
+ * The content of a schema as a step identity: canonicalJSON, except that
+ * its own composition lists count as sets of distinct branches. Merging
+ * concatenates those lists, so a schema that refers to itself through one
+ * comes back with its branches repeated ([a, a] then [a, a, a, a]) and must
+ * still be recognised as the same step.
+ */
+function stepContent(schema: JSONSchema): string {
+  const rest: JSONSchema = { ...schema };
+  const sets: string[] = [];
+  for (const keyword of COMPOSITION_KEYWORDS) {
+    const branches = ownValue(schema, keyword);
+    if (!Array.isArray(branches)) continue;
+    delete rest[keyword];
+    sets.push(`${keyword}:${JSON.stringify([...new Set(branches.map((branch: unknown) => canonicalJSON(branch)))].sort())}`);
+  }
+  return `${canonicalJSON(rest)}\u0000${sets.join('\u0000')}`;
+}
+
+/** The step of expanding node's $ref, or of a composition branch node within the container whose key is given. */
+export function expansionStep(node: JSONSchema, containerKey?: string): ExpansionStep {
+  const key = containerKey === undefined ? stepContent(node) : `${containerKey}\u0000${stepContent(node)}`;
+  return [key, node.$ref];
+}
+
+/** Whether expanding node (within the container, for a branch) repeats a step on the live ancestry: a cycle. */
+export function onRefPath(node: JSONSchema, containerKey?: string): boolean {
+  if (stepPath.size === 0) return false;
+  return stepPath.has(expansionStep(node, containerKey)[0]);
+}
+
+/** Run walk with steps on the live ancestry, popped when it returns. */
+export function followingSteps<T>(steps: readonly ExpansionStep[], walk: () => T): T {
+  const added: string[] = [];
+  try {
+    // Registered inside the try: a later step's key can run out of budget,
+    // and the steps already added must still come off.
+    for (const [key, ref] of steps) {
+      if (stepPath.has(key)) continue;
+      stepPath.set(key, ref);
+      added.push(key);
+    }
+    return walk();
+  } finally {
+    added.forEach(key => stepPath.delete(key));
+  }
+}
+
+/** Run walk on a fresh path: for a walker descending into a stored value. */
+export function onFreshRefPath<T>(walk: () => T): T {
+  const saved = stepPath;
+  stepPath = new Map();
+  try {
+    return walk();
+  } finally {
+    stepPath = saved;
+  }
+}
+
+/**
+ * schema with its allOf branches merged in, each branch's $ref resolved one
+ * level. A branch whose step repeats one on the live ancestry is a cycle, so
+ * only its sibling keywords are merged. The steps followed go on the
+ * ancestry for the walker's recursion into the result:
+ * followingSteps(followed, ...).
+ */
+export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merged: JSONSchema; followed: ExpansionStep[] } {
+  let merged: JSONSchema = { ...schema };
+  delete merged.allOf;
+  const owned = new WeakSet<object>([merged]);
+  const followed: ExpansionStep[] = [];
+  const containerKey = compositionKey(schema, 'allOf');
+  for (const sub of schema.allOf) {
+    countSchemaWork();
+    let resolved: JSONSchema;
+    if (sub.$ref) {
+      const step = expansionStep(sub, containerKey);
+      const refResult = stepPath.has(step[0]) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
+      const siblings: JSONSchema = { ...sub };
+      delete siblings.$ref;
+      resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+      if (refResult) followed.push(step);
+    } else {
+      resolved = sub;
+    }
+    if (resolved) merged = mergeSchemas(merged, resolved, 'intersect', owned);
+  }
+  return { merged, followed };
+}
+
+// A last resort against a stack overflow on pathological acyclic input (a
+// thousand nested allOf layers); real schemas never come close.
+const MAX_SCHEMA_DEPTH = 1000;
+let schemaDepth = 0;
+
+export function withinDepth<T>(atLimit: T, walk: () => T): T {
+  if (schemaDepth >= MAX_SCHEMA_DEPTH) return atLimit;
+  const outermost = schemaDepth === 0;
+  schemaDepth++;
+  try {
+    if (outermost) {
+      walkMemo = new Map();
+      if (budgetScopes === 0) {
+        workDone = 0;
+        canonicalKeys = new WeakMap();
+        recursiveRefsByRoot = new WeakMap();
+      }
+    }
+    countSchemaWork();
+    return walk();
+  } finally {
+    schemaDepth--;
+    if (schemaDepth === 0) {
+      walkMemo = null;
+      if (budgetScopes === 0) {
+        canonicalKeys = null;
+        recursiveRefsByRoot = null;
+      }
+    }
+  }
+}
+
+// ─── Work budget ─────────────────────────────────────────────────────────────
+// References let a schema describe work far larger than its written size: a
+// chain like aN = anyOf [ref aN+1, ref aN+1], or a diamond of references to
+// the same next level, doubles at every level. Rather than special-case each
+// shape (every special case changed some result), the walkers count the work
+// they do (one unit per node visited), and past a generous budget they throw
+// SchemaTooComplexError. A doubling chain is cut at around 13 to 14 levels
+// (thousands of merged branches), within a fraction of a second, while every
+// normal schema, including 10,002 properties, stays far below it. The
+// budget covers one top-level operation: one render of the display panel,
+// form, search fields, tree editor or a [meta] element (withSchemaBudget), or
+// one top-level walker call outside those. Every entry point catches the error
+// and shows the raw value with "Schema too complex to display": a visible
+// failure, never a silently truncated result. Real schemas stay far below it.
+
+export const SCHEMA_WORK_BUDGET = 1_000_000;
+
+export class SchemaTooComplexError extends Error {
+  constructor() {
+    super(`Schema too complex: more than ${SCHEMA_WORK_BUDGET} schema nodes visited`);
+    this.name = 'SchemaTooComplexError';
+  }
+}
+
+let workDone = 0;
+let budgetScopes = 0;
+
+/** Run one top-level operation under a fresh work budget. */
+export function withSchemaBudget<T>(operation: () => T): T {
+  const outermost = budgetScopes === 0;
+  // The walk state as the operation found it: restored afterwards whatever
+  // happened, so a budget error thrown mid-walk leaves no depth, memo,
+  // reference path or cached value key behind for the next render.
+  const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Map(stepPath) : stepPath;
+  const savedKeys = canonicalKeys, savedRecursion = recursiveRefsByRoot;
+  if (outermost) {
+    workDone = 0;
+    canonicalKeys = new WeakMap();
+    recursiveRefsByRoot = new WeakMap();
+  }
+  budgetScopes++;
+  try {
+    return operation();
+  } finally {
+    budgetScopes--;
+    if (outermost) {
+      schemaDepth = savedDepth;
+      walkMemo = savedMemo;
+      stepPath = savedPath;
+      canonicalKeys = savedKeys;
+      recursiveRefsByRoot = savedRecursion;
+    }
+  }
+}
+
+/** The work counted in the current (or last) top-level operation. */
+export function schemaWorkDone(): number {
+  return workDone;
+}
+
+/** Count amount units of walker work; throws past the budget. Outside any operation it does nothing. */
+export function countSchemaWork(amount = 1): void {
+  if (budgetScopes === 0 && schemaDepth === 0) return;
+  workDone += amount;
+  if (workDone > SCHEMA_WORK_BUDGET) throw new SchemaTooComplexError();
+}
+
+// ─── Shared subtrees ─────────────────────────────────────────────────────────
+// Two walkers avoid repeating identical work without changing any result:
+// scoring takes a best score, which byte-identical branches cannot change, and
+// evaluateCondition evaluates a referenced subtree once per value within one
+// top-level walk (memoized; skipped wherever the reference path matters).
+
+/** branches without byte-identical repeats. */
+export function distinctBranches<T>(branches: readonly T[]): T[] {
+  countSchemaWork(branches.length);
+  const seen = new Set<string>();
+  return branches.filter(branch => {
+    const key = JSON.stringify(branch);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+let walkMemo: Map<string, Map<object, Map<unknown, unknown>>> | null = null;
+
+/** canonicalJSON's text per object, within one top-level operation only. */
+let canonicalKeys: WeakMap<object, string> | null = null;
+
+/**
+ * compute's result for (kind, target, data), computed once per top-level walk.
+ * target is a resolved $ref target. Only used when the result cannot depend
+ * on the reference path: neither ref nor any reference on the path is
+ * recursive (see onRefPath).
+ */
+function memoized<T>(kind: string, target: object, data: unknown, ref: unknown, root: JSONSchema, compute: () => T): T {
+  if (!walkMemo) return compute();
+  const recursive = recursiveRefs(root);
+  if (recursive.has(ref)) return compute();
+  for (const onPath of stepPath.values()) if (recursive.has(onPath)) return compute();
+  let byTarget = walkMemo.get(kind);
+  if (!byTarget) walkMemo.set(kind, (byTarget = new Map()));
+  let byData = byTarget.get(target);
+  if (!byData) byTarget.set(target, (byData = new Map()));
+  if (byData.has(data)) return byData.get(data) as T;
+  const result = compute();
+  byData.set(data, result);
+  return result;
+}
+
 export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
+  return withinDepth(null, () => resolveSchemaUnguarded(schema, rootSchema));
+}
+
+function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
   if (!schema) return schema;
 
   if (schema.$ref) {
+    if (onRefPath(schema)) return null;
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
       // Use mergeSchemas to properly combine ref target with sibling keywords,
@@ -134,22 +621,38 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return resolveSchema(merged, rootSchema);
+      return followingSteps([expansionStep(schema)], () => resolveSchema(merged, rootSchema));
     }
     return null;
   }
 
   for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
     if (schema[keyword] && Array.isArray(schema[keyword])) {
+      // A labeled enum is the oneOf itself: merging its alternatives would
+      // leave only the last const and title, and lose every label. Keep it
+      // whole, but still resolve every sibling keyword (anyOf, annotations
+      // such as x-display, title, description) around it.
+      if (keyword === 'oneOf' && isLabeledEnum(schema)) {
+        const rest: JSONSchema = { ...schema };
+        delete rest.oneOf;
+        const resolvedRest = resolveSchema(rest, rootSchema) ?? rest;
+        return { ...resolvedRest, oneOf: schema.oneOf };
+      }
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
+      const owned = new WeakSet<object>([merged]);
+      const followed: ExpansionStep[] = [];
+      const containerKey = compositionKey(schema, keyword);
       for (const sub of schema[keyword]) {
+        countSchemaWork();
         let resolved: JSONSchema | null;
         if (sub.$ref) {
-          const refResult = resolveRef(sub.$ref, rootSchema);
+          const step = expansionStep(sub, containerKey);
+          const refResult = stepPath.has(step[0]) ? null : resolveRef(sub.$ref, rootSchema);
           const siblings: JSONSchema = { ...sub };
           delete siblings.$ref;
           resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+          if (refResult) followed.push(step);
         } else {
           resolved = sub;
         }
@@ -157,7 +660,7 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
           // For oneOf/anyOf, branches are alternatives — union their enums.
           // For allOf, branches are constraints — intersect (the default).
           const branchMode = keyword === 'allOf' ? 'intersect' : 'union' as const;
-          merged = mergeSchemas(merged, resolved, branchMode);
+          merged = mergeSchemas(merged, resolved, branchMode, owned);
         }
       }
 
@@ -192,7 +695,13 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
         }
       }
 
-      return resolveSchema(merged, rootSchema);
+      // An alternative's title names that alternative, not the property.
+      if (keyword !== 'allOf') {
+        if (schema.title === undefined) delete merged.title;
+        else merged.title = schema.title;
+      }
+
+      return followingSteps(followed, () => resolveSchema(merged, rootSchema));
     }
   }
 
@@ -224,15 +733,24 @@ export function inferSchema(val: unknown): JSONSchema {
 // ─── Condition evaluation ────────────────────────────────────────────────────
 
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
+  return withinDepth(true, () => evaluateConditionUnguarded(conditionSchema, data, rootSchema));
+}
+
+function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
   if (!conditionSchema) return true;
 
   // ── Resolve $ref before any checks ────────────────────────────────────
   if (conditionSchema.$ref && rootSchema) {
+    if (onRefPath(conditionSchema)) return true;
     const resolved = resolveRef(conditionSchema.$ref, rootSchema);
     if (resolved) {
       const siblings: JSONSchema = { ...conditionSchema };
       delete siblings.$ref;
-      return evaluateCondition(mergeSchemas(resolved, siblings), data, rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      const ref = conditionSchema.$ref;
+      const step = expansionStep(conditionSchema);
+      const evaluate = () => followingSteps([step], () => evaluateCondition(merged, data, rootSchema));
+      return Object.keys(siblings).length ? evaluate() : memoized('condition', resolved, data, ref, rootSchema, evaluate);
     }
   }
 
@@ -294,7 +812,8 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   if (conditionSchema.maxLength !== undefined && (typeof data !== 'string' || data.length > conditionSchema.maxLength)) return false;
   if (conditionSchema.pattern) {
     if (typeof data === 'string') {
-      try { if (!new RegExp(conditionSchema.pattern).test(data)) return false; } catch { /* invalid regex — skip */ }
+      const re = compilePattern(conditionSchema.pattern);
+      if (re && !re.test(data)) return false;
     }
   }
 
@@ -305,7 +824,7 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   // Check required — all listed keys must be present and non-undefined
   if (conditionSchema.required && Array.isArray(conditionSchema.required)) {
     for (const key of conditionSchema.required) {
-      if (data?.[key] === undefined) return false;
+      if (ownValue(data, key) === undefined) return false;
     }
   }
 
@@ -316,7 +835,7 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   if (conditionSchema.properties) {
     for (const key in conditionSchema.properties) {
       let propSchema = conditionSchema.properties[key];
-      const value = data?.[key];
+      const value = ownValue(data, key);
 
       // Resolve property-level $ref
       if (propSchema.$ref && rootSchema) {
@@ -333,7 +852,8 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
 
       // Recurse into nested object properties or composition schemas
       if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf || propSchema.not) {
-        if (!evaluateCondition(propSchema, value, rootSchema)) return false;
+        // Descending into the stored value: a fresh reference path.
+        if (!onFreshRefPath(() => evaluateCondition(propSchema, value, rootSchema))) return false;
         continue;
       }
 
@@ -369,7 +889,8 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
 
       // pattern for strings
       if (propSchema.pattern && typeof value === 'string') {
-        try { if (!new RegExp(propSchema.pattern).test(value)) return false; } catch { /* invalid regex — skip */ }
+        const re = compilePattern(propSchema.pattern);
+        if (re && !re.test(value)) return false;
       }
 
       // minItems/maxItems for arrays
@@ -384,6 +905,10 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
 // ─── Schema match scoring ────────────────────────────────────────────────────
 
 export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: JSONSchema): number {
+  return withinDepth(0, () => scoreSchemaMatchUnguarded(schema, data, rootSchema));
+}
+
+function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema: JSONSchema): number {
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
@@ -399,11 +924,12 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
   if (schema.allOf && Array.isArray(schema.allOf)) {
     let merged: JSONSchema = { ...schema };
     delete merged.allOf;
+    const owned = new WeakSet<object>([merged]);
     for (const sub of schema.allOf) {
       const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
       if (resolved) {
         const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
+        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved, 'intersect', owned);
       }
     }
     schema = merged;
@@ -415,7 +941,11 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         delete siblings[kw];
 
         let bestScore = -1;
-        for (const sub of schema[kw]) {
+        const containerKey = compositionKey(schema, kw);
+        for (const sub of distinctBranches(schema[kw] as any[])) {
+          // A branch repeating a step on the live ancestry is a cycle.
+          const step = sub.$ref ? expansionStep(sub, containerKey) : null;
+          if (step && stepPath.has(step[0])) continue;
           const resolved = sub.$ref ? (() => {
             const r = resolveRef(sub.$ref, rootSchema);
             const s: JSONSchema = { ...sub }; delete s.$ref;
@@ -423,7 +953,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
           })() : sub;
           // Merge branch with sibling properties for scoring
           const branchSchema = mergeSchemas(siblings, resolved);
-          const branchScore = scoreSchemaMatch(branchSchema, data, rootSchema);
+          const branchScore = followingSteps(step ? [step] : [], () => scoreSchemaMatch(branchSchema, data, rootSchema));
           if (branchScore > bestScore) bestScore = branchScore;
         }
         return bestScore >= 0 ? bestScore : 0;
@@ -431,7 +961,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     }
   }
 
-  if (schema.const !== undefined) return schema.const === data ? 100 : 0;
+  if (schema.const !== undefined) return sameValue(schema.const, data) ? 100 : 0;
 
   const dataType = inferType(data);
   let schemaType = schema.type;
@@ -458,18 +988,18 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     // recursing into nested objects for deep discriminators.
     for (const [key, propSchema] of Object.entries(schema.properties)) {
       const ps = propSchema as Record<string, any>;
-      const val = (data as Record<string, any>)[key];
+      const val = ownValue(data, key);
       if (val === undefined) continue;
 
       // const match: strong signal for discriminated unions
       if (ps.const !== undefined) {
-        if (val === ps.const) score += 50;
+        if (sameValue(val, ps.const)) score += 50;
         else return 0; // Definite mismatch — this variant cannot match
       }
 
       // enum match
       if (ps.enum && Array.isArray(ps.enum)) {
-        if (ps.enum.includes(val)) score += 20;
+        if (ps.enum.some((member: unknown) => sameValue(member, val))) score += 20;
         else return 0; // Value not in allowed enum — cannot match
       }
 
@@ -489,11 +1019,12 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         // allOf: merge all (all constraints apply simultaneously)
         let merged: JSONSchema = { ...resolvedProp };
         delete merged.allOf;
+        const owned = new WeakSet<object>([merged]);
         for (const sub of resolvedProp.allOf) {
           const r = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
           if (r) {
             const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-            merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r);
+            merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r, 'intersect', owned);
           }
         }
         resolvedProp = merged;
@@ -510,7 +1041,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             const metadataOnly = ['title', 'description', 'examples', 'deprecated', 'readOnly', 'writeOnly', 'default', '$comment'];
             const hasSiblingConstraints = Object.keys(siblingSchema).some(k => !metadataOnly.includes(k));
             if (hasSiblingConstraints) {
-              const siblingScore = scoreSchemaMatch(siblingSchema, val, rootSchema);
+              const siblingScore = onFreshRefPath(() => scoreSchemaMatch(siblingSchema, val, rootSchema));
               if (siblingScore === 0) return 0; // Sibling constraint mismatch
               score += siblingScore - 10; // Subtract base to avoid double-counting
             }
@@ -518,7 +1049,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             // Score composition branches independently
             let bestBranchScore = -1;
             for (const sub of resolvedProp[kw]) {
-              const branchScore = scoreSchemaMatch(sub, val, rootSchema);
+              const branchScore = onFreshRefPath(() => scoreSchemaMatch(sub, val, rootSchema));
               if (branchScore > bestBranchScore) bestBranchScore = branchScore;
             }
             if (bestBranchScore === 0) return 0;
@@ -531,7 +1062,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
 
       // Recurse into nested objects for deep discriminators
       if (resolvedProp.properties && typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        const nestedScore = scoreSchemaMatch(resolvedProp, val, rootSchema);
+        const nestedScore = onFreshRefPath(() => scoreSchemaMatch(resolvedProp, val, rootSchema));
         if (nestedScore === 0) return 0; // Nested discriminator mismatch
         score += nestedScore - 10; // Subtract base score to avoid double-counting
       }
@@ -566,31 +1097,28 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
 // ─── Default values ──────────────────────────────────────────────────────────
 
 export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): any {
+  return withinDepth(undefined, () => getDefaultValueUnguarded(schema, rootSchema));
+}
+
+function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
+    // A repeat of a reference being expanded on this build's stack is not
+    // expanded again, but its own default still applies, as it would over
+    // the expanded target.
+    if (onRefPath(schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
-      return getDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      return followingSteps([expansionStep(schema)], () => getDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema;
-      if (sub.$ref) {
-        const refResult = resolveRef(sub.$ref, rootSchema || schema);
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return getDefaultValue(merged, rootSchema);
+    const root = rootSchema || schema;
+    const { merged, followed } = mergeAllOf(schema, root);
+    return followingSteps(followed, () => getDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {
@@ -615,7 +1143,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     if (!schema.properties) return {};
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -643,7 +1171,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
   if (schema.properties) {
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -664,31 +1192,28 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
  * to [] (no items to seed). enum/const/$ref still resolve their explicit value.
  */
 export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): any {
+  return withinDepth(undefined, () => getPreviewDefaultValueUnguarded(schema, rootSchema));
+}
+
+function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
+    // A repeat of a reference being expanded on this build's stack is not
+    // expanded again, but its own default still applies, as it would over
+    // the expanded target.
+    if (onRefPath(schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
-      return getPreviewDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      return followingSteps([expansionStep(schema)], () => getPreviewDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema;
-      if (sub.$ref) {
-        const refResult = resolveRef(sub.$ref, rootSchema || schema);
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return getPreviewDefaultValue(merged, rootSchema);
+    const root = rootSchema || schema;
+    const { merged, followed } = mergeAllOf(schema, root);
+    return followingSteps(followed, () => getPreviewDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {
@@ -713,7 +1238,7 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
     if (!schema.properties) return {};
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getPreviewDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -743,7 +1268,7 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
   if (schema.properties) {
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getPreviewDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -784,9 +1309,246 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
   if (!schema.oneOf) return [];
   return schema.oneOf.map((entry: JSONSchema) => ({
     value: entry.const,
-    label: entry.title || String(entry.const),
-    ...(entry['x-color'] ? { color: entry['x-color'] } : {}),
+    label: (typeof entry.title === 'string' && entry.title) || valueText(entry.const),
+    ...(safeColor(entry['x-color']) ? { color: entry['x-color'] } : {}),
   }));
+}
+
+/**
+ * A schema const, enum entry, default or stored value as text. Primitives keep
+ * their String() form; a non-primitive goes through JSON, because String() and
+ * Lit's attribute and .value coercion throw on a parsed {"toString":null} and
+ * turn every other object into the same "[object Object]".
+ */
+export function valueText(value: unknown): string {
+  return value !== null && typeof value === 'object' ? safeJSON(value) : String(value);
+}
+
+/**
+ * A schema's type as a single choice for a select: the type when it is a
+ * string, otherwise '' (no choice). A nested schema the editor shows, such
+ * as items, contains or a prefix item, is never typed by withTypedKeywords,
+ * and binding a non-string type to a select's value throws inside the child
+ * element, outside every boundary.
+ */
+export function typeChoice(type: unknown): string {
+  return typeof type === 'string' ? type : '';
+}
+
+/** What a serialiser shows for a value it cannot serialise. */
+export const UNSHOWABLE_VALUE = '(value too deep to show)';
+
+/**
+ * JSON.stringify(value, null, space) that never throws: a value too deep for
+ * the stack, or one whose toJSON throws, gives UNSHOWABLE_VALUE. Child
+ * elements (tree node editors, pills) render outside every schema
+ * boundary, so a throw there would escape. The text counts as work, at
+ * 1/64 per character; past the budget the placeholder is shown as well.
+ */
+export function safeJSON(value: unknown, space?: number): string {
+  try {
+    const text = JSON.stringify(value, null, space);
+    if (text === undefined) return String(value);
+    countSchemaWork(Math.ceil(text.length / 64));
+    return text;
+  } catch {
+    return UNSHOWABLE_VALUE;
+  }
+}
+
+const isNumber = (v: unknown) => typeof v === 'number';
+const isString = (v: unknown) => typeof v === 'string';
+
+/**
+ * The value type each checked keyword allows, as the union across draft-04,
+ * draft-07 and 2020-12 (where the drafts differ, both forms are allowed).
+ * Keywords not listed are never checked.
+ */
+const KEYWORD_TYPES: Record<string, (value: unknown) => boolean> = {
+  minimum: isNumber,
+  maximum: isNumber,
+  multipleOf: isNumber,
+  // A number from draft-06 on; a boolean modifier of minimum/maximum in draft-04.
+  exclusiveMinimum: v => isNumber(v) || typeof v === 'boolean',
+  exclusiveMaximum: v => isNumber(v) || typeof v === 'boolean',
+  minLength: isNumber,
+  maxLength: isNumber,
+  minItems: isNumber,
+  maxItems: isNumber,
+  minProperties: isNumber,
+  maxProperties: isNumber,
+  title: isString,
+  description: isString,
+  patternDescription: isString,
+  pattern: isString,
+  format: isString,
+  type: v => isString(v) || (Array.isArray(v) && v.every(isString)),
+  'x-display': isString,
+  'x-color': v => safeColor(v) !== undefined,
+};
+
+/** False only for a checked keyword holding a value of a type no draft allows. */
+export function keywordValueValid(key: string, value: unknown): boolean {
+  return !hasOwn(KEYWORD_TYPES, key) || KEYWORD_TYPES[key](value);
+}
+
+/** schema without the keywords keywordValueValid rejects. */
+function validKeywords(schema: JSONSchema): JSONSchema {
+  const out: JSONSchema = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (keywordValueValid(key, value)) setOwn(out, key, value);
+  }
+  return out;
+}
+
+/**
+ * A copy of schema that renderers can read safely.
+ *
+ * - Keywords holding a value of a type no draft allows are dropped: a
+ *   non-number minimum or maxLength, a non-string title, pattern, format or
+ *   x-display, a type that is not a string or an array of strings. A
+ *   hand-written schema can hold any JSON there, and a renderer would coerce
+ *   it into text, an attribute, a comparison or a RegExp.
+ * - A draft-04 boolean exclusiveMinimum/exclusiveMaximum is normalised to the
+ *   draft-06+ form: true with a numeric minimum becomes exclusiveMinimum set to
+ *   that bound; false, or true with no bound, leaves the inclusive bound alone.
+ *
+ * Renderers read a property schema through this; the tree editor, which edits
+ * the schema itself, shows the raw values through inputText instead.
+ */
+export function withTypedKeywords(schema: JSONSchema): JSONSchema {
+  if (!schema || typeof schema !== 'object') return schema;
+  let copy: JSONSchema | null = null;
+  const edit = (): JSONSchema => (copy ??= { ...schema });
+  for (const key of Object.keys(KEYWORD_TYPES)) {
+    if (hasOwn(schema, key) && !keywordValueValid(key, schema[key])) delete edit()[key];
+  }
+  for (const [flag, bound] of [['exclusiveMinimum', 'minimum'], ['exclusiveMaximum', 'maximum']] as const) {
+    const current = copy ?? schema;
+    if (typeof current[flag] !== 'boolean') continue;
+    const target = edit();
+    if (current[flag] && typeof current[bound] === 'number') {
+      target[flag] = current[bound];
+      delete target[bound];
+    } else {
+      delete target[flag];
+    }
+  }
+  return copy ?? schema;
+}
+
+/** valueText for an input's .value: an absent value (undefined or null) is the empty string. */
+export function inputText(value: unknown): string {
+  return value === undefined || value === null ? '' : valueText(value);
+}
+
+/**
+ * A type-tagged identity for a JSON value. Equal keys mean equal values, and
+ * object key order does not matter ({b:2,a:1} equals {a:1,b:2}), while values
+ * that print alike stay apart: {"a":1} and the string '{"a":1}', or 1 and "1".
+ * Compare, sort and dedupe raw values through this, never directly.
+ */
+export function valueKey(value: unknown): string {
+  return `${jsonKind(value)}:${canonicalJSON(value)}`;
+}
+
+function jsonKind(value: unknown): string {
+  return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+}
+
+/**
+ * JSON with every object's keys sorted, recursively; array order is kept.
+ * Each node counts as work, and within one operation an object's text is
+ * computed once (canonicalKeys); outside one nothing is cached, so a value
+ * mutated between calls is read afresh.
+ */
+function canonicalJSON(value: unknown): string {
+  try {
+    return canonicalJSONUnguarded(value);
+  } catch (error) {
+    // A budget error is the walkers' to handle; anything else (a value too
+    // deep for the stack) gives the value a key equal only to itself.
+    if (error instanceof SchemaTooComplexError) throw error;
+    return unshowableKey(value);
+  }
+}
+
+const unshowableKeys = new WeakMap<object, string>();
+let unshowableCount = 0;
+
+/** A key for a value canonicalJSON cannot read: equal only to the same object's key. */
+function unshowableKey(value: unknown): string {
+  if (value === null || typeof value !== 'object') return `\u0001unshowable:${String(value)}`;
+  let key = unshowableKeys.get(value);
+  if (key === undefined) unshowableKeys.set(value, (key = `\u0001unshowable:${++unshowableCount}`));
+  return key;
+}
+
+function canonicalJSONUnguarded(value: unknown): string {
+  countSchemaWork();
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  const cached = canonicalKeys?.get(value);
+  if (cached !== undefined) return cached;
+  let text: string;
+  if (Array.isArray(value)) {
+    text = `[${value.map(canonicalJSONUnguarded).join(',')}]`;
+  } else {
+    const entries = Object.keys(value).sort()
+      .map(key => `${JSON.stringify(key)}:${canonicalJSONUnguarded((value as Record<string, unknown>)[key])}`);
+    text = `{${entries.join(',')}}`;
+  }
+  canonicalKeys?.set(value, text);
+  return text;
+}
+
+/**
+ * Deep, type-aware equality of two JSON values. Values of different JSON
+ * types and arrays of different lengths are unequal without reading further.
+ */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  const kind = jsonKind(a);
+  if (kind !== jsonKind(b)) return false;
+  if (kind === 'array' && (a as unknown[]).length !== (b as unknown[]).length) return false;
+  return canonicalJSON(a) === canonicalJSON(b);
+}
+
+// ─── Enum choices ────────────────────────────────────────────────────────────
+// A choice's identity is its position in the enum (or labeled oneOf), never
+// its text: two choices can print the same. Controls key their options with
+// choiceKey and map a key back with choiceIndex; labels are display only.
+
+/** The key of the choice at index, for an <option> or checkbox value. */
+export function choiceKey(index: number): string {
+  return String(index);
+}
+
+/** The index a choice key names, or -1 when it names none of count choices. */
+export function choiceIndex(key: string, count: number): number {
+  if (!/^\d+$/.test(key)) return -1;
+  const index = Number(key);
+  return index < count ? index : -1;
+}
+
+/** The index of the first choice equal to value (deep, type-aware), or -1. */
+export function findChoice(choices: readonly unknown[], value: unknown): number {
+  return choices.findIndex(choice => sameValue(choice, value));
+}
+
+// Characters a CSS color can contain; anything else (";", ":", braces,
+// quotes) could break out of the declaration it is interpolated into.
+const SAFE_COLOR_CHARS = /^[#\w\s(),.%/+-]+$/;
+
+/**
+ * An x-color value when it is a string CSS color made of safe characters,
+ * else undefined. Hand-written schemas can hold any JSON there.
+ */
+export function safeColor(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !SAFE_COLOR_CHARS.test(value)) return undefined;
+  if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports('color', value)) {
+    return undefined;
+  }
+  return value;
 }
 
 // ─── Schema flattening (for search mode) ─────────────────────────────────────
@@ -798,6 +1560,16 @@ export function flattenSchema(
   depth = 0,
   rootSchema: JSONSchema | null = null,
 ): FlatField[] {
+  return withinDepth([], () => flattenSchemaUnguarded(schema, prefix, labelPrefix, depth, rootSchema));
+}
+
+function flattenSchemaUnguarded(
+  schema: JSONSchema,
+  prefix: string,
+  labelPrefix: string,
+  depth: number,
+  rootSchema: JSONSchema | null,
+): FlatField[] {
   if (depth > 10 || !schema) return [];
 
   const root = rootSchema || schema;
@@ -806,9 +1578,11 @@ export function flattenSchema(
 
   const fields: FlatField[] = [];
 
-  for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+  for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+    if (!isSchemaValue(rawPropIn)) continue;
     const path = prefix ? `${prefix}.${key}` : key;
-    const prop = resolveSchema(rawProp, root) || rawProp;
+    const rawProp = withTypedKeywords(rawPropIn);
+    const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);
     const rawLabel = prop.title || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
@@ -906,8 +1680,9 @@ export function intersectFields(fieldLists: FlatField[][]): FlatField[] {
         }
       }
       if (existing.enum && field.enum) {
-        const a = [...existing.enum].sort();
-        const b = [...field.enum].sort();
+        // Compare as sets of typed keys: sorting raw values coerces them.
+        const a = existing.enum.map(valueKey).sort();
+        const b = field.enum.map(valueKey).sort();
         if (JSON.stringify(a) !== JSON.stringify(b)) {
           existing.enum = null;
           existing.enumLabels = null;

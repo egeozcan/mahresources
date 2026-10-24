@@ -1,0 +1,549 @@
+// Generated: src/webcomponents/meta-shortcode.ts at commit 207cd972, for the differential test
+// (differential-base.test.ts). Do not edit; regenerate with the script
+// named in that test. Imports and custom element names are rewritten.
+// src/webcomponents/meta-shortcode.ts
+import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { styleMap } from 'lit/directives/style-map.js';
+import { detectShape, getBuiltinRenderer } from '../display-renderers';
+import type { JSONSchema } from '../schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-core';
+import { dateTimeField } from '../../../utils/dateTimeValue';
+import { PluginNodeCache } from '../../../utils/pluginNodeCache';
+import { pillOptions, type PillOption } from '../../../utils/pillOptions';
+
+@customElement('base-meta-shortcode')
+export class MetaShortcode extends LitElement {
+  @property({ attribute: 'data-path' }) path = '';
+  @property({ attribute: 'data-editable' }) editable = 'false';
+  @property({ attribute: 'data-hide-empty' }) hideEmpty = 'false';
+  @property({ attribute: 'data-default' }) defaultValue = '';
+  @property({ attribute: 'data-entity-type' }) entityType = '';
+  @property({ attribute: 'data-entity-id' }) entityId = '';
+  @property({ attribute: 'data-schema' }) schemaStr = '';
+  @property({ attribute: 'data-value' }) valueStr = '';
+  @property({ attribute: 'data-date-time' }) dateTime = 'false';
+  @property({ attribute: 'data-layout' }) layout = '';
+  @property({ attribute: 'data-input-layout' }) inputLayout = '';
+  @property({ attribute: 'data-pills' }) pills = 'false';
+  @property({ attribute: 'data-options' }) optionsStr = '';
+  @state() private _pillError = false;
+
+  private _dateEditor: ReturnType<typeof dateTimeField> | null = null;
+  @state() private _dateInput = '';
+  @state() private _dateInvalid = false;
+
+  @state() private _editing = false;
+  @state() private _saving = false;
+  @state() private _currentValue: any = undefined;
+  @state() private _flash: 'success' | 'error' | null = null;
+  @state() private _pluginHtml: string | null = null;
+  @state() private _pluginError = false;
+  private _pluginFetchVersion = 0;
+  // The built wrapper, held so a re-render reuses the node rather than
+  // replacing it. See PluginNodeCache. One shortcode renders one plugin value,
+  // so the cache holds a single entry under a fixed key.
+  private _pluginNodes = new PluginNodeCache();
+
+  private _metaUpdateHandler = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.entityType === this.entityType && detail?.entityId === this.entityId && detail?.meta) {
+      // Another meta-shortcode on the same entity saved — refresh our value
+      const parts = this.path.split('.');
+      let current: any = detail.meta;
+      for (const part of parts) {
+        if (current == null || typeof current !== 'object') { current = undefined; break; }
+        current = current[part];
+      }
+      this._currentValue = current;
+      this.valueStr = current !== undefined ? JSON.stringify(current) : '';
+      // Clear plugin display cache and advance fetch version so any
+      // in-flight request from before this update is discarded.
+      this._pluginHtml = null;
+      this._pluginError = false;
+      this._pluginNodes.clear();
+      this._pluginFetchVersion++;
+    }
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+  }
+
+  override disconnectedCallback() {
+    document.removeEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+    super.disconnectedCallback();
+  }
+
+  override createRenderRoot() {
+    return this;
+  }
+
+  // When shortcode data changes externally (e.g. Alpine morph patches data-*
+  // attributes after a background refresh), clear cached display state so the
+  // next render uses the fresh attributes and plugin displays refetch.
+  override willUpdate(changedProperties: PropertyValues) {
+    const identityChanged =
+      changedProperties.has('path') ||
+      changedProperties.has('entityType') ||
+      changedProperties.has('entityId') ||
+      changedProperties.has('dateTime') ||
+      changedProperties.has('layout') ||
+      changedProperties.has('inputLayout') ||
+      changedProperties.has('pills') ||
+      changedProperties.has('optionsStr');
+
+    if (identityChanged) {
+      this._editing = false;
+      this._editValue = undefined;
+      this._pillError = false;
+    }
+
+    // identityChanged is included, not just recomputed above it: entityType and
+    // entityId are part of what a plugin display is rendered *for*, and they
+    // were missing here. Rebinding an element from one entity to another while
+    // path, value and schema happened to match kept the first entity's rendered
+    // plugin markup and never refetched for the second.
+    if (
+      identityChanged ||
+      changedProperties.has('valueStr') ||
+      changedProperties.has('schemaStr') ||
+      changedProperties.has('defaultValue') ||
+      changedProperties.has('editable') ||
+      changedProperties.has('hideEmpty')
+    ) {
+      this._currentValue = undefined;
+      this._pluginHtml = null;
+      this._pluginError = false;
+      this._pluginNodes.clear();
+      this._pluginFetchVersion++;
+    }
+  }
+
+  refreshFromMorph(_toEl?: Element) {
+    this._currentValue = undefined;
+    this._pluginHtml = null;
+    this._pluginError = false;
+    this._pluginNodes.clear();
+    this._pluginFetchVersion++;
+    this.requestUpdate();
+  }
+
+  private get _schema(): JSONSchema | null {
+    if (!this.schemaStr) return null;
+    try {
+      return JSON.parse(this.schemaStr);
+    } catch {
+      return null;
+    }
+  }
+
+  private get _value(): any {
+    if (this._currentValue !== undefined) return this._currentValue;
+    if (!this.valueStr) return undefined;
+    try {
+      return JSON.parse(this.valueStr);
+    } catch {
+      return this.valueStr;
+    }
+  }
+
+  private get _isEmpty(): boolean {
+    const v = this._value;
+    return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+  }
+
+  private get _label(): string {
+    const schema = this._schema;
+    if (schema?.title) return schema.title;
+    const parts = this.path.split('.');
+    return titleCase(parts[parts.length - 1]);
+  }
+
+  private get _isEditable(): boolean {
+    return this.editable === 'true';
+  }
+
+  override render(): TemplateResult | typeof nothing {
+    if (this._isEmpty && this.hideEmpty === 'true' && !this._editing) {
+      return nothing;
+    }
+
+    if (this.pills === 'true') return this._renderPills();
+
+    const flashClass = this._flash === 'success'
+      ? 'bg-green-100 transition-colors duration-300'
+      : this._flash === 'error'
+        ? 'bg-red-100 transition-colors duration-300'
+        : '';
+
+    return html`
+      <span class="meta-shortcode inline-flex items-center gap-1 ${flashClass}">
+        ${this._editing ? this._renderEditMode() : this._renderDisplayMode()}
+      </span>
+    `;
+  }
+
+  private _renderPills(): TemplateResult {
+    const options = pillOptions(this.optionsStr, this._schema);
+    const selected = options.findIndex(option => option.value === this._value);
+    return html`
+      <span class="meta-pills-field">
+        ${options.length ? html`
+          <span class="meta-pills" role="radiogroup" aria-label=${this._label}
+            aria-busy=${this._saving ? 'true' : 'false'}>
+            ${options.map((option, index) => html`
+              <button type="button" role="radio" class="meta-pill"
+                style=${styleMap(this._pillColors(index === selected ? option.color : undefined))}
+                aria-checked=${index === selected ? 'true' : 'false'}
+                aria-disabled=${!this._isEditable || this._saving ? 'true' : 'false'}
+                tabindex=${index === (selected < 0 ? 0 : selected) ? '0' : '-1'}
+                @click=${() => this._selectPill(option)}
+                @keydown=${(event: KeyboardEvent) => this._onPillKeyDown(event, index, options)}
+              >${option.label}</button>
+            `)}
+          </span>
+        ` : html`<span class="text-sm text-stone-600">No options configured for ${this._label}.</span>`}
+        ${selected < 0 && !this._isEmpty
+          ? html`<span class="text-sm text-stone-600">Current: ${String(this._value)}</span>` : nothing}
+        <span role="status" class="text-sm ${this._pillError ? 'text-red-700' : 'text-stone-600'}">
+          ${this._pillError ? 'Could not save. Try again.' : this._saving ? 'Saving…' : ''}
+        </span>
+      </span>
+    `;
+  }
+
+  private _pillColors(color?: string): Record<string, string> {
+    if (typeof color !== 'string' || !CSS.supports('color', color)) return {};
+    // Match schema enum badges with a light tint and dark text. Binding the
+    // properties separately also keeps a color from introducing declarations.
+    return {
+      '--meta-pill-background': `color-mix(in srgb, ${color} 15%, white)`,
+      '--meta-pill-text': `color-mix(in srgb, ${color} 40%, black)`,
+    };
+  }
+
+  private _selectPill(option: PillOption) {
+    if (!this._isEditable || this._saving || option.value === this._value) return;
+    this._pillError = false;
+    this._editValue = option.value;
+    void this._save();
+  }
+
+  private _onPillKeyDown(event: KeyboardEvent, index: number, options: PillOption[]) {
+    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1
+      : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+    if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    if (!this._isEditable || this._saving) return;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+      : (index + direction + options.length) % options.length;
+    this.querySelectorAll<HTMLButtonElement>('.meta-pill')[next]?.focus();
+    this._selectPill(options[next]);
+  }
+
+  private _renderDisplayMode(): TemplateResult {
+    const value = this._value;
+    const schema = this._schema;
+    const editButton = this._isEditable
+      ? html`<button
+          type="button"
+          class="inline-flex items-center p-0.5 border-0 bg-transparent cursor-pointer"
+          aria-label="Edit ${this._label}"
+          @click=${this._enterEditMode}
+        >${this._pencilIcon()}</button>`
+      : nothing;
+
+    if (this._isEmpty) {
+      // A configured default renders as plain text in place of the empty state.
+      // hide-empty still wins (render() returns nothing before reaching here).
+      if (this.defaultValue) {
+        return html`
+          <span class="text-sm">${this.defaultValue}</span>
+          ${editButton}
+        `;
+      }
+      return html`
+        <span class="text-stone-600 text-sm">${this._label}: —</span>
+        ${editButton}
+      `;
+    }
+
+    return html`
+      <span class="text-sm">${this._renderValue(value, schema)}</span>
+      ${editButton}
+    `;
+  }
+
+  private _renderValue(value: any, schema: JSONSchema | null): TemplateResult | string {
+    if (this.dateTime === 'true') {
+      return dateTimeField(value, schema, this.inputLayout, this.layout).display;
+    }
+    // Check built-in x-display on raw schema (these only use the value, not schema metadata).
+    const rawXDisplay = schema?.['x-display'] as string | undefined;
+    if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
+      const renderer = getBuiltinRenderer(rawXDisplay);
+      if (renderer) return html`<span>${renderer.render(value)}</span>`;
+    }
+
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      const shape = detectShape(value);
+      if (shape) return html`<span>${shape.render(value)}</span>`;
+    }
+
+    if (schema) {
+      // Check labeled enum on raw schema (resolveSchema merges oneOf away).
+      if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
+      if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
+
+      // Resolve composition ($ref, allOf, oneOf, anyOf) for full metadata.
+      const resolved = resolveSchema(schema, schema);
+      if (resolved) schema = resolved;
+
+      // After resolution: x-display (including plugin), enums, then type.
+      const xDisplay = (rawXDisplay || schema['x-display']) as string | undefined;
+      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
+      if (xDisplay) {
+        const renderer = getBuiltinRenderer(xDisplay);
+        if (renderer) return html`<span>${renderer.render(value)}</span>`;
+      }
+      if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
+      if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
+
+      const type = Array.isArray(schema.type)
+        ? schema.type.find((t: string) => t !== 'null') || 'string'
+        : schema.type || 'string';
+
+      if (type === 'boolean') return value ? 'Yes' : 'No';
+      if (type === 'integer' || type === 'number') {
+        return html`<span class="font-mono">${value}</span>`;
+      }
+    }
+
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  }
+
+  private _renderLabeledEnum(value: any, schema: JSONSchema): TemplateResult {
+    const entries = getLabeledEnumEntries(schema);
+    const entry = entries.find(e => e.value === value);
+    const label = entry ? entry.label : String(value);
+    const tooltip = entry ? String(value) : '';
+    return html`<span
+      class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
+      title=${tooltip || nothing}
+    >${label}</span>`;
+  }
+
+  private _renderPlainEnum(value: any): TemplateResult {
+    return html`<span
+      class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
+    >${String(value)}</span>`;
+  }
+
+  private _renderPluginDisplay(value: any, xDisplay: string, resolvedSchema?: JSONSchema | null): TemplateResult {
+    if (this._pluginHtml !== null) {
+      return html`${this._pluginNodes.nodeFor('value', this._pluginHtml, 'span')}`;
+    }
+    if (this._pluginError) {
+      return html`<span class="text-stone-400 text-xs italic">Render error</span>`;
+    }
+
+    const parts = xDisplay.split(':');
+    if (parts.length < 3) {
+      return typeof value === 'object' ? html`${JSON.stringify(value)}` : html`${String(value)}`;
+    }
+    this._fetchPluginDisplay(parts[1], parts[2], value, resolvedSchema ?? this._schema);
+    return html`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`;
+  }
+
+  private async _fetchPluginDisplay(pluginName: string, typeName: string, value: any, schema?: JSONSchema | null) {
+    const version = ++this._pluginFetchVersion;
+    try {
+      const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: typeName,
+          value,
+          schema: schema || {},
+          field_path: this.path,
+          field_label: this._label,
+          // What is being rendered. Without it a renderer cannot link back to
+          // its own entity or fetch a related record — it only ever saw the
+          // field's value.
+          entity_type: this.entityType,
+          entity_id: Number(this.entityId) || 0,
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const html = await resp.text();
+      // Discard if a newer fetch was started (value changed while in-flight)
+      if (version === this._pluginFetchVersion) {
+        this._pluginHtml = html;
+      }
+    } catch {
+      if (version === this._pluginFetchVersion) {
+        this._pluginError = true;
+      }
+    }
+  }
+
+  private _renderEditMode(): TemplateResult {
+    const schema = this._schema;
+    const value = this._editValue !== undefined ? this._editValue : this._value;
+
+    return html`
+      <div class="meta-shortcode-edit border border-stone-300 rounded p-2 my-1">
+        ${this.dateTime === 'true' && this._dateEditor
+          ? html`<input
+              type=${this._dateEditor.type}
+              step="any"
+              aria-label=${this._label}
+              class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
+              .value=${this._dateInput}
+              @input=${this._onDateInput}
+            />`
+          : schema
+          ? html`<schema-editor
+              mode="form"
+              .schema=${JSON.stringify(schema)}
+              .value=${JSON.stringify(value ?? getDefaultValue(schema))}
+              name="_meta_shortcode_value"
+              @value-change=${this._onFormValueChange}
+            ></schema-editor>`
+          : html`<input
+              type="text"
+              class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
+              .value=${value != null ? (typeof value === 'object' ? JSON.stringify(value) : String(value)) : ''}
+              @input=${this._onInputChange}
+            />`
+        }
+        <div class="flex gap-2 mt-2">
+          <button
+            type="button"
+            class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            ?disabled=${this._saving || this._dateInvalid}
+            @click=${this._save}
+          >${this._saving ? 'Saving...' : 'Save'}</button>
+          <button
+            type="button"
+            class="px-3 py-1 text-sm bg-stone-200 text-stone-700 rounded hover:bg-stone-300"
+            ?disabled=${this._saving}
+            @click=${this._cancelEdit}
+          >Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _editValue: any = undefined;
+
+  private _onFormValueChange(e: CustomEvent) {
+    this._editValue = e.detail.value;
+  }
+
+  private _onInputChange(e: Event) {
+    const input = e.target as HTMLInputElement;
+    try {
+      this._editValue = JSON.parse(input.value);
+    } catch {
+      this._editValue = input.value;
+    }
+  }
+
+  private _onDateInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    this._dateInput = input.value;
+    const value = this._dateEditor?.serialize(input.value);
+    this._dateInvalid = !input.validity.valid || value == null;
+    if (!this._dateInvalid) this._editValue = value;
+  }
+
+  private _enterEditMode() {
+    const current = this._value;
+    this._dateInvalid = false;
+    // For missing fields, initialize with the schema default so saving
+    // without touching the control submits valid JSON instead of undefined.
+    this._editValue = current !== undefined ? current : getDefaultValue(this._schema || {});
+    if (this.dateTime === 'true') {
+      this._dateEditor = dateTimeField(current, this._schema, this.inputLayout, this.layout);
+      this._dateInput = this._dateEditor.input;
+      this._editValue = this._dateEditor.initialValue;
+    }
+    this._editing = true;
+  }
+
+  private _cancelEdit() {
+    this._editing = false;
+    this._editValue = undefined;
+  }
+
+  private async _save() {
+    if (this._saving) return;
+    if (this.dateTime === 'true' && this._dateInvalid) return;
+    this._saving = true;
+
+    let value = this._editValue !== undefined ? this._editValue : this._value;
+    if (value === undefined) {
+      value = getDefaultValue(this._schema || {});
+    }
+    const valueJSON = JSON.stringify(value);
+
+    const body = new URLSearchParams();
+    body.append('path', this.path);
+    body.append('value', valueJSON);
+
+    try {
+      const resp = await fetch(
+        `/v1/${this.entityType}/editMeta?id=${this.entityId}`,
+        { method: 'POST', body }
+      );
+
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const result = await resp.json();
+      if (result.meta) {
+        const parts = this.path.split('.');
+        let current: any = result.meta;
+        for (const part of parts) {
+          if (current == null || typeof current !== 'object') {
+            current = undefined;
+            break;
+          }
+          current = current[part];
+        }
+        this._currentValue = current;
+        this.valueStr = current !== undefined ? JSON.stringify(current) : '';
+      }
+
+      this._editing = false;
+      this._flash = 'success';
+      setTimeout(() => { this._flash = null; }, 1000);
+
+      // Notify other meta-shortcode elements on the same entity to refresh
+      document.dispatchEvent(new CustomEvent('meta-shortcode-updated', {
+        detail: { entityType: this.entityType, entityId: this.entityId, meta: result.meta },
+      }));
+    } catch (err) {
+      console.error('Meta shortcode save error:', err);
+      this._flash = 'error';
+      if (this.pills === 'true') this._pillError = true;
+      setTimeout(() => { this._flash = null; }, 1000);
+    } finally {
+      this._saving = false;
+    }
+  }
+
+  private _pencilIcon(): TemplateResult {
+    return html`
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-stone-400 hover:text-stone-600">
+        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+        <path d="m15 5 4 4"/>
+      </svg>
+    `;
+  }
+}

@@ -203,26 +203,15 @@ describe('Bug 3: flattenSchema normalizes nullable type arrays to scalar', () =>
 
 // ─── Known limitation: mixed-type enum round-trip ────────────────────────────
 
-describe('Mixed-type enum serialization (known limitation)', () => {
-  it('prefers non-string type when enum values stringify identically', () => {
-    // enum: [1, "1"] — both stringify to "1"
-    // When the user selects "1", the serializer should produce the non-string
-    // variant (numeric 1) since strings get quoted and non-strings don't.
-    // This is a best-effort heuristic, not a perfect solution.
-    const source = readFileSync(
-      __dirname + '/modes/search-mode.ts', 'utf8'
-    );
-    // The enum serialization should check typeof ev !== 'string' to prefer
-    // non-string originals when multiple entries stringify the same.
-    expect(source).toContain("typeof ev !== 'string'");
-  });
-
-  it('documents that truly ambiguous mixed-type enums are unsupported', () => {
+describe('Mixed-type enum serialization', () => {
+  // Search controls key each choice by its position, so enum: [1, "1"] is no
+  // longer ambiguous; adversarial-sweep.test.ts pins the behaviour. The docs
+  // must not keep describing the old limitation.
+  it('no longer documents mixed-type enums as indistinguishable', () => {
     const docs = readFileSync(
       __dirname + '/../../docs-site/docs/features/meta-schemas.md', 'utf8'
     );
-    expect(docs).toContain('Mixed-type enums with identical string representations');
-    expect(docs).toContain('cannot be distinguished in the search UI');
+    expect(docs).not.toContain('Mixed-type enums with identical string representations');
   });
 
   it('homogeneous string enums are quoted correctly', () => {
