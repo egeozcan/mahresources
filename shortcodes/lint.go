@@ -412,9 +412,13 @@ func Lint(input string, opts LintOptions) []LintIssue {
 					}
 				}
 			default:
-				for _, attr := range []string{"query", "mrql"} {
-					start, end := attrOffset(tk, attr)
-					check(tk.attrs[attr], MRQLCheckOptions{ParseOnly: true}, start, end, attr)
+				// A plugin shortcode's query is the plugin's own: only parsed.
+				// No other built-in runs a query.
+				if strings.HasPrefix(tk.name, "plugin:") {
+					for _, attr := range []string{"query", "mrql"} {
+						start, end := attrOffset(tk, attr)
+						check(tk.attrs[attr], MRQLCheckOptions{ParseOnly: true}, start, end, attr)
+					}
 				}
 			}
 		}

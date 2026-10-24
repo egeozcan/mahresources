@@ -3679,4 +3679,15 @@ func TestLintMRQLSeamGetsTheRuntimeOptions(t *testing.T) {
 	if len(pluginCalls) != 1 || !pluginCalls[0].ParseOnly || pluginCalls[0].Limit != 0 {
 		t.Fatalf("plugin query options: %+v", pluginCalls)
 	}
+
+	// A built-in other than [mrql] and [conditional] runs no query, so a
+	// query= on it is not MRQL and is not checked.
+	pluginCalls = nil
+	Lint(`[each path="items" query="BAD"]x[/each]`, LintOptions{Known: known, ValidateMRQL: func(_ string, opts MRQLCheckOptions) error {
+		pluginCalls = append(pluginCalls, opts)
+		return nil
+	}})
+	if len(pluginCalls) != 0 {
+		t.Fatalf("a non-plugin, non-query shortcode's attribute was checked: %+v", pluginCalls)
+	}
 }
