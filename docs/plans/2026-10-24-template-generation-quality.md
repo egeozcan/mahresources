@@ -298,6 +298,8 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
 
 ### 3a. Profiles (item 8b)
 
+Eval evidence after phase 1 (2026-10-24, `baselines/phase1-2026-10-24.json`): cache hits rose from 70% to 93%, but every single-call bundle and two of three group CustomCSS drafts now stop at their token cap (bundle pass 56% → 0%), because the reorganised prompt draws longer output. Decision: the decision 6 table changes to 4000 for the CustomCSS slot and 8000 for a single-call bundle, until phase 4's fan-out replaces single-call bundles. New MRQL errors in group OwnEntities and ListHeader drafts are invented syntax (`parent = $self`, the category name used as `type`), which 2e's grounding targets.
+
 Profiles land first: the repair budget is defined in terms of `profile.Timeout`.
 
 - [ ] `application_context/template_generation_config.go`:
