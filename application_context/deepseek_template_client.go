@@ -29,6 +29,8 @@ func NewDeepSeekTemplateDraftProvider(url, apiKey, model string, client *http.Cl
 	return &deepSeekTemplateDraftProvider{url: url, apiKey: apiKey, model: model, client: client}
 }
 
+func (p *deepSeekTemplateDraftProvider) Endpoint() string { return p.url }
+
 // GenerateDraft returns the raw JSON content string; the generator unmarshals it
 // per target. Unlike the MRQL provider it tolerates a truncated ("length")
 // response, including one with no content at all, so a draft that overflows

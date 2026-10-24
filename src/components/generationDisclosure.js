@@ -1,5 +1,5 @@
 import { blockingModal, refuseOverModal } from '../utils/modality.js';
-import { restoreFocus } from '../utils/focus.js';
+import { containFocus, focusFirstAvailable } from '../utils/containFocus.js';
 
 /**
  * The template generation disclosure (decision 11 of
@@ -12,17 +12,10 @@ import { restoreFocus } from '../utils/focus.js';
  * It follows the confirm dialog's pattern (templates/partials/confirmDialog.tpl):
  * `.overlays`, the confirm overlay's z-index, the rest of the page made inert,
  * and focus returned by the store one macrotask after the dialog is torn down.
- * It keeps focus in with inert and Tab wrapping rather than x-trap (see
- * TABBABLE below). It never opens over another painted modal; the reader is
+ * It keeps focus in with inert and containFocus rather than x-trap (see
+ * src/utils/containFocus.js). It never opens over another painted modal; the reader is
  * told so inside that modal instead.
  */
-// Focus is kept in the dialog by making the rest of the page inert and by
-// wrapping Tab at either end (onTab), not by x-trap: x-trap arms its trap 15ms
-// after mounting and does not cancel that timer when the dialog closes first,
-// so a dialog answered quickly left a trap armed on a removed element that
-// swallowed every Tab on the page.
-const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
-
 export const DISCLOSURE_REFUSED_OVER_DIALOG = 'Close this dialog first to review what template generation will send.';
 
 export function registerGenerationDisclosureStore(Alpine) {
@@ -30,7 +23,9 @@ export function registerGenerationDisclosureStore(Alpine) {
     isOpen: false,
     disclosure: null,
     _resolve: null,
-    _opener: null,
+    // Where focus goes back on Cancel: the first of these that can take it.
+    _returnTo: [],
+    _containment: null,
 
     _inerted: [],
 
@@ -38,11 +33,31 @@ export function registerGenerationDisclosureStore(Alpine) {
       return this.disclosure?.destination?.host || 'the provider';
     },
 
+    get endpoint() {
+      return this.disclosure?.destination?.endpoint || this.host;
+    },
+
     // One line per kind of call the request can make.
     get profiles() {
       return (this.disclosure?.destination?.profiles || []).map((p) =>
-        `${p.kind}: ${p.model}, thinking ${p.thinking ? 'on' : 'off'}, at most ${p.maxCalls} call${p.maxCalls === 1 ? '' : 's'}`,
+        `${p.kind}: ${p.model}, thinking ${p.thinking ? 'on' : 'off'}, up to ${p.maxTokens} output tokens, at most ${p.maxCalls} call${p.maxCalls === 1 ? '' : 's'}`,
       );
+    },
+
+    // How every call is sent: the fixed transport settings.
+    get transport() {
+      const t = this.disclosure?.transport;
+      if (!t) return [];
+      return [
+        `POST ${this.endpoint}`,
+        `Content-Type: ${t.contentType}`,
+        `Authorization: ${t.authorization}`,
+        `stream: ${t.stream ? 'true' : 'false'}, response_format: ${t.responseFormat}`,
+      ];
+    },
+
+    get continuationRule() {
+      return this.disclosure?.continuationRule?.text || '';
     },
 
     get sections() {
@@ -51,10 +66,12 @@ export function registerGenerationDisclosureStore(Alpine) {
 
     /**
      * Show `disclosure` and resolve true only if the reader presses Send.
-     * `opener` gets focus back on Cancel; on Send the caller moves focus, since
-     * its Generate button is disabled while the request runs.
+     * On Cancel focus goes to the first of `returnTo` that can take it (the
+     * Generate button, else its status region, else its prompt); on Send the
+     * caller moves focus, since its Generate button is disabled while the
+     * request runs.
      */
-    open(disclosure, opener = null) {
+    open(disclosure, returnTo = []) {
       if (this.isOpen) return Promise.resolve(false);
       const blocker = blockingModal();
       if (blocker) {
@@ -62,7 +79,7 @@ export function registerGenerationDisclosureStore(Alpine) {
         return Promise.resolve(false);
       }
       this.disclosure = disclosure;
-      this._opener = opener;
+      this._returnTo = Array.isArray(returnTo) ? returnTo : [returnTo];
       this.isOpen = true;
       return new Promise((resolve) => {
         this._resolve = resolve;
@@ -80,13 +97,15 @@ export function registerGenerationDisclosureStore(Alpine) {
     _settle(value) {
       if (!this.isOpen) return;
       const resolve = this._resolve;
-      const opener = this._opener;
+      const returnTo = this._returnTo;
       this.isOpen = false;
       this._resolve = null;
-      this._opener = null;
+      this._returnTo = [];
+      this._containment?.stop();
+      this._containment = null;
       this._releaseInert();
       if (!value) {
-        setTimeout(() => restoreFocus(opener), 0);
+        setTimeout(() => focusFirstAvailable(returnTo), 0);
       }
       if (resolve) resolve(value);
     },
@@ -111,26 +130,13 @@ export function registerGenerationDisclosureStore(Alpine) {
       }
     },
 
-    // Mounting: inert page, then focus on Cancel, the safe default.
+    // Mounting: inert page, focus kept inside, then focus on Cancel, the safe
+    // default.
     _mount(dialogRoot) {
       this._applyInert(dialogRoot);
+      this._containment?.stop();
+      this._containment = containFocus(dialogRoot);
       dialogRoot.querySelector('[autofocus]')?.focus();
-    },
-
-    // Wrap Tab and Shift+Tab at the dialog's ends; the inert page has nowhere
-    // else to send focus.
-    onTab(event, dialogRoot) {
-      const stops = [...dialogRoot.querySelectorAll(TABBABLE)].filter((el) => el.getClientRects().length > 0);
-      if (!stops.length) return;
-      const first = stops[0];
-      const last = stops[stops.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
     },
 
     _releaseInert() {
@@ -144,13 +150,13 @@ export function registerGenerationDisclosureStore(Alpine) {
  * Ask the reader to approve a disclosure, from a plain module. Fails closed:
  * without the store nothing is sent.
  */
-export function reviewDisclosure(disclosure, opener) {
+export function reviewDisclosure(disclosure, returnTo) {
   const store = globalThis.Alpine?.store('generationDisclosure');
   if (!store) {
     console.error('generationDisclosure store is not registered; refusing to send');
     return Promise.resolve(false);
   }
-  return store.open(disclosure, opener);
+  return store.open(disclosure, returnTo);
 }
 
 /** One macrotask, so a dialog's x-trap has released and its subtree is gone. */
@@ -164,12 +170,13 @@ export function afterDialogTeardown() {
  * re-enabled binding ($nextTick, itself a macrotask, then one more), and moves
  * focus only if the reader is still on the status region, or nowhere (a
  * disabled button that had focus drops it to <body>). A reader who went
- * elsewhere meanwhile is left there.
+ * elsewhere meanwhile is left there. When Generate cannot take focus (still
+ * disabled, or gone), it falls back to `fallbacks` in order.
  */
-export async function returnFocusToGenerate(component, region, button) {
-  await component.$nextTick();
+export async function returnFocusToGenerate(component, region, button, fallbacks = []) {
+  await component.$nextTick?.();
   await afterDialogTeardown();
   const active = document.activeElement;
   const nowhere = !active || active === document.body || active === document.documentElement;
-  if ((nowhere || active === region) && button && !button.disabled) button.focus();
+  if (nowhere || (region && active === region)) focusFirstAvailable([button, ...fallbacks]);
 }

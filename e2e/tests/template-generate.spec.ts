@@ -12,8 +12,9 @@ import { test, expect } from '../fixtures/base.fixture';
 // stubs answer it automatically, and only the real request reaches the handler.
 const stubDisclosure = {
   groundingHash: 'stub-hash',
-  destination: { host: 'api.deepseek.com', profiles: [{ kind: 'pair', model: 'deepseek-v4-flash', thinking: false, maxTokens: 4000, maxCalls: 1 }] },
-  continuationRule: { version: 1, text: 'x' },
+  destination: { endpoint: 'https://api.deepseek.com/chat/completions', host: 'api.deepseek.com', profiles: [{ kind: 'pair', model: 'deepseek-v4-flash', thinking: false, maxTokens: 4000, maxCalls: 1 }] },
+  transport: { stream: false, responseFormat: 'json_object', contentType: 'application/json', authorization: 'Bearer (your API key, not shown)' },
+  continuationRule: { version: 1, text: "Only the model's own output and the server's validation messages ever fill a placeholder, never further user or entity data." },
   sections: [
     { call: 0, role: 'system', key: 'system', label: 'System prompt', bytes: 12, text: 'System text.', constant: true },
     { call: 0, role: 'user', key: 'request', label: 'Your request', bytes: 20, text: 'User request: stub', constant: false },
@@ -614,7 +615,11 @@ test.describe('Generation disclosure dialog', () => {
     { call: 0, role: 'user', key: 'request', label: 'Your request', bytes: 20, text: 'User request: a header', constant: false },
   ];
 
-  test('Generate opens the disclosure, and Send makes exactly one request carrying the hash', async ({ page }) => {
+  // The E2E server has no provider key, so the disclosure is a stub: this checks
+  // how the dialog shows user data (expanded) and reference text (collapsed).
+  // That each disclosed field's value is in its section is the Go test
+  // TestTemplateGenerationInputFieldsAreClassified.
+  test('Generate opens the disclosure with user data expanded, and Send makes exactly one request carrying the hash', async ({ page }) => {
     const sent = await spyGenerate(page, okDraft, undefined, sampleSections);
     await page.goto('/category/new');
     await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
@@ -627,6 +632,12 @@ test.describe('Generation disclosure dialog', () => {
     await expect.poll(() => isOpen('samples')).toBe(true);
     await expect(dialog.locator('details[data-section="samples"] pre')).toHaveText(/Seeded Recipe Group/);
     await expect.poll(() => isOpen('system')).toBe(false);
+    // Where it goes and how: endpoint, transport, per-kind limits, the rule.
+    await expect(dialog.getByTestId('generation-disclosure-transport')).toContainText('POST https://api.deepseek.com/chat/completions');
+    await expect(dialog.getByTestId('generation-disclosure-transport')).toContainText('Authorization: Bearer (your API key, not shown)');
+    await expect(dialog.getByTestId('generation-disclosure-transport')).toContainText('response_format: json_object');
+    await expect(dialog.getByTestId('generation-disclosure-profiles')).toContainText('up to 4000 output tokens');
+    await expect(dialog.getByTestId('generation-disclosure-rule')).toContainText('never further user or entity data');
     expect(sent).toHaveLength(0);
 
     await dialog.getByRole('button', { name: 'Send to api.deepseek.com' }).click();
@@ -863,4 +874,72 @@ test.describe('Draft review panels and the keyboard', () => {
     await page.keyboard.press('Tab');
     expect(await tab).toBe(false);
   });
+
+  test('focus stays in the disclosure: Tab and Shift+Tab wrap, and the page behind is inert', async ({ page }) => {
+    await stub(page, bundleReply);
+    await page.goto('/category/new');
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    const dialog = page.getByTestId('generation-disclosure');
+    await expect(page.getByTestId('generation-disclosure-cancel')).toBeFocused();
+    const inside = () => page.evaluate(() => !!document.activeElement?.closest('[data-testid="generation-disclosure"]'));
+    for (const key of ['Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
+      await page.keyboard.press(key);
+      expect(await inside(), `after ${key}`).toBe(true);
+    }
+    await expect(dialog).toBeVisible();
+    expect(await page.getByTestId('generate-button-CustomHeader').evaluate((el) => !!el.closest('[inert]'))).toBe(true);
+  });
+
+  test('after a mouse click on the heading or the backdrop, Tab and Shift+Tab stay in the disclosure', async ({ page }) => {
+    await stub(page, bundleReply);
+    await page.goto('/category/new');
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await expect(page.getByTestId('generation-disclosure-cancel')).toBeFocused();
+    const inside = () => page.evaluate(() => !!document.activeElement?.closest('[data-testid="generation-disclosure"]'));
+    const heading = page.getByRole('heading', { name: 'Review what will be sent' });
+    for (const [click, key] of [['heading', 'Shift+Tab'], ['heading', 'Tab'], ['backdrop', 'Shift+Tab'], ['backdrop', 'Tab']] as const) {
+      if (click === 'heading') await heading.click();
+      else await page.mouse.click(3, 3);
+      await page.keyboard.press(key);
+      expect(await inside(), `${key} after a click on the ${click}`).toBe(true);
+    }
+    // A click on the backdrop never dismisses it.
+    await expect(page.getByTestId('generation-disclosure')).toBeVisible();
+  });
+
+  for (const how of ['disabled', 'removed']) {
+    test(`Cancel with Generate ${how} falls back to the prompt`, async ({ page }) => {
+      await stub(page, bundleReply);
+      await page.goto('/category/new');
+      await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+      await page.getByTestId('generate-button-CustomHeader').click();
+      await expect(page.getByTestId('generation-disclosure')).toBeVisible();
+      await page.getByTestId('generate-button-CustomHeader').evaluate((el, mode) => {
+        if (mode === 'disabled') (el as HTMLButtonElement).disabled = true;
+        else el.remove();
+      }, how);
+      await page.getByTestId('generation-disclosure-cancel').click();
+      await expect(page.getByTestId('generation-disclosure')).toHaveCount(0);
+      // The status region is empty (and so not painted) after Cancel; the prompt is next.
+      await expect(page.getByTestId('generate-prompt-CustomHeader')).toBeFocused();
+    });
+
+    test(`Apply with the whole-template Generate ${how} falls back to the status region`, async ({ page }) => {
+      await stub(page, bundleReply);
+      await page.goto('/category/new');
+      await page.getByTestId('template-bundle-generate-prompt').fill('a template');
+      await page.getByTestId('template-bundle-generate-button').click();
+      await sendDisclosure(page);
+      await page.getByTestId('template-bundle-generate-button').evaluate((el, mode) => {
+        if (mode === 'disabled') (el as HTMLButtonElement).disabled = true;
+        else el.remove();
+      }, how);
+      await page.getByTestId('template-bundle-apply').click();
+      await expect(page.getByTestId('template-bundle-review')).toHaveCount(0);
+      // Apply leaves a status message, so the status region is painted and takes focus.
+      await expect(page.getByTestId('template-bundle-status')).toBeFocused();
+    });
+  }
 });

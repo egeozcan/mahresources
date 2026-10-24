@@ -21,14 +21,35 @@ const templateContinuationRule = "Only the model's own output and the server's v
 type TemplateDisclosure struct {
 	Sections         []PromptSection          `json:"sections"`
 	Destination      TemplateDestination      `json:"destination"`
+	Transport        TemplateTransport        `json:"transport"`
 	ContinuationRule TemplateContinuationRule `json:"continuationRule"`
 	GroundingHash    string                   `json:"groundingHash"`
 }
 
 // TemplateDestination is where the calls go and how each kind of call is made.
 type TemplateDestination struct {
+	// Endpoint is the scheme, host and path the provider posts to; a query
+	// string is left out of both the display and the hash.
+	Endpoint string                     `json:"endpoint"`
 	Host     string                     `json:"host"`
 	Profiles []TemplateDisclosedProfile `json:"profiles"`
+}
+
+// TemplateTransport is how every call is sent. It is fixed by
+// postDeepSeekChatJSON and disclosed so the user sees the whole request.
+type TemplateTransport struct {
+	Stream         bool   `json:"stream"`
+	ResponseFormat string `json:"responseFormat"`
+	ContentType    string `json:"contentType"`
+	Authorization  string `json:"authorization"`
+}
+
+// templateTransport mirrors the request postDeepSeekChatJSON builds.
+var templateTransport = TemplateTransport{
+	Stream:         false,
+	ResponseFormat: "json_object",
+	ContentType:    "application/json",
+	Authorization:  "Bearer (your API key, not shown)",
 }
 
 // TemplateDisclosedProfile is one kind of call the request can make.
@@ -45,14 +66,16 @@ type TemplateContinuationRule struct {
 	Text    string `json:"text"`
 }
 
-func newTemplateDisclosure(providerURL string, profiles []TemplateDisclosedProfile, sections []PromptSection) *TemplateDisclosure {
-	host := providerURL
-	if parsed, err := url.Parse(providerURL); err == nil && parsed.Host != "" {
+func newTemplateDisclosure(endpoint string, profiles []TemplateDisclosedProfile, sections []PromptSection) *TemplateDisclosure {
+	host := endpoint
+	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
 		host = parsed.Host
+		endpoint = (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}).String()
 	}
 	d := &TemplateDisclosure{
 		Sections:         sections,
-		Destination:      TemplateDestination{Host: host, Profiles: profiles},
+		Destination:      TemplateDestination{Endpoint: endpoint, Host: host, Profiles: profiles},
+		Transport:        templateTransport,
 		ContinuationRule: TemplateContinuationRule{Version: templateContinuationRuleVersion, Text: templateContinuationRule},
 	}
 	d.GroundingHash = templateGroundingHash(d)
@@ -65,9 +88,10 @@ func newTemplateDisclosure(providerURL string, profiles []TemplateDisclosedProfi
 func templateGroundingHash(d *TemplateDisclosure) string {
 	canonical, err := json.Marshal(struct {
 		Destination      TemplateDestination      `json:"destination"`
+		Transport        TemplateTransport        `json:"transport"`
 		ContinuationRule TemplateContinuationRule `json:"continuationRule"`
 		Sections         []PromptSection          `json:"sections"`
-	}{d.Destination, d.ContinuationRule, d.Sections})
+	}{d.Destination, d.Transport, d.ContinuationRule, d.Sections})
 	if err != nil {
 		// Only fixed structs of strings, ints and bools are marshalled here.
 		panic(err)

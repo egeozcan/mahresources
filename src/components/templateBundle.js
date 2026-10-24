@@ -460,7 +460,8 @@ export function templateBundle({ carrier } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, ...extra }),
       });
-      const { bundleGenerate, bundleStatus } = this.$refs;
+      // Missing refs (a test fixture, a partial render) only cost the focus moves.
+      const { bundleGenerate, bundleStatus, bundlePrompt } = this.$refs || {};
       try {
         // A dry run assembles exactly what would be sent and sends nothing; the
         // reader approves it before the real request goes out with its hash.
@@ -474,7 +475,7 @@ export function templateBundle({ carrier } = {}) {
         // Generate is enabled while the dialog is open, so Cancel can return to it.
         this.generating = false;
         this.notify('', 'info');
-        const approved = await reviewDisclosure(disclosure, bundleGenerate);
+        const approved = await reviewDisclosure(disclosure, [bundleGenerate, bundleStatus, bundlePrompt]);
         if (requestId !== this._generationRequestId || !approved) return;
 
         this.generating = true;
@@ -545,7 +546,7 @@ export function templateBundle({ carrier } = {}) {
       } finally {
         if (requestId === this._generationRequestId) {
           this.generating = false;
-          returnFocusToGenerate(this, bundleStatus, bundleGenerate);
+          returnFocusToGenerate(this, bundleStatus, bundleGenerate, [bundlePrompt]);
         }
       }
     },
@@ -565,7 +566,7 @@ export function templateBundle({ carrier } = {}) {
         // dialog's own focus return needs somewhere stable to land.
         const confirmed = await askToConfirm(
           `${changed.join(', ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
-          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this.$refs.bundleGenerate },
+          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this._focusChain().find((el) => el?.isConnected && !el.disabled && el.getClientRects().length > 0) },
         );
         if (!confirmed || this.pendingDraft !== draft) return;
       }
@@ -590,7 +591,15 @@ export function templateBundle({ carrier } = {}) {
     // Apply and Discard live in the panel they remove; once Alpine has torn it
     // down, focus would be on <body>, so it goes back to Generate.
     _focusAfterPanelCloses() {
-      returnFocusToGenerate(this, null, this.$refs?.bundleGenerate);
+      const [button, ...fallbacks] = this._focusChain();
+      returnFocusToGenerate(this, null, button, fallbacks);
+    },
+
+    // Where focus goes when Generate cannot take it: its status region, then
+    // the prompt.
+    _focusChain() {
+      const refs = this.$refs || {};
+      return [refs.bundleGenerate, refs.bundleStatus, refs.bundlePrompt];
     },
   };
 }

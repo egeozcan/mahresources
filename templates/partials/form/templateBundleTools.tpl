@@ -46,7 +46,7 @@
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
         <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. The draft then waits for review; nothing is filled until you press Apply.</p>
         <div class="flex flex-wrap gap-2">
-            <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2"
+            <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2" x-ref="bundlePrompt"
                       data-testid="template-bundle-generate-prompt"
                       class="flex-1 min-w-0 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500"
                       placeholder="e.g. A recipe card with the cooking time, a photo, and a list of ingredients"></textarea>

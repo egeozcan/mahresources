@@ -14,6 +14,7 @@ import (
 )
 
 type fakeTemplateDraftProvider struct {
+	endpoint   string
 	response   string
 	finish     string
 	usage      TemplateTokenUsage
@@ -22,6 +23,13 @@ type fakeTemplateDraftProvider struct {
 	seenSystem string
 	seenUser   string
 	seenTokens int
+}
+
+func (f *fakeTemplateDraftProvider) Endpoint() string {
+	if f.endpoint == "" {
+		return DefaultDeepSeekChatCompletionsURL
+	}
+	return f.endpoint
 }
 
 func (f *fakeTemplateDraftProvider) GenerateDraft(ctx context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error) {

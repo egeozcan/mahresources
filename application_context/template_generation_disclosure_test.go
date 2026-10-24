@@ -143,8 +143,8 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 				provider.seen.Model != profile.Model || provider.seen.MaxTokens != profile.MaxTokens || provider.seen.Thinking != profile.Thinking {
 				t.Fatalf("profile %+v, request model %q tokens %d", disclosure.Destination.Profiles, provider.seen.Model, provider.seen.MaxTokens)
 			}
-			if disclosure.Destination.Host != "api.deepseek.com" {
-				t.Fatalf("host = %q", disclosure.Destination.Host)
+			if disclosure.Destination.Host != "api.deepseek.com" || disclosure.Destination.Endpoint != DefaultDeepSeekChatCompletionsURL {
+				t.Fatalf("host %q endpoint %q", disclosure.Destination.Host, disclosure.Destination.Endpoint)
 			}
 		})
 	}
@@ -152,36 +152,56 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 
 func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	in := disclosureKinds()["pair"]
-	hash := func(cfg TemplateGenerationConfig) string {
-		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(in, "make it")
+	disclose := func(cfg TemplateGenerationConfig, endpoint string) *TemplateDisclosure {
+		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: endpoint}, cfg).DiscloseTemplate(in, "make it")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return d.GroundingHash
+		return d
 	}
+	const deepseek = "https://api.deepseek.com/chat/completions"
 	base := templateGenConfig()
-	if hash(base) != hash(base) {
+	hash := func(cfg TemplateGenerationConfig, endpoint string) string {
+		return disclose(cfg, endpoint).GroundingHash
+	}
+	if hash(base, deepseek) != hash(base, deepseek) {
 		t.Fatal("two disclosures of unchanged data hash differently")
 	}
 	model := base
 	model.Model = "deepseek-other"
-	host := base
-	host.ProviderURL = "https://elsewhere.example/chat/completions"
-	if hash(model) == hash(base) {
+	if hash(model, deepseek) == hash(base, deepseek) {
 		t.Error("changing the model did not change the hash")
 	}
-	if hash(host) == hash(base) {
-		t.Error("changing the provider host did not change the hash")
+	// The endpoint is the provider's own: scheme, host and path all count.
+	for _, other := range []string{
+		"https://elsewhere.example/chat/completions",
+		"http://api.deepseek.com/chat/completions",
+		"https://api.deepseek.com/v2/chat/completions",
+	} {
+		if hash(base, other) == hash(base, deepseek) {
+			t.Errorf("posting to %s did not change the hash", other)
+		}
+	}
+	withQuery := disclose(base, deepseek+"?token=secret")
+	if withQuery.Destination.Endpoint != deepseek || withQuery.Destination.Host != "api.deepseek.com" {
+		t.Errorf("endpoint %q host %q: the query must not be shown", withQuery.Destination.Endpoint, withQuery.Destination.Host)
+	}
+	d := disclose(base, deepseek)
+	want := TemplateTransport{Stream: false, ResponseFormat: "json_object", ContentType: "application/json", Authorization: "Bearer (your API key, not shown)"}
+	if d.Transport != want {
+		t.Errorf("transport = %+v, want %+v", d.Transport, want)
 	}
 	changed := in
 	changed.SampleMeta = `{"rating":5}`
-	d, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{}, base).DiscloseTemplate(changed, "make it")
-	if d.GroundingHash == hash(base) {
+	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(changed, "make it")
+	if c.GroundingHash == hash(base, deepseek) {
 		t.Error("changing a sample did not change the hash")
 	}
 }
 
 type countingTemplateProvider struct{ calls int }
+
+func (p *countingTemplateProvider) Endpoint() string { return DefaultDeepSeekChatCompletionsURL }
 
 func (p *countingTemplateProvider) GenerateDraft(context.Context, TemplateDraftRequest) (TemplateDraftResponse, error) {
 	p.calls++

@@ -136,7 +136,8 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, ...extra }),
       });
-      const { generateButton, generateStatus } = this.$refs;
+      // Missing refs (a test fixture, a partial render) only cost the focus moves.
+      const { generateButton, generateStatus, generatePrompt } = this.$refs || {};
 
       try {
         // A dry run assembles exactly what would be sent and sends nothing; the
@@ -154,7 +155,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         // Generate is enabled while the dialog is open, so Cancel can return to it.
         this.generating = false;
         this.generationStatus = '';
-        const approved = await reviewDisclosure(disclosure, generateButton);
+        const approved = await reviewDisclosure(disclosure, [generateButton, generateStatus, generatePrompt]);
         if (requestId !== this._generationRequestId || !approved) return;
 
         this.generating = true;
@@ -230,7 +231,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       } finally {
         if (requestId === this._generationRequestId) {
           this.generating = false;
-          returnFocusToGenerate(this, generateStatus, generateButton);
+          returnFocusToGenerate(this, generateStatus, generateButton, [generatePrompt]);
         }
       }
     },
@@ -257,7 +258,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           `${changed.join(' and ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
           // Apply is removed with the panel once the draft is written, so the
           // dialog's own focus return needs somewhere stable to land.
-          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this.$refs.generateButton },
+          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this._focusChain().find((el) => el?.isConnected && !el.disabled && el.getClientRects().length > 0) },
         );
         if (!confirmed || this.generatedFields !== draft) return;
       }
@@ -276,7 +277,15 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // Apply and Discard live in the panel they remove; once Alpine has torn it
     // down, focus would be on <body>, so it goes back to Generate.
     _focusAfterPanelCloses() {
-      returnFocusToGenerate(this, null, this.$refs?.generateButton);
+      const [button, ...fallbacks] = this._focusChain();
+      returnFocusToGenerate(this, null, button, fallbacks);
+    },
+
+    // Where focus goes when the control's own button cannot take it: Generate,
+    // then its status region, then its prompt.
+    _focusChain() {
+      const refs = this.$refs || {};
+      return [refs.generateButton, refs.generateStatus, refs.generatePrompt];
     },
 
     discardGenerated() {

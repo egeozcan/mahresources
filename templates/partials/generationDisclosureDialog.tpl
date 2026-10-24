@@ -2,8 +2,8 @@
 {# before it is sent. Driven by the `generationDisclosure` store                    #}
 {# (src/components/generationDisclosure.js). It follows confirmDialog.tpl (overlay  #}
 {# z-index, inert page, store-owned focus return, Escape cancels) with one layout  #}
-{# difference and one focus difference: no x-trap (see generationDisclosure.js);   #}
-{# the page is inert and Tab wraps at the dialog's ends.                            #}
+{# difference and one focus difference: no x-trap. The page is inert and          #}
+{# src/utils/containFocus.js keeps Tab inside, also after a mouse blur.            #}
 {# The layout: the panel is bounded to the viewport and only the section list      #}
 {# scrolls, so the actions stay reachable however long a sample block is. User data #}
 {# is bound with x-text only.                                                       #}
@@ -12,7 +12,6 @@
         <div class="confirm-dialog-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-2 sm:p-4"
              @keydown.escape.window="$store.generationDisclosure.cancel()">
             <div x-init="$store.generationDisclosure._mount($el)"
-                 @keydown.tab="$store.generationDisclosure.onTab($event, $el)"
                  class="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92dvh] flex flex-col overflow-hidden ring-1 ring-black/5"
                  role="dialog"
                  aria-modal="true"
@@ -23,11 +22,19 @@
                     <h2 id="generation-disclosure-title" class="text-lg font-medium font-mono text-stone-900">Review what will be sent</h2>
                     <div id="generation-disclosure-summary" class="mt-1 text-sm text-stone-700 space-y-1">
                         <p>These messages go to <strong class="font-mono" x-text="$store.generationDisclosure.host"></strong>. Nothing is sent until you press Send.</p>
-                        <ul class="text-xs font-mono text-stone-600 list-disc pl-5">
+                        <ul class="text-xs font-mono text-stone-600 list-disc pl-5" data-testid="generation-disclosure-profiles">
                             <template x-for="(line, i) in $store.generationDisclosure.profiles" :key="i">
                                 <li x-text="line"></li>
                             </template>
                         </ul>
+                        <ul class="text-xs font-mono text-stone-600 list-none break-all" aria-label="How it is sent" data-testid="generation-disclosure-transport">
+                            <template x-for="(line, i) in $store.generationDisclosure.transport" :key="i">
+                                <li x-text="line"></li>
+                            </template>
+                        </ul>
+                        <p class="text-xs text-stone-600" x-show="$store.generationDisclosure.continuationRule" data-testid="generation-disclosure-rule">
+                            <span class="font-medium">Later calls:</span> <span x-text="$store.generationDisclosure.continuationRule"></span>
+                        </p>
                     </div>
                 </div>
                 {# The only scrolling part. tabindex makes it reachable and scrollable by keyboard. #}

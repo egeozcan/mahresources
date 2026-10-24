@@ -48,12 +48,9 @@ var (
 )
 
 type TemplateGenerationConfig struct {
-	APIKey string
-	Model  string
-	// ProviderURL is where the provider sends requests; its host is disclosed
-	// and hashed (DefaultDeepSeekChatCompletionsURL when empty).
-	ProviderURL string
-	Timeout     time.Duration
+	APIKey  string
+	Model   string
+	Timeout time.Duration
 	// Logf receives one line per provider call (log.Printf when nil).
 	Logf func(format string, args ...any)
 }
@@ -148,6 +145,9 @@ type TemplateDraftResponse struct {
 // unlike the MRQL provider — the provider does not decode a fixed struct).
 type TemplateDraftProvider interface {
 	GenerateDraft(ctx context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error)
+	// Endpoint is the URL GenerateDraft posts to. The disclosure hashes it,
+	// taken from the provider itself so the two cannot diverge.
+	Endpoint() string
 }
 
 type defaultTemplateGenerator struct {
@@ -164,9 +164,6 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
-	}
-	if cfg.ProviderURL == "" {
-		cfg.ProviderURL = DefaultDeepSeekChatCompletionsURL
 	}
 	return &defaultTemplateGenerator{provider: provider, config: cfg}
 }
@@ -213,7 +210,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	}
 
 	sections, maxTokens := buildTemplatePromptSections(in, prompt)
-	disclosure := newTemplateDisclosure(g.config.ProviderURL, []TemplateDisclosedProfile{{
+	disclosure := newTemplateDisclosure(g.provider.Endpoint(), []TemplateDisclosedProfile{{
 		Kind:      templateCallKind(in),
 		Model:     g.config.Model,
 		MaxTokens: maxTokens,

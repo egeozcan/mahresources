@@ -703,6 +703,8 @@ func TestLintMessagePrefixesStayClassified(t *testing.T) {
 
 type malformedProvider struct{}
 
+func (malformedProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+
 func (malformedProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	return application_context.TemplateDraftResponse{Content: `{"slots":{"CustomHeader":"<p>`, FinishReason: "stop"}, nil
 }
@@ -731,11 +733,15 @@ func TestBundleDegradeMessageStaysClassified(t *testing.T) {
 
 type fixedProvider string
 
+func (p fixedProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+
 func (p fixedProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "stop"}, nil
 }
 
 type lengthProvider string
+
+func (p lengthProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
 
 func (p lengthProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "length"}, nil

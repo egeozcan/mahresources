@@ -2656,11 +2656,13 @@ Request body fields:
 
 Generation takes two requests. A dry run returns the disclosure: {"sections":
 [{"call", "role", "key", "label", "bytes", "text", "constant"}], "destination":
-{"host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
+{"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
+"transport": {"stream", "responseFormat", "contentType", "authorization"},
 "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
 provider call's system and user messages, split into labelled parts; the
-provider request is built only from them. "groundingHash" is the sha256 of the
-destination, the continuation rule and every section. The real request repeats
+provider request is built only from them. "endpoint" is the scheme, host and
+path the provider posts to. "groundingHash" is the sha256 of the destination,
+the transport, the continuation rule and every section. The real request repeats
 the same fields with "groundingHash"; the server rebuilds the disclosure and
 answers 409 "the data to be sent changed; review it again" when the hash no
 longer matches (for example a new member entity became the sample), and 400

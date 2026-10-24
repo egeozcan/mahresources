@@ -15,6 +15,8 @@ import (
 
 type countingAPIProvider struct{ calls int }
 
+func (p *countingAPIProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+
 func (p *countingAPIProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	p.calls++
 	return application_context.TemplateDraftResponse{Content: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"x"}`, FinishReason: "stop"}, nil

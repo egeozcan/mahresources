@@ -6,6 +6,7 @@
     <div class="flex flex-wrap items-start gap-2">
         <textarea id="{{ field_id }}-genprompt"
                   x-model="generationPrompt"
+                  x-ref="generatePrompt"
                   data-testid="generate-prompt-{{ name }}"
                   rows="1"
                   @keydown.enter.meta.prevent="generateFromPrompt()"

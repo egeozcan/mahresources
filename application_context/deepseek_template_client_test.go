@@ -136,3 +136,24 @@ func TestDeepSeekTemplateClientEmptyLengthIsTruncationNotError(t *testing.T) {
 		})
 	}
 }
+
+// TestDeepSeekTemplateClientReportsTheURLItPostsTo: the disclosure hashes the
+// provider's own endpoint, so it must be the URL requests actually go to.
+func TestDeepSeekTemplateClientReportsTheURLItPostsTo(t *testing.T) {
+	var posted string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = "http://" + r.Host + r.URL.Path
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	provider := NewDeepSeekTemplateDraftProvider(server.URL+"/chat/completions", "k", "m", server.Client())
+	if _, err := provider.GenerateDraft(context.Background(), TemplateDraftRequest{MaxTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if provider.Endpoint() != posted {
+		t.Fatalf("Endpoint() = %q, posted to %q", provider.Endpoint(), posted)
+	}
+	if NewDeepSeekTemplateDraftProvider("", "k", "m", nil).Endpoint() != DefaultDeepSeekChatCompletionsURL {
+		t.Fatal("the default endpoint is not reported")
+	}
+}

@@ -84,10 +84,9 @@ func TestTemplateGenerationEval(t *testing.T) {
 		&http.Client{Transport: recorder},
 	)
 	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{
-		APIKey:      apiKey,
-		Model:       model,
-		ProviderURL: application_context.DefaultDeepSeekChatCompletionsURL,
-		Timeout:     timeout,
+		APIKey:  apiKey,
+		Model:   model,
+		Timeout: timeout,
 	}))
 	// SetupTestEnv runs no plugin manager, so the server lints against the
 	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
