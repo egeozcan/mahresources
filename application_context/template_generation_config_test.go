@@ -319,3 +319,106 @@ func TestProviderSlotsBoundConcurrentCallsAndTimeOutWaiters(t *testing.T) {
 		t.Fatalf("%d calls were in flight with 2 slots", peak)
 	}
 }
+
+// funcTemplateProvider runs fn for each call.
+type funcTemplateProvider struct {
+	fn func(ctx context.Context) (TemplateDraftResponse, error)
+}
+
+func (f funcTemplateProvider) Endpoint() string { return DefaultDeepSeekChatCompletionsURL }
+
+func (f funcTemplateProvider) GenerateDraft(ctx context.Context, _ TemplateDraftRequest) (TemplateDraftResponse, error) {
+	return f.fn(ctx)
+}
+
+// Every way a call can end releases its slot: with one slot, a follow-up call
+// is admitted after a success, a provider error, a cancelled context and a
+// panic, and a waiter that gives up while the slot is held never takes it.
+func TestProviderSlotIsReleasedHoweverTheCallEnds(t *testing.T) {
+	cfg := templateGenConfig()
+	cfg.ProviderSlots = 1
+	var mode atomic.Value
+	mode.Store("ok")
+	hold := make(chan struct{})
+	held := make(chan struct{}, 1)
+	provider := funcTemplateProvider{fn: func(ctx context.Context) (TemplateDraftResponse, error) {
+		switch mode.Load().(string) {
+		case "error":
+			return TemplateDraftResponse{}, errors.New("boom")
+		case "cancel":
+			<-ctx.Done()
+			return TemplateDraftResponse{}, ctx.Err()
+		case "panic":
+			panic("provider bug")
+		case "hold":
+			held <- struct{}{}
+			<-hold
+		}
+		return TemplateDraftResponse{Content: "{}", FinishReason: "stop"}, nil
+	}}
+	g := NewTemplateGenerator(provider, cfg).(*defaultTemplateGenerator)
+	profile := TemplateCallProfile{Timeout: 2 * time.Second}
+	call := func(ctx context.Context) error {
+		_, err := g.callProvider(ctx, profile, TemplateDraftRequest{}, "draft", TemplateGenerationInput{})
+		return err
+	}
+	admitted := func(after string) {
+		t.Helper()
+		mode.Store("ok")
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		if err := call(ctx); err != nil {
+			t.Fatalf("after %s the slot was not released: %v", after, err)
+		}
+	}
+
+	admitted("start")
+	mode.Store("error")
+	if err := call(context.Background()); err == nil {
+		t.Fatal("expected a provider error")
+	}
+	admitted("a provider error")
+
+	mode.Store("cancel")
+	cancelled, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+	if err := call(cancelled); err == nil {
+		t.Fatal("expected a cancellation error")
+	}
+	admitted("a cancelled context")
+
+	mode.Store("panic")
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the panic was swallowed")
+			}
+		}()
+		_ = call(context.Background())
+	}()
+	admitted("a recovered panic")
+
+	// A waiter cancelled while the holder is active returns without a slot.
+	mode.Store("hold")
+	done := make(chan error, 1)
+	go func() { done <- call(context.Background()) }()
+	<-held
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiter := make(chan error, 1)
+	go func() { waiter <- call(waiterCtx) }()
+	time.Sleep(30 * time.Millisecond)
+	cancelWaiter()
+	select {
+	case err := <-waiter:
+		if err == nil {
+			t.Fatal("the cancelled waiter succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the cancelled waiter did not return")
+	}
+	close(hold)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	admitted("a cancelled waiter and a finished holder")
+}
