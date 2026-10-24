@@ -934,6 +934,145 @@ describe('round 12: one work budget, base merge semantics', () => {
   });
 });
 
+describe('round 13: linear reference analysis, no state after a fallback, scoring by value', () => {
+  const TOO_COMPLEX = 'Schema too complex to display';
+  const CONDITION_BRANCHES = {
+    then: { properties: { thenOnly: { type: 'string', title: 'Then field' } } },
+    else: { properties: { elseOnly: { type: 'string', title: 'Else field' } } },
+  };
+
+  const chain = (length: number, last: any) => {
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < length; i++) $defs[`a${i}`] = { $ref: `#/$defs/a${i + 1}` };
+    $defs[`a${length}`] = last;
+    return $defs;
+  };
+
+  it('an 8,000-reference chain as the root if renders or falls back within 1s', async () => {
+    const $defs = chain(8000, { properties: { v: { const: 'a' } } });
+    const schema = { $defs, type: 'object', properties: { v: { type: 'string' } }, if: { $ref: '#/$defs/a0' }, ...CONDITION_BRANCHES };
+    const started = Date.now();
+    const panel = await mountEl('schema-display-mode', { schema, value: { v: 'a', thenOnly: 'T', elseOnly: 'E' } });
+    expect(Date.now() - started).toBeLessThan(1000);
+    const text = snapshot(panel);
+    expect(text.includes('Then field') || text.includes('showing the raw value')).toBe(true);
+  });
+
+  it('an 8,000-reference ring is recursive throughout and still renders within 1s', async () => {
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < 8000; i++) $defs[`a${i}`] = { properties: { next: { $ref: `#/$defs/a${(i + 1) % 8000}` } } };
+    const schema = { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a0' } } };
+    const started = Date.now();
+    const panel = await mountEl('schema-display-mode', { schema, value: { v: { next: { next: 'x' } } } });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(snapshot(panel)).toContain('x');
+  });
+
+  it('visiting a 50,000-level schema does not overflow the stack, and keeps keyword order', () => {
+    let deep: any = { $ref: '#/$defs/end' };
+    for (let i = 0; i < 50000; i++) deep = { not: deep };
+    let count = 0;
+    expect(() => visitSubschemas(deep, () => { count++; })).not.toThrow();
+    expect(count).toBe(50001);
+    const order: string[] = [];
+    visitSubschemas({ title: 'root', not: { title: 'not' }, allOf: [{ title: 'all0' }, { title: 'all1' }], properties: { p: { title: 'p', items: { title: 'p.items' } } } },
+      s => order.push(s.title));
+    expect(order).toEqual(['root', 'not', 'all0', 'all1', 'p', 'p.items']);
+  });
+
+  it('the reference analysis charges the work budget for every reference and edge', () => {
+    // The condition is the chain's last link, so evaluating it is cheap and
+    // the difference is the analysis of the root's whole reference graph:
+    // each extra link is two subschemas visited, one reference and one edge.
+    const work = (length: number) => {
+      const root = { $defs: chain(length, { properties: { v: { const: 'a' } } }) };
+      withSchemaBudget(() => evaluateCondition({ $ref: `#/$defs/a${length}` }, { v: 'a' }, root));
+      return schemaWorkDone();
+    };
+    expect(work(5010) - work(10)).toBeGreaterThanOrEqual(3 * 5000);
+  });
+
+  it('recursion is decided per strongly connected component', () => {
+    // b and c form a cycle, d refers to itself, and a (reached from x and
+    // from its own sibling) is on no cycle.
+    const root: any = {
+      $defs: {
+        a: { type: 'object', properties: { q: { type: 'string', default: 'A' } } },
+        x: { type: 'object', allOf: [{ $ref: '#/$defs/a' }, { properties: { p: { $ref: '#/$defs/a' } } }] },
+        b: { type: 'object', properties: { y: { $ref: '#/$defs/c' } } },
+        c: { type: 'object', properties: { z: { $ref: '#/$defs/b' } } },
+        d: { type: 'object', properties: { self: { $ref: '#/$defs/d' } } },
+        w: { type: 'object', properties: { b: { $ref: '#/$defs/b' } } },
+      },
+    };
+    // a is on the path when its sibling p refers to it again, and resolves
+    // there, because it is not recursive.
+    expect(getDefaultValue({ $ref: '#/$defs/x' }, root)).toEqual({ q: 'A', p: { q: 'A' } });
+    // A two-reference cycle and a self-reference stop at their first repeat.
+    expect(getDefaultValue({ $ref: '#/$defs/b' }, root)).toEqual({ y: {} });
+    expect(getDefaultValue({ $ref: '#/$defs/w' }, root)).toEqual({ b: { y: {} } });
+    expect(getDefaultValue({ $ref: '#/$defs/d' }, root)).toEqual({});
+    // In a three-reference cycle every member is recursive, including the
+    // one the analysis started from.
+    const ring: any = { $defs: {
+      a: { type: 'object', properties: { x: { $ref: '#/$defs/b' } } },
+      b: { type: 'object', properties: { y: { $ref: '#/$defs/c' } } },
+      c: { type: 'object', properties: { z: { $ref: '#/$defs/a' } } },
+    } };
+    expect(getDefaultValue({ $ref: '#/$defs/a' }, ring)).toEqual({ x: { y: {} } });
+    expect(getDefaultValue({ $ref: '#/$defs/b' }, ring)).toEqual({ y: { z: {} } });
+    expect(getDefaultValue({ $ref: '#/$defs/c' }, ring)).toEqual({ z: { x: {} } });
+  });
+
+  it('a budget fallback leaves no walk state behind for the next render', async () => {
+    let doubling: any = { title: 'leaf', properties: { v: { const: 'a' } } };
+    for (let i = 0; i < 20; i++) doubling = { title: `L${i}`, allOf: [doubling, doubling] };
+    const heavy = { type: 'object', properties: { v: { type: 'string' } }, if: { allOf: [doubling] }, ...CONDITION_BRANCHES };
+    const fallen = await mountEl('schema-display-mode', { schema: heavy, value: { v: 'a' } });
+    expect(snapshot(fallen)).toContain(TOO_COMPLEX);
+    document.body.replaceChildren();
+
+    const schema = { $defs: { c: { properties: { v: { const: 'a' } } } }, type: 'object', properties: { v: { type: 'string' } }, if: { $ref: '#/$defs/c' }, ...CONDITION_BRANCHES };
+    const value = { v: 'a', thenOnly: 'T', elseOnly: 'E' };
+    const el: any = await mountEl('schema-display-mode', { schema, value });
+    expect(el.textContent).toContain('Then field');
+    value.v = 'b';
+    el.requestUpdate();
+    await settle(el);
+    expect(el.textContent).toContain('Else field');
+    expect(el.textContent).not.toContain('Then field');
+  });
+
+  it('a budget error thrown by the depth guard itself unwinds the depth', () => {
+    // Every branch is one guarded walker call, so the budget runs out in the
+    // guard's own count. A top-level walker call outside any render has its
+    // own budget, and no withSchemaBudget around it to restore the walk state.
+    const wide = { allOf: new Array(SCHEMA_WORK_BUDGET + 1).fill({}) };
+    expect(() => evaluateCondition(wide, {}, {})).toThrow(SchemaTooComplexError);
+    // A leaked depth would keep the previous walk's memo, so mutated data
+    // would keep its old verdict.
+    const data = { v: 'a' };
+    const root: any = { $defs: { c: { properties: { v: { const: 'a' } } } } };
+    expect(evaluateCondition({ $ref: '#/$defs/c' }, data, root)).toBe(true);
+    data.v = 'b';
+    expect(evaluateCondition({ $ref: '#/$defs/c' }, data, root)).toBe(false);
+  });
+
+  it('scoring compares const and enum by value, so equal object branches score alike', () => {
+    const second = { k: 1 };
+    // The second branch's own const object: dropping that branch as a
+    // repeat of the first must not change its score.
+    expect(scoreSchemaMatch({ anyOf: [{ const: { k: 1 } }, { const: second }] } as any, second, {})).toBe(100);
+    const data = { k: 1 };
+    expect(scoreSchemaMatch({ anyOf: [{ const: { k: 1 } }, { const: { k: 1 } }] } as any, data, {})).toBe(100);
+    expect(scoreSchemaMatch({ const: { k: 1 } } as any, data, {})).toBe(100);
+    expect(scoreSchemaMatch({ properties: { p: { const: [1] } } } as any, { p: [1] }, {}))
+      .toBe(scoreSchemaMatch({ properties: { p: { const: 1 } } } as any, { p: 1 }, {}));
+    expect(scoreSchemaMatch({ properties: { p: { enum: [[1]] } } } as any, { p: [1] }, {}))
+      .toBe(scoreSchemaMatch({ properties: { p: { enum: [1] } } } as any, { p: 1 }, {}));
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [

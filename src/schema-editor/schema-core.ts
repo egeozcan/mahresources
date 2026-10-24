@@ -188,29 +188,47 @@ const SUBSCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems', 'item
 // array of property names; only the schema values are followed.
 const SUBSCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
 
-/** Call visit on schema and on every subschema it holds, at schema-bearing keywords only. */
+/**
+ * Call visit on schema and on every subschema it holds, at schema-bearing
+ * keywords only, depth first in keyword order. Iterative, so a deeply nested
+ * schema cannot overflow the stack.
+ */
 export function visitSubschemas(schema: unknown, visit: (subschema: JSONSchema) => void): void {
-  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return;
-  const s = schema as JSONSchema;
-  visit(s);
-  for (const key of SUBSCHEMA_KEYWORDS) visitSubschemas(ownValue(s, key), visit);
-  for (const key of SUBSCHEMA_LIST_KEYWORDS) {
-    const list = ownValue(s, key);
-    if (Array.isArray(list)) list.forEach(sub => visitSubschemas(sub, visit));
-  }
-  for (const key of SUBSCHEMA_MAP_KEYWORDS) {
-    const map = ownValue(s, key);
-    if (map !== null && typeof map === 'object' && !Array.isArray(map)) Object.values(map).forEach(sub => visitSubschemas(sub, visit));
+  const pending: unknown[] = [schema];
+  while (pending.length) {
+    const next = pending.pop();
+    if (next === null || typeof next !== 'object' || Array.isArray(next)) continue;
+    const s = next as JSONSchema;
+    visit(s);
+    const children: unknown[] = [];
+    for (const key of SUBSCHEMA_KEYWORDS) children.push(ownValue(s, key));
+    for (const key of SUBSCHEMA_LIST_KEYWORDS) {
+      const list = ownValue(s, key);
+      if (Array.isArray(list)) children.push(...list);
+    }
+    for (const key of SUBSCHEMA_MAP_KEYWORDS) {
+      const map = ownValue(s, key);
+      if (map !== null && typeof map === 'object' && !Array.isArray(map)) children.push(...Object.values(map));
+    }
+    for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]);
   }
 }
 
-/** Every $ref of schema and of the subschemas it holds. */
+/** Every $ref of schema and of the subschemas it holds; each subschema visited counts as work. */
 function refsWithin(schema: unknown, into: Set<string>): Set<string> {
-  visitSubschemas(schema, s => { if (typeof s.$ref === 'string') into.add(s.$ref); });
+  visitSubschemas(schema, s => {
+    countSchemaWork();
+    if (typeof s.$ref === 'string') into.add(s.$ref);
+  });
   return into;
 }
 
-/** The references of root that can reach themselves through its $ref graph. */
+/**
+ * The references of root that can reach themselves through its $ref graph: a
+ * reference with an edge to itself, or one in a strongly connected component
+ * of more than one reference. One iterative Tarjan pass, linear in the graph
+ * and charged to the work budget per reference and per edge.
+ */
 function recursiveRefs(root: JSONSchema): Set<unknown> {
   const cached = recursiveRefsByRoot.get(root);
   if (cached) return cached;
@@ -220,19 +238,53 @@ function recursiveRefs(root: JSONSchema): Set<unknown> {
     const ref = pending.pop()!;
     if (edges.has(ref)) continue;
     const next = refsWithin(resolveRef(ref, root), new Set());
+    countSchemaWork(1 + next.size);
     edges.set(ref, next);
     pending.push(...next);
   }
+
   const recursive = new Set<unknown>();
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const component: string[] = [];
+  let counter = 0;
+  const enter = (ref: string, frames: Array<[string, Iterator<string>]>) => {
+    index.set(ref, counter);
+    low.set(ref, counter);
+    counter++;
+    component.push(ref);
+    onStack.add(ref);
+    frames.push([ref, edges.get(ref)!.values()]);
+  };
   for (const start of edges.keys()) {
-    const seen = new Set<string>();
-    const stack = [...edges.get(start)!];
-    while (stack.length) {
-      const ref = stack.pop()!;
-      if (ref === start) { recursive.add(start); break; }
-      if (seen.has(ref)) continue;
-      seen.add(ref);
-      stack.push(...(edges.get(ref) ?? []));
+    if (index.has(start)) continue;
+    const frames: Array<[string, Iterator<string>]> = [];
+    enter(start, frames);
+    while (frames.length) {
+      const [ref, targets] = frames[frames.length - 1];
+      const step = targets.next();
+      if (!step.done) {
+        const target = step.value;
+        if (target === ref) recursive.add(ref);
+        if (!index.has(target)) enter(target, frames);
+        else if (onStack.has(target)) low.set(ref, Math.min(low.get(ref)!, index.get(target)!));
+        continue;
+      }
+      frames.pop();
+      if (frames.length) {
+        const parent = frames[frames.length - 1][0];
+        low.set(parent, Math.min(low.get(parent)!, low.get(ref)!));
+      }
+      if (low.get(ref) !== index.get(ref)) continue;
+      const members: string[] = [];
+      let member: string;
+      do {
+        member = component.pop()!;
+        onStack.delete(member);
+        members.push(member);
+      } while (member !== ref);
+      if (members.length > 1) members.forEach(m => recursive.add(m));
     }
   }
   recursiveRefsByRoot.set(root, recursive);
@@ -301,13 +353,14 @@ let schemaDepth = 0;
 
 export function withinDepth<T>(atLimit: T, walk: () => T): T {
   if (schemaDepth >= MAX_SCHEMA_DEPTH) return atLimit;
-  if (schemaDepth === 0) {
-    walkMemo = new Map();
-    if (budgetScopes === 0) workDone = 0;
-  }
+  const outermost = schemaDepth === 0;
   schemaDepth++;
-  countSchemaWork();
   try {
+    if (outermost) {
+      walkMemo = new Map();
+      if (budgetScopes === 0) workDone = 0;
+    }
+    countSchemaWork();
     return walk();
   } finally {
     schemaDepth--;
@@ -344,12 +397,22 @@ let budgetScopes = 0;
 
 /** Run one top-level operation under a fresh work budget. */
 export function withSchemaBudget<T>(operation: () => T): T {
-  if (budgetScopes === 0) workDone = 0;
+  const outermost = budgetScopes === 0;
+  // The walk state as the operation found it: restored afterwards whatever
+  // happened, so a budget error thrown mid-walk leaves no depth, memo or
+  // reference path behind for the next render.
+  const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Set(refPath) : refPath;
+  if (outermost) workDone = 0;
   budgetScopes++;
   try {
     return operation();
   } finally {
     budgetScopes--;
+    if (outermost) {
+      schemaDepth = savedDepth;
+      walkMemo = savedMemo;
+      refPath = savedPath;
+    }
   }
 }
 
@@ -753,7 +816,7 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
     }
   }
 
-  if (schema.const !== undefined) return schema.const === data ? 100 : 0;
+  if (schema.const !== undefined) return sameValue(schema.const, data) ? 100 : 0;
 
   const dataType = inferType(data);
   let schemaType = schema.type;
@@ -785,13 +848,13 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
 
       // const match: strong signal for discriminated unions
       if (ps.const !== undefined) {
-        if (val === ps.const) score += 50;
+        if (sameValue(val, ps.const)) score += 50;
         else return 0; // Definite mismatch — this variant cannot match
       }
 
       // enum match
       if (ps.enum && Array.isArray(ps.enum)) {
-        if (ps.enum.includes(val)) score += 20;
+        if (ps.enum.some((member: unknown) => sameValue(member, val))) score += 20;
         else return 0; // Value not in allowed enum — cannot match
       }
 
