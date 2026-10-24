@@ -2342,57 +2342,42 @@ describe('round 25: automatic assignments that cycle stop, value errors clear wi
     el.remove();
   });
 
-  it('const writes that would restore a replaced value stop, warn once, and restart after user input', async () => {
-    // The contradictory conditional loops forever in a browser behind
-    // schema-editor's echo; happy-dom's update scheduling lets it end after a
-    // few flips, so the guard itself is driven here: const writes on flag,
-    // alternating, each computed from the current value.
-    const { AutoWrite } = await import('./modes/form-mode');
+  it('a cycle of automatic writes stops, warns once, and restarts after user input or an outside value', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    const el: any = await mountEl('schema-form-mode', { schema: contradictory, value: {} });
-    await new Promise(r => setTimeout(r, 0));
-    await settle(el);
-    const values: unknown[] = [];
-    el.addEventListener('value-change', (e: CustomEvent) => { values.push(e.detail.value); });
-    const flip = (times: number) => {
-      for (let i = 0; i < times; i++) {
-        const current = el._data?.flag;
-        el._applyAutoWrite(new AutoWrite(['flag'], !current, current, 'const'));
-      }
+    const el: any = document.createElement('schema-form-mode');
+    let emits = 0;
+    const emit = el._emitChange;
+    el._emitChange = function (...args: unknown[]) { if (emits >= 200) return; return emit.apply(this, args); };
+    // schema-editor's echo: every emitted value comes back as text.
+    el.addEventListener('value-change', (e: CustomEvent) => { emits++; el.value = JSON.stringify(e.detail.value); });
+    // An initialisation the conditional's cleanup removes again: this one
+    // cycles in happy-dom too (the contradictory consts end on their own here).
+    el.schema = {
+      if: { required: ['enabled'] },
+      then: { properties: { name: { type: 'string' } } },
+      else: { properties: { enabled: { type: 'boolean' } }, required: ['enabled'] },
     };
-    el._emitChange({});
-    const start = values.length;
-    flip(20);
-    expect(values.length - start).toBeLessThan(4);
+    el.value = '{}';
+    document.body.append(el);
+    const run = async () => { for (let i = 0; i < 12; i++) { await el.updateComplete; await new Promise(r => setTimeout(r, 0)); } };
+    await run();
+    expect(emits).toBeLessThan(10);
     expect(warn).toHaveBeenCalledTimes(1);
-    // A const write computed from a value that has since changed is dropped.
-    const beforeStale = values.length;
-    el._applyAutoWrite(new AutoWrite(['flag'], 'x', 'not the current value', 'const'));
-    expect(values.length).toBe(beforeStale);
-    // A user change starts afresh.
-    el._emitChange({ flag: true });
-    const afterUser = values.length;
-    flip(1);
-    expect(values.length).toBe(afterUser + 1);
-    // An echo of the form's own value (schema-editor passes it back as text)
-    // is not a value from outside: the loop stays stopped.
-    flip(20);
-    const beforeEcho = values.length;
-    el.value = JSON.stringify(el._emittedValue);
-    await settle(el);
-    flip(2);
-    expect(values.length).toBe(beforeEcho);
-    // Once after the first loop, once after the loop that followed the
-    // user's change; the echo did not reset the guard.
+    // User input starts a new sequence: it cycles again and is stopped again.
+    el._emitChange({ edited: 1 });
+    await run();
     expect(warn).toHaveBeenCalledTimes(2);
-    // A value set from outside starts afresh: the guard warns again when
-    // the flips resume, rather than staying silently stopped.
-    // (A value equal to the last one emitted would be an echo.)
-    el.value = { flag: false, note: 'from outside' };
-    await settle(el);
-    flip(20);
+    // An echo of the form's own value is not a value from outside.
+    el.value = JSON.stringify(el._emittedValue);
+    await run();
+    expect(warn).toHaveBeenCalledTimes(2);
+    // A value from outside starts a new sequence too.
+    el.value = '{"note":"from outside"}';
+    await run();
     expect(warn).toHaveBeenCalledTimes(3);
+    expect(emits).toBeLessThan(40);
+    el.remove();
   });
 
   it('initialisation writes set only their own path, onto the current value', async () => {
@@ -2403,6 +2388,12 @@ describe('round 25: automatic assignments that cycle stop, value errors clear wi
     el._applyAutoWrite(new AutoWrite(['b'], 'filled', undefined, 'init'));
     el._applyAutoWrite(new AutoWrite(['c', 'd'], 1, undefined, 'init'));
     expect(el._data).toEqual({ a: 'user', b: 'filled', c: { d: 1 } });
+    // A const write computed from a value its path no longer holds is stale
+    // and dropped; one computed from the current value applies.
+    el._applyAutoWrite(new AutoWrite(['a'], 'const', 'not the current value', 'const'));
+    expect(el._data.a).toBe('user');
+    el._applyAutoWrite(new AutoWrite(['a'], 'const', 'user', 'const'));
+    expect(el._data.a).toBe('const');
   });
 
   it('a usable value after a value-triggered failure renders the form again', async () => {
@@ -2548,6 +2539,133 @@ describe('round 26: nested initialisation through the wrapper echo settles as at
     // The allowance must stay the exception, not hide a general difference.
     expect(keptByHead).toBeLessThan(10);
   }, 60000);
+});
+
+describe('round 27: automatic writes stop on a whole-state cycle', () => {
+  // Mount tag behind schema-editor's echo and count emits; settled is false
+  // when the emits never stop within the rounds.
+  async function runWithEcho(tag: string, schema: any, valueText: string, rounds = 40) {
+    const el: any = document.createElement(tag);
+    let emits = 0;
+    let looped = false;
+    // A loop runs on microtasks and would starve every timer, so emits past
+    // a limit are swallowed: that ends a loop, and marks the run unsettled.
+    const emit = el._emitChange;
+    el._emitChange = function (...args: unknown[]) {
+      if (emits >= 200) { looped = true; return; }
+      return emit.apply(this, args);
+    };
+    el.addEventListener('value-change', (e: CustomEvent) => {
+      emits++;
+      try { el.value = JSON.stringify(e.detail.value); } catch { /* keep */ }
+    });
+    el.schema = schema;
+    el.value = valueText;
+    document.body.append(el);
+    let previous = '';
+    let settled = false;
+    for (let round = 0; round < rounds; round++) {
+      await el.updateComplete;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const now = `${emits}|${typeof el.value === 'string' ? el.value : JSON.stringify(el.value ?? null)}`;
+      if (now === previous && !el.isUpdatePending) { settled = !looped; break; }
+      previous = now;
+    }
+    const final = typeof el.value === 'string' ? JSON.parse(el.value) : JSON.parse(JSON.stringify(el.value ?? null));
+    el.remove();
+    return { final, emits, settled };
+  }
+
+  it('an initialisation undone by conditional cleanup stops instead of looping (pi\'s repro)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const schema = {
+      if: { required: ['enabled'] },
+      then: { properties: { name: { type: 'string' } } },
+      else: { properties: { enabled: { type: 'boolean' } }, required: ['enabled'] },
+    };
+    const head = await runWithEcho('schema-form-mode', schema, '{}');
+    expect(head.settled).toBe(true);
+    expect(head.emits).toBeLessThan(10);
+  });
+
+  it('a const transition the conditional requires is made, as at base (pi\'s repro)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const schema = {
+      type: 'object',
+      properties: { reviewed: { type: 'boolean' }, status: { type: 'string' } },
+      required: ['reviewed'],
+      if: { properties: { reviewed: { const: true } }, required: ['reviewed'] },
+      then: { properties: { status: { const: 'approved' } } },
+      else: { properties: { status: { const: 'pending' } } },
+    };
+    const head = await runWithEcho('schema-form-mode', schema, '{"status":"pending"}');
+    const base = await runWithEcho('base-schema-form-mode', schema, '{"status":"pending"}');
+    expect(head.settled).toBe(true);
+    expect(base.settled).toBe(true);
+    expect(head.final).toEqual(base.final);
+    expect(head.final.status).toBe('pending');
+  });
+
+  it('generated conditionals with required booleans and branch consts settle, as base does where base settles', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let seed = 270027;
+    const random = () => {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(items: T[]): T => items[Math.floor(random() * items.length)];
+    const branch = () => {
+      const properties: Record<string, any> = {};
+      if (random() < 0.6) properties.flag = pick<any>([{ const: true }, { const: false }, { type: 'boolean' }]);
+      if (random() < 0.6) properties.status = pick<any>([{ const: 'a' }, { const: 'b' }, { type: 'string' }]);
+      if (random() < 0.3) properties.extra = { type: 'string', default: 'x' };
+      const out: any = { properties };
+      if (random() < 0.4) out.required = [pick(['flag', 'status', 'extra'])];
+      return out;
+    };
+    const failures: string[] = [];
+    let compared = 0;
+    let baseLoops = 0;
+    let orderDependent = 0;
+    let neitherFixed = 0;
+    for (let i = 0; i < 60; i++) {
+      const schema: any = {
+        type: 'object',
+        properties: { flag: { type: 'boolean' }, status: { type: 'string' } },
+        required: random() < 0.7 ? ['flag'] : [],
+        if: { properties: { [pick(['flag', 'status'])]: { const: pick<any>([true, false, 'a']) } }, required: random() < 0.5 ? ['flag'] : [] },
+        then: branch(),
+        else: branch(),
+      };
+      const valueText = pick(['{}', '{"status":"a"}', '{"flag":true}', '{"flag":false,"status":"b"}']);
+      const text = JSON.stringify(schema);
+      const head = await runWithEcho('schema-form-mode', JSON.parse(text), valueText);
+      const base = await runWithEcho('base-schema-form-mode', JSON.parse(text), valueText);
+      if (!head.settled) failures.push(`case ${i}: head never settled\n  schema ${text}\n  value ${valueText}`);
+      if (!base.settled) { baseLoops++; continue; }
+      compared++;
+      if (sameValue(head.final, base.final)) continue;
+      // Conditionals make the settled value depend on the order of writes
+      // (base's stale snapshots reorder them). Allowed when both are settled
+      // values, fixed points no automatic write changes, or when neither is
+      // (the schema has none: head stopped a cycle, base stopped elsewhere).
+      const fixed = async (value: unknown) => (await runWithEcho('schema-form-mode', JSON.parse(text), JSON.stringify(value), 10)).emits === 0;
+      const headFixed = await fixed(head.final);
+      const baseFixed = await fixed(base.final);
+      if (headFixed && baseFixed) { orderDependent++; continue; }
+      if (!headFixed && !baseFixed) { neitherFixed++; continue; }
+      failures.push(`case ${i}\n  schema ${text}\n  value ${valueText}\n  head ${JSON.stringify(head.final)} (fixed ${headFixed})\n  base ${JSON.stringify(base.final)} (fixed ${baseFixed})`);
+    }
+    expect(failures).toEqual([]);
+    expect(compared).toBeGreaterThan(20);
+    // The allowances stay the exception.
+    expect(orderDependent + neitherFixed).toBeLessThan(compared / 4);
+    // Where base loops (past 200 emits) head must still settle: checked
+    // above for every case. In happy-dom none of these 60 loops at base.
+    void baseLoops;
+  }, 120000);
 });
 
 describe('schema-bearing keywords by draft', () => {
