@@ -94,12 +94,16 @@ func TestTemplateGeneratorSlotSuccess(t *testing.T) {
 	}
 }
 
+// The handler sends every HTML slot as a pair with its companion, so this is
+// the request a CustomMRQLResult Generate button makes.
 func TestTemplateGeneratorResourcePromptDocumentsRuntimeAndLightbox(t *testing.T) {
 	in := slotInput()
-	in.Slot = "CustomMRQLResult"
+	in.Target = TemplateTargetBundle
+	in.Slot = ""
+	in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS"}
 	in.EntityType = "resource"
 	provider := &fakeTemplateDraftProvider{
-		response: `{"content":"<div>x</div>","explanation":"A resource card."}`,
+		response: `{"slots":{"CustomMRQLResult":"<div>x</div>","CustomMRQLResultCSS":""},"explanation":"A resource card."}`,
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
@@ -107,9 +111,10 @@ func TestTemplateGeneratorResourcePromptDocumentsRuntimeAndLightbox(t *testing.T
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
 	for _, want := range []string{
-		"not a Pongo2 template",
+		"not Pongo2 templates",
 		"Do not rely on Tailwind utility classes or app-owned CSS classes",
-		"Alpine.js directives do not run in this slot",
+		"They do not run in these slots: CustomMRQLResult",
+		"Alpine directives are unavailable",
 		"ID, Name, OriginalName, Description, ResourceCategoryId",
 		"/v1/resource/preview?id=ID&height=PIXELS",
 		`onclick="window.Alpine.store('lightbox').openFromClick(event, Number(this.dataset.resourceId), this.dataset.contentType)"`,

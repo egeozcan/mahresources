@@ -312,21 +312,35 @@ type templateGenerationPluginReferences struct {
 }
 
 func serializeTemplateGenerationPluginReferencesForPrompt(ctx PluginManagerProvider) templateGenerationPluginReferences {
+	if pm := ctx.PluginManager(); pm != nil {
+		return templateGenerationPluginReferencesFromSnapshot(pm.AuthoringSnapshot())
+	}
 	var b strings.Builder
 	for _, d := range shortcodes.BuiltinDocs() {
 		writeBuiltinShortcodeDoc(&b, d)
 	}
-	references := templateGenerationPluginReferences{Known: shortcodes.KnownFromBuiltins()}
-	if pm := ctx.PluginManager(); pm != nil {
-		snapshot := pm.AuthoringSnapshot()
-		if omitted := appendPluginShortcodeDocsForPrompt(&b, snapshot.Shortcodes); omitted > 0 {
-			fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
-		}
-		references.PluginContext = serializePluginContextFromSnapshot(snapshot)
-		references.Known = buildKnownShortcodesFromPluginDocs(snapshot.Shortcodes)
+	return templateGenerationPluginReferences{DocsBlock: b.String(), Known: shortcodes.KnownFromBuiltins()}
+}
+
+// templateGenerationPluginReferencesFromSnapshot serializes one snapshot. The
+// output is part of the shared prompt prefix, so it orders every collection
+// itself rather than trusting the order it was handed: the same plugins must
+// give the same bytes whatever order they registered in.
+func templateGenerationPluginReferencesFromSnapshot(snapshot plugin_system.AuthoringSnapshot) templateGenerationPluginReferences {
+	var b strings.Builder
+	for _, d := range shortcodes.BuiltinDocs() {
+		writeBuiltinShortcodeDoc(&b, d)
 	}
-	references.DocsBlock = b.String()
-	return references
+	docs := append([]plugin_system.PluginShortcodeInfo(nil), snapshot.Shortcodes...)
+	sort.SliceStable(docs, func(i, j int) bool { return docs[i].FullName < docs[j].FullName })
+	if omitted := appendPluginShortcodeDocsForPrompt(&b, docs); omitted > 0 {
+		fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
+	}
+	return templateGenerationPluginReferences{
+		DocsBlock:     b.String(),
+		PluginContext: serializePluginContextFromSnapshot(snapshot),
+		Known:         buildKnownShortcodesFromPluginDocs(docs),
+	}
 }
 
 func appendPluginShortcodeDocsForPrompt(b *strings.Builder, docs []plugin_system.PluginShortcodeInfo) int {
@@ -359,11 +373,11 @@ func serializePluginContextForPrompt(ctx PluginManagerProvider) string {
 }
 
 func serializePluginContextFromSnapshot(snapshot plugin_system.AuthoringSnapshot) string {
-	plugins := snapshot.Plugins
+	plugins := append([]plugin_system.AuthoringPluginInfo(nil), snapshot.Plugins...)
 	if len(plugins) == 0 {
 		return ""
 	}
-	sort.Slice(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
+	sort.SliceStable(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
 
 	blocksByPlugin := make(map[string][]plugin_system.PluginBlockInfo)
 	for _, block := range snapshot.Blocks {

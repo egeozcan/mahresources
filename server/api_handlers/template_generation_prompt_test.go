@@ -339,3 +339,85 @@ func TestPluginBlockJSONPreservesWhitespaceInStringValues(t *testing.T) {
 		t.Fatalf("block JSON string values were altered: %q", got)
 	}
 }
+
+// TestPluginReferencesSerializeIdenticallyAcrossRegistrationOrder pins the
+// plugin half of the shared prompt prefix: two managers that enabled the same
+// plugins in opposite orders produce byte-identical references, so a restart
+// cannot cost every cached prefix.
+func TestPluginReferencesSerializeIdenticallyAcrossRegistrationOrder(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"alpha-tools", "beta-tools"} {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		source := `
+plugin = { name = "` + name + `", version = "1.0", description = "Tools ` + name + `." }
+function init()
+    mah.shortcode({ name = "badge", label = "Badge", description = "A badge.", render = function(ctx) return "<b>b</b>" end })
+    mah.shortcode({ name = "aside", label = "Aside", description = "An aside.", render = function(ctx) return "<i>a</i>" end })
+    mah.block_type({ type = "panel", label = "Panel", description = "A panel.",
+        content_schema = { type = "object" }, state_schema = { type = "object" },
+        default_content = {}, default_state = {},
+        render_view = function(ctx) return "<div></div>" end, render_edit = function(ctx) return "<div></div>" end })
+end
+`
+		if err := os.WriteFile(filepath.Join(dir, "plugin.lua"), []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serialize := func(order []string) templateGenerationPluginReferences {
+		pm, err := plugin_system.NewPluginManager(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pm.Close()
+		for _, name := range order {
+			if err := pm.EnablePlugin(name); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return serializeTemplateGenerationPluginReferencesForPrompt(promptPluginProvider{pm: pm})
+	}
+	first := serialize([]string{"alpha-tools", "beta-tools"})
+	second := serialize([]string{"beta-tools", "alpha-tools"})
+	if first.DocsBlock != second.DocsBlock {
+		t.Errorf("shortcode reference depends on registration order:\n%s\n---\n%s", first.DocsBlock, second.DocsBlock)
+	}
+	if first.PluginContext != second.PluginContext {
+		t.Errorf("plugin context depends on registration order:\n%s\n---\n%s", first.PluginContext, second.PluginContext)
+	}
+	if !strings.Contains(first.DocsBlock, "plugin:beta-tools:aside") || !strings.Contains(first.PluginContext, "plugin:alpha-tools:panel") {
+		t.Fatalf("both plugins should be serialized:\n%s\n%s", first.DocsBlock, first.PluginContext)
+	}
+}
+
+// TestPluginReferencesFromSnapshotIgnoreInputOrder holds the serializer to the
+// same rule however the snapshot arrives, so the prefix does not rely on the
+// manager's own sorting.
+func TestPluginReferencesFromSnapshotIgnoreInputOrder(t *testing.T) {
+	snapshot := func(reverse bool) plugin_system.AuthoringSnapshot {
+		s := plugin_system.AuthoringSnapshot{
+			Plugins: []plugin_system.AuthoringPluginInfo{{Name: "a"}, {Name: "b"}},
+			Shortcodes: []plugin_system.PluginShortcodeInfo{
+				{FullName: "plugin:a:x", Name: "x", PluginName: "a", Description: "X."},
+				{FullName: "plugin:b:y", Name: "y", PluginName: "b", Description: "Y."},
+			},
+			Blocks: []plugin_system.PluginBlockInfo{
+				{PluginName: "a", TypeName: "plugin:a:p"},
+				{PluginName: "b", TypeName: "plugin:b:q"},
+			},
+		}
+		if reverse {
+			s.Plugins[0], s.Plugins[1] = s.Plugins[1], s.Plugins[0]
+			s.Shortcodes[0], s.Shortcodes[1] = s.Shortcodes[1], s.Shortcodes[0]
+			s.Blocks[0], s.Blocks[1] = s.Blocks[1], s.Blocks[0]
+		}
+		return s
+	}
+	forward := templateGenerationPluginReferencesFromSnapshot(snapshot(false))
+	reverse := templateGenerationPluginReferencesFromSnapshot(snapshot(true))
+	if forward.DocsBlock != reverse.DocsBlock || forward.PluginContext != reverse.PluginContext {
+		t.Fatalf("serialization depends on snapshot order:\n%s%s\n---\n%s%s", forward.DocsBlock, forward.PluginContext, reverse.DocsBlock, reverse.PluginContext)
+	}
+}

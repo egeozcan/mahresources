@@ -124,8 +124,8 @@ Run: `DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api
 
 ### 1b. Shared prefix (item 7)
 
-- [ ] `template_generation_prompt.go`: replace `templateSlotSystemPrompt` and `templateBundleSystemPrompt` with one `templateAuthoringSystemPrompt`. It keeps the untrusted-data clause and says the JSON keys are given by the final "Output format" line.
-- [ ] `buildTemplateReferencePrefix(in)` reads only DocsBlock, PluginContext, PartialNames and the MRQL reference (decision 2). "Byte-identical" means for one plugin snapshot and one partial catalogue: enabling a plugin or editing a partial legitimately changes the prefix and costs one cache miss. Order:
+- [x] `template_generation_prompt.go`: replace `templateSlotSystemPrompt` and `templateBundleSystemPrompt` with one `templateAuthoringSystemPrompt`. It keeps the untrusted-data clause and says the JSON keys are given by the final "Output format" line.
+- [x] `buildTemplateReferencePrefix(in)` reads only DocsBlock, PluginContext, PartialNames and the MRQL reference (decision 2). "Byte-identical" means for one plugin snapshot and one partial catalogue: enabling a plugin or editing a partial legitimately changes the prefix and costs one cache miss. Order:
   1. untrusted preamble;
   2. constant authoring rules, including `templateLayoutLines`;
   3. shortcode reference;
@@ -133,9 +133,9 @@ Run: `DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api
   5. MRQL reference (added in phase 2);
   6. partial list in name order;
   7. a fixed "End of reference" line.
-- [ ] Task builders append the tail in this order: carrier runtime lines, schema, samples, plan, user request, slot role, current content, then the output format with a JSON example. Fan-out pair calls share everything before the slot role.
-- [ ] Remove the html branch of `slotRuntimeLines` (`template_generation_prompt.go:186-201`). It is unreachable: the handler upgrades every slot except CustomCSS into a pair.
-- [ ] Tests:
+- [x] Task builders append the tail in this order: carrier runtime lines, schema, samples, plan, user request, slot role, current content, then the output format with a JSON example. Fan-out pair calls share everything before the slot role.
+- [x] Remove the html branch of `slotRuntimeLines` (`template_generation_prompt.go:186-201`). It is unreachable: the handler upgrades every slot except CustomCSS into a pair.
+- [x] Tests:
   - `TestTemplatePromptsShareByteIdenticalReferencePrefix` covers every slot, all three carriers and every docs-bearing target (slot, pair, bundle, plan; not metaschema), with sentinels in every variable field, and asserts `HasPrefix` and no sentinel in the prefix.
   - `TestTemplateReferencePrefixIndependentOfCarrier`.
   - The plugin reference serialises identically across two calls when plugins register in different orders.
