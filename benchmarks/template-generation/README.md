@@ -17,7 +17,7 @@ Without `DEEPSEEK_API_KEY` the test fails at once. It reads the same `DEEPSEEK_M
 |---|---|---|
 | `TEMPLATE_EVAL_REPEATS` | `3` | Runs per case. |
 | `TEMPLATE_EVAL_CASES` | every case | Comma-separated case IDs from `internal/templateeval/corpus.go`. An unknown ID fails the test. |
-| `TEMPLATE_EVAL_OUT` | `benchmarks/template-generation/results/eval-<UTC time>.json` | The full report. An aggregate copy is written beside it as `<name>.aggregate.json`. |
+| `TEMPLATE_EVAL_OUT` | `benchmarks/template-generation/results/eval-<UTC time>.json` | The full report; a relative path is taken from the repository root. An aggregate copy is written beside it as `<name>.aggregate.json`. |
 
 The full report holds every draft, every rendered preview, every raw model reply and the text behind each check. It is gitignored. The aggregate copy keeps no free text at all: only numbers, booleans, case IDs, fixed enums (kinds, carriers, slot names, flag names, error classes, finish reasons) and the run's own configuration. Only aggregate reports are committed, under `baselines/`.
 

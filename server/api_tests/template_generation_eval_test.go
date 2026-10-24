@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,14 +50,12 @@ func TestTemplateGenerationEval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := templateeval.ModuleRoot(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := os.Getenv("TEMPLATE_EVAL_OUT")
-	if out == "" {
-		out = filepath.Join(repoRoot, "benchmarks", "template-generation", "results", "eval-"+time.Now().UTC().Format("20060102T150405Z")+".json")
-	}
+	// Relative to the module root, not to server/api_tests where this runs.
+	out := templateeval.ResolveOutPath(os.Getenv("TEMPLATE_EVAL_OUT"), repoRoot, time.Now())
 
 	// The provider configuration main.go reads (DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT
 	// and their defaults), wired the way main.go wires it, with the recorder as

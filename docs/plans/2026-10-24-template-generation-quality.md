@@ -108,7 +108,7 @@ Nothing else starts until a baseline report exists.
   - `TestTemplateGenerationEvalCompare` compares two reports with no network calls.
 - [x] `benchmarks/template-generation/README.md` (how to run, cost estimate), a tracked `baselines/`, and gitignored `results/`.
 - [x] Unit tests, red first: one table row per check in `score_test.go`; incompatible-version refusal in `compare_test.go`; `recorder_test.go` against `httptest.Server`, asserting the Authorization header is absent. A pin test lints known-bad markup so a change to lint message wording breaks the prefix classification loudly.
-- [ ] Run against `master` and commit `baselines/master-2026-10-24.json` (aggregate only).
+- [x] Run against `master` and commit `baselines/master-2026-10-24.json` (aggregate only).
 
 Run: `DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api_tests -run TestTemplateGenerationEval -count=1 -timeout 60m -v`
 
