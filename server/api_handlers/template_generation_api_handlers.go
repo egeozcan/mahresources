@@ -78,6 +78,28 @@ const maxPluginShortcodePromptBytes = 128 << 10
 // large, so each plugin's context is included whole or omitted whole.
 const maxPluginContextPromptBytes = 128 << 10
 
+// The enabled plugins' x-display values go into the MetaSchema prompt. They
+// are plugin-authored, so the list is bounded: entries are kept whole, in sorted
+// order, up to these limits.
+const (
+	maxPromptDisplayTypes     = 100
+	maxPromptDisplayTypeBytes = 8 << 10
+)
+
+// capDisplayTypes keeps the leading whole entries of a sorted list within the
+// prompt limits and reports whether any were left out.
+func capDisplayTypes(types []string) (kept []string, truncated bool) {
+	used := 0
+	for _, t := range types {
+		if len(kept) == maxPromptDisplayTypes || used+len(t) > maxPromptDisplayTypeBytes {
+			return kept, true
+		}
+		kept = append(kept, t)
+		used += len(t)
+	}
+	return kept, false
+}
+
 type templateGenerateRequest struct {
 	Target     string `json:"target" schema:"target"`
 	Mode       string `json:"mode" schema:"mode"`
@@ -197,24 +219,26 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		partials, partialCount := templatePartialSummaries(ctx)
 		samples, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID)
 		input := application_context.TemplateGenerationInput{
-			Target:              target,
-			Mode:                req.Mode,
-			Slot:                req.Slot,
-			EntityType:          entityType,
-			CurrentContent:      req.Content,
-			CategoryName:        name,
-			CategoryDescription: description,
-			SectionConfig:       sectionConfig,
-			SiblingSlots:        siblings,
-			MetaSchema:          metaSchema,
-			Samples:             samples,
-			SamplesArePreview:   samplesArePreview,
-			DocsBlock:           pluginReferences.DocsBlock,
-			PluginContext:       pluginReferences.PluginContext,
-			Known:               pluginReferences.Known,
-			ValidateMRQL:        templateMRQLValidator(ctx.MRQLStaticEnv()),
-			Partials:            partials,
-			PartialCount:        partialCount,
+			Target:                target,
+			Mode:                  req.Mode,
+			Slot:                  req.Slot,
+			EntityType:            entityType,
+			CurrentContent:        req.Content,
+			CategoryName:          name,
+			CategoryDescription:   description,
+			SectionConfig:         sectionConfig,
+			SiblingSlots:          siblings,
+			MetaSchema:            metaSchema,
+			Samples:               samples,
+			SamplesArePreview:     samplesArePreview,
+			DocsBlock:             pluginReferences.DocsBlock,
+			PluginContext:         pluginReferences.PluginContext,
+			DisplayTypes:          pluginReferences.DisplayTypes,
+			DisplayTypesTruncated: pluginReferences.DisplayTypesTruncated,
+			Known:                 pluginReferences.Known,
+			ValidateMRQL:          templateMRQLValidator(ctx.MRQLStaticEnv()),
+			Partials:              partials,
+			PartialCount:          partialCount,
 		}
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
@@ -448,6 +472,10 @@ type templateGenerationPluginReferences struct {
 	DocsBlock     string
 	PluginContext string
 	Known         shortcodes.KnownShortcodes
+	// DisplayTypes are the enabled plugins' x-display values, sorted and
+	// capped for the MetaSchema prompt.
+	DisplayTypes          []string
+	DisplayTypesTruncated bool
 }
 
 func serializeTemplateGenerationPluginReferencesForPrompt(ctx PluginManagerProvider) templateGenerationPluginReferences {
@@ -478,10 +506,15 @@ func templateGenerationPluginReferencesFromSnapshot(snapshot plugin_system.Autho
 	if omitted := appendPluginShortcodeDocsForPrompt(&b, docs); omitted > 0 {
 		fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
 	}
+	displayTypes := append([]string(nil), snapshot.DisplayTypes...)
+	sort.Strings(displayTypes)
+	displayTypes, displayTypesTruncated := capDisplayTypes(displayTypes)
 	return templateGenerationPluginReferences{
-		DocsBlock:     b.String(),
-		PluginContext: serializePluginContextFromSnapshot(snapshot),
-		Known:         buildKnownShortcodesFromPluginDocs(docs),
+		DocsBlock:             b.String(),
+		PluginContext:         serializePluginContextFromSnapshot(snapshot),
+		Known:                 buildKnownShortcodesFromPluginDocs(docs),
+		DisplayTypes:          displayTypes,
+		DisplayTypesTruncated: displayTypesTruncated,
 	}
 }
 

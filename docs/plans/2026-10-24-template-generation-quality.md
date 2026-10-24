@@ -243,24 +243,24 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
 
 ### 2d. MetaSchema extensions (item 5)
 
-- [ ] `shortcodes/schema_extensions.go` is the Go source of truth. It holds:
+- [x] `shortcodes/schema_extensions.go` is the Go source of truth. It holds:
   - `BuiltinDisplayRenderers()`: url, geo, daterange and dimensions in TS order, with their shapes;
   - `DisplayOptOutValues`, `LabeledEnumComplexKeys` and `SchemaFormatsWithUI()`;
   - `SchemaExtensionReference(displayTypes)`, about 2 KB;
   - `LintMetaSchema(schema, opts)`.
-- [ ] `LintMetaSchema` rules:
+- [x] `LintMetaSchema` rules:
   - **Error:** a non-string `x-display` (the panel casts it and calls `startsWith`: `display-mode.ts:104, 333`).
   - **Error:** a built-in `x-display` on a non-object property, or on an object whose declared `properties` lack the renderer's required keys (geo needs latitude/longitude or lat/lng, dimensions needs width/height, daterange needs start/end, url needs href and host or hostname, matching `isURLShape` at `display-renderers.ts:15-20`). A forced renderer skips `detect()` and throws (`display-renderers.ts:48-54`).
   - **Warning:** an unknown or malformed string `x-display`; a geo/dimensions/daterange/url property whose required keys are declared but not listed in `required` (the 1d guards keep it from crashing, but it renders as a plain object when a key is missing); a labeled enum silently lost because an entry carries a complex key; a property key outside `[A-Za-z0-9_]` (dots get a specific message); a non-local `$ref`.
-- [ ] `AuthoringSnapshot` gains active plugin `DisplayTypes`, sorted (`plugin_system/shortcode_docs.go`). The handler caps them at 100 entries or 8 KB.
-- [ ] The metaschema prompt replaces its generic lines with the reference; `validateMetaSchemaJSON` appends `LintMetaSchema` after the compile.
-- [ ] Drift guards in `shortcodes/schema_extensions_drift_test.go`, against:
+- [x] `AuthoringSnapshot` gains active plugin `DisplayTypes`, sorted (`plugin_system/shortcode_docs.go`). The handler caps them at 100 entries or 8 KB.
+- [x] The metaschema prompt replaces its generic lines with the reference; `validateMetaSchemaJSON` appends `LintMetaSchema` after the compile.
+- [x] Drift guards in `shortcodes/schema_extensions_drift_test.go`, against:
   - `builtinRenderers` names in order (`src/schema-editor/display-renderers.ts:98-103`);
   - the opt-out values (`display-mode.ts:338`);
   - `complexKeys` (`schema-core.ts:772`);
   - the `format` set (`form-mode.ts:1118-1121`);
   - the table in `docs-site/docs/features/meta-schemas.md`.
-- [ ] The browser-side crash fixes this lint backs up land earlier, in 1d.
+- [x] The browser-side crash fixes this lint backs up land earlier, in 1d.
 - [x] `[meta]` and the display panel now both honour the `raw`/`none` opt-out (fixed in step 1d, where `[meta]` gained the same effective-x-display rule as the panel); 2d's drift guard asserts both consumers agree.
 
 ### 2e. MRQL grounding and checks (item 6)

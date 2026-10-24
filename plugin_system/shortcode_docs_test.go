@@ -1013,3 +1013,19 @@ func TestAuthoringSnapshotExcludesRegistrationsUntilPluginPublished(t *testing.T
 	require.Len(t, snapshot.Shortcodes, 1)
 	require.Len(t, snapshot.Blocks, 1)
 }
+
+func TestAuthoringSnapshotListsActiveDisplayTypesSorted(t *testing.T) {
+	pm := &PluginManager{
+		displayTypes: map[string][]*PluginDisplayType{
+			"zeta":    {{PluginName: "zeta", TypeName: "plugin:zeta:chart"}},
+			"alpha":   {{PluginName: "alpha", TypeName: "plugin:alpha:grid"}, {PluginName: "alpha", TypeName: "plugin:alpha:badge"}},
+			"loading": {{PluginName: "loading", TypeName: "plugin:loading:half"}},
+		},
+	}
+	// A plugin whose init() has registered a renderer but is not published yet
+	// is not active, so its type must not reach an authoring prompt.
+	assert.Empty(t, pm.AuthoringSnapshot().DisplayTypes)
+
+	pm.plugins = []PluginInfo{{Name: "zeta"}, {Name: "alpha"}}
+	assert.Equal(t, []string{"plugin:alpha:badge", "plugin:alpha:grid", "plugin:zeta:chart"}, pm.AuthoringSnapshot().DisplayTypes)
+}

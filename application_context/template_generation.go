@@ -93,6 +93,12 @@ type TemplateGenerationInput struct {
 	Partials     []TemplatePartialSummary
 	PartialCount int
 	BundleSlots  []string // target=bundle: which slot fields to fill
+	// DisplayTypes are the enabled plugins' x-display values, taught to the
+	// MetaSchema call and known to its lint. DisplayTypesTruncated is true
+	// when the list was cut to fit the prompt, so the lint does not report a
+	// plugin value that may exist beyond the cut.
+	DisplayTypes          []string
+	DisplayTypesTruncated bool
 
 	// Postgres chooses the dialect the MRQL reference teaches (regex is
 	// PostgreSQL-only). The generator sets it from
@@ -533,7 +539,10 @@ func singleSlotIsCSS(in TemplateGenerationInput) bool {
 // one input across every slot it validates.
 func validateTemplateContent(target string, in TemplateGenerationInput, content string, cssMode bool) []shortcodes.LintIssue {
 	if target == TemplateTargetMetaSchema {
-		return validateMetaSchemaJSON(content)
+		return validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
+			DisplayTypes:          in.DisplayTypes,
+			DisplayTypesTruncated: in.DisplayTypesTruncated,
+		})
 	}
 	issues := shortcodes.Lint(content, shortcodes.LintOptions{
 		Known:        in.Known,
@@ -546,13 +555,19 @@ func validateTemplateContent(target string, in TemplateGenerationInput, content 
 	return issues
 }
 
-func validateMetaSchemaJSON(content string) []shortcodes.LintIssue {
+// validateMetaSchemaJSON reports a draft that is not JSON or does not compile
+// as the only issue, and otherwise the app-specific lint of a schema that
+// compiles.
+func validateMetaSchemaJSON(content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
 	var probe any
 	if err := json.Unmarshal([]byte(content), &probe); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not valid JSON: " + err.Error()}}
 	}
 	if err := compileGeneratedSchema(content); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not a valid JSON Schema: " + err.Error()}}
+	}
+	if issues := shortcodes.LintMetaSchema(content, opts); issues != nil {
+		return issues
 	}
 	return []shortcodes.LintIssue{}
 }

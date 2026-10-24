@@ -214,7 +214,7 @@ Each field renders according to its schema type:
 |-------------|---------|
 | `string` | Plain text |
 | `string` with `format: "email"` | Clickable `mailto:` link |
-| `string` with `format: "uri"` | Clickable link |
+| `string` with `format: "uri"` or `"url"` | Clickable link |
 | `string` with `format: "date"` or `"date-time"` | Formatted date. A value that is not an ISO 8601 date or date-time that exists, such as `2024-02-30`, is shown as its text |
 | `string` with `enum` | Colored pill/badge |
 | `string` with labeled enum (`oneOf` + `const` + `title`) | Pill showing the human-readable title |

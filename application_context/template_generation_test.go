@@ -937,3 +937,81 @@ func disclosedGenerate(gen TemplateGenerator, in TemplateGenerationInput, prompt
 	}
 	return gen.GenerateTemplate(context.Background(), in, prompt, disclosure.GroundingHash)
 }
+
+// The MetaSchema prompt teaches the app's schema extensions from the Go source
+// of truth, as one disclosed section. It is constant until a plugin adds a
+// display renderer, because then it depends on the request's registry state.
+func TestMetaSchemaPromptCarriesTheExtensionReference(t *testing.T) {
+	in := slotInput()
+	in.Target, in.Slot, in.Mode = TemplateTargetMetaSchema, "", "json"
+
+	sections, _ := buildTemplatePromptSections(in, "add a place")
+	var found *PromptSection
+	for i := range sections {
+		if sections[i].Key == "extensions" {
+			found = &sections[i]
+		}
+	}
+	if found == nil || found.Role != promptRoleUser || !found.Constant {
+		t.Fatalf("want a constant user section \"extensions\", got %+v", found)
+	}
+	if want := strings.TrimRight(shortcodes.SchemaExtensionReference(nil), "\n"); found.Text != want {
+		t.Fatalf("section text differs from SchemaExtensionReference:\n%s", found.Text)
+	}
+
+	in.DisplayTypes = []string{"plugin:gallery:image-grid"}
+	sections, _ = buildTemplatePromptSections(in, "add a place")
+	for _, s := range sections {
+		if s.Key == "extensions" {
+			if s.Constant || !strings.Contains(s.Text, "plugin:gallery:image-grid") {
+				t.Fatalf("with a plugin renderer the section is per-request and names it: %+v", s)
+			}
+			return
+		}
+	}
+	t.Fatal("extensions section missing")
+}
+
+func TestExtensionReferenceIsOnlyInTheMetaSchemaPrompt(t *testing.T) {
+	for kind, in := range disclosureKinds() {
+		sections, _ := buildTemplatePromptSections(in, "make it")
+		has := sectionText(sections, "extensions") != ""
+		if has != (kind == "metaschema") {
+			t.Errorf("%s: extensions section present=%t", kind, has)
+		}
+	}
+}
+
+func TestGeneratedMetaSchemaIsLintedAfterItCompiles(t *testing.T) {
+	in := slotInput()
+	in.Target, in.Slot, in.Mode = TemplateTargetMetaSchema, "", "json"
+	in.DisplayTypes = []string{"plugin:gallery:image-grid"}
+	reply := func(schema string) *fakeTemplateDraftProvider {
+		b, _ := json.Marshal(map[string]string{"content": schema, "explanation": "x"})
+		return &fakeTemplateDraftProvider{response: string(b)}
+	}
+
+	// A forced renderer on a string: the editors throw on it, so it is an error.
+	got, err := disclosedGenerate(NewTemplateGenerator(reply(`{"type":"object","properties":{"where":{"type":"string","x-display":"geo"}}}`), templateGenConfig()), in, "a place")
+	if err != nil || got.Valid || !hasErrorIssue(got.Issues) || !strings.Contains(got.Issues[0].Message, `"geo" needs an object`) {
+		t.Fatalf("err=%v valid=%t issues=%+v", err, got.Valid, got.Issues)
+	}
+
+	// A hyphenated key is only a warning: the draft stays valid.
+	got, err = disclosedGenerate(NewTemplateGenerator(reply(`{"type":"object","properties":{"due-date":{"type":"string"}}}`), templateGenConfig()), in, "a date")
+	if err != nil || !got.Valid || len(got.Issues) != 1 || got.Issues[0].Severity != shortcodes.SeverityWarning {
+		t.Fatalf("err=%v valid=%t issues=%+v", err, got.Valid, got.Issues)
+	}
+
+	// The request's plugin renderers are known to the lint.
+	got, err = disclosedGenerate(NewTemplateGenerator(reply(`{"type":"object","properties":{"g":{"type":"object","x-display":"plugin:gallery:image-grid"}}}`), templateGenConfig()), in, "a gallery")
+	if err != nil || !got.Valid || len(got.Issues) != 0 {
+		t.Fatalf("err=%v valid=%t issues=%+v", err, got.Valid, got.Issues)
+	}
+
+	// A schema that does not compile is reported by the compile step alone.
+	got, err = disclosedGenerate(NewTemplateGenerator(reply(`{"type":"nonsense","properties":{"due-date":{}}}`), templateGenConfig()), in, "x")
+	if err != nil || got.Valid || len(got.Issues) != 1 {
+		t.Fatalf("err=%v valid=%t issues=%+v", err, got.Valid, got.Issues)
+	}
+}

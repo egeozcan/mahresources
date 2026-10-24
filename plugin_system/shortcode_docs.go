@@ -39,6 +39,9 @@ type AuthoringSnapshot struct {
 	Plugins    []AuthoringPluginInfo
 	Shortcodes []PluginShortcodeInfo
 	Blocks     []PluginBlockInfo
+	// DisplayTypes are the x-display values (plugin:<plugin>:<type>) of the
+	// active plugins' display renderers, sorted.
+	DisplayTypes []string
 }
 
 // AuthoringPluginInfo is the plugin metadata needed by authoring clients. It
@@ -112,6 +115,15 @@ func (pm *PluginManager) AuthoringSnapshot() AuthoringSnapshot {
 	sort.Slice(snapshot.Blocks, func(i, j int) bool {
 		return snapshot.Blocks[i].TypeName < snapshot.Blocks[j].TypeName
 	})
+	for pluginName, types := range pm.displayTypes {
+		if !active[pluginName] {
+			continue
+		}
+		for _, dt := range types {
+			snapshot.DisplayTypes = append(snapshot.DisplayTypes, dt.TypeName)
+		}
+	}
+	sort.Strings(snapshot.DisplayTypes)
 	return snapshot
 }
 

@@ -14,26 +14,28 @@ import (
 // TestTemplateGenerationInputFieldsAreClassified until it is listed here, so
 // nothing reaches the provider without appearing in the disclosure.
 var templateInputDisclosure = map[string]struct{ section, reason string }{
-	"Target":              {reason: "chooses which builder runs; its value is not sent"},
-	"Mode":                {reason: "chooses the mode rule line; its value is not sent"},
-	"Slot":                {section: "task"},
-	"EntityType":          {section: "carrier"},
-	"CurrentContent":      {section: "current"},
-	"CategoryName":        {section: "identity"},
-	"CategoryDescription": {section: "identity"},
-	"SectionConfig":       {section: "layout", reason: "sent as the sections it shows and hides, not as JSON"},
-	"SiblingSlots":        {section: "siblings"},
-	"MetaSchema":          {section: "schema"},
-	"Samples":             {section: "samples"},
-	"SamplesArePreview":   {section: "samples"},
-	"DocsBlock":           {section: "shortcodes"},
-	"PluginContext":       {section: "plugins"},
-	"Partials":            {section: "partials"},
-	"PartialCount":        {section: "partials"},
-	"BundleSlots":         {section: "task"},
-	"Postgres":            {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
-	"Known":               {reason: "validates the reply only"},
-	"ValidateMRQL":        {reason: "validates the reply only"},
+	"Target":                {reason: "chooses which builder runs; its value is not sent"},
+	"Mode":                  {reason: "chooses the mode rule line; its value is not sent"},
+	"Slot":                  {section: "task"},
+	"EntityType":            {section: "carrier"},
+	"CurrentContent":        {section: "current"},
+	"CategoryName":          {section: "identity"},
+	"CategoryDescription":   {section: "identity"},
+	"SectionConfig":         {section: "layout", reason: "sent as the sections it shows and hides, not as JSON"},
+	"SiblingSlots":          {section: "siblings"},
+	"MetaSchema":            {section: "schema"},
+	"Samples":               {section: "samples"},
+	"SamplesArePreview":     {section: "samples"},
+	"DocsBlock":             {section: "shortcodes"},
+	"PluginContext":         {section: "plugins"},
+	"Partials":              {section: "partials"},
+	"PartialCount":          {section: "partials"},
+	"BundleSlots":           {section: "task"},
+	"DisplayTypes":          {section: "extensions"},
+	"DisplayTypesTruncated": {reason: "validates the reply only"},
+	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
+	"Known":                 {reason: "validates the reply only"},
+	"ValidateMRQL":          {reason: "validates the reply only"},
 }
 
 func sectionText(sections []PromptSection, key string) string {
@@ -68,6 +70,9 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 	css.Target, css.Slot, css.Mode, css.BundleSlots = TemplateTargetSlot, "CustomCSS", "css", nil
 	preview := bundle
 	preview.SamplesArePreview = true
+	metaschema := bundle
+	metaschema.Target, metaschema.BundleSlots = TemplateTargetMetaSchema, nil
+	metaschema.DisplayTypes = []string{"plugin:sentinel:grid"}
 	values := map[string]struct {
 		in    TemplateGenerationInput
 		value string
@@ -87,6 +92,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"Partials":            {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
 		"PartialCount":        {bundle, "6 more partials exist"},
 		"BundleSlots":         {bundle, "CustomPreview, CustomPreviewCSS"},
+		"DisplayTypes":        {metaschema, "plugin:sentinel:grid"},
 	}
 	for name, c := range templateInputDisclosure {
 		if c.section == "" {

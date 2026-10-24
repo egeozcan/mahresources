@@ -147,3 +147,25 @@ func TestTemplateDryRunDefaultRateLimit(t *testing.T) {
 		t.Fatalf("the 31st dry run in a minute should be 429, got %d", resp.Code)
 	}
 }
+
+// The MetaSchema request discloses the schema-extension reference, and only it.
+func TestTemplateDryRunDisclosesSchemaExtensionsForMetaSchemaOnly(t *testing.T) {
+	tc := SetupTestEnv(t)
+	realGenerator(tc)
+	cat := seedSampledCategory(t, tc)
+
+	has := func(d application_context.TemplateDisclosure) bool {
+		for _, s := range d.Sections {
+			if s.Key == "extensions" {
+				return s.Constant && s.Bytes > 500 && s.Bytes < 2600
+			}
+		}
+		return false
+	}
+	if !has(dryRun(t, tc, map[string]any{"target": "metaschema", "prompt": "x", "categoryId": cat.ID})) {
+		t.Fatal("the metaschema disclosure lacks a constant extensions section of about 2 KB")
+	}
+	if has(dryRun(t, tc, map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID})) {
+		t.Fatal("a pair request must not carry the schema-extension reference")
+	}
+}

@@ -3,6 +3,8 @@ package application_context
 import (
 	"regexp"
 	"strings"
+
+	"mahresources/shortcodes"
 )
 
 // System prompts pin the JSON envelope shape (mirrors deepSeekMRQLSystemPrompt).
@@ -72,8 +74,11 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 			"Generate a JSON Schema describing the metadata (Meta) fields for a Mahresources "+in.EntityType+".",
 			"The schema must be a JSON Schema object with top-level \"type\": \"object\" and a \"properties\" map keyed by field name.",
 			"Prefer simple field types (string, number, integer, boolean, array, object) and add \"title\" and \"description\" to each property.",
-			"You may use \"enum\" for closed choice sets and \"format\" (date, date-time, email, uri) where appropriate.",
 		)
+		// Constant until a plugin adds a display renderer; then it carries this
+		// request's registry state.
+		p.add(promptRoleUser, "extensions", "Schema extensions", len(in.DisplayTypes) == 0,
+			strings.TrimRight(shortcodes.SchemaExtensionReference(in.DisplayTypes), "\n"))
 		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
 		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)

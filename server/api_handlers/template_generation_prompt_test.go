@@ -480,3 +480,32 @@ func TestPluginContextOrdersSeveralBlocksPerPlugin(t *testing.T) {
 		t.Fatalf("blocks are not in name order:\n%s", forward)
 	}
 }
+
+func TestPluginReferencesCarrySortedDisplayTypes(t *testing.T) {
+	refs := templateGenerationPluginReferencesFromSnapshot(plugin_system.AuthoringSnapshot{
+		DisplayTypes: []string{"plugin:b:one", "plugin:a:two"},
+	})
+	if got := strings.Join(refs.DisplayTypes, ","); got != "plugin:a:two,plugin:b:one" || refs.DisplayTypesTruncated {
+		t.Fatalf("display types %q truncated=%t", got, refs.DisplayTypesTruncated)
+	}
+}
+
+func TestDisplayTypesAreCappedByWholeEntry(t *testing.T) {
+	many := make([]string, 150)
+	for i := range many {
+		many[i] = "plugin:p:t" + strings.Repeat("a", 5) + string(rune('a'+i/26)) + string(rune('a'+i%26))
+	}
+	kept, truncated := capDisplayTypes(many)
+	if len(kept) != maxPromptDisplayTypes || !truncated || kept[len(kept)-1] != many[maxPromptDisplayTypes-1] {
+		t.Fatalf("count cap: kept %d truncated=%t", len(kept), truncated)
+	}
+
+	long := strings.Repeat("x", 3000)
+	kept, truncated = capDisplayTypes([]string{"plugin:p:" + long + "1", "plugin:p:" + long + "2", "plugin:p:" + long + "3"})
+	if len(kept) != 2 || !truncated {
+		t.Fatalf("byte cap: kept %d truncated=%t", len(kept), truncated)
+	}
+	if kept, truncated = capDisplayTypes([]string{"plugin:p:t"}); len(kept) != 1 || truncated {
+		t.Fatalf("under the caps: kept %d truncated=%t", len(kept), truncated)
+	}
+}
