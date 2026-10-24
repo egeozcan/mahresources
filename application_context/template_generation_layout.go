@@ -10,6 +10,8 @@ import (
 	"mahresources/models"
 	"mahresources/models/types"
 	"mahresources/shortcodes"
+
+	"golang.org/x/net/html"
 )
 
 // templateSiblingStylesBudget bounds the sibling styles block, and
@@ -17,6 +19,10 @@ import (
 const (
 	templateSiblingStylesBudget = 8 << 10
 	templateWholeCustomCSSBytes = 6 << 10
+	// The category's name and description are clipped to these, with a note
+	// of their full length.
+	templateIdentityNameBytes        = 200
+	templateIdentityDescriptionBytes = 2 << 10
 )
 
 // identityLines names the category the template belongs to, fenced: both
@@ -28,10 +34,10 @@ func identityLines(name, description string) []string {
 	}
 	var body []string
 	if name != "" {
-		body = append(body, "Name: "+name)
+		body = append(body, "Name: "+clipSampleString(name, templateIdentityNameBytes))
 	}
 	if description != "" {
-		body = append(body, "Description: "+description)
+		body = append(body, "Description: "+clipSampleString(description, templateIdentityDescriptionBytes))
 	}
 	return append([]string{"This template belongs to this category:"}, referenceBlock("category identity", strings.Join(body, "\n"))...)
 }
@@ -40,7 +46,7 @@ func identityLines(name, description string) []string {
 // page that the Section Config shows and hides, resolved the way the page
 // resolves it (invalid JSON means the defaults), and what each choice means
 // for the template.
-func DescribeSectionConfig(entityType, raw string) []string {
+func DescribeSectionConfig(entityType, raw string, hasSchema bool) []string {
 	data := types.JSON(raw)
 	var resolved any
 	switch entityType {
@@ -117,8 +123,18 @@ func DescribeSectionConfig(entityType, raw string) []string {
 	if len(duplicates) > 0 {
 		consequences = append(consequences, "These are already shown by built-in sections: "+strings.Join(duplicates, ", ")+". Do not duplicate them.")
 	}
-	if shown["metaSchemaDisplay"] || shown["metadataGrid"] {
-		consequences = append(consequences, "The built-in schema display or metadata grid already shows the metadata: no generic key/value dump of Meta; show only the fields the request is about.")
+	// What each section renders, from the detail templates: the schema
+	// display shows Meta only when the category has a schema; the JSON panel
+	// shows the raw Meta; the resource metadata grid shows built-in
+	// properties, never Meta.
+	if shown["metaSchemaDisplay"] && hasSchema {
+		consequences = append(consequences, "The built-in schema display already shows every Meta field with its schema title: no generic key/value dump of Meta; show only the fields the request is about.")
+	}
+	if shown["metaJson"] {
+		consequences = append(consequences, "The sidebar already shows the raw Meta JSON.")
+	}
+	if entityType == "resource" && shown["metadataGrid"] {
+		consequences = append(consequences, "The resource metadata grid already shows the name, original name, dimensions and, with timestamps on, the created and updated times: do not repeat them.")
 	}
 	if entityType == "resource" && !shown["previewImage"] {
 		consequences = append(consequences, "The built-in preview image is off: CustomPreview is the only preview on the detail page.")
@@ -136,84 +152,89 @@ func sortedAnyKeys(m map[string]any) []string {
 	return keys
 }
 
-// templateClassAttribute matches a plain class attribute; :class and
-// x-bind:class are Alpine expressions, not class lists.
-var templateClassAttribute = regexp.MustCompile(`(?i)(?:^|[\s"'])class\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-
 // templateClassSelector matches a class selector inside a selector list.
 var templateClassSelector = regexp.MustCompile(`\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)`)
 
 // htmlClassTokens lists the class tokens an HTML slot uses, sorted. A token
 // that comes from a shortcode is not the template's own, so shortcodes are
-// blanked out before the attributes are read.
-func htmlClassTokens(html string) []string {
-	for _, sc := range shortcodes.Parse(html) {
-		html = strings.Replace(html, sc.Raw, strings.Repeat(" ", len(sc.Raw)), 1)
+// blanked out first; then the markup is tokenised as a browser would, so only
+// real class attributes count, never text, comments, or script and style
+// bodies. :class and x-bind:class are Alpine expressions, not class lists.
+func htmlClassTokens(markup string) []string {
+	for _, sc := range shortcodes.Parse(markup) {
+		markup = strings.Replace(markup, sc.Raw, strings.Repeat(" ", len(sc.Raw)), 1)
 	}
 	tokens := map[string]bool{}
-	for _, m := range templateClassAttribute.FindAllStringSubmatch(html, -1) {
-		for _, token := range strings.Fields(m[1] + " " + m[2]) {
-			tokens[token] = true
+	z := html.NewTokenizer(strings.NewReader(markup))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return sortedKeys(tokens)
+		case html.StartTagToken, html.SelfClosingTagToken:
+			for _, attr := range z.Token().Attr {
+				if attr.Key == "class" {
+					for _, token := range strings.Fields(attr.Val) {
+						tokens[token] = true
+					}
+				}
+			}
 		}
 	}
-	return sortedKeys(tokens)
 }
 
 // cssClassSelectors lists the classes a stylesheet's selectors name, sorted.
 // Comments and strings are dropped first; declaration blocks are skipped, so
 // a value like .5em is not read as a class; @media and @supports blocks are
 // read as nested rules, and other at-rules (keyframes, font-face) skipped.
+// Unsaved CSS is often half typed, so an unclosed block runs to the end and a
+// stray closing brace is ignored.
 func cssClassSelectors(css string) []string {
 	css = stripCSSCommentsAndStrings(css)
+	const (
+		blockGroup = iota // @media, @supports: holds rules
+		blockSkip         // a declaration block or another at-rule
+	)
 	classes := map[string]bool{}
-	var walk func(string)
-	walk = func(text string) {
-		for {
-			open := strings.IndexByte(text, '{')
-			if open < 0 {
-				return
+	var stack []int
+	var prelude strings.Builder
+	for i := 0; i < len(css); i++ {
+		c := css[i]
+		if len(stack) > 0 && stack[len(stack)-1] == blockSkip {
+			switch c {
+			case '{':
+				stack = append(stack, blockSkip)
+			case '}':
+				stack = stack[:len(stack)-1]
 			}
-			prelude := strings.TrimSpace(text[:open])
-			if i := strings.LastIndexAny(prelude, ";}"); i >= 0 {
-				prelude = strings.TrimSpace(prelude[i+1:])
-			}
-			end := matchingBrace(text, open)
-			inner := text[open+1 : end]
+			continue
+		}
+		switch c {
+		case '{':
+			selector := strings.TrimSpace(prelude.String())
+			prelude.Reset()
 			switch {
-			case strings.HasPrefix(prelude, "@media"), strings.HasPrefix(prelude, "@supports"):
-				walk(inner)
-			case strings.HasPrefix(prelude, "@"):
+			case strings.HasPrefix(selector, "@media"), strings.HasPrefix(selector, "@supports"):
+				stack = append(stack, blockGroup)
+			case strings.HasPrefix(selector, "@"):
+				stack = append(stack, blockSkip)
 			default:
-				for _, m := range templateClassSelector.FindAllStringSubmatch(prelude, -1) {
+				for _, m := range templateClassSelector.FindAllStringSubmatch(selector, -1) {
 					classes[m[1]] = true
 				}
+				stack = append(stack, blockSkip)
 			}
-			if end+1 >= len(text) {
-				return
-			}
-			text = text[end+1:]
-		}
-	}
-	walk(css)
-	return sortedKeys(classes)
-}
-
-// matchingBrace returns the index of the brace closing the one at open, or
-// the end of text when it is unclosed.
-func matchingBrace(text string, open int) int {
-	depth := 0
-	for i := open; i < len(text); i++ {
-		switch text[i] {
-		case '{':
-			depth++
 		case '}':
-			depth--
-			if depth == 0 {
-				return i
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
 			}
+			prelude.Reset()
+		case ';':
+			prelude.Reset()
+		default:
+			prelude.WriteByte(c)
 		}
 	}
-	return len(text) - 1
+	return sortedKeys(classes)
 }
 
 func stripCSSCommentsAndStrings(css string) string {
@@ -276,19 +297,13 @@ func DescribeSiblingStyles(siblings map[string]string, customCSS string, budget 
 	if len(entries) == 0 {
 		return nil
 	}
-	var kept []string
-	used := 0
-	for _, entry := range entries {
-		if used+len(entry)+1 > budget {
-			continue
+	lines, _ := fitSection(entries, budget, func(kept []string, omitted int) []string {
+		if omitted > 0 {
+			kept = append(kept[:len(kept):len(kept)], fmt.Sprintf("%d more slots are not listed.", omitted))
 		}
-		kept = append(kept, entry)
-		used += len(entry) + 1
-	}
-	if omitted := len(entries) - len(kept); omitted > 0 {
-		kept = append(kept, fmt.Sprintf("%d more slots are not listed.", omitted))
-	}
-	return append([]string{"The category's other slots already use these classes; reuse them where they fit so the template looks consistent:"}, referenceBlock("sibling styles", strings.Join(kept, "\n"))...)
+		return append([]string{"The category's other slots already use these classes; reuse them where they fit so the template looks consistent:"}, referenceBlock("sibling styles", strings.Join(kept, "\n"))...)
+	})
+	return lines
 }
 
 // siblingStyleLines is the sibling block for one call: every slot except the

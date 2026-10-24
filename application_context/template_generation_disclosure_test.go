@@ -25,6 +25,7 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"SiblingSlots":        {section: "siblings"},
 	"MetaSchema":          {section: "schema"},
 	"Samples":             {section: "samples"},
+	"SamplesArePreview":   {section: "samples"},
 	"DocsBlock":           {section: "shortcodes"},
 	"PluginContext":       {section: "plugins"},
 	"Partials":            {section: "partials"},
@@ -65,6 +66,8 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 	}
 	css := bundle
 	css.Target, css.Slot, css.Mode, css.BundleSlots = TemplateTargetSlot, "CustomCSS", "css", nil
+	preview := bundle
+	preview.SamplesArePreview = true
 	values := map[string]struct {
 		in    TemplateGenerationInput
 		value string
@@ -78,6 +81,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"SiblingSlots":        {bundle, "CustomHeader classes: SENTINEL-sibling"},
 		"MetaSchema":          {bundle, "SENTINEL-schema"},
 		"Samples":             {bundle, `Sample 1: {"Name":"SENTINEL-sample"}`},
+		"SamplesArePreview":   {preview, "the preview entity the user chose"},
 		"DocsBlock":           {bundle, "SENTINEL-docs"},
 		"PluginContext":       {bundle, "SENTINEL-plugins"},
 		"Partials":            {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},

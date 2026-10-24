@@ -25,7 +25,7 @@ func TestCategoryIdentityIsFencedAndAbsentWhenEmpty(t *testing.T) {
 
 func TestDescribeSectionConfig(t *testing.T) {
 	join := func(lines []string) string { return strings.Join(lines, "\n") }
-	off := join(DescribeSectionConfig("group", `{"ownEntities":{"state":"off"},"tags":false}`))
+	off := join(DescribeSectionConfig("group", `{"ownEntities":{"state":"off"},"tags":false}`, true))
 	for _, want := range []string{
 		"return an empty CustomOwnEntities and an empty CustomOwnEntitiesCSS",
 		"hidden: ownEntities, tags",
@@ -38,21 +38,106 @@ func TestDescribeSectionConfig(t *testing.T) {
 	if strings.Contains(off, "already shown by built-in sections: tags") {
 		t.Errorf("hidden tags listed as shown:\n%s", off)
 	}
-	defaults := join(DescribeSectionConfig("group", ""))
-	if invalid := join(DescribeSectionConfig("group", "{not json")); invalid != defaults {
+	defaults := join(DescribeSectionConfig("group", "", true))
+	if invalid := join(DescribeSectionConfig("group", "{not json", true)); invalid != defaults {
 		t.Errorf("invalid JSON should describe the defaults:\n%s\n---\n%s", invalid, defaults)
 	}
 	if strings.Contains(defaults, "empty CustomOwnEntities") || !strings.Contains(defaults, "tags, owner, breadcrumb, timestamps") {
 		t.Errorf("defaults:\n%s", defaults)
 	}
-	resource := join(DescribeSectionConfig("resource", `{"previewImage":false,"metadataGrid":true}`))
-	for _, want := range []string{"CustomPreview is the only preview", "no generic key/value dump"} {
-		if !strings.Contains(resource, want) {
-			t.Errorf("missing %q in:\n%s", want, resource)
+	if !strings.Contains(defaults, "schema display") || !strings.Contains(defaults, "raw Meta JSON") {
+		t.Errorf("defaults with a schema show Meta twice over:\n%s", defaults)
+	}
+	resource := join(DescribeSectionConfig("resource", `{"previewImage":false}`, true))
+	if !strings.Contains(resource, "CustomPreview is the only preview") {
+		t.Errorf("preview line missing:\n%s", resource)
+	}
+	// The metadata grid shows built-in properties, not Meta; Meta is shown
+	// only by the schema display (with a schema) and the raw JSON panel.
+	grid := join(DescribeSectionConfig("resource", `{"metaSchemaDisplay":false,"metadataGrid":true,"metaJson":false}`, true))
+	if strings.Contains(grid, "Meta") && strings.Contains(grid, "already shows") {
+		t.Errorf("Meta is claimed to be shown with both Meta sections off:\n%s", grid)
+	}
+	if !strings.Contains(grid, "metadata grid already shows the name, original name, dimensions") {
+		t.Errorf("grid line missing:\n%s", grid)
+	}
+	if noSchema := join(DescribeSectionConfig("group", `{"metaJson":false}`, false)); strings.Contains(noSchema, "schema display") {
+		t.Errorf("the schema display renders nothing without a schema:\n%s", noSchema)
+	}
+	if note := join(DescribeSectionConfig("note", `{"metaSchemaDisplay":false,"metaJson":false,"content":false}`, true)); strings.Contains(note, "already shows") || strings.Contains(note, "repeat the description") {
+		t.Errorf("note with schema display, JSON and content off:\n%s", note)
+	}
+}
+
+// TestCSSClassSelectorsSurviveIncompleteCSS: unsaved CSS is often half
+// typed, and the disclosure must never panic on it.
+func TestCSSClassSelectorsSurviveIncompleteCSS(t *testing.T) {
+	for css, want := range map[string]string{
+		".x{":                             "x",
+		".x{color:red":                    "x",
+		"/* .hidden ":                     "",
+		".a{} /* .b":                      "a",
+		"} .stray{}":                      "stray",
+		"}}}":                             "",
+		"@media (min-width:1px){.m{":      "m",
+		"@media (min-width:1px){.m{} .n":  "m",
+		"@supports (x){@media y{.deep{}}": "deep",
+		".q{content:\"":                   "q",
+		"@keyframes k{from{opacity:0}":    "",
+		".a, .b:hover > .c{} .d":          "a, b, c",
+	} {
+		if got := strings.Join(cssClassSelectors(css), ", "); got != want {
+			t.Errorf("%q: got %q, want %q", css, got, want)
 		}
 	}
-	if note := join(DescribeSectionConfig("note", `{"metaSchemaDisplay":false,"content":false}`)); strings.Contains(note, "key/value dump") || strings.Contains(note, "repeat the description") {
-		t.Errorf("note with schema display and content off:\n%s", note)
+	// Random fragments of real CSS and noise: no panic, whatever the cut.
+	alphabet := []string{"{", "}", "/*", "*/", "\"", "'", "\\", ".a", " ", "@media x", "@supports y", ";", ":", "@keyframes k", ".b-c", "\n"}
+	seed := uint32(1)
+	for i := 0; i < 20000; i++ {
+		var b strings.Builder
+		for j := 0; j < 1+i%24; j++ {
+			seed = seed*1664525 + 1013904223
+			b.WriteString(alphabet[seed>>16%uint32(len(alphabet))])
+		}
+		cssClassSelectors(b.String())
+	}
+}
+
+func FuzzCSSClassSelectors(f *testing.F) {
+	for _, seed := range []string{".x{", "/* a", "}{", "@media{.a{", ".a{content:\"}\"}"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, css string) { cssClassSelectors(css) })
+}
+
+func TestHTMLClassTokensReadRealAttributes(t *testing.T) {
+	for html, want := range map[string]string{
+		`<div title="example class='secret'">x</div>`:      "",
+		`<!-- <b class="commented"> -->`:                   "",
+		`<script>var s = '<i class="scripted">';</script>`: "",
+		`<style>.styled{}</style><p class="real">`:         "real",
+		`<div class=actual>`:                               "actual",
+		`<b :class="{on: x}" class='kept  also'>`:          "also, kept",
+		`<span class="[property path='Name'] tmpl-chip">`:  "tmpl-chip",
+		`<p class="a"><p class="b">`:                       "a, b",
+	} {
+		if got := strings.Join(htmlClassTokens(html), ", "); got != want {
+			t.Errorf("%s: got %q, want %q", html, got, want)
+		}
+	}
+}
+
+func TestCategoryIdentityIsCapped(t *testing.T) {
+	name := strings.Repeat("é", 150)         // 300 bytes
+	description := strings.Repeat("d", 5000) // 5000 bytes
+	text := strings.Join(identityLines(name, description), "\n")
+	nameLine := text[strings.Index(text, "Name: ")+len("Name: "):]
+	nameLine = nameLine[:strings.Index(nameLine, "\n")]
+	if !strings.HasSuffix(nameLine, "…(150 chars)") || len(strings.TrimSuffix(nameLine, "…(150 chars)")) > 200 {
+		t.Errorf("name not capped: %q", nameLine)
+	}
+	if strings.Count(text, "d") > 2048+len("Description") || !strings.Contains(text, "…(5000 chars)") {
+		t.Errorf("description not capped: %d bytes", len(text))
 	}
 }
 
@@ -91,7 +176,7 @@ func TestDescribeSiblingStyles(t *testing.T) {
 		many[fmt.Sprintf("Custom%02dCSS", i)] = b.String()
 	}
 	budgeted := strings.Join(DescribeSiblingStyles(many, "", 8<<10), "\n")
-	if len(budgeted) > 8<<10+512 || !strings.Contains(budgeted, "more slots are not listed") {
+	if len(budgeted) > templateSiblingStylesBudget || !strings.Contains(budgeted, "more slots are not listed") {
 		t.Errorf("budget not applied: %d bytes", len(budgeted))
 	}
 }

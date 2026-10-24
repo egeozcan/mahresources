@@ -502,3 +502,60 @@ func TestTemplateGenerateUnsavedCategoryContextWins(t *testing.T) {
 		t.Fatalf("malformed siblingSlots: want 400, got %d", resp.Code)
 	}
 }
+
+// Members created in the same instant are ordered by descending ID before the
+// cap, so the sample set and the grounding hash cannot change between a dry
+// run and the request that follows it.
+func TestTemplateGenerateSampleOrderBreaksTiesByDescendingID(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	cat := &models.Category{Name: "Ties"}
+	if err := tc.DB.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	same := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	var ids []uint
+	for i := 0; i < 8; i++ {
+		g := &models.Group{Name: fmt.Sprintf("tie-%d", i), CategoryId: &cat.ID, CreatedAt: same, UpdatedAt: same}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, g.ID)
+	}
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID}); resp.Code != http.StatusOK {
+		t.Fatalf("%d %s", resp.Code, resp.Body.String())
+	}
+	var got []string
+	for _, s := range fake.seen.Samples {
+		got = append(got, s["Name"].(string))
+	}
+	if strings.Join(got, ",") != "tie-7,tie-6,tie-5,tie-4,tie-3" {
+		t.Fatalf("samples %v, want the five highest IDs, descending (ids %v)", got, ids)
+	}
+}
+
+// On the create form there is no category to sample, but the preview entity
+// the user picked is still sampled, through the caller's scope, and named as
+// that choice.
+func TestTemplateGenerateCreateFormSamplesThePreviewEntity(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	picked := &models.Group{Name: "Picked", Meta: types.JSON(`{"calories":120}`)}
+	if err := tc.DB.Create(picked).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.DB.Create(&models.Group{Name: "Unpicked"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "metaschema", "prompt": "x", "entityId": picked.ID}); resp.Code != http.StatusOK {
+		t.Fatalf("%d %s", resp.Code, resp.Body.String())
+	}
+	if got := samplesJSON(t, fake.seen.Samples); len(fake.seen.Samples) != 1 || !strings.Contains(got, `"calories":120`) || !fake.seen.SamplesArePreview {
+		t.Fatalf("create form samples %s, preview=%t", got, fake.seen.SamplesArePreview)
+	}
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "metaschema", "prompt": "x"}); resp.Code != http.StatusOK || len(fake.seen.Samples) != 0 {
+		t.Fatalf("with no choice the create form samples nothing: %d %v", resp.Code, fake.seen.Samples)
+	}
+}

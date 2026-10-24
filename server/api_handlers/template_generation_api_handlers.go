@@ -195,6 +195,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
 		partials, partialCount := templatePartialSummaries(ctx)
+		samples, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID)
 		input := application_context.TemplateGenerationInput{
 			Target:              target,
 			Mode:                req.Mode,
@@ -206,7 +207,8 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			SectionConfig:       sectionConfig,
 			SiblingSlots:        siblings,
 			MetaSchema:          metaSchema,
-			Samples:             loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID),
+			Samples:             samples,
+			SamplesArePreview:   samplesArePreview,
 			DocsBlock:           pluginReferences.DocsBlock,
 			PluginContext:       pluginReferences.PluginContext,
 			Known:               pluginReferences.Known,
@@ -331,10 +333,19 @@ func templateSiblingSlots(entityType string, carrier any, unsaved string) (map[s
 // prompt: the client's entityId first, when it loads through the (scoped)
 // context and belongs to this category, then the newest members, without
 // repeats. Only the first sample carries relations. Failures degrade to
-// fewer samples, and the create form (no category) has none.
-func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) []application_context.TemplateSample {
+// fewer samples. The create form has no category to sample, so there the
+// preview entity the user chose is the only sample, loaded through the same
+// scope, and preview reports it.
+func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) (samples []application_context.TemplateSample, preview bool) {
 	if categoryID == 0 {
-		return nil
+		if entityID == 0 {
+			return nil, false
+		}
+		entity, _, err := loadPreviewEntity(ctx, entityType, entityID)
+		if err != nil {
+			return nil, false
+		}
+		return []application_context.TemplateSample{application_context.ProjectTemplateSample(entity, true)}, true
 	}
 	var entities []any
 	seen := map[uint]bool{}
@@ -356,11 +367,11 @@ func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categ
 			entities = append(entities, entity)
 		}
 	}
-	samples := make([]application_context.TemplateSample, 0, len(entities))
+	samples = make([]application_context.TemplateSample, 0, len(entities))
 	for i, entity := range entities {
 		samples = append(samples, application_context.ProjectTemplateSample(entity, i == 0))
 	}
-	return samples
+	return samples, false
 }
 
 // templateSampleOrder orders sample candidates canonically: newest first, the

@@ -262,7 +262,7 @@ type templateSampleStat struct {
 // Meta path across the samples, then up to maxTemplateRawSamples whole
 // samples, fenced together. It iterates in sorted key order, so unchanged
 // samples always give the same bytes.
-func DescribeTemplateSamples(samples []TemplateSample, target string) []string {
+func DescribeTemplateSamples(samples []TemplateSample, target string, preview bool) []string {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -286,57 +286,55 @@ func DescribeTemplateSamples(samples []TemplateSample, target string) []string {
 		}
 	}
 
-	var summary []string
-	used := 0
-	add := func(line string) bool {
-		if used+len(line)+1 > templateSampleSummaryBudget {
-			return false
-		}
-		summary = append(summary, line)
-		used += len(line) + 1
-		return true
-	}
-	add(fmt.Sprintf("Summary of %d sample(s): field (samples it is present in): types", len(samples)))
+	header := fmt.Sprintf("Summary of %d sample(s): field (samples it is present in): types", len(samples))
+	var statLines []string
 	for _, key := range sortedStatKeys(fields) {
-		add(describeSampleStat(key, fields[key], len(samples)))
+		statLines = append(statLines, describeSampleStat(key, fields[key], len(samples)))
 	}
 	paths := sortedStatKeys(metaPaths)
-	listed := 0
+	unlisted := 0
+	if len(paths) > maxTemplateSampleMetaPaths {
+		unlisted = len(paths) - maxTemplateSampleMetaPaths
+		paths = paths[:maxTemplateSampleMetaPaths]
+	}
 	for _, path := range paths {
-		if listed == maxTemplateSampleMetaPaths || !add(describeSampleStat(path, metaPaths[path], len(samples))) {
-			break
+		statLines = append(statLines, describeSampleStat(path, metaPaths[path], len(samples)))
+	}
+	// The summary, its omission notice included, stays within its budget.
+	summary, _ := fitSection(statLines, templateSampleSummaryBudget, func(kept []string, omitted int) []string {
+		lines := append([]string{header}, kept...)
+		if omitted+unlisted > 0 {
+			lines = append(lines, fmt.Sprintf("%d more fields and Meta paths are not listed.", omitted+unlisted))
 		}
-		listed++
-	}
-	if listed < len(paths) {
-		summary = append(summary, fmt.Sprintf("%d more Meta paths are not listed.", len(paths)-listed))
-	}
+		return lines
+	})
 
-	body := strings.Join(summary, "\n")
-	raw := []string{}
+	intro := "Here are real members of this category, summarised and then shown whole, for reference only: do not hard-code their values. Fields present in fewer than all samples are optional, so guard optional fields (for example with [conditional])."
+	if preview {
+		intro = "Here is the preview entity the user chose, summarised and then shown whole, for reference only: do not hard-code its values. It is one example, so guard optional fields (for example with [conditional])."
+	}
+	if target == TemplateTargetMetaSchema {
+		intro += " Fields present in samples but missing from the schema are candidates to add."
+	}
+	var raw []string
 	for i, sample := range samples {
 		if i == maxTemplateRawSamples {
 			break
 		}
-		encoded, err := json.Marshal(sample)
-		if err != nil {
-			continue
+		if encoded, err := json.Marshal(sample); err == nil {
+			raw = append(raw, fmt.Sprintf("Sample %d: %s", i+1, encoded))
 		}
-		line := fmt.Sprintf("Sample %d: %s", i+1, encoded)
-		if len(body)+len("\nRaw samples:")+len(strings.Join(raw, "\n"))+len(line)+2 > templateSampleBudget {
-			break
+	}
+	// Whole samples are kept or left out, and the section as sent stays within
+	// the total budget.
+	lines, _ := fitSection(raw, templateSampleBudget, func(kept []string, _ int) []string {
+		body := strings.Join(summary, "\n")
+		if len(kept) > 0 {
+			body += "\nRaw samples:\n" + strings.Join(kept, "\n")
 		}
-		raw = append(raw, line)
-	}
-	if len(raw) > 0 {
-		body += "\nRaw samples:\n" + strings.Join(raw, "\n")
-	}
-
-	intro := "Here are real members of this category, summarised and then shown whole, for reference only: do not hard-code their values. Fields present in fewer than all samples are optional, so guard optional fields (for example with [conditional])."
-	if target == TemplateTargetMetaSchema {
-		intro += " Fields present in samples but missing from the schema are candidates to add."
-	}
-	return append([]string{intro}, referenceBlock("samples", body)...)
+		return append([]string{intro}, referenceBlock("samples", body)...)
+	})
+	return lines
 }
 
 func observeSampleValue(stats map[string]*templateSampleStat, key string, value any) {

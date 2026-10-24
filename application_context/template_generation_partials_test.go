@@ -1,9 +1,13 @@
 package application_context
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"mahresources/shortcodes"
 )
 
 func TestSummarizeTemplatePartialReadsThroughNesting(t *testing.T) {
@@ -15,7 +19,7 @@ func TestSummarizeTemplatePartialReadsThroughNesting(t *testing.T) {
 [each path="links"][item path="url"][/each]
 [partial name="avatar"]</div>`
 	got := SummarizeTemplatePartial("card", "A card.", content)
-	want := "conditional path=status; each path=links; item path=url; meta path=rating, status; property path=Name; uses lazy, mrql; includes partials avatar, badge"
+	want := "conditional path=status; each path=links; meta path=rating, status; property path=Name; item path=url (inside each); uses lazy, mrql; includes partials avatar, badge"
 	if got.Reads != want {
 		t.Fatalf("reads:\n got %q\nwant %q", got.Reads, want)
 	}
@@ -80,7 +84,7 @@ func TestPartialLinesCapSaysTheListIsIncomplete(t *testing.T) {
 	partials = append(partials, TemplatePartialSummary{Name: strings.Repeat("x", templatePartialMaxNameBytes+1)})
 	lines := partialLines(partials, 250)
 	block := strings.Join(lines, "\n")
-	if len(block) > templatePartialBlockCap+1024 {
+	if len(block) > templatePartialBlockCap {
 		t.Fatalf("block is %d bytes", len(block))
 	}
 	listed := strings.Count(block, "\n- p")
@@ -112,5 +116,57 @@ func TestPromptNamesPartialsTheContentAlreadyIncludes(t *testing.T) {
 	pair.CurrentContent = `{"CustomHeader":"<h1>x</h1>"}`
 	if _, user, _ := buildTemplateGenerationPrompt(pair, "make it"); strings.Contains(user, "included partials") {
 		t.Fatal("content with no partial still lists included partials")
+	}
+}
+
+// TestSummarizeTemplatePartialReadsWhatTheRuntimeReads: the reads follow the
+// runtime's own handling. Numbered conditions and [elseif] guards are read;
+// an [item] is an item field only at the top of an [each] body (one nested in
+// a block renders empty), and an [mrql] body renders against each result,
+// not against the including entity.
+func TestSummarizeTemplatePartialReadsWhatTheRuntimeReads(t *testing.T) {
+	render := func(content, meta string) string {
+		return shortcodes.Process(context.Background(), content, shortcodes.MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: json.RawMessage(meta)}, nil, nil)
+	}
+	// The runtime reads path2 and the [elseif] guard's own paths and fields.
+	numbered := `[conditional path="status" eq="a" path2="secret" eq2="b"]X[elseif path="other" eq="c"]Y[/conditional]`
+	if render(numbered, `{"status":"a","secret":"b"}`) != "X" || render(numbered, `{"status":"a","secret":"z"}`) != "" || render(numbered, `{"other":"c"}`) != "Y" {
+		t.Fatal("the runtime no longer reads path2 and the [elseif] guard; update this test")
+	}
+	// An [item] inside a block within [each] renders empty.
+	nested := `[each path="links"][conditional path="z" eq="y"][item path="url"][/conditional]|[item path="title"][/each]`
+	if got := render(nested, `{"z":"y","links":[{"url":"U","title":"T"}]}`); strings.Contains(got, "U") || !strings.Contains(got, "T") {
+		t.Fatalf("the runtime's [item] handling changed; update this test: %q", got)
+	}
+
+	content := numbered + `[conditional path="a" eq="1" field2="Name" eq2="x"]A[elseif path="b" eq="2" mrql2="type = note" gt2="0"]B[/conditional]` +
+		nested + `[mrql query="type = note"][meta path="inresult"][/mrql]`
+	got := SummarizeTemplatePartial("p", "", content).Reads
+	want := "conditional path=a, b, other, secret, status, z; each path=links; conditional field=Name; item path=title (inside each); uses mrql"
+	if got != want {
+		t.Fatalf("reads:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestPartialLinesKeepEveryNameThatFits: a long description never pushes a
+// name out of the list while the names alone fit under the cap.
+func TestPartialLinesKeepEveryNameThatFits(t *testing.T) {
+	var partials []TemplatePartialSummary
+	for i := 0; i < 200; i++ {
+		partials = append(partials, TemplatePartialSummary{Name: fmt.Sprintf("p%03d-%s", i, strings.Repeat("n", 95))})
+	}
+	partials[0].Description = strings.Repeat("d", 16000)
+	partials[1].Description = "short"
+	block := strings.Join(partialLines(partials, len(partials)), "\n")
+	for _, p := range partials {
+		if !strings.Contains(block, "- "+p.Name) {
+			t.Fatalf("%s is missing although every name fits", p.Name[:4])
+		}
+	}
+	if len(block) > templatePartialBlockCap || strings.Contains(block, "more partials exist") {
+		t.Fatalf("block is %d bytes", len(block))
+	}
+	if !strings.Contains(block, ": short") {
+		t.Error("a summary that fits after the names was dropped")
 	}
 }

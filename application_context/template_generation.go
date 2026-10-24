@@ -78,8 +78,11 @@ type TemplateGenerationInput struct {
 	MetaSchema   string // the (possibly unsaved) MetaSchema being authored
 	// Samples are up to five projected members of the category, the
 	// client's chosen entity first; none on the create form.
-	Samples   []TemplateSample
-	DocsBlock string // pre-serialized built-in + plugin shortcode docs
+	Samples []TemplateSample
+	// SamplesArePreview marks Samples as the one preview entity the user chose
+	// on the create form, which has no category members to sample yet.
+	SamplesArePreview bool
+	DocsBlock         string // pre-serialized built-in + plugin shortcode docs
 	// PluginContext describes the enabled plugins and their note block types.
 	// It is separate from DocsBlock because blocks are selected in the note
 	// editor, not invoked as shortcodes in template markup.

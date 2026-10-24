@@ -70,6 +70,27 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 	}
 
 	scoped := tc.AppCtx.WithPrincipal(principal)
+	// The create form (no categoryId) samples only the picked entity, through
+	// the same scope.
+	createForm := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
+		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note"),
+			fmt.Sprintf(`{"target":"metaschema","prompt":"x","entityId":%d,"dryRun":true}`, entityID))
+		if code != http.StatusOK {
+			t.Fatalf("generate: want 200, got %d (%s)", code, body)
+		}
+		return samplesJSON(t, fake.seen.Samples)
+	}
+	t.Run("create form", func(t *testing.T) {
+		if got := createForm(scoped, outsideNote.ID); strings.Contains(got, "outside-value") {
+			t.Fatalf("the create form sampled an entity outside the subtree: %s", got)
+		}
+		if got := createForm(scoped, insideNote.ID); !strings.Contains(got, "inside-value") {
+			t.Fatalf("the create form should sample the picked in-subtree note: %s", got)
+		}
+		if got := createForm(tc.AppCtx, outsideNote.ID); !strings.Contains(got, "outside-value") {
+			t.Fatalf("mutation step: unscoped, the picked outside note is sampled: %s", got)
+		}
+	})
 	for name, entityID := range map[string]uint{"named outside entity": outsideNote.ID, "first member": 0} {
 		t.Run("generate/"+name, func(t *testing.T) {
 			if got := generate(scoped, entityID); strings.Contains(got, "outside-value") || !strings.Contains(got, "inside-value") {
