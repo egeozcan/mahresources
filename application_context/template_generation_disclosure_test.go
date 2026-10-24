@@ -182,9 +182,25 @@ func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 			t.Errorf("posting to %s did not change the hash", other)
 		}
 	}
-	withQuery := disclose(base, deepseek+"?token=secret")
-	if withQuery.Destination.Endpoint != deepseek || withQuery.Destination.Host != "api.deepseek.com" {
-		t.Errorf("endpoint %q host %q: the query must not be shown", withQuery.Destination.Endpoint, withQuery.Destination.Host)
+	// The exact target counts: a different query value or an escaped path
+	// reaches a different place, so it is a different hash.
+	for _, pair := range [][2]string{
+		{deepseek + "?tenant=A", deepseek + "?tenant=B"},
+		{"https://api.deepseek.com/a%2Fb", "https://api.deepseek.com/a/b"},
+		{deepseek, deepseek + "?tenant=A"},
+	} {
+		if hash(base, pair[0]) == hash(base, pair[1]) {
+			t.Errorf("%s and %s hash the same", pair[0], pair[1])
+		}
+	}
+	// Query values are masked in what is shown; names, the escaped path and the
+	// host are not.
+	withQuery := disclose(base, "https://api.deepseek.com/a%2Fb?tenant=secret&region=eu")
+	if withQuery.Destination.Endpoint != "https://api.deepseek.com/a%2Fb?tenant=…&region=…" || withQuery.Destination.Host != "api.deepseek.com" {
+		t.Errorf("endpoint %q host %q", withQuery.Destination.Endpoint, withQuery.Destination.Host)
+	}
+	if strings.Contains(withQuery.Destination.Endpoint, "secret") {
+		t.Error("a query value is shown")
 	}
 	d := disclose(base, deepseek)
 	want := TemplateTransport{Stream: false, ResponseFormat: "json_object", ContentType: "application/json", Authorization: "Bearer (your API key, not shown)"}

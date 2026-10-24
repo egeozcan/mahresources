@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/url"
+	"strings"
 )
 
 // templateContinuationRuleVersion versions templateContinuationRule. Bump it
@@ -24,12 +25,15 @@ type TemplateDisclosure struct {
 	Transport        TemplateTransport        `json:"transport"`
 	ContinuationRule TemplateContinuationRule `json:"continuationRule"`
 	GroundingHash    string                   `json:"groundingHash"`
+	// exactEndpoint is the URL the provider posts to, query and escaped path
+	// as sent. It is hashed but not shown: query values can be secrets.
+	exactEndpoint string
 }
 
 // TemplateDestination is where the calls go and how each kind of call is made.
 type TemplateDestination struct {
-	// Endpoint is the scheme, host and path the provider posts to; a query
-	// string is left out of both the display and the hash.
+	// Endpoint is the URL the provider posts to, shown with each query value
+	// masked. The exact URL, values included, is what the hash covers.
 	Endpoint string                     `json:"endpoint"`
 	Host     string                     `json:"host"`
 	Profiles []TemplateDisclosedProfile `json:"profiles"`
@@ -67,14 +71,17 @@ type TemplateContinuationRule struct {
 }
 
 func newTemplateDisclosure(endpoint string, profiles []TemplateDisclosedProfile, sections []PromptSection) *TemplateDisclosure {
-	host := endpoint
+	exact, shown, host := endpoint, endpoint, endpoint
 	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
 		host = parsed.Host
-		endpoint = (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}).String()
+		// RequestURI is the escaped path and raw query as they go on the wire.
+		exact = parsed.Scheme + "://" + parsed.Host + parsed.RequestURI()
+		shown = parsed.Scheme + "://" + parsed.Host + parsed.EscapedPath() + maskedQuery(parsed.RawQuery)
 	}
 	d := &TemplateDisclosure{
+		exactEndpoint:    exact,
 		Sections:         sections,
-		Destination:      TemplateDestination{Endpoint: endpoint, Host: host, Profiles: profiles},
+		Destination:      TemplateDestination{Endpoint: shown, Host: host, Profiles: profiles},
 		Transport:        templateTransport,
 		ContinuationRule: TemplateContinuationRule{Version: templateContinuationRuleVersion, Text: templateContinuationRule},
 	}
@@ -87,15 +94,30 @@ func newTemplateDisclosure(endpoint string, profiles []TemplateDisclosedProfile,
 // fixed, so unchanged data always hashes the same.
 func templateGroundingHash(d *TemplateDisclosure) string {
 	canonical, err := json.Marshal(struct {
+		ExactEndpoint    string                   `json:"exactEndpoint"`
 		Destination      TemplateDestination      `json:"destination"`
 		Transport        TemplateTransport        `json:"transport"`
 		ContinuationRule TemplateContinuationRule `json:"continuationRule"`
 		Sections         []PromptSection          `json:"sections"`
-	}{d.Destination, d.Transport, d.ContinuationRule, d.Sections})
+	}{d.exactEndpoint, d.Destination, d.Transport, d.ContinuationRule, d.Sections})
 	if err != nil {
 		// Only fixed structs of strings, ints and bools are marshalled here.
 		panic(err)
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])
+}
+
+// maskedQuery shows a query's parameter names in order with each value
+// replaced by "…", or "" when there is no query.
+func maskedQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, "&")
+	for i, part := range parts {
+		name, _, _ := strings.Cut(part, "=")
+		parts[i] = name + "=…"
+	}
+	return "?" + strings.Join(parts, "&")
 }

@@ -321,7 +321,9 @@ func TestTemplateGenerateSlotAlwaysRequestsPair(t *testing.T) {
 
 type apiPairDraftProvider string
 
-func (p apiPairDraftProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+func (p apiPairDraftProvider) Endpoint() string {
+	return application_context.DefaultDeepSeekChatCompletionsURL
+}
 
 func (p apiPairDraftProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	return application_context.TemplateDraftResponse{Content: string(p), FinishReason: "stop"}, nil

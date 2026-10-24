@@ -142,11 +142,11 @@ func TestDeepSeekTemplateClientEmptyLengthIsTruncationNotError(t *testing.T) {
 func TestDeepSeekTemplateClientReportsTheURLItPostsTo(t *testing.T) {
 	var posted string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		posted = "http://" + r.Host + r.URL.Path
+		posted = "http://" + r.Host + r.RequestURI
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]}`))
 	}))
 	defer server.Close()
-	provider := NewDeepSeekTemplateDraftProvider(server.URL+"/chat/completions", "k", "m", server.Client())
+	provider := NewDeepSeekTemplateDraftProvider(server.URL+"/v1/a%2Fb/chat?tenant=A&x=1", "k", "m", server.Client())
 	if _, err := provider.GenerateDraft(context.Background(), TemplateDraftRequest{MaxTokens: 1}); err != nil {
 		t.Fatal(err)
 	}
