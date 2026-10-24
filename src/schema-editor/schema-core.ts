@@ -1324,6 +1324,17 @@ export function valueText(value: unknown): string {
   return value !== null && typeof value === 'object' ? safeJSON(value) : String(value);
 }
 
+/**
+ * A schema's type as a single choice for a select: the type when it is a
+ * string, otherwise '' (no choice). A nested schema the editor shows, such
+ * as items, contains or a prefix item, is never typed by withTypedKeywords,
+ * and binding a non-string type to a select's value throws inside the child
+ * element, outside every boundary.
+ */
+export function typeChoice(type: unknown): string {
+  return typeof type === 'string' ? type : '';
+}
+
 /** What a serialiser shows for a value it cannot serialise. */
 export const UNSHOWABLE_VALUE = '(value too deep to show)';
 

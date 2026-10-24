@@ -2,7 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
 import type { SchemaNode } from '../schema-tree-model';
-import { isLabeledEnum, safeColor, inputText } from '../schema-core';
+import { isLabeledEnum, safeColor, inputText, typeChoice } from '../schema-core';
 import type { EnumEntry } from './node-editors/enum-editor';
 
 // Import all node editors (registers them as custom elements)
@@ -226,7 +226,7 @@ export class SchemaDetailPanel extends LitElement {
         ` : ''}
         <div>
           <label for="prop-type">Type</label>
-          <select id="prop-type" .value=${node.type} @change=${(e: Event) => this._dispatchChange('type', (e.target as HTMLSelectElement).value)}>
+          <select id="prop-type" .value=${typeChoice(node.type)} @change=${(e: Event) => this._dispatchChange('type', (e.target as HTMLSelectElement).value)}>
             ${allTypes.map(t => html`<option .value=${t} ?selected=${t === node.type}>${t}</option>`)}
           </select>
         </div>

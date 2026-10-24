@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import { inputText, type JSONSchema } from '../../schema-core';
+import { inputText, typeChoice, type JSONSchema } from '../../schema-core';
 
 const ITEM_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array'];
 
@@ -25,7 +25,7 @@ export class SchemaArrayEditor extends LitElement {
     if (changed.has('schema')) {
       const pi = this.schema.prefixItems;
       if (Array.isArray(pi)) {
-        this._prefixItems = pi.map((s: JSONSchema) => ({ type: s?.type || 'string' }));
+        this._prefixItems = pi.map((s: JSONSchema) => ({ type: typeChoice(s?.type) || 'string' }));
       } else {
         this._prefixItems = [];
       }
@@ -63,10 +63,10 @@ export class SchemaArrayEditor extends LitElement {
 
   override render() {
     const itemsType = (this.schema.items && typeof this.schema.items === 'object' && !Array.isArray(this.schema.items))
-      ? (this.schema.items.type || '')
+      ? typeChoice(this.schema.items.type)
       : '';
     const containsType = (this.schema.contains && typeof this.schema.contains === 'object')
-      ? (this.schema.contains.type || '')
+      ? typeChoice(this.schema.contains.type)
       : '';
 
     return html`

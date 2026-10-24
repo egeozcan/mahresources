@@ -323,6 +323,11 @@ export class SchemaFormMode extends LitElement {
     }
     // A new schema is a fresh start for the loop guard on automatic assignments.
     if (changed.has('schema')) this._resetAutomaticStates();
+    // Errors were computed against the old schema, under field ids the new
+    // one reuses: drop them, and check the fields already validated again
+    // once the new fields have rendered (updated).
+    if (changed.has('schema') && this._errors.size > 0) this._errors = new Map();
+    if (changed.has('schema')) this._revalidate = new Set(this._validatedFields);
     if (changed.has('value') || changed.has('schema')) {
       // Recomputed for every value: a failure caused by one value (a strip
       // overflowing on it, a value that cannot be copied) never outlives it.
@@ -410,13 +415,33 @@ export class SchemaFormMode extends LitElement {
 
   // BH-009: Store validation errors in reactive state so Lit templates can
   // render aria-invalid and error text without being overwritten on re-render.
+  /** Field ids validated (blur or submit) under the current schema. */
+  private _validatedFields = new Set<string>();
+  /** Field ids to validate again after a schema change has rendered. */
+  private _revalidate = new Set<string>();
+
+  override updated(changed: Map<string, unknown>) {
+    super.updated(changed);
+    if (this._revalidate.size === 0) return;
+    const ids = this._revalidate;
+    this._revalidate = new Set();
+    this._validatedFields = new Set();
+    for (const id of ids) {
+      // The field's own blur check, against the new schema; a field the new
+      // schema no longer has is simply gone.
+      [...this.querySelectorAll('[id]')].find(el => el.id === id)?.dispatchEvent(new Event('blur'));
+    }
+  }
+
   private _setError(fieldId: string, message: string) {
+    this._validatedFields.add(fieldId);
     const updated = new Map(this._errors);
     updated.set(fieldId, message);
     this._errors = updated;
   }
 
   private _clearError(fieldId: string) {
+    this._validatedFields.add(fieldId);
     if (!this._errors.has(fieldId)) return;
     const updated = new Map(this._errors);
     updated.delete(fieldId);

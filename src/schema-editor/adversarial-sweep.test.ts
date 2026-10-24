@@ -2668,6 +2668,57 @@ describe('round 27: automatic writes stop on a whole-state cycle', () => {
   }, 120000);
 });
 
+describe('round 28: typed node-editor selects, errors recomputed on a schema change', () => {
+  it('node editors bind a nested non-string type as an empty choice instead of throwing', async () => {
+    const array: any = await mountEl('schema-array-editor', {
+      schema: { type: 'array', items: { type: H }, contains: { type: H }, prefixItems: [{ type: H }, { type: ['string', 'null'] }] },
+    });
+    await settle(array);
+    for (const id of ['arr-items-type', 'arr-contains-type']) {
+      expect((array.shadowRoot.querySelector(`#${id}`) as HTMLSelectElement).value, id).toBe('');
+    }
+    const object: any = await mountEl('schema-object-editor', { schema: { type: 'object', patternProperties: { '^x': { type: H }, '^y': { type: { a: 1 } } } } });
+    await settle(object);
+    expect(snapshot(object)).not.toContain('[object Object]');
+    const tree: any = await mountEl('schema-edit-mode', { schema: { type: 'object', properties: { v: { type: H } } } });
+    await settle(tree);
+    expect(snapshot(tree)).not.toContain('showing the raw value');
+  });
+
+  it('a field error is recomputed when the schema changes', async () => {
+    const schema = (minLength: number) => ({ type: 'object', properties: { v: { type: 'string', minLength } } });
+    const el: any = await mountEl('schema-form-mode', { schema: schema(3), value: { v: 'ab' } });
+    const input = () => el.querySelector('input:not([type="hidden"])') as HTMLInputElement;
+    input().dispatchEvent(new Event('blur'));
+    await settle(el);
+    expect(el.textContent).toContain('Must be at least 3 characters');
+    expect(input().getAttribute('aria-invalid')).toBe('true');
+    // Relaxed: the stale error goes.
+    el.schema = schema(1);
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(el.textContent).not.toContain('Must be at least');
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+    // Tightened again: the field was blurred, so its error is recomputed.
+    el.schema = schema(5);
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(el.textContent).toContain('Must be at least 5 characters');
+    expect(input().getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('a field never blurred shows no error after a schema change', async () => {
+    const el: any = await mountEl('schema-form-mode', { schema: { type: 'object', properties: { v: { type: 'string', minLength: 3 } } }, value: { v: 'ab' } });
+    el.schema = { type: 'object', properties: { v: { type: 'string', minLength: 5 } } };
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(el.textContent).not.toContain('Must be at least');
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [

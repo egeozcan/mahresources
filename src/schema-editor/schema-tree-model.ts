@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { isLabeledEnum, isSchemaValue, countSchemaWork } from './schema-core';
+import { isLabeledEnum, isSchemaValue, countSchemaWork, typeChoice } from './schema-core';
 
 // ─── Schema Node ─────────────────────────────────────────────────────────────
 
@@ -77,9 +77,11 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   let nullableTypeArray: string[] | null = null;
   if (Array.isArray(schema.type)) {
     nullableTypeArray = schema.type;
-    baseType = schema.type.find((t: string) => t !== 'null') || '';
+    baseType = typeChoice(schema.type.find((t: unknown) => t !== 'null'));
   } else {
-    baseType = schema.type || '';
+    // node.type is shown and bound throughout the tree editor: only a
+    // string type is one (typeChoice), anything else is no type.
+    baseType = typeChoice(schema.type);
   }
 
   const node: SchemaNode = {
