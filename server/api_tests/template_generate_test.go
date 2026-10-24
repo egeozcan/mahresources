@@ -443,3 +443,62 @@ func TestTemplateGenerateSamplesFiveMembersOfThisCategory(t *testing.T) {
 		t.Fatal("unexpected relations")
 	}
 }
+
+// Unsaved identity, layout and sibling values win over the saved category; an
+// empty name, description or section config falls back to the saved one, and
+// a sibling key that is present wins even when it is empty.
+func TestTemplateGenerateUnsavedCategoryContextWins(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	cat := &models.Category{
+		Name: "Saved name", Description: "Saved description",
+		SectionConfig: types.JSON(`{"tags":false}`),
+		CustomSidebar: `<aside class="saved-side">x</aside>`, CustomSummary: `<p class="saved-summary">x</p>`, CustomCSS: ".saved-css{}",
+	}
+	if err := tc.DB.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	generate := func(extra map[string]any) application_context.TemplateGenerationInput {
+		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID}
+		for k, v := range extra {
+			body[k] = v
+		}
+		if resp := tc.generateTemplate("/v1/category/generateTemplate", body); resp.Code != http.StatusOK {
+			t.Fatalf("%d %s", resp.Code, resp.Body.String())
+		}
+		return fake.seen
+	}
+
+	saved := generate(nil)
+	if saved.CategoryName != "Saved name" || saved.CategoryDescription != "Saved description" || saved.SectionConfig != `{"tags":false}` {
+		t.Fatalf("saved values: %q %q %q", saved.CategoryName, saved.CategoryDescription, saved.SectionConfig)
+	}
+	if saved.SiblingSlots["CustomSidebar"] != `<aside class="saved-side">x</aside>` || saved.SiblingSlots["CustomCSS"] != ".saved-css{}" {
+		t.Fatalf("saved siblings: %v", saved.SiblingSlots)
+	}
+
+	unsaved := generate(map[string]any{
+		"name": "Unsaved name", "description": "Unsaved description", "sectionConfig": `{"owner":false}`,
+		"siblingSlots": `{"CustomSidebar":"<aside class=\"unsaved-side\">x</aside>","CustomSummary":"","NotASlot":"x"}`,
+	})
+	if unsaved.CategoryName != "Unsaved name" || unsaved.CategoryDescription != "Unsaved description" || unsaved.SectionConfig != `{"owner":false}` {
+		t.Fatalf("unsaved values: %q %q %q", unsaved.CategoryName, unsaved.CategoryDescription, unsaved.SectionConfig)
+	}
+	if unsaved.SiblingSlots["CustomSidebar"] != `<aside class="unsaved-side">x</aside>` {
+		t.Fatalf("an unsaved sibling did not win: %v", unsaved.SiblingSlots)
+	}
+	if v, ok := unsaved.SiblingSlots["CustomSummary"]; !ok || v != "" {
+		t.Fatalf("a present empty sibling should win: %v", unsaved.SiblingSlots)
+	}
+	if unsaved.SiblingSlots["CustomCSS"] != ".saved-css{}" {
+		t.Fatalf("an absent sibling should keep the saved value: %v", unsaved.SiblingSlots)
+	}
+	if _, ok := unsaved.SiblingSlots["NotASlot"]; ok {
+		t.Fatal("an unknown sibling key was passed on")
+	}
+
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "siblingSlots": "{not json"}); resp.Code != http.StatusBadRequest {
+		t.Fatalf("malformed siblingSlots: want 400, got %d", resp.Code)
+	}
+}

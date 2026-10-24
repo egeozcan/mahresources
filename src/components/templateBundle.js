@@ -454,6 +454,10 @@ export function templateBundle({ carrier } = {}) {
         metaSchema: this.getEditor('MetaSchema'),
         categoryId: store.categoryId || 0,
         entityId: store.entityId || 0,
+        // The unsaved identity and layout; content already holds every slot.
+        name: this.getEditor('name'),
+        description: this.getEditor('Description'),
+        sectionConfig: this.getEditor('SectionConfig'),
       };
       const post = (extra) => fetch(generatePath, {
         method: 'POST',

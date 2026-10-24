@@ -14,20 +14,24 @@ import (
 // TestTemplateGenerationInputFieldsAreClassified until it is listed here, so
 // nothing reaches the provider without appearing in the disclosure.
 var templateInputDisclosure = map[string]struct{ section, reason string }{
-	"Target":         {reason: "chooses which builder runs; its value is not sent"},
-	"Mode":           {reason: "chooses the mode rule line; its value is not sent"},
-	"Slot":           {section: "task"},
-	"EntityType":     {section: "carrier"},
-	"CurrentContent": {section: "current"},
-	"MetaSchema":     {section: "schema"},
-	"Samples":        {section: "samples"},
-	"DocsBlock":      {section: "shortcodes"},
-	"PluginContext":  {section: "plugins"},
-	"Partials":       {section: "partials"},
-	"PartialCount":   {section: "partials"},
-	"BundleSlots":    {section: "task"},
-	"Known":          {reason: "validates the reply only"},
-	"ValidateMRQL":   {reason: "validates the reply only"},
+	"Target":              {reason: "chooses which builder runs; its value is not sent"},
+	"Mode":                {reason: "chooses the mode rule line; its value is not sent"},
+	"Slot":                {section: "task"},
+	"EntityType":          {section: "carrier"},
+	"CurrentContent":      {section: "current"},
+	"CategoryName":        {section: "identity"},
+	"CategoryDescription": {section: "identity"},
+	"SectionConfig":       {section: "layout", reason: "sent as the sections it shows and hides, not as JSON"},
+	"SiblingSlots":        {section: "siblings"},
+	"MetaSchema":          {section: "schema"},
+	"Samples":             {section: "samples"},
+	"DocsBlock":           {section: "shortcodes"},
+	"PluginContext":       {section: "plugins"},
+	"Partials":            {section: "partials"},
+	"PartialCount":        {section: "partials"},
+	"BundleSlots":         {section: "task"},
+	"Known":               {reason: "validates the reply only"},
+	"ValidateMRQL":        {reason: "validates the reply only"},
 }
 
 func sectionText(sections []PromptSection, key string) string {
@@ -54,6 +58,8 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		CurrentContent: "SENTINEL-current", MetaSchema: `{"SENTINEL-schema":1}`, Samples: []TemplateSample{{"Name": "SENTINEL-sample"}},
 		DocsBlock: "SENTINEL-docs", PluginContext: "SENTINEL-plugins", Partials: []TemplatePartialSummary{{Name: "sentinel-partial", Description: "SENTINEL-partial-description", Reads: "meta path=SENTINEL-reads"}},
 		PartialCount: 7,
+		CategoryName: "SENTINEL-name", CategoryDescription: "SENTINEL-description", SectionConfig: `{"tags":false}`,
+		SiblingSlots: map[string]string{"CustomHeader": `<b class="SENTINEL-sibling">x</b>`},
 		BundleSlots:  []string{"CustomPreview", "CustomPreviewCSS"},
 	}
 	css := bundle
@@ -62,16 +68,20 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		in    TemplateGenerationInput
 		value string
 	}{
-		"Slot":           {css, "CustomCSS"},
-		"EntityType":     {bundle, "resource"},
-		"CurrentContent": {bundle, "SENTINEL-current"},
-		"MetaSchema":     {bundle, "SENTINEL-schema"},
-		"Samples":        {bundle, `Sample 1: {"Name":"SENTINEL-sample"}`},
-		"DocsBlock":      {bundle, "SENTINEL-docs"},
-		"PluginContext":  {bundle, "SENTINEL-plugins"},
-		"Partials":       {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
-		"PartialCount":   {bundle, "6 more partials exist"},
-		"BundleSlots":    {bundle, "CustomPreview, CustomPreviewCSS"},
+		"Slot":                {css, "CustomCSS"},
+		"EntityType":          {bundle, "resource"},
+		"CurrentContent":      {bundle, "SENTINEL-current"},
+		"CategoryName":        {bundle, "Name: SENTINEL-name"},
+		"CategoryDescription": {bundle, "Description: SENTINEL-description"},
+		"SectionConfig":       {bundle, "hidden: tags"},
+		"SiblingSlots":        {bundle, "CustomHeader classes: SENTINEL-sibling"},
+		"MetaSchema":          {bundle, "SENTINEL-schema"},
+		"Samples":             {bundle, `Sample 1: {"Name":"SENTINEL-sample"}`},
+		"DocsBlock":           {bundle, "SENTINEL-docs"},
+		"PluginContext":       {bundle, "SENTINEL-plugins"},
+		"Partials":            {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
+		"PartialCount":        {bundle, "6 more partials exist"},
+		"BundleSlots":         {bundle, "CustomPreview, CustomPreviewCSS"},
 	}
 	for name, c := range templateInputDisclosure {
 		if c.section == "" {

@@ -132,6 +132,8 @@ func TestReferenceBlocksFenceUntrustedData(t *testing.T) {
 	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 	in.MetaSchema = `{"description":"` + attack + `"}`
 	in.Samples = []TemplateSample{{"Name": attack}}
+	in.CategoryName, in.CategoryDescription = "n "+attack, "d "+attack
+	in.SiblingSlots = map[string]string{"CustomSidebar": `<b class="` + attack + `">x</b>`, "CustomCSS": "/* " + attack + " */ .x{}"}
 	in.DocsBlock = "doc " + attack
 	in.PluginContext = "plugin " + attack
 	in.Partials = []TemplatePartialSummary{{Name: "p", Description: attack, Reads: "meta path=" + attack}}
@@ -140,8 +142,8 @@ func TestReferenceBlocksFenceUntrustedData(t *testing.T) {
 	metaschema.Target = TemplateTargetMetaSchema
 
 	labels := map[string][]string{
-		"bundle":     {"shortcode reference", "plugin reference", "partials", "metadata schema", "samples", "current content", "included partials"},
-		"metaschema": {"metadata schema", "samples"},
+		"bundle":     {"shortcode reference", "plugin reference", "partials", "metadata schema", "samples", "current content", "included partials", "category identity", "section layout", "sibling styles"},
+		"metaschema": {"category identity", "metadata schema", "samples"},
 	}
 	for name, input := range map[string]TemplateGenerationInput{"bundle": in, "metaschema": metaschema} {
 		t.Run(name, func(t *testing.T) {

@@ -224,20 +224,20 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
 
 ### 2c. Category identity, layout, siblings (item 3)
 
-- [ ] Request fields `name`, `description`, `sectionConfig` and `siblingSlots` (a JSON string, like `content`). Unsaved values win; an empty string falls back to the saved value. For `siblingSlots`, a key that is present wins even when empty.
-- [ ] `DescribeSectionConfig(entityType, raw)` resolves through `models.Resolve*SectionConfig`. It lists visible and hidden built-in sections and adds these consequence lines:
+- [x] Request fields `name`, `description`, `sectionConfig` and `siblingSlots` (a JSON string, like `content`). Unsaved values win; an empty string falls back to the saved value. For `siblingSlots`, a key that is present wins even when empty.
+- [x] `DescribeSectionConfig(entityType, raw)` resolves through `models.Resolve*SectionConfig`. It lists visible and hidden built-in sections and adds these consequence lines:
   - group Own Entities off: return empty `CustomOwnEntities` and its CSS;
   - description shown below CustomHeader: do not repeat it;
   - tags, owner, breadcrumb or timestamps already shown: do not duplicate them;
   - schema display or metadata grid on: no generic key/value dump;
   - resource preview image off: CustomPreview is the only preview.
-- [ ] `DescribeSiblingStyles(siblings, customCSS, 8 KiB)` gives:
+- [x] `DescribeSiblingStyles(siblings, customCSS, 8 KiB)` gives:
   - the class tokens per HTML slot, skipping tokens that come from shortcodes;
   - class selectors per CSS slot (comments and strings stripped, recursing into `@media` and `@supports`);
   - CustomCSS in full when it is 6 KiB or less, otherwise selectors only.
   - Bundle requests skip it, because `content` already has every slot.
-- [ ] Frontend: `templateGeneration.js:97-115` and `templateBundle.js:433-442` send the new fields (`[name="name"]`, `[name="Description"]`, `[name="SectionConfig"]`). Rebuild with `npm run build-js` and commit `public/dist`.
-- [ ] Tests:
+- [x] Frontend: `templateGeneration.js:97-115` and `templateBundle.js:433-442` send the new fields (`[name="name"]`, `[name="Description"]`, `[name="SectionConfig"]`). Rebuild with `npm run build-js` and commit `public/dist`.
+- [x] Tests:
   - Go: identity is fenced and absent when empty; Own Entities off yields the empty-slot line; invalid SectionConfig JSON yields defaults; sibling extraction and budget; unsaved values win in the handler; a pair request sees sibling classes and not its own content.
   - E2E (`e2e/tests/template-generate.spec.ts`): extend the `postDataJSON()` assertions at :14, :172 and :138.
 

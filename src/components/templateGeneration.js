@@ -130,6 +130,15 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         prompt,
         categoryId: store.categoryId || 0,
         entityId: store.entityId || 0,
+        // The category's unsaved identity, layout and other slots ground the
+        // draft; the server falls back to the saved values and leaves out
+        // the slots this request writes.
+        name: form?.querySelector('[name="name"]')?.value || '',
+        description: form?.querySelector('[name="Description"]')?.value || '',
+        sectionConfig: form?.querySelector('[name="SectionConfig"]')?.value || '',
+        siblingSlots: JSON.stringify(Object.fromEntries(
+          [...(form?.querySelectorAll('input[name^="Custom"]') || [])].map((input) => [input.name, input.value]),
+        )),
       };
       const post = (extra) => fetch(generatePath, {
         method: 'POST',

@@ -2649,7 +2649,15 @@ Request body fields:
   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
   - prompt     (string, required) — the natural-language request
   - categoryId (integer) — the carrier being edited (for schema + sample entity)
-  - entityId   (integer) — a sample entity to ground on (else the newest category member)
+  - entityId   (integer) — a member to sample first; ignored unless it belongs to
+    categoryId. Up to five members are sampled, the newest after it.
+  - name, description (string) — the category's (possibly unsaved) name and
+    description; empty falls back to the saved category
+  - sectionConfig (string) — the (possibly unsaved) Section Config JSON; empty
+    falls back to the saved one
+  - siblingSlots (string) — a JSON object of the form's current slot values by
+    field name, laid over the saved ones; a key that is present wins even when
+    empty, and unknown keys are ignored. Malformed JSON is a 400.
   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
   - groundingHash (string) — required unless dryRun: the groundingHash of the
     disclosure the user approved

@@ -79,6 +79,9 @@ test.describe('Template section generation', () => {
 
     const genButton = page.getByTestId('generate-button-CustomHeader');
     await expect(genButton).toBeVisible({ timeout: 10000 });
+    // The unsaved name, description and section layout go with the request.
+    await page.locator('input[name="name"]').fill('Unsaved Recipes');
+    await page.locator('textarea[name="Description"]').evaluate((el: HTMLTextAreaElement) => { el.value = 'Dishes we cook'; });
     await page.getByTestId('generate-prompt-CustomHeader').fill('a header with the name');
     await genButton.click();
     await sendDisclosure(page);
@@ -95,7 +98,11 @@ test.describe('Template section generation', () => {
     await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
 
     // The request must carry the target + slot so the server routes correctly.
-    expect(seenBody).toMatchObject({ target: 'cluster', slot: 'CustomHeader', prompt: 'a header with the name' });
+    expect(seenBody).toMatchObject({ target: 'cluster', slot: 'CustomHeader', prompt: 'a header with the name', name: 'Unsaved Recipes', description: 'Dishes we cook' });
+    const sent = seenBody as unknown as { sectionConfig: string; siblingSlots: string };
+    expect(JSON.parse(sent.sectionConfig)).toHaveProperty('ownEntities');
+    // Every slot of the form is sent as a sibling; the server leaves out the pair's own.
+    expect(JSON.parse(sent.siblingSlots)).toMatchObject({ CustomSidebar: '', CustomSidebarCSS: '', CustomCSS: '' });
   });
 
   test('a prompt submitted before the editors have loaded waits for them', async ({ page }) => {
@@ -195,7 +202,9 @@ test.describe('Template section generation', () => {
   });
 
   test('the whole-template panel fills multiple slots', async ({ page }) => {
+    let seenBody: Record<string, unknown> | null = null;
     await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      seenBody = route.request().postDataJSON();
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -217,6 +226,7 @@ test.describe('Template section generation', () => {
 
     const bundleButton = page.getByTestId('template-bundle-generate-button');
     await expect(bundleButton).toBeVisible({ timeout: 10000 });
+    await page.locator('input[name="name"]').fill('Unsaved Cards');
     await page.getByTestId('template-bundle-generate-prompt').fill('a compact card');
     await bundleButton.click();
     await sendDisclosure(page);
@@ -232,6 +242,9 @@ test.describe('Template section generation', () => {
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Card</h1>', { timeout: 10000 });
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('.card{padding:1rem}');
     await expect(review).toHaveCount(0);
+    // The whole template sends the identity and layout; its content already holds every slot.
+    expect(seenBody).toMatchObject({ target: 'bundle', name: 'Unsaved Cards', description: '' });
+    expect(JSON.parse((seenBody as unknown as { sectionConfig: string }).sectionConfig)).toHaveProperty('ownEntities');
   });
 });
 

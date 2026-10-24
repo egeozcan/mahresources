@@ -88,6 +88,14 @@ type templateGenerateRequest struct {
 	Prompt     string `json:"prompt" schema:"prompt"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"`
 	EntityID   uint   `json:"entityId" schema:"entityId"`
+	// Name, Description and SectionConfig are the category form's current,
+	// possibly unsaved, values; empty falls back to the saved category.
+	Name          string `json:"name" schema:"name"`
+	Description   string `json:"description" schema:"description"`
+	SectionConfig string `json:"sectionConfig" schema:"sectionConfig"`
+	// SiblingSlots is a JSON object of the form's current slot values by
+	// field name. A key that is present wins over the saved value, even empty.
+	SiblingSlots string `json:"siblingSlots" schema:"siblingSlots"`
 	// DryRun returns the disclosure (what would be sent, and its
 	// groundingHash) and calls no provider.
 	DryRun bool `json:"dryRun" schema:"dryRun"`
@@ -170,22 +178,42 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			metaSchema = carrierMetaSchema(carrier)
 		}
 
+		siblings, err := templateSiblingSlots(entityType, carrier, req.SiblingSlots)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+		name, description, sectionConfig := carrierIdentity(carrier)
+		if strings.TrimSpace(req.Name) != "" {
+			name = req.Name
+		}
+		if strings.TrimSpace(req.Description) != "" {
+			description = req.Description
+		}
+		if strings.TrimSpace(req.SectionConfig) != "" {
+			sectionConfig = req.SectionConfig
+		}
+
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
 		partials, partialCount := templatePartialSummaries(ctx)
 		input := application_context.TemplateGenerationInput{
-			Target:         target,
-			Mode:           req.Mode,
-			Slot:           req.Slot,
-			EntityType:     entityType,
-			CurrentContent: req.Content,
-			MetaSchema:     metaSchema,
-			Samples:        loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID),
-			DocsBlock:      pluginReferences.DocsBlock,
-			PluginContext:  pluginReferences.PluginContext,
-			Known:          pluginReferences.Known,
-			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
-			Partials:       partials,
-			PartialCount:   partialCount,
+			Target:              target,
+			Mode:                req.Mode,
+			Slot:                req.Slot,
+			EntityType:          entityType,
+			CurrentContent:      req.Content,
+			CategoryName:        name,
+			CategoryDescription: description,
+			SectionConfig:       sectionConfig,
+			SiblingSlots:        siblings,
+			MetaSchema:          metaSchema,
+			Samples:             loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID),
+			DocsBlock:           pluginReferences.DocsBlock,
+			PluginContext:       pluginReferences.PluginContext,
+			Known:               pluginReferences.Known,
+			ValidateMRQL:        func(q string) error { _, e := mrql.Parse(q); return e },
+			Partials:            partials,
+			PartialCount:        partialCount,
 		}
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
@@ -219,7 +247,6 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 
 		var result any
-		var err error
 		if req.DryRun {
 			result, err = generator.DiscloseTemplate(input, req.Prompt)
 		} else {
@@ -257,6 +284,48 @@ func carrierMetaSchema(carrier any) string {
 		return c.MetaSchema
 	}
 	return ""
+}
+
+// carrierIdentity is the saved category's name, description and Section
+// Config, or empty values on the create form.
+func carrierIdentity(carrier any) (name, description, sectionConfig string) {
+	switch c := carrier.(type) {
+	case *models.Category:
+		return c.Name, c.Description, string(c.SectionConfig)
+	case *models.ResourceCategory:
+		return c.Name, c.Description, string(c.SectionConfig)
+	case *models.NoteType:
+		return c.Name, c.Description, string(c.SectionConfig)
+	}
+	return "", "", ""
+}
+
+// templateSiblingSlots is every slot of the carrier: the saved values, with
+// the client's unsaved ones laid over them. A key the client sends wins even
+// when empty, since clearing a slot is an edit. Unknown keys are dropped.
+func templateSiblingSlots(entityType string, carrier any, unsaved string) (map[string]string, error) {
+	slots := map[string]string{}
+	if carrier != nil {
+		value := reflect.Indirect(reflect.ValueOf(carrier))
+		for _, field := range templateGenerateBundleSlots(entityType) {
+			if v := value.FieldByName(field); v.IsValid() && v.Kind() == reflect.String {
+				slots[field] = v.String()
+			}
+		}
+	}
+	if strings.TrimSpace(unsaved) == "" {
+		return slots, nil
+	}
+	var sent map[string]string
+	if err := json.Unmarshal([]byte(unsaved), &sent); err != nil {
+		return nil, fmt.Errorf("siblingSlots must be a JSON object of slot values: %w", err)
+	}
+	for field, content := range sent {
+		if templateGenerateSlotAllowed(entityType, field) {
+			slots[field] = content
+		}
+	}
+	return slots, nil
 }
 
 // loadTemplateSamples projects up to five members of the category for the

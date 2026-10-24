@@ -63,7 +63,16 @@ type TemplateGenerationInput struct {
 	Slot           string // CustomHeader ... CustomMRQLResult / CustomCSS; "" for metaschema/bundle
 	EntityType     string // group | resource | note
 	CurrentContent string // current editor content of the slot being refined
-	MetaSchema     string // the (possibly unsaved) MetaSchema being authored
+	// CategoryName and CategoryDescription identify the category, unsaved
+	// values first.
+	CategoryName        string
+	CategoryDescription string
+	// SectionConfig is the category's (possibly unsaved) Section Config JSON.
+	SectionConfig string
+	// SiblingSlots holds the category's other slot values by field name, the
+	// saved ones overlaid with the client's unsaved ones.
+	SiblingSlots map[string]string
+	MetaSchema   string // the (possibly unsaved) MetaSchema being authored
 	// Samples are up to five projected members of the category, the
 	// client's chosen entity first; none on the create form.
 	Samples   []TemplateSample
