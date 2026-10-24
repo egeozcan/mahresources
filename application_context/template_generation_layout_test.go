@@ -216,3 +216,40 @@ func TestPairPromptSeesSiblingsNotItsOwnContent(t *testing.T) {
 		t.Error("a whole-template request gets a sibling block")
 	}
 }
+
+// TestHTMLClassTokensReadForeignContent: the HTML parser handles SVG and
+// MathML, where a bare tokenizer reads <title> as raw text and loses every
+// class after it.
+func TestHTMLClassTokensReadForeignContent(t *testing.T) {
+	for markup, want := range map[string]string{
+		`<svg><title/><path class="icon"/></svg><aside class="side"></aside>`: "icon, side",
+		`<svg><title>t</title><g class="g"></g></svg><p class="after">`:       "after, g",
+		`<math><mi class="var">x</mi></math><span class="tail">`:              "tail, var",
+		`<textarea><b class="inside-text"></b></textarea><i class="out"></i>`: "out",
+	} {
+		if got := strings.Join(htmlClassTokens(markup), ", "); got != want {
+			t.Errorf("%s: got %q, want %q", markup, got, want)
+		}
+	}
+}
+
+// TestSchemaDisplayLineNamesOnlySchemaFields: the schema display iterates the
+// schema's properties (display-mode.ts), so Meta outside the schema is not
+// shown there, and a schema without properties shows nothing.
+func TestSchemaDisplayLineNamesOnlySchemaFields(t *testing.T) {
+	withProps := `{"type":"object","properties":{"rating":{"type":"number"}}}`
+	text := strings.Join(DescribeSectionConfig("group", `{"metaJson":false}`, schemaShowsFields(withProps)), "\n")
+	if !strings.Contains(text, "schema-defined Meta fields") || strings.Contains(text, "every Meta field") || !strings.Contains(text, "Meta fields outside the schema") {
+		t.Errorf("schema display line:\n%s", text)
+	}
+	for _, schema := range []string{`{"type":"object"}`, `{"type":"object","properties":{}}`, ``, `not json`} {
+		if schemaShowsFields(schema) {
+			t.Errorf("%q shows no fields", schema)
+		}
+	}
+	for _, schema := range []string{withProps, `{"allOf":[{"properties":{"a":{}}}]}`, `{"$ref":"#/$defs/x","$defs":{"x":{"properties":{"a":{}}}}}`} {
+		if !schemaShowsFields(schema) {
+			t.Errorf("%q shows fields", schema)
+		}
+	}
+}

@@ -170,3 +170,47 @@ func TestPartialLinesKeepEveryNameThatFits(t *testing.T) {
 		t.Error("a summary that fits after the names was dropped")
 	}
 }
+
+// TestSummarizeTemplatePartialReadsMRQLParentSlots: an [mrql] block's
+// [header], [footer] and [else] render against the including entity, so what
+// they read is the partial's; only the per-result template is not.
+func TestSummarizeTemplatePartialReadsMRQLParentSlots(t *testing.T) {
+	content := `[mrql query="type = note"][header][meta path="status"][partial name="badge"][/header][meta path="perresult"][else][property path="Name"][/mrql][mrql query="type = group"][footer][conditional path="flag" eq="1"]x[/conditional][/footer][/mrql]`
+	// Rendering: with no results the [else] branch renders against the entity.
+	empty := func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		return &shortcodes.QueryResult{Mode: "flat"}, nil
+	}
+	got := shortcodes.Process(context.Background(), `[mrql query="type = note"][header]H:[meta path="status" inline="true"][/header]{item}[else]E:[property path="Name"][/mrql]`,
+		shortcodes.MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: json.RawMessage(`{"status":"live"}`), Entity: &struct{ Name string }{"Owner"}}, nil, empty)
+	if !strings.Contains(got, "E:Owner") {
+		t.Fatalf("the [else] branch no longer renders against the entity; update this test: %q", got)
+	}
+	reads := SummarizeTemplatePartial("p", "", content).Reads
+	want := "conditional path=flag; meta path=status; property path=Name; uses mrql; includes partials badge"
+	if reads != want {
+		t.Fatalf("reads:\n got %q\nwant %q", reads, want)
+	}
+}
+
+// TestPartialLinesKeepEveryNameAtTheBoundary: a complete list that fits is
+// kept whole, even when the longer "not all are listed" wording would not.
+func TestPartialLinesKeepEveryNameAtTheBoundary(t *testing.T) {
+	var partials []TemplatePartialSummary
+	for i := 0; i < 198; i++ {
+		name := fmt.Sprintf("p%03d-", i)
+		partials = append(partials, TemplatePartialSummary{Name: name + strings.Repeat("n", 119-len(name))})
+	}
+	partials = append(partials, TemplatePartialSummary{Name: "q"}, TemplatePartialSummary{Name: "z"})
+	block := strings.Join(partialLines(partials, len(partials)), "\n")
+	if len(block) > templatePartialBlockCap {
+		t.Fatalf("block is %d bytes", len(block))
+	}
+	for _, p := range partials {
+		if !strings.Contains(block, "- "+p.Name+"\n") {
+			t.Fatalf("%.5s is missing from a %d-byte list", p.Name, len(block))
+		}
+	}
+	if strings.Contains(block, "more partials exist") {
+		t.Fatal("a list that fits whole says partials are missing")
+	}
+}

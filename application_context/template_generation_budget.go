@@ -10,6 +10,15 @@ import "strings"
 // are still tried. It returns the section, built even when nothing fits, and
 // the indexes of the entries kept.
 func fitSection(entries []string, limit int, build func(kept []string, omitted int) []string) ([]string, []int) {
+	// The whole list first: wording for an incomplete list can be longer, so
+	// a greedy pass could drop an entry the complete list has room for.
+	if whole := build(entries, 0); sectionBytes(whole) <= limit {
+		indexes := make([]int, len(entries))
+		for i := range indexes {
+			indexes[i] = i
+		}
+		return whole, indexes
+	}
 	var kept []string
 	var indexes []int
 	for i, entry := range entries {

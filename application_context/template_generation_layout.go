@@ -124,11 +124,11 @@ func DescribeSectionConfig(entityType, raw string, hasSchema bool) []string {
 		consequences = append(consequences, "These are already shown by built-in sections: "+strings.Join(duplicates, ", ")+". Do not duplicate them.")
 	}
 	// What each section renders, from the detail templates: the schema
-	// display shows Meta only when the category has a schema; the JSON panel
+	// display shows the schema's own fields, so only when it has some; the JSON panel
 	// shows the raw Meta; the resource metadata grid shows built-in
 	// properties, never Meta.
 	if shown["metaSchemaDisplay"] && hasSchema {
-		consequences = append(consequences, "The built-in schema display already shows every Meta field with its schema title: no generic key/value dump of Meta; show only the fields the request is about.")
+		consequences = append(consequences, "The built-in schema display already shows the schema-defined Meta fields with their schema titles: no generic key/value dump of them; show only the fields the request is about. Meta fields outside the schema are not shown there.")
 	}
 	if shown["metaJson"] {
 		consequences = append(consequences, "The sidebar already shows the raw Meta JSON.")
@@ -157,29 +157,36 @@ var templateClassSelector = regexp.MustCompile(`\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)`)
 
 // htmlClassTokens lists the class tokens an HTML slot uses, sorted. A token
 // that comes from a shortcode is not the template's own, so shortcodes are
-// blanked out first; then the markup is tokenised as a browser would, so only
-// real class attributes count, never text, comments, or script and style
-// bodies. :class and x-bind:class are Alpine expressions, not class lists.
+// blanked out first; then the markup is parsed as a browser would, foreign
+// SVG and MathML content included, and only element class attributes count,
+// never text, comments, or script and style bodies. :class and x-bind:class
+// are Alpine expressions, not class lists.
 func htmlClassTokens(markup string) []string {
 	for _, sc := range shortcodes.Parse(markup) {
 		markup = strings.Replace(markup, sc.Raw, strings.Repeat(" ", len(sc.Raw)), 1)
 	}
 	tokens := map[string]bool{}
-	z := html.NewTokenizer(strings.NewReader(markup))
-	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			return sortedKeys(tokens)
-		case html.StartTagToken, html.SelfClosingTagToken:
-			for _, attr := range z.Token().Attr {
-				if attr.Key == "class" {
+	doc, err := html.Parse(strings.NewReader(markup))
+	if err != nil {
+		return nil
+	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			for _, attr := range n.Attr {
+				if attr.Key == "class" && attr.Namespace == "" {
 					for _, token := range strings.Fields(attr.Val) {
 						tokens[token] = true
 					}
 				}
 			}
 		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
 	}
+	walk(doc)
+	return sortedKeys(tokens)
 }
 
 // cssClassSelectors lists the classes a stylesheet's selectors name, sorted.
@@ -329,4 +336,24 @@ func siblingStyleLines(in TemplateGenerationInput) []string {
 		}
 	}
 	return DescribeSiblingStyles(siblings, customCSS, templateSiblingStylesBudget)
+}
+
+// schemaShowsFields reports whether the schema display has fields to show: it
+// iterates the schema's properties (src/schema-editor/modes/display-mode.ts),
+// after resolving $ref and composition, so a schema with neither shows
+// nothing.
+func schemaShowsFields(schema string) bool {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(schema), &root); err != nil {
+		return false
+	}
+	if properties, ok := root["properties"].(map[string]any); ok && len(properties) > 0 {
+		return true
+	}
+	for _, key := range []string{"$ref", "allOf", "anyOf", "oneOf", "if"} {
+		if _, ok := root[key]; ok {
+			return true
+		}
+	}
+	return false
 }

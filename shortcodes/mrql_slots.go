@@ -46,6 +46,24 @@ func parseMRQLSlots(inner string) mrqlSlots {
 	return s
 }
 
+// MRQLParentBoundSlots returns the parts of an [mrql] block's inner content
+// that render against the including entity rather than each result: the
+// [header], [footer] and [else] branch, when present.
+func MRQLParentBoundSlots(inner string) []string {
+	s := parseMRQLSlots(inner)
+	var slots []string
+	if s.HasHeader {
+		slots = append(slots, s.Header)
+	}
+	if s.HasFooter {
+		slots = append(slots, s.Footer)
+	}
+	if s.HasElse {
+		slots = append(slots, s.Else)
+	}
+	return slots
+}
+
 // extractFirstSlot removes the first top-level [tag]…[/tag] pair from content,
 // returning the slot's inner content, the content with that pair excised, and
 // whether a pair was found. Occurrences nested inside another block shortcode
