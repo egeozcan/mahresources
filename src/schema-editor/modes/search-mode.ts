@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
-import { flattenSchema, intersectFields } from '../schema-core';
+import { flattenSchema, intersectFields, valueText } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -237,9 +237,9 @@ export class SchemaSearchMode extends LitElement {
       if (field.enum && existing && enumValues.length === 0) {
         if (existing.rawValue !== undefined) {
           // rawValue preserves the original value including null, false, 0, ""
-          enumValues = [String(existing.rawValue)];
+          enumValues = [valueText(existing.rawValue)];
         } else if (existing.value != null && existing.value !== '') {
-          enumValues = [String(existing.value)];
+          enumValues = [valueText(existing.value)];
         } else if (existing.boolValue !== 'any') {
           enumValues = [existing.boolValue];
         }
@@ -286,7 +286,7 @@ export class SchemaSearchMode extends LitElement {
       return {
         operator: matches[0].operation || 'EQ',
         value: '',
-        enumValues: matches.map(m => String(m.value)),
+        enumValues: matches.map(m => valueText(m.value)),
         boolValue: 'any',
       };
     }
@@ -304,7 +304,7 @@ export class SchemaSearchMode extends LitElement {
 
     return {
       operator: m.operation || 'EQ',
-      value: m.value != null ? String(m.value) : '',
+      value: m.value != null ? valueText(m.value) : '',
       enumValues: [],
       boolValue: 'any',
       rawValue: m.value,
@@ -321,13 +321,13 @@ export class SchemaSearchMode extends LitElement {
       // Numeric, boolean, and null values must NOT be quoted.
       // Use index-based lookup to avoid ambiguity between e.g., 1 and "1".
       return field.enumValues.map(v => {
-        // Match by index: enumValues stores String(enum[i]), so find the
+        // Match by index: enumValues stores valueText(enum[i]), so find the
         // original by matching the stringified form at each index. If multiple
         // enum entries stringify the same way (e.g., 1 and "1"), prefer the
         // non-string original since strings get quoted and non-strings don't.
         let isStringTyped = true;
         for (const ev of field.enum!) {
-          if (String(ev) === v) {
+          if (valueText(ev) === v) {
             if (typeof ev !== 'string') {
               isStringTyped = false;
               break;
@@ -403,11 +403,11 @@ export class SchemaSearchMode extends LitElement {
 
   private _onEnumCheckboxChange(field: SearchField, enumVal: string, checked: boolean) {
     if (checked) {
-      if (!field.enumValues.includes(String(enumVal))) {
-        field.enumValues = [...field.enumValues, String(enumVal)];
+      if (!field.enumValues.includes(valueText(enumVal))) {
+        field.enumValues = [...field.enumValues, valueText(enumVal)];
       }
     } else {
-      field.enumValues = field.enumValues.filter(v => v !== String(enumVal));
+      field.enumValues = field.enumValues.filter(v => v !== valueText(enumVal));
     }
     this.requestUpdate();
   }
@@ -492,12 +492,12 @@ export class SchemaSearchMode extends LitElement {
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
         <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
           ${field.enum!.map((enumVal, idx) => {
-            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
               <label class="text-sm flex items-center gap-1">
-                <input type="checkbox" .value=${String(enumVal)}
-                       .checked=${field.enumValues.includes(String(enumVal))}
-                       @change=${(e: Event) => this._onEnumCheckboxChange(field, String(enumVal), (e.target as HTMLInputElement).checked)}>
+                <input type="checkbox" .value=${valueText(enumVal)}
+                       .checked=${field.enumValues.includes(valueText(enumVal))}
+                       @change=${(e: Event) => this._onEnumCheckboxChange(field, valueText(enumVal), (e.target as HTMLInputElement).checked)}>
                 <span>${displayLabel}</span>
               </label>
             `;
@@ -517,9 +517,9 @@ export class SchemaSearchMode extends LitElement {
                 size=${selectSize}
                 @change=${(e: Event) => this._onEnumSelectChange(field, e)}>
           ${field.enum!.map((enumVal, idx) => {
-            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
-              <option value=${String(enumVal)} ?selected=${field.enumValues.includes(String(enumVal))}>${displayLabel}</option>
+              <option value=${valueText(enumVal)} ?selected=${field.enumValues.includes(valueText(enumVal))}>${displayLabel}</option>
             `;
           })}
         </select>

@@ -4,18 +4,10 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
-
-/**
- * A stored value as text. Objects and arrays go through JSON: String() on a
- * parsed value such as {"toString":null} throws.
- */
-function valueText(value: any): string {
-  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
-}
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {

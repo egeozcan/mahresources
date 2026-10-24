@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { sharedStyles } from '../../styles';
+import { valueText } from '../../schema-core';
 
 export interface EnumEntry {
   value: any;
@@ -201,7 +202,7 @@ export class SchemaEnumEditor extends LitElement {
             <span class="drag" aria-hidden="true">\u2630</span>
             ${this.valueType === 'boolean'
               ? html`<select
-                  .value=${String(v)}
+                  .value=${valueText(v)}
                   @change=${(e: Event) => this._updateValue(i, (e.target as HTMLSelectElement).value)}
                   aria-label="Enum value ${i + 1}"
                 >
@@ -209,13 +210,13 @@ export class SchemaEnumEditor extends LitElement {
                   <option value="false" ?selected=${v === false}>false</option>
                 </select>`
               : html`<input
-                  .value=${String(v)}
+                  .value=${valueText(v)}
                   type=${this.valueType === 'number' || this.valueType === 'integer' ? 'number' : 'text'}
                   step=${this.valueType === 'integer' ? '1' : 'any'}
                   @change=${(e: Event) => this._updateValue(i, (e.target as HTMLInputElement).value)}
                   aria-label="Enum value ${i + 1}"
                 >`}
-            <button class="remove" @click=${() => this._removeValue(i)} aria-label="Remove value ${v}">\u00d7</button>
+            <button class="remove" @click=${() => this._removeValue(i)} aria-label="Remove value ${valueText(v)}">\u00d7</button>
           </div>
         `)}
         <button class="btn-ghost" @click=${this._addValue}>+ Add Value</button>
@@ -244,7 +245,7 @@ export class SchemaEnumEditor extends LitElement {
             <span class="drag" aria-hidden="true">\u2630</span>
             ${this.valueType === 'boolean'
               ? html`<select
-                  .value=${String(entry.value)}
+                  .value=${valueText(entry.value)}
                   @change=${(e: Event) => this._updateEntryValue(i, (e.target as HTMLSelectElement).value)}
                   aria-label="Enum value ${i + 1}"
                 >
@@ -252,7 +253,7 @@ export class SchemaEnumEditor extends LitElement {
                   <option value="false" ?selected=${entry.value === false}>false</option>
                 </select>`
               : html`<input
-                  .value=${String(entry.value)}
+                  .value=${valueText(entry.value)}
                   type=${this.valueType === 'number' || this.valueType === 'integer' ? 'number' : 'text'}
                   step=${this.valueType === 'integer' ? '1' : 'any'}
                   @change=${(e: Event) => this._updateEntryValue(i, (e.target as HTMLInputElement).value)}
@@ -263,19 +264,19 @@ export class SchemaEnumEditor extends LitElement {
               type="text"
               placeholder="Display label"
               @change=${(e: Event) => this._updateEntryLabel(i, (e.target as HTMLInputElement).value)}
-              aria-label="Label for value ${entry.value}">
+              aria-label="Label for value ${valueText(entry.value)}">
             ${entry.color
               ? html`<input type="color" class="color-input"
                   .value=${entry.color}
                   @input=${(e: Event) => this._updateEntryColor(i, (e.target as HTMLInputElement).value)}
                   @dblclick=${() => this._updateEntryColor(i, '')}
-                  title="Color for ${entry.label || entry.value} (double-click to remove)"
-                  aria-label="Color for value ${entry.value}">`
+                  title="Color for ${entry.label || valueText(entry.value)} (double-click to remove)"
+                  aria-label="Color for value ${valueText(entry.value)}">`
               : html`<button class="color-clear"
                   @click=${() => this._updateEntryColor(i, '#6366f1')}
                   title="Add color"
-                  aria-label="Add color for value ${entry.value}">+</button>`}
-            <button class="remove" @click=${() => this._removeEntry(i)} aria-label="Remove value ${entry.value}">\u00d7</button>
+                  aria-label="Add color for value ${valueText(entry.value)}">+</button>`}
+            <button class="remove" @click=${() => this._removeEntry(i)} aria-label="Remove value ${valueText(entry.value)}">\u00d7</button>
           </div>
         `)}
         <button class="btn-ghost" @click=${this._addEntry}>+ Add Value</button>

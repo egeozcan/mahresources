@@ -11,6 +11,7 @@ import {
   inferSchema,
   isLabeledEnum,
   getLabeledEnumEntries,
+  valueText,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 
@@ -38,17 +39,7 @@ function generateFieldId(prefix: string, path: string): string {
 function formatNumericForInput(data: any, schema: JSONSchema): string {
   if (data === undefined || data === null) return '';
   if (data === 0 && !('default' in schema)) return '';
-  return String(data);
-}
-
-/**
- * The <option> value for an enum choice. Primitives keep their String() form,
- * so existing values are unchanged; a non-primitive uses JSON, because Lit's
- * attribute coercion throws on {"toString":null} and turns every other object
- * into the same "[object Object]".
- */
-function optionKey(value: any): string {
-  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return valueText(data);
 }
 
 /** The visible text of an enum choice: JSON for a non-primitive, else the value itself. */
@@ -346,7 +337,7 @@ export class SchemaFormMode extends LitElement {
       if (data !== schema.const) {
         onChange(schema.const);
       }
-      return html`<input type="text" .value=${String(schema.const)} disabled
+      return html`<input type="text" .value=${valueText(schema.const)} disabled
         id=${fieldId || nothing}
         aria-label="Constant value"
         aria-describedby=${describedBy || nothing}
@@ -583,9 +574,9 @@ export class SchemaFormMode extends LitElement {
     const onSelectChange = (e: Event) => {
       const valStr = (e.target as HTMLSelectElement).value;
       let val: any = valStr;
-      const match = schema.enum.find((ev: any) => optionKey(ev) === valStr);
+      const match = schema.enum.find((ev: any) => valueText(ev) === valStr);
       if (match !== undefined) val = match;
-      else if (!isNull && !hasValue && valStr === optionKey(data)) val = data;
+      else if (!isNull && !hasValue && valStr === valueText(data)) val = data;
       else if (schema.type === 'integer' || schema.type === 'number') val = parseFloat(valStr);
       onChange(val);
     };
@@ -600,10 +591,10 @@ export class SchemaFormMode extends LitElement {
         @change=${onSelectChange}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${schema.enum.map((val: any) => html`
-          <option value=${optionKey(val)} ?selected=${val === data}>${optionText(val)}</option>
+          <option value=${valueText(val)} ?selected=${val === data}>${optionText(val)}</option>
         `)}
         ${!isNull && !hasValue ? html`
-          <option value=${optionKey(data)} selected>${optionText(data)} (current)</option>
+          <option value=${valueText(data)} selected>${optionText(data)} (current)</option>
         ` : nothing}
       </select>
     `;
@@ -619,10 +610,10 @@ export class SchemaFormMode extends LitElement {
     const onSelectChange = (e: Event) => {
       const valStr = (e.target as HTMLSelectElement).value;
       // Find the matching entry by its option key
-      const match = entries.find(entry => optionKey(entry.value) === valStr);
+      const match = entries.find(entry => valueText(entry.value) === valStr);
       if (match !== undefined) {
         onChange(match.value);
-      } else if (!isNull && !hasValue && valStr === optionKey(data)) {
+      } else if (!isNull && !hasValue && valStr === valueText(data)) {
         onChange(data);
       } else if (schema.type === 'integer' || schema.type === 'number') {
         onChange(parseFloat(valStr));
@@ -641,10 +632,10 @@ export class SchemaFormMode extends LitElement {
         @change=${onSelectChange}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${entries.map(entry => html`
-          <option value=${optionKey(entry.value)} ?selected=${entry.value === data}>${entry.label}</option>
+          <option value=${valueText(entry.value)} ?selected=${entry.value === data}>${entry.label}</option>
         `)}
         ${!isNull && !hasValue ? html`
-          <option value=${optionKey(data)} selected>${optionText(data)} (current)</option>
+          <option value=${valueText(data)} selected>${optionText(data)} (current)</option>
         ` : nothing}
       </select>
     `;
@@ -1180,7 +1171,7 @@ export class SchemaFormMode extends LitElement {
       <div>
         <input type=${inputType}
           id=${fieldId || nothing}
-          .value=${data || ''}
+          .value=${data !== null && typeof data === 'object' ? valueText(data) : data || ''}
           pattern=${schema.pattern || nothing}
           minlength=${schema.minLength !== undefined ? schema.minLength : nothing}
           maxlength=${schema.maxLength !== undefined ? schema.maxLength : nothing}

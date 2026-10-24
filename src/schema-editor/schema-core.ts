@@ -793,12 +793,19 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
   if (!schema.oneOf) return [];
   return schema.oneOf.map((entry: JSONSchema) => ({
     value: entry.const,
-    // A non-primitive const goes through JSON: String() on {"toString":null} throws.
-    label: entry.title || (entry.const !== null && typeof entry.const === 'object'
-      ? JSON.stringify(entry.const)
-      : String(entry.const)),
+    label: entry.title || valueText(entry.const),
     ...(safeColor(entry['x-color']) ? { color: entry['x-color'] } : {}),
   }));
+}
+
+/**
+ * A schema const, enum entry, default or stored value as text. Primitives keep
+ * their String() form; a non-primitive goes through JSON, because String() and
+ * Lit's attribute and .value coercion throw on a parsed {"toString":null} and
+ * turn every other object into the same "[object Object]".
+ */
+export function valueText(value: unknown): string {
+  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
 // Characters a CSS color can contain; anything else (";", ":", braces,

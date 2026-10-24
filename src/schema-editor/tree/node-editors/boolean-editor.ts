@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import type { JSONSchema } from '../../schema-core';
+import { valueText, type JSONSchema } from '../../schema-core';
 
 @customElement('schema-boolean-editor')
 export class SchemaBooleanEditor extends LitElement {
@@ -25,7 +25,7 @@ export class SchemaBooleanEditor extends LitElement {
         <div class="grid">
           <div>
             <label for="bool-default">Default</label>
-            <select id="bool-default" .value=${this.schema.default === undefined ? '' : String(this.schema.default)} @change=${(e: Event) => {
+            <select id="bool-default" .value=${this.schema.default === undefined ? '' : valueText(this.schema.default)} @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
               this._emit('default', v === '' ? undefined : v === 'true');
             }}>
@@ -36,7 +36,7 @@ export class SchemaBooleanEditor extends LitElement {
           </div>
           <div>
             <label for="bool-const">Const</label>
-            <select id="bool-const" .value=${this.schema.const === undefined ? '' : String(this.schema.const)} @change=${(e: Event) => {
+            <select id="bool-const" .value=${this.schema.const === undefined ? '' : valueText(this.schema.const)} @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
               this._emit('const', v === '' ? undefined : v === 'true');
             }}>
