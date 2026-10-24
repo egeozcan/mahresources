@@ -1,0 +1,89 @@
+{
+  "renderers": [
+    {
+      "name": "url",
+      "shapes": [
+        [
+          "href",
+          "host"
+        ],
+        [
+          "href",
+          "hostname"
+        ]
+      ],
+      "fieldTypes": {
+        "host": "string",
+        "hostname": "string",
+        "href": "string"
+      }
+    },
+    {
+      "name": "geo",
+      "shapes": [
+        [
+          "latitude",
+          "longitude"
+        ],
+        [
+          "lat",
+          "lng"
+        ]
+      ],
+      "fieldTypes": {
+        "lat": "number",
+        "latitude": "number",
+        "lng": "number",
+        "longitude": "number"
+      }
+    },
+    {
+      "name": "daterange",
+      "shapes": [
+        [
+          "start",
+          "end"
+        ]
+      ],
+      "fieldTypes": {
+        "end": "date",
+        "start": "date"
+      }
+    },
+    {
+      "name": "dimensions",
+      "shapes": [
+        [
+          "width",
+          "height"
+        ]
+      ],
+      "fieldTypes": {
+        "height": "number",
+        "width": "number"
+      }
+    }
+  ],
+  "optOut": [
+    "raw",
+    "none"
+  ],
+  "formats": [
+    "date",
+    "date-time",
+    "email",
+    "uri",
+    "url"
+  ],
+  "complexKeys": [
+    "type",
+    "properties",
+    "items",
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "if",
+    "$ref",
+    "enum"
+  ]
+}

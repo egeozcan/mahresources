@@ -31,7 +31,7 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Partials":              {section: "partials"},
 	"PartialCount":          {section: "partials"},
 	"BundleSlots":           {section: "task"},
-	"DisplayTypes":          {section: "extensions"},
+	"DisplayTypes":          {section: "display-types"},
 	"DisplayTypesTruncated": {reason: "validates the reply only"},
 	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
 	"Known":                 {reason: "validates the reply only"},

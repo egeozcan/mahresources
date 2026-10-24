@@ -1,26 +1,23 @@
 package shortcodes
 
 import (
+	"encoding/json"
 	"os"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
 )
 
 // The facts in schema_extensions.go are copies of what the TypeScript editors
-// implement. These tests read that TypeScript and the user docs, anchored on
-// identifiers rather than line numbers, so a change on either side fails here
-// and names both files.
+// implement. The contract file below is the Go side written out; the vitest
+// test src/schema-editor/schema-extensions-contract.test.ts imports the real
+// selectors and checks their behaviour against it, so a change on either side
+// fails one of the two tests and the message names both files.
 
 const (
-	displayRenderersTS = "../src/schema-editor/display-renderers.ts"
-	displayModeTS      = "../src/schema-editor/modes/display-mode.ts"
-	formModeTS         = "../src/schema-editor/modes/form-mode.ts"
-	schemaCoreTS       = "../src/schema-editor/schema-core.ts"
-	metaShortcodeTS    = "../src/webcomponents/meta-shortcode.ts"
 	metaSchemasDoc     = "../docs-site/docs/features/meta-schemas.md"
 	schemaExtensionsGo = "shortcodes/schema_extensions.go"
+	contractFile       = "testdata/schema_extensions_contract.json"
+	contractTest       = "src/schema-editor/schema-extensions-contract.test.ts"
 )
 
 func readSource(t *testing.T, path string) string {
@@ -32,150 +29,46 @@ func readSource(t *testing.T, path string) string {
 	return string(b)
 }
 
-func sortedCopy(in []string) []string {
-	out := append([]string(nil), in...)
-	sort.Strings(out)
-	return out
+type contractRenderer struct {
+	Name       string            `json:"name"`
+	Shapes     [][]string        `json:"shapes"`
+	FieldTypes map[string]string `json:"fieldTypes"`
 }
 
-func sameSet(a, b []string) bool {
-	return strings.Join(sortedCopy(a), ",") == strings.Join(sortedCopy(b), ",")
+type schemaExtensionsContract struct {
+	Renderers   []contractRenderer `json:"renderers"`
+	OptOut      []string           `json:"optOut"`
+	Formats     []string           `json:"formats"`
+	ComplexKeys []string           `json:"complexKeys"`
 }
 
-func quotedList(t *testing.T, list, source string) []string {
-	t.Helper()
-	var out []string
-	for _, m := range regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(list, -1) {
-		out = append(out, m[1])
-	}
-	if len(out) == 0 {
-		t.Fatalf("%s: no quoted values in %q", source, list)
-	}
-	return out
-}
-
-// functionBody returns the text of `function name(` up to the next top-level
-// closing brace.
-func functionBody(t *testing.T, src, name, file string) string {
-	t.Helper()
-	i := strings.Index(src, "function "+name+"(")
-	if i < 0 {
-		t.Fatalf("%s: function %s not found; update %s", file, name, schemaExtensionsGo)
-	}
-	rest := src[i:]
-	end := strings.Index(rest, "\n}\n")
-	if end < 0 {
-		t.Fatalf("%s: function %s has no closing brace at column 0", file, name)
-	}
-	return rest[:end]
-}
-
-func TestSchemaExtensionsRenderersMatchTypeScript(t *testing.T) {
-	src := readSource(t, displayRenderersTS)
-	block := regexp.MustCompile(`(?s)export const builtinRenderers: BuiltinRenderer\[\] = \[(.*?)\n\];`).FindStringSubmatch(src)
-	if block == nil {
-		t.Fatalf("%s: builtinRenderers registry not found; update %s", displayRenderersTS, schemaExtensionsGo)
-	}
-	var names, selectors []string
-	for _, m := range regexp.MustCompile(`builtin\('([a-z]+)',\s*(\w+),`).FindAllStringSubmatch(block[1], -1) {
-		names = append(names, m[1])
-		selectors = append(selectors, m[2])
-	}
-	var goNames []string
+func currentContract() []byte {
+	c := schemaExtensionsContract{OptOut: DisplayOptOutValues, Formats: SchemaFormatsWithUI(), ComplexKeys: LabeledEnumComplexKeys}
 	for _, r := range BuiltinDisplayRenderers() {
-		goNames = append(goNames, r.Name)
+		c.Renderers = append(c.Renderers, contractRenderer{Name: r.Name, Shapes: r.Shapes, FieldTypes: r.FieldTypes})
 	}
-	if strings.Join(names, ",") != strings.Join(goNames, ",") {
-		t.Fatalf("builtin renderers (in order) are %v in %s but %v in BuiltinDisplayRenderers (%s)", names, displayRenderersTS, goNames, schemaExtensionsGo)
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		panic(err)
 	}
-	for i, r := range BuiltinDisplayRenderers() {
-		body := functionBody(t, src, selectors[i], displayRenderersTS)
-		var tsKeys []string
-		for _, m := range regexp.MustCompile(`typeof o\.(\w+)`).FindAllStringSubmatch(body, -1) {
-			tsKeys = append(tsKeys, m[1])
-		}
-		var goKeys []string
-		for _, shape := range r.Shapes {
-			goKeys = append(goKeys, shape...)
-		}
-		seen := map[string]bool{}
-		var tsUnique, goUnique []string
-		for _, k := range tsKeys {
-			if !seen[k] {
-				seen[k] = true
-				tsUnique = append(tsUnique, k)
-			}
-		}
-		seen = map[string]bool{}
-		for _, k := range goKeys {
-			if !seen[k] {
-				seen[k] = true
-				goUnique = append(goUnique, k)
-			}
-		}
-		if !sameSet(tsUnique, goUnique) {
-			t.Errorf("renderer %q reads keys %v in %s (%s) but its Shapes in %s hold %v", r.Name, tsUnique, displayRenderersTS, selectors[i], schemaExtensionsGo, goUnique)
-		}
-	}
+	return append(b, '\n')
 }
 
-func TestSchemaExtensionsOptOutMatchesBothConsumers(t *testing.T) {
-	display := readSource(t, displayModeTS)
-	m := regexp.MustCompile(`if \(xd && ((?:xd !== '\w+'(?: && )?)+)\)`).FindStringSubmatch(display)
-	if m == nil {
-		t.Fatalf("%s: the forced-renderer guard `if (xd && xd !== ...)` was not found; update DisplayOptOutValues in %s", displayModeTS, schemaExtensionsGo)
-	}
-	tsOptOut := quotedList(t, m[1], displayModeTS)
-	if !sameSet(tsOptOut, DisplayOptOutValues) {
-		t.Errorf("opt-out values are %v in %s but %v in DisplayOptOutValues (%s)", tsOptOut, displayModeTS, DisplayOptOutValues, schemaExtensionsGo)
-	}
-	// Auto-detection runs only when x-display is unset, so an opt-out value
-	// (which no renderer is registered under) suppresses it in the panel...
-	if !strings.Contains(display, "if (!xd && typeof val === 'object'") {
-		t.Errorf("%s: auto shape detection is no longer guarded by `!xd`, so the opt-out %v may not suppress it (see %s)", displayModeTS, DisplayOptOutValues, schemaExtensionsGo)
-	}
-	// ...and in [meta], which looks the value up among the built-ins.
-	meta := readSource(t, metaShortcodeTS)
-	if !strings.Contains(meta, "if (!xDisplay && value != null && typeof value === 'object'") ||
-		!strings.Contains(meta, "const renderer = getBuiltinRenderer(xDisplay);") {
-		t.Errorf("%s: [meta] no longer guards auto-detection on `!xDisplay` and looks forced renderers up with getBuiltinRenderer, so it may disagree with %s about %v (see %s)", metaShortcodeTS, displayModeTS, DisplayOptOutValues, schemaExtensionsGo)
-	}
-	for _, r := range BuiltinDisplayRenderers() {
-		for _, v := range DisplayOptOutValues {
-			if r.Name == v {
-				t.Errorf("opt-out value %q is also a built-in renderer name (%s)", v, schemaExtensionsGo)
-			}
+// TestSchemaExtensionsContractIsCurrent fails when the committed contract is
+// not what the Go side says. Regenerate it with UPDATE_SCHEMA_CONTRACT=1.
+func TestSchemaExtensionsContractIsCurrent(t *testing.T) {
+	want := currentContract()
+	if os.Getenv("UPDATE_SCHEMA_CONTRACT") == "1" {
+		if err := os.WriteFile(contractFile, want, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-}
-
-func TestSchemaExtensionsComplexKeysMatchTypeScript(t *testing.T) {
-	src := readSource(t, schemaCoreTS)
-	body := functionBody(t, src, "isLabeledEnum", schemaCoreTS)
-	m := regexp.MustCompile(`const complexKeys = new Set\(\[([^\]]*)\]\)`).FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("%s: isLabeledEnum's complexKeys set was not found; update LabeledEnumComplexKeys in %s", schemaCoreTS, schemaExtensionsGo)
+	got, err := os.ReadFile(contractFile)
+	if err != nil {
+		t.Fatalf("read %s: %v; regenerate with UPDATE_SCHEMA_CONTRACT=1 go test ./shortcodes -run TestSchemaExtensionsContractIsCurrent", contractFile, err)
 	}
-	ts := quotedList(t, m[1], schemaCoreTS)
-	if !sameSet(ts, LabeledEnumComplexKeys) {
-		t.Errorf("complexKeys is %v in %s but %v in LabeledEnumComplexKeys (%s)", ts, schemaCoreTS, LabeledEnumComplexKeys, schemaExtensionsGo)
-	}
-}
-
-func TestSchemaExtensionsFormatsMatchTypeScript(t *testing.T) {
-	re := regexp.MustCompile(`\.format === '([\w-]+)'`)
-	for _, file := range []string{formModeTS, displayModeTS} {
-		var ts []string
-		seen := map[string]bool{}
-		for _, m := range re.FindAllStringSubmatch(readSource(t, file), -1) {
-			if !seen[m[1]] {
-				seen[m[1]] = true
-				ts = append(ts, m[1])
-			}
-		}
-		if !sameSet(ts, SchemaFormatsWithUI()) {
-			t.Errorf("formats with their own UI are %v in %s but %v in SchemaFormatsWithUI (%s)", ts, file, SchemaFormatsWithUI(), schemaExtensionsGo)
-		}
+	if string(got) != string(want) {
+		t.Fatalf("%s is stale against %s; regenerate with UPDATE_SCHEMA_CONTRACT=1 go test --tags 'json1 fts5' ./shortcodes -run TestSchemaExtensionsContractIsCurrent, then run `npx vitest run %s` to see whether the TypeScript still behaves as the contract says", contractFile, schemaExtensionsGo, contractTest)
 	}
 }
 

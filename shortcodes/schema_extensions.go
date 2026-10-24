@@ -21,15 +21,22 @@ import (
 type DisplayRenderer struct {
 	Name   string
 	Shapes [][]string
+	// FieldTypes is what each shape key must hold for the renderer's selector
+	// to accept the value: "number", "string", or "date" (an ISO 8601 string).
+	FieldTypes map[string]string
 }
 
 // builtinDisplayRenderers is src/schema-editor/display-renderers.ts
 // builtinRenderers, in detection order (first match wins).
 var builtinDisplayRenderers = []DisplayRenderer{
-	{Name: "url", Shapes: [][]string{{"href", "host"}, {"href", "hostname"}}},
-	{Name: "geo", Shapes: [][]string{{"latitude", "longitude"}, {"lat", "lng"}}},
-	{Name: "daterange", Shapes: [][]string{{"start", "end"}}},
-	{Name: "dimensions", Shapes: [][]string{{"width", "height"}}},
+	{Name: "url", Shapes: [][]string{{"href", "host"}, {"href", "hostname"}},
+		FieldTypes: map[string]string{"href": "string", "host": "string", "hostname": "string"}},
+	{Name: "geo", Shapes: [][]string{{"latitude", "longitude"}, {"lat", "lng"}},
+		FieldTypes: map[string]string{"latitude": "number", "longitude": "number", "lat": "number", "lng": "number"}},
+	{Name: "daterange", Shapes: [][]string{{"start", "end"}},
+		FieldTypes: map[string]string{"start": "date", "end": "date"}},
+	{Name: "dimensions", Shapes: [][]string{{"width", "height"}},
+		FieldTypes: map[string]string{"width": "number", "height": "number"}},
 }
 
 // BuiltinDisplayRenderers lists the built-in x-display renderers in detection
@@ -37,7 +44,10 @@ var builtinDisplayRenderers = []DisplayRenderer{
 func BuiltinDisplayRenderers() []DisplayRenderer {
 	out := make([]DisplayRenderer, len(builtinDisplayRenderers))
 	for i, r := range builtinDisplayRenderers {
-		out[i] = DisplayRenderer{Name: r.Name}
+		out[i] = DisplayRenderer{Name: r.Name, FieldTypes: map[string]string{}}
+		for k, v := range r.FieldTypes {
+			out[i].FieldTypes[k] = v
+		}
 		for _, shape := range r.Shapes {
 			out[i].Shapes = append(out[i].Shapes, append([]string(nil), shape...))
 		}
@@ -76,9 +86,9 @@ func shapeAlternatives(r DisplayRenderer) string {
 }
 
 // SchemaExtensionReference is the prompt block describing the extensions the
-// app understands. displayTypes are the enabled plugins' x-display values; the
-// block is constant when there are none.
-func SchemaExtensionReference(displayTypes []string) string {
+// app understands. It is constant; the enabled plugins' x-display values are
+// plugin-authored and travel separately, fenced.
+func SchemaExtensionReference() string {
 	var b strings.Builder
 	b.WriteString("Schema extensions this app understands. Use only these; any other custom keyword is ignored.\n")
 	b.WriteString("- \"x-display\" on a property chooses how the detail page draws its value. Built-in values, each for a property of type object that declares these keys in \"properties\" and lists them in \"required\":\n")
@@ -87,9 +97,7 @@ func SchemaExtensionReference(displayTypes []string) string {
 	}
 	b.WriteString("  Types: href, host and hostname are strings; latitude, longitude, lat, lng, width and height are numbers; start and end are ISO 8601 date strings (YYYY-MM-DD or a date-time).\n")
 	b.WriteString("  An object value with one of these shapes is drawn that way without x-display. " + quoteJoin(DisplayOptOutValues, " or ") + " opts out of that and shows a plain key/value grid. A value that lacks the shape is drawn as a plain object.\n")
-	if len(displayTypes) > 0 {
-		b.WriteString("  Enabled plugin renderers, usable as the x-display value on any property: " + strings.Join(displayTypes, ", ") + ". Use no other plugin: value.\n")
-	}
+	b.WriteString("  An x-display that is not a string is ignored. A value starting with plugin: names an enabled plugin's renderer; the request lists them when there are any.\n")
 	b.WriteString("- \"format\" with its own input and display: " + strings.Join(schemaFormatsWithUI, ", ") + ". Other formats validate only.\n")
 	b.WriteString("- Labeled enum: \"oneOf\" whose every entry is {\"const\": value, \"title\": label} with an optional \"x-color\" (a hex color) and \"description\". An entry that also has any of " + strings.Join(LabeledEnumComplexKeys, ", ") + " is a plain subschema and loses its labels. Use \"enum\" for choices without labels.\n")
 	b.WriteString("- Property names are meta paths and MRQL fields: use letters, digits and underscores only (a dot means nesting).\n")
@@ -120,11 +128,17 @@ var (
 	schemaSubschemaKeys = []string{"not", "if", "then", "else", "contains", "propertyNames", "additionalProperties", "unevaluatedProperties", "unevaluatedItems", "items", "additionalItems"}
 	schemaSchemaLists   = []string{"allOf", "anyOf", "oneOf", "prefixItems", "items"}
 	schemaSchemaMaps    = []string{"$defs", "definitions", "patternProperties", "dependentSchemas"}
+	// rendererDraws says what a matching value looks like, for the messages.
+	rendererDraws = map[string]string{"url": "a link with its host", "geo": "a map link", "daterange": "a formatted date range", "dimensions": "a width \u00d7 height size"}
 )
 
-// LintMetaSchema reports constructs in a MetaSchema that the app's editors and
-// renderers mishandle. The schema must already compile; text that is not a JSON
-// document gives no issues, because the compile step reports that.
+// LintMetaSchema advises on constructs in a MetaSchema that the app's editors
+// and renderers handle differently from what the author probably meant. None
+// of them breaks a page: a renderer that does not fit a value falls back to the
+// plain display, and an annotation of the wrong type is ignored. Every issue is
+// therefore a warning that says what will be drawn instead. The schema must
+// already compile; text that is not a JSON document gives no issues, because
+// the compile step reports that.
 func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 	if strings.TrimSpace(schema) == "" {
 		return nil
@@ -133,18 +147,19 @@ func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {
 		return nil
 	}
-	l := &schemaLinter{opts: opts}
+	l := &schemaLinter{opts: opts, root: root}
 	l.walk(root, "#")
 	return l.issues
 }
 
 type schemaLinter struct {
 	opts   MetaSchemaLintOptions
+	root   any
 	issues []LintIssue
 }
 
-func (l *schemaLinter) add(severity, format string, args ...any) {
-	l.issues = append(l.issues, LintIssue{Severity: severity, Message: fmt.Sprintf(format, args...)})
+func (l *schemaLinter) warn(format string, args ...any) {
+	l.issues = append(l.issues, LintIssue{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...)})
 }
 
 func sortedKeys(m map[string]any) []string {
@@ -162,7 +177,7 @@ func (l *schemaLinter) walk(node any, path string) {
 		return
 	}
 	if ref, ok := obj["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
-		l.add(SeverityWarning, "%s: $ref %q is not local; use a \"#/$defs/name\" reference inside the document.", path, ref)
+		l.warn("%s: $ref %q is not local; use a \"#/$defs/name\" reference inside the document.", path, ref)
 	}
 	if v, present := obj["x-display"]; present {
 		l.lintDisplay(obj, v, path)
@@ -199,10 +214,10 @@ func (l *schemaLinter) lintPropertyKey(key, path string) {
 		return
 	}
 	if strings.Contains(key, ".") {
-		l.add(SeverityWarning, "%s: property name %q contains a dot, which meta paths read as nesting; use letters, digits and underscores only.", path, key)
+		l.warn("%s: property name %q contains a dot, which meta paths read as nesting; use letters, digits and underscores only.", path, key)
 		return
 	}
-	l.add(SeverityWarning, "%s: property name %q should use letters, digits and underscores only; other characters break meta paths and MRQL field names.", path, key)
+	l.warn("%s: property name %q should use letters, digits and underscores only; other characters break meta paths and MRQL field names.", path, key)
 }
 
 func (l *schemaLinter) lintLabeledEnum(obj map[string]any, path string) {
@@ -229,14 +244,14 @@ func (l *schemaLinter) lintLabeledEnum(obj map[string]any, path string) {
 		}
 	}
 	if complexAt >= 0 {
-		l.add(SeverityWarning, "%s: this oneOf looks like a labeled enum, but entry %d has %q, so the app treats it as a plain subschema and the titles are lost; keep only const, title, x-color and description in each entry.", path, complexAt, complexKey)
+		l.warn("%s: this oneOf looks like a labeled enum, but entry %d has %q, so the app treats it as a plain subschema and the titles are lost; keep only const, title, x-color and description in each entry.", path, complexAt, complexKey)
 	}
 }
 
 func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string) {
 	name, ok := value.(string)
 	if !ok {
-		l.add(SeverityError, "%s: \"x-display\" must be a string, not %s.", path, jsonTypeName(value))
+		l.warn("%s: \"x-display\" must be a string, not %s; it is ignored and the value is drawn by shape or by its type.", path, jsonTypeName(value))
 		return
 	}
 	for _, v := range DisplayOptOutValues {
@@ -253,13 +268,13 @@ func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string) {
 	if strings.HasPrefix(name, "plugin:") {
 		switch {
 		case !pluginDisplayValue.MatchString(name):
-			l.add(SeverityWarning, "%s: x-display %q is not of the form plugin:<plugin>:<type>.", path, name)
+			l.warn("%s: x-display %q is not of the form plugin:<plugin>:<type>; the value is drawn without it.", path, name)
 		case !l.opts.DisplayTypesTruncated && !containsString(l.opts.DisplayTypes, name):
-			l.add(SeverityWarning, "%s: no enabled plugin provides x-display %q, so the value is drawn without it.", path, name)
+			l.warn("%s: no enabled plugin provides x-display %q, so the value is drawn without it.", path, name)
 		}
 		return
 	}
-	l.add(SeverityWarning, "%s: unknown x-display %q; use %s, %s or an enabled plugin value.", path, name, builtinNames(), quoteJoin(DisplayOptOutValues, " or "))
+	l.warn("%s: unknown x-display %q, so it has no effect; use %s, %s or an enabled plugin value.", path, name, builtinNames(), quoteJoin(DisplayOptOutValues, " or "))
 }
 
 func builtinNames() string {
@@ -271,44 +286,207 @@ func builtinNames() string {
 }
 
 func (l *schemaLinter) lintBuiltinDisplay(obj map[string]any, r DisplayRenderer, path string) {
-	if t, declared := obj["type"]; declared && !typeIncludes(t, "object") {
-		l.add(SeverityError, "%s: x-display %q needs an object property, but its type is %s; a forced renderer throws on any other value.", path, r.Name, typeText(t))
+	eff, ok := l.effective(obj, 0, map[string]bool{})
+	if !ok {
+		return // anyOf/oneOf alternatives or an unresolvable $ref: do not guess
+	}
+	draws := rendererDraws[r.Name]
+	for _, types := range eff.typeLists {
+		if !containsString(types, "object") {
+			l.warn("%s: x-display %q is for an object property, but its type is %s, so its value is drawn as that type instead of %s.", path, r.Name, strings.Join(types, " or "), draws)
+			return
+		}
+	}
+	if len(eff.props) == 0 {
 		return
 	}
-	props, hasProps := obj["properties"].(map[string]any)
-	if !hasProps {
-		return
-	}
-	var declared [][]string
+	var declared, usable [][]string
 	for _, shape := range r.Shapes {
-		if allIn(shape, func(k string) bool { _, ok := props[k]; return ok }) {
+		if allIn(shape, func(k string) bool { _, ok := eff.props[k]; return ok }) {
 			declared = append(declared, shape)
 		}
 	}
 	if len(declared) == 0 {
-		l.add(SeverityError, "%s: x-display %q needs properties %s declared under \"properties\"; a forced renderer throws on a value without them.", path, r.Name, shapeAlternatives(r))
+		l.warn("%s: x-display %q draws only an object with %s, but that property does not declare them, so its value is drawn as a plain object instead of %s.", path, r.Name, shapeAlternatives(r), draws)
 		return
 	}
-	required := map[string]bool{}
-	if list, ok := obj["required"].([]any); ok {
-		for _, k := range list {
-			if s, ok := k.(string); ok {
-				required[s] = true
-			}
+	for _, shape := range declared {
+		if allIn(shape, func(k string) bool { return l.fieldTypeFits(eff, k, r.FieldTypes[k]) }) {
+			usable = append(usable, shape)
 		}
 	}
-	for _, shape := range declared {
-		if allIn(shape, func(k string) bool { return required[k] }) {
+	if len(usable) == 0 {
+		l.warn("%s: x-display %q needs %s typed %s, but they are declared with other types, so no value matches and it is drawn as a plain object instead of %s.", path, r.Name, shapeText(declared[0]), fieldTypeText(r.FieldTypes[declared[0][0]]), draws)
+		return
+	}
+	for _, shape := range usable {
+		if allIn(shape, func(k string) bool { return eff.required[k] }) {
 			return
 		}
 	}
 	var missing []string
-	for _, k := range declared[0] {
-		if !required[k] {
+	for _, k := range usable[0] {
+		if !eff.required[k] {
 			missing = append(missing, k)
 		}
 	}
-	l.add(SeverityWarning, "%s: x-display %q draws only when %s are present; add %s to \"required\", or a value without them is drawn as a plain object.", path, r.Name, shapeText(declared[0]), strings.Join(missing, " and "))
+	l.warn("%s: x-display %q draws only when %s are present; add %s to \"required\", or a value without them is drawn as a plain object instead of %s.", path, r.Name, shapeText(usable[0]), strings.Join(missing, " and "), draws)
+}
+
+func fieldTypeText(kind string) string {
+	switch kind {
+	case "number":
+		return "number"
+	case "date":
+		return "string (an ISO 8601 date)"
+	}
+	return "string"
+}
+
+// fieldTypeFits reports whether the property's declared type can hold the kind
+// of value the renderer's selector accepts. An undeclared or unresolvable type
+// fits: the check refuses only what is certainly unusable.
+func (l *schemaLinter) fieldTypeFits(eff *effectiveSchema, key, kind string) bool {
+	acceptable := []string{"string"}
+	if kind == "number" {
+		acceptable = []string{"number", "integer"}
+	}
+	for _, sub := range eff.props[key] {
+		e, ok := l.effective(sub, 0, map[string]bool{})
+		if !ok {
+			return true
+		}
+		for _, types := range e.typeLists {
+			fits := false
+			for _, t := range types {
+				if containsString(acceptable, t) {
+					fits = true
+				}
+			}
+			if !fits {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// effectiveSchema is what the editors' resolveSchema makes of a node for the
+// facts the lint needs: its allOf entries and local $ref targets merged in.
+type effectiveSchema struct {
+	typeLists [][]string // one list per declaration; the value must satisfy each
+	props     map[string][]any
+	required  map[string]bool
+}
+
+// effective resolves obj through local $ref and allOf. It reports false when
+// the answer is not one schema: anyOf/oneOf alternatives, a ref that is not
+// local or does not resolve, a cycle, or too deep a chain.
+func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*effectiveSchema, bool) {
+	obj, ok := node.(map[string]any)
+	if !ok || depth > 12 {
+		return nil, false
+	}
+	if _, has := obj["anyOf"]; has {
+		return nil, false
+	}
+	if _, has := obj["oneOf"]; has {
+		return nil, false
+	}
+	eff := &effectiveSchema{props: map[string][]any{}, required: map[string]bool{}}
+	merge := func(sub *effectiveSchema) {
+		eff.typeLists = append(eff.typeLists, sub.typeLists...)
+		for k, v := range sub.props {
+			eff.props[k] = append(eff.props[k], v...)
+		}
+		for k := range sub.required {
+			eff.required[k] = true
+		}
+	}
+	if ref, has := obj["$ref"]; has {
+		pointer, isString := ref.(string)
+		if !isString || active[pointer] {
+			return nil, false
+		}
+		target, ok := localRef(l.root, pointer)
+		if !ok {
+			return nil, false
+		}
+		active[pointer] = true
+		sub, ok := l.effective(target, depth+1, active)
+		delete(active, pointer)
+		if !ok {
+			return nil, false
+		}
+		merge(sub)
+	}
+	if list, has := obj["allOf"].([]any); has {
+		for _, entry := range list {
+			sub, ok := l.effective(entry, depth+1, active)
+			if !ok {
+				return nil, false
+			}
+			merge(sub)
+		}
+	}
+	switch t := obj["type"].(type) {
+	case string:
+		eff.typeLists = append(eff.typeLists, []string{t})
+	case []any:
+		var types []string
+		for _, e := range t {
+			if s, ok := e.(string); ok {
+				types = append(types, s)
+			}
+		}
+		if len(types) > 0 {
+			eff.typeLists = append(eff.typeLists, types)
+		}
+	}
+	if props, ok := obj["properties"].(map[string]any); ok {
+		for k, v := range props {
+			eff.props[k] = append(eff.props[k], v)
+		}
+	}
+	if req, ok := obj["required"].([]any); ok {
+		for _, k := range req {
+			if s, ok := k.(string); ok {
+				eff.required[s] = true
+			}
+		}
+	}
+	return eff, true
+}
+
+// localRef follows a "#" or "#/a/b" JSON pointer inside the document.
+func localRef(root any, ref string) (any, bool) {
+	if ref == "#" {
+		return root, true
+	}
+	if !strings.HasPrefix(ref, "#/") {
+		return nil, false
+	}
+	node := root
+	for _, part := range strings.Split(ref[2:], "/") {
+		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		switch n := node.(type) {
+		case map[string]any:
+			child, ok := n[part]
+			if !ok {
+				return nil, false
+			}
+			node = child
+		case []any:
+			i, err := strconv.Atoi(part)
+			if err != nil || i < 0 || i >= len(n) {
+				return nil, false
+			}
+			node = n[i]
+		default:
+			return nil, false
+		}
+	}
+	return node, true
 }
 
 func allIn(keys []string, ok func(string) bool) bool {
@@ -327,25 +505,6 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func typeIncludes(t any, want string) bool {
-	switch v := t.(type) {
-	case string:
-		return v == want
-	case []any:
-		for _, e := range v {
-			if s, ok := e.(string); ok && s == want {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func typeText(t any) string {
-	b, _ := json.Marshal(t)
-	return string(b)
 }
 
 func jsonTypeName(v any) string {

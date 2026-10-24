@@ -939,8 +939,9 @@ func disclosedGenerate(gen TemplateGenerator, in TemplateGenerationInput, prompt
 }
 
 // The MetaSchema prompt teaches the app's schema extensions from the Go source
-// of truth, as one disclosed section. It is constant until a plugin adds a
-// display renderer, because then it depends on the request's registry state.
+// of truth, as one constant disclosed section. The enabled plugins' display
+// types are plugin-authored and per request, so they sit in a section of their
+// own, inside a fence.
 func TestMetaSchemaPromptCarriesTheExtensionReference(t *testing.T) {
 	in := slotInput()
 	in.Target, in.Slot, in.Mode = TemplateTargetMetaSchema, "", "json"
@@ -951,25 +952,37 @@ func TestMetaSchemaPromptCarriesTheExtensionReference(t *testing.T) {
 		if sections[i].Key == "extensions" {
 			found = &sections[i]
 		}
+		if sections[i].Key == "display-types" {
+			t.Fatalf("no plugin renderers, yet a display-types section: %+v", sections[i])
+		}
 	}
 	if found == nil || found.Role != promptRoleUser || !found.Constant {
 		t.Fatalf("want a constant user section \"extensions\", got %+v", found)
 	}
-	if want := strings.TrimRight(shortcodes.SchemaExtensionReference(nil), "\n"); found.Text != want {
+	if want := strings.TrimRight(shortcodes.SchemaExtensionReference(), "\n"); found.Text != want {
 		t.Fatalf("section text differs from SchemaExtensionReference:\n%s", found.Text)
 	}
 
 	in.DisplayTypes = []string{"plugin:gallery:image-grid"}
 	sections, _ = buildTemplatePromptSections(in, "add a place")
+	var types string
 	for _, s := range sections {
-		if s.Key == "extensions" {
-			if s.Constant || !strings.Contains(s.Text, "plugin:gallery:image-grid") {
-				t.Fatalf("with a plugin renderer the section is per-request and names it: %+v", s)
+		if s.Key == "extensions" && s.Text != found.Text {
+			t.Fatal("the extensions section must not depend on the request")
+		}
+		if s.Key == "display-types" {
+			if s.Constant {
+				t.Fatal("the display types are per request, not constant")
 			}
-			return
+			types = s.Text
 		}
 	}
-	t.Fatal("extensions section missing")
+	if !strings.Contains(types, "<<<BEGIN plugin display types>>>\nplugin:gallery:image-grid\n<<<END plugin display types>>>") {
+		t.Fatalf("display types are not fenced:\n%s", types)
+	}
+	if !strings.Contains(templateMetaSchemaSystemPrompt, "plugin display types") {
+		t.Fatal("the MetaSchema system prompt does not name the fence")
+	}
 }
 
 func TestExtensionReferenceIsOnlyInTheMetaSchemaPrompt(t *testing.T) {
@@ -991,9 +1004,9 @@ func TestGeneratedMetaSchemaIsLintedAfterItCompiles(t *testing.T) {
 		return &fakeTemplateDraftProvider{response: string(b)}
 	}
 
-	// A forced renderer on a string: the editors throw on it, so it is an error.
+	// A forced renderer on a string is drawn as a string: advice, not an error.
 	got, err := disclosedGenerate(NewTemplateGenerator(reply(`{"type":"object","properties":{"where":{"type":"string","x-display":"geo"}}}`), templateGenConfig()), in, "a place")
-	if err != nil || got.Valid || !hasErrorIssue(got.Issues) || !strings.Contains(got.Issues[0].Message, `"geo" needs an object`) {
+	if err != nil || !got.Valid || len(got.Issues) != 1 || !strings.Contains(got.Issues[0].Message, `x-display "geo" is for an object property`) {
 		t.Fatalf("err=%v valid=%t issues=%+v", err, got.Valid, got.Issues)
 	}
 
