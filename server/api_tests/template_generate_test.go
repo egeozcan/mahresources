@@ -361,3 +361,23 @@ func TestTemplateGenerateEnforcesPairsEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// The handler summarises each partial for the prompt: its description and what
+// its content reads, so the model knows what a partial shows before using it.
+func TestTemplateGeneratePassesPartialSummaries(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	partial := &models.TemplatePartial{Name: "rating-badge", Description: "A star badge.", Content: `[conditional path="rating" gt="3"][meta path="rating"][/conditional]`}
+	if err := tc.DB.Create(partial).Error; err != nil {
+		t.Fatal(err)
+	}
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header"})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", resp.Code, resp.Body.String())
+	}
+	want := application_context.TemplatePartialSummary{Name: "rating-badge", Description: "A star badge.", Reads: "conditional path=rating; meta path=rating"}
+	if len(fake.seen.Partials) != 1 || fake.seen.Partials[0] != want || fake.seen.PartialCount != 1 {
+		t.Fatalf("partials %+v count %d, want %+v", fake.seen.Partials, fake.seen.PartialCount, want)
+	}
+}

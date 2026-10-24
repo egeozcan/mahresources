@@ -198,10 +198,10 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
 
 ### 2a. Partial summaries (item 10)
 
-- [ ] `TemplatePartialSummary{Name, Description, Reads}` replaces `PartialNames`. `SummarizeTemplatePartial` walks `shortcodes.ParseWithBlocks` to collect `path=` attributes by shortcode, other shortcodes used, and nested `[partial]` names.
+- [x] `TemplatePartialSummary{Name, Description, Reads}` replaces `PartialNames`. `SummarizeTemplatePartial` walks `shortcodes.ParseWithBlocks` to collect `path=` attributes by shortcode, other shortcodes used, and nested `[partial]` names.
   - `[partial]` takes no parameters (`shortcodes/builtin_docs.go:243-253`) and renders against the including entity (`shortcodes/partial_handler.go:15-33`), so the "usage" to report is what each partial reads.
-- [ ] The prefix lists partials in name order. Summaries (description and reads) get a 16 KiB budget; past it, partials are listed by name only. The whole partial block has a 24 KiB hard cap, over at most `maxTemplatePartialsForPrompt` (200) partials; a name longer than 128 bytes is skipped, since names have no length bound (`template_partial_context.go:56-63`). If names alone exceed the cap, the block ends with "N more partials exist; use [partial] only with a name listed here", so the model is never told a list is complete when it is not. The header says partials take no parameters, and that one reading `[meta]` renders empty in CustomListHeader and CustomListFooter. The tail names partials the current content already includes.
-- [ ] Tests: reads extraction through nesting; the budget keeps every name; descriptions are fenced; the handler passes a seeded partial's description and reads.
+- [x] The prefix lists partials in name order. Summaries (description and reads) get a 16 KiB budget; past it, partials are listed by name only. The whole partial block has a 24 KiB hard cap, over at most `maxTemplatePartialsForPrompt` (200) partials; a name longer than 128 bytes is skipped, since names have no length bound (`template_partial_context.go:56-63`). If names alone exceed the cap, the block ends with "N more partials exist; use [partial] only with a name listed here", so the model is never told a list is complete when it is not. The header says partials take no parameters, and that one reading `[meta]` renders empty in CustomListHeader and CustomListFooter. The tail names partials the current content already includes.
+- [x] Tests: reads extraction through nesting; the budget keeps every name; descriptions are fenced; the handler passes a seeded partial's description and reads.
 
 ### 2b. Samples (item 4)
 

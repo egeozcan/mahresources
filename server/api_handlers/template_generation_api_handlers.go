@@ -172,6 +172,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
+		partials, partialCount := templatePartialSummaries(ctx)
 		input := application_context.TemplateGenerationInput{
 			Target:         target,
 			Mode:           req.Mode,
@@ -182,9 +183,10 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			SampleMeta:     loadSampleMeta(ctx, entityType, req.CategoryID, req.EntityID),
 			DocsBlock:      pluginReferences.DocsBlock,
 			PluginContext:  pluginReferences.PluginContext,
-			PartialNames:   templatePartialNames(ctx),
 			Known:          pluginReferences.Known,
 			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
+			Partials:       partials,
+			PartialCount:   partialCount,
 		}
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
@@ -314,18 +316,27 @@ func firstCategoryMember(ctx TemplateGenerationContext, entityType string, categ
 	return entity
 }
 
-// templatePartialNames lists existing partial names so the model won't invent
-// [partial name=…] references that render as empty comments.
-func templatePartialNames(ctx TemplateGenerationContext) []string {
-	partials, err := ctx.GetTemplatePartials(&query_models.TemplatePartialQuery{}, 0, maxTemplatePartialsForPrompt)
+// templatePartialSummaries summarises the first maxTemplatePartialsForPrompt
+// partials by name, with how many exist, so the model won't invent
+// [partial name=…] references that render as empty comments and knows what
+// each one reads.
+func templatePartialSummaries(ctx TemplateGenerationContext) ([]application_context.TemplatePartialSummary, int) {
+	query := &query_models.TemplatePartialQuery{}
+	partials, err := ctx.GetTemplatePartials(query, 0, maxTemplatePartialsForPrompt)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	names := make([]string, 0, len(partials))
+	count := len(partials)
+	if count == maxTemplatePartialsForPrompt {
+		if total, err := ctx.GetTemplatePartialsCount(query); err == nil {
+			count = int(total)
+		}
+	}
+	summaries := make([]application_context.TemplatePartialSummary, 0, len(partials))
 	for i := range partials {
-		names = append(names, partials[i].Name)
+		summaries = append(summaries, application_context.SummarizeTemplatePartial(partials[i].Name, partials[i].Description, partials[i].Content))
 	}
-	return names
+	return summaries, count
 }
 
 // serializeShortcodeDocsForPrompt renders the complete authoring catalogue for

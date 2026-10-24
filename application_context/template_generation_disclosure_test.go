@@ -23,7 +23,8 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"SampleMeta":     {section: "samples"},
 	"DocsBlock":      {section: "shortcodes"},
 	"PluginContext":  {section: "plugins"},
-	"PartialNames":   {section: "partials"},
+	"Partials":       {section: "partials"},
+	"PartialCount":   {section: "partials"},
 	"BundleSlots":    {section: "task"},
 	"Known":          {reason: "validates the reply only"},
 	"ValidateMRQL":   {reason: "validates the reply only"},
@@ -51,8 +52,9 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 	bundle := TemplateGenerationInput{
 		Target: TemplateTargetBundle, EntityType: "resource",
 		CurrentContent: "SENTINEL-current", MetaSchema: `{"SENTINEL-schema":1}`, SampleMeta: `{"SENTINEL-sample":1}`,
-		DocsBlock: "SENTINEL-docs", PluginContext: "SENTINEL-plugins", PartialNames: []string{"SENTINEL-partial"},
-		BundleSlots: []string{"CustomPreview", "CustomPreviewCSS"},
+		DocsBlock: "SENTINEL-docs", PluginContext: "SENTINEL-plugins", Partials: []TemplatePartialSummary{{Name: "sentinel-partial", Description: "SENTINEL-partial-description", Reads: "meta path=SENTINEL-reads"}},
+		PartialCount: 7,
+		BundleSlots:  []string{"CustomPreview", "CustomPreviewCSS"},
 	}
 	css := bundle
 	css.Target, css.Slot, css.Mode, css.BundleSlots = TemplateTargetSlot, "CustomCSS", "css", nil
@@ -67,7 +69,8 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"SampleMeta":     {bundle, "SENTINEL-sample"},
 		"DocsBlock":      {bundle, "SENTINEL-docs"},
 		"PluginContext":  {bundle, "SENTINEL-plugins"},
-		"PartialNames":   {bundle, "SENTINEL-partial"},
+		"Partials":       {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
+		"PartialCount":   {bundle, "6 more partials exist"},
 		"BundleSlots":    {bundle, "CustomPreview, CustomPreviewCSS"},
 	}
 	for name, c := range templateInputDisclosure {
@@ -101,7 +104,7 @@ func disclosureKinds() map[string]TemplateGenerationInput {
 	for _, in := range []*TemplateGenerationInput{&css, &pair, &bundle, &metaschema} {
 		in.SampleMeta = `{"rating":4}`
 		in.CurrentContent = `{"CustomHeader":"<h1>old</h1>"}`
-		in.PartialNames = []string{"card"}
+		in.Partials = []TemplatePartialSummary{{Name: "card", Description: "A card.", Reads: "meta path=rating"}}
 	}
 	return map[string]TemplateGenerationInput{"slot": css, "pair": pair, "bundle": bundle, "metaschema": metaschema}
 }

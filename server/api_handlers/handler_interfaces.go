@@ -229,6 +229,7 @@ type TemplateGenerationContext interface {
 	GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error)
 	GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) ([]models.Resource, error)
 	GetTemplatePartials(query *query_models.TemplatePartialQuery, offset, maxResults int) ([]models.TemplatePartial, error)
+	GetTemplatePartialsCount(query *query_models.TemplatePartialQuery) (int64, error)
 }
 
 // TemplatePreviewContext serves the category-template live preview, which

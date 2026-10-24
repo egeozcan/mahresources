@@ -70,8 +70,12 @@ type TemplateGenerationInput struct {
 	// It is separate from DocsBlock because blocks are selected in the note
 	// editor, not invoked as shortcodes in template markup.
 	PluginContext string
-	PartialNames  []string
-	BundleSlots   []string // target=bundle: which slot fields to fill
+	// Partials summarises the partial catalogue, at most
+	// maxTemplatePartialsForPrompt of it; PartialCount is how many partials
+	// exist, so the prompt can say when the list is incomplete.
+	Partials     []TemplatePartialSummary
+	PartialCount int
+	BundleSlots  []string // target=bundle: which slot fields to fill
 
 	// Validation seams (keep the generator plugin-agnostic and DB-free).
 	Known        shortcodes.KnownShortcodes
