@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth, onRefPath, followingRefs, mergeAllOf } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth, onRefPath, followingSteps, expansionStep, mergeAllOf } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -24,13 +24,13 @@ function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boo
   // $ref: resolve and check the resolved schema
   if (schema.$ref) {
     if (!rootSchema) return false; // cannot resolve without root
-    if (onRefPath(schema.$ref, rootSchema)) return false; // a cycle
+    if (onRefPath(schema)) return false; // a cycle
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (!resolved) return false;
     const siblings: JSONSchema = { ...schema };
     delete siblings.$ref;
     const merged = mergeSchemas(resolved, siblings);
-    return followingRefs([schema.$ref], () => isLeafSchema(merged, rootSchema));
+    return followingSteps([expansionStep(schema)], () => isLeafSchema(merged, rootSchema));
   }
 
   // Labeled enum (oneOf with const+title) renders as a simple dropdown — it's a leaf
@@ -43,7 +43,7 @@ function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boo
   // allOf: merge all entries and check the merged result
   if (schema.allOf && Array.isArray(schema.allOf)) {
     const { merged, followed } = mergeAllOf(schema, rootSchema);
-    return followingRefs(followed, () => isLeafSchema(merged, rootSchema));
+    return followingSteps(followed, () => isLeafSchema(merged, rootSchema));
   }
 
   // Conditional schemas render nested sub-forms

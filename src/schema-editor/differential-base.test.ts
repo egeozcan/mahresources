@@ -191,6 +191,22 @@ function genRoot(g: Gen): { schema: any; chain: boolean } {
   }
   g.defs = names;
   const root = genObject(g, 0);
+  // A definition recursive through array items, reused in sibling
+  // composition branches: a finite reuse every walker must expand, as base
+  // does, while the recursion itself stays bounded by the data.
+  if (chance(g, 0.15)) {
+    $defs.rec = {
+      title: 'Node', type: 'object',
+      properties: { name: { type: 'string', title: 'Name', default: 'n' }, children: { type: 'array', items: { $ref: '#/$defs/rec' } } },
+    };
+    const ref = { $ref: '#/$defs/rec' };
+    root.properties.recursive = pick(g, [
+      { allOf: [ref, { title: 'Override', allOf: [ref] }] },
+      { allOf: [ref, { properties: { selected: ref } }] },
+      { allOf: [ref, ref] },
+      { anyOf: [ref, { title: 'Override', allOf: [ref] }] },
+    ]);
+  }
   const chain = CHAINS && chance(g, 0.08);
   if (chain) root.properties.chain = { $ref: genChain($defs, g) };
   if (Object.keys($defs).length) root.$defs = $defs;

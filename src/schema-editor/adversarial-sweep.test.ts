@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './modes/display-mode';
 import './modes/form-mode';
 import './__base__/modes/form-mode';
+import './__base__/modes/display-mode';
 import './modes/search-mode';
 import './schema-editor';
 import './tree/detail-panel';
@@ -1134,8 +1135,10 @@ describe('round 14: cycle defaults, budgeted equality, deep schemas, linear merg
     const score = withSchemaBudget(() => scoreSchemaMatch(v as any, { p: { ...big } }, { type: 'object', properties: { v } }));
     expect(Date.now() - started).toBeLessThan(500);
     expect(score).toBeGreaterThan(50);
-    // The value and the const, 20,001 nodes each, and nothing per number.
-    expect(schemaWorkDone()).toBeLessThan(2 * 20001 + 100);
+    // The value and the const, 20,001 nodes each, and nothing per number
+    // compared. Each branch is read once more for its expansion-step key
+    // (the 1,000-number enum is 1,001 nodes); the const is cached by then.
+    expect(schemaWorkDone()).toBeLessThan(2 * 20001 + 1100);
   });
 
   it('a 10,000-level schema falls back or renders in every entry point instead of throwing', async () => {
@@ -2224,6 +2227,81 @@ describe('round 23: serialisers that never throw, renames on copies', () => {
     expect(Object.keys(emitted.$defs)).toEqual(['New']);
     expect(emitted.if.$ref).toBe('#/$defs/New');
     expect(emitted.then.properties.w.$ref).toBe('#/$defs/New');
+  });
+});
+
+describe('round 24: initialisation stops only without progress, one ancestry for every walker', () => {
+  async function settledForm(tag: string, schema: any, value: any, rounds = 8) {
+    const el: any = document.createElement(tag);
+    let last: unknown;
+    el.addEventListener('value-change', (e: CustomEvent) => { last = e.detail.value; });
+    el.schema = schema;
+    el.value = value;
+    document.body.append(el);
+    let previous = '';
+    for (let round = 0; round < rounds; round++) {
+      await el.updateComplete;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const now = JSON.stringify(el.value ?? null);
+      if (now === previous && !el.isUpdatePending) break;
+      previous = now;
+    }
+    const final = JSON.parse(JSON.stringify(el.value ?? null));
+    el.remove();
+    return { final, last: JSON.parse(JSON.stringify(last ?? null)) };
+  }
+
+  for (const count of [60, 200]) {
+    it(`${count} sibling variant defaults all land, as at base`, async () => {
+      for (const keyword of ['oneOf', 'anyOf']) {
+        const properties: Record<string, any> = {};
+        for (let i = 0; i < count; i++) properties[`field${i}`] = { [keyword]: [{ type: 'string', default: 'draft' }, { type: 'null' }] };
+        const schema = { type: 'object', properties };
+        const head = await settledForm('schema-form-mode', schema, {}, count + 20);
+        const base = await settledForm('base-schema-form-mode', schema, {}, count + 20);
+        expect(Object.keys(head.final).length, keyword).toBe(count);
+        expect(head.final, keyword).toEqual(base.final);
+        expect(head.last, keyword).toEqual(base.last);
+      }
+    }, 60000);
+  }
+
+  const $defs = {
+    N: {
+      title: 'Node', type: 'object',
+      properties: { name: { type: 'string', title: 'Name' }, children: { type: 'array', items: { $ref: '#/$defs/N' } } },
+    },
+  };
+  const tree = { allOf: [{ $ref: '#/$defs/N' }, { title: 'Override', allOf: [{ $ref: '#/$defs/N' }] }] };
+
+  it('a recursive reference reused in a sibling branch resolves as at base', () => {
+    const root: any = { $defs, type: 'object', properties: { tree } };
+    expect(resolveSchema(tree as any, root)!.title).toBe(baseCore.resolveSchema(tree as any, root)!.title);
+    expect(resolveSchema(tree as any, root)!.title).toBe('Node');
+    const labels = (fields: any[]) => fields.map(f => `${f.path} ${f.label}`);
+    expect(labels(flattenSchema(root, '', '', 0, root))).toEqual(labels(baseCore.flattenSchema(root, '', '', 0, root)));
+  });
+
+  it('the display panel labels that field as at base', async () => {
+    const root: any = { $defs, type: 'object', properties: { tree } };
+    const value = { tree: { name: 'n0' } };
+    const head = await mountEl('schema-display-mode', { schema: root, value });
+    const base = await mountEl('base-schema-display-mode', { schema: root, value });
+    expect(head.textContent).toContain('Node');
+    expect(head.textContent).not.toContain('Override');
+    expect(base.textContent).toContain('Node');
+  });
+
+  it('a recursive allOf still stops at its first repeat in every walker', () => {
+    const root: any = { $defs: { A: { allOf: [{ $ref: '#/$defs/A' }], properties: { a: { type: 'string', default: 'x' } } } }, $ref: '#/$defs/A' };
+    expect(() => withSchemaBudget(() => resolveSchema(root, root))).not.toThrow();
+    expect(withSchemaBudget(() => getDefaultValue(root, root))).toEqual({ a: 'x' });
+    expect(withSchemaBudget(() => evaluateCondition(root, { a: 'x' }, root))).toBe(true);
+    expect(() => withSchemaBudget(() => flattenSchema(root, '', '', 0, root))).not.toThrow();
+    // An alias cycle is cut at its first repeat, not walked to the depth limit.
+    const alias: any = { $defs: { A: { $ref: '#/$defs/A' } }, $ref: '#/$defs/A' };
+    expect(withSchemaBudget(() => resolveSchema(alias, alias))).toBeNull();
+    expect(schemaWorkDone()).toBeLessThan(100);
   });
 });
 

@@ -214,18 +214,35 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
 // A $ref cycle (a definition that refers to itself, directly, through another
 // definition or through allOf) is valid JSON Schema.
 //
-// Which references can recur at all is decided once per root, statically: a
-// reference is recursive when its target reaches it again through the schema's
-// $ref graph. A walker treats a reference as a cycle only when it is recursive
-// and already being expanded on the current path; that reference is then left
-// unresolved (resolveSchema: null, the default builders: undefined,
-// evaluateCondition: true, isLeafSchema: false, the form: its
-// unresolved-reference message). A schema with no recursive reference is
-// therefore walked exactly as before cycle detection existed, siblings
-// included. A walker that descends into a stored value (null included) starts
-// a fresh path there, because the data's own depth bounds that recursion.
+// Every walker shares one mechanism: the live ancestry of the expansion steps
+// it is in. A step is a $ref being expanded, or a composition branch's $ref
+// resolved within the schema holding it; it is pushed when its expansion
+// starts and popped when it returns (followingSteps), so sibling expansions
+// never share entries, and references merged in from sibling branches are not
+// ancestors of one another.
+//
+// A step is identified by the schema it expands, by content: the
+// referencing node with every sibling merged into it ({$ref Node} at an items
+// position and {$ref Node, properties: {kind: {default: "leaf"}}} in a then
+// are different steps), and for a composition branch the schema holding the
+// composition as well (its other keywords and its distinct branches as a set:
+// merging concatenates allOf lists into [a, a, a, a]). Every walker is a
+// function of that schema, so a step that repeats on the ancestry would repeat
+// forever; it is a cycle and left unresolved (resolveSchema: null, the default
+// builders: the node's own default, evaluateCondition: true, isLeafSchema:
+// false, the form: its unresolved-reference message). A reference reused
+// finitely, by a sibling or through a merge, is a different step and is
+// expanded, as at base. A walker that descends into a stored value (null
+// included) starts a fresh ancestry there (onFreshRefPath), because the
+// data's own depth bounds that recursion. The work budget stays the backstop
+// for an expansion that grows instead of repeating. canonicalJSON charges each
+// node it reads and caches each object within the operation.
 
-let refPath = new Set<unknown>();
+/** A step: its key, and the $ref it expands. */
+export type ExpansionStep = readonly [key: string, ref: unknown];
+
+/** The live ancestry: step key → the $ref the step expands. */
+let stepPath = new Map<string, unknown>();
 
 // Per root, within one top-level operation only (like canonicalKeys): the
 // tree editor edits a root in place, so a classification kept across
@@ -345,135 +362,104 @@ function recursiveRefs(root: JSONSchema): Set<unknown> {
   return recursive;
 }
 
-/** Whether ref, a reference of root, is a cycle here: recursive and already on the path. */
-export function onRefPath(ref: unknown, root: JSONSchema | null | undefined): boolean {
-  if (!refPath.has(ref) || !root || typeof root !== 'object') return false;
-  return recursiveRefs(root).has(ref);
+/**
+ * The identity of a schema holding a composition (keyword), for its branch
+ * steps: its other keywords, and its distinct branches as a set.
+ */
+export function compositionKey(container: JSONSchema, keyword: 'allOf' | 'anyOf' | 'oneOf' = 'allOf'): string {
+  return `${keyword}\u0000${stepContent(container)}`;
 }
 
-/** Run walk with refs added to the current path. */
-export function followingRefs<T>(refs: readonly unknown[], walk: () => T): T {
-  const added = refs.filter(ref => !refPath.has(ref));
-  added.forEach(ref => refPath.add(ref));
-  try {
-    return walk();
-  } finally {
-    added.forEach(ref => refPath.delete(ref));
-  }
-}
-
-// ─── Default build stack ─────────────────────────────────────────────────────
-// The default builders do not use the static recursion classification: a
-// reference recursive somewhere in the graph (through items, through a then
-// the data never activates, or through one a sibling override switches off
-// a level down) can still be finite to expand. They keep the live stack of
-// the expansion steps this build is in: a $ref step, or an allOf branch
-// resolved within the schema holding it, pushed when the step starts and
-// popped when it returns. Sibling properties are built one after another,
-// so they never share entries.
-//
-// A step is identified by the schema it expands, by content: the
-// referencing node with every sibling merged into it ({$ref Node} at an
-// items position and {$ref Node, properties: {kind: {default: "leaf"}}} in a
-// then are different steps), and for an allOf branch the whole schema
-// holding the allOf as well. A default build is a function of that schema,
-// so a step that repeats on the stack would repeat forever; it is not
-// expanded again, and the referencing node's own sibling default applies.
-// Any other repeat, a merge having carried a reference into a schema with
-// different siblings, is a different step and is expanded, as at base. The
-// work budget stays the backstop for an expansion that grows instead of
-// repeating. canonicalJSON charges each node it reads and caches each object
-// within the operation.
-
-let defaultSteps = new Set<string>();
+const COMPOSITION_KEYWORDS = ['allOf', 'anyOf', 'oneOf'];
 
 /**
- * The identity of a schema holding an allOf, for its branch steps: its other
- * keywords, and its distinct branches as a set. Merging concatenates allOf
- * lists, so an allOf that refers to itself comes back with its branches
- * repeated ([a, a] then [a, a, a, a]); as a set it is the same schema.
+ * The content of a schema as a step identity: canonicalJSON, except that
+ * its own composition lists count as sets of distinct branches. Merging
+ * concatenates those lists, so a schema that refers to itself through one
+ * comes back with its branches repeated ([a, a] then [a, a, a, a]) and must
+ * still be recognised as the same step.
  */
-function allOfContainerKey(container: JSONSchema): string {
-  const rest: JSONSchema = { ...container };
-  delete rest.allOf;
-  const branches = Array.isArray(container.allOf) ? container.allOf : [];
-  const distinct = [...new Set(branches.map(branch => canonicalJSON(branch)))].sort();
-  return `${canonicalJSON(rest)}\u0000${JSON.stringify(distinct)}`;
+function stepContent(schema: JSONSchema): string {
+  const rest: JSONSchema = { ...schema };
+  const sets: string[] = [];
+  for (const keyword of COMPOSITION_KEYWORDS) {
+    const branches = ownValue(schema, keyword);
+    if (!Array.isArray(branches)) continue;
+    delete rest[keyword];
+    sets.push(`${keyword}:${JSON.stringify([...new Set(branches.map((branch: unknown) => canonicalJSON(branch)))].sort())}`);
+  }
+  return `${canonicalJSON(rest)}\u0000${sets.join('\u0000')}`;
 }
 
-/** The identity of expanding node: a $ref step, or an allOf branch within the container whose key is given. */
-function defaultStepKey(node: object, containerKey?: string): string {
-  return containerKey === undefined ? canonicalJSON(node) : `${containerKey}\u0000${canonicalJSON(node)}`;
+/** The step of expanding node's $ref, or of a composition branch node within the container whose key is given. */
+export function expansionStep(node: JSONSchema, containerKey?: string): ExpansionStep {
+  const key = containerKey === undefined ? stepContent(node) : `${containerKey}\u0000${stepContent(node)}`;
+  return [key, node.$ref];
 }
 
-/** Whether the step is already being expanded on this default build's stack. */
-function repeatsDefaultExpansion(node: object, containerKey?: string): boolean {
-  return defaultSteps.has(defaultStepKey(node, containerKey));
+/** Whether expanding node (within the container, for a branch) repeats a step on the live ancestry: a cycle. */
+export function onRefPath(node: JSONSchema, containerKey?: string): boolean {
+  if (stepPath.size === 0) return false;
+  return stepPath.has(expansionStep(node, containerKey)[0]);
 }
 
-/** Run walk with the steps on the default build stack, popped when it returns. */
-function expandingDefault<T>(steps: ReadonlyArray<readonly [object, string | undefined]>, walk: () => T): T {
+/** Run walk with steps on the live ancestry, popped when it returns. */
+export function followingSteps<T>(steps: readonly ExpansionStep[], walk: () => T): T {
   const added: string[] = [];
   try {
-    // Registered inside the try: computing a later key can run out of
-    // budget, and the steps already added must still come off.
-    for (const [node, containerKey] of steps) {
-      const key = defaultStepKey(node, containerKey);
-      if (defaultSteps.has(key)) continue;
-      defaultSteps.add(key);
+    // Registered inside the try: a later step's key can run out of budget,
+    // and the steps already added must still come off.
+    for (const [key, ref] of steps) {
+      if (stepPath.has(key)) continue;
+      stepPath.set(key, ref);
       added.push(key);
     }
     return walk();
   } finally {
-    added.forEach(key => defaultSteps.delete(key));
+    added.forEach(key => stepPath.delete(key));
   }
 }
 
 /** Run walk on a fresh path: for a walker descending into a stored value. */
 export function onFreshRefPath<T>(walk: () => T): T {
-  const saved = refPath;
-  refPath = new Set();
+  const saved = stepPath;
+  stepPath = new Map();
   try {
     return walk();
   } finally {
-    refPath = saved;
+    stepPath = saved;
   }
 }
 
 /**
  * schema with its allOf branches merged in, each branch's $ref resolved one
- * level. A branch whose $ref is on the current path is a cycle, so only its
- * sibling keywords are merged. The refs followed go on the path for the
- * walker's recursion into the result: followingRefs(followed, ...).
+ * level. A branch whose step repeats one on the live ancestry is a cycle, so
+ * only its sibling keywords are merged. The steps followed go on the
+ * ancestry for the walker's recursion into the result:
+ * followingSteps(followed, ...).
  */
-export function mergeAllOf(
-  schema: JSONSchema,
-  rootSchema?: JSONSchema,
-  isCycle: (ref: unknown, node: JSONSchema, container: JSONSchema) => boolean = ref => onRefPath(ref, rootSchema),
-): { merged: JSONSchema; followed: unknown[]; followedNodes: JSONSchema[] } {
+export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merged: JSONSchema; followed: ExpansionStep[] } {
   let merged: JSONSchema = { ...schema };
   delete merged.allOf;
   const owned = new WeakSet<object>([merged]);
-  const followed: unknown[] = [];
-  const followedNodes: JSONSchema[] = [];
+  const followed: ExpansionStep[] = [];
+  const containerKey = compositionKey(schema, 'allOf');
   for (const sub of schema.allOf) {
     countSchemaWork();
     let resolved: JSONSchema;
     if (sub.$ref) {
-      const refResult = isCycle(sub.$ref, sub, schema) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
+      const step = expansionStep(sub, containerKey);
+      const refResult = stepPath.has(step[0]) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
       const siblings: JSONSchema = { ...sub };
       delete siblings.$ref;
       resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      if (refResult) {
-        followed.push(sub.$ref);
-        followedNodes.push(sub);
-      }
+      if (refResult) followed.push(step);
     } else {
       resolved = sub;
     }
     if (resolved) merged = mergeSchemas(merged, resolved, 'intersect', owned);
   }
-  return { merged, followed, followedNodes };
+  return { merged, followed };
 }
 
 // A last resort against a stack overflow on pathological acyclic input (a
@@ -541,9 +527,8 @@ export function withSchemaBudget<T>(operation: () => T): T {
   // The walk state as the operation found it: restored afterwards whatever
   // happened, so a budget error thrown mid-walk leaves no depth, memo,
   // reference path or cached value key behind for the next render.
-  const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Set(refPath) : refPath;
+  const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Map(stepPath) : stepPath;
   const savedKeys = canonicalKeys, savedRecursion = recursiveRefsByRoot;
-  const savedSteps = outermost ? new Set(defaultSteps) : defaultSteps;
   if (outermost) {
     workDone = 0;
     canonicalKeys = new WeakMap();
@@ -557,10 +542,9 @@ export function withSchemaBudget<T>(operation: () => T): T {
     if (outermost) {
       schemaDepth = savedDepth;
       walkMemo = savedMemo;
-      refPath = savedPath;
+      stepPath = savedPath;
       canonicalKeys = savedKeys;
       recursiveRefsByRoot = savedRecursion;
-      defaultSteps = savedSteps;
     }
   }
 }
@@ -610,7 +594,7 @@ function memoized<T>(kind: string, target: object, data: unknown, ref: unknown, 
   if (!walkMemo) return compute();
   const recursive = recursiveRefs(root);
   if (recursive.has(ref)) return compute();
-  for (const onPath of refPath) if (recursive.has(onPath)) return compute();
+  for (const onPath of stepPath.values()) if (recursive.has(onPath)) return compute();
   let byTarget = walkMemo.get(kind);
   if (!byTarget) walkMemo.set(kind, (byTarget = new Map()));
   let byData = byTarget.get(target);
@@ -629,7 +613,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
   if (!schema) return schema;
 
   if (schema.$ref) {
-    if (onRefPath(schema.$ref, rootSchema)) return null;
+    if (onRefPath(schema)) return null;
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
       // Use mergeSchemas to properly combine ref target with sibling keywords,
@@ -637,7 +621,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([schema.$ref], () => resolveSchema(merged, rootSchema));
+      return followingSteps([expansionStep(schema)], () => resolveSchema(merged, rootSchema));
     }
     return null;
   }
@@ -657,16 +641,18 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
       const owned = new WeakSet<object>([merged]);
-      const followed: unknown[] = [];
+      const followed: ExpansionStep[] = [];
+      const containerKey = compositionKey(schema, keyword);
       for (const sub of schema[keyword]) {
         countSchemaWork();
         let resolved: JSONSchema | null;
         if (sub.$ref) {
-          const refResult = onRefPath(sub.$ref, rootSchema) ? null : resolveRef(sub.$ref, rootSchema);
+          const step = expansionStep(sub, containerKey);
+          const refResult = stepPath.has(step[0]) ? null : resolveRef(sub.$ref, rootSchema);
           const siblings: JSONSchema = { ...sub };
           delete siblings.$ref;
           resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-          if (refResult) followed.push(sub.$ref);
+          if (refResult) followed.push(step);
         } else {
           resolved = sub;
         }
@@ -715,7 +701,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
         else merged.title = schema.title;
       }
 
-      return followingRefs(followed, () => resolveSchema(merged, rootSchema));
+      return followingSteps(followed, () => resolveSchema(merged, rootSchema));
     }
   }
 
@@ -755,14 +741,15 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 
   // ── Resolve $ref before any checks ────────────────────────────────────
   if (conditionSchema.$ref && rootSchema) {
-    if (onRefPath(conditionSchema.$ref, rootSchema)) return true;
+    if (onRefPath(conditionSchema)) return true;
     const resolved = resolveRef(conditionSchema.$ref, rootSchema);
     if (resolved) {
       const siblings: JSONSchema = { ...conditionSchema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
       const ref = conditionSchema.$ref;
-      const evaluate = () => followingRefs([ref], () => evaluateCondition(merged, data, rootSchema));
+      const step = expansionStep(conditionSchema);
+      const evaluate = () => followingSteps([step], () => evaluateCondition(merged, data, rootSchema));
       return Object.keys(siblings).length ? evaluate() : memoized('condition', resolved, data, ref, rootSchema, evaluate);
     }
   }
@@ -954,9 +941,11 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
         delete siblings[kw];
 
         let bestScore = -1;
+        const containerKey = compositionKey(schema, kw);
         for (const sub of distinctBranches(schema[kw] as any[])) {
-          // A branch referring back to a reference on the path is a cycle.
-          if (sub.$ref && onRefPath(sub.$ref, rootSchema)) continue;
+          // A branch repeating a step on the live ancestry is a cycle.
+          const step = sub.$ref ? expansionStep(sub, containerKey) : null;
+          if (step && stepPath.has(step[0])) continue;
           const resolved = sub.$ref ? (() => {
             const r = resolveRef(sub.$ref, rootSchema);
             const s: JSONSchema = { ...sub }; delete s.$ref;
@@ -964,7 +953,7 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
           })() : sub;
           // Merge branch with sibling properties for scoring
           const branchSchema = mergeSchemas(siblings, resolved);
-          const branchScore = followingRefs(sub.$ref ? [sub.$ref] : [], () => scoreSchemaMatch(branchSchema, data, rootSchema));
+          const branchScore = followingSteps(step ? [step] : [], () => scoreSchemaMatch(branchSchema, data, rootSchema));
           if (branchScore > bestScore) bestScore = branchScore;
         }
         return bestScore >= 0 ? bestScore : 0;
@@ -1116,21 +1105,20 @@ function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): 
     // A repeat of a reference being expanded on this build's stack is not
     // expanded again, but its own default still applies, as it would over
     // the expanded target.
-    if (repeatsDefaultExpansion(schema)) return ownValue(schema, 'default');
+    if (onRefPath(schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([schema.$ref], () => expandingDefault([[schema, undefined]], () => getDefaultValue(merged, rootSchema)));
+      return followingSteps([expansionStep(schema)], () => getDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
     const root = rootSchema || schema;
-    const containerKey = allOfContainerKey(schema);
-    const { merged, followed, followedNodes } = mergeAllOf(schema, root, (_ref, sub) => repeatsDefaultExpansion(sub, containerKey));
-    return followingRefs(followed, () => expandingDefault(followedNodes.map(sub => [sub, containerKey] as const), () => getDefaultValue(merged, rootSchema)));
+    const { merged, followed } = mergeAllOf(schema, root);
+    return followingSteps(followed, () => getDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {
@@ -1212,21 +1200,20 @@ function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSc
     // A repeat of a reference being expanded on this build's stack is not
     // expanded again, but its own default still applies, as it would over
     // the expanded target.
-    if (repeatsDefaultExpansion(schema)) return ownValue(schema, 'default');
+    if (onRefPath(schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([schema.$ref], () => expandingDefault([[schema, undefined]], () => getPreviewDefaultValue(merged, rootSchema)));
+      return followingSteps([expansionStep(schema)], () => getPreviewDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
     const root = rootSchema || schema;
-    const containerKey = allOfContainerKey(schema);
-    const { merged, followed, followedNodes } = mergeAllOf(schema, root, (_ref, sub) => repeatsDefaultExpansion(sub, containerKey));
-    return followingRefs(followed, () => expandingDefault(followedNodes.map(sub => [sub, containerKey] as const), () => getPreviewDefaultValue(merged, rootSchema)));
+    const { merged, followed } = mergeAllOf(schema, root);
+    return followingSteps(followed, () => getPreviewDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {

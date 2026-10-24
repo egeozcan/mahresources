@@ -19,7 +19,8 @@ import {
   ownValue,
   setOwn,
   onRefPath,
-  followingRefs,
+  followingSteps,
+  expansionStep,
   onFreshRefPath,
   mergeAllOf,
   withSchemaBudget,
@@ -88,7 +89,10 @@ function isMultipleOf(n: number, m: number): boolean {
   return Math.abs(quotient - Math.round(quotient)) <= 4 * Number.EPSILON * Math.abs(quotient);
 }
 
-/** A variant default queued more often than this under one schema stops being queued. */
+/**
+ * A variant default queued this many times while no queued default anywhere
+ * stuck stops being queued: initialisation has stopped making progress.
+ */
 const MAX_INIT_ATTEMPTS = 50;
 
 /**
@@ -403,9 +407,11 @@ export class SchemaFormMode extends LitElement {
    * Otherwise as at base: each deferred assignment goes through the onChange
    * chain of the render that queued it, so sibling assignments can overwrite
    * one another, and the next render queues the field that lost again until
-   * every field holds its default. A field queued MAX_INIT_ATTEMPTS times
-   * under one schema stops, only so that a value that can never stick
-   * cannot loop.
+   * every field holds its default; each round, at least one more default
+   * sticks. The counts only detect a lack of progress: they are all reset
+   * whenever a queued default is found in place (_noteInitialized), and a
+   * field queued MAX_INIT_ATTEMPTS times since then stops, so that a value
+   * that can never stick cannot loop.
    */
   private _shouldInitialize(key: string, defaultVal: unknown): boolean {
     if (defaultVal === undefined) return false;
@@ -413,6 +419,11 @@ export class SchemaFormMode extends LitElement {
     if (attempts >= MAX_INIT_ATTEMPTS) return false;
     this._initAttempts.set(key, attempts + 1);
     return true;
+  }
+
+  /** The field at key holds a value: if its default was queued, initialisation progressed. */
+  private _noteInitialized(key: string): void {
+    if (this._initAttempts.has(key)) this._initAttempts.clear();
   }
 
   /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
@@ -467,7 +478,7 @@ export class SchemaFormMode extends LitElement {
     // Handle $ref
     if (schema.$ref) {
       // A reference already being expanded on this path is a cycle.
-      const resolved = onRefPath(schema.$ref, rootSchema) ? null : resolveRef(schema.$ref, rootSchema);
+      const resolved = onRefPath(schema) ? null : resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const siblings: JSONSchema = { ...schema };
         delete siblings.$ref;
@@ -475,7 +486,7 @@ export class SchemaFormMode extends LitElement {
         const render = () => {
           return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
         };
-        return followingRefs([schema.$ref], render);
+        return followingSteps([expansionStep(schema)], render);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${valueText(schema.$ref)}</div>`;
     }
@@ -496,7 +507,7 @@ export class SchemaFormMode extends LitElement {
       const render = () => {
         return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
       };
-      return followingRefs(followed, render);
+      return followingSteps(followed, render);
     }
 
     // Handle anyOf
@@ -580,6 +591,8 @@ export class SchemaFormMode extends LitElement {
       });
     }
 
+    const initKey = `${this._variantPrefix}oneOf:${path ?? ''}`;
+    if (data !== undefined) this._noteInitialized(initKey);
     if (data === undefined) {
       // Merge shared properties with first variant for initial default
       const merged = sharedProps
@@ -588,7 +601,7 @@ export class SchemaFormMode extends LitElement {
       // A copy: the value becomes editable data, and the schema's own
       // default object must never be changed through it.
       const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
-      if (this._shouldInitialize(`${this._variantPrefix}oneOf:${path ?? ''}`, defaultVal)) {
+      if (this._shouldInitialize(initKey, defaultVal)) {
         this._defer(() => onChange(defaultVal));
       }
     }
@@ -659,6 +672,8 @@ export class SchemaFormMode extends LitElement {
       });
     }
 
+    const initKey = `${this._variantPrefix}anyOf:${path ?? ''}`;
+    if (data !== undefined) this._noteInitialized(initKey);
     if (data === undefined) {
       const merged = sharedProps
         ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.anyOf[activeIndex])
@@ -666,7 +681,7 @@ export class SchemaFormMode extends LitElement {
       // A copy: the value becomes editable data, and the schema's own
       // default object must never be changed through it.
       const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
-      if (this._shouldInitialize(`${this._variantPrefix}anyOf:${path ?? ''}`, defaultVal)) {
+      if (this._shouldInitialize(initKey, defaultVal)) {
         this._defer(() => onChange(defaultVal));
       }
     }
