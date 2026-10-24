@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/net/html"
 
 	"mahresources/shortcodes"
 )
@@ -163,7 +166,7 @@ func (g *defaultTemplateGenerator) repair(ctx context.Context, in TemplateGenera
 		return draft, &TemplateRepair{Attempted: true, Reason: reason}
 	}
 	repaired, err := parseTemplateDraft(in, resp)
-	if err != nil || !repaired.parsed || repaired.truncated || !repairIsBetter(draft, repaired) {
+	if err != nil || !repaired.parsed || repaired.truncated || !repairIsBetter(draft, repaired, singleSlotIsCSS(in)) {
 		return draft, &TemplateRepair{Attempted: true, Reason: templateRepairNotBetter}
 	}
 	return repaired, &TemplateRepair{Attempted: true, Applied: true}
@@ -244,8 +247,9 @@ func issueExcerpt(content string, issue shortcodes.LintIssue) string {
 
 // repairIsBetter keeps a repair only if it scores strictly lower, keeps every
 // slot key the original returned, and keeps the content. Emptying a slot is
-// the cheapest way to make a lint error go away.
-func repairIsBetter(original, repaired templateDraft) bool {
+// the cheapest way to make a lint error go away. css says whether a single
+// slot draft is a stylesheet; a bundle's slots are told apart by name.
+func repairIsBetter(original, repaired templateDraft, css bool) bool {
 	if !scoreLess(repaired.score(), original.score()) {
 		return false
 	}
@@ -253,48 +257,145 @@ func repairIsBetter(original, repaired templateDraft) bool {
 		return repairKeepsSchemaProperties(original.result.Content, repaired.result.Content)
 	}
 	if original.result.Target != TemplateTargetBundle {
-		return repairKeepsSlot(original.result.Content, repaired.result.Content)
+		return repairKeepsSlot(original.result.Content, repaired.result.Content, css)
 	}
 	for slot, content := range original.result.Slots {
 		kept, ok := repaired.result.Slots[slot]
-		if !ok || !repairKeepsSlot(content, kept) {
+		if !ok || !repairKeepsSlot(content, kept, strings.HasSuffix(slot, "CSS")) {
 			return false
 		}
 	}
 	return true
 }
 
-// contentWeight is the size of a slot's content with surrounding whitespace
-// trimmed. Comments count as content: telling a comment from a string that
-// looks like one needs a parser per language, a repair should rarely delete a
-// large comment, and a conservative rule costs little.
-func contentWeight(s string) int { return len(strings.TrimSpace(s)) }
+// contentWeight is the size of a slot's content once its comments are gone:
+// /* */ outside quoted strings for CSS, comment tokens for HTML. Shortcodes
+// and {# #} stay text. Both scans are linear.
+func contentWeight(s string, css bool) int {
+	if css {
+		return len(strings.TrimSpace(stripCSSComments(s)))
+	}
+	return len(strings.TrimSpace(stripHTMLComments(s)))
+}
 
-// repairKeepsSlot is true when a slot that had content still has it: not empty,
-// and not under half the original's weight. A comment in place of real CSS
-// weighs nothing.
-func repairKeepsSlot(original, repaired string) bool {
+// stripCSSComments drops /* */ comments outside quoted strings (a backslash
+// escapes the next byte inside one). An unterminated comment runs to the end.
+func stripCSSComments(s string) string {
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+			b.WriteByte(c)
+		case c == '/' && i+1 < len(s) && s[i+1] == '*':
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				return b.String()
+			}
+			i += 2 + end + 1
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// stripHTMLComments drops the comment tokens of the HTML tokenizer.
+func stripHTMLComments(s string) string {
+	var b strings.Builder
+	z := html.NewTokenizer(strings.NewReader(s))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			return b.String()
+		}
+		if tt != html.CommentToken {
+			b.Write(z.Raw())
+		}
+	}
+}
+
+// repairKeepsSlot is true when a slot that had content still has it: not
+// empty, and its non-comment content not under half the original's. A comment
+// in place of real content weighs nothing.
+func repairKeepsSlot(original, repaired string, css bool) bool {
 	if strings.TrimSpace(original) == "" {
 		return true
 	}
 	if strings.TrimSpace(repaired) == "" {
 		return false
 	}
-	return contentWeight(repaired)*2 >= contentWeight(original)
+	return contentWeight(repaired, css)*2 >= contentWeight(original, css)
+}
+
+// schemaLandmarks are what a repair of a MetaSchema must leave where it was:
+// the JSON Pointer of every key of a "properties" object, and every $ref with
+// its location and value. They are read literally, with no reference resolved
+// or followed, so collecting them is linear in the document.
+type schemaLandmarks struct {
+	properties map[string]bool
+	refs       map[string]string
+}
+
+var schemaPointerEscape = strings.NewReplacer("~", "~0", "/", "~1")
+
+func collectSchemaLandmarks(schema string) (schemaLandmarks, bool) {
+	var root any
+	if err := json.Unmarshal([]byte(schema), &root); err != nil {
+		return schemaLandmarks{}, false
+	}
+	found := schemaLandmarks{properties: map[string]bool{}, refs: map[string]string{}}
+	var walk func(node any, pointer string)
+	walk = func(node any, pointer string) {
+		switch v := node.(type) {
+		case map[string]any:
+			for key, child := range v {
+				at := pointer + "/" + schemaPointerEscape.Replace(key)
+				if key == "properties" {
+					if properties, ok := child.(map[string]any); ok {
+						for name := range properties {
+							found.properties[at+"/"+schemaPointerEscape.Replace(name)] = true
+						}
+					}
+				}
+				if ref, ok := child.(string); ok && key == "$ref" {
+					found.refs[at] = ref
+				}
+				walk(child, at)
+			}
+		case []any:
+			for i, child := range v {
+				walk(child, pointer+"/"+strconv.Itoa(i))
+			}
+		}
+	}
+	walk(root, "")
+	return found, true
 }
 
 // repairKeepsSchemaProperties is true when the repaired MetaSchema has at least
-// one property and, when the original parses as JSON, every property path the
-// original named, in $defs and definitions included. `{}` compiles as a schema
-// and would otherwise win.
+// one property outside $defs and definitions and, when the original parses as
+// JSON, keeps every property pointer and every $ref (same place, same value)
+// the original had. `{}` compiles as a schema and would otherwise win; turning
+// a $ref into an inline object, or dropping a property anywhere, is refused.
 func repairKeepsSchemaProperties(original, repaired string) bool {
-	kept, ok := schemaPropertyPaths(repaired)
+	kept, ok := collectSchemaLandmarks(repaired)
 	if !ok {
 		return false
 	}
 	hasProperty := false
-	for path := range kept {
-		if !strings.HasPrefix(path, "d") {
+	for pointer := range kept.properties {
+		if !strings.HasPrefix(pointer, "/$defs/") && !strings.HasPrefix(pointer, "/definitions/") {
 			hasProperty = true
 			break
 		}
@@ -302,101 +403,19 @@ func repairKeepsSchemaProperties(original, repaired string) bool {
 	if !hasProperty {
 		return false
 	}
-	if before, ok := schemaPropertyPaths(original); ok {
-		for path := range before {
-			if !kept[path] {
+	if before, ok := collectSchemaLandmarks(original); ok {
+		for pointer := range before.properties {
+			if !kept.properties[pointer] {
+				return false
+			}
+		}
+		for pointer, ref := range before.refs {
+			if kept.refs[pointer] != ref {
 				return false
 			}
 		}
 	}
 	return true
-}
-
-// schemaPointerEscape escapes a property name as a JSON Pointer token, so a
-// path's segments can be joined with "/" without two different schemas giving
-// the same path.
-var schemaPointerEscape = strings.NewReplacer("~", "~0", "/", "~1")
-
-// schemaPropertyPaths lists the property paths of a JSON Schema document. A
-// path is "/"-joined segments: "p<name>" for a property, "i" for array items,
-// and a leading "d<name>" for an entry of $defs or definitions. It walks nested
-// properties, items, the allOf/anyOf/oneOf branches, and follows local "#/..."
-// $refs (once per reference chain, so a cycle ends).
-func schemaPropertyPaths(schema string) (map[string]bool, bool) {
-	var root any
-	if err := json.Unmarshal([]byte(schema), &root); err != nil {
-		return nil, false
-	}
-	paths := map[string]bool{}
-	var walk func(node any, prefix string, refs map[string]bool, depth int)
-	join := func(prefix, segment string) string {
-		if prefix == "" {
-			return segment
-		}
-		return prefix + "/" + segment
-	}
-	walk = func(node any, prefix string, refs map[string]bool, depth int) {
-		object, ok := node.(map[string]any)
-		if !ok || depth > 32 {
-			return
-		}
-		if properties, ok := object["properties"].(map[string]any); ok {
-			for name, sub := range properties {
-				path := join(prefix, "p"+schemaPointerEscape.Replace(name))
-				paths[path] = true
-				walk(sub, path, refs, depth+1)
-			}
-		}
-		walk(object["items"], join(prefix, "i"), refs, depth+1)
-		for _, key := range []string{"allOf", "anyOf", "oneOf"} {
-			if branches, ok := object[key].([]any); ok {
-				for _, branch := range branches {
-					walk(branch, prefix, refs, depth+1)
-				}
-			}
-		}
-		if ref, ok := object["$ref"].(string); ok && strings.HasPrefix(ref, "#") && !refs[ref] {
-			if target, ok := resolveLocalSchemaRef(root, ref); ok {
-				refs[ref] = true
-				walk(target, prefix, refs, depth+1)
-				delete(refs, ref)
-			}
-		}
-	}
-	walk(root, "", map[string]bool{}, 0)
-	if object, ok := root.(map[string]any); ok {
-		for _, key := range []string{"$defs", "definitions"} {
-			if defs, ok := object[key].(map[string]any); ok {
-				for name, sub := range defs {
-					walk(sub, "d"+schemaPointerEscape.Replace(key+"/"+name), map[string]bool{}, 1)
-				}
-			}
-		}
-	}
-	return paths, true
-}
-
-// resolveLocalSchemaRef follows a "#/a/b" JSON Pointer inside the document.
-func resolveLocalSchemaRef(root any, ref string) (any, bool) {
-	pointer := strings.TrimPrefix(ref, "#")
-	if pointer == "" {
-		return root, true
-	}
-	if !strings.HasPrefix(pointer, "/") {
-		return nil, false
-	}
-	node := root
-	for _, token := range strings.Split(pointer[1:], "/") {
-		token = strings.NewReplacer("~1", "/", "~0", "~").Replace(token)
-		object, ok := node.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		if node, ok = object[token]; !ok {
-			return nil, false
-		}
-	}
-	return node, true
 }
 
 // templateRepairError carries the repair metadata through a failed request, so

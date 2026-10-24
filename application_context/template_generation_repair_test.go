@@ -572,3 +572,75 @@ func TestFailedPairRepairKeepsItsMetadata(t *testing.T) {
 		t.Fatal("repair metadata from an unrelated error")
 	}
 }
+
+// Replacing all CSS (or HTML) by a comment of the same length keeps the byte
+// count and none of the content.
+func TestRepairCannotPadASlotWithComments(t *testing.T) {
+	css := `.hdr{margin:0;padding:4px;color:#333}.hdr h1{font-size:2rem;margin:0 0 .5rem}`
+	html := `<div class="hdr"><h1>[property path="Name"]</h1>[mrql]</div>`
+	fixedHTML := `<div class="hdr"><h1>[property path="Name"]</h1></div>`
+	original := bundleReply(map[string]string{"CustomHeader": html, "CustomHeaderCSS": css})
+	pad := func(n int) string { return "/*" + strings.Repeat("x", n-4) + "*/" }
+	htmlPad := "<!--" + strings.Repeat("x", len(fixedHTML)*3) + "-->"
+	for name, repaired := range map[string]string{
+		"css padded":  bundleReply(map[string]string{"CustomHeader": fixedHTML, "CustomHeaderCSS": pad(len(css))}),
+		"html padded": bundleReply(map[string]string{"CustomHeader": htmlPad, "CustomHeaderCSS": css}),
+	} {
+		provider := scripted(reply(original), reply(repaired))
+		got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), pairInput(), "x")
+		if err != nil || got.Repair == nil || got.Repair.Applied {
+			t.Errorf("%s: %#v, %v", name, got, err)
+		}
+	}
+	// Comments in the original do not count toward what must survive.
+	commented := bundleReply(map[string]string{"CustomHeader": html + "<!-- " + strings.Repeat("note ", 100) + "-->", "CustomHeaderCSS": css})
+	provider := scripted(reply(commented), reply(bundleReply(map[string]string{"CustomHeader": fixedHTML, "CustomHeaderCSS": css})))
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), pairInput(), "x")
+	if err != nil || got.Repair == nil || !got.Repair.Applied {
+		t.Errorf("dropping a comment was refused: %#v, %v", got, err)
+	}
+}
+
+// A property reached through an array index ref is still in the document, and
+// a repair that deletes it, or inlines a $ref, is refused.
+func TestRepairKeepsEveryPropertyAndRefWhereItWas(t *testing.T) {
+	original := `{"type":"object","properties":{"title":{"type":"strng"},"person":{"$ref":"#/$defs/person/allOf/0"}},"$defs":{"person":{"allOf":[{"type":"object","properties":{"name":{"type":"string"},"address":{"type":"string"}}}]}}}`
+	for name, repaired := range map[string]string{
+		"property deleted behind an index ref": `{"type":"object","properties":{"title":{"type":"string"},"person":{"$ref":"#/$defs/person/allOf/0"}},"$defs":{"person":{"allOf":[{"type":"object","properties":{"name":{"type":"string"}}}]}}}`,
+		"ref turned inline":                    `{"type":"object","properties":{"title":{"type":"string"},"person":{"type":"object","properties":{"name":{"type":"string"},"address":{"type":"string"}}}},"$defs":{"person":{"allOf":[{"type":"object","properties":{"name":{"type":"string"},"address":{"type":"string"}}}]}}}`,
+		"ref retargeted":                       strings.Replace(strings.Replace(original, "strng", "string", 1), "allOf/0", "allOf/1", 1),
+	} {
+		provider := scripted(reply(schemaReply(original)), reply(schemaReply(repaired)))
+		got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+		if err != nil || got.Repair == nil || got.Repair.Applied {
+			t.Errorf("%s: %#v, %v", name, got, err)
+		}
+	}
+	fixed := strings.Replace(original, "strng", "string", 1)
+	provider := scripted(reply(schemaReply(original)), reply(schemaReply(fixed)))
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+	if err != nil || got.Repair == nil || !got.Repair.Applied {
+		t.Errorf("a faithful repair was refused: %#v, %v", got, err)
+	}
+}
+
+// Shared references fan out exponentially if they are expanded; they are not.
+func TestSchemaRetentionIsLinearInTheDocument(t *testing.T) {
+	var defs []string
+	for i := 0; i < 30; i++ {
+		next := fmt.Sprintf(`{"$ref":"#/$defs/d%d"}`, i+1)
+		defs = append(defs, fmt.Sprintf(`"d%d":{"type":"object","properties":{"a":%s,"b":%s}}`, i, next, next))
+	}
+	defs = append(defs, `"d30":{"type":"object","properties":{"leaf":{"type":"string"}}}`)
+	schema := `{"type":"object","properties":{"root":{"$ref":"#/$defs/d0"}},"$defs":{` + strings.Join(defs, ",") + `}}`
+	start := time.Now()
+	if !repairKeepsSchemaProperties(schema, schema) {
+		t.Fatal("a schema was not kept as itself")
+	}
+	if repairKeepsSchemaProperties(schema, strings.Replace(schema, `"leaf"`, `"other"`, 1)) {
+		t.Fatal("a renamed leaf was accepted")
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("retention took %s on a %d byte schema", elapsed, len(schema))
+	}
+}
