@@ -309,12 +309,11 @@ func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftR
 		return nil, fmt.Errorf("%w: provider returned invalid JSON", ErrTemplateGenerationProvider)
 	}
 	content := strings.TrimSpace(draft.Content)
-	explanation := strings.TrimSpace(draft.Explanation)
-	if !truncated && (content == "" || explanation == "" || len(explanation) > MaxTemplateGeneratedExplanationLength) {
+	// Nothing to review is the one shape that stays a provider error. Size and
+	// truncation are judged before the explanation, which only describes the
+	// draft: a draft without one is still reviewable.
+	if !truncated && content == "" {
 		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
-	}
-	if len(explanation) > MaxTemplateGeneratedExplanationLength {
-		explanation = explanation[:MaxTemplateGeneratedExplanationLength]
 	}
 
 	issues := []shortcodes.LintIssue{}
@@ -328,6 +327,8 @@ func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftR
 		}
 		issues = append(issues, templateOversizeIssue(field, len(content)))
 	}
+	explanation, explanationIssues := templateExplanation(draft.Explanation, truncated)
+	issues = append(issues, explanationIssues...)
 	if content != "" {
 		issues = append(issues, validateTemplateContent(target, in, content, singleSlotIsCSS(in))...)
 	}
@@ -338,6 +339,24 @@ func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftR
 		Valid:       !hasErrorIssue(issues),
 		Issues:      issues,
 	}, nil
+}
+
+// templateExplanation trims and clips the model's explanation. A missing or
+// overlong one is a warning, unless the reply was cut off, which already says
+// why the explanation may be missing.
+func templateExplanation(raw string, truncated bool) (string, []shortcodes.LintIssue) {
+	explanation := strings.TrimSpace(raw)
+	var issues []shortcodes.LintIssue
+	switch {
+	case len(explanation) > MaxTemplateGeneratedExplanationLength:
+		explanation = explanation[:MaxTemplateGeneratedExplanationLength]
+		if !truncated {
+			issues = append(issues, shortcodes.LintIssue{Severity: shortcodes.SeverityWarning, Message: fmt.Sprintf("The model's explanation was shortened to %d bytes.", MaxTemplateGeneratedExplanationLength)})
+		}
+	case explanation == "" && !truncated:
+		issues = append(issues, shortcodes.LintIssue{Severity: shortcodes.SeverityWarning, Message: "The model gave no explanation for this draft."})
+	}
+	return explanation, issues
 }
 
 // truncatedTemplateResult is the result for a reply cut off before anything
@@ -380,10 +399,7 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 		return nil, fmt.Errorf("%w: provider returned no slots", ErrTemplateGenerationProvider)
 	}
 
-	explanation := strings.TrimSpace(draft.Explanation)
-	if len(explanation) > MaxTemplateGeneratedExplanationLength {
-		explanation = explanation[:MaxTemplateGeneratedExplanationLength]
-	}
+	explanation, _ := templateExplanation(draft.Explanation, true)
 
 	result := &TemplateGenerationResult{
 		Target:      TemplateTargetBundle,
@@ -408,9 +424,9 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 	}
 	// A pair is applied whole or not at all. A model that stopped on its own and
 	// returned half a pair broke the contract; a reply cut off part way through
-	// a pair merely ran out, so that pair is dropped and the truncation issue
-	// says why.
-	dropped := map[string]bool{}
+	// a pair merely ran out, so the half that arrived is kept for review with an
+	// issue naming the missing companion, and the client refuses to apply it.
+	halfPair := map[string]string{}
 	for _, slotName := range allowed {
 		if strings.HasSuffix(slotName, "CSS") || !requested[slotName+"CSS"] {
 			continue
@@ -421,18 +437,28 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 			if !truncated {
 				return nil, fmt.Errorf("%w: provider must return %s and %s together", ErrTemplateGenerationProvider, slotName, slotName+"CSS")
 			}
-			dropped[slotName], dropped[slotName+"CSS"] = true, true
+			if htmlPresent {
+				halfPair[slotName] = slotName + "CSS"
+			} else {
+				halfPair[slotName+"CSS"] = slotName
+			}
 		}
 	}
 	for _, slotName := range allowed {
 		content, ok := draft.Slots[slotName]
-		if !ok || dropped[slotName] {
+		if !ok {
 			continue
 		}
 		content = strings.TrimSpace(content)
 		// An explicitly empty slot clears its editor; an absent key leaves it unspecified.
 		result.Slots[slotName] = content
 		var issues []shortcodes.LintIssue
+		if missing, half := halfPair[slotName]; half {
+			issues = append(issues, shortcodes.LintIssue{
+				Severity: shortcodes.SeverityError,
+				Message:  fmt.Sprintf("%s came back without %s before the reply was cut off, so this pair cannot be applied.", slotName, missing),
+			})
+		}
 		if len(content) > MaxTemplateGeneratedContentLength {
 			issues = append(issues, templateOversizeIssue(slotName, len(content)))
 		}

@@ -787,18 +787,18 @@ func TestTemplateGeneratorTruncationDegradesForEveryTarget(t *testing.T) {
 	}
 }
 
-// TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError: a reply cut off
-// part way through a pair ran out, it did not break the pair contract, so it is
-// a diagnostic result. The half pair is dropped, because a pair is applied
-// whole or not at all; complete pairs are kept.
-func TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError(t *testing.T) {
+// TestTemplateGeneratorTruncatedHalfPairIsKeptForReviewNotAnError: a reply
+// cut off part way through a pair ran out, it did not break the pair contract,
+// so it is a diagnostic result. The half that arrived stays reviewable, with an
+// issue naming the missing companion (the client refuses to apply a half
+// pair); complete pairs are kept as they are.
+func TestTemplateGeneratorTruncatedHalfPairIsKeptForReviewNotAnError(t *testing.T) {
 	in := slotInput()
 	in.Target = TemplateTargetBundle
 	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}
-	provider := &fakeTemplateDraftProvider{
-		response: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":".x{}","CustomSidebar":"<p>y</p>"},"explanation":"Cut."}`,
-		finish:   "length",
-	}
+	big := "<p>" + strings.Repeat("y", MaxTemplateGeneratedContentLength) + "</p>"
+	reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": "<h1>x</h1>", "CustomHeaderCSS": ".x{}", "CustomSidebar": big}, "explanation": "Cut."})
+	provider := &fakeTemplateDraftProvider{response: string(reply), finish: "length"}
 	got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it")
 	if err != nil {
 		t.Fatalf("must not be the pair-mismatch provider error: %v", err)
@@ -806,14 +806,73 @@ func TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError(t *testing.T) {
 	if got.Valid || !hasTruncationIssue(got.Issues) {
 		t.Fatalf("want the truncation issue: %#v", got)
 	}
-	if _, ok := got.Slots["CustomSidebar"]; ok || got.Slots["CustomHeader"] != "<h1>x</h1>" || got.Slots["CustomHeaderCSS"] != ".x{}" {
-		t.Fatalf("slots = %#v, want the complete Header pair only", got.Slots)
+	if got.Slots["CustomSidebar"] != big || got.Slots["CustomHeader"] != "<h1>x</h1>" || got.Slots["CustomHeaderCSS"] != ".x{}" {
+		t.Fatalf("slots = %d keys, want the Header pair and the Sidebar half", len(got.Slots))
+	}
+	if _, ok := got.Slots["CustomSidebarCSS"]; ok {
+		t.Fatal("the missing companion must stay absent")
+	}
+	if countIssuesContaining(got.SlotIssues["CustomSidebar"], "without CustomSidebarCSS") != 1 || !hasOversizeIssue(got.SlotIssues["CustomSidebar"], "CustomSidebar") {
+		t.Fatalf("the half needs its missing-companion and oversize issues: %#v", got.SlotIssues["CustomSidebar"])
 	}
 
 	// The same half pair from a model that stopped on its own is still an error.
 	provider.finish = "stop"
 	if _, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it"); !errors.Is(err, ErrTemplateGenerationProvider) {
 		t.Fatalf("an untruncated half pair must stay a provider error, got %v", err)
+	}
+}
+
+// TestTemplateGeneratorSingleDraftShapeTable pins which reply shapes are
+// reviewable drafts and which are provider errors. Size and truncation are
+// judged before the explanation, so an oversize or cut-off draft is never a
+// 502 for lacking one; a missing or overlong explanation is a warning.
+func TestTemplateGeneratorSingleDraftShapeTable(t *testing.T) {
+	big := ".a{}" + strings.Repeat("/*x*/", MaxTemplateGeneratedContentLength/5+1)
+	long := strings.Repeat("e", MaxTemplateGeneratedExplanationLength+1)
+	cases := []struct {
+		name, finish, content, explanation string
+		omitExplanation                    bool
+		wantErr, wantValid, wantOversize   bool
+		wantWarning                        string
+	}{
+		{name: "oversize, no explanation, stop", finish: "stop", content: big, omitExplanation: true, wantOversize: true, wantWarning: "no explanation"},
+		{name: "oversize, empty explanation, stop", finish: "stop", content: big, wantOversize: true, wantWarning: "no explanation"},
+		{name: "oversize, overlong explanation, stop", finish: "stop", content: big, explanation: long, wantOversize: true, wantWarning: "explanation was shortened"},
+		{name: "oversize, no explanation, length", finish: "length", content: big, omitExplanation: true, wantOversize: true},
+		{name: "fine, no explanation, stop", finish: "stop", content: ".a{}", omitExplanation: true, wantValid: true, wantWarning: "no explanation"},
+		{name: "fine, overlong explanation, stop", finish: "stop", content: ".a{}", explanation: long, wantValid: true, wantWarning: "explanation was shortened"},
+		{name: "empty content, stop", finish: "stop", content: "", explanation: "e", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]string{"content": tc.content}
+			if !tc.omitExplanation {
+				fields["explanation"] = tc.explanation
+			}
+			reply, _ := json.Marshal(fields)
+			in := slotInput()
+			in.Slot, in.Mode = "CustomCSS", "css"
+			got, err := disclosedGenerate(NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply), finish: tc.finish}, templateGenConfig()), in, "x")
+			if tc.wantErr {
+				if !errors.Is(err, ErrTemplateGenerationProvider) {
+					t.Fatalf("want a provider error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want a reviewable draft, got %v", err)
+			}
+			if got.Valid != tc.wantValid || got.Content != tc.content || hasOversizeIssue(got.Issues, "CustomCSS") != tc.wantOversize {
+				t.Fatalf("valid=%t len=%d issues=%#v", got.Valid, len(got.Content), got.Issues)
+			}
+			if tc.wantWarning != "" && countIssuesContaining(got.Issues, tc.wantWarning) != 1 {
+				t.Fatalf("want a %q warning: %#v", tc.wantWarning, got.Issues)
+			}
+			if len(got.Explanation) > MaxTemplateGeneratedExplanationLength {
+				t.Fatalf("explanation not clipped: %d", len(got.Explanation))
+			}
+		})
 	}
 }
 
