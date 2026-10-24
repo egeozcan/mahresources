@@ -522,7 +522,7 @@ var modelledKeywords = map[string]bool{
 	"format": true, "enum": true, "const": true, "pattern": true,
 	"minimum": true, "maximum": true, "exclusiveMinimum": true, "exclusiveMaximum": true, "multipleOf": true,
 	"minLength": true, "maxLength": true, "items": true, "prefixItems": true, "minItems": true, "maxItems": true, "uniqueItems": true,
-	"contentMediaType": true, "contentEncoding": true,
+	"contentMediaType": true, "contentEncoding": true, "minProperties": true, "maxProperties": true,
 }
 
 func onlyModelledKeywords(obj map[string]any) bool {

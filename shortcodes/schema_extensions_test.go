@@ -186,7 +186,6 @@ func TestLintMetaSchemaAllowlistsModelledKeywords(t *testing.T) {
 		"additionalProperties":  `"additionalProperties":{"type":"number"}`,
 		"unevaluatedProperties": `"unevaluatedProperties":{"type":"number"}`,
 		"propertyNames":         `"propertyNames":{"maxLength":3}`,
-		"minProperties":         `"minProperties":2`,
 	}
 	for name, extra := range skip {
 		t.Run("skip "+name, func(t *testing.T) {
@@ -214,6 +213,18 @@ func TestLintMetaSchemaAllowlistsModelledKeywords(t *testing.T) {
 			t.Fatalf("want the missing-keys warning, got %+v", issues)
 		}
 	})
+}
+
+// Key-count bounds cannot change which keys or types are declared, so they do
+// not hide a certain warning.
+func TestLintMetaSchemaKeyCountBoundsDoNotHideWarnings(t *testing.T) {
+	for _, bounds := range []string{`"minProperties":2`, `"maxProperties":2`, `"minProperties":1,"maxProperties":4`} {
+		schema := `{"type":"object","properties":{"a":{"type":"object","x-display":"geo","properties":{"lat":{"type":"string"},"lng":{"type":"string"}},"required":["lat","lng"],"additionalProperties":false,` + bounds + `}}}`
+		issues := LintMetaSchema(schema, MetaSchemaLintOptions{})
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "typed number") {
+			t.Errorf("%s: want the type warning, got %+v", bounds, issues)
+		}
+	}
 }
 
 func TestLintMetaSchemaTreatsEmptyXDisplayAsUnset(t *testing.T) {
