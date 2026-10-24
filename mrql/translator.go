@@ -3,6 +3,7 @@ package mrql
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,14 @@ func (e *TranslateError) Error() string {
 // TranslateOptions provides configurable options for query translation.
 type TranslateOptions struct {
 	ScopeGroupID uint // resolved scope group ID; 0 = no scope
+
+	// VisibleRootID is the root of the subtree a confined principal may see;
+	// 0 means the caller is not confined. ScopeGroupID limits the rows a
+	// query returns; this limits every row the query reaches through a join
+	// or a subquery (a parent, an owner, a related group, note or resource, a
+	// similarity target), so a row outside the subtree behaves as if it did
+	// not exist and its name, Meta or presence cannot be read or tested.
+	VisibleRootID uint
 
 	// SimilarityThreshold is the max effective perceptual distance
 	// (COALESCE(p_distance, hamming_distance)) for SIMILAR TO predicates
@@ -171,6 +180,8 @@ type translateContext struct {
 	db         *gorm.DB
 	entityType EntityType
 	tableName  string
+	// visibleRoot is TranslateOptions.VisibleRootID.
+	visibleRoot uint
 
 	// SIMILAR TO state (package 3). similarTarget is the single SimilarToExpr
 	// in the WHERE clause when exactly one exists — the validator guarantees
@@ -197,6 +208,7 @@ func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts Tran
 		db:                  db,
 		entityType:          entityType,
 		tableName:           entityTableName(entityType),
+		visibleRoot:         opts.VisibleRootID,
 		similarityThreshold: resolveSimilarityThreshold(opts),
 		aHashThreshold:      opts.AHashThreshold,
 		similarTarget:       findSimilarTarget(q.Where),
@@ -393,8 +405,8 @@ func (tc *translateContext) wrapChainSubqueries(steps []fkStep, innerWhere strin
 		if strings.HasSuffix(step.selectCol, ".owner_id") {
 			childFilter = step.alias + ".owner_id IS NOT NULL AND "
 		}
-		currentWhere = fmt.Sprintf("%s IN (SELECT %s FROM groups %s WHERE %s%s)",
-			step.fkExpr, step.selectCol, step.alias, childFilter, currentWhere)
+		currentWhere = fmt.Sprintf("%s IN (SELECT %s FROM %s %s WHERE %s%s)",
+			step.fkExpr, step.selectCol, tc.visibleTable("groups"), step.alias, childFilter, currentWhere)
 	}
 	return currentWhere, currentVals
 }
@@ -509,7 +521,7 @@ func (tc *translateContext) negatedNullClause(step fkStep) string {
 		return step.fkExpr + " NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
 	}
 	// For forward FK (owner/parent): the fkExpr is like "resources.owner_id"
-	return step.fkExpr + " IS NULL"
+	return tc.missingGroup(step.fkExpr)
 }
 
 // isChildrenStep returns true if the step represents a reverse FK (children) traversal.
@@ -748,7 +760,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 		if numericFilter != "" {
 			clause = numericFilter + " AND " + clause
 		}
-		return "SELECT gm.id FROM groups gm WHERE " + clause, clauseVal, nil
+		return "SELECT gm.id FROM " + tc.visibleTable("groups") + " gm WHERE " + clause, clauseVal, nil
 	}
 
 	// Single group-field leaf (scalar or tags).
@@ -775,12 +787,12 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 			tagClause = "LOWER(t.name) = LOWER(?)"
 			tagVal = val
 		}
-		return "SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE " + tagClause, []interface{}{tagVal}, nil
+		return "SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE " + tagClause + tc.visibleRelated("gt.group_id", "groups"), []interface{}{tagVal}, nil
 	}
 
 	// Scalar leaf.
 	clause, clauseVal := tc.buildScalarClause("gm."+subFd.Column, posOp, val, subFd)
-	return "SELECT gm.id FROM groups gm WHERE " + clause, []interface{}{clauseVal}, nil
+	return "SELECT gm.id FROM " + tc.visibleTable("groups") + " gm WHERE " + clause, []interface{}{clauseVal}, nil
 }
 
 // buildMetaClause builds a WHERE clause for a meta JSON comparison.
@@ -842,6 +854,49 @@ func entityTableName(et EntityType) string {
 	}
 }
 
+// visibleTable is how the translator names an entity table it reaches through
+// a join or a subquery: the table itself, or, for a confined principal, a
+// derived table of only the rows that principal can see (groups in the
+// subtree; resources and notes owned by one), the rule the scope callback
+// applies to a query's own table. Tags are global and stay as they are.
+func (tc *translateContext) visibleTable(table string) string {
+	if tc.visibleRoot == 0 {
+		return table
+	}
+	switch table {
+	case "groups":
+		return "(SELECT * FROM groups WHERE groups.id IN (" + tc.visibleGroupIDs() + "))"
+	case "resources", "notes":
+		return fmt.Sprintf("(SELECT * FROM %s WHERE %s.owner_id IN (%s))", table, table, tc.visibleGroupIDs())
+	}
+	return table
+}
+
+// visibleGroupIDs selects the IDs of the groups a confined principal can see.
+// The root is a uint formatted into the SQL, so nothing is interpolated from
+// user input.
+func (tc *translateContext) visibleGroupIDs() string {
+	return strings.Replace(scopeCTE, "?", strconv.FormatUint(uint64(tc.visibleRoot), 10), 1)
+}
+
+// visibleRelated is " AND <col> IN (visible ids)" for a junction column that
+// points at table, or "" when the caller is not confined or table is global.
+func (tc *translateContext) visibleRelated(col, table string) string {
+	if tc.visibleRoot == 0 || (table != "groups" && table != "resources" && table != "notes") {
+		return ""
+	}
+	return fmt.Sprintf(" AND %s IN (SELECT v.id FROM %s v)", col, tc.visibleTable(table))
+}
+
+// missingGroup is "<fk> IS NULL" for a group foreign key; for a confined
+// principal a key naming a group it cannot see counts as missing too.
+func (tc *translateContext) missingGroup(fk string) string {
+	if tc.visibleRoot == 0 {
+		return fk + " IS NULL"
+	}
+	return fmt.Sprintf("(%s IS NULL OR %s NOT IN (SELECT v.id FROM %s v))", fk, fk, tc.visibleTable("groups"))
+}
+
 // translateNode recursively translates an AST node into GORM Where/Or clauses.
 func (tc *translateContext) translateNode(db *gorm.DB, node Node) (*gorm.DB, error) {
 	switch n := node.(type) {
@@ -889,6 +944,10 @@ func (tc *translateContext) translateSimilarTo(db *gorm.DB, expr *SimilarToExpr)
 	}
 
 	filter := SimilarPairPredicate("rs", dist, tc.aHashThreshold)
+	if tc.visibleRoot != 0 {
+		// A target the caller cannot see has no similar resources.
+		filter += fmt.Sprintf(" AND %d IN (SELECT v.id FROM %s v)", expr.TargetID, tc.visibleTable("resources"))
+	}
 
 	sql := fmt.Sprintf(
 		"%s.id IN ("+
@@ -1205,7 +1264,7 @@ func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctio
 
 	subquery := fmt.Sprintf(
 		"%s.id %s (SELECT jt.%s FROM %s jt JOIN %s %s ON %s.id = jt.%s WHERE %s)",
-		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, rel.relatedTable, a, a, rel.relatedCol, matchClause,
+		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, tc.visibleTable(rel.relatedTable), a, a, rel.relatedCol, matchClause,
 	)
 
 	db = db.Where(subquery, matchVal)
@@ -1257,11 +1316,11 @@ func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, 
 		fkCol := tc.tableName + ".owner_id"
 		if expr.Negated {
 			db = db.Where(
-				fmt.Sprintf("%s IN (SELECT p.id FROM groups p WHERE p.%s IS NOT NULL)", fkCol, col),
+				fmt.Sprintf("%s IN (SELECT p.id FROM %s p WHERE p.%s IS NOT NULL)", fkCol, tc.visibleTable("groups"), col),
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("(%s IN (SELECT p.id FROM groups p WHERE p.%s IS NULL) OR %s IS NULL)", fkCol, col, fkCol),
+				fmt.Sprintf("(%s IN (SELECT p.id FROM %s p WHERE p.%s IS NULL) OR %s)", fkCol, tc.visibleTable("groups"), col, tc.missingGroup(fkCol)),
 			)
 		}
 	}
@@ -1561,7 +1620,7 @@ func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negate
 	a := rel.relatedAlias
 	subquery := fmt.Sprintf(
 		"%s.id %s (SELECT jt.%s FROM %s jt JOIN %s %s ON %s.id = jt.%s WHERE LOWER(%s.name) IN (?))",
-		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, rel.relatedTable, a, a, rel.relatedCol, a,
+		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, tc.visibleTable(rel.relatedTable), a, a, rel.relatedCol, a,
 	)
 	db = db.Where(subquery, lowerValues)
 	return db, nil
@@ -1645,8 +1704,8 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 
 	if rel, ok := lookupJunction(tc.entityType, fd.Column); ok {
 		subquery := fmt.Sprintf(
-			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
-			existsOp, rel.junctionTable, rel.entityCol, tc.tableName,
+			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id%s)",
+			existsOp, rel.junctionTable, rel.entityCol, tc.tableName, tc.visibleRelated("jt."+rel.relatedCol, rel.relatedTable),
 		)
 		db = db.Where(subquery)
 		return db, nil
@@ -1863,7 +1922,7 @@ func (tc *translateContext) relationCountExpr(fieldName string) (string, bool) {
 		return "", false
 	}
 	if rel, isJunction := lookupJunction(tc.entityType, fd.Column); isJunction {
-		return fmt.Sprintf("(SELECT COUNT(*) FROM %s jt WHERE jt.%s = %s.id)", rel.junctionTable, rel.entityCol, tc.tableName), true
+		return fmt.Sprintf("(SELECT COUNT(*) FROM %s jt WHERE jt.%s = %s.id%s)", rel.junctionTable, rel.entityCol, tc.tableName, tc.visibleRelated("jt."+rel.relatedCol, rel.relatedTable)), true
 	}
 	if fd.Column == "children" {
 		return fmt.Sprintf("(SELECT COUNT(*) FROM groups c WHERE c.owner_id = %s.id)", tc.tableName), true
@@ -2376,17 +2435,18 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_t.name", groupExpr: "_gb_t.name"}
 
 		case "owner_id":
-			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_owner ON _gb_owner.id = %s.owner_id", tc.tableName))
-			// Group by FK column (unique per entity) and display the joined name.
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_owner ON _gb_owner.id = %s.owner_id", tc.visibleTable("groups"), tc.tableName))
+			// Group by the joined group's ID (unique per group) and display its name.
 			// Group names are NOT unique, so grouping by name would merge distinct groups.
-			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_owner.name", groupExpr: tc.tableName + ".owner_id"}
+			// A group the caller cannot see joins nothing and falls in the NULL bucket.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_owner.name", groupExpr: "_gb_owner.id"}
 
 		case "groups":
 			rel, _ := lookupJunction(tc.entityType, "groups")
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", rel.junctionTable, rel.entityCol, tc.tableName))
-			db = db.Joins("LEFT JOIN groups _gb_g ON _gb_g.id = _gb_grp_jt.group_id")
-			// Group by junction group_id (unique per association) and display name.
-			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_grp_jt.group_id"}
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_g ON _gb_g.id = _gb_grp_jt.group_id", tc.visibleTable("groups")))
+			// Group by the joined group's ID (unique per group) and display name.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_g.id"}
 
 		case "notes", "resources":
 			rel, ok := lookupJunction(tc.entityType, fd.Column)
@@ -2396,18 +2456,18 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			jtAlias := "_gb_" + fd.Column + "_jt"
 			relAlias := "_gb_" + fd.Column
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.%s = %s.id", rel.junctionTable, jtAlias, jtAlias, rel.entityCol, tc.tableName))
-			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.id = %s.%s", rel.relatedTable, relAlias, relAlias, jtAlias, rel.relatedCol))
-			// Names are not unique — group by the junction FK (identity) and display name.
-			exprMap[fieldName] = groupByRelExpr{selectExpr: relAlias + ".name", groupExpr: jtAlias + "." + rel.relatedCol}
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.id = %s.%s", tc.visibleTable(rel.relatedTable), relAlias, relAlias, jtAlias, rel.relatedCol))
+			// Names are not unique — group by the joined row's ID (identity) and display name.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: relAlias + ".name", groupExpr: relAlias + ".id"}
 
 		case "parent_id":
 			// parent on groups — logical Column is "parent_id", actual DB column is owner_id
-			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_parent ON _gb_parent.id = %s.owner_id", tc.tableName))
-			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_parent.name", groupExpr: tc.tableName + ".owner_id"}
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_parent ON _gb_parent.id = %s.owner_id", tc.visibleTable("groups"), tc.tableName))
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_parent.name", groupExpr: "_gb_parent.id"}
 
 		case "children":
 			// children on groups — reverse FK: child.owner_id = parent.id
-			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_child ON _gb_child.owner_id = %s.id", tc.tableName))
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_child ON _gb_child.owner_id = %s.id", tc.visibleTable("groups"), tc.tableName))
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_child.name", groupExpr: "_gb_child.id"}
 		}
 	}
@@ -2467,10 +2527,10 @@ func (tc *translateContext) groupByBuildChainJoins(db **gorm.DB, steps []Token, 
 
 		if fieldName == "children" {
 			// Reverse FK: children's owner_id points to parent's id
-			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN groups %s ON %s.owner_id = %s.id", alias, alias, prevRef))
+			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.owner_id = %s.id", tc.visibleTable("groups"), alias, alias, prevRef))
 		} else {
 			// Forward FK (owner/parent): source.owner_id = target.id
-			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN groups %s ON %s.id = %s.owner_id", alias, alias, prevRef))
+			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.id = %s.owner_id", tc.visibleTable("groups"), alias, alias, prevRef))
 		}
 
 		prevRef = alias

@@ -436,12 +436,20 @@ func (ctx *MahresourcesContext) mrqlTranslateOptions() mrql.TranslateOptions {
 	if ctx.metadataIndexer != nil {
 		readyIndexes = ctx.metadataIndexer.ReadyIndexes()
 	}
-	return mrql.TranslateOptions{
+	opts := mrql.TranslateOptions{
 		SimilarityThreshold:  &pThreshold,
 		AHashThreshold:       aThreshold,
 		FTSAvailable:         &ftsAvailable,
 		ReadyMetadataIndexes: readyIndexes,
 	}
+	// A confined principal's queries reach only rows it can see, through
+	// joins and subqueries too; one that may see nothing reaches nothing.
+	if scopeID, forced, deny := ctx.principalForcedScope(); forced {
+		opts.VisibleRootID = scopeID
+	} else if deny {
+		opts.VisibleRootID = mrql.UnresolvedScopeSentinel
+	}
+	return opts
 }
 
 // mrqlQueryTranslateOptions resolves effective query scope without leaking
