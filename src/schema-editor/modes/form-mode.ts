@@ -12,8 +12,8 @@ import {
   isLabeledEnum,
   getLabeledEnumEntries,
   valueText,
-  choiceKey,
-  choiceIndex,
+  choiceKeys,
+  choiceIndexOf,
   findChoice,
   withTypedKeywords,
   ownValue,
@@ -892,18 +892,20 @@ export class SchemaFormMode extends LitElement {
   }
 
   /**
-   * A <select> over enum choices. Each option is keyed by its position
-   * (choiceKey), never by its text, so two choices that print alike, such as
-   * {"a":1} and the string '{"a":1}', stay distinct; labels are display only.
+   * A <select> over enum choices. Each option's value is the choice's
+   * text (choiceKeys) while every choice has a distinct text, else its
+   * position, so {"a":1} and the string '{"a":1}' stay distinct. A selection
+   * maps back to the typed choice by index; labels are display only.
    */
   private _renderChoices(schema: JSONSchema, choices: any[], labels: any[], data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const selected = findChoice(choices, data);
+    const keys = choiceKeys(choices, [CURRENT_CHOICE_KEY]);
     const isNull = data === null || data === undefined;
     const showCurrent = !isNull && selected < 0;
 
     const onSelectChange = (e: Event) => {
       const key = (e.target as HTMLSelectElement).value;
-      const index = choiceIndex(key, choices.length);
+      const index = choiceIndexOf(keys, key);
       if (index >= 0) {
         onChange(copyDefault(choices[index]));
       } else if (key === CURRENT_CHOICE_KEY) {
@@ -925,7 +927,7 @@ export class SchemaFormMode extends LitElement {
         @change=${this._act(onSelectChange)}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${choices.map((_, index) => html`
-          <option value=${choiceKey(index)} ?selected=${index === selected}>${labels[index]}</option>
+          <option value=${keys[index]} ?selected=${index === selected}>${labels[index]}</option>
         `)}
         ${showCurrent ? html`
           <option value=${CURRENT_CHOICE_KEY} selected>${optionText(data)} (current)</option>

@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
-import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex, withSchemaBudget } from '../schema-core';
+import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKeys, choiceIndexOf, withSchemaBudget } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
 import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
@@ -477,8 +477,9 @@ export class SchemaSearchMode extends LitElement {
 
   private _onEnumSelectChange(field: SearchField, e: Event) {
     const select = e.target as HTMLSelectElement;
+    const keys = choiceKeys(field.enum!);
     field.enumValues = Array.from(select.selectedOptions)
-      .map(o => choiceIndex(o.value, field.enum!.length))
+      .map(o => choiceIndexOf(keys, o.value))
       .filter(i => i >= 0)
       .map(i => field.enum![i]);
     this.requestUpdate();
@@ -569,6 +570,7 @@ export class SchemaSearchMode extends LitElement {
   }
 
   private _renderEnumCheckboxes(field: SearchField, ariaLabel: string): TemplateResult {
+    const keys = choiceKeys(field.enum!);
     return html`
       <fieldset class="w-full" aria-label=${ariaLabel}>
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
@@ -577,7 +579,7 @@ export class SchemaSearchMode extends LitElement {
             const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
               <label class="text-sm flex items-center gap-1">
-                <input type="checkbox" .value=${choiceKey(idx)}
+                <input type="checkbox" .value=${keys[idx]}
                        .checked=${field.enumValues.some(v => sameValue(v, enumVal))}
                        @change=${this._act((e: Event) => this._onEnumCheckboxChange(field, enumVal, (e.target as HTMLInputElement).checked))}>
                 <span>${displayLabel}</span>
@@ -591,6 +593,7 @@ export class SchemaSearchMode extends LitElement {
 
   private _renderEnumSelect(field: SearchField, ariaLabel: string): TemplateResult {
     const selectSize = Math.min(field.enum!.length, 6);
+    const keys = choiceKeys(field.enum!);
     return html`
       <fieldset class="w-full" aria-label=${ariaLabel}>
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
@@ -601,7 +604,7 @@ export class SchemaSearchMode extends LitElement {
           ${field.enum!.map((enumVal, idx) => {
             const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
-              <option value=${choiceKey(idx)} ?selected=${field.enumValues.some(v => sameValue(v, enumVal))}>${displayLabel}</option>
+              <option value=${keys[idx]} ?selected=${field.enumValues.some(v => sameValue(v, enumVal))}>${displayLabel}</option>
             `;
           })}
         </select>

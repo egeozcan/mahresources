@@ -66,12 +66,40 @@ describe('form enum options', () => {
     expect(await choose(el, '{"b":2}')).toEqual({ b: 2 });
   });
 
-  it('keys options by position and maps them back to typed values', async () => {
+  it('uses the choice text as the option value when every text is distinct', async () => {
     const str = await mount({ enum: ['a', 'b'] }, {});
-    expect([...select(str).options].map(o => o.value)).toEqual(['', '0', '1']);
+    expect([...select(str).options].map(o => o.value)).toEqual(['', 'a', 'b']);
     expect(await choose(str, 'b')).toBe('b');
     const num = await mount({ type: 'integer', oneOf: [{ const: 1, title: 'One' }, { const: 2, title: 'Two' }] }, {});
+    expect([...select(num).options].map(o => o.value)).toEqual(['', '1', '2']);
     expect(await choose(num, 'Two')).toBe(2);
+    const nums = await mount({ type: 'integer', enum: [1, 2] }, {});
+    expect(await choose(nums, '2')).toBe(2);
+  });
+
+  it('falls back to position keys when choice texts collide, and maps back to the typed value', async () => {
+    const numStr = await mount({ enum: [1, '1'] }, {});
+    expect([...select(numStr).options].map(o => o.value)).toEqual(['', '0', '1']);
+    const pick = (key: string) => {
+      let emitted: any;
+      numStr.addEventListener('value-change', e => { emitted = (e as CustomEvent).detail.value; }, { once: true });
+      const s = select(numStr);
+      s.value = key;
+      s.dispatchEvent(new Event('change'));
+      return emitted?.v;
+    };
+    expect(pick('1')).toBe('1');
+    expect(pick('0')).toBe(1);
+    const objStr = await mount({ enum: [{ a: 1 }, '{"a":1}'] }, {});
+    expect([...select(objStr).options].map(o => o.value)).toEqual(['', '0', '1']);
+  });
+
+  it('falls back to position keys for an empty or reserved text', async () => {
+    const empty = await mount({ enum: ['', 'a'] }, {});
+    expect([...select(empty).options].map(o => o.value)).toEqual(['', '0', '1']);
+    const reserved = await mount({ enum: ['current', 'a'] }, {});
+    expect([...select(reserved).options].map(o => o.value)).toEqual(['', '0', '1']);
+    expect(await choose(reserved, 'current')).toBe('current');
   });
 });
 

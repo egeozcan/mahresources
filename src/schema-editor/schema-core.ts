@@ -1530,6 +1530,25 @@ export function choiceIndex(key: string, count: number): number {
   return index < count ? index : -1;
 }
 
+/**
+ * The DOM keys for a set of choices. Ordinarily each choice's own text
+ * (valueText), so a consumer reading the native control's value sees the
+ * choice, not a position. When the texts cannot serve as keys (two choices
+ * print alike, or one is empty or equals a reserved key) every choice falls
+ * back to its position (choiceKey), so equal-looking choices stay distinct.
+ */
+export function choiceKeys(choices: readonly unknown[], reserved: readonly string[] = []): string[] {
+  const texts = choices.map(valueText);
+  const usable = new Set(texts).size === texts.length
+    && texts.every(t => t !== '' && !reserved.includes(t));
+  return usable ? texts : choices.map((_, index) => choiceKey(index));
+}
+
+/** The index a DOM key names among keys (from choiceKeys), or -1. */
+export function choiceIndexOf(keys: readonly string[], key: string): number {
+  return keys.indexOf(key);
+}
+
 /** The index of the first choice equal to value (deep, type-aware), or -1. */
 export function findChoice(choices: readonly unknown[], value: unknown): number {
   return choices.findIndex(choice => sameValue(choice, value));
