@@ -77,7 +77,7 @@ func TestTemplateGenerationEval(t *testing.T) {
 	// There is no dry-run limiter yet (phase 1f adds one); the generation limiter
 	// is the only one to lift.
 	tc.AppCtx.SetTemplateGenerationRateLimiter(application_context.NewMRQLGenerationRateLimiter(math.MaxInt, time.Minute))
-	recorder := templateeval.NewRecorder(nil)
+	recorder := templateeval.NewRecorder(nil, apiKey)
 	provider := application_context.NewDeepSeekTemplateDraftProvider(
 		application_context.DefaultDeepSeekChatCompletionsURL,
 		apiKey,
@@ -125,6 +125,9 @@ func TestTemplateGenerationEval(t *testing.T) {
 	}
 	report.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	report.Summary = templateeval.Summarize(report.Results)
+	// The recorder already redacts what it captures; this covers the drafts,
+	// previews and error text that reached the report by other routes.
+	report = templateeval.RedactReport(report, apiKey)
 
 	if err := templateeval.WriteJSONAtomic(out, report); err != nil {
 		t.Fatal(err)

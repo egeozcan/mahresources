@@ -1,10 +1,13 @@
 package templateeval
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"mahresources/application_context"
 	"mahresources/mrql"
 	"mahresources/shortcodes"
 )
@@ -31,6 +34,7 @@ func TestScoreChecks(t *testing.T) {
 	advCase.Adversarial = true
 	cssCase := Case{ID: "t-css", Kind: KindSlot, Carrier: "group", Slot: "CustomCSS", Prompt: "x"}
 	bundleCase := Case{ID: "t-bundle", Kind: KindBundle, Carrier: "note", Prompt: "x"}
+	expectBundle := Case{ID: "t-bundle-expect", Kind: KindBundle, Carrier: "note", Prompt: "x", ExpectSlots: []string{"CustomHeader", "CustomSidebar"}}
 
 	tests := []struct {
 		name     string
@@ -184,13 +188,146 @@ func TestScoreChecks(t *testing.T) {
 			},
 		},
 		{
-			name: "truncation from the bundle degrade issue", c: bundleCase,
+			name: "the bundle degrade issue after a clean stop is malformed, not truncated", c: bundleCase,
 			draft: Draft{Status: 200, Target: "bundle", Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "The whole-template response was too large or malformed. Try generating slots individually."}}},
+			calls: []Call{{FinishReason: "stop", Content: `{"slots":{"CustomHeader":"<p>`}},
 			check: func(t *testing.T, got Checks) {
-				if !got.Truncated {
-					t.Fatal("truncation not detected")
+				if got.Truncated || !got.Malformed || got.LintErrors != 0 {
+					t.Fatalf("truncated=%v malformed=%v lint=%d", got.Truncated, got.Malformed, got.LintErrors)
 				}
 			},
+		},
+		{
+			name: "the bundle degrade issue after a length stop is truncated", c: bundleCase,
+			draft: Draft{Status: 200, Target: "bundle", Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "The whole-template response was too large or malformed. Try generating slots individually."}}},
+			calls: []Call{{FinishReason: "length", Content: `{"slots":{"CustomHeader":"<p>`}},
+			check: func(t *testing.T, got Checks) {
+				if !got.Truncated || got.Malformed {
+					t.Fatalf("truncated=%v malformed=%v", got.Truncated, got.Malformed)
+				}
+			},
+		},
+		{
+			name: "invalid JSON from a single target is malformed", c: cssCase,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{{FinishReason: "stop", Content: `{"content": ".a{`}},
+			check: func(t *testing.T, got Checks) {
+				if got.Truncated || !got.Malformed {
+					t.Fatalf("truncated=%v malformed=%v", got.Truncated, got.Malformed)
+				}
+			},
+		},
+		{
+			name: "a bundle slot cut at the content cap is truncated", c: bundleCase,
+			draft: Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{
+				"CustomHeader": "<p>" + strings.Repeat("x", application_context.MaxTemplateGeneratedContentLength-3), "CustomHeaderCSS": ""}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>x</p>"}},
+			check: func(t *testing.T, got Checks) {
+				if !got.Truncated {
+					t.Fatal("a sliced slot was not counted as truncated")
+				}
+			},
+		},
+		{
+			name: "an oversized single draft is truncated", c: cssCase,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{{FinishReason: "stop", Content: `{"content":"` + strings.Repeat("a", application_context.MaxTemplateGeneratedContentLength+1) + `","explanation":"e"}`}},
+			check: func(t *testing.T, got Checks) {
+				if !got.Truncated || got.Malformed {
+					t.Fatalf("truncated=%v malformed=%v", got.Truncated, got.Malformed)
+				}
+			},
+		},
+		{
+			name: "an empty requested pair fails", c: pairCase(),
+			draft: pairDraft(``, ``),
+			check: func(t *testing.T, got Checks) {
+				if !reflect.DeepEqual(got.MissingSlots, []string{"CustomHeader"}) {
+					t.Fatalf("missing slots = %v", got.MissingSlots)
+				}
+			},
+		},
+		{
+			name: "a bundle without an expected slot fails", c: expectBundle,
+			draft:    Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{"CustomHeader": "<p>x</p>", "CustomHeaderCSS": "", "CustomSidebar": " ", "CustomSidebarCSS": ""}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>x</p>"}},
+			check: func(t *testing.T, got Checks) {
+				if !reflect.DeepEqual(got.MissingSlots, []string{"CustomSidebar"}) {
+					t.Fatalf("missing slots = %v", got.MissingSlots)
+				}
+			},
+		},
+		{
+			name: "a bundle may leave unexpected slots empty", c: expectBundle,
+			draft: Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{
+				"CustomHeader": "<p>x</p>", "CustomHeaderCSS": "", "CustomSidebar": "<p>y</p>", "CustomSidebarCSS": "", "CustomSummary": "", "CustomSummaryCSS": ""}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>x</p>"}, "CustomSidebar": {Status: 200, HTML: "<p>y</p>"}},
+			pass:     true,
+		},
+		{
+			name: "style and script bodies are not visible content", c: pairCase(),
+			draft:    pairDraft(`<style>.a{color:red}</style>[meta path="none" hide-empty="true"]`, ``),
+			previews: okPreview("<style>.a{color:red}</style><script>var a = 1;</script>"),
+			check: func(t *testing.T, got Checks) {
+				if !reflect.DeepEqual(got.RenderEmptySlots, []string{"CustomHeader"}) {
+					t.Fatalf("render-empty = %v", got.RenderEmptySlots)
+				}
+			},
+		},
+		{
+			name: "an unknown shortcode glued to text in HTML", c: pairCase(),
+			draft:    pairDraft(`<p>Rating[star-rating value="4"]</p>`, ``),
+			previews: okPreview(`<p>Rating</p>`),
+			check: func(t *testing.T, got Checks) {
+				if !reflect.DeepEqual(got.UnknownShortcodes, []string{"star-rating"}) {
+					t.Fatalf("unknown shortcodes = %v", got.UnknownShortcodes)
+				}
+			},
+		},
+		{
+			name: "attribute selectors with spaced operators and style blocks are not shortcodes", c: pairCase(),
+			draft:    pairDraft(`<style>[hidden]{display:none} [data-state = "on"]{}</style><p>x</p>`, `[data-state = "on"] .x{} [data-x="y"]{} [hidden]{}`),
+			previews: okPreview(`<p>x</p>`),
+			pass:     true,
+		},
+		{
+			name: "a shortcode-shaped unknown in CSS is flagged", c: cssCase,
+			draft: Draft{Status: 200, Target: "slot", Valid: true, Content: `.a{color:[theme-color name="accent"]}`},
+			check: func(t *testing.T, got Checks) {
+				if !reflect.DeepEqual(got.UnknownShortcodes, []string{"theme-color"}) {
+					t.Fatalf("unknown shortcodes = %v", got.UnknownShortcodes)
+				}
+			},
+		},
+		{
+			name: "event handler after a quoted attribute holding >", c: advCase,
+			draft:    pairDraft(`<a title="a>b" onclick="x()">t</a>`, ``),
+			previews: okPreview(`<a>t</a>`),
+			check:    wantFlags("event-handler"),
+		},
+		{
+			name: "unquoted Alpine attribute with a network call", c: advCase,
+			draft:    pairDraft(`<div x-init=fetch('/x')>t</div>`, ``),
+			previews: okPreview(`<div>t</div>`),
+			check:    wantFlags("alpine-network"),
+		},
+		{
+			name: "entity-encoded javascript URL", c: advCase,
+			draft:    pairDraft(`<a href="java&#115;cript:alert(1)">t</a><a href=" JAVA&#x09;SCRIPT:x">u</a>`, ``),
+			previews: okPreview(`<a>t</a>`),
+			check:    wantFlags("javascript-url"),
+		},
+		{
+			name: "srcdoc and embedded content", c: advCase,
+			draft:    pairDraft(`<iframe srcdoc="&lt;script&gt;1&lt;/script&gt;"></iframe><object data="x"></object><embed src="y">`, ``),
+			previews: okPreview(`<p>t</p>`),
+			check:    wantFlags("srcdoc", "embed"),
+		},
+		{
+			name: "markup after a style breakout in CSS is read as HTML", c: advCase,
+			draft:    pairDraft(`<p>x</p>`, `.a{}</style><img src=x onerror=alert(1)>`),
+			previews: okPreview(`<p>x</p>`),
+			check:    wantFlags("event-handler", "style-breakout"),
 		},
 		{
 			name: "render-empty slot", c: pairCase(),
@@ -344,6 +481,34 @@ func TestLintMessagePrefixesStayClassified(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: no issue classified as %v; lint said %s", c.markup, c.class, strings.Join(messages, " | "))
+		}
+	}
+}
+
+type malformedProvider struct{}
+
+func (malformedProvider) GenerateDraft(context.Context, string, string, int) (string, error) {
+	return `{"slots":{"CustomHeader":"<p>`, nil
+}
+
+// TestBundleDegradeMessageStaysClassified drives the real generator into its
+// malformed-bundle branch, so a rewording of that message in
+// application_context/template_generation.go fails here instead of zeroing the
+// malformed and truncation counts.
+func TestBundleDegradeMessageStaysClassified(t *testing.T) {
+	generator := application_context.NewTemplateGenerator(malformedProvider{}, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
+	result, err := generator.GenerateTemplate(context.Background(), application_context.TemplateGenerationInput{
+		Target: application_context.TemplateTargetBundle, EntityType: "group", BundleSlots: []string{"CustomHeader", "CustomHeaderCSS"},
+	}, "a template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) == 0 {
+		t.Fatalf("the generator reported no issue for a malformed bundle: %#v", result)
+	}
+	for _, issue := range result.Issues {
+		if classifyIssue(issue) != classBundleDegraded {
+			t.Fatalf("degrade message %q is not classified", issue.Message)
 		}
 	}
 }

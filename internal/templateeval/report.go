@@ -6,7 +6,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 )
@@ -201,9 +203,11 @@ type GroupDelta struct {
 	CandidateCacheHitPct float64 `json:"candidateCacheHitPct"`
 }
 
-// Compare refuses reports with a different schema, corpus or fixture, or a
-// different set of cases, and otherwise lists every group's deltas. A kind
-// whose pass rate drops by more than RegressionThresholdPP is a regression.
+// Compare refuses reports with a different schema, corpus or fixture, a
+// different number of results for any case, or a stored summary that does not
+// match its own results. Otherwise it lists every group's deltas, from
+// summaries recomputed from the results. A kind whose pass rate drops by more
+// than RegressionThresholdPP is a regression.
 func Compare(base, candidate RunReport) Comparison {
 	cmp := Comparison{Compatible: true}
 	fail := func(format string, args ...any) {
@@ -219,18 +223,27 @@ func Compare(base, candidate RunReport) Comparison {
 	if base.FixtureChecksum != candidate.FixtureChecksum {
 		fail("fixture checksums differ: %s vs %s", base.FixtureChecksum, candidate.FixtureChecksum)
 	}
-	if b, c := caseIDs(base), caseIDs(candidate); b != c {
-		fail("the runs cover different cases: [%s] vs [%s]", b, c)
+	// Equal counts per case, not just equal case sets: three repeats of a
+	// passing case against one of a failing case would read as a gain.
+	if b, c := caseCounts(base), caseCounts(candidate); b != c {
+		fail("the runs differ in cases or repeats: [%s] vs [%s]", b, c)
+	}
+	baseSummary, candidateSummary := Summarize(base.Results), Summarize(candidate.Results)
+	if !reflect.DeepEqual(base.Summary, baseSummary) {
+		fail("the baseline's stored summary does not match its results")
+	}
+	if !reflect.DeepEqual(candidate.Summary, candidateSummary) {
+		fail("the candidate's stored summary does not match its results")
 	}
 	if !cmp.Compatible {
 		return cmp
 	}
 	keys := map[string]bool{}
-	for _, g := range append(append([]GroupSummary(nil), base.Summary.Groups...), candidate.Summary.Groups...) {
+	for _, g := range append(append([]GroupSummary(nil), baseSummary.Groups...), candidateSummary.Groups...) {
 		keys[g.Key] = true
 	}
 	for _, key := range sortedKeys(keys) {
-		b, c := base.Summary.Group(key), candidate.Summary.Group(key)
+		b, c := baseSummary.Group(key), candidateSummary.Group(key)
 		if b == nil {
 			b = &GroupSummary{Key: key}
 		}
@@ -258,12 +271,18 @@ func Compare(base, candidate RunReport) Comparison {
 // float noise cannot push an exact 10-point drop over the threshold.
 func pp(f float64) float64 { return math.Round(f*1000) / 10 }
 
-func caseIDs(r RunReport) string {
-	ids := map[string]bool{}
+// caseCounts lists each case with its number of results, sorted.
+func caseCounts(r RunReport) string {
+	counts := map[string]int{}
 	for _, res := range r.Results {
-		ids[res.Case] = true
+		counts[res.Case]++
 	}
-	return strings.Join(sortedKeys(ids), ",")
+	parts := make([]string, 0, len(counts))
+	for id, n := range counts {
+		parts = append(parts, id+"×"+strconv.Itoa(n))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
 
 // FormatComparison renders a comparison as text.

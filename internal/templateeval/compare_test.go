@@ -1,6 +1,7 @@
 package templateeval
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,7 +95,9 @@ func TestAggregateOnlyDropsDraftsAndRawContent(t *testing.T) {
 
 func TestWriteAndReadReport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "run.json")
-	report := reportWith(result("a", KindPair, "group", true))
+	r := result("a", KindPair, "group", true)
+	r.Calls = []Call{{Usage: Usage{CacheHit: 1, CacheMiss: 2}, LatencyMS: 7}}
+	report := reportWith(r, result("b", KindSlot, "note", false), result("b", KindSlot, "note", true))
 	if err := WriteJSONAtomic(path, report); err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +105,13 @@ func TestWriteAndReadReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.FixtureChecksum != report.FixtureChecksum || len(loaded.Results) != 1 {
+	if loaded.FixtureChecksum != report.FixtureChecksum || len(loaded.Results) != 3 {
 		t.Fatalf("loaded %#v", loaded)
+	}
+	// The stored summary must survive the JSON round trip exactly, or Compare
+	// would refuse every report read from disk.
+	if got := Compare(loaded, loaded); !got.Compatible {
+		t.Fatalf("a report read back from disk cannot be compared: %v", got.Errors)
 	}
 	if matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".run.json-*.tmp")); len(matches) != 0 {
 		t.Fatalf("temporary files remain: %v", matches)
@@ -134,6 +142,9 @@ func TestCorpusShape(t *testing.T) {
 		if c.Kind == KindMetaSchema && len(c.ExpectFields) == 0 {
 			t.Fatalf("metaschema case %q has no ExpectFields, so {} could pass", c.ID)
 		}
+		if c.Kind == KindBundle && len(c.ExpectSlots) == 0 {
+			t.Fatalf("bundle case %q has no ExpectSlots, so an empty bundle could pass", c.ID)
+		}
 		if c.Kind == KindPair && !containsString(BundleSlots(c.Carrier), c.Slot+"CSS") {
 			t.Fatalf("pair case %q names a slot %q with no companion on %s", c.ID, c.Slot, c.Carrier)
 		}
@@ -149,5 +160,57 @@ func TestCorpusShape(t *testing.T) {
 func TestFixtureChecksumIsStable(t *testing.T) {
 	if FixtureChecksum() != FixtureChecksum() || len(FixtureChecksum()) != 64 {
 		t.Fatalf("checksum %q", FixtureChecksum())
+	}
+}
+
+func TestCompareRefusesUnevenRepeats(t *testing.T) {
+	base := reportWith(result("a", KindPair, "group", false), result("b", KindPair, "group", true))
+	// Three passing repeats of b and one failing a would read as a 25-point gain.
+	candidate := reportWith(result("a", KindPair, "group", false), result("b", KindPair, "group", true), result("b", KindPair, "group", true), result("b", KindPair, "group", true))
+	if got := Compare(base, candidate); got.Compatible {
+		t.Fatalf("uneven repeats compared: %#v", got)
+	}
+}
+
+func TestCompareRecomputesSummariesAndRefusesStaleOnes(t *testing.T) {
+	base := reportWith(result("a", KindPair, "group", true), result("b", KindPair, "group", true))
+	candidate := reportWith(result("a", KindPair, "group", false), result("b", KindPair, "group", false))
+
+	missing := candidate
+	missing.Summary = Summary{}
+	if got := Compare(base, missing); got.Compatible || len(got.Regressions) != 0 {
+		t.Fatalf("a report with no summary was compared: %#v", got)
+	}
+
+	tampered := candidate
+	tampered.Summary = base.Summary
+	if got := Compare(base, tampered); got.Compatible {
+		t.Fatalf("a report whose summary disagrees with its results was compared: %#v", got)
+	}
+
+	got := Compare(base, candidate)
+	if !got.Compatible || len(got.Regressions) != 1 {
+		t.Fatalf("the honest regression was not reported: %#v", got)
+	}
+}
+
+func TestBundleRequestSendsTheBrowsersWholeFieldMap(t *testing.T) {
+	c := Case{ID: "b", Kind: KindBundle, Carrier: "note", Prompt: "x", Current: map[string]string{"CustomHeader": "<p>h</p>"}}
+	body := c.Request(3, 4)
+	var content map[string]string
+	if err := json.Unmarshal([]byte(body["content"].(string)), &content); err != nil {
+		t.Fatal(err)
+	}
+	// templateBundle.js sends every SLOT_FIELDS entry, including fields the
+	// carrier has no surface for.
+	if len(content) != 29 || content["CustomPreview"] != "" || content["CustomOwnEntities"] != "" || content["CustomHeader"] != "<p>h</p>" {
+		t.Fatalf("bundle content = %v", content)
+	}
+	if _, ok := content["CustomPreview"]; !ok {
+		t.Fatal("a cross-carrier field is missing")
+	}
+	f, _ := FixtureForCase(c)
+	if body["metaSchema"] != f.MetaSchema {
+		t.Fatalf("the bundle request does not carry the editor's schema: %v", body["metaSchema"])
 	}
 }

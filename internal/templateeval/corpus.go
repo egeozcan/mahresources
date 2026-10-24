@@ -8,7 +8,7 @@ import (
 
 // CorpusVersion identifies the case list. Bump it whenever a case is added,
 // removed or reworded: Compare refuses reports from different versions.
-const CorpusVersion = "2026-10-24.1"
+const CorpusVersion = "2026-10-24.2"
 
 // Kind is how a case is scored and summarised.
 type Kind string
@@ -39,6 +39,9 @@ type Case struct {
 	// ExpectFields are schema properties the draft should use. They gate Pass
 	// for metaschema cases and feed the heuristic field coverage otherwise.
 	ExpectFields []string `json:"expectFields,omitempty"`
+	// ExpectSlots are the HTML slots a bundle case must fill. A bundle may
+	// leave every other slot empty.
+	ExpectSlots []string `json:"expectSlots,omitempty"`
 }
 
 // sharedSlots and carrierSlots copy templateGenerateSharedSlots and
@@ -66,6 +69,21 @@ func BundleSlots(carrier string) []string {
 		}
 	}
 	return slots
+}
+
+// browserBundleFields copies the values of SLOT_FIELDS in
+// src/components/templateBundle.js, in its order. The bundle panel sends every
+// one of them as the current content, on every carrier, including the fields
+// the carrier has no surface for.
+var browserBundleFields = []string{
+	"CustomHeader", "CustomHeaderCSS", "CustomDetailFooter", "CustomDetailFooterCSS",
+	"CustomSidebar", "CustomSidebarCSS", "CustomPreview", "CustomPreviewCSS",
+	"CustomLightbox", "CustomLightboxCSS", "CustomSummary", "CustomSummaryCSS",
+	"CustomAvatar", "CustomAvatarCSS", "CustomHoverCard", "CustomHoverCardCSS",
+	"CustomCell", "CustomCellCSS", "CustomOwnEntities", "CustomOwnEntitiesCSS",
+	"CustomListHeader", "CustomListHeaderCSS", "CustomListFooter", "CustomListFooterCSS",
+	"CustomMRQLResult", "CustomMRQLResultCSS", "CustomEntityPickerResult", "CustomEntityPickerResultCSS",
+	"CustomCSS",
 }
 
 // CarrierRoute is the URL segment of the carrier's generate and preview routes.
@@ -110,26 +128,48 @@ func (c Case) RequestedSlots() []string {
 	return nil
 }
 
-// Request is the generateTemplate body the editor would send for this case.
+// RequiredSlots lists the slots that must come back non-empty: the HTML half
+// of a pair, the CustomCSS of a slot case, and a bundle's ExpectSlots.
+func (c Case) RequiredSlots() []string {
+	switch c.Kind {
+	case KindSlot, KindPair:
+		return []string{c.Slot}
+	case KindBundle:
+		return c.ExpectSlots
+	}
+	return nil
+}
+
+// Request is the generateTemplate body the editor sends for this case:
+// templateGeneration.js for a pair, CustomCSS or MetaSchema (its mode is the
+// editor's: html, css or json, and content is that editor's text), and
+// templateBundle.js for a bundle. Both send the schema editor's current value,
+// which on an edit page is the saved schema unless the case overrides it.
 func (c Case) Request(categoryID, entityID uint) map[string]any {
-	body := map[string]any{"prompt": c.Prompt, "categoryId": categoryID, "entityId": entityID, "metaSchema": c.Current["MetaSchema"]}
+	metaSchema, ok := c.Current["MetaSchema"]
+	if !ok {
+		if f, found := FixtureForCase(c); found {
+			metaSchema = f.MetaSchema
+		}
+	}
+	body := map[string]any{"prompt": c.Prompt, "categoryId": categoryID, "entityId": entityID, "metaSchema": metaSchema}
 	switch c.Kind {
 	case KindSlot:
 		body["target"], body["slot"], body["mode"], body["content"] = "slot", c.Slot, "css", c.Current[c.Slot]
 	case KindPair:
-		body["target"], body["slot"], body["mode"], body["content"] = "cluster", c.Slot, "html", c.currentJSON()
+		body["target"], body["slot"], body["mode"], body["content"] = "cluster", c.Slot, "html", c.currentJSON(c.RequestedSlots())
 	case KindBundle:
-		body["target"], body["content"] = "bundle", c.currentJSON()
+		body["target"], body["content"] = "bundle", c.currentJSON(browserBundleFields)
 	case KindMetaSchema:
-		body["target"], body["mode"] = "metaschema", "json"
+		body["target"], body["slot"], body["mode"], body["content"] = "metaschema", "", "json", metaSchema
 	}
 	return body
 }
 
-func (c Case) currentJSON() string {
+func (c Case) currentJSON(fields []string) string {
 	current := map[string]string{}
-	for _, slot := range c.RequestedSlots() {
-		current[slot] = c.Current[slot]
+	for _, field := range fields {
+		current[field] = c.Current[field]
 	}
 	encoded, _ := json.Marshal(current)
 	return string(encoded)
@@ -187,7 +227,7 @@ func Corpus() []Case {
 			Prompt: "Shared styles for book pages: a warm paper background for cards, serif headings and a muted accent colour."},
 		{ID: "group-metaschema", Kind: KindMetaSchema, Carrier: "group", ExpectFields: []string{"isbn", "pages", "author"},
 			Prompt: "Add an isbn field (string) and a pages field (integer). Keep the existing fields."},
-		{ID: "group-bundle", Kind: KindBundle, Carrier: "group",
+		{ID: "group-bundle", Kind: KindBundle, Carrier: "group", ExpectSlots: []string{"CustomHeader", "CustomSidebar", "CustomSummary"},
 			Prompt: "A complete template for books: a header with title and author, a details sidebar, a list summary, and matching styles."},
 		{ID: "group-header-refine", Kind: KindPair, Carrier: "group", Slot: "CustomHeader",
 			Current: map[string]string{
@@ -219,7 +259,7 @@ func Corpus() []Case {
 			Prompt: "Shared styles for photo pages: a dark gallery look with light text and rounded image corners."},
 		{ID: "resource-metaschema", Kind: KindMetaSchema, Carrier: "resource", ExpectFields: []string{"license", "camera"},
 			Prompt: "Add a license field with the choices cc-by, cc0 and all-rights-reserved. Keep the camera settings."},
-		{ID: "resource-bundle", Kind: KindBundle, Carrier: "resource",
+		{ID: "resource-bundle", Kind: KindBundle, Carrier: "resource", ExpectSlots: []string{"CustomHeader", "CustomHoverCard", "CustomCell"},
 			Prompt: "A complete template for photos: a header with the camera details, a hover card, a table cell and matching styles."},
 
 		// Note: Meeting.
@@ -237,7 +277,7 @@ func Corpus() []Case {
 			Prompt: "Shared styles for meeting notes: clean sans-serif text, a light grey card and a blue status badge."},
 		{ID: "note-metaschema", Kind: KindMetaSchema, Carrier: "note", ExpectFields: []string{"followUpDate", "durationMinutes", "attendees"},
 			Prompt: "Add a followUpDate field (a date) and a durationMinutes field (an integer). Keep the existing fields."},
-		{ID: "note-bundle", Kind: KindBundle, Carrier: "note",
+		{ID: "note-bundle", Kind: KindBundle, Carrier: "note", ExpectSlots: []string{"CustomHeader", "CustomSidebar", "CustomSummary"},
 			Prompt: "A complete template for meeting notes: a header, a sidebar with attendees and action items, a summary and matching styles."},
 		{ID: "note-sidebar-refine", Kind: KindPair, Carrier: "note", Slot: "CustomSidebar",
 			Current: map[string]string{
