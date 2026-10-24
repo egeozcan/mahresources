@@ -1,9 +1,12 @@
 package shortcodes
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"mahresources/mrql"
 )
 
 func lintSchema(t *testing.T, schema string, opts ...MetaSchemaLintOptions) []LintIssue {
@@ -223,6 +226,84 @@ func TestLintMetaSchemaKeyCountBoundsDoNotHideWarnings(t *testing.T) {
 		issues := LintMetaSchema(schema, MetaSchemaLintOptions{})
 		if len(issues) != 1 || !strings.Contains(issues[0].Message, "typed number") {
 			t.Errorf("%s: want the type warning, got %+v", bounds, issues)
+		}
+	}
+}
+
+// A closed object with minProperties at or above its declared count can only be
+// valid with every declared key present, so each is effectively required.
+func TestLintMetaSchemaClosedMinPropertiesImpliesRequired(t *testing.T) {
+	node := func(extra string) string {
+		return `{"type":"object","properties":{"a":{"type":"object","x-display":"geo","properties":{"lat":{"type":"number"},"lng":{"type":"number"}},` + extra + `}}}`
+	}
+	for _, extra := range []string{
+		`"additionalProperties":false,"minProperties":2`,
+		`"additionalProperties":false,"minProperties":3`,
+	} {
+		if issues := LintMetaSchema(node(extra), MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Errorf("%s: every key is effectively required, want no issues, got %+v", extra, issues)
+		}
+	}
+	for _, extra := range []string{
+		`"additionalProperties":false,"minProperties":1`,
+		`"minProperties":2`,
+		`"additionalProperties":true,"minProperties":2`,
+		`"title":"Place"`,
+	} {
+		issues := LintMetaSchema(node(extra), MetaSchemaLintOptions{})
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "required") {
+			t.Errorf("%q: want the required warning, got %+v", extra, issues)
+		}
+	}
+}
+
+// Dependency and conditional keywords on an ancestor can reach into a property
+// and add keys to it, so nothing below such an ancestor is decided.
+func TestLintMetaSchemaSkipsBelowAncestorsThatCanAddKeys(t *testing.T) {
+	geo := `"p":{"type":"object","x-display":"geo","properties":{"lat":{"type":"number"}}}`
+	for name, ancestor := range map[string]string{
+		"dependentSchemas":      `"dependentSchemas":{"mode":{"properties":{"p":{"properties":{"lng":{"type":"number"}}}}}}`,
+		"dependencies":          `"dependencies":{"mode":{"properties":{"p":{"properties":{"lng":{"type":"number"}}}}}}`,
+		"if/then/else":          `"if":{"required":["mode"]},"then":{"properties":{"p":{"properties":{"lng":{"type":"number"}}}}}`,
+		"patternProperties":     `"patternProperties":{"^p$":{"properties":{"lng":{"type":"number"}}}}`,
+		"additionalProperties":  `"additionalProperties":{"properties":{"lng":{"type":"number"}}}`,
+		"unevaluatedProperties": `"unevaluatedProperties":{"properties":{"lng":{"type":"number"}}}`,
+	} {
+		schema := `{"type":"object","properties":{"mode":{"type":"string"},` + geo + `},` + ancestor + `}`
+		if issues := LintMetaSchema(schema, MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Errorf("%s: want no issues, got %+v", name, issues)
+		}
+	}
+	plain := `{"type":"object","required":["p"],"additionalProperties":false,"properties":{` + geo + `}}`
+	if issues := LintMetaSchema(plain, MetaSchemaLintOptions{}); len(issues) != 1 {
+		t.Errorf("a plain ancestor must not hide the warning, got %+v", issues)
+	}
+}
+
+// A property name is addressed as meta.<name> in MRQL, so the lint follows the
+// parser: a name warns exactly when meta.<name> does not parse as that field.
+func TestLintMetaSchemaPropertyNamesFollowTheMRQLParser(t *testing.T) {
+	addressable := func(key string) bool {
+		q, err := mrql.Parse("meta." + key + " = 1")
+		if err != nil {
+			return false
+		}
+		cmp, ok := q.Where.(*mrql.ComparisonExpr)
+		return ok && len(cmp.Field.Parts) == 2 && cmp.Field.Parts[1].Value == key
+	}
+	known := map[string]bool{ // key -> addressable
+		"rating": true, "_x": true, "Type": true, "type": true, "having": true, "within": true, "count": true, "rating2": true,
+		"1st": false, "9": false, "limit": false, "and": false, "NOT": false, "null": false, "order": true,
+		"due-date": false, "a b": false, "na\u00efve": false,
+	}
+	for key, want := range known {
+		if got := addressable(key); got != want {
+			t.Errorf("fixture: %q addressable=%t in the parser, test expects %t", key, got, want)
+		}
+		doc, _ := json.Marshal(map[string]any{"type": "object", "properties": map[string]any{key: map[string]any{"type": "string"}}})
+		warned := len(LintMetaSchema(string(doc), MetaSchemaLintOptions{})) > 0
+		if warned == addressable(key) {
+			t.Errorf("%q: warned=%t but addressable=%t", key, warned, addressable(key))
 		}
 	}
 }

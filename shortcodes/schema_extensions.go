@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"mahresources/mrql"
 )
 
 // This file is the Go source of truth for the JSON Schema extensions the app's
@@ -227,7 +229,7 @@ func (l *schemaLinter) walk(node any, path string, local bool) {
 	}
 	l.lintLabeledEnum(obj, path)
 
-	childLocal := local && !composesOthers(obj)
+	childLocal := local && !composesOthers(obj) && onlyModelledKeywords(obj)
 	if props, ok := obj["properties"].(map[string]any); ok {
 		for _, key := range sortedKeys(props) {
 			l.lintPropertyKey(key, path)
@@ -253,12 +255,29 @@ func (l *schemaLinter) walk(node any, path string, local bool) {
 	}
 }
 
+// metaKeyAddressable reports whether MRQL can address the key as meta.<key>:
+// the parser reads "meta.<key> = 1" as a comparison on exactly that field. A
+// name that starts with a digit, is a reserved word (and, or, not, limit, ...)
+// or has other characters does not.
+func metaKeyAddressable(key string) bool {
+	q, err := mrql.Parse("meta." + key + " = 1")
+	if err != nil {
+		return false
+	}
+	cmp, ok := q.Where.(*mrql.ComparisonExpr)
+	return ok && len(cmp.Field.Parts) == 2 && cmp.Field.Parts[1].Value == key
+}
+
 func (l *schemaLinter) lintPropertyKey(key, path string) {
-	if metaPropertyKey.MatchString(key) {
+	if metaPropertyKey.MatchString(key) && metaKeyAddressable(key) {
 		return
 	}
 	if strings.Contains(key, ".") {
 		l.warn("%s: property name %q contains a dot, which meta paths read as nesting; use letters, digits and underscores only.", path, key)
+		return
+	}
+	if metaPropertyKey.MatchString(key) {
+		l.warn("%s: property name %q cannot be written as meta.%s in MRQL because it starts with a digit or is a reserved word; rename it.", path, key, key)
 		return
 	}
 	l.warn("%s: property name %q should use letters, digits and underscores only; other characters break meta paths and MRQL field names.", path, key)
@@ -363,6 +382,11 @@ func (l *schemaLinter) lintBuiltinDisplay(obj map[string]any, r DisplayRenderer,
 	}
 	if len(usable) == 0 {
 		l.warn("%s: x-display %q needs %s typed %s, but they are declared with other types, so no value matches and it is drawn as a plain object instead of %s.", path, r.Name, shapeText(declared[0]), fieldTypeText(r.FieldTypes[declared[0][0]]), draws)
+		return
+	}
+	// A closed object whose minProperties reaches its declared count is only
+	// valid with every declared key present.
+	if min, ok := obj["minProperties"].(float64); ok && obj["additionalProperties"] == false && !hasAnyKey(obj, "$ref", "allOf") && int(min) >= len(eff.props) {
 		return
 	}
 	for _, shape := range usable {
