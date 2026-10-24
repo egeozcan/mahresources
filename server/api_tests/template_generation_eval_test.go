@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,7 +113,8 @@ func TestTemplateGenerationEval(t *testing.T) {
 			draft := evalGenerate(tc, c, ids.category, ids.sample)
 			calls := recorder.Take()
 			previews := evalPreviews(tc, c, draft, ids.category, ids.sample)
-			checks, details := templateeval.Score(c, draft, calls, previews, known)
+			probes := evalQueryProbes(tc, c, draft, ids.category, ids.sample)
+			checks, details := templateeval.Score(c, draft, calls, previews, probes, known)
 			result := templateeval.CaseResult{
 				Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: repeat,
 				DurationMS: time.Since(start).Milliseconds(),
@@ -321,6 +323,43 @@ func evalPreviews(tc *TestContext, c templateeval.Case, d templateeval.Draft, ca
 		previews[slot] = preview
 	}
 	return previews
+}
+
+// evalQueryProbes renders every inline query of the draft on its own, against
+// the entity (or carrier) its slot renders against, so a runtime MRQL failure
+// is tied to the query that caused it.
+func evalQueryProbes(tc *TestContext, c templateeval.Case, d templateeval.Draft, categoryID, entityID uint) []templateeval.QueryProbe {
+	if d.Status != http.StatusOK {
+		return nil
+	}
+	texts := d.Slots
+	if c.Kind == templateeval.KindSlot {
+		texts = map[string]string{c.Slot: d.Content}
+	}
+	slots := make([]string, 0, len(texts))
+	for slot := range texts {
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	var probes []templateeval.QueryProbe
+	for _, slot := range slots {
+		for _, probe := range templateeval.QueryProbes(slot, texts[slot]) {
+			base := strings.TrimSuffix(slot, "CSS")
+			body := map[string]any{"content": probe.Snippet, "slot": base, "categoryId": categoryID}
+			if templateeval.RendersAgainstCarrier(base) {
+				body["carrier"] = true
+			} else {
+				body["entityId"] = entityID
+			}
+			rr := evalRequest(tc, "/v1/"+templateeval.CarrierRoute(c.Carrier)+"/previewTemplate", body)
+			var rendered struct {
+				HTML string `json:"html"`
+			}
+			probe.Failed = rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &rendered) != nil || templateeval.RenderShowsMRQLError(rendered.HTML)
+			probes = append(probes, probe)
+		}
+	}
+	return probes
 }
 
 // evalCommit names the code under test, marking a dirty tree.

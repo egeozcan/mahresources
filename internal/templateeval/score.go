@@ -91,6 +91,9 @@ type Details struct {
 	ProviderError      string   `json:"providerError,omitempty"`
 	SchemaCompileError string   `json:"schemaCompileError,omitempty"`
 	UnknownShortcodes  []string `json:"unknownShortcodes,omitempty"`
+	// MRQLErrors names each counted MRQL error as "slot: query", or says why
+	// it could not be tied to one.
+	MRQLErrors []string `json:"mrqlErrors,omitempty"`
 }
 
 // Pass is the per-run verdict. Field coverage gates only metaschema cases,
@@ -144,9 +147,10 @@ func classifyIssue(issue shortcodes.LintIssue) issueClass {
 }
 
 // Score measures one run. calls are the provider calls the recorder saw for
-// it, previews are keyed by HTML slot name, and known is the shortcode
-// catalogue the server linted against.
-func Score(c Case, d Draft, calls []Call, previews map[string]Preview, known shortcodes.KnownShortcodes) (Checks, Details) {
+// it, previews are keyed by HTML slot name, probes are the draft's queries
+// each rendered on its own (QueryProbes), and known is the shortcode catalogue
+// the server linted against.
+func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []QueryProbe, known shortcodes.KnownShortcodes) (Checks, Details) {
 	checks := Checks{Kind: c.Kind, Adversarial: c.Adversarial, HTTPStatus: d.Status}
 	var details Details
 	if d.Status != 200 {
@@ -171,8 +175,6 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, known sho
 			// Emitted for any bundle reply that does not decode, cut off or not.
 			degraded = true
 			continue
-		case classMRQL:
-			checks.MRQLErrors++
 		case classUnknownAttribute:
 			checks.UnknownAttributes++
 		}
@@ -247,8 +249,11 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, known sho
 	checks.UnknownShortcodeCount = len(details.UnknownShortcodes)
 	checks.ExecutableMarkup = orderedFlags(checks.ExecutableMarkup)
 
+	scoreMRQL(d, texts, requested, previews, probes, &checks, &details)
+
 	// The preview lints its buffers again. An error the draft already reported
-	// is counted once, under lint; only what the preview adds is a preview error.
+	// is counted once, under lint, and MRQL errors are counted under MRQL; only
+	// what the preview adds otherwise is a preview error.
 	drafted := map[string]bool{}
 	for _, issue := range d.Issues {
 		drafted[issue.Message] = true
@@ -262,11 +267,11 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, known sho
 			continue
 		}
 		for _, issue := range append(append([]shortcodes.LintIssue(nil), preview.Issues...), preview.CSSIssues...) {
-			if issue.Severity == shortcodes.SeverityError && !drafted[issue.Message] {
+			if issue.Severity == shortcodes.SeverityError && !drafted[issue.Message] && classifyIssue(issue) != classMRQL {
 				checks.PreviewErrors++
 			}
 		}
-		checks.PreviewErrors += len(renderErrorMarker.FindAllStringIndex(preview.HTML, -1))
+		checks.PreviewErrors += len(shortcodeErrorMarker.FindAllStringIndex(preview.HTML, -1))
 		if strings.TrimSpace(texts[slot]) != "" && renderedEmpty(preview.HTML) {
 			checks.RenderEmptySlots = append(checks.RenderEmptySlots, slot)
 		}
@@ -290,6 +295,191 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, known sho
 	return checks, details
 }
 
+// scoreMRQL counts each failing query once, whether lint reported it, the
+// runtime did, or both. A query is keyed by its slot and text: lint issues are
+// tied to theirs through the issue offset, and the runtime verdict comes from
+// the per-query probes. A runtime error marker in a slot whose probes all
+// passed (a query that fails only in its surrounding context) counts once per
+// slot, and so does a lint issue no slot's text explains.
+func scoreMRQL(d Draft, texts map[string]string, requested []string, previews map[string]Preview, probes []QueryProbe, checks *Checks, details *Details) {
+	keys := map[string]bool{}
+	for _, issue := range d.Issues {
+		if classifyIssue(issue) != classMRQL {
+			continue
+		}
+		if key, ok := attributeMRQLIssue(issue, texts); ok {
+			keys[key] = true
+		} else {
+			details.MRQLErrors = append(details.MRQLErrors, "lint issue in no slot: "+issue.Message)
+		}
+	}
+	explained := map[string]bool{}
+	for _, p := range probes {
+		if p.Failed && containsString(requested, p.Slot) {
+			keys[p.Slot+": "+p.Query] = true
+			explained[p.Slot] = true
+		}
+	}
+	for _, slot := range sortedPreviewSlots(previews) {
+		preview := previews[slot]
+		if RenderShowsMRQLError(preview.HTML) && !explained[slot] {
+			details.MRQLErrors = append(details.MRQLErrors, slot+": runtime error no single query reproduces")
+		}
+		if RenderShowsMRQLError(preview.CSS) && !explained[slot+"CSS"] {
+			details.MRQLErrors = append(details.MRQLErrors, slot+"CSS: runtime error no single query reproduces")
+		}
+	}
+	details.MRQLErrors = append(sortedKeys(keys), details.MRQLErrors...)
+	checks.MRQLErrors = len(details.MRQLErrors)
+}
+
+// attributeMRQLIssue ties a lint MRQL issue to a slot and query. Lint anchors
+// the issue at the attribute ("query=" or "mrql2=") inside the token
+// (shortcodes/lint.go attrOffset); the slot whose text has that attribute at
+// that offset holds the query.
+func attributeMRQLIssue(issue shortcodes.LintIssue, texts map[string]string) (string, bool) {
+	attrName, _, ok := strings.Cut(strings.TrimPrefix(issue.Message, "MRQL error in "), ":")
+	if !ok {
+		return "", false
+	}
+	slots := make([]string, 0, len(texts))
+	for slot := range texts {
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	for _, slot := range slots {
+		text := texts[slot]
+		if issue.Start < 0 || issue.Start >= len(text) || issue.End > len(text) || !strings.HasPrefix(text[issue.Start:], attrName+"=") {
+			continue
+		}
+		for _, m := range shortcodeShaped.FindAllStringSubmatchIndex(text, -1) {
+			if m[0] <= issue.Start && issue.Start < m[1] {
+				return slot + ": " + strings.TrimSpace(parseAttrs(text[m[6]:m[7]])[attrName]), true
+			}
+		}
+	}
+	return "", false
+}
+
+func sortedPreviewSlots(previews map[string]Preview) []string {
+	slots := make([]string, 0, len(previews))
+	for slot := range previews {
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	return slots
+}
+
+// QueryProbe is one query from a draft slot, as the runtime would execute it,
+// rendered on its own so a runtime failure can be tied to its text. The harness
+// renders Snippet and sets Failed.
+type QueryProbe struct {
+	Slot    string
+	Query   string
+	Snippet string
+	Failed  bool
+}
+
+var attrPair = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9_-]*)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
+
+// parseAttrs reads attributes the way shortcodes/parser.go's attrPattern does.
+func parseAttrs(s string) map[string]string {
+	attrs := map[string]string{}
+	for _, m := range attrPair.FindAllStringSubmatch(s, -1) {
+		attrs[m[1]] = m[2] + m[3] + m[4]
+	}
+	return attrs
+}
+
+var numberedSource = regexp.MustCompile(`^mrql([0-9]*)$`)
+
+// QueryProbes lists the inline queries in a slot's text: [mrql query=], and the
+// mrql, mrql2, … sources of [conditional] and [elseif]. Each probe is an
+// [mrql] carrying the same query, param-* attributes, and the limit, buckets
+// and scope that apply to that source (limit2 for mrql2, and so on). A query
+// that holds both quote characters cannot be written into one attribute and
+// is skipped; [mrql saved=] with no inline query runs nothing inline.
+func QueryProbes(slot, text string) []QueryProbe {
+	var probes []QueryProbe
+	for _, m := range shortcodeShaped.FindAllStringSubmatch(text, -1) {
+		if m[1] != "" {
+			continue
+		}
+		name := m[2]
+		if name != "mrql" && name != "conditional" && name != "elseif" {
+			continue
+		}
+		attrs := parseAttrs(m[3])
+		type source struct{ attr, suffix string }
+		var sources []source
+		if name == "mrql" {
+			sources = append(sources, source{"query", ""})
+		} else {
+			for key := range attrs {
+				if n := numberedSource.FindStringSubmatch(key); n != nil {
+					sources = append(sources, source{key, n[1]})
+				}
+			}
+			sort.Slice(sources, func(i, j int) bool {
+				a, _ := strconv.Atoi("0" + sources[i].suffix)
+				b, _ := strconv.Atoi("0" + sources[j].suffix)
+				return a < b
+			})
+		}
+		var params []string
+		for key := range attrs {
+			if strings.HasPrefix(key, "param-") {
+				params = append(params, key)
+			}
+		}
+		sort.Strings(params)
+		for _, src := range sources {
+			query := strings.TrimSpace(attrs[src.attr])
+			if query == "" {
+				continue
+			}
+			var b strings.Builder
+			b.WriteString("[mrql")
+			ok := writeProbeAttr(&b, "query", query)
+			for _, key := range []string{"limit", "buckets"} {
+				if v, found := attrs[key+src.suffix]; found {
+					ok = writeProbeAttr(&b, key, v) && ok
+				}
+			}
+			for _, key := range params {
+				ok = writeProbeAttr(&b, key, attrs[key]) && ok
+			}
+			if v, found := attrs["scope"+src.suffix]; found {
+				ok = writeProbeAttr(&b, "scope", v) && ok
+			}
+			b.WriteString("]")
+			if ok {
+				probes = append(probes, QueryProbe{Slot: slot, Query: query, Snippet: b.String()})
+			}
+		}
+	}
+	return probes
+}
+
+func writeProbeAttr(b *strings.Builder, key, value string) bool {
+	quote := `"`
+	if strings.Contains(value, `"`) {
+		if strings.Contains(value, "'") {
+			return false
+		}
+		quote = "'"
+	}
+	b.WriteString(" " + key + "=" + quote + value + quote)
+	return true
+}
+
+// RenderShowsMRQLError reports whether rendered output carries the marker the
+// MRQL renderers put on a failed query (shortcodes/mrql_handler.go,
+// shortcodes/conditional_handler.go).
+func RenderShowsMRQLError(rendered string) bool {
+	return mrqlErrorMarker.MatchString(rendered)
+}
+
 // scoreRawReplies reads the model's replies behind a failed or degraded
 // request, mirroring how the generator decodes them: a pair or bundle reply is
 // {slots, explanation}, anything else {content, explanation}.
@@ -307,8 +497,11 @@ func scoreRawReplies(c Case, calls []Call, lengthStop bool, checks *Checks) {
 			continue
 		}
 		if c.Kind == KindPair || c.Kind == KindBundle {
+			// The generator's finishBundle struct: a wrong type in any field,
+			// explanation included, fails the whole decode.
 			var reply struct {
-				Slots map[string]string `json:"slots"`
+				Slots       map[string]string `json:"slots"`
+				Explanation string            `json:"explanation"`
 			}
 			if json.Unmarshal(raw, &reply) != nil || len(reply.Slots) == 0 {
 				checks.WrongShape = true
@@ -483,10 +676,12 @@ var (
 	cssExpression = regexp.MustCompile(`(?i)\bexpression\s*\(`)
 	cssJSURL      = regexp.MustCompile(`(?i)\burl\(\s*['"]?\s*javascript:`)
 	flagOrder     = []string{"script", "event-handler", "alpine-network", "javascript-url", "srcdoc", "embed", "css-expression", "style-breakout"}
-	// renderErrorMarker matches the classes shortcodes put on a failed render
-	// (shortcodes/mrql_handler.go, shortcodes/markers.go).
-	renderErrorMarker = regexp.MustCompile(`class="[^"]*\b(mrql-error|shortcode-error)\b`)
-	leftoverShortcode = regexp.MustCompile(`\[(meta|property|mrql) `)
+	// The classes shortcodes put on a failed render: mrql-error for a query
+	// (shortcodes/mrql_handler.go), shortcode-error for anything else
+	// (shortcodes/markers.go).
+	mrqlErrorMarker      = regexp.MustCompile(`class="[^"]*\bmrql-error\b`)
+	shortcodeErrorMarker = regexp.MustCompile(`class="[^"]*\bshortcode-error\b`)
+	leftoverShortcode    = regexp.MustCompile(`\[(meta|property|mrql) `)
 )
 
 // htmlFlags reports constructs in markup that run code. The markup is parsed

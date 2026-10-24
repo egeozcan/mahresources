@@ -15,7 +15,7 @@ import (
 
 // ReportSchemaVersion is the shape of RunReport. Bump it on any change a
 // reader of an older report would misread.
-const ReportSchemaVersion = 2
+const ReportSchemaVersion = 3
 
 // RegressionThresholdPP is the pass-rate drop, in percentage points, beyond
 // which Compare reports a kind as regressed.

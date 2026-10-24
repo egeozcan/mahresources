@@ -43,6 +43,7 @@ func TestScoreChecks(t *testing.T) {
 		draft    Draft
 		calls    []Call
 		previews map[string]Preview
+		probes   []QueryProbe
 		check    func(t *testing.T, got Checks, details Details)
 		pass     bool
 	}{
@@ -359,7 +360,7 @@ func TestScoreChecks(t *testing.T) {
 		{
 			name: "preview error issue and render error marker", c: pairCase(),
 			draft: pairDraft(`<p>x</p>`, ``),
-			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: `<p>x</p><span class="mrql-error text-red-700 font-mono">bad</span>`,
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: `<p>x</p><span class="shortcode-error text-red-700 font-mono" title="t">bad</span>`,
 				Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "boom"}}}},
 			check: func(t *testing.T, got Checks, details Details) {
 				if got.PreviewErrors != 2 {
@@ -377,6 +378,83 @@ func TestScoreChecks(t *testing.T) {
 					t.Fatalf("preview errors = %d, lint errors = %d", got.PreviewErrors, got.LintErrors)
 				}
 			},
+		},
+		{
+			name: "an MRQL error only lint reports", c: pairCase(),
+			draft:    pairDraft(badLintHTML, ``, badLintIssue),
+			previews: okPreview(`<p>x</p>`),
+			probes:   []QueryProbe{{Slot: "CustomHeader", Query: "type = = =", Failed: false}},
+			check:    wantMRQL(1, 0),
+		},
+		{
+			name: "an MRQL error only the runtime reports", c: pairCase(),
+			draft:    pairDraft(`<p>[mrql query="type = resource AND nosuchfield = 1"]</p>`, ``),
+			previews: okPreview(`<p><div class="mrql-results mrql-error text-sm">unknown field nosuchfield</div></p>`),
+			probes:   []QueryProbe{{Slot: "CustomHeader", Query: "type = resource AND nosuchfield = 1", Failed: true}},
+			check:    wantMRQL(1, 0),
+		},
+		{
+			name: "an MRQL error both report counts once", c: pairCase(),
+			draft:    pairDraft(badLintHTML, ``, badLintIssue),
+			previews: okPreview(`<p><span class="mrql-error">parse error</span></p>`),
+			probes:   []QueryProbe{{Slot: "CustomHeader", Query: "type = = =", Failed: true}},
+			check:    wantMRQL(1, 0),
+		},
+		{
+			name: "the same bad query in two slots counts twice", c: Case{ID: "b", Kind: KindBundle, Carrier: "note", Prompt: "x", ExpectSlots: []string{"CustomHeader"}},
+			draft: Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{
+				"CustomHeader": `<p>[mrql query="nosuch = 1"]</p>`, "CustomHeaderCSS": "", "CustomSidebar": `<p>[mrql query="nosuch = 1"]</p>`, "CustomSidebarCSS": ""}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: `<p class="mrql-error">e</p>`}, "CustomSidebar": {Status: 200, HTML: `<p class="mrql-error">e</p>`}},
+			probes:   []QueryProbe{{Slot: "CustomHeader", Query: "nosuch = 1", Failed: true}, {Slot: "CustomSidebar", Query: "nosuch = 1", Failed: true}},
+			check:    wantMRQL(2, 0),
+		},
+		{
+			name: "a runtime MRQL marker no probe explains still counts, once", c: pairCase(),
+			draft:    pairDraft(`<p>[each path="genres"][mrql query="x"][/each]</p>`, ``),
+			previews: okPreview(`<p><span class="mrql-error">a</span><span class="mrql-error">b</span></p>`),
+			check:    wantMRQL(1, 0),
+		},
+		{
+			name: "a shortcode render error is a preview error, not MRQL", c: pairCase(),
+			draft:    pairDraft(`<p>x</p>`, ``),
+			previews: okPreview(`<p><span class="shortcode-error" title="t">x</span></p>`),
+			check:    wantMRQL(0, 1),
+		},
+		{
+			name: "single reply with a non-string content", c: cssCase,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{{FinishReason: "stop", Content: `{"content":5,"explanation":"e"}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "single reply with a non-string explanation", c: cssCase,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{{FinishReason: "stop", Content: `{"content":".a{}","explanation":123}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "bundle reply with slots as an array", c: bundleCase,
+			draft: degradedBundle,
+			calls: []Call{{FinishReason: "stop", Content: `{"slots":[],"explanation":"e"}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "bundle reply with a non-string slot", c: bundleCase,
+			draft: degradedBundle,
+			calls: []Call{{FinishReason: "stop", Content: `{"slots":{"CustomHeader":5},"explanation":"e"}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "bundle reply with a non-string explanation", c: bundleCase,
+			draft: degradedBundle,
+			calls: []Call{{FinishReason: "stop", Content: `{"slots":{"CustomHeader":"hi","CustomHeaderCSS":""},"explanation":123}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "pair reply with a non-string explanation", c: pairCase(),
+			draft: degradedBundle,
+			calls: []Call{{FinishReason: "stop", Content: `{"slots":{"CustomHeader":"hi","CustomHeaderCSS":""},"explanation":123}`}},
+			check: wantShape(false, true),
 		},
 		{
 			name: "field coverage is heuristic and does not gate markup", c: pairCase(),
@@ -522,7 +600,7 @@ func TestScoreChecks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, details := Score(tt.c, tt.draft, tt.calls, tt.previews, known)
+			got, details := Score(tt.c, tt.draft, tt.calls, tt.previews, tt.probes, known)
 			if tt.check != nil {
 				tt.check(t, got, details)
 			}
@@ -530,6 +608,32 @@ func TestScoreChecks(t *testing.T) {
 				t.Fatalf("Pass() = %v, want %v; checks %#v", got.Pass(), tt.pass, got)
 			}
 		})
+	}
+}
+
+const badLintHTML = `<p>[mrql query="type = = ="]</p>`
+
+// badLintIssue is the issue lint gives badLintHTML: anchored at query=, ending
+// at the token's end, as shortcodes/lint.go's attrOffset places it.
+var badLintIssue = shortcodes.LintIssue{Start: 9, End: 28, Severity: shortcodes.SeverityError, Message: "MRQL error in query: unexpected ="}
+
+var degradedBundle = Draft{Status: 200, Target: "bundle", Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "The whole-template response was too large or malformed. Try generating slots individually."}}}
+
+func wantMRQL(mrql, preview int) func(t *testing.T, got Checks, details Details) {
+	return func(t *testing.T, got Checks, details Details) {
+		t.Helper()
+		if got.MRQLErrors != mrql || got.PreviewErrors != preview {
+			t.Fatalf("mrql errors = %d (want %d), preview errors = %d (want %d)", got.MRQLErrors, mrql, got.PreviewErrors, preview)
+		}
+	}
+}
+
+func wantShape(malformed, wrongShape bool) func(t *testing.T, got Checks, details Details) {
+	return func(t *testing.T, got Checks, details Details) {
+		t.Helper()
+		if got.Malformed != malformed || got.WrongShape != wrongShape {
+			t.Fatalf("malformed=%v (want %v) wrongShape=%v (want %v)", got.Malformed, malformed, got.WrongShape, wrongShape)
+		}
 	}
 }
 
@@ -625,8 +729,58 @@ func TestSlicedSlotEndingInWhitespaceIsTruncated(t *testing.T) {
 		t.Fatalf("the generator no longer slices this way (len %d); revisit the truncation check", len(got))
 	}
 	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
-	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), shortcodes.KnownFromBuiltins())
+	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), nil, shortcodes.KnownFromBuiltins())
 	if !got.Truncated {
 		t.Fatal("a slot sliced at the cap was not counted as truncated")
+	}
+}
+
+// TestBadLintIssueMatchesTheLinter keeps the badLintIssue fixture honest.
+func TestBadLintIssueMatchesTheLinter(t *testing.T) {
+	issues := shortcodes.Lint(badLintHTML, shortcodes.LintOptions{
+		Known:        shortcodes.KnownFromBuiltins(),
+		ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err },
+	})
+	for _, issue := range issues {
+		if classifyIssue(issue) == classMRQL {
+			if issue.Start != badLintIssue.Start || issue.End != badLintIssue.End {
+				t.Fatalf("lint places the MRQL issue at %d-%d, the fixture at %d-%d", issue.Start, issue.End, badLintIssue.Start, badLintIssue.End)
+			}
+			return
+		}
+	}
+	t.Fatalf("lint reported no MRQL issue: %#v", issues)
+}
+
+// TestWrongTypeExplanationDegradesInProductionAndScoresOnce drives the real
+// generator: an explanation of the wrong type makes the whole reply fail to
+// decode, which production reports with the degrade issue.
+func TestWrongTypeExplanationDegradesInProductionAndScoresOnce(t *testing.T) {
+	reply := `{"slots":{"CustomHeader":"hi","CustomHeaderCSS":""},"explanation":123}`
+	generator := application_context.NewTemplateGenerator(fixedProvider(reply), application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
+	result, err := generator.GenerateTemplate(context.Background(), application_context.TemplateGenerationInput{
+		Target: application_context.TemplateTargetBundle, EntityType: "group", BundleSlots: []string{"CustomHeader", "CustomHeaderCSS"},
+	}, "a header")
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
+	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop", Content: reply}}, nil, nil, shortcodes.KnownFromBuiltins())
+	if got.Malformed || !got.WrongShape {
+		t.Fatalf("malformed=%v wrongShape=%v for production's result %#v", got.Malformed, got.WrongShape, result)
+	}
+}
+
+func TestQueryProbesCarryWhatTheRuntimeReads(t *testing.T) {
+	text := `[mrql query="type = note AND name = $n" param-n="x" limit="3" scope="global" format="table"]` +
+		`[conditional mrql2='a = "b"' gt2="0" limit2="2" path="p" eq="v"]y[elseif mrql="c = 1" gt="0"]z[/conditional][mrql saved="s"]`
+	got := QueryProbes("CustomHeader", text)
+	want := []QueryProbe{
+		{Slot: "CustomHeader", Query: "type = note AND name = $n", Snippet: `[mrql query="type = note AND name = $n" limit="3" param-n="x" scope="global"]`},
+		{Slot: "CustomHeader", Query: `a = "b"`, Snippet: `[mrql query='a = "b"' limit="2"]`},
+		{Slot: "CustomHeader", Query: "c = 1", Snippet: `[mrql query="c = 1"]`},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("probes = %#v\nwant %#v", got, want)
 	}
 }
