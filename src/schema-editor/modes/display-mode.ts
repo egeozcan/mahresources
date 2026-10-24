@@ -422,10 +422,13 @@ export class SchemaDisplayMode extends LitElement {
           class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
         >${String(v)}</span>`)}`;
       }
-      // Array of objects — render each as a key-value sub-grid
+      // Array of objects — render each object as a key-value sub-grid. Members
+      // can be mixed (null, scalars), e.g. a forced renderer's rejected value.
       return html`${val.map((item, i) => html`
         ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
-        ${this._renderObjectValue(item, 0, `${field.path}[${i}]`)}
+        ${typeof item === 'object' && item !== null
+          ? this._renderObjectValue(item, 0, `${field.path}[${i}]`)
+          : html`<span>${String(item)}</span>`}
       `)}`;
     }
 

@@ -93,4 +93,53 @@ describe('display panel x-display guards', () => {
     const numeric = await mount(geoSchema({ type: 'string', allOf: [{ 'x-display': true }] }), { loc: 'via allOf' });
     expect(numeric.textContent).toContain('via allOf');
   });
+
+  it('renders valid forced url, daterange and dimensions values', async () => {
+    const el = await mount({
+      type: 'object',
+      properties: {
+        link: { type: 'object', 'x-display': 'url', properties: { href: { type: 'string' }, host: { type: 'string' } } },
+        span: { type: 'object', 'x-display': 'daterange', properties: { start: { type: 'string' }, end: { type: 'string' } } },
+        size: { type: 'object', 'x-display': 'dimensions', properties: { width: { type: 'number' }, height: { type: 'number' } } },
+      },
+    }, {
+      link: { href: 'https://example.com/p', host: 'example.com' },
+      span: { start: '2024-03-15', end: '2024-04-01' },
+      size: { width: 1920, height: 1080 },
+    });
+    expect(el.querySelector('a[href="https://example.com/p"]')).not.toBeNull();
+    expect(el.textContent).toContain('2024 \u2014');
+    expect(el.textContent).toContain('1920 \u00D7 1080');
+  });
+
+  it('does not auto-detect another shape when a forced renderer fails', async () => {
+    const el = await mount(geoSchema({ type: 'object', 'x-display': 'geo', properties: { width: { type: 'number' }, height: { type: 'number' } } }),
+      { loc: { width: 3, height: 4 } });
+    expect(el.textContent).not.toContain('\u00D7');
+    expect(el.textContent).toContain('Width');
+  });
+
+  it('lets a resolved x-display win over an overlapping auto-detected shape', async () => {
+    const value = { loc: { latitude: 1, longitude: 2, width: 3, height: 4 } };
+    const viaAllOf = await mount(geoSchema({ type: 'object', allOf: [{ 'x-display': 'dimensions' }] }), value);
+    expect(viaAllOf.textContent).toContain('3 \u00D7 4');
+    expect(viaAllOf.querySelector('a[href*="openstreetmap.org"]')).toBeNull();
+    const viaRef = await mount({
+      type: 'object',
+      $defs: { d: { type: 'object', 'x-display': 'dimensions' } },
+      properties: { loc: { $ref: '#/$defs/d' } },
+    }, value);
+    expect(viaRef.textContent).toContain('3 \u00D7 4');
+  });
+
+  it('renders mixed array members under every forced renderer without throwing', async () => {
+    for (const name of ['url', 'geo', 'daterange', 'dimensions']) {
+      const el = await mount(geoSchema({ type: 'array', 'x-display': name }), { loc: [null, {}, 7, { a: 'inner' }] });
+      expect(el.textContent).toContain('inner');
+      expect(el.textContent).toContain('7');
+    }
+    const plain = await mount(geoSchema({ type: 'array' }), { loc: [null, 'text', { a: 'obj' }] });
+    expect(plain.textContent).toContain('text');
+    expect(plain.textContent).toContain('obj');
+  });
 });

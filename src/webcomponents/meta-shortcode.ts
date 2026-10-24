@@ -277,17 +277,19 @@ export class MetaShortcode extends LitElement {
     if (this.dateTime === 'true') {
       return dateTimeField(value, schema, this.inputLayout, this.layout).display;
     }
-    // Check built-in x-display on raw schema (these only use the value, not schema metadata).
-    // A non-string x-display is ignored, and a forced renderer runs only when
-    // the value has its shape; otherwise rendering continues below.
-    const rawXDisplay = xDisplayOf(schema);
-    if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
-      const renderer = getBuiltinRenderer(rawXDisplay);
+    // The effective x-display is the raw schema's, else the resolved schema's.
+    // A non-string x-display is ignored. A forced built-in renderer runs only
+    // when the value has its shape; otherwise the value gets the normal
+    // rendering below. Auto-detection applies only when no x-display is set.
+    const resolvedSchema = schema ? resolveSchema(schema, schema) : null;
+    const xDisplay = xDisplayOf(schema) || xDisplayOf(resolvedSchema);
+    if (xDisplay && !xDisplay.startsWith('plugin:')) {
+      const renderer = getBuiltinRenderer(xDisplay);
       const rendered = renderer && renderBuiltin(renderer, value);
       if (rendered) return html`<span>${rendered}</span>`;
     }
 
-    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+    if (!xDisplay && value != null && typeof value === 'object' && !Array.isArray(value)) {
       const shape = detectShape(value);
       if (shape) return html`<span>${renderBuiltin(shape, value)}</span>`;
     }
@@ -298,17 +300,10 @@ export class MetaShortcode extends LitElement {
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
       // Resolve composition ($ref, allOf, oneOf, anyOf) for full metadata.
-      const resolved = resolveSchema(schema, schema);
-      if (resolved) schema = resolved;
+      if (resolvedSchema) schema = resolvedSchema;
 
-      // After resolution: x-display (including plugin), enums, then type.
-      const xDisplay = rawXDisplay || xDisplayOf(schema);
+      // After resolution: plugin x-display, enums, then type.
       if (xDisplay.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
-      if (xDisplay) {
-        const renderer = getBuiltinRenderer(xDisplay);
-        const rendered = renderer && renderBuiltin(renderer, value);
-        if (rendered) return html`<span>${rendered}</span>`;
-      }
       if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 

@@ -71,4 +71,31 @@ describe('[meta] x-display guards', () => {
     const numeric = await mount({ allOf: [{ type: 'string', 'x-display': true }] }, 'via allOf');
     expect(numeric.textContent).toContain('via allOf');
   });
+
+  it('renders valid forced url, daterange and dimensions values', async () => {
+    const url = await mount({ type: 'object', 'x-display': 'url' }, { href: 'https://example.com/p', host: 'example.com' });
+    expect(url.querySelector('a[href="https://example.com/p"]')).not.toBeNull();
+    const range = await mount({ type: 'object', 'x-display': 'daterange' }, { start: '2024-03-15', end: '2024-04-01' });
+    expect(range.textContent).toContain('2024 \u2014');
+    const dims = await mount({ type: 'object', 'x-display': 'dimensions' }, { width: 1920, height: 1080 });
+    expect(dims.textContent).toContain('1920 \u00D7 1080');
+  });
+
+  it('does not auto-detect another shape when a forced renderer fails', async () => {
+    const el = await mount(geo, { width: 3, height: 4 });
+    expect(el.textContent).not.toContain('\u00D7');
+    expect(el.textContent).toContain('{"width":3,"height":4}');
+  });
+
+  it('lets a resolved x-display win over an overlapping auto-detected shape', async () => {
+    const value = { latitude: 1, longitude: 2, width: 3, height: 4 };
+    const viaAllOf = await mount({ allOf: [{ type: 'object', 'x-display': 'dimensions' }] }, value);
+    expect(viaAllOf.textContent).toContain('3 \u00D7 4');
+    expect(viaAllOf.querySelector('a[href*="openstreetmap.org"]')).toBeNull();
+    const viaRef = await mount({ $ref: '#/$defs/d', $defs: { d: { type: 'object', 'x-display': 'dimensions' } } }, value);
+    expect(viaRef.textContent).toContain('3 \u00D7 4');
+    // A resolved x-display that fails selection skips auto-detection too.
+    const failed = await mount({ allOf: [{ type: 'object', 'x-display': 'url' }] }, value);
+    expect(failed.textContent).toContain(JSON.stringify(value));
+  });
 });
