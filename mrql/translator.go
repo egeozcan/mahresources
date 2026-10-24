@@ -1732,8 +1732,10 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 		// Match ResourceQuery.ShowWithSimilar exactly: the resource must have an
 		// image hash and another image_hashes row with the same DHash.
 		subquery := fmt.Sprintf(
-			"%s (SELECT 1 FROM image_hashes ih WHERE ih.resource_id = %s.id AND EXISTS (SELECT 1 FROM image_hashes i WHERE ih.d_hash = i.d_hash AND ih.id <> i.id))",
+			"%s (SELECT 1 FROM image_hashes ih WHERE ih.resource_id = %s.id AND EXISTS (SELECT 1 FROM image_hashes i WHERE ih.d_hash = i.d_hash AND ih.id <> i.id%s))",
 			existsOp, tc.tableName,
+			// Only a duplicate the caller can see counts.
+			tc.visibleRelated("i.resource_id", "resources"),
 		)
 		db = db.Where(subquery)
 	}
@@ -1952,8 +1954,10 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) (string, error) {
 	if len(f.Parts) == 1 && f.Parts[0].Value == "distance" && tc.similarTarget != nil && tc.entityType == EntityResource {
 		return fmt.Sprintf(
 			"COALESCE((SELECT MIN(%s) FROM resource_similarities rs "+
-				"WHERE (rs.resource_id1 = %d AND rs.resource_id2 = %s.id) OR (rs.resource_id2 = %d AND rs.resource_id1 = %s.id)), 255)",
-			SimilarPairDistance("rs"), tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName), nil
+				"WHERE ((rs.resource_id1 = %d AND rs.resource_id2 = %s.id) OR (rs.resource_id2 = %d AND rs.resource_id1 = %s.id))%s), 255)",
+			SimilarPairDistance("rs"), tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName,
+			// A target the caller cannot see has no distances, like a missing one.
+			tc.visibleRelated(strconv.FormatInt(tc.similarTarget.TargetID, 10), "resources")), nil
 	}
 
 	// <relation>.count → correlated COUNT(*) subquery (valid in ORDER BY on
@@ -2443,7 +2447,9 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 
 		case "groups":
 			rel, _ := lookupJunction(tc.entityType, "groups")
-			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", rel.junctionTable, rel.entityCol, tc.tableName))
+			// A junction row to a group the caller cannot see is left out before
+			// it joins, or it would add a row of its own to the NULL bucket.
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id%s", rel.junctionTable, rel.entityCol, tc.tableName, tc.visibleRelated("_gb_grp_jt.group_id", "groups")))
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_g ON _gb_g.id = _gb_grp_jt.group_id", tc.visibleTable("groups")))
 			// Group by the joined group's ID (unique per group) and display name.
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_g.id"}
@@ -2455,7 +2461,7 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			}
 			jtAlias := "_gb_" + fd.Column + "_jt"
 			relAlias := "_gb_" + fd.Column
-			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.%s = %s.id", rel.junctionTable, jtAlias, jtAlias, rel.entityCol, tc.tableName))
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.%s = %s.id%s", rel.junctionTable, jtAlias, jtAlias, rel.entityCol, tc.tableName, tc.visibleRelated(jtAlias+"."+rel.relatedCol, rel.relatedTable)))
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.id = %s.%s", tc.visibleTable(rel.relatedTable), relAlias, relAlias, jtAlias, rel.relatedCol))
 			// Names are not unique — group by the joined row's ID (identity) and display name.
 			exprMap[fieldName] = groupByRelExpr{selectExpr: relAlias + ".name", groupExpr: relAlias + ".id"}
