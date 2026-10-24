@@ -3,7 +3,9 @@ package plugin_system
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -513,20 +515,27 @@ func TestPluginBlockDefaultsPreserveExplicitEmptyArrays(t *testing.T) {
 // Plan 2026-10-24 section 1e: a plugin's block schema must not make the host
 // read a file the Lua sandbox cannot. The default loader opened file:// refs.
 func TestNewPluginBlockType_RefusesExternalSchemaRefs(t *testing.T) {
-	path := t.TempDir() + "/external.json"
+	path := filepath.Join(t.TempDir(), "external.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"type":"string"}`), 0o600))
+	// A Windows path has no leading slash and uses backslashes; this spells it
+	// file:///C:/... and keeps the JSON valid on every platform.
+	fileURL := url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(path), "/")}
 
 	for name, ref := range map[string]string{
-		"file":  "file://" + path,
+		"file":  fileURL.String(),
 		"http":  "http://127.0.0.1:1/s.json",
 		"https": "https://example.invalid/s.json",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := NewPluginBlockType(PluginBlockTypeConfig{
+			schema, err := json.Marshal(map[string]any{
+				"properties": map[string]any{"x": map[string]any{"$ref": ref}},
+			})
+			require.NoError(t, err)
+			_, err = NewPluginBlockType(PluginBlockTypeConfig{
 				PluginName:    "testplugin",
 				TypeName:      "plugin:testplugin:ext",
 				Label:         "Ext",
-				ContentSchema: `{"properties":{"x":{"$ref":"` + ref + `"}}}`,
+				ContentSchema: string(schema),
 			})
 			require.Error(t, err)
 			// LoadURLError has no Unwrap, so errors.Is cannot see the loader's error.

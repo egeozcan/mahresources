@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
-	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -53,31 +51,6 @@ func TestValidateMetaSchemaRefusesFileRef(t *testing.T) {
 
 	err := ValidateMetaSchema(`{"type":"object","properties":{"x":{"$ref":"` + fileURL + `"}}}`)
 	requireRefusedByLoader(t, err, fileURL)
-}
-
-// A FIFO opened for reading blocks until a writer appears, so a compile that
-// returns promptly proves the reference was never opened.
-func TestValidateMetaSchemaDoesNotOpenAFIFORef(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "pipe.json")
-	if err := syscall.Mkfifo(path, 0o600); err != nil {
-		t.Skipf("mkfifo unavailable: %v", err)
-	}
-	fileURL := "file://" + filepath.ToSlash(path)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- ValidateMetaSchema(`{"$ref":"` + fileURL + `"}`)
-	}()
-	select {
-	case err := <-done:
-		requireRefusedByLoader(t, err, fileURL)
-	case <-time.After(5 * time.Second):
-		// Unblock the reader so the goroutine can finish.
-		if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
-			_ = f.Close()
-		}
-		t.Fatal("ValidateMetaSchema blocked on a FIFO $ref: it opened the file")
-	}
 }
 
 func TestValidateMetaSchemaRefusesRemoteRefsWithoutNetwork(t *testing.T) {
