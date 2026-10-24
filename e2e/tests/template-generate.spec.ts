@@ -868,11 +868,12 @@ test.describe('Draft review panels and the keyboard', () => {
     await expect(page.getByTestId('generation-disclosure')).toHaveCount(0);
     await page.waitForTimeout(100);
     await page.getByTestId('template-bundle-generate-button').focus();
-    const tab = page.evaluate(() => new Promise<boolean>((resolve) => {
-      document.addEventListener('keydown', (e) => setTimeout(() => resolve(e.defaultPrevented), 0), { once: true });
-    }));
+    // The listener is installed before the key is pressed (an un-awaited evaluate could lose the race).
+    await page.evaluate(() => {
+      document.addEventListener('keydown', (e) => setTimeout(() => { (window as any).__tabPrevented = e.defaultPrevented; }, 0), { once: true });
+    });
     await page.keyboard.press('Tab');
-    expect(await tab).toBe(false);
+    await expect.poll(() => page.evaluate(() => (window as any).__tabPrevented)).toBe(false);
   });
 
   test('focus stays in the disclosure: Tab and Shift+Tab wrap, and the page behind is inert', async ({ page }) => {
@@ -883,6 +884,18 @@ test.describe('Draft review panels and the keyboard', () => {
     const dialog = page.getByTestId('generation-disclosure');
     await expect(page.getByTestId('generation-disclosure-cancel')).toBeFocused();
     const inside = () => page.evaluate(() => !!document.activeElement?.closest('[data-testid="generation-disclosure"]'));
+    // Focus has to move to a specific stop, not merely stay inside.
+    const cancel = page.getByTestId('generation-disclosure-cancel');
+    const send = page.getByTestId('generation-disclosure-send');
+    const list = page.getByTestId('generation-disclosure-sections');
+    await page.keyboard.press('Tab');
+    await expect(send).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(list).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(send).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(cancel).toBeFocused();
     for (const key of ['Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
       await page.keyboard.press(key);
       expect(await inside(), `after ${key}`).toBe(true);

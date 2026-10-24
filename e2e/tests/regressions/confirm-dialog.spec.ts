@@ -190,11 +190,12 @@ test.describe('confirm dialog focus containment', () => {
     });
     await expect(page.locator(DIALOG)).toHaveCount(0);
     await page.waitForTimeout(100);
-    const prevented = page.evaluate(() => new Promise<boolean>((resolve) => {
-      document.addEventListener('keydown', (e) => setTimeout(() => resolve(e.defaultPrevented), 0), { once: true });
-    }));
+    // The listener is installed before the key is pressed (an un-awaited evaluate could lose the race).
+    await page.evaluate(() => {
+      document.addEventListener('keydown', (e) => setTimeout(() => { (window as any).__tabPrevented = e.defaultPrevented; }, 0), { once: true });
+    });
     await page.keyboard.press('Tab');
-    expect(await prevented).toBe(false);
+    await expect.poll(() => page.evaluate(() => (window as any).__tabPrevented)).toBe(false);
   });
 
   test('a click on the backdrop or heading does not let Tab leave the dialog', async ({ page }) => {
@@ -204,12 +205,22 @@ test.describe('confirm dialog focus containment', () => {
     });
     const dialog = page.locator(DIALOG);
     await expect(dialog).toBeVisible();
-    const inside = () => page.evaluate(() => !!document.activeElement?.closest('[role="alertdialog"]'));
-    for (const [click, key] of [['heading', 'Shift+Tab'], ['heading', 'Tab'], ['backdrop', 'Shift+Tab'], ['backdrop', 'Tab']] as const) {
+    const cancel = dialog.getByRole('button', { name: 'Cancel' });
+    const confirm = dialog.getByRole('button', { name: 'Confirm' });
+    // Focus has to land on a specific control, not merely stay inside: a Tab
+    // that never moves focus passes an "inside" check.
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(confirm).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(confirm).toBeFocused();
+    for (const [click, key, lands] of [['heading', 'Shift+Tab', confirm], ['heading', 'Tab', cancel], ['backdrop', 'Shift+Tab', confirm], ['backdrop', 'Tab', cancel]] as const) {
       if (click === 'heading') await dialog.getByRole('heading', { name: 'Stay here' }).click();
       else await page.mouse.click(3, 3);
       await page.keyboard.press(key);
-      expect(await inside(), `${key} after a click on the ${click}`).toBe(true);
+      await expect(lands, `${key} after a click on the ${click}`).toBeFocused();
     }
     await expect(dialog).toBeVisible();
   });

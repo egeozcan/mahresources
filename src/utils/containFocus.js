@@ -5,51 +5,60 @@
  * cancel that timer when the dialog closes first, so a dialog answered sooner
  * left a trap armed on a removed element that swallowed every Tab on the page.
  *
- * This listens at document level, so it also holds after a mouse click on the
- * dialog's heading or backdrop has moved focus to <body>: the next Tab or
- * Shift+Tab lands on the dialog's first or last stop instead of leaving for the
- * browser's own UI, and a focus that lands outside the dialog is pulled back.
- * The rest of the page is expected to be inert as well; this covers the moves
- * inert cannot (focus on <body>, Tab past either end).
+ * Tab and Shift+Tab are handled here, at window level in the capture phase, so
+ * this runs before any other trap's document listener: a confirm raised from
+ * inside a modal that has its own x-trap (mass edit, plugin actions) would
+ * otherwise have that trap answer every Tab first and keep focus where it was.
+ * Alpine bundles its own copy of focus-trap, so its trap stack cannot be shared
+ * to pause it; taking the event before it is how the parent is paused. While a
+ * containment is active the topmost one owns Tab outright: it moves focus to
+ * the next or previous stop itself, wrapping at either end, and stops the event.
+ * Focus that lands outside the dialog, as after a mouse click on its heading or
+ * backdrop, is pulled back to it. The rest of the page is expected to be inert.
  */
 const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
+// Open containments, innermost last. Only the last one handles events.
+const stack = [];
 
 function stopsIn(root) {
   return [...root.querySelectorAll(TABBABLE)].filter((el) => el.getClientRects().length > 0 && !el.closest('[inert]'));
 }
 
+function onKeydown(event) {
+  const root = stack[stack.length - 1];
+  if (!root || event.key !== 'Tab' || !root.isConnected) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const stops = stopsIn(root);
+  if (!stops.length) return;
+  const at = stops.indexOf(document.activeElement);
+  let next;
+  if (at < 0) next = event.shiftKey ? stops.length - 1 : 0;
+  else next = (at + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
+  stops[next].focus();
+}
+
+function onFocusIn(event) {
+  const root = stack[stack.length - 1];
+  if (root?.isConnected && !root.contains(event.target)) stopsIn(root)[0]?.focus();
+}
+
 export function containFocus(root) {
   if (!root) return { stop() {} };
-  const onKeydown = (event) => {
-    if (event.key !== 'Tab' || !root.isConnected) return;
-    const stops = stopsIn(root);
-    if (!stops.length) {
-      event.preventDefault();
-      return;
-    }
-    const first = stops[0];
-    const last = stops[stops.length - 1];
-    const active = document.activeElement;
-    if (!root.contains(active)) {
-      event.preventDefault();
-      (event.shiftKey ? last : first).focus();
-    } else if (event.shiftKey && active === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-  const onFocusIn = (event) => {
-    if (root.isConnected && !root.contains(event.target)) stopsIn(root)[0]?.focus();
-  };
-  document.addEventListener('keydown', onKeydown, true);
-  document.addEventListener('focusin', onFocusIn, true);
+  if (!stack.length) {
+    window.addEventListener('keydown', onKeydown, true);
+    window.addEventListener('focusin', onFocusIn, true);
+  }
+  stack.push(root);
   return {
     stop() {
-      document.removeEventListener('keydown', onKeydown, true);
-      document.removeEventListener('focusin', onFocusIn, true);
+      const i = stack.lastIndexOf(root);
+      if (i >= 0) stack.splice(i, 1);
+      if (!stack.length) {
+        window.removeEventListener('keydown', onKeydown, true);
+        window.removeEventListener('focusin', onFocusIn, true);
+      }
     },
   };
 }

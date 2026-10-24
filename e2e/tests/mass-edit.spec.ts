@@ -239,6 +239,38 @@ test.describe('Mass Edit', () => {
     await expect(confirm).toBeHidden();
   });
 
+  // A confirm raised from inside the mass-edit modal (which keeps its own
+  // x-trap) must own the keyboard while it is open: Tab and Shift+Tab move
+  // between its two buttons, and closing it returns focus to Apply in the modal.
+  test('a confirm over the mass-edit modal takes Tab and Shift+Tab, then returns focus to Apply', async ({ page, resourcePage }) => {
+    await resourcePage.gotoList();
+    await page.goto(`/resources?tags=${tagId}`);
+    await page.waitForLoadState('load');
+    await page.getByRole('button', { name: /Mass edit all \d+ results/ }).click();
+    const dialog = page.getByRole('dialog', { name: /Mass edit/ });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('radio', { name: 'Clear owner' }).check();
+    const apply = dialog.getByRole('button', { name: 'Apply', exact: true });
+    await apply.click();
+
+    const confirm = page.getByRole('alertdialog', { name: 'Mass edit' });
+    const cancel = confirm.getByRole('button', { name: 'Cancel' });
+    const accept = confirm.getByRole('button', { name: 'Apply' });
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(accept).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(accept).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(cancel).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(confirm).toBeHidden();
+    await expect(apply).toBeFocused();
+  });
+
   // The error banner is at the top of a form long enough to scroll and Apply is
   // at the bottom, so setting the message alone left it off-screen — which is
   // the same "the button does nothing" report.
