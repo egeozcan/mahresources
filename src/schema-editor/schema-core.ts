@@ -141,13 +141,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       // Otherwise copy from extension. This preserves nested constraints
       // like spec.allOf:[{required:['height']}] during deep property merge.
       if (merged[key] && Array.isArray(merged[key])) {
-        // allOf [A, A] is allOf [A] and anyOf [A, A] is anyOf [A]: dropping
-        // repeats keeps repeated merges of the same branch from doubling the
-        // list at every level. (oneOf repeats are kept: they change "exactly
-        // one" counting.)
-        merged[key] = key !== 'oneOf'
-          ? uniqueBranches([...merged[key], ...extension[key]])
-          : [...merged[key], ...extension[key]];
+        // Repeats beyond two copies are dropped (uniqueBranches), so repeated
+        // merges of the same branch cannot double the list at every level
+        // while the merged result stays what any number of copies gives.
+        merged[key] = uniqueBranches([...merged[key], ...extension[key]]);
       } else {
         merged[key] = extension[key];
       }
@@ -158,13 +155,21 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
   return merged;
 }
 
+/**
+ * branches with at most two copies of each identical branch. mergeSchemas is
+ * not idempotent on its first application (a property type conflict takes the
+ * shallow path, a second merge of the same branch the deep path), but merging
+ * a branch a third time changes nothing more. Two copies therefore give the
+ * result of any number of copies, while the list can no longer double at
+ * every level.
+ */
 function uniqueBranches(branches: unknown[]): unknown[] {
-  const seen = new Set<string>();
+  const copies = new Map<string, number>();
   return branches.filter(branch => {
     const key = valueKey(branch);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const count = copies.get(key) ?? 0;
+    copies.set(key, count + 1);
+    return count < 2;
   });
 }
 
@@ -189,16 +194,33 @@ let refPath = new Set<unknown>();
 
 const recursiveRefsByRoot = new WeakMap<object, Set<unknown>>();
 
-/** Every $ref string anywhere inside value. */
-function refsWithin(value: unknown, into: Set<string>): Set<string> {
-  if (Array.isArray(value)) {
-    for (const item of value) refsWithin(item, into);
-  } else if (value !== null && typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) {
-      if (key === '$ref' && typeof item === 'string') into.add(item);
-      else refsWithin(item, into);
-    }
+// Keywords whose values are subschemas. Annotation and data keywords
+// (examples, default, const, enum, unknown x-* keywords) are never followed: a
+// "$ref" key inside them is data, not a reference.
+const SUBSCHEMA_KEYWORDS = ['additionalProperties', 'items', 'contains', 'not', 'if', 'then', 'else',
+  'propertyNames', 'additionalItems', 'unevaluatedItems', 'unevaluatedProperties'];
+const SUBSCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems', 'items'];
+const SUBSCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', '$defs', 'definitions'];
+
+/** Call visit on schema and on every subschema it holds, at schema-bearing keywords only. */
+export function visitSubschemas(schema: unknown, visit: (subschema: JSONSchema) => void): void {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return;
+  const s = schema as JSONSchema;
+  visit(s);
+  for (const key of SUBSCHEMA_KEYWORDS) visitSubschemas(ownValue(s, key), visit);
+  for (const key of SUBSCHEMA_LIST_KEYWORDS) {
+    const list = ownValue(s, key);
+    if (Array.isArray(list)) list.forEach(sub => visitSubschemas(sub, visit));
   }
+  for (const key of SUBSCHEMA_MAP_KEYWORDS) {
+    const map = ownValue(s, key);
+    if (map !== null && typeof map === 'object' && !Array.isArray(map)) Object.values(map).forEach(sub => visitSubschemas(sub, visit));
+  }
+}
+
+/** Every $ref of schema and of the subschemas it holds. */
+function refsWithin(schema: unknown, into: Set<string>): Set<string> {
+  visitSubschemas(schema, s => { if (typeof s.$ref === 'string') into.add(s.$ref); });
   return into;
 }
 
@@ -292,12 +314,58 @@ let schemaDepth = 0;
 
 export function withinDepth<T>(atLimit: T, walk: () => T): T {
   if (schemaDepth >= MAX_SCHEMA_DEPTH) return atLimit;
+  if (schemaDepth === 0) walkMemo = new Map();
   schemaDepth++;
   try {
     return walk();
   } finally {
     schemaDepth--;
+    if (schemaDepth === 0) walkMemo = null;
   }
+}
+
+// ─── Shared subtrees ─────────────────────────────────────────────────────────
+// A walker that evaluates every branch of a composition independently doubles
+// its work at each level of a chain like aN = anyOf [ref aN+1, ref aN+1], and
+// a diamond of distinct references to the same next level does the same. Only
+// references can make the work grow faster than the schema's written size.
+// Merging drops repeated branches (mergeSchemas), scoring iterates distinct
+// branches (a best score cannot change), and evaluateCondition evaluates a
+// referenced subtree once per value within one top-level walk (memoized),
+// which also covers oneOf, where repeats count.
+
+/** branches without repeats (deep, type-aware). */
+export function distinctBranches<T>(branches: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return branches.filter(branch => {
+    const key = valueKey(branch);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+let walkMemo: Map<string, Map<object, Map<unknown, unknown>>> | null = null;
+
+/**
+ * compute's result for (kind, target, data), computed once per top-level walk.
+ * target is a resolved $ref target. Only used when the result cannot depend
+ * on the reference path: neither ref nor any reference on the path is
+ * recursive (see onRefPath).
+ */
+function memoized<T>(kind: string, target: object, data: unknown, ref: unknown, root: JSONSchema, compute: () => T): T {
+  if (!walkMemo) return compute();
+  const recursive = recursiveRefs(root);
+  if (recursive.has(ref)) return compute();
+  for (const onPath of refPath) if (recursive.has(onPath)) return compute();
+  let byTarget = walkMemo.get(kind);
+  if (!byTarget) walkMemo.set(kind, (byTarget = new Map()));
+  let byData = byTarget.get(target);
+  if (!byData) byTarget.set(target, (byData = new Map()));
+  if (byData.has(data)) return byData.get(data) as T;
+  const result = compute();
+  byData.set(data, result);
+  return result;
 }
 
 export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
@@ -438,7 +506,9 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
       const siblings: JSONSchema = { ...conditionSchema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([conditionSchema.$ref], () => evaluateCondition(merged, data, rootSchema));
+      const ref = conditionSchema.$ref;
+      const evaluate = () => followingRefs([ref], () => evaluateCondition(merged, data, rootSchema));
+      return Object.keys(siblings).length ? evaluate() : memoized('condition', resolved, data, ref, rootSchema, evaluate);
     }
   }
 
@@ -622,7 +692,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         delete siblings[kw];
 
         let bestScore = -1;
-        for (const sub of schema[kw]) {
+        for (const sub of distinctBranches(schema[kw] as any[])) {
           // A branch referring back to a reference on the path is a cycle.
           if (sub.$ref && onRefPath(sub.$ref, rootSchema)) continue;
           const resolved = sub.$ref ? (() => {

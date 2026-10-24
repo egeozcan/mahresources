@@ -16,7 +16,7 @@ import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
 import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch } from './schema-core';
 import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
-import { schemaToTree } from './schema-tree-model';
+import { schemaToTree, treeToSchema } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
 
 // A nested element (a tree node editor inside the detail panel) that throws
@@ -738,6 +738,96 @@ describe('round 10 repros', () => {
   it('a stored null is data: a nullable recursive schema follows it', async () => {
     const root = { $defs: { N: { type: ['object', 'null'], properties: { child: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
     const el = await mountEl('schema-form-mode', { schema: root, value: { child: null } });
+    expect(el.textContent).not.toContain('Unresolvable reference');
+  });
+});
+
+describe('duplicate-branch chains stay linear in every walker', () => {
+  // aN = anyOf/oneOf [ref aN+1, ref aN+1] down to a string, and a diamond of
+  // distinct references to the same next level. A walker that iterates the
+  // branches independently doubles its work at every level.
+  function chain(kw: 'anyOf' | 'oneOf', depth: number) {
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < depth; i++) $defs[`a${i}`] = { [kw]: [{ $ref: `#/$defs/a${i + 1}` }, { $ref: `#/$defs/a${i + 1}` }] };
+    $defs[`a${depth}`] = { type: 'string' };
+    return { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a0' } } } as any;
+  }
+  function diamond(depth: number) {
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < depth; i++) {
+      $defs[`a${i}`] = { anyOf: [{ $ref: `#/$defs/b${i}` }, { $ref: `#/$defs/c${i}` }] };
+      $defs[`b${i}`] = { $ref: `#/$defs/a${i + 1}` };
+      $defs[`c${i}`] = { $ref: `#/$defs/a${i + 1}` };
+    }
+    $defs[`a${depth}`] = { type: 'string' };
+    return { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a0' } } } as any;
+  }
+  const roots: Array<[string, any]> = [['anyOf chain', chain('anyOf', 30)], ['oneOf chain', chain('oneOf', 30)], ['diamond', diamond(22)]];
+  const within2s = (label: string, run: () => unknown) => {
+    const started = Date.now();
+    run();
+    expect(Date.now() - started, label).toBeLessThan(2000);
+  };
+
+  for (const [name, root] of roots) {
+    const ref = { $ref: '#/$defs/a0' };
+    it(`${name}: scoring, conditions, defaults, isLeafSchema and flatten`, () => {
+      within2s('scoreSchemaMatch match', () => scoreSchemaMatch(ref, 'x', root));
+      within2s('scoreSchemaMatch miss', () => scoreSchemaMatch(ref, 5, root));
+      within2s('evaluateCondition miss', () => evaluateCondition(ref, 5, root));
+      within2s('evaluateCondition match', () => evaluateCondition(ref, 'x', root));
+      within2s('getDefaultValue', () => getDefaultValue(root, root));
+      within2s('getPreviewDefaultValue', () => getPreviewDefaultValue(root, root));
+      within2s('isLeafSchema', () => isLeafSchema(ref, root));
+      within2s('flattenSchema', () => flattenSchema(root));
+    });
+
+    it(`${name}: the display panel and [meta] render within 2s`, async () => {
+      for (const value of ['x', 5]) {
+        const started = Date.now();
+        await mountEl('schema-display-mode', { schema: { ...root, if: { properties: { v: ref } }, then: {} }, value: { v: value } });
+        await mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify({ ...ref, $defs: root.$defs }), 'data-value': JSON.stringify(value) });
+        await mountEl('schema-form-mode', { schema: { type: 'object', properties: { v: { anyOf: [ref, { type: 'number' }] } }, $defs: root.$defs }, value: { v: value } });
+        expect(Date.now() - started).toBeLessThan(2000);
+        document.body.replaceChildren();
+      }
+    });
+  }
+
+  it('evaluateCondition still counts duplicate oneOf matches', () => {
+    expect(evaluateCondition({ oneOf: [{ type: 'string' }, { type: 'string' }] }, 'x', {})).toBe(false);
+    expect(evaluateCondition({ anyOf: [{ type: 'string' }, { type: 'string' }] }, 'x', {})).toBe(true);
+  });
+});
+
+describe('annotation data never creates a cycle', () => {
+  it('renaming a definition rewrites references, not $ref keys inside data', async () => {
+    const schema = {
+      type: 'object',
+      properties: { x: { $ref: '#/$defs/A' } },
+      $defs: { A: { type: 'string', examples: [{ $ref: '#/$defs/A' }], default: { $ref: '#/$defs/A' }, allOf: [{ $ref: '#/$defs/A' }] } },
+    };
+    const el = await mountEl('schema-edit-mode', { schema });
+    const find = (node: any): any => node.isDef && node.name === 'A' ? node : [...(node.children ?? []), ...(node.variants ?? [])].map(find).find(Boolean);
+    el._selectedId = find(el._root).id;
+    el._handleNodeChange(new CustomEvent('node-change', { detail: { field: 'name', value: 'B' } }));
+    const out = treeToSchema(el._root);
+    expect(out.properties.x.$ref).toBe('#/$defs/B');
+    expect(out.$defs.B.allOf[0].$ref).toBe('#/$defs/B');
+    expect(out.$defs.B.examples[0].$ref).toBe('#/$defs/A');
+    expect(out.$defs.B.default.$ref).toBe('#/$defs/A');
+  });
+
+  it('a $ref inside examples or an unknown keyword is data, not a reference', async () => {
+    const root = {
+      $defs: {
+        A: { type: 'object', properties: { x: { $ref: '#/$defs/B' } } },
+        B: { type: 'object', properties: { y: { type: 'string' } }, examples: [{ $ref: '#/$defs/B' }], 'x-meta': { $ref: '#/$defs/B' } },
+      },
+      allOf: [{ $ref: '#/$defs/A' }, { $ref: '#/$defs/B' }],
+    };
+    expect(getDefaultValue(root, root)).toEqual({ x: { y: '' }, y: '' });
+    const el = await mountEl('schema-form-mode', { schema: root, value: {} });
     expect(el.textContent).not.toContain('Unresolvable reference');
   });
 });

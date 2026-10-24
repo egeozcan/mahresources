@@ -4,7 +4,7 @@ import { sharedStyles } from '../styles';
 import { schemaToTree, treeToSchema, detectDraft, getDefsPrefix } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
-import { escapeJsonPointer } from '../schema-core';
+import { escapeJsonPointer, visitSubschemas } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
 import { schemaFallback } from '../schema-fallback';
@@ -340,22 +340,15 @@ export class SchemaEditMode extends LitElement {
     }
   }
 
-  /** Recursively scan an object for $ref string values and replace matches */
+  /**
+   * Replace oldRef in obj and the subschemas it holds. Only schema-bearing
+   * keywords are followed: a "$ref" key inside examples, default or const is
+   * data and stays as written.
+   */
   private _updateRefsInObject(obj: any, oldRef: string, newRef: string) {
-    if (!obj || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) {
-      for (const item of obj) {
-        this._updateRefsInObject(item, oldRef, newRef);
-      }
-      return;
-    }
-    for (const [key, value] of Object.entries(obj)) {
-      if (key === '$ref' && value === oldRef) {
-        obj[key] = newRef;
-      } else if (typeof value === 'object' && value !== null) {
-        this._updateRefsInObject(value, oldRef, newRef);
-      }
-    }
+    visitSubschemas(obj, subschema => {
+      if (subschema.$ref === oldRef) subschema.$ref = newRef;
+    });
   }
 
   private _handleAddProperty() {
