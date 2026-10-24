@@ -28,6 +28,15 @@ type Draft struct {
 	Explanation string                 `json:"explanation,omitempty"`
 	Valid       bool                   `json:"valid"`
 	Issues      []shortcodes.LintIssue `json:"issues,omitempty"`
+	Repair      *Repair                `json:"repair,omitempty"`
+}
+
+// Repair mirrors application_context.TemplateRepair: the result's report of
+// the automatic repair round.
+type Repair struct {
+	Attempted bool   `json:"attempted"`
+	Applied   bool   `json:"applied"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // Preview is one HTML slot rendered through /v1/{carrier}/previewTemplate.
@@ -57,6 +66,10 @@ type Checks struct {
 	Truncated  bool `json:"truncated,omitempty"`
 	Malformed  bool `json:"malformed,omitempty"`
 	WrongShape bool `json:"wrongShape,omitempty"`
+	// RepairAttempted is a repair call that was made, Repaired one whose draft
+	// replaced the original. Both are read from the result's repair field.
+	RepairAttempted bool `json:"repairAttempted,omitempty"`
+	Repaired        bool `json:"repaired,omitempty"`
 	// MissingSlots are slots the case requires that came back absent or empty.
 	MissingSlots []string `json:"missingSlots,omitempty"`
 
@@ -179,8 +192,23 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		}
 	}
 
+	if d.Repair != nil {
+		checks.RepairAttempted = d.Repair.Attempted
+		checks.Repaired = d.Repair.Applied
+	}
+
+	// A repair reply that was not applied is discarded, so the draft that stands
+	// is the first call's; an applied one is the last call's.
+	judged := calls
+	if len(calls) > 1 && checks.RepairAttempted {
+		if checks.Repaired {
+			judged = calls[len(calls)-1:]
+		} else {
+			judged = calls[:1]
+		}
+	}
 	lengthStop := false
-	for _, call := range calls {
+	for _, call := range judged {
 		if call.FinishReason == "length" {
 			lengthStop = true
 		}

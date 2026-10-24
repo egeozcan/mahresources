@@ -85,6 +85,21 @@ func TestSummarizeGroupsByKindAndCarrierWithCacheRatio(t *testing.T) {
 	}
 }
 
+func TestSummarizeCountsRepairs(t *testing.T) {
+	applied := result("a", KindPair, "group", true)
+	applied.Checks.RepairAttempted, applied.Checks.Repaired = true, true
+	rejected := result("b", KindPair, "group", true)
+	rejected.Checks.RepairAttempted = true
+	s := Summarize([]CaseResult{applied, rejected, result("c", KindPair, "group", true), result("d", KindPair, "group", true)})
+	pair := s.Group("pair")
+	if pair.RepairAttemptedRate != 0.5 || pair.RepairedRate != 0.25 {
+		t.Fatalf("repair rates = %v / %v", pair.RepairAttemptedRate, pair.RepairedRate)
+	}
+	if !strings.Contains(FormatSummary(s), "repaired") {
+		t.Fatalf("summary text lacks the repair column:\n%s", FormatSummary(s))
+	}
+}
+
 func TestAggregateOnlyDropsDraftsAndRawContent(t *testing.T) {
 	r := result("a", KindPair, "group", true)
 	r.Draft = &Draft{Content: "secret draft"}

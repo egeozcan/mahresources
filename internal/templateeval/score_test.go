@@ -63,6 +63,55 @@ func TestScoreChecks(t *testing.T) {
 			},
 		},
 		{
+			name: "repair applied is read from the result's repair field", c: pairCase(),
+			draft: func() Draft {
+				d := pairDraft(`<h1>x</h1>`, ``)
+				d.Repair = &Repair{Attempted: true, Applied: true}
+				return d
+			}(),
+			calls:    []Call{{FinishReason: "stop"}, {FinishReason: "stop"}},
+			previews: okPreview(`<h1>x</h1>`),
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.RepairAttempted || !got.Repaired {
+					t.Fatalf("repair checks = attempted %t repaired %t", got.RepairAttempted, got.Repaired)
+				}
+			},
+			pass: true,
+		},
+		{
+			// The repair reply was cut off but discarded: the draft that stands
+			// came from the first call, which finished.
+			name: "a truncated repair reply that was not applied is not a truncation", c: pairCase(),
+			draft: func() Draft {
+				d := pairDraft(`<h1>x</h1>`, ``)
+				d.Repair = &Repair{Attempted: true, Reason: "not_better"}
+				return d
+			}(),
+			calls:    []Call{{FinishReason: "stop"}, {FinishReason: "length"}},
+			previews: okPreview(`<h1>x</h1>`),
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.RepairAttempted || got.Repaired || got.Truncated {
+					t.Fatalf("checks = %+v", got)
+				}
+			},
+			pass: true,
+		},
+		{
+			name: "a skipped repair is not an attempt", c: pairCase(),
+			draft: func() Draft {
+				d := pairDraft(`<h1>x</h1>`, ``)
+				d.Repair = &Repair{Reason: "budget"}
+				return d
+			}(),
+			previews: okPreview(`<h1>x</h1>`),
+			check: func(t *testing.T, got Checks, details Details) {
+				if got.RepairAttempted || got.Repaired {
+					t.Fatalf("checks = %+v", got)
+				}
+			},
+			pass: true,
+		},
+		{
 			name: "lint errors and warnings", c: pairCase(),
 			draft: pairDraft(`<h1>x</h1>`, ``,
 				shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: "[conditional] must be a block: [conditional]…[/conditional]"},

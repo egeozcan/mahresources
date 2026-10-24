@@ -147,8 +147,16 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 			}
 			var system, user []string
 			for _, s := range disclosure.Sections {
-				if s.Call != 0 || s.Bytes != len(s.Text) {
-					t.Fatalf("section %q: call %d bytes %d len %d", s.Key, s.Call, s.Bytes, len(s.Text))
+				if s.Bytes != len(s.Text) {
+					t.Fatalf("section %q: bytes %d len %d", s.Key, s.Bytes, len(s.Text))
+				}
+				// Call 1 is the possible repair, which continues call 0's
+				// messages; TestDisclosureListsTheRepairCall covers it.
+				if s.Call == 1 {
+					continue
+				}
+				if s.Call != 0 {
+					t.Fatalf("section %q: call %d", s.Key, s.Call)
 				}
 				switch s.Role {
 				case promptRoleSystem:
@@ -163,7 +171,7 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 				t.Fatalf("the provider request differs from the disclosed sections")
 			}
 			profile := disclosure.Destination.Profiles[0]
-			if len(disclosure.Destination.Profiles) != 1 || profile.Kind != kind || profile.MaxCalls != 1 ||
+			if len(disclosure.Destination.Profiles) != 1 || profile.Kind != kind || profile.MaxCalls != 2 ||
 				provider.seen.Model != profile.Model || provider.seen.MaxTokens != profile.MaxTokens || provider.seen.Thinking != profile.Thinking {
 				t.Fatalf("profile %+v, request model %q tokens %d", disclosure.Destination.Profiles, provider.seen.Model, provider.seen.MaxTokens)
 			}

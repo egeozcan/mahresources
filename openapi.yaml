@@ -3872,11 +3872,18 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
+                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                server makes one more call, the disclosed repair call, and keeps its answer only
+                if it scores better and still holds the draft's content; "repair" then reports
+                {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                A truncated draft is never repaired, and the field is absent when the first
+                draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).
@@ -9287,11 +9294,18 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
+                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                server makes one more call, the disclosed repair call, and keeps its answer only
+                if it scores better and still holds the draft's content; "repair" then reports
+                {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                A truncated draft is never repaired, and the field is absent when the first
+                draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).
@@ -11760,11 +11774,18 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
+                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                server makes one more call, the disclosed repair call, and keeps its answer only
+                if it scores better and still holds the draft's content; "repair" then reports
+                {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                A truncated draft is never repaired, and the field is absent when the first
+                draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).

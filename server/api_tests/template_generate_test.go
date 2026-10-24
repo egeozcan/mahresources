@@ -609,3 +609,46 @@ func TestTemplateGenerateClipsOversizedIdentity(t *testing.T) {
 		t.Fatalf("unsaved identity not clipped:\n%.400s", unsaved)
 	}
 }
+
+// repairingProvider answers a draft with a lint error first and a clean one
+// after, and counts its calls.
+type repairingProvider struct{ calls int }
+
+func (p *repairingProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+
+func (p *repairingProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	p.calls++
+	content := `{"slots":{"CustomHeader":"<div>[mrql]</div>","CustomHeaderCSS":""},"explanation":"Broken."}`
+	if p.calls > 1 {
+		content = `{"slots":{"CustomHeader":"<div>[property path=\"Name\"]</div>","CustomHeaderCSS":""},"explanation":"Fixed."}`
+	}
+	return application_context.TemplateDraftResponse{Content: content, FinishReason: "stop"}, nil
+}
+
+// One user request is one rate-limiter slot, whether or not the generator
+// makes a repair call to answer it (decision 4 of the plan).
+func TestTemplateGenerateRepairTakesNoSecondRateLimitSlot(t *testing.T) {
+	tc := SetupTestEnv(t)
+	provider := &repairingProvider{}
+	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{APIKey: "test", Timeout: 30 * time.Second}))
+	tc.AppCtx.SetTemplateGenerationRateLimiter(application_context.NewMRQLGenerationRateLimiter(1, time.Minute))
+
+	body := map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "a header"}
+	first := tc.generateTemplate("/v1/category/generateTemplate", body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request: %d %s", first.Code, first.Body.String())
+	}
+	var result application_context.TemplateGenerationResult
+	if err := json.Unmarshal(first.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || !result.Valid || result.Repair == nil || !result.Repair.Applied {
+		t.Fatalf("%d provider calls, result %#v", provider.calls, result)
+	}
+	if second := tc.generateTemplate("/v1/category/generateTemplate", body); second.Code != http.StatusTooManyRequests {
+		t.Fatalf("the repair call used the second slot: %d %s", second.Code, second.Body.String())
+	}
+	if provider.calls != 2 {
+		t.Fatalf("the limited request reached the provider: %d calls", provider.calls)
+	}
+}

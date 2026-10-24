@@ -128,6 +128,9 @@ type TemplateGenerationResult struct {
 	// Issues still lists every issue, plus those about the reply as a whole
 	// (truncation), which belong to no slot.
 	SlotIssues map[string][]shortcodes.LintIssue `json:"slotIssues,omitempty"`
+	// Repair reports the automatic repair round, when the first draft had
+	// errors a repair could address.
+	Repair *TemplateRepair `json:"repair,omitempty"`
 }
 
 // templateTruncationMessage is the issue for a reply cut off at max_tokens.
@@ -195,6 +198,7 @@ type defaultTemplateGenerator struct {
 	// slots is the process-wide provider semaphore (decision 4 of the plan). It
 	// is created with the generator, which the context copies share.
 	slots chan struct{}
+	now   func() time.Time
 }
 
 func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGenerationConfig) TemplateGenerator {
@@ -210,7 +214,7 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	if cfg.ProviderSlots <= 0 {
 		cfg.ProviderSlots = DefaultTemplateProviderSlots
 	}
-	return &defaultTemplateGenerator{provider: provider, config: cfg, slots: make(chan struct{}, cfg.ProviderSlots)}
+	return &defaultTemplateGenerator{provider: provider, config: cfg, slots: make(chan struct{}, cfg.ProviderSlots), now: time.Now}
 }
 
 func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
@@ -258,12 +262,18 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	sections := buildTemplatePromptSections(in, prompt)
 	kind := templateCallKind(in)
 	profile := g.config.profileFor(kind)
+	maxCalls := 1
+	if !g.config.RepairDisabled {
+		// The possible repair call is part of what the user approves.
+		maxCalls = 2
+		sections = append(sections, templateRepairSections()...)
+	}
 	disclosure := newTemplateDisclosure(g.provider.Endpoint(), []TemplateDisclosedProfile{{
 		Kind:      kind,
 		Model:     profile.Model,
 		Thinking:  profile.Thinking,
 		MaxTokens: profile.MaxTokens,
-		MaxCalls:  1,
+		MaxCalls:  maxCalls,
 	}}, sections)
 	return in, prompt, disclosure, nil
 }
@@ -280,22 +290,31 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 		return nil, ErrTemplateGenerationGroundingChanged
 	}
 
-	profile := disclosure.Destination.Profiles[0]
-	resp, err := g.callProvider(ctx, g.config.profileFor(profile.Kind), TemplateDraftRequest{
+	disclosed := disclosure.Destination.Profiles[0]
+	profile := g.config.profileFor(disclosed.Kind)
+	started := g.now()
+	first := TemplateDraftRequest{
 		System:    promptMessage(disclosure.Sections, 0, promptRoleSystem),
 		User:      promptMessage(disclosure.Sections, 0, promptRoleUser),
-		Model:     profile.Model,
-		Thinking:  profile.Thinking,
-		MaxTokens: profile.MaxTokens,
-	}, "draft", in)
+		Model:     disclosed.Model,
+		Thinking:  disclosed.Thinking,
+		MaxTokens: disclosed.MaxTokens,
+	}
+	resp, err := g.callProvider(ctx, profile, first, "draft", in)
 	if err != nil {
 		return nil, err
 	}
-
-	if in.Target == TemplateTargetBundle {
-		return finishBundle(in, resp)
+	draft, err := parseTemplateDraft(in, resp)
+	if err != nil {
+		return nil, err
 	}
-	return finishSingle(in, in.Target, resp)
+	draft, repair := g.repair(ctx, in, profile, first, resp, draft, promptMessage(disclosure.Sections, 1, promptRoleUser), started)
+	result, err := finalizeDraft(draft)
+	if err != nil {
+		return nil, err
+	}
+	result.Repair = repair
+	return result, nil
 }
 
 // callProvider makes one provider call under its profile's timeout and the
@@ -341,13 +360,22 @@ func (g *defaultTemplateGenerator) logCall(phase string, in TemplateGenerationIn
 		phase, templateCallKind(in), in.EntityType, u.Prompt, u.CacheHit, u.CacheMiss, u.Completion, u.Reasoning, finish, dur.Milliseconds())
 }
 
-// finishSingle parses a {content, explanation} draft for a slot or metaschema
-// target and validates it. Malformed JSON is a provider error (mirrors MRQL);
-// a syntactically-valid but semantically-invalid draft is returned with
-// valid:false so the user can review and apply anyway. A reply cut off at
-// max_tokens is never an error: whatever arrived is returned with valid:false
-// and the truncation issue.
-func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftResponse) (*TemplateGenerationResult, error) {
+// parseTemplateDraft parses a model reply into a draft and lints it. It stops
+// short of the decision to keep the draft: a repair may replace it first.
+func parseTemplateDraft(in TemplateGenerationInput, resp TemplateDraftResponse) (templateDraft, error) {
+	if in.Target == TemplateTargetBundle {
+		return parseBundleDraft(in, resp)
+	}
+	return parseSingleDraft(in, in.Target, resp)
+}
+
+// parseSingleDraft parses a {content, explanation} draft for a slot or
+// metaschema target and validates it. Malformed JSON is a provider error
+// (mirrors MRQL); a syntactically-valid but semantically-invalid draft is
+// returned with valid:false so the user can review and apply anyway. A reply
+// cut off at max_tokens is never an error: whatever arrived is returned with
+// valid:false and the truncation issue.
+func parseSingleDraft(in TemplateGenerationInput, target string, resp TemplateDraftResponse) (templateDraft, error) {
 	truncated := resp.FinishReason == "length"
 	var draft struct {
 		Content     string `json:"content"`
@@ -355,16 +383,16 @@ func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftR
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Content)), &draft); err != nil {
 		if truncated {
-			return truncatedTemplateResult(target), nil
+			return templateDraft{result: truncatedTemplateResult(target), truncated: true}, nil
 		}
-		return nil, fmt.Errorf("%w: provider returned invalid JSON", ErrTemplateGenerationProvider)
+		return templateDraft{}, fmt.Errorf("%w: provider returned invalid JSON", ErrTemplateGenerationProvider)
 	}
 	content := strings.TrimSpace(draft.Content)
 	// Nothing to review is the one shape that stays a provider error. Size and
 	// truncation are judged before the explanation, which only describes the
 	// draft: a draft without one is still reviewable.
 	if !truncated && content == "" {
-		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
+		return templateDraft{}, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
 	}
 
 	issues := []shortcodes.LintIssue{}
@@ -383,13 +411,13 @@ func finishSingle(in TemplateGenerationInput, target string, resp TemplateDraftR
 	if content != "" {
 		issues = append(issues, validateTemplateContent(target, in, content, singleSlotIsCSS(in))...)
 	}
-	return &TemplateGenerationResult{
+	return templateDraft{parsed: true, truncated: truncated, result: &TemplateGenerationResult{
 		Target:      target,
 		Content:     content,
 		Explanation: explanation,
 		Valid:       !hasErrorIssue(issues),
 		Issues:      issues,
-	}, nil
+	}}, nil
 }
 
 // templateExplanation trims and clips the model's explanation. A missing or
@@ -420,11 +448,12 @@ func truncatedTemplateResult(target string) *TemplateGenerationResult {
 	}
 }
 
-// finishBundle parses a {slots, explanation} draft. A reply cut off at
+// parseBundleDraft parses a {slots, explanation} draft. A reply cut off at
 // max_tokens degrades to a reviewable invalid result with the truncation
 // issue; one that is malformed although the model stopped on its own degrades
-// with a message telling the user to generate slots individually.
-func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*TemplateGenerationResult, error) {
+// with a message telling the user to generate slots individually. Neither has
+// a draft to repair.
+func parseBundleDraft(in TemplateGenerationInput, resp TemplateDraftResponse) (templateDraft, error) {
 	truncated := resp.FinishReason == "length"
 	var draft struct {
 		Slots       map[string]string `json:"slots"`
@@ -432,22 +461,22 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Content)), &draft); err != nil {
 		if truncated {
-			return truncatedTemplateResult(TemplateTargetBundle), nil
+			return templateDraft{result: truncatedTemplateResult(TemplateTargetBundle), truncated: true}, nil
 		}
-		return &TemplateGenerationResult{
+		return templateDraft{result: &TemplateGenerationResult{
 			Target: TemplateTargetBundle,
 			Valid:  false,
 			Issues: []shortcodes.LintIssue{{
 				Severity: shortcodes.SeverityError,
 				Message:  "The whole-template response was too large or malformed. Try generating slots individually.",
 			}},
-		}, nil
+		}}, nil
 	}
 	if len(draft.Slots) == 0 {
 		if truncated {
-			return truncatedTemplateResult(TemplateTargetBundle), nil
+			return templateDraft{result: truncatedTemplateResult(TemplateTargetBundle), truncated: true}, nil
 		}
-		return nil, fmt.Errorf("%w: provider returned no slots", ErrTemplateGenerationProvider)
+		return templateDraft{}, fmt.Errorf("%w: provider returned no slots", ErrTemplateGenerationProvider)
 	}
 
 	explanation, _ := templateExplanation(draft.Explanation, true)
@@ -474,9 +503,12 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 		requested[slotName] = true
 	}
 	// A pair is applied whole or not at all. A model that stopped on its own and
-	// returned half a pair broke the contract; a reply cut off part way through
-	// a pair merely ran out, so the half that arrived is kept for review with an
-	// issue naming the missing companion, and the client refuses to apply it.
+	// returned half a pair broke the contract: that is a pair error, which a
+	// repair may fix and which is a provider error if it stays. A reply cut off
+	// part way through a pair merely ran out, so the half that arrived is kept
+	// for review with an issue naming the missing companion, and the client
+	// refuses to apply it.
+	var pairErrors []templatePairError
 	halfPair := map[string]string{}
 	for _, slotName := range allowed {
 		if strings.HasSuffix(slotName, "CSS") || !requested[slotName+"CSS"] {
@@ -486,7 +518,12 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 		_, cssPresent := draft.Slots[slotName+"CSS"]
 		if htmlPresent != cssPresent {
 			if !truncated {
-				return nil, fmt.Errorf("%w: provider must return %s and %s together", ErrTemplateGenerationProvider, slotName, slotName+"CSS")
+				if htmlPresent {
+					pairErrors = append(pairErrors, templatePairError{Present: slotName, Missing: slotName + "CSS"})
+				} else {
+					pairErrors = append(pairErrors, templatePairError{Present: slotName + "CSS", Missing: slotName})
+				}
+				continue
 			}
 			if htmlPresent {
 				halfPair[slotName] = slotName + "CSS"
@@ -522,10 +559,10 @@ func finishBundle(in TemplateGenerationInput, resp TemplateDraftResponse) (*Temp
 		result.Issues = append(result.Issues, issues...)
 	}
 	if len(result.Slots) == 0 && !truncated {
-		return nil, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
+		return templateDraft{}, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
 	}
 	result.Valid = !hasErrorIssue(result.Issues)
-	return result, nil
+	return templateDraft{result: result, pairErrors: pairErrors, truncated: truncated, parsed: true}, nil
 }
 
 // singleSlotIsCSS reports whether a slot-target draft is a stylesheet.

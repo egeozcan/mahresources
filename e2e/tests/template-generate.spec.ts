@@ -498,9 +498,42 @@ test.describe('Generated drafts do not run before Apply', () => {
       await page.getByTestId('generate-button-CustomHeader').click();
       await sendDisclosure(page);
       await expect(page.getByTestId('generate-apply-CustomHeader')).toBeVisible();
+      // The status is display only: Apply does not depend on its wording.
+      const status = page.getByTestId('generate-status-CustomHeader');
+      if (kind === 'auto-repaired') await expect(status).toContainText('auto-repaired');
+      else await expect(status).not.toContainText('auto-repaired');
       await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
       await page.getByTestId('generate-apply-CustomHeader').click();
       await expect(page.locator('input[name="CustomHeader"]')).toHaveValue(`<h1>${kind}</h1>`);
+    });
+  }
+
+  for (const repaired of [true, false]) {
+    test(`the whole-template status ${repaired ? 'says' : 'does not say'} auto-repaired, and Apply is offered either way`, async ({ page }) => {
+      await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            target: 'bundle',
+            explanation: 'x',
+            slots: { CustomHeader: '<h1>Card</h1>', CustomHeaderCSS: '' },
+            valid: true,
+            ...(repaired ? { repair: { attempted: true, applied: true } } : {}),
+          }),
+        });
+      }));
+      await page.goto('/category/new');
+      await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+      await page.getByTestId('template-bundle-generate-button').click();
+      await sendDisclosure(page);
+      await expect(page.getByTestId('template-bundle-apply')).toBeVisible();
+      const status = page.getByTestId('template-bundle-status');
+      if (repaired) await expect(status).toContainText('auto-repaired');
+      else await expect(status).not.toContainText('auto-repaired');
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+      await page.getByTestId('template-bundle-apply').click();
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Card</h1>');
     });
   }
 

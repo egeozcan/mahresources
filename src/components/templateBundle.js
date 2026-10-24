@@ -539,10 +539,12 @@ export function templateBundle({ carrier } = {}) {
           snapshot,
           blocked,
         };
+        // Display only: Apply depends on the pending draft, never on this text.
+        const repairedNote = data?.repair?.applied ? ' (auto-repaired)' : '';
         if (this.pendingDraft.valid) {
-          this.notify(`Generated ${returned.length} slot(s). Review the draft below, then Apply.`, 'info');
+          this.notify(`Generated ${returned.length} slot(s)${repairedNote}. Review the draft below, then Apply.`, 'info');
         } else {
-          this.notify(`Generated ${returned.length} slot(s), but the draft has issues. Review it below before applying.`, 'warn');
+          this.notify(`Generated ${returned.length} slot(s)${repairedNote}, but the draft has issues. Review it below before applying.`, 'warn');
         }
       } catch (err) {
         if (requestId !== this._generationRequestId) return;

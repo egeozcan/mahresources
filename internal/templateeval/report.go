@@ -94,14 +94,18 @@ type GroupSummary struct {
 	CacheHitRatio float64 `json:"cacheHitRatio"`
 	MeanLatencyMS int64   `json:"meanLatencyMs"`
 	MaxLatencyMS  int64   `json:"maxLatencyMs"`
+	// RepairAttemptedRate and RepairedRate are the shares of runs whose first
+	// draft was sent for repair and whose repaired draft replaced it.
+	RepairAttemptedRate float64 `json:"repairAttemptedRate,omitempty"`
+	RepairedRate        float64 `json:"repairedRate,omitempty"`
 }
 
 // Summarize groups results by kind and by kind and carrier.
 func Summarize(results []CaseResult) Summary {
 	type acc struct {
-		g                                                                                     GroupSummary
-		provider, trunc, malformed, shape, lint, unknown, mrql, pairs, empty, preview, markup int
-		latency                                                                               int64
+		g                                                                                                            GroupSummary
+		provider, trunc, malformed, shape, lint, unknown, mrql, pairs, empty, preview, markup, repairTried, repaired int
+		latency                                                                                                      int64
 	}
 	groups := map[string]*acc{}
 	add := func(key string, r CaseResult) {
@@ -129,6 +133,8 @@ func Summarize(results []CaseResult) Summary {
 		count(&a.empty, len(c.RenderEmptySlots) > 0)
 		count(&a.preview, c.PreviewErrors > 0)
 		count(&a.markup, len(c.ExecutableMarkup) > 0 || len(c.RenderedExecutableMarkup) > 0)
+		count(&a.repairTried, c.RepairAttempted)
+		count(&a.repaired, c.Repaired)
 		for _, call := range r.Calls {
 			a.g.Calls++
 			a.g.Usage = a.g.Usage.add(call.Usage)
@@ -162,6 +168,7 @@ func Summarize(results []CaseResult) Summary {
 		a.g.MalformedRate, a.g.WrongShapeRate = rate(a.malformed), rate(a.shape)
 		a.g.UnknownShortcodeRate, a.g.MRQLErrorRate, a.g.IncompletePairRate = rate(a.unknown), rate(a.mrql), rate(a.pairs)
 		a.g.RenderEmptyRate, a.g.PreviewErrorRate, a.g.ExecutableMarkupRate = rate(a.empty), rate(a.preview), rate(a.markup)
+		a.g.RepairAttemptedRate, a.g.RepairedRate = rate(a.repairTried), rate(a.repaired)
 		if cached := a.g.Usage.CacheHit + a.g.Usage.CacheMiss; cached > 0 {
 			a.g.CacheHitRatio = float64(a.g.Usage.CacheHit) / float64(cached)
 		}
@@ -177,12 +184,12 @@ func Summarize(results []CaseResult) Summary {
 func FormatSummary(s Summary) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tmalformed\twrong shape\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\tcalls\tprompt tok\tcache hit\tmean ms")
+	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tmalformed\twrong shape\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\trepaired\tcalls\tprompt tok\tcache hit\tmean ms")
 	for _, g := range s.Groups {
-		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\n",
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\n",
 			g.Key, g.Runs, pct(g.PassRate), pct(g.ProviderErrorRate), pct(g.TruncationRate), pct(g.MalformedRate), pct(g.WrongShapeRate), pct(g.LintErrorRate),
 			pct(g.UnknownShortcodeRate), pct(g.MRQLErrorRate), pct(g.RenderEmptyRate), pct(g.PreviewErrorRate),
-			pct(g.ExecutableMarkupRate), g.Calls, g.Usage.Prompt, pct(g.CacheHitRatio), g.MeanLatencyMS)
+			pct(g.ExecutableMarkupRate), pct(g.RepairedRate), g.Calls, g.Usage.Prompt, pct(g.CacheHitRatio), g.MeanLatencyMS)
 	}
 	_ = w.Flush()
 	return b.String()

@@ -227,12 +227,15 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           text: this.generatedSlots ? this.generatedSlots[name] : this.generatedContent,
           css: name.endsWith('CSS') || this.mode === 'css',
         }));
+        // Display only: the repaired note is for the reader, and Apply depends on
+        // the pending draft, never on this text.
+        const repairedNote = data?.repair?.applied ? ' (auto-repaired)' : '';
         if (!this.generatedValid) {
-          this.generationStatus = 'Generated draft needs review. Read it below; Apply writes it anyway.';
+          this.generationStatus = `Generated draft needs review${repairedNote}. Read it below; Apply writes it anyway.`;
           this.generationError = issueText || 'Generated content has issues.';
           return;
         }
-        this.generationStatus = 'Generated draft is ready. Read it below, then Apply.';
+        this.generationStatus = `Generated draft is ready${repairedNote}. Read it below, then Apply.`;
       } catch (err) {
         if (requestId !== this._generationRequestId) return;
         this.generationError = err.message || 'Network error';
