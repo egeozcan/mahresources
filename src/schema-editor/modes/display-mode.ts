@@ -11,6 +11,8 @@ import {
   withTypedKeywords,
   ownValue,
   setOwn,
+  withSchemaBudget,
+  countSchemaWork,
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
@@ -95,6 +97,7 @@ function flattenForDisplay(
   const fields: DisplayField[] = [];
 
   for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+    countSchemaWork();
     const path = prefix ? `${prefix}.${key}` : key;
     const rawProp = withTypedKeywords(rawPropIn);
     const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);
@@ -255,7 +258,7 @@ export class SchemaDisplayMode extends LitElement {
 
   override render() {
     try {
-      return this._renderPanel();
+      return withSchemaBudget(() => this._renderPanel());
     } catch (error) {
       return schemaFallback('schema-display-mode', error, this.value);
     }

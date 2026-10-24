@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords, ownValue } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords, ownValue, withSchemaBudget } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
@@ -166,7 +166,7 @@ export class MetaShortcode extends LitElement {
 
   override render(): TemplateResult | typeof nothing {
     try {
-      return this._renderShortcode();
+      return withSchemaBudget(() => this._renderShortcode());
     } catch (error) {
       return schemaFallback('meta-shortcode', error, this._value);
     }

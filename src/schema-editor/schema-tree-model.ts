@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { isLabeledEnum, isSchemaValue } from './schema-core';
+import { isLabeledEnum, isSchemaValue, countSchemaWork } from './schema-core';
 
 // ─── Schema Node ─────────────────────────────────────────────────────────────
 
@@ -71,6 +71,7 @@ export function getDefsPrefix(schemaUri: string | undefined, originalSchema?: JS
 // ─── Schema → Tree ───────────────────────────────────────────────────────────
 
 export function schemaToTree(schema: JSONSchema, name = '', parentRequired: string[] = []): SchemaNode {
+  countSchemaWork();
   // Handle nullable type arrays: ["string", "null"] → base type + preserved array
   let baseType: string = '';
   let nullableTypeArray: string[] | null = null;

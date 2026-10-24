@@ -40,13 +40,15 @@ const SEED = Number(process.env.DIFF_SEED ?? 1);
 const CHAINS = process.env.DIFF_CHAINS !== '0';
 const CALL_BUDGET_MS = 250;
 const RENDER_BUDGET_MS = 1000;
+// A chain case may run to the work budget before failing as too complex,
+// which takes about half a second; it must still finish within 2s.
+const CHAIN_BUDGET_MS = 2000;
 
 // ─── Allowed differences ─────────────────────────────────────────────────────
 
 const ALLOWED_DIFFERENCES = {
   'labeled-oneof-kept': 'resolveSchema keeps a labeled oneOf whole; base merged it into its last const and title (so a labeled alternative also lent "Why" to the parent). Normalised: when head\'s resolved schema is a labeled enum, it is collapsed with base\'s own resolveSchema before comparing. flattenSchema fields and display/[meta] rendering are compared for every top-level property except one that reaches a labeled oneOf (head still runs for it, time-bounded).',
   'alternative-titles': 'A non-labeled oneOf/anyOf alternative no longer lends its title to the property. Normalised: base runs on the schema with those alternative titles removed, and resolved schemas are compared with them removed on both sides (unresolved nested schemas pass them through unchanged).',
-  'identical-branches-merged-once': 'Identical allOf/anyOf/oneOf branches are merged once when composition lists are concatenated. Normalised: duplicate branches are dropped from both outputs before comparing.',
   'non-conforming-values': 'A property whose generated value was deliberately made non-conforming (noise) renders differently on purpose: an object under a boolean renders as an object, non-primitives are never coerced. Rendering of that property only is not compared; every other property and every walker is.',
   'arrays-render-structurally': 'An array value under a non-array resolved type renders as its members; base printed String(array). Allowed per token: where base shows the array joined with commas, head must show the same stored array\'s members joined without separators (adjacent pills).',
   'yes-no-only-for-booleans': 'Under a boolean type only a real boolean renders as Yes/No. Allowed per token: where base shows Yes or No, head must show a non-boolean primitive stored in that field.',
@@ -55,7 +57,7 @@ const ALLOWED_DIFFERENCES = {
   'object-under-scalar-type': 'An object or array value whose schema resolves to a declared scalar type renders as the object. Allowed in [meta] when head printed exactly the JSON of that field\'s value.',
   'mixed-array-members': 'An array holding both objects and scalars shows the scalars as text. The display of that property only is not compared.',
   'union-scalar-shown': 'A property whose schema resolves to an object but whose stored value is a scalar or array is shown as that value; base flattened the object alternative and hid it. The display of that property only is not compared.',
-  'base-exponential-chains': 'Deep duplicate-branch chains (aN = anyOf/oneOf [ref aN+1, ref aN+1], and diamonds) are exponential at base. For a case with one, base is not run; head runs every walker and renderer under the time bound.',
+  'base-exponential-chains': 'Deep duplicate-branch chains (aN = anyOf/oneOf [ref aN+1, ref aN+1], and diamonds) are exponential at base. For a case with one, base is not run; head runs every walker and renderer under the time bound, and may finish with SchemaTooComplexError (rendered as the too-complex fallback). In any other case that error is a failure.',
   'raw-none-in-meta': '[meta] honours x-display raw/none. Generator: never emitted.',
   'x-color-filtering': 'Unsafe x-color values are ignored. Generator: only hex colors are emitted.',
   'index-keyed-options': 'Form and search option values are index keys. Not compared: neither the form nor search is rendered here.',
@@ -241,18 +243,8 @@ function normalise(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(value).sort()) {
-    let item = (value as Record<string, unknown>)[key];
+    const item = (value as Record<string, unknown>)[key];
     if (item === undefined) continue;
-    if ((key === 'allOf' || key === 'anyOf' || key === 'oneOf') && Array.isArray(item)) {
-      // identical-branches-merged-once
-      const seen = new Set<string>();
-      item = item.filter(branch => {
-        const k = JSON.stringify(normalise(branch));
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-    }
     out[key] = normalise(item);
   }
   return out;
@@ -411,8 +403,8 @@ async function compareCase(seed: number) {
     const started = performance.now();
     const h = outcome(() => normaliseHead(runHead()));
     const took = performance.now() - started;
-    if (took > CALL_BUDGET_MS) { differences.push({ check: `${name} time`, base: null, head: `${took.toFixed(0)}ms` }); return; }
-    if (h.error) { differences.push({ check: `${name} threw`, base: null, head: h }); return; }
+    if (took > (chain ? CHAIN_BUDGET_MS : CALL_BUDGET_MS)) { differences.push({ check: `${name} time`, base: null, head: `${took.toFixed(0)}ms` }); return; }
+    if (h.error && !(chain && h.error.startsWith('SchemaTooComplexError'))) { differences.push({ check: `${name} threw`, base: null, head: h }); return; }
     if (chain) return;
     const b = outcome(runBase);
     if (JSON.stringify(b) !== JSON.stringify(h)) differences.push({ check: name, base: b, head: h });
@@ -439,7 +431,8 @@ async function compareCase(seed: number) {
   {
     const started = performance.now();
     const hf = outcome(() => head.flattenSchema(schema));
-    if (performance.now() - started > CALL_BUDGET_MS || hf.error) differences.push({ check: 'flattenSchema time/threw', base: null, head: hf.error ?? 'slow' });
+    const tooComplexInChain = chain && hf.error?.startsWith('SchemaTooComplexError');
+    if (performance.now() - started > (chain ? CHAIN_BUDGET_MS : CALL_BUDGET_MS) || (hf.error && !tooComplexInChain)) differences.push({ check: 'flattenSchema time/threw', base: null, head: hf.error ?? 'slow' });
     else if (!chain) {
       const bf = outcome(() => base.flattenSchema(baseSchema));
       if (bf.error) differences.push({ check: 'flattenSchema', base: bf, head: hf });
@@ -463,8 +456,9 @@ async function compareCase(seed: number) {
       : undefined;
     const single = (root: any) => ({ ...root, properties: { [key]: root.properties[key] } });
     const headPanel = await rendered('schema-display-mode', el => { el.schema = single(schema); el.value = value; });
-    if (headPanel.took > RENDER_BUDGET_MS) differences.push({ check: `display ${key} time`, base: null, head: headPanel.took });
-    const panelExempt = exempt
+    if (headPanel.took > (chain ? CHAIN_BUDGET_MS : RENDER_BUDGET_MS)) differences.push({ check: `display ${key} time`, base: null, head: headPanel.took });
+    // The predicates resolve with head, so they only run where base is compared.
+    const panelExempt = chain ? undefined : exempt
       ?? (hasUnionScalar(prop, stored, schema) ? 'union-scalar-shown' : undefined)
       ?? (hasMixedArray(stored) ? 'mixed-array-members' : undefined);
     if (chain || panelExempt) { if (panelExempt) allowed.push(panelExempt); }
@@ -481,7 +475,7 @@ async function compareCase(seed: number) {
       el.setAttribute('data-value', stored === undefined ? '' : JSON.stringify(stored));
     });
     const headMeta = await metaFor('meta-shortcode', schema);
-    if (headMeta.took > RENDER_BUDGET_MS) differences.push({ check: `[meta] ${key} time`, base: null, head: headMeta.took });
+    if (headMeta.took > (chain ? CHAIN_BUDGET_MS : RENDER_BUDGET_MS)) differences.push({ check: `[meta] ${key} time`, base: null, head: headMeta.took });
     if (chain || exempt) { if (exempt) allowed.push(exempt); continue; }
     const baseMeta = await metaFor('base-meta-shortcode', baseSchema);
     const json = stored === undefined ? undefined : JSON.stringify(stored);

@@ -14,7 +14,7 @@ import './schema-editor';
 import './tree/detail-panel';
 import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET } from './schema-core';
 import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
 import { schemaToTree, treeToSchema } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
@@ -718,8 +718,9 @@ describe('round 10 repros', () => {
     const el = await mountEl('meta-shortcode', {}, {
       'data-path': 'v', 'data-schema': JSON.stringify({ $defs, $ref: '#/$defs/a0' }), 'data-value': JSON.stringify({ width: 3, height: 4 }),
     });
-    expect(el.textContent).toContain('3 \u00D7 4');
+    // Finishes quickly either way: rendered, or the visible too-complex fallback.
     expect(Date.now() - started).toBeLessThan(1000);
+    expect(el.textContent!.includes('3 \u00D7 4') || el.textContent!.includes('Schema too complex to display')).toBe(true);
   });
 
   it('a reference reached through a sibling allOf branch is not a cycle', async () => {
@@ -765,7 +766,12 @@ describe('duplicate-branch chains stay linear in every walker', () => {
   const roots: Array<[string, any]> = [['anyOf chain', chain('anyOf', 30)], ['oneOf chain', chain('oneOf', 30)], ['diamond', diamond(22)]];
   const within2s = (label: string, run: () => unknown) => {
     const started = Date.now();
-    run();
+    try {
+      run();
+    } catch (error) {
+      // Too complex is an acceptable, visible outcome; anything else is not.
+      if (!(error instanceof SchemaTooComplexError)) throw error;
+    }
     expect(Date.now() - started, label).toBeLessThan(2000);
   };
 
@@ -783,12 +789,16 @@ describe('duplicate-branch chains stay linear in every walker', () => {
     });
 
     it(`${name}: the display panel and [meta] render within 2s`, async () => {
-      for (const value of ['x', 5]) {
+      // Each render finishes within 2s: rendered, or the too-complex fallback.
+      const timed = async (label: string, mount: () => Promise<unknown>) => {
         const started = Date.now();
-        await mountEl('schema-display-mode', { schema: { ...root, if: { properties: { v: ref } }, then: {} }, value: { v: value } });
-        await mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify({ ...ref, $defs: root.$defs }), 'data-value': JSON.stringify(value) });
-        await mountEl('schema-form-mode', { schema: { type: 'object', properties: { v: { anyOf: [ref, { type: 'number' }] } }, $defs: root.$defs }, value: { v: value } });
-        expect(Date.now() - started).toBeLessThan(2000);
+        await mount();
+        expect(Date.now() - started, label).toBeLessThan(2000);
+      };
+      for (const value of ['x', 5]) {
+        await timed('display', () => mountEl('schema-display-mode', { schema: { ...root, if: { properties: { v: ref } }, then: {} }, value: { v: value } }));
+        await timed('[meta]', () => mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify({ ...ref, $defs: root.$defs }), 'data-value': JSON.stringify(value) }));
+        await timed('form', () => mountEl('schema-form-mode', { schema: { type: 'object', properties: { v: { anyOf: [ref, { type: 'number' }] } }, $defs: root.$defs }, value: { v: value } }));
         document.body.replaceChildren();
       }
     });
@@ -829,6 +839,153 @@ describe('annotation data never creates a cycle', () => {
     expect(getDefaultValue(root, root)).toEqual({ x: { y: '' }, y: '' });
     const el = await mountEl('schema-form-mode', { schema: root, value: {} });
     expect(el.textContent).not.toContain('Unresolvable reference');
+  });
+});
+
+describe('round 12: one work budget, base merge semantics', () => {
+  const TOO_COMPLEX = 'Schema too complex to display';
+
+  it('a later allOf override wins, as at base', async () => {
+    const $defs = { A: { title: 'Alpha', default: 'A' }, B: { title: 'Beta', default: 'B' } };
+    const A = { $ref: '#/$defs/A' }, B = { $ref: '#/$defs/B' };
+    const v = { allOf: [{ allOf: [A, B, A, B] }, { allOf: [A] }] };
+    const root = { $defs, type: 'object', properties: { v } } as any;
+    expect(resolveSchema(v, root)!.title).toBe('Alpha');
+    expect(getDefaultValue(v, root)).toBe('A');
+    const el = await mountEl('schema-display-mode', { schema: root, value: { v: 'z' } });
+    expect(el.textContent).toContain('Alpha');
+  });
+
+  it('a diamond of anyOf references in the form finishes within 2s', async () => {
+    const $defs: Record<string, any> = { a0: { type: 'string' }, b0: { type: 'string' } };
+    for (let i = 1; i <= 20; i++) {
+      $defs[`a${i}`] = { anyOf: [{ $ref: `#/$defs/a${i - 1}` }, { $ref: `#/$defs/b${i - 1}` }] };
+      $defs[`b${i}`] = { anyOf: [{ $ref: `#/$defs/a${i - 1}` }, { $ref: `#/$defs/b${i - 1}` }] };
+    }
+    const started = Date.now();
+    const el = await mountEl('schema-form-mode', { schema: { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a20' } } }, value: { v: 'x' } });
+    expect(Date.now() - started).toBeLessThan(2000);
+    const text = snapshot(el);
+    expect(text.includes(TOO_COMPLEX) || el.querySelector('select, input:not([type="hidden"])') !== null).toBe(true);
+  });
+
+  it('an annotated allOf chain as the root if evaluates once per subtree and picks the branch', async () => {
+    const $defs: Record<string, any> = { r0: { properties: { v: { const: 'a' } } } };
+    for (let i = 1; i <= 21; i++) $defs[`r${i}`] = { title: `R${i}`, allOf: [{ $ref: `#/$defs/r${i - 1}` }, { $ref: `#/$defs/r${i - 1}` }] };
+    const schema = {
+      $defs, type: 'object', properties: { v: { type: 'string' } }, if: { $ref: '#/$defs/r21' },
+      then: { properties: { thenOnly: { type: 'string', title: 'Then field' } } },
+      else: { properties: { elseOnly: { type: 'string', title: 'Else field' } } },
+    };
+    const value = { v: 'a', thenOnly: 'T1', elseOnly: 'E1' };
+    const started = Date.now();
+    const panel = await mountEl('schema-display-mode', { schema, value });
+    const form = await mountEl('schema-form-mode', { schema, value });
+    expect(Date.now() - started).toBeLessThan(2000);
+    for (const el of [panel, form]) expect(snapshot(el)).not.toContain(TOO_COMPLEX);
+    expect(panel.textContent).toContain('Then field');
+    expect(panel.textContent).not.toContain('Else field');
+  });
+
+  it('normal large schemas stay well under the budget', () => {
+    const properties: Record<string, any> = {};
+    for (let i = 0; i < 10002; i++) properties[`p${i}`] = { type: 'string', default: 'd' };
+    const wide = { type: 'object', properties };
+    let gate: any = { properties: { gate: { const: true } } };
+    for (let i = 0; i < 34; i++) gate = { allOf: [gate] };
+    withSchemaBudget(() => {
+      getDefaultValue(wide, wide);
+      getPreviewDefaultValue(wide, wide);
+      flattenSchema(wide);
+      resolveSchema(wide, wide);
+      evaluateCondition(gate, { gate: false }, {});
+    });
+    expect(schemaWorkDone()).toBeLessThan(SCHEMA_WORK_BUDGET / 2);
+  });
+
+  it('one budget spans a whole render, not each walker call', async () => {
+    const $defs: Record<string, any> = { a0: { type: 'string' }, b0: { type: 'string' } };
+    for (let i = 1; i <= 12; i++) {
+      $defs[`a${i}`] = { anyOf: [{ $ref: `#/$defs/a${i - 1}` }, { $ref: `#/$defs/b${i - 1}` }] };
+      $defs[`b${i}`] = { anyOf: [{ $ref: `#/$defs/a${i - 1}` }, { $ref: `#/$defs/b${i - 1}` }] };
+    }
+    const render = async (tag: string, count: number) => {
+      const properties: Record<string, any> = {};
+      const value: Record<string, string> = {};
+      for (let i = 0; i < count; i++) { properties[`p${i}`] = { $ref: '#/$defs/a12' }; value[`p${i}`] = 'x'; }
+      const el = await mountEl(tag, { schema: { $defs, type: 'object', properties }, value });
+      const text = snapshot(el);
+      document.body.replaceChildren();
+      return text;
+    };
+    for (const tag of ['schema-form-mode', 'schema-display-mode']) {
+      // One such field renders well under the budget; sixty of them pass it
+      // together, though each walker call stays as cheap as for one field.
+      expect(await render(tag, 1), tag).not.toContain('Schema too complex');
+      expect(await render(tag, 60), tag).toContain('Schema too complex to display');
+    }
+  });
+
+  it('an optional recursive object offers Initialize, as at base', async () => {
+    const root = { $defs: { N: { type: 'object', default: {}, properties: { child: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
+    const el = await mountEl('schema-form-mode', { schema: root, value: {} });
+    expect(el.textContent).not.toContain('Unresolvable reference');
+    expect(el.textContent).toContain('Initialize');
+  });
+});
+
+describe('schema-bearing keywords by draft', () => {
+  const ref = () => ({ $ref: '#/$defs/D' });
+  const positions: Array<[string, string, () => any]> = [
+    ['draft-04', 'properties', () => ({ properties: { p: ref() } })],
+    ['draft-04', 'patternProperties', () => ({ patternProperties: { '^x': ref() } })],
+    ['draft-04', 'additionalProperties', () => ({ additionalProperties: ref() })],
+    ['draft-04', 'items (schema)', () => ({ items: ref() })],
+    ['draft-04', 'items (array)', () => ({ items: [ref()] })],
+    ['draft-04', 'additionalItems', () => ({ additionalItems: ref() })],
+    ['draft-04', 'dependencies (schema)', () => ({ dependencies: { x: ref(), y: ['a', 'b'] } })],
+    ['draft-04', 'allOf', () => ({ allOf: [ref()] })],
+    ['draft-04', 'anyOf', () => ({ anyOf: [ref()] })],
+    ['draft-04', 'oneOf', () => ({ oneOf: [ref()] })],
+    ['draft-04', 'not', () => ({ not: ref() })],
+    ['draft-04', 'definitions', () => ({ definitions: { X: ref() } })],
+    ['draft-06', 'contains', () => ({ contains: ref() })],
+    ['draft-06', 'propertyNames', () => ({ propertyNames: ref() })],
+    ['draft-07', 'if', () => ({ if: ref() })],
+    ['draft-07', 'then', () => ({ then: ref() })],
+    ['draft-07', 'else', () => ({ else: ref() })],
+    ['2019-09', 'dependentSchemas', () => ({ dependentSchemas: { x: ref() } })],
+    ['2019-09', 'unevaluatedItems', () => ({ unevaluatedItems: ref() })],
+    ['2019-09', 'unevaluatedProperties', () => ({ unevaluatedProperties: ref() })],
+    ['2019-09', 'contentSchema', () => ({ contentSchema: ref() })],
+    ['2019-09', '$defs', () => ({ $defs: { X: ref() } })],
+    ['2020-12', 'prefixItems', () => ({ prefixItems: [ref()] })],
+  ];
+  for (const [draft, keyword, build] of positions) {
+    it(`${draft}: ${keyword} is visited`, () => {
+      const refs: string[] = [];
+      visitSubschemas(build(), s => { if (typeof s.$ref === 'string') refs.push(s.$ref); });
+      expect(refs).toEqual(['#/$defs/D']);
+    });
+  }
+
+  it('annotation and data keywords are not visited', () => {
+    const refs: string[] = [];
+    visitSubschemas({ examples: [ref()], default: ref(), const: ref(), enum: [ref()], 'x-meta': ref(), dependencies: { y: ['$ref'] } }, s => {
+      if (typeof s.$ref === 'string') refs.push(s.$ref);
+    });
+    expect(refs).toEqual([]);
+  });
+
+  it('renaming a definition updates a draft-07 dependencies reference', async () => {
+    const schema = { type: 'object', properties: { x: { type: 'string' } }, dependencies: { x: { $ref: '#/$defs/D' }, y: ['x'] }, $defs: { D: { type: 'object' } } };
+    const el = await mountEl('schema-edit-mode', { schema });
+    const find = (node: any): any => node.isDef && node.name === 'D' ? node : [...(node.children ?? []), ...(node.variants ?? [])].map(find).find(Boolean);
+    el._selectedId = find(el._root).id;
+    el._handleNodeChange(new CustomEvent('node-change', { detail: { field: 'name', value: 'E' } }));
+    const out = treeToSchema(el._root);
+    expect(out.dependencies.x.$ref).toBe('#/$defs/E');
+    expect(out.dependencies.y).toEqual(['x']);
   });
 });
 
@@ -899,17 +1056,20 @@ describe('large acyclic schemas behave as at base', () => {
     expect([...el.querySelectorAll<HTMLInputElement>('input[type="text"]')].map(i => i.value)).toEqual(['root', 'k1', 'k2']);
   });
 
-  it('an acyclic diamond of references expands linearly', () => {
-    // Each level refers to the next twice: without merging identical allOf
-    // branches once, the branch list doubles at every level.
+  it('an acyclic diamond of references finishes quickly: correct, or too complex', () => {
+    // Each level refers to the next twice, so base's merge semantics double
+    // the branch list at every level; the work budget stops it visibly.
     const $defs: Record<string, any> = {};
     for (let i = 0; i < 30; i++) $defs[`a${i}`] = { allOf: [{ $ref: `#/$defs/a${i + 1}` }, { $ref: `#/$defs/a${i + 1}` }] };
     $defs.a30 = { properties: { leaf: { type: 'string', default: 'L' } } };
     const root = { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a0' } } } as any;
+    const correctOrTooComplex = (run: () => void) => {
+      try { run(); } catch (error) { if (!(error instanceof SchemaTooComplexError)) throw error; }
+    };
     const started = Date.now();
-    expect(resolveSchema({ $ref: '#/$defs/a0' }, root)!.properties.leaf.type).toBe('string');
-    expect(getDefaultValue({ $ref: '#/$defs/a0' }, root)).toEqual({ leaf: 'L' });
-    isLeafSchema({ $ref: '#/$defs/a0' }, root);
+    correctOrTooComplex(() => expect(resolveSchema({ $ref: '#/$defs/a0' }, root)!.properties.leaf.type).toBe('string'));
+    correctOrTooComplex(() => expect(getDefaultValue({ $ref: '#/$defs/a0' }, root)).toEqual({ leaf: 'L' }));
+    correctOrTooComplex(() => isLeafSchema({ $ref: '#/$defs/a0' }, root));
     expect(Date.now() - started).toBeLessThan(2000);
   });
 });

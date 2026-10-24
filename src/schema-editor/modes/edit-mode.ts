@@ -4,7 +4,7 @@ import { sharedStyles } from '../styles';
 import { schemaToTree, treeToSchema, detectDraft, getDefsPrefix } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
-import { escapeJsonPointer, visitSubschemas } from '../schema-core';
+import { escapeJsonPointer, visitSubschemas, withSchemaBudget } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
 import { schemaFallback } from '../schema-fallback';
@@ -53,7 +53,7 @@ export class SchemaEditMode extends LitElement {
         return;
       }
       try {
-        this._root = schemaToTree(this.schema);
+        this._root = withSchemaBudget(() => schemaToTree(this.schema));
         this._schemaError = null;
       } catch (error) {
         this._root = null;
@@ -607,7 +607,7 @@ export class SchemaEditMode extends LitElement {
   override render() {
     if (this._schemaError) return schemaFallback('schema-edit-mode', this._schemaError, this.schema);
     try {
-      return this._renderEditor();
+      return withSchemaBudget(() => this._renderEditor());
     } catch (error) {
       return schemaFallback('schema-edit-mode', error, this.schema);
     }

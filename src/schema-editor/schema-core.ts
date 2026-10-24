@@ -67,6 +67,7 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
 // ─── Schema merging ──────────────────────────────────────────────────────────
 
 export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect'): JSONSchema {
+  countSchemaWork();
   const merged: JSONSchema = { ...base };
   for (const key in extension) {
     // A keyword value of a type no draft allows (an x-display of 7, a title
@@ -141,10 +142,11 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       // Otherwise copy from extension. This preserves nested constraints
       // like spec.allOf:[{required:['height']}] during deep property merge.
       if (merged[key] && Array.isArray(merged[key])) {
-        // Repeats beyond two copies are dropped (uniqueBranches), so repeated
-        // merges of the same branch cannot double the list at every level
-        // while the merged result stays what any number of copies gives.
-        merged[key] = uniqueBranches([...merged[key], ...extension[key]]);
+        // Copying a branch costs far less than visiting a node, so it counts
+        // as 1/64 of a visit: a doubling list still reaches the budget in
+        // about a tenth of a second instead of copying for seconds first.
+        countSchemaWork(Math.ceil((merged[key].length + extension[key].length) / 64));
+        merged[key] = [...merged[key], ...extension[key]];
       } else {
         merged[key] = extension[key];
       }
@@ -153,24 +155,6 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
     }
   }
   return merged;
-}
-
-/**
- * branches with at most two copies of each identical branch. mergeSchemas is
- * not idempotent on its first application (a property type conflict takes the
- * shallow path, a second merge of the same branch the deep path), but merging
- * a branch a third time changes nothing more. Two copies therefore give the
- * result of any number of copies, while the list can no longer double at
- * every level.
- */
-function uniqueBranches(branches: unknown[]): unknown[] {
-  const copies = new Map<string, number>();
-  return branches.filter(branch => {
-    const key = valueKey(branch);
-    const count = copies.get(key) ?? 0;
-    copies.set(key, count + 1);
-    return count < 2;
-  });
 }
 
 // ─── Schema resolution (composition keywords) ───────────────────────────────
@@ -197,10 +181,12 @@ const recursiveRefsByRoot = new WeakMap<object, Set<unknown>>();
 // Keywords whose values are subschemas. Annotation and data keywords
 // (examples, default, const, enum, unknown x-* keywords) are never followed: a
 // "$ref" key inside them is data, not a reference.
-const SUBSCHEMA_KEYWORDS = ['additionalProperties', 'items', 'contains', 'not', 'if', 'then', 'else',
+const SUBSCHEMA_KEYWORDS = ['additionalProperties', 'items', 'contains', 'not', 'if', 'then', 'else', 'contentSchema',
   'propertyNames', 'additionalItems', 'unevaluatedItems', 'unevaluatedProperties'];
 const SUBSCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems', 'items'];
-const SUBSCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', '$defs', 'definitions'];
+// dependencies (draft-04 to 07) maps a property either to a schema or to an
+// array of property names; only the schema values are followed.
+const SUBSCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
 
 /** Call visit on schema and on every subschema it holds, at schema-bearing keywords only. */
 export function visitSubschemas(schema: unknown, visit: (subschema: JSONSchema) => void): void {
@@ -292,6 +278,7 @@ export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merge
   delete merged.allOf;
   const followed: unknown[] = [];
   for (const sub of schema.allOf) {
+    countSchemaWork();
     let resolved: JSONSchema;
     if (sub.$ref) {
       const refResult = onRefPath(sub.$ref, rootSchema) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
@@ -314,8 +301,12 @@ let schemaDepth = 0;
 
 export function withinDepth<T>(atLimit: T, walk: () => T): T {
   if (schemaDepth >= MAX_SCHEMA_DEPTH) return atLimit;
-  if (schemaDepth === 0) walkMemo = new Map();
+  if (schemaDepth === 0) {
+    walkMemo = new Map();
+    if (budgetScopes === 0) workDone = 0;
+  }
   schemaDepth++;
+  countSchemaWork();
   try {
     return walk();
   } finally {
@@ -324,21 +315,68 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
   }
 }
 
-// ─── Shared subtrees ─────────────────────────────────────────────────────────
-// A walker that evaluates every branch of a composition independently doubles
-// its work at each level of a chain like aN = anyOf [ref aN+1, ref aN+1], and
-// a diamond of distinct references to the same next level does the same. Only
-// references can make the work grow faster than the schema's written size.
-// Merging drops repeated branches (mergeSchemas), scoring iterates distinct
-// branches (a best score cannot change), and evaluateCondition evaluates a
-// referenced subtree once per value within one top-level walk (memoized),
-// which also covers oneOf, where repeats count.
+// ─── Work budget ─────────────────────────────────────────────────────────────
+// References let a schema describe work far larger than its written size: a
+// chain like aN = anyOf [ref aN+1, ref aN+1], or a diamond of references to
+// the same next level, doubles at every level. Rather than special-case each
+// shape (every special case changed some result), the walkers count the work
+// they do (one unit per node visited), and past a generous budget they throw
+// SchemaTooComplexError. A doubling chain is cut at around 13 to 14 levels
+// (thousands of merged branches), within a fraction of a second, while every
+// normal schema, including 10,002 properties, stays far below it. The
+// budget covers one top-level operation: one render of the display panel,
+// form, search fields, tree editor or a [meta] element (withSchemaBudget), or
+// one top-level walker call outside those. Every entry point catches the error
+// and shows the raw value with "Schema too complex to display": a visible
+// failure, never a silently truncated result. Real schemas stay far below it.
 
-/** branches without repeats (deep, type-aware). */
+export const SCHEMA_WORK_BUDGET = 1_000_000;
+
+export class SchemaTooComplexError extends Error {
+  constructor() {
+    super(`Schema too complex: more than ${SCHEMA_WORK_BUDGET} schema nodes visited`);
+    this.name = 'SchemaTooComplexError';
+  }
+}
+
+let workDone = 0;
+let budgetScopes = 0;
+
+/** Run one top-level operation under a fresh work budget. */
+export function withSchemaBudget<T>(operation: () => T): T {
+  if (budgetScopes === 0) workDone = 0;
+  budgetScopes++;
+  try {
+    return operation();
+  } finally {
+    budgetScopes--;
+  }
+}
+
+/** The work counted in the current (or last) top-level operation. */
+export function schemaWorkDone(): number {
+  return workDone;
+}
+
+/** Count amount units of walker work; throws past the budget. Outside any operation it does nothing. */
+export function countSchemaWork(amount = 1): void {
+  if (budgetScopes === 0 && schemaDepth === 0) return;
+  workDone += amount;
+  if (workDone > SCHEMA_WORK_BUDGET) throw new SchemaTooComplexError();
+}
+
+// ─── Shared subtrees ─────────────────────────────────────────────────────────
+// Two walkers avoid repeating identical work without changing any result:
+// scoring takes a best score, which byte-identical branches cannot change, and
+// evaluateCondition evaluates a referenced subtree once per value within one
+// top-level walk (memoized; skipped wherever the reference path matters).
+
+/** branches without byte-identical repeats. */
 export function distinctBranches<T>(branches: readonly T[]): T[] {
+  countSchemaWork(branches.length);
   const seen = new Set<string>();
   return branches.filter(branch => {
-    const key = valueKey(branch);
+    const key = JSON.stringify(branch);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -405,6 +443,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       delete merged[keyword];
       const followed: unknown[] = [];
       for (const sub of schema[keyword]) {
+        countSchemaWork();
         let resolved: JSONSchema | null;
         if (sub.$ref) {
           const refResult = onRefPath(sub.$ref, rootSchema) ? null : resolveRef(sub.$ref, rootSchema);
@@ -661,6 +700,10 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 // ─── Schema match scoring ────────────────────────────────────────────────────
 
 export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: JSONSchema): number {
+  return withinDepth(0, () => scoreSchemaMatchUnguarded(schema, data, rootSchema));
+}
+
+function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema: JSONSchema): number {
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
@@ -1222,6 +1265,16 @@ export function flattenSchema(
   labelPrefix = '',
   depth = 0,
   rootSchema: JSONSchema | null = null,
+): FlatField[] {
+  return withinDepth([], () => flattenSchemaUnguarded(schema, prefix, labelPrefix, depth, rootSchema));
+}
+
+function flattenSchemaUnguarded(
+  schema: JSONSchema,
+  prefix: string,
+  labelPrefix: string,
+  depth: number,
+  rootSchema: JSONSchema | null,
 ): FlatField[] {
   if (depth > 10 || !schema) return [];
 

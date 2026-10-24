@@ -22,6 +22,8 @@ import {
   followingRefs,
   onFreshRefPath,
   mergeAllOf,
+  withSchemaBudget,
+  countSchemaWork,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 import { schemaFallback } from '../schema-fallback';
@@ -234,7 +236,7 @@ export class SchemaFormMode extends LitElement {
       if (changed.has('schema') && this._data && typeof this._data === 'object') {
         const before = JSON.stringify(this._data);
         try {
-          stripStaleKeys(this._data, this.schema, this.schema);
+          withSchemaBudget(() => stripStaleKeys(this._data, this.schema, this.schema));
         } catch (error) {
           // The data is kept as it was; render shows the fallback.
           this._schemaError = error;
@@ -314,9 +316,9 @@ export class SchemaFormMode extends LitElement {
 
     if (this._schemaError) return schemaFallback('schema-form-mode', this._schemaError, this._data);
     try {
-      return this._renderField(this.schema, this._data, (val: any) => {
+      return withSchemaBudget(() => this._renderField(this.schema, this._data, (val: any) => {
         this._emitChange(val);
-      }, this.schema, undefined, '');
+      }, this.schema, undefined, ''));
     } catch (error) {
       return schemaFallback('schema-form-mode', error, this._data);
     }
@@ -333,6 +335,7 @@ export class SchemaFormMode extends LitElement {
     if (this._renderDepth >= MAX_FORM_DEPTH) {
       return html`<div class="text-red-500 text-xs">Unresolvable reference: the schema refers to itself</div>`;
     }
+    countSchemaWork();
     this._renderDepth++;
     try {
       return this._renderFieldUnguarded(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
@@ -786,9 +789,11 @@ export class SchemaFormMode extends LitElement {
           const propData = ownValue(data, key);
           const hasData = propData !== undefined && propData !== null;
           const childParentRequired = isRequired || hasData;
-          // Stored data (null included) bounds the recursion, so a child with
-          // a stored value starts a fresh reference path (a recursive schema
-          // follows the data).
+          // Each property starts a fresh reference path: descending into a
+          // property is progress, and the form offers Initialize for an absent
+          // optional object instead of expanding it, so a recursive schema
+          // stops where the data does, as at base. A reference repeated at
+          // the same position (no property in between) is still a cycle.
           const renderChild = () => this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
             onChange({ ...data, [key]: val });
           }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired);
@@ -802,7 +807,7 @@ export class SchemaFormMode extends LitElement {
                 ? html`<p class="text-xs text-gray-500" id="${fieldId}-desc">${propSchema.description}</p>`
                 : nothing}
               <div>
-                ${propData !== undefined ? onFreshRefPath(renderChild) : renderChild()}
+                ${onFreshRefPath(renderChild)}
               </div>
             </div>
           `;

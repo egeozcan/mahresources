@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
-import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex } from '../schema-core';
+import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex, withSchemaBudget } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
 import { schemaFallback } from '../schema-fallback';
 
@@ -115,7 +115,7 @@ export class SchemaSearchMode extends LitElement {
     this.metaQuery = JSON.stringify(this._existingMeta);
     // Discard in-progress values: MRQL is now the source of truth.
     this._fields = [];
-    this._rebuildFields();
+    this._rebuildFieldsSafely();
     this.requestUpdate();
   }
 
@@ -126,17 +126,22 @@ export class SchemaSearchMode extends LitElement {
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('schema')) {
-      try {
-        this._schemaError = null;
-        this._rebuildFields();
-      } catch (error) {
-        this._schemaError = error;
-        this._fields = [];
-        this._hasFields = false;
-      }
+      this._rebuildFieldsSafely();
     }
     if (changed.has('metaQuery')) {
       this._parseMetaQuery();
+    }
+  }
+
+  /** _rebuildFields under one work budget; a schema that cannot be used shows the fallback. */
+  private _rebuildFieldsSafely() {
+    try {
+      this._schemaError = null;
+      withSchemaBudget(() => this._rebuildFields());
+    } catch (error) {
+      this._schemaError = error;
+      this._fields = [];
+      this._hasFields = false;
     }
   }
 
@@ -446,7 +451,7 @@ export class SchemaSearchMode extends LitElement {
   override render() {
     if (this._schemaError) return schemaFallback('schema-search-mode', this._schemaError);
     try {
-      return this._renderFields();
+      return withSchemaBudget(() => this._renderFields());
     } catch (error) {
       return schemaFallback('schema-search-mode', error);
     }
