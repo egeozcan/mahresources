@@ -14,7 +14,8 @@ import './schema-editor';
 import './tree/detail-panel';
 import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch } from './schema-core';
+import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
 import { schemaToTree } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
 
@@ -667,6 +668,122 @@ describe('malformed schemas fall back at each entry point', () => {
       expect(results).toEqual(EXPECTED[name]);
     });
   }
+});
+
+// ─── Class A: cycle detection is by path, not by depth ───────────────────────
+
+describe('branching reference cycles', () => {
+  const branching: Array<[string, any]> = [
+    ['two-branch self allOf', { r: { allOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }] } }],
+    ['mutual a<->b through allOf', { r: { allOf: [{ $ref: '#/$defs/b' }] }, b: { allOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }] } }],
+    ['self through oneOf and anyOf', { r: { oneOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }, { type: 'string' }], anyOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }] } }],
+  ];
+
+  for (const [name, defs] of branching) {
+    it(`${name}: every walker and entry point finishes within 2s`, async () => {
+      const root = { $defs: defs, type: 'object', properties: { v: { $ref: '#/$defs/r' } } } as any;
+      const ref = { $ref: '#/$defs/r' };
+      const started = Date.now();
+      resolveSchema(ref, root);
+      flattenSchema(root);
+      getDefaultValue(root, root);
+      getPreviewDefaultValue(root, root);
+      evaluateCondition(ref, {}, root);
+      isLeafSchema(ref, root);
+      scoreSchemaMatch(ref, {}, root);
+      stripStaleKeys({ v: {} }, root, root);
+      for (const el of [
+        await mountEl('schema-display-mode', { schema: root, value: { v: {} } }),
+        await mountEl('schema-form-mode', { schema: root, value: { v: {} } }),
+        await mountEl('schema-search-mode', { schema: JSON.stringify(root), metaQuery: '[]' }),
+        await mountEl('schema-edit-mode', { schema: root }),
+        await mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify({ ...ref, $defs: defs }), 'data-value': '{}' }),
+      ]) expect(snapshot(el)).not.toContain('Schema could not be used');
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+  }
+});
+
+describe('large acyclic schemas behave as at base', () => {
+  it('34 nested allOf layers still evaluate the gate', () => {
+    let gate: any = { properties: { gate: { const: true } } };
+    for (let i = 0; i < 34; i++) gate = { allOf: [gate] };
+    expect(evaluateCondition(gate, { gate: false }, {})).toBe(false);
+    expect(evaluateCondition(gate, { gate: true }, {})).toBe(true);
+  });
+
+  it('34 nested allOf layers in if keep else-only data in the form', async () => {
+    let gate: any = { properties: { gate: { const: true } } };
+    for (let i = 0; i < 34; i++) gate = { allOf: [gate] };
+    const schema = {
+      type: 'object', properties: { gate: { type: 'boolean' } }, if: gate,
+      then: { properties: { thenOnly: { type: 'string' } } },
+      else: { properties: { elseOnly: { type: 'string' } } },
+    };
+    const el = await mountEl('schema-form-mode', { schema, value: { gate: false, elseOnly: 'keep' } });
+    expect([...el.querySelectorAll<HTMLInputElement>('input[type="text"]')].map(i => i.value)).toContain('keep');
+  });
+
+  it('10,002 properties all get defaults', () => {
+    const properties: Record<string, any> = {};
+    for (let i = 0; i < 10002; i++) properties[`p${i}`] = { type: 'string', default: 'd' };
+    const schema = { type: 'object', properties };
+    const defined = (o: object) => Object.values(o).filter(v => v !== undefined);
+    expect(defined(getDefaultValue(schema, schema))).toHaveLength(10002);
+    expect(defined(getPreviewDefaultValue(schema, schema))).toHaveLength(10002);
+  });
+
+  it('a 65-deep chain of nested objects still renders its input', async () => {
+    let schema: any = { type: 'string' };
+    let value: any = 'deep';
+    for (let i = 0; i < 65; i++) { schema = { type: 'object', properties: { n: schema } }; value = { n: value }; }
+    const el = await mountEl('schema-form-mode', { schema, value });
+    expect([...el.querySelectorAll<HTMLInputElement>('input[type="text"]')].map(i => i.value)).toEqual(['deep']);
+    expect(el.textContent).not.toContain('Unresolvable reference');
+  });
+
+  it('a recursive schema follows stored data as deep as it goes', async () => {
+    const defs = { node: { type: 'object', properties: { name: { type: 'string' }, child: { $ref: '#/$defs/node' } } } };
+    const schema = { $defs: defs, $ref: '#/$defs/node' };
+    const value = { name: 'n0', child: { name: 'n1', child: { name: 'n2' } } };
+    const el = await mountEl('schema-form-mode', { schema, value });
+    const names = [...el.querySelectorAll<HTMLInputElement>('input[type="text"]')].map(i => i.value);
+    // Each stored level renders, and only those: the form does not expand an
+    // absent optional object.
+    expect(names).toEqual(['n0', 'n1', 'n2']);
+    // Defaults have no data to follow, so the repeated reference is unresolved.
+    expect(getDefaultValue(schema, schema)).toEqual({ name: '', child: undefined });
+    // The condition walker also descends into the data: the nested name fails.
+    const cond = { $defs: { node: { properties: { name: { const: 'x' }, child: { $ref: '#/$defs/node' } } } }, $ref: '#/$defs/node' };
+    expect(evaluateCondition(cond, { name: 'x', child: { name: 'y' } }, cond)).toBe(false);
+    expect(evaluateCondition(cond, { name: 'x', child: { name: 'x' } }, cond)).toBe(true);
+    // Reaching the nested level through allOf meets "node" again while it is
+    // still on the outer path; descending into the stored value starts fresh.
+    const viaAllOf = { $defs: { node: { properties: { name: { const: 'x' }, child: { allOf: [{ $ref: '#/$defs/node' }] } } } }, $ref: '#/$defs/node' };
+    expect(evaluateCondition(viaAllOf, { name: 'x', child: { name: 'y' } }, viaAllOf)).toBe(false);
+  });
+
+  it('a recursive schema through array items follows the stored items', async () => {
+    const defs = { node: { type: 'object', properties: { name: { type: 'string' }, kids: { type: 'array', items: { $ref: '#/$defs/node' } } } } };
+    const schema = { $defs: defs, $ref: '#/$defs/node' };
+    const value = { name: 'root', kids: [{ name: 'k1', kids: [{ name: 'k2' }] }] };
+    const el = await mountEl('schema-form-mode', { schema, value });
+    expect([...el.querySelectorAll<HTMLInputElement>('input[type="text"]')].map(i => i.value)).toEqual(['root', 'k1', 'k2']);
+  });
+
+  it('an acyclic diamond of references expands linearly', () => {
+    // Each level refers to the next twice: without merging identical allOf
+    // branches once, the branch list doubles at every level.
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < 30; i++) $defs[`a${i}`] = { allOf: [{ $ref: `#/$defs/a${i + 1}` }, { $ref: `#/$defs/a${i + 1}` }] };
+    $defs.a30 = { properties: { leaf: { type: 'string', default: 'L' } } };
+    const root = { $defs, type: 'object', properties: { v: { $ref: '#/$defs/a0' } } } as any;
+    const started = Date.now();
+    expect(resolveSchema({ $ref: '#/$defs/a0' }, root)!.properties.leaf.type).toBe('string');
+    expect(getDefaultValue({ $ref: '#/$defs/a0' }, root)).toEqual({ leaf: 'L' });
+    isLeafSchema({ $ref: '#/$defs/a0' }, root);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });
 
 describe('pills with hand-written options', () => {

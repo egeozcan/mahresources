@@ -18,6 +18,10 @@ import {
   withTypedKeywords,
   ownValue,
   setOwn,
+  onRefPath,
+  followingRefs,
+  onFreshRefPath,
+  mergeAllOf,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 import { schemaFallback } from '../schema-fallback';
@@ -59,8 +63,11 @@ function isMultipleOf(n: number, m: number): boolean {
   return Math.abs(quotient - Math.round(quotient)) <= 1e-9 * Math.max(1, Math.abs(quotient));
 }
 
-/** How deep form rendering nests before treating the schema as a cycle. */
-const MAX_FORM_DEPTH = 64;
+/**
+ * A last resort against a stack overflow on pathological acyclic input; cycles
+ * are detected by reference path, so real schemas never come close.
+ */
+const MAX_FORM_DEPTH = 1000;
 
 /** The option key of a stored value that matches no choice. */
 const CURRENT_CHOICE_KEY = 'current';
@@ -319,12 +326,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
-  /**
-   * A $ref cycle (resolveRef's target keeps its own $ref through the merge)
-   * would recurse forever, so rendering stops at a fixed nesting depth and
-   * shows the unresolved-reference message there. Depth only, no step budget:
-   * a large form legitimately makes many calls.
-   */
+  /** _renderFieldUnguarded behind the last-resort nesting limit. */
   private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean, parentRequired?: boolean): TemplateResult | typeof nothing {
     if (this._renderDepth >= MAX_FORM_DEPTH) {
       return html`<div class="text-red-500 text-xs">Unresolvable reference: the schema refers to itself</div>`;
@@ -343,12 +345,16 @@ export class SchemaFormMode extends LitElement {
     schema = withTypedKeywords(schema);
     // Handle $ref
     if (schema.$ref) {
-      const resolved = resolveRef(schema.$ref, rootSchema);
+      // A reference already being expanded on this path is a cycle.
+      const resolved = onRefPath(schema.$ref) ? null : resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const siblings: JSONSchema = { ...schema };
         delete siblings.$ref;
         const mergedSchema = mergeSchemas(resolved, siblings);
-        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
+        const render = () => {
+          return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
+        };
+        return followingRefs([schema.$ref], render);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${valueText(schema.$ref)}</div>`;
     }
@@ -365,21 +371,11 @@ export class SchemaFormMode extends LitElement {
 
     // Handle allOf - merge all schemas
     if (schema.allOf && Array.isArray(schema.allOf)) {
-      let merged: JSONSchema = { ...schema };
-      delete merged.allOf;
-      for (const sub of schema.allOf) {
-        let resolved: JSONSchema;
-        if (sub.$ref) {
-          const refResult = resolveRef(sub.$ref, rootSchema);
-          const siblings: JSONSchema = { ...sub };
-          delete siblings.$ref;
-          resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-        } else {
-          resolved = sub;
-        }
-        if (resolved) merged = mergeSchemas(merged, resolved);
-      }
-      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
+      const { merged, followed } = mergeAllOf(schema, rootSchema);
+      const render = () => {
+        return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
+      };
+      return followingRefs(followed, render);
     }
 
     // Handle anyOf
@@ -788,6 +784,11 @@ export class SchemaFormMode extends LitElement {
           const propData = ownValue(data, key);
           const hasData = propData !== undefined && propData !== null;
           const childParentRequired = isRequired || hasData;
+          // Stored data bounds the recursion, so a child with data starts a
+          // fresh reference path (a recursive schema follows the data).
+          const renderChild = () => this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
+            onChange({ ...data, [key]: val });
+          }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired);
 
           return html`
             <div>
@@ -798,9 +799,7 @@ export class SchemaFormMode extends LitElement {
                 ? html`<p class="text-xs text-gray-500" id="${fieldId}-desc">${propSchema.description}</p>`
                 : nothing}
               <div>
-                ${this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
-                  onChange({ ...data, [key]: val });
-                }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired)}
+                ${hasData ? onFreshRefPath(renderChild) : renderChild()}
               </div>
             </div>
           `;
@@ -1023,11 +1022,11 @@ export class SchemaFormMode extends LitElement {
             return html`
             <div class="flex gap-2 items-start">
               <div class="flex-grow">
-                ${this._renderField(schema.items || inferSchema(item), item, (val: any) => {
+                ${onFreshRefPath(() => this._renderField(schema.items || inferSchema(item), item, (val: any) => {
                   const updated = [...data];
                   updated[index] = val;
                   onChange(updated);
-                }, rootSchema, undefined, itemPath)}
+                }, rootSchema, undefined, itemPath))}
               </div>
               <button type="button"
                 title="Remove item"

@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth, onRefPath, followingRefs, mergeAllOf } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -24,12 +24,13 @@ function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boo
   // $ref: resolve and check the resolved schema
   if (schema.$ref) {
     if (!rootSchema) return false; // cannot resolve without root
+    if (onRefPath(schema.$ref)) return false; // a cycle
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (!resolved) return false;
     const siblings: JSONSchema = { ...schema };
     delete siblings.$ref;
     const merged = mergeSchemas(resolved, siblings);
-    return isLeafSchema(merged, rootSchema);
+    return followingRefs([schema.$ref], () => isLeafSchema(merged, rootSchema));
   }
 
   // Labeled enum (oneOf with const+title) renders as a simple dropdown — it's a leaf
@@ -41,21 +42,8 @@ function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boo
 
   // allOf: merge all entries and check the merged result
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema | null;
-      if (sub.$ref) {
-        const refResult = rootSchema ? resolveRef(sub.$ref, rootSchema) : null;
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return isLeafSchema(merged, rootSchema);
+    const { merged, followed } = mergeAllOf(schema, rootSchema);
+    return followingRefs(followed, () => isLeafSchema(merged, rootSchema));
   }
 
   // Conditional schemas render nested sub-forms

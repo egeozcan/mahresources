@@ -141,7 +141,12 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       // Otherwise copy from extension. This preserves nested constraints
       // like spec.allOf:[{required:['height']}] during deep property merge.
       if (merged[key] && Array.isArray(merged[key])) {
-        merged[key] = [...merged[key], ...extension[key]];
+        // allOf [A, A] is allOf [A]: dropping repeats keeps repeated merges of
+        // the same branch from growing the list at every level. (oneOf/anyOf
+        // repeats are kept: they change "exactly one" counting.)
+        merged[key] = key === 'allOf'
+          ? uniqueBranches([...merged[key], ...extension[key]])
+          : [...merged[key], ...extension[key]];
       } else {
         merged[key] = extension[key];
       }
@@ -152,28 +157,92 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
   return merged;
 }
 
+function uniqueBranches(branches: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  return branches.filter(branch => {
+    const key = valueKey(branch);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ─── Schema resolution (composition keywords) ───────────────────────────────
 
-// ─── Recursion depth ─────────────────────────────────────────────────────────
+// ─── Reference cycles ────────────────────────────────────────────────────────
 // A $ref cycle (a definition that refers to itself, directly, through another
-// definition or through allOf) is valid JSON Schema, and every walker that
-// follows references would recurse forever on one. The walkers share one
-// depth counter; past the limit a call returns its "unresolved" answer
-// instead (resolveSchema: null, the default builders: undefined,
-// evaluateCondition: true), which each caller already handles. A cycle that
-// branches (anyOf of several self-references) would still grow exponentially
-// below the depth limit, so each top-level walk also has a step budget.
+// definition or through allOf) is valid JSON Schema. Every walker that follows
+// references carries the set of references being expanded along the current
+// path, and meeting one again on that path is a cycle: that reference is left
+// unresolved (resolveSchema: null, the default builders: undefined,
+// evaluateCondition: true, isLeafSchema: false, the form: its
+// unresolved-reference message). Expanding the same reference in sibling
+// branches is not a cycle. A walker that descends into stored data starts a
+// fresh path there, because the data's own depth bounds that recursion.
 
-const MAX_SCHEMA_DEPTH = 32;
-const MAX_SCHEMA_STEPS = 10_000;
+let refPath = new Set<unknown>();
+
+/** Whether ref is being expanded on the current path. */
+export function onRefPath(ref: unknown): boolean {
+  return refPath.has(ref);
+}
+
+/** Run walk with refs added to the current path. */
+export function followingRefs<T>(refs: readonly unknown[], walk: () => T): T {
+  const added = refs.filter(ref => !refPath.has(ref));
+  added.forEach(ref => refPath.add(ref));
+  try {
+    return walk();
+  } finally {
+    added.forEach(ref => refPath.delete(ref));
+  }
+}
+
+/** Run walk on a fresh path: for a walker descending into a stored value. */
+export function onFreshRefPath<T>(walk: () => T): T {
+  const saved = refPath;
+  refPath = new Set();
+  try {
+    return walk();
+  } finally {
+    refPath = saved;
+  }
+}
+
+/**
+ * schema with its allOf branches merged in, each branch's $ref resolved one
+ * level. A branch whose $ref is on the current path is a cycle, so only its
+ * sibling keywords are merged. The refs followed go on the path for the
+ * walker's recursion into the result: followingRefs(followed, ...).
+ */
+export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merged: JSONSchema; followed: unknown[] } {
+  let merged: JSONSchema = { ...schema };
+  delete merged.allOf;
+  const followed: unknown[] = [];
+  for (const sub of schema.allOf) {
+    let resolved: JSONSchema;
+    if (sub.$ref) {
+      const refResult = onRefPath(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
+      const siblings: JSONSchema = { ...sub };
+      delete siblings.$ref;
+      resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+      if (refResult) followed.push(sub.$ref);
+    } else {
+      resolved = sub;
+    }
+    if (resolved) merged = mergeSchemas(merged, resolved);
+  }
+  return { merged, followed };
+}
+
+// A last resort against a stack overflow on pathological acyclic input (a
+// thousand nested allOf layers); real schemas never come close.
+const MAX_SCHEMA_DEPTH = 1000;
 let schemaDepth = 0;
-let schemaSteps = 0;
 
 export function withinDepth<T>(atLimit: T, walk: () => T): T {
-  if (schemaDepth === 0) schemaSteps = 0;
-  if (schemaDepth >= MAX_SCHEMA_DEPTH || schemaSteps >= MAX_SCHEMA_STEPS) return atLimit;
+  if (schemaDepth >= MAX_SCHEMA_DEPTH) return atLimit;
   schemaDepth++;
-  schemaSteps++;
   try {
     return walk();
   } finally {
@@ -185,28 +254,11 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
   return withinDepth(null, () => resolveSchemaUnguarded(schema, rootSchema));
 }
 
-/**
- * The references resolveSchema is following right now. A composition branch
- * that refers to one of them is a cycle and is skipped, so a branching cycle
- * cannot multiply the merged branches at every level. (A plain $ref cycle is
- * stopped by the depth limit.)
- */
-const resolvingRefs = new Set<unknown>();
-
-function whileResolving<T>(refs: unknown[], resolve: () => T): T {
-  const added = refs.filter(ref => !resolvingRefs.has(ref));
-  added.forEach(ref => resolvingRefs.add(ref));
-  try {
-    return resolve();
-  } finally {
-    added.forEach(ref => resolvingRefs.delete(ref));
-  }
-}
-
 function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
   if (!schema) return schema;
 
   if (schema.$ref) {
+    if (onRefPath(schema.$ref)) return null;
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
       // Use mergeSchemas to properly combine ref target with sibling keywords,
@@ -214,7 +266,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return whileResolving([schema.$ref], () => resolveSchema(merged, rootSchema));
+      return followingRefs([schema.$ref], () => resolveSchema(merged, rootSchema));
     }
     return null;
   }
@@ -237,7 +289,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       for (const sub of schema[keyword]) {
         let resolved: JSONSchema | null;
         if (sub.$ref) {
-          const refResult = resolvingRefs.has(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema);
+          const refResult = onRefPath(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema);
           const siblings: JSONSchema = { ...sub };
           delete siblings.$ref;
           resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
@@ -290,7 +342,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
         else merged.title = schema.title;
       }
 
-      return whileResolving(followed, () => resolveSchema(merged, rootSchema));
+      return followingRefs(followed, () => resolveSchema(merged, rootSchema));
     }
   }
 
@@ -322,7 +374,6 @@ export function inferSchema(val: unknown): JSONSchema {
 // ─── Condition evaluation ────────────────────────────────────────────────────
 
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
-  // A reference cycle has no constraint left to check.
   return withinDepth(true, () => evaluateConditionUnguarded(conditionSchema, data, rootSchema));
 }
 
@@ -331,11 +382,13 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 
   // ── Resolve $ref before any checks ────────────────────────────────────
   if (conditionSchema.$ref && rootSchema) {
+    if (onRefPath(conditionSchema.$ref)) return true;
     const resolved = resolveRef(conditionSchema.$ref, rootSchema);
     if (resolved) {
       const siblings: JSONSchema = { ...conditionSchema };
       delete siblings.$ref;
-      return evaluateCondition(mergeSchemas(resolved, siblings), data, rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      return followingRefs([conditionSchema.$ref], () => evaluateCondition(merged, data, rootSchema));
     }
   }
 
@@ -436,7 +489,8 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 
       // Recurse into nested object properties or composition schemas
       if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf || propSchema.not) {
-        if (!evaluateCondition(propSchema, value, rootSchema)) return false;
+        // Descending into the stored value: a fresh reference path.
+        if (!onFreshRefPath(() => evaluateCondition(propSchema, value, rootSchema))) return false;
         continue;
       }
 
@@ -519,6 +573,8 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
 
         let bestScore = -1;
         for (const sub of schema[kw]) {
+          // A branch referring back to a reference on the path is a cycle.
+          if (sub.$ref && onRefPath(sub.$ref)) continue;
           const resolved = sub.$ref ? (() => {
             const r = resolveRef(sub.$ref, rootSchema);
             const s: JSONSchema = { ...sub }; delete s.$ref;
@@ -526,7 +582,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
           })() : sub;
           // Merge branch with sibling properties for scoring
           const branchSchema = mergeSchemas(siblings, resolved);
-          const branchScore = scoreSchemaMatch(branchSchema, data, rootSchema);
+          const branchScore = followingRefs(sub.$ref ? [sub.$ref] : [], () => scoreSchemaMatch(branchSchema, data, rootSchema));
           if (branchScore > bestScore) bestScore = branchScore;
         }
         return bestScore >= 0 ? bestScore : 0;
@@ -613,7 +669,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             const metadataOnly = ['title', 'description', 'examples', 'deprecated', 'readOnly', 'writeOnly', 'default', '$comment'];
             const hasSiblingConstraints = Object.keys(siblingSchema).some(k => !metadataOnly.includes(k));
             if (hasSiblingConstraints) {
-              const siblingScore = scoreSchemaMatch(siblingSchema, val, rootSchema);
+              const siblingScore = onFreshRefPath(() => scoreSchemaMatch(siblingSchema, val, rootSchema));
               if (siblingScore === 0) return 0; // Sibling constraint mismatch
               score += siblingScore - 10; // Subtract base to avoid double-counting
             }
@@ -621,7 +677,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             // Score composition branches independently
             let bestBranchScore = -1;
             for (const sub of resolvedProp[kw]) {
-              const branchScore = scoreSchemaMatch(sub, val, rootSchema);
+              const branchScore = onFreshRefPath(() => scoreSchemaMatch(sub, val, rootSchema));
               if (branchScore > bestBranchScore) bestBranchScore = branchScore;
             }
             if (bestBranchScore === 0) return 0;
@@ -634,7 +690,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
 
       // Recurse into nested objects for deep discriminators
       if (resolvedProp.properties && typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        const nestedScore = scoreSchemaMatch(resolvedProp, val, rootSchema);
+        const nestedScore = onFreshRefPath(() => scoreSchemaMatch(resolvedProp, val, rootSchema));
         if (nestedScore === 0) return 0; // Nested discriminator mismatch
         score += nestedScore - 10; // Subtract base score to avoid double-counting
       }
@@ -674,30 +730,19 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
 function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
+    if (onRefPath(schema.$ref)) return undefined;
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
-      return getDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      return followingRefs([schema.$ref], () => getDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema;
-      if (sub.$ref) {
-        const refResult = resolveRef(sub.$ref, rootSchema || schema);
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return getDefaultValue(merged, rootSchema);
+    const { merged, followed } = mergeAllOf(schema, rootSchema || schema);
+    return followingRefs(followed, () => getDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {
@@ -776,30 +821,19 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
 
 function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
+    if (onRefPath(schema.$ref)) return undefined;
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
-      return getPreviewDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
+      const merged = mergeSchemas(resolved, siblings);
+      return followingRefs([schema.$ref], () => getPreviewDefaultValue(merged, rootSchema));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      let resolved: JSONSchema;
-      if (sub.$ref) {
-        const refResult = resolveRef(sub.$ref, rootSchema || schema);
-        const siblings: JSONSchema = { ...sub };
-        delete siblings.$ref;
-        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        resolved = sub;
-      }
-      if (resolved) merged = mergeSchemas(merged, resolved);
-    }
-    return getPreviewDefaultValue(merged, rootSchema);
+    const { merged, followed } = mergeAllOf(schema, rootSchema || schema);
+    return followingRefs(followed, () => getPreviewDefaultValue(merged, rootSchema));
   }
 
   if (schema.if) {
