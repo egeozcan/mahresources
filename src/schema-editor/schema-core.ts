@@ -65,26 +65,37 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
 }
 
 // ─── Patterns ────────────────────────────────────────────────────────────────
-// The server validates patterns with Go's regexp, which accepts syntax a
-// browser's RegExp rejects. A leading (?i), the common case, becomes the i
-// flag; any other pattern this browser cannot compile is no constraint here
-// (the server still enforces it), with one warning per pattern.
+// JSON Schema patterns are ECMA-262 regular expressions with Unicode
+// semantics, so they compile with the u flag. A leading (?i), which the
+// server's Go regexp accepts, becomes the i flag. A pattern the u flag rejects
+// compiles without it, as at base, only when nothing in it means something
+// else there: \p, \P and \u{..} do. Anything else this browser cannot
+// compile is no constraint here (the server still enforces it), with one
+// warning per pattern; a pattern never gains a different meaning.
 
 const compiledPatterns = new Map<string, RegExp | null>();
 const MAX_COMPILED_PATTERNS = 500;
+const UNICODE_ONLY_ESCAPE = /\\[pP]|\\u\{/;
 
-/** pattern as a RegExp, or null when this browser cannot compile it. Cached. */
+function tryRegExp(source: string, flags: string): RegExp | null {
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+}
+
+/** pattern as a RegExp, or null when this browser cannot give it its meaning. Cached. */
 export function compilePattern(pattern: unknown): RegExp | null {
   if (typeof pattern !== 'string') return null;
   const cached = compiledPatterns.get(pattern);
   if (cached !== undefined) return cached;
-  let compiled: RegExp | null;
-  try {
-    compiled = pattern.startsWith('(?i)') ? new RegExp(pattern.slice(4), 'i') : new RegExp(pattern);
-  } catch {
-    console.warn(`Ignoring a pattern this browser cannot compile: ${pattern}`);
-    compiled = null;
-  }
+  const caseless = pattern.startsWith('(?i)');
+  const source = caseless ? pattern.slice(4) : pattern;
+  const flags = caseless ? 'i' : '';
+  let compiled = tryRegExp(source, `u${flags}`);
+  if (!compiled && !UNICODE_ONLY_ESCAPE.test(source)) compiled = tryRegExp(source, flags);
+  if (!compiled) console.warn(`Ignoring a pattern this browser cannot compile: ${pattern}`);
   if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear();
   compiledPatterns.set(pattern, compiled);
   return compiled;

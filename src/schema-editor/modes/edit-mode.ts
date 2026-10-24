@@ -51,7 +51,9 @@ export class SchemaEditMode extends LitElement {
       // Serialising the whole schema is inside the boundary too: a schema
       // nested thousands of levels deep overflows JSON.stringify.
       try {
-        if (JSON.stringify(this.schema) === this._lastEmittedSchema) return;
+        // The echo shortcut needs a tree to keep: after a fallback, the
+        // same schema coming back must be parsed again.
+        if (this._root && !this._schemaError && JSON.stringify(this.schema) === this._lastEmittedSchema) return;
         this._root = withSchemaBudget(() => schemaToTree(this.schema));
         this._schemaError = null;
       } catch (error) {

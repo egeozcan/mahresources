@@ -1159,9 +1159,12 @@ describe('round 14: cycle defaults, budgeted equality, deep schemas, linear merg
   it('a schema JSON.stringify cannot serialise falls back in the tree editor', async () => {
     // Node's JSON.stringify survives depths that overflow it in a browser
     // (pi's 8,000 nested not), so the overflow is simulated.
+    // The echo check serialises the incoming schema once a tree exists.
+    const el: any = await mountEl('schema-edit-mode', { schema: { type: 'object' } });
     const schema: any = { type: 'object', properties: { v: { type: 'string' } } };
     Object.defineProperty(schema, 'toJSON', { enumerable: false, value: () => { throw new RangeError('Maximum call stack size exceeded'); } });
-    const el = await mountEl('schema-edit-mode', { schema });
+    el.schema = schema;
+    await settle(el);
     expect(snapshot(el)).toContain('Schema could not be used; showing the raw value.');
     expect(snapshot(el)).toContain('too deeply nested to show');
   });
@@ -1241,6 +1244,7 @@ describe('round 15: patterns the browser cannot compile, exact multipleOf, per-o
 
   it('a Go (?i) prefix becomes the i flag, on blur and on submit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
     const { el, input, submit } = await mountInForm({ type: 'string', pattern: '(?i)^[a-z]+$' }, 'Book');
     input.dispatchEvent(new Event('blur'));
     await settle(el);
@@ -1254,6 +1258,7 @@ describe('round 15: patterns the browser cannot compile, exact multipleOf, per-o
 
   it('a pattern JS cannot compile is no constraint, with a warning, never an exception', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
     const pattern = '(?P<word>[a-z]+)';
     const { el, input, submit } = await mountInForm({ type: 'string', pattern }, 'Book');
     input.dispatchEvent(new Event('blur'));
@@ -1300,6 +1305,76 @@ describe('round 15: patterns the browser cannot compile, exact multipleOf, per-o
     expect(JSON.stringify(expected).length).toBeLessThan(60);
     expect(withSchemaBudget(() => getDefaultValue(root, root))).toEqual(expected);
     expect(getDefaultValue(root, root)).toEqual(expected);
+  });
+});
+
+describe('round 16: unicode-mode patterns, restoring a schema after a fallback', () => {
+  async function submitWith(pattern: string, v: string) {
+    const form = document.createElement('form');
+    document.body.append(form);
+    const el = document.createElement('schema-form-mode') as any;
+    el.schema = { type: 'object', properties: { v: { type: 'string', pattern } } };
+    el.value = { v };
+    form.append(el);
+    await settle(el);
+    const ev = new Event('submit', { cancelable: true });
+    form.dispatchEvent(ev);
+    await settle(el);
+    document.body.replaceChildren();
+    return ev.defaultPrevented;
+  }
+
+  it('a (?i) pattern with a Unicode property keeps its meaning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const pattern = '(?i)^[\\p{L}\\s-]+$';
+    expect(await submitWith(pattern, 'Alice')).toBe(false);
+    expect(await submitWith(pattern, 'Zoë Saldaña')).toBe(false);
+    expect(await submitWith(pattern, 'Alice 2')).toBe(true);
+    expect(evaluateCondition({ pattern }, 'Alice', {})).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a Unicode property pattern without (?i) is case-sensitive', async () => {
+    expect(await submitWith('^\\p{Lu}', 'Alice')).toBe(false);
+    expect(await submitWith('^\\p{Lu}', 'alice')).toBe(true);
+    expect(evaluateCondition({ pattern: '^\\p{Lu}' }, 'alice', {})).toBe(false);
+  });
+
+  it('a pattern only valid without unicode mode behaves as at base', async () => {
+    // \- outside a class is an identity escape only without the u flag.
+    expect(await submitWith('^a\\-b$', 'a-b')).toBe(false);
+    expect(await submitWith('^a\\-b$', 'ab')).toBe(true);
+    expect(evaluateCondition({ pattern: '^a\\-b$' }, 'ab', {})).toBe(baseCore.evaluateCondition({ pattern: '^a\\-b$' }, 'ab', {}));
+    expect(evaluateCondition({ pattern: '^a\\-b$' }, 'a-b', {})).toBe(true);
+  });
+
+  it('a pattern whose meaning depends on unicode mode but fails in it is no constraint', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    // \- makes the u compile fail; without u, \p{L} would mean "p{L}".
+    for (const pattern of ['^\\p{L}\\-$', '^\\u{41}\\-$']) {
+      expect(await submitWith(pattern, 'zz'), pattern).toBe(false);
+      expect(evaluateCondition({ pattern }, 'zz', {}), pattern).toBe(true);
+    }
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('restoring the last emitted schema after a fallback rebuilds the tree', async () => {
+    const schema = { type: 'object', properties: { name: { type: 'string', title: 'Name field' } } };
+    const el: any = await mountEl('schema-edit-mode', { schema });
+    let emitted = '';
+    el.addEventListener('schema-change', (e: CustomEvent) => { emitted = e.detail.schema; });
+    el._emitSchemaChange();
+    expect(emitted).not.toBe('');
+    el.schema = { $defs: { bad: null } };
+    await settle(el);
+    expect(snapshot(el)).toContain('showing the raw value');
+    // The parent echoes back exactly what the editor last emitted.
+    el.schema = JSON.parse(emitted);
+    await settle(el);
+    expect(snapshot(el)).not.toContain('showing the raw value');
+    expect(snapshot(el)).toContain('name');
   });
 });
 
