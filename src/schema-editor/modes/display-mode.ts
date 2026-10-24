@@ -9,7 +9,7 @@ import {
   getLabeledEnumEntries,
   titleCase,
 } from '../schema-core';
-import { detectShape, getBuiltinRenderer } from '../display-renderers';
+import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
 
 interface DisplayField {
@@ -100,8 +100,8 @@ function flattenForDisplay(
     const format = prop.format || '';
     const val = getNestedValue(value, path);
 
-    // Read x-display annotation
-    const xDisplay = (rawProp['x-display'] || prop['x-display'] || '') as string;
+    // Read x-display annotation (a non-string value is ignored)
+    const xDisplay = xDisplayOf(rawProp) || xDisplayOf(prop);
 
     // If x-display is set on an object, do NOT flatten — emit as whole field
     if (xDisplay && prop.properties) {
@@ -336,8 +336,11 @@ export class SchemaDisplayMode extends LitElement {
 
     // 2. Forced built-in renderer (x-display: "url", "geo", etc.)
     if (xd && xd !== 'raw' && xd !== 'none') {
+      // Runs only when the value has the renderer's shape; otherwise the
+      // value falls through to the type rendering below.
       const renderer = getBuiltinRenderer(xd);
-      if (renderer) return renderer.render(val);
+      const rendered = renderer && renderBuiltin(renderer, val);
+      if (rendered) return rendered;
     }
 
     // 3. Opt-out: x-display "raw" or "none" skips shape detection
@@ -346,7 +349,7 @@ export class SchemaDisplayMode extends LitElement {
     // 4. Auto shape detection for objects (when no x-display set)
     if (!xd && typeof val === 'object' && val !== null && !Array.isArray(val)) {
       const detected = detectShape(val);
-      if (detected) return detected.render(val);
+      if (detected) return renderBuiltin(detected, val)!;
     }
     // ── End renderer pipeline ──────────────────────────────────────────
 

@@ -1,29 +1,40 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
 /**
- * A built-in display renderer: a shape detector paired with a renderer.
+ * A built-in display renderer. `select` validates a value and returns the
+ * normalised fields the renderer draws, or null when the value does not have
+ * the shape. Detection and rendering both go through it, so a value is only
+ * ever rendered from the fields that made it match.
  * Detectors are checked in order; first match wins.
  */
-export interface BuiltinRenderer {
+export interface BuiltinRenderer<T = any> {
   name: string;
+  select: (val: any) => T | null;
   detect: (val: any) => boolean;
-  render: (val: any) => TemplateResult;
+  render: (fields: T) => TemplateResult;
+}
+
+function builtin<T>(name: string, select: (val: any) => T | null, render: (fields: T) => TemplateResult): BuiltinRenderer<T> {
+  return { name, select, detect: val => select(val) !== null, render };
+}
+
+function asObject(val: any): Record<string, any> | null {
+  return val != null && typeof val === 'object' && !Array.isArray(val) ? val : null;
 }
 
 // ── URL / Location ──────────────────────────────────────────────────────────
 
-function isURLShape(val: any): boolean {
-  return (
-    val != null &&
-    typeof val === 'object' &&
-    typeof val.href === 'string' &&
-    (typeof val.host === 'string' || typeof val.hostname === 'string')
-  );
+interface URLFields { href: string; host: string }
+
+function selectURL(val: any): URLFields | null {
+  const o = asObject(val);
+  if (!o || typeof o.href !== 'string') return null;
+  if (typeof o.host !== 'string' && typeof o.hostname !== 'string') return null;
+  const host = (typeof o.host === 'string' && o.host) || (typeof o.hostname === 'string' && o.hostname) || '';
+  return { href: o.href, host };
 }
 
-function renderURL(val: any): TemplateResult {
-  const href = val.href as string;
-  const host = (val.host || val.hostname || '') as string;
+function renderURL({ href, host }: URLFields): TemplateResult {
   return html`
     <div>
       <a href=${href} target="_blank" rel="noopener noreferrer"
@@ -37,17 +48,22 @@ function renderURL(val: any): TemplateResult {
 
 // ── GeoLocation ─────────────────────────────────────────────────────────────
 
-function isGeoShape(val: any): boolean {
-  if (val == null || typeof val !== 'object') return false;
-  const hasLatLon =
-    (typeof val.latitude === 'number' && typeof val.longitude === 'number') ||
-    (typeof val.lat === 'number' && typeof val.lng === 'number');
-  return hasLatLon;
+interface GeoFields { lat: number; lng: number }
+
+/** latitude/longitude when both are numbers, else lat/lng when both are. */
+function selectGeo(val: any): GeoFields | null {
+  const o = asObject(val);
+  if (!o) return null;
+  if (typeof o.latitude === 'number' && typeof o.longitude === 'number') {
+    return { lat: o.latitude, lng: o.longitude };
+  }
+  if (typeof o.lat === 'number' && typeof o.lng === 'number') {
+    return { lat: o.lat, lng: o.lng };
+  }
+  return null;
 }
 
-function renderGeo(val: any): TemplateResult {
-  const lat = (val.latitude ?? val.lat) as number;
-  const lng = (val.longitude ?? val.lng) as number;
+function renderGeo({ lat, lng }: GeoFields): TemplateResult {
   const osmUrl = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=15/${lat}/${lng}`;
   return html`
     <div>
@@ -62,44 +78,46 @@ function renderGeo(val: any): TemplateResult {
 
 // ── Date Range ──────────────────────────────────────────────────────────────
 
-function isDateRangeShape(val: any): boolean {
-  if (val == null || typeof val !== 'object') return false;
-  if (typeof val.start !== 'string' || typeof val.end !== 'string') return false;
-  const s = new Date(val.start);
-  const e = new Date(val.end);
-  return !isNaN(s.getTime()) && !isNaN(e.getTime());
+interface DateRangeFields { start: Date; end: Date }
+
+function selectDateRange(val: any): DateRangeFields | null {
+  const o = asObject(val);
+  if (!o || typeof o.start !== 'string' || typeof o.end !== 'string') return null;
+  const start = new Date(o.start);
+  const end = new Date(o.end);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+  return { start, end };
 }
 
-function renderDateRange(val: any): TemplateResult {
+function renderDateRange({ start, end }: DateRangeFields): TemplateResult {
   const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
-  const s = new Date(val.start).toLocaleDateString(undefined, opts);
-  const e = new Date(val.end).toLocaleDateString(undefined, opts);
+  const s = start.toLocaleDateString(undefined, opts);
+  const e = end.toLocaleDateString(undefined, opts);
   return html`<span class="text-sm">${s} \u2014 ${e}</span>`;
 }
 
 // ── Dimensions ──────────────────────────────────────────────────────────────
 
-function isDimensionsShape(val: any): boolean {
-  return (
-    val != null &&
-    typeof val === 'object' &&
-    typeof val.width === 'number' &&
-    typeof val.height === 'number'
-  );
+interface DimensionsFields { width: number; height: number }
+
+function selectDimensions(val: any): DimensionsFields | null {
+  const o = asObject(val);
+  if (!o || typeof o.width !== 'number' || typeof o.height !== 'number') return null;
+  return { width: o.width, height: o.height };
 }
 
-function renderDimensions(val: any): TemplateResult {
-  return html`<span class="font-mono text-sm">${val.width} \u00D7 ${val.height}</span>`;
+function renderDimensions({ width, height }: DimensionsFields): TemplateResult {
+  return html`<span class="font-mono text-sm">${width} \u00D7 ${height}</span>`;
 }
 
 // ── Registry ────────────────────────────────────────────────────────────────
 
 /** Ordered list of built-in renderers. First match wins. */
 export const builtinRenderers: BuiltinRenderer[] = [
-  { name: 'url', detect: isURLShape, render: renderURL },
-  { name: 'geo', detect: isGeoShape, render: renderGeo },
-  { name: 'daterange', detect: isDateRangeShape, render: renderDateRange },
-  { name: 'dimensions', detect: isDimensionsShape, render: renderDimensions },
+  builtin('url', selectURL, renderURL),
+  builtin('geo', selectGeo, renderGeo),
+  builtin('daterange', selectDateRange, renderDateRange),
+  builtin('dimensions', selectDimensions, renderDimensions),
 ];
 
 /** Look up a built-in renderer by name (for forced x-display values). */
@@ -109,6 +127,20 @@ export function getBuiltinRenderer(name: string): BuiltinRenderer | undefined {
 
 /** Run shape detectors against a value. Returns the first matching renderer, or undefined. */
 export function detectShape(val: any): BuiltinRenderer | undefined {
-  if (val == null || typeof val !== 'object' || Array.isArray(val)) return undefined;
   return builtinRenderers.find(r => r.detect(val));
+}
+
+/** Render val with the renderer when its shape matches, or null when it does not. */
+export function renderBuiltin(renderer: BuiltinRenderer, val: any): TemplateResult | null {
+  const fields = renderer.select(val);
+  return fields === null ? null : renderer.render(fields);
+}
+
+/**
+ * The x-display annotation as a string, or '' when it is absent or not a
+ * string. A hand-written schema can hold any JSON there.
+ */
+export function xDisplayOf(schema: any): string {
+  const xd = schema?.['x-display'];
+  return typeof xd === 'string' ? xd : '';
 }

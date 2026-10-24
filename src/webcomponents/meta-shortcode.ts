@@ -2,7 +2,7 @@
 import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
-import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
+import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
 import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
@@ -278,15 +278,18 @@ export class MetaShortcode extends LitElement {
       return dateTimeField(value, schema, this.inputLayout, this.layout).display;
     }
     // Check built-in x-display on raw schema (these only use the value, not schema metadata).
-    const rawXDisplay = schema?.['x-display'] as string | undefined;
+    // A non-string x-display is ignored, and a forced renderer runs only when
+    // the value has its shape; otherwise rendering continues below.
+    const rawXDisplay = xDisplayOf(schema);
     if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
       const renderer = getBuiltinRenderer(rawXDisplay);
-      if (renderer) return html`<span>${renderer.render(value)}</span>`;
+      const rendered = renderer && renderBuiltin(renderer, value);
+      if (rendered) return html`<span>${rendered}</span>`;
     }
 
     if (value != null && typeof value === 'object' && !Array.isArray(value)) {
       const shape = detectShape(value);
-      if (shape) return html`<span>${shape.render(value)}</span>`;
+      if (shape) return html`<span>${renderBuiltin(shape, value)}</span>`;
     }
 
     if (schema) {
@@ -299,11 +302,12 @@ export class MetaShortcode extends LitElement {
       if (resolved) schema = resolved;
 
       // After resolution: x-display (including plugin), enums, then type.
-      const xDisplay = (rawXDisplay || schema['x-display']) as string | undefined;
-      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
+      const xDisplay = rawXDisplay || xDisplayOf(schema);
+      if (xDisplay.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
       if (xDisplay) {
         const renderer = getBuiltinRenderer(xDisplay);
-        if (renderer) return html`<span>${renderer.render(value)}</span>`;
+        const rendered = renderer && renderBuiltin(renderer, value);
+        if (rendered) return html`<span>${rendered}</span>`;
       }
       if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
