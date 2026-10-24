@@ -1514,6 +1514,169 @@ describe('round 17: user actions inside the fallback boundary, typed search valu
   });
 });
 
+describe('round 18: selector-safe property names, defaults pruned only on real recursion', () => {
+  const NAMES = ['source["id"]', "it's", 'a\\b', 'x y', '[0]', 'q"'];
+
+  async function exercise(el: HTMLElement) {
+    // Every control an entry point renders, through its action: buttons are
+    // clicked, inputs and selects get input, change and blur.
+    for (let round = 0; round < 2; round++) {
+      for (const button of [...el.querySelectorAll<HTMLButtonElement>('button')]) {
+        if (!button.isConnected || button.disabled) continue;
+        button.click();
+        await settle(el);
+      }
+      for (const control of [...el.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input:not([type="hidden"]), select, textarea')]) {
+        if (!control.isConnected) continue;
+        if (control instanceof HTMLInputElement && control.type !== 'checkbox' && control.type !== 'radio') control.value = control.type === 'number' ? '1' : 'v';
+        for (const type of ['input', 'change', 'blur']) control.dispatchEvent(new Event(type));
+        await settle(el);
+      }
+    }
+  }
+
+  it('property names with quotes, brackets, backslashes and spaces survive every action', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('confirm', () => true);
+    vi.stubGlobal('prompt', () => null);
+    // [meta]'s Save posts the value; answer it without a server.
+    vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    const properties: Record<string, any> = {};
+    const value: Record<string, any> = {};
+    for (const name of NAMES) {
+      properties[name] = { type: 'number', title: `T ${name}` };
+      value[name] = 1;
+    }
+    const schema = { type: 'object', properties };
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => { errors.push(e.error ?? e.message); e.preventDefault(); };
+    window.addEventListener('error', onError);
+    try {
+      for (const [tag, props] of [
+        ['schema-search-mode', { schema: JSON.stringify(schema), metaQuery: '[]' }],
+        ['schema-form-mode', { schema, value }],
+        ['schema-display-mode', { schema, value }],
+        ['schema-edit-mode', { schema }],
+      ] as const) {
+        const el = await mountEl(tag, props as any);
+        await exercise(el);
+        expect(snapshot(el), tag).not.toContain('showing the raw value');
+        document.body.replaceChildren();
+      }
+      for (const name of NAMES) {
+        const el = await mountEl('meta-shortcode', {}, {
+          'data-path': name, 'data-editable': 'true', 'data-entity-type': 'group', 'data-entity-id': '1',
+          'data-schema': JSON.stringify(properties[name]), 'data-value': '1',
+        });
+        await exercise(el);
+        expect(snapshot(el), name).not.toContain('showing the raw value');
+        document.body.replaceChildren();
+      }
+    } finally {
+      window.removeEventListener('error', onError);
+    }
+    expect(errors.map(String)).toEqual([]);
+  });
+
+  it('the search operator toggle focuses its own field whatever the name', async () => {
+    const name = 'source["id"]';
+    const el: any = await mountEl('schema-search-mode', {
+      schema: JSON.stringify({ type: 'object', properties: { [name]: { type: 'number' } } }), metaQuery: '[]',
+    });
+    const toggle = el.querySelector('button[data-operator-toggle]') as HTMLButtonElement;
+    expect(toggle).toBeTruthy();
+    toggle.click();
+    await settle(el);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const select = el.querySelector('select') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(document.activeElement).toBe(select);
+    select.value = select.options[1].value;
+    select.dispatchEvent(new Event('change'));
+    await settle(el);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(el.querySelector('button[data-operator-toggle]'));
+  });
+
+  it('a deferred step that throws inside an action reaches the fallback', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const el: any = await mountEl('schema-search-mode', {
+      schema: JSON.stringify({ type: 'object', properties: { n: { type: 'number' } } }), metaQuery: '[]',
+    });
+    // Break the deferred focus step: its rejection must reach the boundary.
+    const focus = HTMLSelectElement.prototype.focus;
+    HTMLSelectElement.prototype.focus = () => { throw new SyntaxError('broken focus'); };
+    try {
+      (el.querySelector('button[data-operator-toggle]') as HTMLButtonElement).click();
+      await settle(el);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await settle(el);
+    } finally {
+      HTMLSelectElement.prototype.focus = focus;
+    }
+    expect(schemaActionError(el)).toBeInstanceOf(SyntaxError);
+    expect(snapshot(el)).toContain('showing the raw value');
+
+    // Choosing an operator focuses the toggle again, also deferred.
+    const other: any = await mountEl('schema-search-mode', {
+      schema: JSON.stringify({ type: 'object', properties: { n: { type: 'number' } } }), metaQuery: '[]',
+    });
+    (other.querySelector('button[data-operator-toggle]') as HTMLButtonElement).click();
+    await settle(other);
+    const buttonFocus = HTMLButtonElement.prototype.focus;
+    HTMLButtonElement.prototype.focus = () => { throw new SyntaxError('broken toggle focus'); };
+    try {
+      const select = other.querySelector('select') as HTMLSelectElement;
+      select.value = select.options[1].value;
+      select.dispatchEvent(new Event('change'));
+      await settle(other);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await settle(other);
+    } finally {
+      HTMLButtonElement.prototype.focus = buttonFocus;
+    }
+    expect(String(schemaActionError(other))).toContain('broken toggle focus');
+  });
+
+  it('a reference repeated off its recursive path still gets its full default, as at base', () => {
+    const $defs = {
+      Node: { type: 'object', properties: { name: { type: 'string', default: 'Untitled' }, children: { type: 'array', items: { $ref: '#/$defs/Node' } } } },
+    };
+    const root: any = { $defs, type: 'array', items: { allOf: [{ $ref: '#/$defs/Node' }], properties: { selected: { $ref: '#/$defs/Node' } } } };
+    const expected = { name: 'Untitled', children: [], selected: { name: 'Untitled', children: [] } };
+    expect(getDefaultValue(root.items, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root.items, root)).toEqual(expected);
+    expect(baseCore.getDefaultValue(root.items, root)).toEqual(expected);
+    // The same through an allOf branch of the repeated property.
+    const viaAllOf: any = { $defs, allOf: [{ $ref: '#/$defs/Node' }], properties: { selected: { allOf: [{ $ref: '#/$defs/Node' }] } } };
+    expect(getDefaultValue(viaAllOf, viaAllOf)).toEqual(expected);
+    expect(getPreviewDefaultValue(viaAllOf, viaAllOf)).toEqual(expected);
+    expect(baseCore.getDefaultValue(viaAllOf, viaAllOf)).toEqual(expected);
+  });
+
+  it('Add Item builds the same default through the form', async () => {
+    const $defs = {
+      Node: { type: 'object', properties: { name: { type: 'string', default: 'Untitled' }, children: { type: 'array', items: { $ref: '#/$defs/Node' } } } },
+    };
+    const schema: any = { $defs, type: 'object', properties: { list: { type: 'array', items: { allOf: [{ $ref: '#/$defs/Node' }], properties: { selected: { $ref: '#/$defs/Node' } } } } } };
+    const el: any = await mountEl('schema-form-mode', { schema, value: { list: [] } });
+    let emitted: any;
+    el.addEventListener('value-change', (e: CustomEvent) => { emitted = e.detail.value; });
+    ([...el.querySelectorAll('button')].find((b: HTMLButtonElement) => b.textContent?.includes('Add Item')) as HTMLButtonElement).click();
+    await settle(el);
+    expect(emitted?.list?.[0]).toEqual({ name: 'Untitled', children: [], selected: { name: 'Untitled', children: [] } });
+  });
+
+  it('a property cycle through objects is still cut at its first repeat', () => {
+    const root: any = { $defs: { N: { type: 'object', properties: { name: { default: 'n' }, self: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
+    expect(getDefaultValue(root, root)).toEqual({ name: 'n' });
+    expect(getPreviewDefaultValue(root, root)).toEqual({ name: 'n' });
+    // Through an allOf branch too.
+    const viaAllOf: any = { $defs: { N: { allOf: [{ properties: { name: { default: 'n' }, next: { $ref: '#/$defs/N' } } }] } }, $ref: '#/$defs/N' };
+    expect(getDefaultValue(viaAllOf, viaAllOf)).toEqual({ name: 'n' });
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [

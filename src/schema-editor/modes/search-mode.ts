@@ -417,13 +417,22 @@ export class SchemaSearchMode extends LitElement {
 
   // ─── Event handlers ─────────────────────────────────────────────────────
 
+  /**
+   * The rendered wrapper of field. Found by comparing the attribute, never by
+   * a selector built from the path: a property may be named source["id"].
+   */
+  private _fieldWrapper(field: SearchField): Element | undefined {
+    return [...this.querySelectorAll('[data-field-path]')].find(el => el.getAttribute('data-field-path') === field.path);
+  }
+
   private _toggleOperator(field: SearchField) {
     field.showOperator = !field.showOperator;
     this.requestUpdate();
 
-    // Focus the appropriate element after render
-    this.updateComplete.then(() => {
-      const wrapper = this.querySelector(`[data-field-path="${field.path}"]`);
+    // Focus the appropriate element after render. Returned, so the action
+    // boundary sees a failure in this deferred step too.
+    return this.updateComplete.then(() => {
+      const wrapper = this._fieldWrapper(field);
       if (!wrapper) return;
       const target = field.showOperator
         ? wrapper.querySelector('select')
@@ -437,8 +446,8 @@ export class SchemaSearchMode extends LitElement {
     field.showOperator = false;
     this.requestUpdate();
 
-    this.updateComplete.then(() => {
-      const wrapper = this.querySelector(`[data-field-path="${field.path}"]`);
+    return this.updateComplete.then(() => {
+      const wrapper = this._fieldWrapper(field);
       if (!wrapper) return;
       const btn = wrapper.querySelector('button[data-operator-toggle]');
       if (btn) (btn as HTMLElement).focus();
