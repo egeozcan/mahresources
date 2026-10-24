@@ -174,12 +174,15 @@ const scopeCTE = `WITH RECURSIVE scope_tree(id, depth) AS (
 ) SELECT id FROM scope_tree`
 
 // ApplyScopeCTE injects an inline recursive CTE into a GORM query.
-// For EntityGroup: WHERE id IN (CTE) — includes the scoped group itself.
-// For other types: WHERE owner_id IN (CTE) — entities owned by subtree groups.
+// For EntityGroup: WHERE groups.id IN (CTE) — includes the scoped group itself.
+// For other types: WHERE <table>.owner_id IN (CTE) — entities owned by subtree
+// groups. The column is qualified with the entity's table: a GROUP BY over a
+// relation joins groups (or another table with an id), and an unqualified
+// column there is ambiguous.
 // When scopeGroupID doesn't exist, the CTE returns zero rows = no results.
 func ApplyScopeCTE(db *gorm.DB, entityType EntityType, scopeGroupID uint) *gorm.DB {
 	if entityType == EntityGroup {
-		return db.Where(fmt.Sprintf("id IN (%s)", scopeCTE), scopeGroupID)
+		return db.Where(fmt.Sprintf("groups.id IN (%s)", scopeCTE), scopeGroupID)
 	}
-	return db.Where(fmt.Sprintf("owner_id IN (%s)", scopeCTE), scopeGroupID)
+	return db.Where(fmt.Sprintf("%s.owner_id IN (%s)", entityTableName(entityType), scopeCTE), scopeGroupID)
 }

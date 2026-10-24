@@ -66,3 +66,39 @@ func TestCheckTemplateMRQL(t *testing.T) {
 		})
 	}
 }
+
+// TestPluginQueryAttributesKeepTheParseOnlyCheck: a plugin shortcode's query
+// attribute is the plugin's own; the built-in execution rules (limits, params,
+// regex) do not apply to it, so only a parse error is reported, as before.
+func TestPluginQueryAttributesKeepTheParseOnlyCheck(t *testing.T) {
+	known := shortcodes.KnownFromBuiltins()
+	known["plugin:test:echo"] = shortcodes.KnownShortcode{Documented: true, Attrs: map[string]shortcodes.DocAttr{"query": {Name: "query"}, "mrql": {Name: "mrql"}}}
+	validate := func(q string, opts shortcodes.MRQLCheckOptions) error {
+		return CheckTemplateMRQL(q, opts, MRQLStaticEnv{FTS: true})
+	}
+	lint := func(markup string) []shortcodes.LintIssue {
+		var mrqlIssues []shortcodes.LintIssue
+		for _, issue := range shortcodes.Lint(markup, shortcodes.LintOptions{Known: known, ValidateMRQL: validate}) {
+			if strings.HasPrefix(issue.Message, "MRQL error") {
+				mrqlIssues = append(mrqlIssues, issue)
+			}
+		}
+		return mrqlIssues
+	}
+	for _, clean := range []string{
+		`[plugin:test:echo query='type = note LIMIT 10001']`,
+		`[plugin:test:echo query='type = note AND name = $n']`,
+		`[plugin:test:echo mrql='type = resource AND name ~* "^a"']`,
+	} {
+		if issues := lint(clean); len(issues) != 0 {
+			t.Errorf("%s: %+v", clean, issues)
+		}
+	}
+	if issues := lint(`[plugin:test:echo query='type = note AND']`); len(issues) != 1 {
+		t.Errorf("a plugin query that does not parse lost its diagnostic: %+v", issues)
+	}
+	// The built-in sources keep the full check.
+	if issues := lint(`[mrql query='type = note LIMIT 10001' limit="10001"]`); len(issues) != 1 {
+		t.Errorf("the built-in [mrql] lost its execution check: %+v", issues)
+	}
+}

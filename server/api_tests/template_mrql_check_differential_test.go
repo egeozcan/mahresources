@@ -3,6 +3,9 @@ package api_tests
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,9 +22,15 @@ import (
 // attribute parsing, the limit and buckets overrides, params, numbered
 // conditional sources and [elseif] guards go through both paths.
 //
-// Excluded, as a known gap: whether a SCOPE group, a scope= group or a saved
-// query exists is database state the static check cannot see, so those cases
-// are not in the corpus.
+// The corpus is the cases below, GROUP BY over every relation under the
+// default entity scope, the built-in examples, and every query the mrql
+// package's tests translate.
+//
+// Parity limits, left out of the corpus: whether a SCOPE group (by ID or
+// name), a scope= group or a saved= query exists, and whether a scope name
+// is ambiguous, is database state the static check cannot see; it is
+// decided at render time. Checks that need rows (bucket materialisation per
+// key) are out of reach too.
 func TestTemplateMRQLCheckMatchesRendering(t *testing.T) {
 	tc := SetupTestEnv(t)
 	group := &models.Group{Name: "Differential"}
@@ -63,6 +72,14 @@ func TestTemplateMRQLCheckMatchesRendering(t *testing.T) {
 		fmt.Sprintf(`type = note SCOPE %d`, group.ID),
 		`type = note AND meta.due-date > "2026-01-01"`,
 	}
+	// GROUP BY over every relation and field an entity groups by, rendered
+	// with the default scope="entity", which joins the scope subtree.
+	for _, et := range []string{"resource", "note", "group"} {
+		for _, field := range []string{"owner", "groups", "tags", "category", "noteType", "parent", "children", "name", "contentType", "created.month"} {
+			queries = append(queries, fmt.Sprintf(`type = %s GROUP BY %s COUNT()`, et, field), fmt.Sprintf(`type = %s GROUP BY %s`, et, field))
+		}
+	}
+	queries = append(queries, translatorTestQueries(t)...)
 	var corpus []string
 	for _, q := range queries {
 		corpus = append(corpus, `[mrql query='`+q+`']`)
@@ -117,4 +134,33 @@ func TestTemplateMRQLCheckMatchesRendering(t *testing.T) {
 	if staticErrors < 10 || len(corpus)-runtimeErrors < 10 {
 		t.Fatalf("the corpus must hold both verdicts: %d errors out of %d", runtimeErrors, len(corpus))
 	}
+}
+
+// translatorTestQueries are the MRQL queries the mrql package's own tests
+// translate, read from their source so new ones join the corpus.
+func translatorTestQueries(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("../../mrql/*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no mrql tests found: %v", err)
+	}
+	literal := regexp.MustCompile("(?:parseAndTranslate|Parse|mustParse)\\(t?,? ?`([^`]+)`")
+	seen := map[string]bool{}
+	var queries []string
+	for _, file := range files {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range literal.FindAllStringSubmatch(string(src), -1) {
+			// A query whose text holds a single quote cannot sit in a
+			// single-quoted attribute.
+			// SCOPE names a group that exists only in the test's own fixture.
+			if q := m[1]; !seen[q] && !strings.Contains(q, "'") && !strings.Contains(q, "SCOPE") {
+				seen[q] = true
+				queries = append(queries, q)
+			}
+		}
+	}
+	return queries
 }

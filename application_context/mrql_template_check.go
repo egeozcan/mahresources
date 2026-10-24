@@ -40,7 +40,7 @@ func ValidateMRQLInteractiveBounds(q *mrql.Query) error {
 // a SCOPE literal is checked here.
 func CheckTemplateMRQL(query string, opts shortcodes.MRQLCheckOptions, env MRQLStaticEnv) error {
 	parsed, err := mrql.Parse(query)
-	if err != nil {
+	if err != nil || opts.ParseOnly {
 		return err
 	}
 	var params map[string]any

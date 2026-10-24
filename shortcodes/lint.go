@@ -42,6 +42,10 @@ type MRQLCheckOptions struct {
 	Params  map[string]string
 	Limit   int
 	Buckets int
+	// ParseOnly asks only whether the query parses. A plugin shortcode's
+	// query attribute is the plugin's own, so the built-in execution rules do
+	// not apply to it.
+	ParseOnly bool
 }
 
 // mrqlCheckOptions reads a query source's options the way the runtime does
@@ -410,7 +414,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			default:
 				for _, attr := range []string{"query", "mrql"} {
 					start, end := attrOffset(tk, attr)
-					check(tk.attrs[attr], MRQLCheckOptions{Params: collectShortcodeParams(tk.attrs)}, start, end, attr)
+					check(tk.attrs[attr], MRQLCheckOptions{ParseOnly: true}, start, end, attr)
 				}
 			}
 		}

@@ -559,3 +559,53 @@ func TestTemplateGenerateCreateFormSamplesThePreviewEntity(t *testing.T) {
 		t.Fatalf("with no choice the create form samples nothing: %d %v", resp.Code, fake.seen.Samples)
 	}
 }
+
+type unusedTemplateProvider struct{}
+
+func (unusedTemplateProvider) Endpoint() string {
+	return application_context.DefaultDeepSeekChatCompletionsURL
+}
+
+func (unusedTemplateProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{}, fmt.Errorf("a dry run must not call the provider")
+}
+
+// An oversized saved or unsaved name and description reach the disclosure
+// clipped, with their full length noted.
+func TestTemplateGenerateClipsOversizedIdentity(t *testing.T) {
+	tc := SetupTestEnv(t)
+	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(unusedTemplateProvider{}, application_context.TemplateGenerationConfig{APIKey: "key"}))
+	cat := &models.Category{Name: strings.Repeat("s", 300), Description: strings.Repeat("S", 5000)}
+	if err := tc.DB.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	identity := func(extra map[string]any) string {
+		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID, "dryRun": true}
+		for k, v := range extra {
+			body[k] = v
+		}
+		resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", body)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("%d %s", resp.Code, resp.Body.String())
+		}
+		var d application_context.TemplateDisclosure
+		if err := json.Unmarshal(resp.Body.Bytes(), &d); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range d.Sections {
+			if s.Key == "identity" {
+				return s.Text
+			}
+		}
+		t.Fatal("no identity section")
+		return ""
+	}
+	saved := identity(nil)
+	if !strings.Contains(saved, strings.Repeat("s", 200)+"…(300 chars)") || strings.Contains(saved, strings.Repeat("s", 201)) || !strings.Contains(saved, "…(5000 chars)") || strings.Contains(saved, strings.Repeat("S", 2049)) {
+		t.Fatalf("saved identity not clipped:\n%.400s", saved)
+	}
+	unsaved := identity(map[string]any{"name": strings.Repeat("u", 250), "description": strings.Repeat("U", 3000)})
+	if !strings.Contains(unsaved, strings.Repeat("u", 200)+"…(250 chars)") || strings.Contains(unsaved, strings.Repeat("U", 2049)) || !strings.Contains(unsaved, "…(3000 chars)") {
+		t.Fatalf("unsaved identity not clipped:\n%.400s", unsaved)
+	}
+}

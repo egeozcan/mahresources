@@ -3667,4 +3667,16 @@ func TestLintMRQLSeamGetsTheRuntimeOptions(t *testing.T) {
 	if findIssue(issues, "MRQL error in [elseif] mrql") == nil {
 		t.Fatalf("elseif error not reported: %+v", issues)
 	}
+
+	// A plugin shortcode's query attribute is only parsed.
+	known := KnownFromBuiltins()
+	known["plugin:test:echo"] = KnownShortcode{Documented: true, Attrs: map[string]DocAttr{"query": {Name: "query"}}}
+	var pluginCalls []MRQLCheckOptions
+	Lint(`[plugin:test:echo query="type = note" limit="7"]`, LintOptions{Known: known, ValidateMRQL: func(_ string, opts MRQLCheckOptions) error {
+		pluginCalls = append(pluginCalls, opts)
+		return nil
+	}})
+	if len(pluginCalls) != 1 || !pluginCalls[0].ParseOnly || pluginCalls[0].Limit != 0 {
+		t.Fatalf("plugin query options: %+v", pluginCalls)
+	}
 }
