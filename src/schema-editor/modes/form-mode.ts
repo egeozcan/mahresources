@@ -90,8 +90,55 @@ function isMultipleOf(n: number, m: number): boolean {
   return Math.abs(quotient - Math.round(quotient)) <= 4 * Number.EPSILON * Math.abs(quotient);
 }
 
-/** An automatic assignment producing the same value this many times stops: a loop. */
-const MAX_AUTOMATIC_REPEATS = 2;
+/**
+ * A write the form makes on its own, not from user input: a default put in
+ * place (init) or a const enforced (const). It travels up the onChange chain
+ * like a value, each composer prefixing its key (under), and is applied at
+ * the root to the form's current value (_applyAutoWrite). An init write sets
+ * only its own path, never a stale snapshot of its parent, so sibling
+ * initialisations no longer overwrite one another; where two inits target
+ * the same path the later one wins, as base's chain composed them. A const
+ * write applies only if its path still holds the value it was computed
+ * from (expected).
+ */
+export class AutoWrite {
+  constructor(
+    readonly path: ReadonlyArray<string | number>,
+    readonly value: unknown,
+    readonly expected: unknown,
+    readonly kind: 'init' | 'const',
+  ) {}
+
+  under(key: string | number): AutoWrite {
+    return new AutoWrite([key, ...this.path], this.value, this.expected, this.kind);
+  }
+}
+
+/** The value at path in value, or undefined. */
+function valueAtPath(value: unknown, path: ReadonlyArray<string | number>): unknown {
+  let current: any = value;
+  for (const key of path) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = ownValue(current, String(key));
+  }
+  return current;
+}
+
+/** value with path set to next, copying each container on the way; missing containers are created. */
+function withValueAtPath(value: unknown, path: ReadonlyArray<string | number>, next: unknown): unknown {
+  if (path.length === 0) return next;
+  const [key, ...rest] = path;
+  const container: any = Array.isArray(value) ? [...value]
+    : value !== null && typeof value === 'object' ? { ...(value as object) }
+      : typeof key === 'number' ? [] : {};
+  setOwn(container, String(key), withValueAtPath(ownValue(container, String(key)), rest, next));
+  return container;
+}
+
+/** onChange for the child at key: an automatic write gains the key; a value is composed by compose. */
+function childChange(onChange: (val: any) => void, key: string | number, compose: (val: any) => unknown): (val: any) => void {
+  return (val: any) => (val instanceof AutoWrite ? onChange(val.under(key)) : onChange(compose(val)));
+}
 
 /**
  * A variant default queued this many times while no queued default anywhere
@@ -346,28 +393,9 @@ export class SchemaFormMode extends LitElement {
     try { return JSON.parse(s); } catch { return {}; }
   }
 
-  private _emitChange(newValue: any) {
-    if (this._automaticDepth > 0) {
-      // An automatic assignment that recreates a state it already produced
-      // MAX_AUTOMATIC_REPEATS times is a loop (a conditional whose branches
-      // set the same field back and forth, as base did forever): stop
-      // assigning, keep the current value. A single repeat is not enough:
-      // sibling initialisations composing on stale parent values revisit a
-      // state on their way to the settled value. User input, a new value or
-      // a new schema start afresh.
-      const key = valueKey(newValue);
-      const produced = this._automaticStates.get(key) ?? 0;
-      if (produced >= MAX_AUTOMATIC_REPEATS) {
-        if (!this._warnedAutomaticLoop) {
-          console.warn('schema-form-mode: automatic assignments repeat a previous value; stopped');
-          this._warnedAutomaticLoop = true;
-        }
-        return;
-      }
-      this._automaticStates.set(key, produced + 1);
-    } else {
-      this._resetAutomaticStates();
-    }
+  private _emitChange(newValue: any, automatic = false) {
+    // User input starts the const loop guard afresh.
+    if (!automatic) this._resetAutomaticStates();
     this._emittedValue = newValue;
     this._data = newValue;
     // Keep the public `value` property in sync so that a subsequent schema
@@ -408,32 +436,49 @@ export class SchemaFormMode extends LitElement {
    * throw as an action can, and must fall back the same way.
    */
   private _defer(callback: () => unknown): void {
-    queueMicrotask(this._act(() => this._automatically(callback)));
+    queueMicrotask(this._act(callback));
   }
 
-  /** How deep in automatic (not user-driven) assignments the form is. */
-  private _automaticDepth = 0;
   /**
-   * How often automatic assignments produced each value (by value key)
-   * since the last user action, outside value or schema change.
+   * Per field path, the values const enforcement replaced since the last
+   * user input, outside value or schema change.
    */
-  private _automaticStates = new Map<string, number>();
+  private _constReplaced = new Map<string, Set<string>>();
   private _warnedAutomaticLoop = false;
-  /** The last value this form emitted, to tell its own value from one set from outside. */
+  /** The last value this form emitted, to tell its own value (echoed back) from one set from outside. */
   private _emittedValue: unknown = undefined;
 
-  /** Run callback as an automatic assignment (initialisation, a const put in place). */
-  private _automatically<T>(callback: () => T): T {
-    this._automaticDepth++;
-    try {
-      return callback();
-    } finally {
-      this._automaticDepth--;
+  /**
+   * Apply a write the form makes on its own to its current value. A write
+   * whose path no longer holds the value it was computed from is stale and
+   * dropped (the next render computes it again if it still applies). Const
+   * enforcement is the only automatic write that replaces a defined value
+   * with a different one, so it alone can loop (a conditional whose branches
+   * set the same field to opposite consts, which base did forever): a const
+   * write that would restore a value an earlier const write replaced at
+   * that path stops, keeps the current value and warns once.
+   */
+  private _applyAutoWrite(write: AutoWrite): void {
+    const current = valueAtPath(this._data, write.path);
+    if (write.kind === 'const' && !sameValue(current, write.expected)) return;
+    if (write.kind === 'const') {
+      const pathKey = JSON.stringify(write.path);
+      const replaced = this._constReplaced.get(pathKey) ?? new Set<string>();
+      if (replaced.has(valueKey(write.value))) {
+        if (!this._warnedAutomaticLoop) {
+          console.warn('schema-form-mode: const assignments would restore a value they replaced; stopped');
+          this._warnedAutomaticLoop = true;
+        }
+        return;
+      }
+      replaced.add(valueKey(current));
+      this._constReplaced.set(pathKey, replaced);
     }
+    this._emitChange(withValueAtPath(this._data, write.path, copyDefault(write.value)), true);
   }
 
   private _resetAutomaticStates(): void {
-    this._automaticStates = new Map();
+    this._constReplaced = new Map();
     this._warnedAutomaticLoop = false;
   }
 
@@ -501,7 +546,8 @@ export class SchemaFormMode extends LitElement {
     if (this._valueError) return schemaFallback('schema-form-mode', this._valueError, this._data);
     try {
       return withSchemaBudget(() => this._renderField(this.schema, this._data, (val: any) => {
-        this._emitChange(val);
+        if (val instanceof AutoWrite) this._applyAutoWrite(val);
+        else this._emitChange(val);
       }, this.schema, undefined, ''));
     } catch (error) {
       return schemaFallback('schema-form-mode', error, this._data);
@@ -587,7 +633,7 @@ export class SchemaFormMode extends LitElement {
       // Compared by value and assigned as a copy: the schema's own const
       // object must never become editable data.
       if (!sameValue(data, schema.const)) {
-        this._automatically(() => onChange(copyDefault(schema.const)));
+        onChange(new AutoWrite([], schema.const, data, 'const'));
       }
       return html`<input type="text" .value=${valueText(schema.const)} disabled
         id=${fieldId || nothing}
@@ -659,7 +705,7 @@ export class SchemaFormMode extends LitElement {
       // default object must never be changed through it.
       const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
       if (this._shouldInitialize(initKey, defaultVal)) {
-        this._defer(() => onChange(defaultVal));
+        this._defer(() => onChange(new AutoWrite([], defaultVal, undefined, 'init')));
       }
     }
 
@@ -739,7 +785,7 @@ export class SchemaFormMode extends LitElement {
       // default object must never be changed through it.
       const defaultVal = copyDefault(getDefaultValue(merged, rootSchema));
       if (this._shouldInitialize(initKey, defaultVal)) {
-        this._defer(() => onChange(defaultVal));
+        this._defer(() => onChange(new AutoWrite([], defaultVal, undefined, 'init')));
       }
     }
 
@@ -824,7 +870,8 @@ export class SchemaFormMode extends LitElement {
       stripStaleKeys(data, applicable, rootSchema);
 
       if (JSON.stringify(data) !== before) {
-        this._defer(() => onChange({ ...data }));
+        const stripped = { ...data };
+        this._defer(() => onChange(new AutoWrite([], stripped, JSON.parse(before), 'init')));
       }
     }
 
@@ -936,8 +983,9 @@ export class SchemaFormMode extends LitElement {
     }
 
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      const seen = data;
       data = {};
-      this._defer(() => onChange(data));
+      this._defer(() => onChange(new AutoWrite([], {}, seen, 'init')));
     }
 
     // Pre-populate undefined REQUIRED boolean properties with false (or the schema default).
@@ -946,18 +994,22 @@ export class SchemaFormMode extends LitElement {
     // Optional booleans stay undefined — only submitted if the user interacts.
     if (schema.properties) {
       const requiredSet = new Set<string>(schema.required || []);
+      // One write per field, each setting only its own key.
+      const writes: AutoWrite[] = [];
       let needsUpdate = false;
       for (const [key, propSchema] of Object.entries(schema.properties)) {
         const ps = propSchema as JSONSchema;
         const isBooleanType = ps.type === 'boolean' ||
           (Array.isArray(ps.type) && ps.type.includes('boolean'));
         if (ownValue(data, key) === undefined && isBooleanType && requiredSet.has(key)) {
-          data = { ...data, [key]: ps.default !== undefined ? copyDefault(ps.default) : false };
+          const initial = ps.default !== undefined ? copyDefault(ps.default) : false;
+          data = { ...data, [key]: initial };
+          writes.push(new AutoWrite([key], initial, undefined, 'init'));
           needsUpdate = true;
         }
       }
       if (needsUpdate) {
-        this._defer(() => onChange(data));
+        for (const write of writes) this._defer(() => onChange(write));
       }
     }
 
@@ -992,9 +1044,7 @@ export class SchemaFormMode extends LitElement {
           // optional object instead of expanding it, so a recursive schema
           // stops where the data does, as at base. A reference repeated at
           // the same position (no property in between) is still a cycle.
-          const renderChild = () => this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
-            onChange({ ...data, [key]: val });
-          }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired);
+          const renderChild = () => this._renderFieldWithAttributes(propSchema, propData, childChange(onChange, key, (val: any) => ({ ...data, [key]: val })), rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired);
 
           return html`
             <div>
@@ -1140,9 +1190,7 @@ export class SchemaFormMode extends LitElement {
         </div>
         <div class="flex-grow">
           ${typeof propData === 'object' && propData !== null
-            ? this._renderField(inferSchema(propData), propData, (val: any) => {
-                onChange({ ...data, [key]: val });
-              }, rootSchema)
+            ? this._renderField(inferSchema(propData), propData, childChange(onChange, key, (val: any) => ({ ...data, [key]: val })), rootSchema)
             : this._renderExtraValueInput(key, propData, data, onChange)
           }
         </div>
@@ -1193,8 +1241,9 @@ export class SchemaFormMode extends LitElement {
 
   private _renderArray(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string): TemplateResult {
     if (!Array.isArray(data)) {
+      const seen = data;
       data = [];
-      this._defer(() => onChange(data));
+      this._defer(() => onChange(new AutoWrite([], [], seen, 'init')));
     }
 
     const hasMinItems = schema.minItems !== undefined;
@@ -1228,11 +1277,11 @@ export class SchemaFormMode extends LitElement {
             return html`
             <div class="flex gap-2 items-start">
               <div class="flex-grow">
-                ${onFreshRefPath(() => this._renderField(schema.items || inferSchema(item), item, (val: any) => {
+                ${onFreshRefPath(() => this._renderField(schema.items || inferSchema(item), item, childChange(onChange, index, (val: any) => {
                   const updated = [...data];
                   updated[index] = val;
-                  onChange(updated);
-                }, rootSchema, undefined, itemPath))}
+                  return updated;
+                }), rootSchema, undefined, itemPath))}
               </div>
               <button type="button"
                 title="Remove item"

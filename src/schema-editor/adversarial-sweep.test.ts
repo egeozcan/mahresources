@@ -2342,10 +2342,12 @@ describe('round 25: automatic assignments that cycle stop, value errors clear wi
     el.remove();
   });
 
-  it('automatic assignments cycling between states stop, warn once, and restart after user input', async () => {
-    // The contradictory conditional loops forever in a browser; happy-dom's
-    // update scheduling lets it end after a few flips, so the guard itself
-    // is driven here: the assignments the form makes on its own, alternating.
+  it('const writes that would restore a replaced value stop, warn once, and restart after user input', async () => {
+    // The contradictory conditional loops forever in a browser behind
+    // schema-editor's echo; happy-dom's update scheduling lets it end after a
+    // few flips, so the guard itself is driven here: const writes on flag,
+    // alternating, each computed from the current value.
+    const { AutoWrite } = await import('./modes/form-mode');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
     const el: any = await mountEl('schema-form-mode', { schema: contradictory, value: {} });
@@ -2353,35 +2355,54 @@ describe('round 25: automatic assignments that cycle stop, value errors clear wi
     await settle(el);
     const values: unknown[] = [];
     el.addEventListener('value-change', (e: CustomEvent) => { values.push(e.detail.value); });
-    for (let i = 0; i < 20; i++) el._automatically(() => el._emitChange({ flag: i % 2 === 0 }));
-    expect(values.length).toBeLessThan(6);
+    const flip = (times: number) => {
+      for (let i = 0; i < times; i++) {
+        const current = el._data?.flag;
+        el._applyAutoWrite(new AutoWrite(['flag'], !current, current, 'const'));
+      }
+    };
+    el._emitChange({});
+    const start = values.length;
+    flip(20);
+    expect(values.length - start).toBeLessThan(4);
     expect(warn).toHaveBeenCalledTimes(1);
-    // Deferred initialisations are automatic too.
-    el._emitChange({ flag: true, user: 1 });
-    const beforeDeferred = values.length;
-    for (let i = 0; i < 20; i++) el._defer(() => el._emitChange({ flag: i % 2 === 0 }));
-    await new Promise(r => setTimeout(r, 0));
-    expect(values.length - beforeDeferred).toBeLessThan(6);
+    // A const write computed from a value that has since changed is dropped.
+    const beforeStale = values.length;
+    el._applyAutoWrite(new AutoWrite(['flag'], 'x', 'not the current value', 'const'));
+    expect(values.length).toBe(beforeStale);
     // A user change starts afresh.
     el._emitChange({ flag: true });
     const afterUser = values.length;
-    el._automatically(() => el._emitChange({ flag: false }));
+    flip(1);
     expect(values.length).toBe(afterUser + 1);
     // An echo of the form's own value (schema-editor passes it back as text)
     // is not a value from outside: the loop stays stopped.
-    for (let i = 0; i < 20; i++) el._automatically(() => el._emitChange({ flag: i % 2 === 0 }));
+    flip(20);
     const beforeEcho = values.length;
     el.value = JSON.stringify(el._emittedValue);
     await settle(el);
-    el._automatically(() => el._emitChange({ flag: true }));
-    el._automatically(() => el._emitChange({ flag: false }));
+    flip(2);
     expect(values.length).toBe(beforeEcho);
-    // A value set from outside starts afresh.
-    const stopped = values.length;
-    el.value = { flag: false };
+    // Once after the first loop, once after the loop that followed the
+    // user's change; the echo did not reset the guard.
+    expect(warn).toHaveBeenCalledTimes(2);
+    // A value set from outside starts afresh: the guard warns again when
+    // the flips resume, rather than staying silently stopped.
+    // (A value equal to the last one emitted would be an echo.)
+    el.value = { flag: false, note: 'from outside' };
     await settle(el);
-    el._automatically(() => el._emitChange({ flag: true }));
-    expect(values.length).toBeGreaterThan(stopped);
+    flip(20);
+    expect(warn).toHaveBeenCalledTimes(3);
+  });
+
+  it('initialisation writes set only their own path, onto the current value', async () => {
+    const { AutoWrite } = await import('./modes/form-mode');
+    const el: any = await mountEl('schema-form-mode', { schema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } } }, value: { a: 'user' } });
+    await settle(el);
+    // Computed when b was the only thing missing; a has the user's value.
+    el._applyAutoWrite(new AutoWrite(['b'], 'filled', undefined, 'init'));
+    el._applyAutoWrite(new AutoWrite(['c', 'd'], 1, undefined, 'init'));
+    expect(el._data).toEqual({ a: 'user', b: 'filled', c: { d: 1 } });
   });
 
   it('a usable value after a value-triggered failure renders the form again', async () => {
@@ -2399,6 +2420,134 @@ describe('round 25: automatic assignments that cycle stop, value errors clear wi
     // The deep value really did fail (or the test proves nothing).
     expect(fellBack).toBe(true);
   });
+});
+
+describe('round 26: nested initialisation through the wrapper echo settles as at base', () => {
+  // Mount tag the way schema-editor does: every emitted value is passed back
+  // as text. Returns the settled value.
+  async function settledWithEcho(tag: string, schema: any, valueText: string) {
+    const el: any = document.createElement(tag);
+    el.addEventListener('value-change', (e: CustomEvent) => {
+      // A value too deep to serialise is left as it is, as schema-editor does.
+      try { el.value = JSON.stringify(e.detail.value); } catch { /* keep */ }
+    });
+    el.schema = schema;
+    el.value = valueText;
+    document.body.append(el);
+    let previous = '';
+    for (let round = 0; round < 60; round++) {
+      await el.updateComplete;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const now = typeof el.value === 'string' ? el.value : JSON.stringify(el.value ?? null);
+      if (now === previous && !el.isUpdatePending) break;
+      previous = now;
+    }
+    const final = typeof el.value === 'string' ? JSON.parse(el.value) : JSON.parse(JSON.stringify(el.value ?? null));
+    el.remove();
+    return final;
+  }
+
+  const shipping = (keyword: 'oneOf' | 'anyOf') => ({
+    type: 'object',
+    properties: {
+      shipping: { [keyword]: [
+        { type: 'object', required: ['address'], properties: {
+          address: { [keyword]: [
+            { type: 'object', required: ['lines'], properties: { lines: { type: 'array', items: { type: 'string' } } } },
+            { type: 'null' },
+          ] },
+        } },
+        { type: 'null' },
+      ] },
+    },
+  });
+
+  it('nested nullable variants with required children settle as at base (pi\'s repro)', async () => {
+    for (const keyword of ['oneOf', 'anyOf'] as const) {
+      const schema = shipping(keyword);
+      const head = await settledWithEcho('schema-form-mode', schema, '{}');
+      const base = await settledWithEcho('base-schema-form-mode', schema, '{}');
+      expect(head, keyword).toEqual({ shipping: { address: { lines: [] } } });
+      expect(head, keyword).toEqual(base);
+    }
+  });
+
+  it('the contradictory conditional still settles behind the echo', async () => {
+    const schema = {
+      type: 'object', properties: { flag: { type: 'boolean' } }, required: ['flag'],
+      if: { properties: { flag: { const: true } }, required: ['flag'] },
+      then: { properties: { flag: { const: false } } },
+      else: { properties: { flag: { const: true } } },
+    };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el: any = document.createElement('schema-form-mode');
+    let emits = 0;
+    el.addEventListener('value-change', (e: CustomEvent) => { emits++; el.value = JSON.stringify(e.detail.value); });
+    el.schema = schema;
+    el.value = '{}';
+    document.body.append(el);
+    for (let i = 0; i < 20; i++) { await el.updateComplete; await new Promise(r => setTimeout(r, 0)); }
+    expect(el.isUpdatePending).toBe(false);
+    expect(emits).toBeLessThan(10);
+    el.remove();
+  });
+
+  it('generated nested nullable variants settle through the echo as at base', async () => {
+    let seed = 260026;
+    const random = () => {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(items: T[]): T => items[Math.floor(random() * items.length)];
+    const leaf = () => pick<any>([
+      { type: 'array', items: { type: 'string' } }, { type: 'string' }, { type: 'string', default: 'd' },
+      { type: 'boolean' }, { type: 'number', default: 1 }, { type: 'integer', enum: [1, 2] },
+    ]);
+    // An object whose required children are nullable oneOf/anyOf objects,
+    // nested depth levels.
+    const nested = (depth: number): any => {
+      const properties: Record<string, any> = {};
+      const required: string[] = [];
+      const count = 1 + Math.floor(random() * 2);
+      for (let i = 0; i < count; i++) {
+        const key = `k${depth}_${i}`;
+        properties[key] = depth > 0 && random() < 0.8
+          ? { [pick(['oneOf', 'anyOf'])]: random() < 0.5 ? [nested(depth - 1), { type: 'null' }] : [{ type: 'null' }, nested(depth - 1)] }
+          : leaf();
+        if (random() < 0.7) required.push(key);
+      }
+      const out: any = { type: 'object', properties };
+      if (required.length) out.required = required;
+      return out;
+    };
+    // Whether outer holds everything inner does: equal leaves, and every key
+    // of an inner object present in the outer one.
+    const containsValue = (outer: any, inner: any): boolean => {
+      if (inner === null || typeof inner !== 'object' || Array.isArray(inner)) return sameValue(outer, inner);
+      if (outer === null || typeof outer !== 'object' || Array.isArray(outer)) return false;
+      return Object.keys(inner).every(key => key in outer && containsValue(outer[key], inner[key]));
+    };
+    let keptByHead = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < 120; i++) {
+      const schema = nested(3 + Math.floor(random() * 2));
+      const text = JSON.stringify(schema);
+      const head = await settledWithEcho('schema-form-mode', JSON.parse(text), '{}');
+      const base = await settledWithEcho('base-schema-form-mode', JSON.parse(text), '{}');
+      if (sameValue(head, base)) continue;
+      // Allowed: base's stale parent snapshots overwrote defaults that were
+      // already in place, and the form never put them back; head writes
+      // each default at its own path and keeps them. Everything base holds,
+      // head holds too.
+      if (containsValue(head, base)) { keptByHead++; continue; }
+      failures.push(`case ${i}\n  schema ${text}\n  head ${JSON.stringify(head)}\n  base ${JSON.stringify(base)}`);
+    }
+    expect(failures).toEqual([]);
+    // The allowance must stay the exception, not hide a general difference.
+    expect(keptByHead).toBeLessThan(10);
+  }, 60000);
 });
 
 describe('schema-bearing keywords by draft', () => {

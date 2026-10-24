@@ -33,3 +33,37 @@ test('a contradictory conditional settles in the form', async ({page}) => {
   expect(result.afterSecond).toBe(result.afterHalfSecond);
   expect(result.afterSecond).toBeLessThan(10);
 });
+
+// Nested nullable variants with required children, through schema-editor's
+// echo: base settles on the full nested default. A guard that counted
+// repeated values stopped the last correction and lost lines.
+test('nested nullable variants with required children settle on their full default', async ({page}) => {
+  await page.goto('/notes');
+  const value = await page.evaluate(async () => {
+    await customElements.whenDefined('schema-editor');
+    const element = document.createElement('schema-editor');
+    element.setAttribute('mode', 'form');
+    element.setAttribute('schema', JSON.stringify({
+      type: 'object',
+      properties: {
+        shipping: {oneOf: [
+          {type: 'object', required: ['address'], properties: {
+            address: {oneOf: [
+              {type: 'object', required: ['lines'], properties: {lines: {type: 'array', items: {type: 'string'}}}},
+              {type: 'null'},
+            ]},
+          }},
+          {type: 'null'},
+        ]},
+      },
+    }));
+    element.setAttribute('value', '{}');
+    document.body.append(element);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const hidden = element.querySelector('schema-form-mode input[type="hidden"]') as HTMLInputElement | null;
+    const result = hidden?.value ?? null;
+    element.remove();
+    return result;
+  });
+  expect(JSON.parse(value ?? 'null')).toEqual({shipping: {address: {lines: []}}});
+});
