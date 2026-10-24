@@ -2,11 +2,14 @@ package plugin_system
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"mahresources/models/block_types"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -505,4 +508,42 @@ func TestPluginBlockDefaultsPreserveExplicitEmptyArrays(t *testing.T) {
 	require.NotNil(t, block)
 	assert.JSONEq(t, `{"items":[]}`, string(block.DefaultContent()))
 	assert.JSONEq(t, `{"checked":[]}`, string(block.DefaultState()))
+}
+
+// Plan 2026-10-24 section 1e: a plugin's block schema must not make the host
+// read a file the Lua sandbox cannot. The default loader opened file:// refs.
+func TestNewPluginBlockType_RefusesExternalSchemaRefs(t *testing.T) {
+	path := t.TempDir() + "/external.json"
+	require.NoError(t, os.WriteFile(path, []byte(`{"type":"string"}`), 0o600))
+
+	for name, ref := range map[string]string{
+		"file":  "file://" + path,
+		"http":  "http://127.0.0.1:1/s.json",
+		"https": "https://example.invalid/s.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewPluginBlockType(PluginBlockTypeConfig{
+				PluginName:    "testplugin",
+				TypeName:      "plugin:testplugin:ext",
+				Label:         "Ext",
+				ContentSchema: `{"properties":{"x":{"$ref":"` + ref + `"}}}`,
+			})
+			require.Error(t, err)
+			// LoadURLError has no Unwrap, so errors.Is cannot see the loader's error.
+			var loadErr *jsonschema.LoadURLError
+			require.True(t, errors.As(err, &loadErr), "not a LoadURLError: %v", err)
+			assert.Equal(t, ref, loadErr.URL)
+			assert.Equal(t, errExternalSchemaRef, loadErr.Err, "not refused by the loader: %v", err)
+		})
+	}
+
+	t.Run("local $defs ref still compiles", func(t *testing.T) {
+		_, err := NewPluginBlockType(PluginBlockTypeConfig{
+			PluginName:    "testplugin",
+			TypeName:      "plugin:testplugin:local",
+			Label:         "Local",
+			ContentSchema: `{"properties":{"x":{"$ref":"#/$defs/n"}},"$defs":{"n":{"type":"string"}}}`,
+		})
+		require.NoError(t, err)
+	})
 }

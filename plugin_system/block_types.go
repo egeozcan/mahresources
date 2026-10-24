@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -157,6 +158,7 @@ func compileSchema(id string, schemaJSON string) (*jsonschema.Schema, error) {
 	}
 
 	c := jsonschema.NewCompiler()
+	c.UseLoader(refuseExternalSchemaLoader{})
 	if err := c.AddResource(id, doc); err != nil {
 		return nil, fmt.Errorf("adding schema resource: %w", err)
 	}
@@ -393,3 +395,14 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 
 	return pbt, nil
 }
+
+// errExternalSchemaRef refuses every URL the compiler would fetch. The default
+// loader opens file:// references, so a schema could make the server read (or,
+// with a FIFO, block on) any local file. The standard metaschemas are embedded
+// in the library and resources added with AddResource resolve before a loader is
+// consulted, so local #/... references and the draft $schema values still work.
+var errExternalSchemaRef = errors.New("external schema references are not supported; use a local #/$defs reference")
+
+type refuseExternalSchemaLoader struct{}
+
+func (refuseExternalSchemaLoader) Load(string) (any, error) { return nil, errExternalSchemaRef }
