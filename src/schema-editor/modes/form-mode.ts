@@ -20,6 +20,7 @@ import {
   setOwn,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
+import { schemaFallback } from '../schema-fallback';
 
 function generateFieldId(prefix: string, path: string): string {
   // Injective encoding: every non-alphanumeric character is replaced with
@@ -47,6 +48,19 @@ function formatNumericForInput(data: any, schema: JSONSchema): string {
   if (data === 0 && !('default' in schema)) return '';
   return valueText(data);
 }
+
+/**
+ * Whether n is a multiple of m, within a relative tolerance: 0.3 % 0.1 is not
+ * 0 in floating point, though 0.3 is 3 × 0.1.
+ */
+function isMultipleOf(n: number, m: number): boolean {
+  if (!(m > 0)) return true;
+  const quotient = n / m;
+  return Math.abs(quotient - Math.round(quotient)) <= 1e-9 * Math.max(1, Math.abs(quotient));
+}
+
+/** How deep form rendering nests before treating the schema as a cycle. */
+const MAX_FORM_DEPTH = 64;
 
 /** The option key of a stored value that matches no choice. */
 const CURRENT_CHOICE_KEY = 'current';
@@ -99,6 +113,9 @@ export class SchemaFormMode extends LitElement {
     }
     if (form) {
       this._submitHandler = (ev: Event) => {
+        // Errors are recomputed from the fields as they are now; one left by a
+        // field that has since been replaced must not block submission.
+        this._errors = new Map();
         // On form submit, validate all schema-managed inputs and set errors in
         // reactive _errors state. We don't use native `required` to avoid the
         // browser blocking the submit event before our handler fires.
@@ -196,6 +213,7 @@ export class SchemaFormMode extends LitElement {
         this.schema = {};
       }
     }
+    if (changed.has('schema')) this._schemaError = null;
     if (changed.has('value') || changed.has('schema')) {
       this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
 
@@ -206,7 +224,12 @@ export class SchemaFormMode extends LitElement {
       // hidden input — including nested objects with additionalProperties:false.
       if (changed.has('schema') && this._data && typeof this._data === 'object') {
         const before = JSON.stringify(this._data);
-        stripStaleKeys(this._data, this.schema, this.schema);
+        try {
+          stripStaleKeys(this._data, this.schema, this.schema);
+        } catch (error) {
+          // The data is kept as it was; render shows the fallback.
+          this._schemaError = error;
+        }
         const after = JSON.stringify(this._data);
 
         // If keys were actually stripped, notify the Alpine wrapper so its
@@ -280,14 +303,43 @@ export class SchemaFormMode extends LitElement {
       return nothing;
     }
 
-    return this._renderField(this.schema, this._data, (val: any) => {
-      this._emitChange(val);
-    }, this.schema, undefined, '');
+    if (this._schemaError) return schemaFallback('schema-form-mode', this._schemaError, this._data);
+    try {
+      return this._renderField(this.schema, this._data, (val: any) => {
+        this._emitChange(val);
+      }, this.schema, undefined, '');
+    } catch (error) {
+      return schemaFallback('schema-form-mode', error, this._data);
+    }
   }
+
+  /** Set when processing the schema in willUpdate threw; render shows the fallback. */
+  private _schemaError: unknown = null;
+
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
+  /**
+   * A $ref cycle (resolveRef's target keeps its own $ref through the merge)
+   * would recurse forever, so rendering stops at a fixed nesting depth and
+   * shows the unresolved-reference message there. Depth only, no step budget:
+   * a large form legitimately makes many calls.
+   */
   private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean, parentRequired?: boolean): TemplateResult | typeof nothing {
+    if (this._renderDepth >= MAX_FORM_DEPTH) {
+      return html`<div class="text-red-500 text-xs">Unresolvable reference: the schema refers to itself</div>`;
+    }
+    this._renderDepth++;
+    try {
+      return this._renderFieldUnguarded(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
+    } finally {
+      this._renderDepth--;
+    }
+  }
+
+  private _renderDepth = 0;
+
+  private _renderFieldUnguarded(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean, parentRequired?: boolean): TemplateResult | typeof nothing {
     schema = withTypedKeywords(schema);
     // Handle $ref
     if (schema.$ref) {
@@ -1079,7 +1131,7 @@ export class SchemaFormMode extends LitElement {
             error = `Must be at most ${schema.maximum}`;
           } else if (type === 'integer' && !Number.isInteger(num)) {
             error = 'Must be a whole number';
-          } else if (schema.multipleOf !== undefined && num % schema.multipleOf !== 0) {
+          } else if (schema.multipleOf !== undefined && !isMultipleOf(num, schema.multipleOf)) {
             error = `Must be a multiple of ${schema.multipleOf}`;
           }
         }

@@ -8,6 +8,7 @@ import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resol
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
+import { schemaFallback } from '../schema-editor/schema-fallback';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -164,6 +165,14 @@ export class MetaShortcode extends LitElement {
   }
 
   override render(): TemplateResult | typeof nothing {
+    try {
+      return this._renderShortcode();
+    } catch (error) {
+      return schemaFallback('meta-shortcode', error, this._value);
+    }
+  }
+
+  private _renderShortcode(): TemplateResult | typeof nothing {
     if (this._isEmpty && this.hideEmpty === 'true' && !this._editing) {
       return nothing;
     }

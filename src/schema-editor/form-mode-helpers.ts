@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum, withinDepth } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -16,6 +16,11 @@ import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum } from './
  * checking.
  */
 export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boolean {
+  // A $ref cycle is not a single control.
+  return withinDepth(false, () => isLeafSchemaUnguarded(schema, rootSchema));
+}
+
+function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boolean {
   // $ref: resolve and check the resolved schema
   if (schema.$ref) {
     if (!rootSchema) return false; // cannot resolve without root

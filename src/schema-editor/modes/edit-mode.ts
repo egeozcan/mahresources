@@ -7,6 +7,7 @@ import type { JSONSchema } from '../schema-core';
 import { escapeJsonPointer } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
+import { schemaFallback } from '../schema-fallback';
 
 @customElement('schema-edit-mode')
 export class SchemaEditMode extends LitElement {
@@ -33,6 +34,8 @@ export class SchemaEditMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
 
   @state() private _root: SchemaNode | null = null;
+  /** Set when the schema could not be turned into a tree; render shows the fallback. */
+  @state() private _schemaError: unknown = null;
   @state() private _selectedId = '';
   @state() private _draft: string | null = null;
 
@@ -49,7 +52,14 @@ export class SchemaEditMode extends LitElement {
       if (incoming === this._lastEmittedSchema) {
         return;
       }
-      this._root = schemaToTree(this.schema);
+      try {
+        this._root = schemaToTree(this.schema);
+        this._schemaError = null;
+      } catch (error) {
+        this._root = null;
+        this._schemaError = error;
+        return;
+      }
       this._draft = detectDraft(this.schema);
       // Validate selection — if old ID doesn't exist in new tree, select root
       if (this._selectedId && !this._findNode(this._selectedId)) {
@@ -602,6 +612,15 @@ export class SchemaEditMode extends LitElement {
   }
 
   override render() {
+    if (this._schemaError) return schemaFallback('schema-edit-mode', this._schemaError, this.schema);
+    try {
+      return this._renderEditor();
+    } catch (error) {
+      return schemaFallback('schema-edit-mode', error, this.schema);
+    }
+  }
+
+  private _renderEditor() {
     const selected = this._findNode(this._selectedId);
     const breadcrumb = this._buildBreadcrumb(this._selectedId);
     const isRoot = selected === this._root;

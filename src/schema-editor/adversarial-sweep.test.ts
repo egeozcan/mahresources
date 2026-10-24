@@ -12,8 +12,9 @@ import './modes/form-mode';
 import './modes/search-mode';
 import './schema-editor';
 import './tree/detail-panel';
+import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition } from './schema-core';
 import { schemaToTree } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
 
@@ -76,6 +77,9 @@ function snapshot(el: Element): string {
     }
   };
   walk(el);
+  // An element that renders into its own shadow root keeps its content there.
+  const own = (el as any).shadowRoot as ShadowRoot | null;
+  if (own) { parts.push(own.textContent ?? ''); walk(own); }
   return parts.join('\n');
 }
 
@@ -519,6 +523,150 @@ describe('date parser edge cases', () => {
       expect((await panel('date', v)).textContent).toContain(v);
     }
   });
+});
+
+// ─── Class A: reference cycles (valid JSON Schema) ───────────────────────────
+
+describe('reference cycles', () => {
+  const cycles: Array<[string, any]> = [
+    ['self', { $defs: { r: { $ref: '#/$defs/r' } } }],
+    ['two-node', { $defs: { a: { $ref: '#/$defs/b' }, b: { $ref: '#/$defs/a' } } }],
+    ['allOf', { $defs: { r: { title: 'R', allOf: [{ $ref: '#/$defs/r' }] } } }],
+  ];
+  const tree = { $defs: { node: { type: 'object', properties: { name: { type: 'string' }, child: { $ref: '#/$defs/node' } } } } };
+
+  for (const [name, defs] of cycles) {
+    it(`a ${name} cycle resolves without overflowing the stack`, () => {
+      const first = Object.keys(defs.$defs)[0];
+      const root = { ...defs, type: 'object', properties: { v: { $ref: `#/$defs/${first}` } } };
+      expect(() => resolveSchema({ $ref: `#/$defs/${first}` }, root)).not.toThrow();
+      expect(() => flattenSchema(root)).not.toThrow();
+      expect(() => getDefaultValue(root, root)).not.toThrow();
+      expect(() => getPreviewDefaultValue(root, root)).not.toThrow();
+      expect(() => evaluateCondition({ $ref: `#/$defs/${first}` }, {}, root)).not.toThrow();
+    });
+  }
+
+  it('a branching cycle finishes quickly instead of growing exponentially', () => {
+    const root = { $defs: { r: { anyOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }], oneOf: [{ $ref: '#/$defs/r' }, { $ref: '#/$defs/r' }] } } };
+    const started = Date.now();
+    resolveSchema({ $ref: '#/$defs/r' }, root);
+    evaluateCondition({ $ref: '#/$defs/r' }, { a: 1 }, root);
+    getDefaultValue({ $ref: '#/$defs/r' }, root);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('every entry point renders a cycle and a recursive tree schema', async () => {
+    for (const root of [
+      ...cycles.map(([, defs]) => ({ ...defs, type: 'object', properties: { v: { $ref: `#/$defs/${Object.keys(defs.$defs)[0]}` } } })),
+      { ...tree, type: 'object', properties: { v: { $ref: '#/$defs/node' } } },
+      { ...tree, $ref: '#/$defs/node' },
+    ]) {
+      const value = { v: { name: 'n', child: { name: 'c' } } };
+      for (const el of [
+        await mountEl('schema-display-mode', { schema: root, value }),
+        await mountEl('schema-form-mode', { schema: root, value }),
+        await mountEl('schema-search-mode', { schema: JSON.stringify(root), metaQuery: '[]' }),
+        await mountEl('schema-edit-mode', { schema: root }),
+        await mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify({ ...root.properties?.v, $defs: root.$defs }), 'data-value': JSON.stringify(value.v) }),
+      ]) {
+        expectClean(el);
+        // A cycle is valid JSON Schema: it renders, it does not fall back.
+        expect(snapshot(el), `${el.tagName} ${JSON.stringify(root)}`).not.toContain('Schema could not be used');
+      }
+      document.body.replaceChildren();
+    }
+  });
+});
+
+// ─── Class A: submission regressions ─────────────────────────────────────────
+
+describe('submission checks', () => {
+  async function mountInForm(prop: any, v: unknown) {
+    const form = document.createElement('form');
+    document.body.append(form);
+    const el = document.createElement('schema-form-mode') as any;
+    el.schema = { type: 'object', properties: { v: prop } };
+    el.value = { v };
+    form.append(el);
+    await settle(el);
+    const submit = async () => {
+      const ev = new Event('submit', { cancelable: true });
+      form.dispatchEvent(ev);
+      await settle(el);
+      return ev.defaultPrevented;
+    };
+    return { el, submit };
+  }
+
+  it('multipleOf tolerates floating-point remainders', async () => {
+    for (const [m, v, blocked] of [[0.1, 0.3, false], [0.01, 1.23, false], [0.1, 0.35, true], [2, 3, true], [2, 4, false]] as const) {
+      const { submit } = await mountInForm({ type: 'number', multipleOf: m }, v);
+      expect(await submit(), `${v} multipleOf ${m}`).toBe(blocked);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('an error from a replaced field does not block the new one', async () => {
+    const { el, submit } = await mountInForm({ type: 'number', minimum: 10 }, 5);
+    expect(await submit()).toBe(true);
+    el.schema = { type: 'object', properties: { v: { type: 'boolean' } } };
+    el.value = { v: true };
+    await settle(el);
+    expect(await submit()).toBe(false);
+  });
+});
+
+// ─── Class B: malformed schemas the server would reject ──────────────────────
+
+describe('malformed schemas fall back at each entry point', () => {
+  const NOTE = 'Schema could not be used';
+  const shapes: Array<[string, any, any]> = [
+    ['null property schema', { type: 'object', properties: { v: null, w: { type: 'string' } } }, { v: 1, w: 'x' }],
+    ['allOf: [null]', { type: 'object', allOf: [null], properties: { v: { type: 'string' } } }, { v: 'x' }],
+    ['nested allOf: [null]', { type: 'object', properties: { v: { allOf: [null] } } }, { v: 'x' }],
+    ['required: 5', { type: 'object', required: 5, properties: { v: { type: 'string' } } }, { v: 'x' }],
+    ['hostile if minimum', { type: 'object', properties: { v: { type: 'number' } }, if: { properties: { v: { minimum: H } } }, then: { title: 'T' } }, { v: 3 }],
+    ['oneOf: [null]', { type: 'object', oneOf: [null], properties: { v: { type: 'string' } } }, { v: 'x' }],
+  ];
+
+  // Where the malformed part reaches an entry point's processing, that entry
+  // point falls back; where normalisation (a null property schema is skipped)
+  // or the entry point's own handling makes it irrelevant, it renders.
+  const F = 'fallback', R = 'rendered';
+  const EXPECTED: Record<string, Record<string, string>> = {
+    'null property schema': { display: F, form: F, search: R, tree: R, meta: R },
+    'allOf: [null]': { display: F, form: F, search: F, tree: F, meta: F },
+    'nested allOf: [null]': { display: F, form: F, search: F, tree: F, meta: R },
+    'required: 5': { display: R, form: F, search: R, tree: F, meta: R },
+    'hostile if minimum': { display: F, form: F, search: R, tree: R, meta: R },
+    'oneOf: [null]': { display: F, form: F, search: F, tree: F, meta: F },
+  };
+
+  for (const [name, schema, value] of shapes) {
+    it(`${name}: every entry point renders or falls back`, async () => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const results: Record<string, string> = {};
+      const entries: Array<[string, () => Promise<HTMLElement>]> = [
+        ['display', () => mountEl('schema-display-mode', { schema, value })],
+        ['form', () => mountEl('schema-form-mode', { schema, value })],
+        ['search', () => mountEl('schema-search-mode', { schema: JSON.stringify(schema), metaQuery: '[]' })],
+        ['tree', () => mountEl('schema-edit-mode', { schema })],
+        ['meta', () => mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': JSON.stringify(schema), 'data-value': JSON.stringify(value) })],
+      ];
+      for (const [entry, mount] of entries) {
+        const el = await mount();
+        expectClean(el);
+        results[entry] = snapshot(el).includes(NOTE) ? 'fallback' : 'rendered';
+        document.body.replaceChildren();
+      }
+      // A fallback is always logged; a normal render never is.
+      const fellBack = Object.values(results).filter(r => r === 'fallback').length;
+      expect(log.mock.calls.length >= fellBack).toBe(true);
+      log.mockRestore();
+      expect(results).toEqual(EXPECTED[name]);
+    });
+  }
 });
 
 describe('pills with hand-written options', () => {

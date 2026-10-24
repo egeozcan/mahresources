@@ -29,6 +29,11 @@ export function unescapeJsonPointer(token: string): string {
 // prototype instead of a property. Use these wherever a key comes from a
 // schema or from stored data.
 
+/** Whether value can be a subschema: an object or a boolean (true/false schemas). */
+export function isSchemaValue(value: unknown): boolean {
+  return typeof value === 'boolean' || (value !== null && typeof value === 'object' && !Array.isArray(value));
+}
+
 /** Whether key is obj's own property. */
 export function hasOwn(obj: unknown, key: string): boolean {
   return obj != null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -149,7 +154,56 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
 
 // ─── Schema resolution (composition keywords) ───────────────────────────────
 
+// ─── Recursion depth ─────────────────────────────────────────────────────────
+// A $ref cycle (a definition that refers to itself, directly, through another
+// definition or through allOf) is valid JSON Schema, and every walker that
+// follows references would recurse forever on one. The walkers share one
+// depth counter; past the limit a call returns its "unresolved" answer
+// instead (resolveSchema: null, the default builders: undefined,
+// evaluateCondition: true), which each caller already handles. A cycle that
+// branches (anyOf of several self-references) would still grow exponentially
+// below the depth limit, so each top-level walk also has a step budget.
+
+const MAX_SCHEMA_DEPTH = 32;
+const MAX_SCHEMA_STEPS = 10_000;
+let schemaDepth = 0;
+let schemaSteps = 0;
+
+export function withinDepth<T>(atLimit: T, walk: () => T): T {
+  if (schemaDepth === 0) schemaSteps = 0;
+  if (schemaDepth >= MAX_SCHEMA_DEPTH || schemaSteps >= MAX_SCHEMA_STEPS) return atLimit;
+  schemaDepth++;
+  schemaSteps++;
+  try {
+    return walk();
+  } finally {
+    schemaDepth--;
+  }
+}
+
 export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
+  return withinDepth(null, () => resolveSchemaUnguarded(schema, rootSchema));
+}
+
+/**
+ * The references resolveSchema is following right now. A composition branch
+ * that refers to one of them is a cycle and is skipped, so a branching cycle
+ * cannot multiply the merged branches at every level. (A plain $ref cycle is
+ * stopped by the depth limit.)
+ */
+const resolvingRefs = new Set<unknown>();
+
+function whileResolving<T>(refs: unknown[], resolve: () => T): T {
+  const added = refs.filter(ref => !resolvingRefs.has(ref));
+  added.forEach(ref => resolvingRefs.add(ref));
+  try {
+    return resolve();
+  } finally {
+    added.forEach(ref => resolvingRefs.delete(ref));
+  }
+}
+
+function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchema): JSONSchema | null {
   if (!schema) return schema;
 
   if (schema.$ref) {
@@ -160,7 +214,7 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return resolveSchema(merged, rootSchema);
+      return whileResolving([schema.$ref], () => resolveSchema(merged, rootSchema));
     }
     return null;
   }
@@ -179,13 +233,15 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
       }
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
+      const followed: unknown[] = [];
       for (const sub of schema[keyword]) {
         let resolved: JSONSchema | null;
         if (sub.$ref) {
-          const refResult = resolveRef(sub.$ref, rootSchema);
+          const refResult = resolvingRefs.has(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema);
           const siblings: JSONSchema = { ...sub };
           delete siblings.$ref;
           resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+          if (refResult) followed.push(sub.$ref);
         } else {
           resolved = sub;
         }
@@ -234,7 +290,7 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
         else merged.title = schema.title;
       }
 
-      return resolveSchema(merged, rootSchema);
+      return whileResolving(followed, () => resolveSchema(merged, rootSchema));
     }
   }
 
@@ -266,6 +322,11 @@ export function inferSchema(val: unknown): JSONSchema {
 // ─── Condition evaluation ────────────────────────────────────────────────────
 
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
+  // A reference cycle has no constraint left to check.
+  return withinDepth(true, () => evaluateConditionUnguarded(conditionSchema, data, rootSchema));
+}
+
+function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
   if (!conditionSchema) return true;
 
   // ── Resolve $ref before any checks ────────────────────────────────────
@@ -608,6 +669,10 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
 // ─── Default values ──────────────────────────────────────────────────────────
 
 export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): any {
+  return withinDepth(undefined, () => getDefaultValueUnguarded(schema, rootSchema));
+}
+
+function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
@@ -706,6 +771,10 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
  * to [] (no items to seed). enum/const/$ref still resolve their explicit value.
  */
 export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): any {
+  return withinDepth(undefined, () => getPreviewDefaultValueUnguarded(schema, rootSchema));
+}
+
+function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
@@ -1009,6 +1078,7 @@ export function flattenSchema(
   const fields: FlatField[] = [];
 
   for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+    if (!isSchemaValue(rawPropIn)) continue;
     const path = prefix ? `${prefix}.${key}` : key;
     const rawProp = withTypedKeywords(rawPropIn);
     const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);

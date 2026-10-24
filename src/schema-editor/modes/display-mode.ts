@@ -14,6 +14,7 @@ import {
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
+import { schemaFallback } from '../schema-fallback';
 
 interface DisplayField {
   path: string;
@@ -253,6 +254,14 @@ export class SchemaDisplayMode extends LitElement {
   }
 
   override render() {
+    try {
+      return this._renderPanel();
+    } catch (error) {
+      return schemaFallback('schema-display-mode', error, this.value);
+    }
+  }
+
+  private _renderPanel() {
     if (!this.schema?.properties || !this.value) return nothing;
 
     const allFields = flattenForDisplay(this.schema, this.value, this.schema);

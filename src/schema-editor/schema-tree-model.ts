@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { isLabeledEnum } from './schema-core';
+import { isLabeledEnum, isSchemaValue } from './schema-core';
 
 // ─── Schema Node ─────────────────────────────────────────────────────────────
 
@@ -144,9 +144,10 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   // Object with properties → children
   if (schema.properties) {
     const reqSet = schema.required || [];
-    const propChildren = Object.entries(schema.properties).map(([key, propSchema]) =>
-      schemaToTree(propSchema as JSONSchema, key, reqSet),
-    );
+    // A property schema that is not a schema (null, a number) is skipped.
+    const propChildren = Object.entries(schema.properties)
+      .filter(([, propSchema]) => isSchemaValue(propSchema))
+      .map(([key, propSchema]) => schemaToTree(propSchema as JSONSchema, key, reqSet));
     node.children = [...(node.children || []), ...propChildren];
   }
 

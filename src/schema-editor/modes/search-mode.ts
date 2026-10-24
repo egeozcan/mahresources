@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
 import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
+import { schemaFallback } from '../schema-fallback';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,8 @@ export class SchemaSearchMode extends LitElement {
   @state() private _fieldsCleared = false;
 
   private _existingMeta: MetaQueryEntry[] = [];
+  /** Set when the schema could not be turned into fields; render shows the fallback. */
+  private _schemaError: unknown = null;
 
   /** Replace URL/form metadata after an MRQL edit and rebuild visible schema controls. */
   setMetaQueryEntries(entries: MetaQueryEntry[]) {
@@ -123,7 +126,14 @@ export class SchemaSearchMode extends LitElement {
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('schema')) {
-      this._rebuildFields();
+      try {
+        this._schemaError = null;
+        this._rebuildFields();
+      } catch (error) {
+        this._schemaError = error;
+        this._fields = [];
+        this._hasFields = false;
+      }
     }
     if (changed.has('metaQuery')) {
       this._parseMetaQuery();
@@ -434,6 +444,15 @@ export class SchemaSearchMode extends LitElement {
   // ─── Render ─────────────────────────────────────────────────────────────
 
   override render() {
+    if (this._schemaError) return schemaFallback('schema-search-mode', this._schemaError);
+    try {
+      return this._renderFields();
+    } catch (error) {
+      return schemaFallback('schema-search-mode', error);
+    }
+  }
+
+  private _renderFields() {
     const srText = this._hasFields
       ? `${this._fields.length} schema filter fields available`
       : (this._fieldsCleared ? 'Schema filter fields cleared' : '');
