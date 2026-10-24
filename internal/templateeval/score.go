@@ -702,16 +702,73 @@ func unknownShortcodeNames(text string, known shortcodes.KnownShortcodes, css bo
 	return append(names, scanShortcodeNames(text, known, css)...)
 }
 
+// slotTagNames is every tag some block's handler reads out of its body
+// (shortcodes.SlotTags). They are not registered shortcodes, so they are known
+// only inside the block that reads them.
+var slotTagNames = func() map[string]bool {
+	names := map[string]bool{}
+	for _, parent := range []string{"mrql", "conditional", "each"} {
+		for _, tag := range shortcodes.SlotTags(parent) {
+			names[tag] = true
+		}
+	}
+	return names
+}()
+
+// blockSpan is the body of one block shortcode, as byte offsets into the text.
+type blockSpan struct {
+	name       string
+	start, end int
+}
+
+// blockSpans lists every block shortcode body in text, nested ones included,
+// read through the runtime's parser. base is text's offset in the outermost text.
+func blockSpans(text string, base int, spans []blockSpan) []blockSpan {
+	for _, sc := range shortcodes.ParseWithBlocks(text) {
+		if !sc.IsBlock {
+			continue
+		}
+		end := sc.End - len("[/"+sc.Name+"]")
+		start := end - len(sc.InnerContent)
+		spans = append(spans, blockSpan{name: sc.Name, start: base + start, end: base + end})
+		spans = blockSpans(sc.InnerContent, base+start, spans)
+	}
+	return spans
+}
+
+// innermostBlock names the block whose body holds offset pos and is nested
+// deepest, or "" outside every block. A handler reads a slot tag only at the
+// top level of its own body, so the innermost block is the one that decides.
+func innermostBlock(spans []blockSpan, pos int) string {
+	best, name := -1, ""
+	for _, s := range spans {
+		if pos >= s.start && pos < s.end && s.start > best {
+			best, name = s.start, s.name
+		}
+	}
+	return name
+}
+
 func scanShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool) []string {
 	var names []string
-	for _, m := range shortcodeShaped.FindAllStringSubmatch(text, -1) {
-		closing, name, attrs := m[1] != "", m[2], strings.TrimSpace(m[3])
+	var blocks []blockSpan
+	scanned := false
+	for _, m := range shortcodeShaped.FindAllStringSubmatchIndex(text, -1) {
+		closing, name, attrs := m[3] > m[2], text[m[4]:m[5]], strings.TrimSpace(text[m[6]:m[7]])
 		bare := attrs == ""
 		if (closing && !bare) || (!bare && !attrList.MatchString(attrs)) || (css && bare) {
 			continue
 		}
-		if _, ok := known[name]; ok || name == "else" || name == "elseif" {
+		if _, ok := known[name]; ok {
 			continue
+		}
+		if slotTagNames[name] {
+			if !scanned {
+				blocks, scanned = blockSpans(text, 0, nil), true
+			}
+			if parent := innermostBlock(blocks, m[0]); parent != "" && containsString(shortcodes.SlotTags(parent), name) {
+				continue
+			}
 		}
 		names = append(names, name)
 	}

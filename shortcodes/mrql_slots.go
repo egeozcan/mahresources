@@ -8,6 +8,28 @@ import (
 	"strings"
 )
 
+const (
+	mrqlHeaderTag = "header"
+	mrqlFooterTag = "footer"
+)
+
+// slotTags are the tags each block shortcode's handler reads out of its own
+// body. None is registered with the global parser, so each carries meaning only
+// inside its parent: [mrql] pulls out [header], [footer] and a top-level
+// [else] (parseMRQLSlots); [conditional] splits on [elseif] and [else]
+// (SplitBranches); [each] splits on [else] (SplitElse).
+var slotTags = map[string][]string{
+	"mrql":        {mrqlHeaderTag, mrqlFooterTag, "else"},
+	"conditional": {"else", "elseif"},
+	"each":        {"else"},
+}
+
+// SlotTags returns the tags a block shortcode's handler reads out of its body,
+// or nil for a block with none. Outside that block the same tags are plain text.
+func SlotTags(parent string) []string {
+	return append([]string(nil), slotTags[parent]...)
+}
+
 // mrqlSlots is the decomposition of an [mrql] block body into its optional
 // header/footer/empty slots and the per-item template. All four are literal,
 // handler-local tags ([header]/[footer]/[else]) — none are registered with the
@@ -34,8 +56,8 @@ type mrqlSlots struct {
 // untouched.
 func parseMRQLSlots(inner string) mrqlSlots {
 	var s mrqlSlots
-	s.Header, inner, s.HasHeader = extractFirstSlot(inner, "header")
-	s.Footer, inner, s.HasFooter = extractFirstSlot(inner, "footer")
+	s.Header, inner, s.HasHeader = extractFirstSlot(inner, mrqlHeaderTag)
+	s.Footer, inner, s.HasFooter = extractFirstSlot(inner, mrqlFooterTag)
 
 	if countTopLevelElse(inner) > 0 {
 		s.Item, s.Else = SplitElse(inner)

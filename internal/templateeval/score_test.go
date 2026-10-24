@@ -929,3 +929,38 @@ func disclosedGenerate(gen application_context.TemplateGenerator, in application
 	}
 	return gen.GenerateTemplate(context.Background(), in, prompt, disclosure.GroundingHash)
 }
+
+func TestUnknownShortcodeScanReadsSlotTagsWhereTheRuntimeDoes(t *testing.T) {
+	known := shortcodes.KnownFromBuiltins()
+	tests := []struct {
+		name, text string
+		want       []string
+	}{
+		{"mrql header and footer", `[mrql query="type = note"][header]H[/header][footer]F[/footer][/mrql]`, nil},
+		{"mrql else", `[mrql query="type = note"]<b>x</b>[else]E[/mrql]`, nil},
+		{"conditional elseif and else", `[conditional mrql="type = note"]A[elseif mrql="type = group"]B[else]C[/conditional]`, nil},
+		{"each else", `[each items="x"]<i>[item][/each]`, nil},
+		{"each with else", `[each items="x"]a[else]b[/each]`, nil},
+		{"stray top-level header", `<p>[header]x[/header]</p>`, []string{"header"}},
+		{"stray else", `<p>[else]</p>`, []string{"else"}},
+		{"header in a conditional", `[conditional mrql="type = note"][header]H[/header][/conditional]`, []string{"header"}},
+		{"header nested in another block inside mrql", `[mrql query="type = note"][conditional mrql="type = note"][header]H[/header][/conditional][/mrql]`, []string{"header"}},
+		{"invented shortcode beside real slots", `[mrql query="type = note"][header]H[/header][star-rating value="4"][/mrql]`, []string{"star-rating"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unknownShortcodeNames(tt.text, known, false)
+			seen := map[string]bool{}
+			var names []string
+			for _, n := range got {
+				if !seen[n] {
+					seen[n] = true
+					names = append(names, n)
+				}
+			}
+			if !reflect.DeepEqual(names, tt.want) {
+				t.Fatalf("unknown = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
