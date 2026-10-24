@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -39,6 +40,7 @@ func ValidateMetaSchema(schemaJSON string) error {
 	}
 
 	c := jsonschema.NewCompiler()
+	c.UseLoader(refuseExternalSchemaLoader{})
 	const id = "mem://meta-schema.json"
 	if err := c.AddResource(id, doc); err != nil {
 		return fmt.Errorf("meta JSON schema is not a valid JSON Schema: %w", err)
@@ -48,3 +50,14 @@ func ValidateMetaSchema(schemaJSON string) error {
 	}
 	return nil
 }
+
+// errExternalSchemaRef refuses every URL the compiler would fetch. The default
+// loader opens file:// references, so a schema could make the server read (or,
+// with a FIFO, block on) any local file. The standard metaschemas are embedded
+// in the library and resources added with AddResource resolve before a loader is
+// consulted, so local #/... references and the draft $schema values still work.
+var errExternalSchemaRef = errors.New("external schema references are not supported; use a local #/$defs reference")
+
+type refuseExternalSchemaLoader struct{}
+
+func (refuseExternalSchemaLoader) Load(string) (any, error) { return nil, errExternalSchemaRef }

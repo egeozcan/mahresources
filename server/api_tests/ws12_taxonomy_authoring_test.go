@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -183,6 +185,34 @@ func TestValidAndEmptyMetaSchemasStillSave(t *testing.T) {
 	}
 	if stored.MetaSchema != validSchema {
 		t.Errorf("MetaSchema = %q, want it stored verbatim", stored.MetaSchema)
+	}
+}
+
+// Plan 2026-10-24 section 1e. Compiling the schema opened file:// references with
+// the library's default loader, so a save read any local file the server could.
+// The refusal is the same 400 an uncompilable schema gets, and nothing is stored.
+func TestMetaSchemaFileRefIsRejected(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	path := filepath.Join(t.TempDir(), "external.json")
+	if err := os.WriteFile(path, []byte(`{"type":"string"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	schema := `{"type":"object","properties":{"x":{"$ref":"file://` + filepath.ToSlash(path) + `"}}}`
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/category", map[string]any{
+		"Name": "ws12-file-ref", "MetaSchema": schema,
+	})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("a file:// $ref returned %d, want 400: %s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "external schema references are not supported") {
+		t.Errorf("the rejection does not say why: %s", resp.Body.String())
+	}
+	var n int64
+	tc.DB.Model(&models.Category{}).Where("name = ?", "ws12-file-ref").Count(&n)
+	if n != 0 {
+		t.Errorf("the rejected category was stored (%d rows)", n)
 	}
 }
 
