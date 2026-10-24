@@ -1849,6 +1849,141 @@ describe('round 20: defaults pruned on the identity of the referencing node', ()
   });
 });
 
+describe('round 21: deferred work inside the boundary, settled initialisation, no leaked steps', () => {
+  function collectUncaught() {
+    const errors: unknown[] = [];
+    const onUncaught = (error: unknown) => { errors.push(error); };
+    const onWindowError = (e: ErrorEvent) => { errors.push(e.error ?? e.message); e.preventDefault(); };
+    process.on('uncaughtException', onUncaught);
+    window.addEventListener('error', onWindowError);
+    return { errors, stop: () => { process.off('uncaughtException', onUncaught); window.removeEventListener('error', onWindowError); } };
+  }
+
+  it('a deferred default that cannot be serialised falls back instead of throwing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const unserialisable = { toJSON() { throw new RangeError('Maximum call stack size exceeded'); } };
+    for (const keyword of ['oneOf', 'anyOf']) {
+      const { errors, stop } = collectUncaught();
+      let el: any;
+      try {
+        el = await mountEl('schema-form-mode', {
+          schema: { type: 'object', properties: { v: { [keyword]: [{ type: 'object', default: unserialisable }] } } },
+          value: {},
+        });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await settle(el);
+      } finally {
+        stop();
+      }
+      expect(errors.map(String), keyword).toEqual([]);
+      expect(snapshot(el), keyword).toContain('showing the raw value');
+      document.body.replaceChildren();
+    }
+  });
+
+  it('every deferred callback in the five entry points goes through the action boundary', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const unguarded: string[] = [];
+    for (const file of [
+      'src/schema-editor/modes/display-mode.ts',
+      'src/schema-editor/modes/form-mode.ts',
+      'src/schema-editor/modes/search-mode.ts',
+      'src/schema-editor/modes/edit-mode.ts',
+      'src/webcomponents/meta-shortcode.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      for (const match of source.matchAll(/\b(queueMicrotask|setTimeout|requestAnimationFrame)\(|\.then\(/g)) {
+        const rest = source.slice(match.index! + match[0].length);
+        const line = source.slice(source.lastIndexOf('\n', match.index!) + 1, source.indexOf('\n', match.index!));
+        // The one helper that defers, and callbacks already guarded.
+        if (rest.startsWith('this._act(') || /\bguarded\b/.test(rest.slice(0, 20))) continue;
+        // A handler returning its deferred promise is guarded by its own _act.
+        if (/^\s*return this\.updateComplete\.then\(/.test(line)) continue;
+        unguarded.push(`${file}: ${line.trim()}`);
+      }
+    }
+    expect(unguarded).toEqual([]);
+  });
+
+  it('a recursive default that resolves to nothing does not initialise forever', async () => {
+    const schema = { $defs: { N: { $ref: '#/$defs/N' } }, type: 'object', properties: { v: { oneOf: [{ $ref: '#/$defs/N' }] } } };
+    for (const keyword of ['oneOf', 'anyOf']) {
+      const s = JSON.parse(JSON.stringify(schema).replace('"oneOf"', `"${keyword}"`));
+      const el: any = document.createElement('schema-form-mode');
+      let changes = 0;
+      el.addEventListener('value-change', () => { changes++; });
+      el.schema = s;
+      el.value = {};
+      document.body.append(el);
+      const settled = await Promise.race([
+        (async () => { for (let i = 0; i < 5; i++) { await el.updateComplete; await new Promise(r => setTimeout(r, 0)); } return true; })(),
+        new Promise(resolve => setTimeout(() => resolve(false), 1000)),
+      ]);
+      expect(settled, keyword).toBe(true);
+      expect(el.isUpdatePending, keyword).toBe(false);
+      // An undefined default is not assigned at all.
+      expect(changes, keyword).toBe(0);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a defined default initialises once per field for the same schema', async () => {
+    const schema = { type: 'object', properties: { v: { oneOf: [{ type: 'object', properties: { a: { type: 'string', default: 'x' } } }] } } };
+    const el: any = document.createElement('schema-form-mode');
+    const values: unknown[] = [];
+    el.addEventListener('value-change', (e: CustomEvent) => { values.push(e.detail.value); });
+    el.schema = schema;
+    el.value = {};
+    document.body.append(el);
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(values).toEqual([{ v: { a: 'x' } }]);
+    // The same schema with the field emptied again: the variant default is
+    // not put in place again (the object field may still set itself to {}).
+    const variantDefaults = () => values.filter((v: any) => v?.v?.a === 'x').length;
+    el.value = {};
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(variantDefaults()).toBe(1);
+    // A new schema initialises afresh.
+    el.value = {};
+    el.schema = { ...schema };
+    await settle(el);
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    expect(variantDefaults()).toBe(2);
+  });
+
+  it('a budget error while registering expansion steps leaves none behind', () => {
+    const $defs = { A: { properties: { a: { default: 1 } } }, B: { properties: { b: { default: 2 } } } };
+    const root: any = { $defs, allOf: [{ $ref: '#/$defs/A' }, { $ref: '#/$defs/B' }] };
+    const fresh = getDefaultValue(root, root);
+    expect(fresh).toEqual({ a: 1, b: 2 });
+    // Run out of budget at every point of a build, then build again in the
+    // same operation: a step left registered would cut A or B short.
+    let probed = 0;
+    for (let spent = SCHEMA_WORK_BUDGET - 400; spent <= SCHEMA_WORK_BUDGET; spent++) {
+      const again = withSchemaBudget(() => {
+        try {
+          countSchemaWork(spent);
+          getDefaultValue(root, root);
+        } catch (error) {
+          if (!(error instanceof SchemaTooComplexError)) throw error;
+          probed++;
+        }
+        // A fresh budget for the second build, in the same operation.
+        countSchemaWork(-schemaWorkDone());
+        return getDefaultValue(root, root);
+      });
+      expect(again, `spent ${spent}`).toEqual(fresh);
+    }
+    expect(probed).toBeGreaterThan(0);
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [

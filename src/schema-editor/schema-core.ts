@@ -414,13 +414,15 @@ function repeatsDefaultExpansion(node: object, containerKey?: string): boolean {
 /** Run walk with the steps on the default build stack, popped when it returns. */
 function expandingDefault<T>(steps: ReadonlyArray<readonly [object, string | undefined]>, walk: () => T): T {
   const added: string[] = [];
-  for (const [node, containerKey] of steps) {
-    const key = defaultStepKey(node, containerKey);
-    if (defaultSteps.has(key)) continue;
-    defaultSteps.add(key);
-    added.push(key);
-  }
   try {
+    // Registered inside the try: computing a later key can run out of
+    // budget, and the steps already added must still come off.
+    for (const [node, containerKey] of steps) {
+      const key = defaultStepKey(node, containerKey);
+      if (defaultSteps.has(key)) continue;
+      defaultSteps.add(key);
+      added.push(key);
+    }
     return walk();
   } finally {
     added.forEach(key => defaultSteps.delete(key));

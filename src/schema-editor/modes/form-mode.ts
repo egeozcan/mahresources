@@ -246,7 +246,10 @@ export class SchemaFormMode extends LitElement {
         this.schema = {};
       }
     }
-    if (changed.has('schema')) this._schemaError = null;
+    if (changed.has('schema')) {
+      this._schemaError = null;
+      this._initialized = new Set();
+    }
     if (changed.has('value') || changed.has('schema')) {
       this._valueError = null;
       try {
@@ -277,13 +280,13 @@ export class SchemaFormMode extends LitElement {
             }
             // Dispatch after the current Lit update cycle completes to avoid
             // side-effects during willUpdate.
-            this.updateComplete.then(() => {
+            this.updateComplete.then(this._act(() => {
               this.dispatchEvent(new CustomEvent('value-change', {
                 detail: { value: this._data },
                 bubbles: true,
                 composed: true,
               }));
-            });
+            }));
           }
         }
 
@@ -338,6 +341,30 @@ export class SchemaFormMode extends LitElement {
   }
 
   // ─── Render ──────────────────────────────────────────────────────────────
+
+  /**
+   * Run callback in a microtask, under the action boundary: a deferred
+   * initialisation (a variant default, an object or array put in place) can
+   * throw as an action can, and must fall back the same way.
+   */
+  private _defer(callback: () => unknown): void {
+    queueMicrotask(this._act(callback));
+  }
+
+  /** Fields whose variant default was put in place, per schema (cleared when it changes). */
+  private _initialized = new Set<string>();
+
+  /**
+   * Whether to put a variant default in place for key: once per field and
+   * schema in this mount, and never for an undefined default (a reference
+   * cycle). Assigning undefined left the field undefined, so every render
+   * queued it again, forever.
+   */
+  private _initializeOnce(key: string, defaultVal: unknown): boolean {
+    if (defaultVal === undefined || this._initialized.has(key)) return false;
+    this._initialized.add(key);
+    return true;
+  }
 
   /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
   private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
@@ -411,7 +438,7 @@ export class SchemaFormMode extends LitElement {
 
     // Handle oneOf
     if (schema.oneOf && Array.isArray(schema.oneOf)) {
-      return this._renderOneOf(schema, data, onChange, rootSchema);
+      return this._renderOneOf(schema, data, onChange, rootSchema, parentPath);
     }
 
     // Handle allOf - merge all schemas
@@ -425,7 +452,7 @@ export class SchemaFormMode extends LitElement {
 
     // Handle anyOf
     if (schema.anyOf && Array.isArray(schema.anyOf)) {
-      return this._renderAnyOf(schema, data, onChange, rootSchema);
+      return this._renderAnyOf(schema, data, onChange, rootSchema, parentPath);
     }
 
     // Handle if/then/else
@@ -485,7 +512,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── oneOf ──────────────────────────────────────────────────────────────
 
-  private _renderOneOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+  private _renderOneOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, path?: string): TemplateResult {
     // Extract shared sibling properties (declared alongside oneOf on the parent)
     const sharedProps = schema.properties;
     const sharedRequired = schema.required;
@@ -508,7 +535,12 @@ export class SchemaFormMode extends LitElement {
         ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.oneOf[activeIndex])
         : schema.oneOf[activeIndex];
       const defaultVal = getDefaultValue(merged, rootSchema);
-      queueMicrotask(() => onChange(defaultVal));
+      if (this._initializeOnce(`oneOf:${path ?? ''}`, defaultVal)) {
+        this._defer(() => onChange(defaultVal));
+        // Render the variant with the value it is about to hold, so its own
+        // fields do not queue a second, competing initialisation.
+        data = defaultVal;
+      }
     }
 
     const onSelectChange = (e: Event) => {
@@ -561,7 +593,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── anyOf ──────────────────────────────────────────────────────────────
 
-  private _renderAnyOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+  private _renderAnyOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, path?: string): TemplateResult {
     const sharedProps = schema.properties;
     const sharedRequired = schema.required;
 
@@ -582,7 +614,12 @@ export class SchemaFormMode extends LitElement {
         ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.anyOf[activeIndex])
         : schema.anyOf[activeIndex];
       const defaultVal = getDefaultValue(merged, rootSchema);
-      queueMicrotask(() => onChange(defaultVal));
+      if (this._initializeOnce(`anyOf:${path ?? ''}`, defaultVal)) {
+        this._defer(() => onChange(defaultVal));
+        // Render the variant with the value it is about to hold, so its own
+        // fields do not queue a second, competing initialisation.
+        data = defaultVal;
+      }
     }
 
     const onSelectChange = (e: Event) => {
@@ -666,7 +703,7 @@ export class SchemaFormMode extends LitElement {
       stripStaleKeys(data, applicable, rootSchema);
 
       if (JSON.stringify(data) !== before) {
-        queueMicrotask(() => onChange({ ...data }));
+        this._defer(() => onChange({ ...data }));
       }
     }
 
@@ -779,7 +816,7 @@ export class SchemaFormMode extends LitElement {
 
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       data = {};
-      queueMicrotask(() => onChange(data));
+      this._defer(() => onChange(data));
     }
 
     // Pre-populate undefined REQUIRED boolean properties with false (or the schema default).
@@ -799,7 +836,7 @@ export class SchemaFormMode extends LitElement {
         }
       }
       if (needsUpdate) {
-        queueMicrotask(() => onChange(data));
+        this._defer(() => onChange(data));
       }
     }
 
@@ -936,12 +973,12 @@ export class SchemaFormMode extends LitElement {
           const errorEl = input.parentElement?.querySelector(`#${errorId}`);
           if (errorEl) {
             errorEl.textContent = 'Key already exists';
-            setTimeout(() => {
+            setTimeout(this._act(() => {
               errorEl.textContent = '';
               input.classList.remove('border-red-500');
               input.classList.add('border-gray-300');
               input.removeAttribute('aria-invalid');
-            }, 3000);
+            }), 3000);
           }
           input.value = key;
           return;
@@ -1036,7 +1073,7 @@ export class SchemaFormMode extends LitElement {
   private _renderArray(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string): TemplateResult {
     if (!Array.isArray(data)) {
       data = [];
-      queueMicrotask(() => onChange(data));
+      this._defer(() => onChange(data));
     }
 
     const hasMinItems = schema.minItems !== undefined;

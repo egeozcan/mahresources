@@ -550,7 +550,7 @@ export class MetaShortcode extends LitElement {
 
       this._editing = false;
       this._flash = 'success';
-      setTimeout(() => { this._flash = null; }, 1000);
+      setTimeout(this._act(() => { this._flash = null; }), 1000);
 
       // Notify other meta-shortcode elements on the same entity to refresh
       document.dispatchEvent(new CustomEvent('meta-shortcode-updated', {
@@ -560,7 +560,7 @@ export class MetaShortcode extends LitElement {
       console.error('Meta shortcode save error:', err);
       this._flash = 'error';
       if (this.pills === 'true') this._pillError = true;
-      setTimeout(() => { this._flash = null; }, 1000);
+      setTimeout(this._act(() => { this._flash = null; }), 1000);
     } finally {
       this._saving = false;
     }
