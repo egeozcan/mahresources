@@ -215,33 +215,21 @@ func bundleReply(slots map[string]string) string {
 	return `{"slots":{` + strings.Join(parts, ",") + `},"explanation":"x"}`
 }
 
-func twoPairInput() TemplateGenerationInput {
-	in := pairInput()
-	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}
-	return in
-}
-
 // Emptying a slot, halving one, or swapping real CSS for a comment silences
 // the lint without fixing anything; none of them may win.
 func TestRepairMustKeepTheContent(t *testing.T) {
 	longHTML := `<div class="hdr"><h1>[property path="Name"]</h1><p>[property path="Description"]</p><p>Some more of the header that must survive the repair.</p>[mrql]</div>`
 	longCSS := `.hdr{margin:0;padding:4px;color:#333}.hdr h1{font-size:2rem;margin:0 0 .5rem}.hdr p{line-height:1.5}`
-	original := bundleReply(map[string]string{
-		"CustomHeader": longHTML, "CustomHeaderCSS": longCSS,
-		"CustomSidebar": `<aside>[property path="Name"]</aside>`, "CustomSidebarCSS": ".side{margin:0}",
-	})
+	original := bundleReply(map[string]string{"CustomHeader": longHTML, "CustomHeaderCSS": longCSS})
 	cleanHTML := `<div class="hdr"><h1>[property path="Name"]</h1><p>[property path="Description"]</p><p>Some more of the header that must survive the repair.</p></div>`
 	for name, repaired := range map[string]map[string]string{
-		"every slot emptied": {"CustomHeader": "", "CustomHeaderCSS": "", "CustomSidebar": "", "CustomSidebarCSS": ""},
-		"html halved":        {"CustomHeader": `<div>[property path="Name"]</div>`, "CustomHeaderCSS": longCSS, "CustomSidebar": `<aside>[property path="Name"]</aside>`, "CustomSidebarCSS": ".side{margin:0}"},
-		"css replaced by a comment": {
-			"CustomHeader": cleanHTML, "CustomHeaderCSS": "/* repaired */",
-			"CustomSidebar": `<aside>[property path="Name"]</aside>`, "CustomSidebarCSS": ".side{margin:0}",
-		},
-		"a slot key dropped": {"CustomHeader": cleanHTML, "CustomHeaderCSS": longCSS, "CustomSidebar": `<aside>[property path="Name"]</aside>`},
+		"every slot emptied":        {"CustomHeader": "", "CustomHeaderCSS": ""},
+		"html halved":               {"CustomHeader": `<div>[property path="Name"]</div>`, "CustomHeaderCSS": longCSS},
+		"css replaced by a comment": {"CustomHeader": cleanHTML, "CustomHeaderCSS": "/* repaired */"},
+		"a slot key dropped":        {"CustomHeader": cleanHTML},
 	} {
 		provider := scripted(reply(original), reply(bundleReply(repaired)))
-		got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), twoPairInput(), "x")
+		got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), pairInput(), "x")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -254,11 +242,8 @@ func TestRepairMustKeepTheContent(t *testing.T) {
 	}
 
 	// A repair that keeps the content and fixes the error wins.
-	provider := scripted(reply(original), reply(bundleReply(map[string]string{
-		"CustomHeader": cleanHTML, "CustomHeaderCSS": longCSS,
-		"CustomSidebar": `<aside>[property path="Name"]</aside>`, "CustomSidebarCSS": ".side{margin:0}",
-	})))
-	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), twoPairInput(), "x")
+	provider := scripted(reply(original), reply(bundleReply(map[string]string{"CustomHeader": cleanHTML, "CustomHeaderCSS": longCSS})))
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), pairInput(), "x")
 	if err != nil || got.Repair == nil || !got.Repair.Applied || !got.Valid {
 		t.Fatalf("a faithful repair was refused: %#v, %v", got, err)
 	}
@@ -370,7 +355,7 @@ func TestNothingToFixIsNeverRepaired(t *testing.T) {
 
 	// A malformed bundle has no draft to fix.
 	provider = scripted(reply(`{"slots": not json`), reply(goodHeader))
-	got, err = disclosedGenerate(newRepairGenerator(provider, repairConfig()), twoPairInput(), "x")
+	got, err = disclosedGenerate(newRepairGenerator(provider, repairConfig()), pairInput(), "x")
 	if err != nil || provider.calls() != 1 || got.Valid || got.Repair != nil {
 		t.Fatalf("malformed bundle: %d calls, %#v, %v", provider.calls(), got, err)
 	}

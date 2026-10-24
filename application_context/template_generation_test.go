@@ -188,9 +188,9 @@ func TestTemplateGeneratorBundlePromptDoesNotDependOnAppStyles(t *testing.T) {
 	in.Target = TemplateTargetBundle
 	in.EntityType = "resource"
 	in.Slot = ""
-	in.BundleSlots = []string{"CustomSummary", "CustomMRQLResult", "CustomCSS"}
+	in.BundleSlots = []string{"CustomSummary", "CustomSummaryCSS"}
 	provider := &fakeTemplateDraftProvider{
-		response: `{"slots":{"CustomSummary":"<p>x</p>"},"explanation":"A bundle."}`,
+		response: `{"slots":{"CustomSummary":"<p>x</p>","CustomSummaryCSS":""},"explanation":"A bundle."}`,
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
@@ -344,9 +344,9 @@ func TestTemplateGeneratorBundle(t *testing.T) {
 	in := slotInput()
 	in.Target = TemplateTargetBundle
 	in.Slot = ""
-	in.BundleSlots = []string{"CustomHeader", "CustomCSS", "CustomSidebar"}
+	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 	provider := &fakeTemplateDraftProvider{
-		response: `{"slots":{"CustomHeader":"<h1>[property path=\"Name\"]</h1>","CustomCSS":".card{padding:1rem}"},"explanation":"A simple template."}`,
+		response: `{"slots":{"CustomHeader":"<h1>[property path=\"Name\"]</h1>","CustomHeaderCSS":".card{padding:1rem}"},"explanation":"A simple template."}`,
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
@@ -357,14 +357,14 @@ func TestTemplateGeneratorBundle(t *testing.T) {
 	if !got.Valid {
 		t.Fatalf("expected valid bundle, got issues %#v", got.Issues)
 	}
-	if len(got.Slots) != 2 || got.Slots["CustomHeader"] == "" || got.Slots["CustomCSS"] == "" {
+	if len(got.Slots) != 2 || got.Slots["CustomHeader"] == "" || got.Slots["CustomHeaderCSS"] == "" {
 		t.Fatalf("unexpected slots: %#v", got.Slots)
 	}
 	if got.Content != "" {
 		t.Fatalf("bundle result should not set Content, got %q", got.Content)
 	}
-	if provider.seenTokens != 8000 {
-		t.Fatalf("bundle maxTokens = %d, want 8000", provider.seenTokens)
+	if provider.seenTokens != 4000 {
+		t.Fatalf("a one-section request is a pair call: maxTokens = %d, want 4000", provider.seenTokens)
 	}
 }
 
@@ -572,11 +572,11 @@ func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
 }
 
 // TestTemplateGeneratorBundleDecidesCSSModePerSlot pins why cssMode is a
-// parameter rather than something read off the input inside the function:
-// finishBundle shares one TemplateGenerationInput across every slot it
-// validates, so only the CustomCSS slot of a bundle may be linted as a
-// stylesheet. Either whole-bundle answer is wrong — deriving from Mode="html"
-// flags neither slot, deriving from Mode="css" flags both.
+// parameter rather than something read off the input inside the function: one
+// TemplateGenerationInput covers every slot of a whole template, so only
+// stylesheets (CustomCSS, the plan's additions to it, and the companions) may
+// be linted as CSS. Deriving from Mode="html" flags neither slot, deriving from
+// Mode="css" flags both.
 func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
 	// Each slot's content is diagnostic of the mode it was linted in, so the
 	// assertions below name a direction rather than a count. Counting "CSS
@@ -584,25 +584,30 @@ func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
 	// warning from CustomCSS to CustomHeader, leaving the total at one.
 	//
 	// CustomHeader carries raw= in plain text, which warns "becomes real
-	// elements" as markup and "raw= ... in a CSS slot" as CSS. CustomCSS
-	// carries a bare interpolation, which warns only as CSS and is silent as
-	// markup.
-	const draft = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\" raw=\"true\"]</div>","CustomCSS":".badge{color:[meta path=\"colour\" inline=\"true\"]}"},"explanation":"Styles the badge."}`
+	// elements" as markup and "raw= ... in a CSS slot" as CSS. The shared CSS
+	// additions carry a bare interpolation, which warns only as CSS and is
+	// silent as markup.
+	const header = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\" raw=\"true\"]</div>","CustomHeaderCSS":".x{margin:0}"},"explanation":"Styles the badge."}`
+	const additions = `.badge{color:[meta path="colour" inline="true"]}`
 
 	for _, mode := range []string{"html", "css"} {
 		t.Run("mode="+mode, func(t *testing.T) {
-			in := slotInput()
-			in.Target = TemplateTargetBundle
+			provider := &fanOutProvider{handler: func(_ context.Context, req TemplateDraftRequest) (TemplateDraftResponse, error) {
+				if isPlanRequest(req) {
+					return reply200(planReply(additions, "CustomHeader", "CustomSummary"))
+				}
+				if pairOf(req) == "CustomSummary" {
+					return reply200(goodPairReply("CustomSummary"))
+				}
+				return reply200(header)
+			}}
+			in := fanInput(true, nil, "CustomHeader", "CustomHeaderCSS", "CustomSummary", "CustomSummaryCSS", "CustomCSS")
 			in.Mode = mode
-			in.Slot = ""
-			in.BundleSlots = []string{"CustomHeader", "CustomCSS"}
-
-			gen := NewTemplateGenerator(&fakeTemplateDraftProvider{response: draft}, templateGenConfig())
-			got, err := disclosedGenerate(gen, in, "style the badge")
+			got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "style the badge")
 			if err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
-			// CustomCSS was read as a stylesheet — and only it, or this count
+			// CustomCSS was read as a stylesheet, and only it, or this count
 			// would be two.
 			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
 				t.Fatalf("expected the CSS-placement issue on CustomCSS alone, got %d: %#v", n, got.Issues)
@@ -643,7 +648,7 @@ func TestTemplateGeneratorPreservesExplicitEmptyCompanion(t *testing.T) {
 			provider := &fakeTemplateDraftProvider{response: fmt.Sprintf(`{"slots":{"CustomMRQLResult":"<p>Card</p>","CustomMRQLResultCSS":%q},"explanation":"Removed styles."}`, css)}
 			in := slotInput()
 			in.Target = TemplateTargetBundle
-			in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS", "CustomSummary"}
+			in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS"}
 			got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "remove the CSS")
 			if err != nil {
 				t.Fatal(err)
@@ -753,15 +758,6 @@ func TestTemplateGeneratorTruncationDegradesForEveryTarget(t *testing.T) {
 			},
 			complete: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"A header."}`,
 		},
-		"bundle": {
-			in: func() TemplateGenerationInput {
-				in := slotInput()
-				in.Target, in.Slot = TemplateTargetBundle, ""
-				in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomCSS"}
-				return in
-			},
-			complete: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":"","CustomCSS":".x{}"},"explanation":"A template."}`,
-		},
 		"metaschema": {
 			in: func() TemplateGenerationInput {
 				in := slotInput()
@@ -803,9 +799,9 @@ func TestTemplateGeneratorTruncationDegradesForEveryTarget(t *testing.T) {
 func TestTemplateGeneratorTruncatedHalfPairIsKeptForReviewNotAnError(t *testing.T) {
 	in := slotInput()
 	in.Target = TemplateTargetBundle
-	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}
+	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 	big := "<p>" + strings.Repeat("y", MaxTemplateGeneratedContentLength) + "</p>"
-	reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": "<h1>x</h1>", "CustomHeaderCSS": ".x{}", "CustomSidebar": big}, "explanation": "Cut."})
+	reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": big}, "explanation": "Cut."})
 	provider := &fakeTemplateDraftProvider{response: string(reply), finish: "length"}
 	got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it")
 	if err != nil {
@@ -814,14 +810,14 @@ func TestTemplateGeneratorTruncatedHalfPairIsKeptForReviewNotAnError(t *testing.
 	if got.Valid || !hasTruncationIssue(got.Issues) {
 		t.Fatalf("want the truncation issue: %#v", got)
 	}
-	if got.Slots["CustomSidebar"] != big || got.Slots["CustomHeader"] != "<h1>x</h1>" || got.Slots["CustomHeaderCSS"] != ".x{}" {
-		t.Fatalf("slots = %d keys, want the Header pair and the Sidebar half", len(got.Slots))
+	if got.Slots["CustomHeader"] != big {
+		t.Fatalf("slots = %d keys, want the Header half", len(got.Slots))
 	}
-	if _, ok := got.Slots["CustomSidebarCSS"]; ok {
+	if _, ok := got.Slots["CustomHeaderCSS"]; ok {
 		t.Fatal("the missing companion must stay absent")
 	}
-	if countIssuesContaining(got.SlotIssues["CustomSidebar"], "without CustomSidebarCSS") != 1 || !hasOversizeIssue(got.SlotIssues["CustomSidebar"], "CustomSidebar") {
-		t.Fatalf("the half needs its missing-companion and oversize issues: %#v", got.SlotIssues["CustomSidebar"])
+	if countIssuesContaining(got.SlotIssues["CustomHeader"], "without CustomHeaderCSS") != 1 || !hasOversizeIssue(got.SlotIssues["CustomHeader"], "CustomHeader") {
+		t.Fatalf("the half needs its missing-companion and oversize issues: %#v", got.SlotIssues["CustomHeader"])
 	}
 
 	// The same half pair from a model that stopped on its own is still an error.

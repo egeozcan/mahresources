@@ -30,6 +30,8 @@ const (
 	// DefaultTemplateProviderSlots bounds the template provider calls in flight
 	// across the whole process.
 	DefaultTemplateProviderSlots = 8
+	// DefaultTemplateBundleDeadline bounds a whole-template fan-out.
+	DefaultTemplateBundleDeadline = 55 * time.Second
 )
 
 // templateTokenBudget is the output budget of one call by kind, with thinking
@@ -48,6 +50,8 @@ var templateTokenBudget = map[string]struct{ off, on int }{
 
 // TemplateCallProfile is how one kind of provider call is made.
 type TemplateCallProfile struct {
+	// Kind is the TemplateKind* the profile was resolved for.
+	Kind      string
 	Model     string
 	Thinking  bool
 	Timeout   time.Duration
@@ -67,7 +71,7 @@ type TemplateCallOverride struct {
 // timeout than the configured one.
 func (c TemplateGenerationConfig) profileFor(kind string) TemplateCallProfile {
 	override := c.Overrides[kind]
-	profile := TemplateCallProfile{Model: override.Model, Thinking: override.Thinking, Timeout: override.Timeout}
+	profile := TemplateCallProfile{Kind: kind, Model: override.Model, Thinking: override.Thinking, Timeout: override.Timeout}
 	if profile.Model == "" {
 		profile.Model = c.Model
 	}

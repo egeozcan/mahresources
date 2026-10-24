@@ -63,6 +63,10 @@ type TemplateGenerationConfig struct {
 	ProviderSlots int
 	// Logf receives one line per provider call (log.Printf when nil).
 	Logf func(format string, args ...any)
+	// BundleDeadline bounds a whole-template fan-out, the plan call and every
+	// pair call together (DefaultTemplateBundleDeadline when 0). Each call keeps
+	// its own profile timeout inside it.
+	BundleDeadline time.Duration
 }
 
 // TemplateGenerationInput is the pure, DB-free grounding assembled by the
@@ -100,6 +104,9 @@ type TemplateGenerationInput struct {
 	Partials     []TemplatePartialSummary
 	PartialCount int
 	BundleSlots  []string // target=bundle: which slot fields to fill
+	// SlotsSelected is true when the user ticked the sections in BundleSlots, so
+	// a fan-out must fill every one of them; false lets the planner choose.
+	SlotsSelected bool
 	// DisplayTypes are the enabled plugins' x-display values, taught to the
 	// MetaSchema call and known to its lint. DisplayTypesTruncated is true
 	// when the list was cut to fit the prompt, so the lint does not report a
@@ -131,6 +138,9 @@ type TemplateGenerationResult struct {
 	// Repair reports the automatic repair round, when the first draft had
 	// errors a repair could address.
 	Repair *TemplateRepair `json:"repair,omitempty"`
+	// FailedSlots names the HTML sections of a fan-out whose pair could not be
+	// generated; they are absent from Slots and each has a warning in Issues.
+	FailedSlots []string `json:"failedSlots,omitempty"`
 }
 
 // templateTruncationMessage is the issue for a reply cut off at max_tokens.
@@ -218,20 +228,32 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 }
 
 func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
-	_, _, disclosure, err := g.disclose(in, prompt)
-	return disclosure, err
+	request, err := g.disclose(in, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return request.disclosure, nil
+}
+
+// templateRequest is a validated request with everything it can send assembled.
+type templateRequest struct {
+	in         TemplateGenerationInput
+	prompt     string
+	disclosure *TemplateDisclosure
+	// fan is set when the request is a planner fan-out.
+	fan *templateFanOut
 }
 
 // disclose validates and normalizes the request, then assembles every call it
 // can make. GenerateTemplate sends what this returns, so the hash the user
 // approved covers the messages that go out.
-func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt string) (TemplateGenerationInput, string, *TemplateDisclosure, error) {
+func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt string) (templateRequest, error) {
 	if strings.TrimSpace(g.config.APIKey) == "" || g.provider == nil {
-		return in, "", nil, ErrTemplateGenerationNotConfigured
+		return templateRequest{}, ErrTemplateGenerationNotConfigured
 	}
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" || len(prompt) > MaxTemplateGenerationPromptLength {
-		return in, "", nil, fmt.Errorf("%w: prompt must be between 1 and %d characters", ErrTemplateGenerationBadRequest, MaxTemplateGenerationPromptLength)
+		return templateRequest{}, fmt.Errorf("%w: prompt must be between 1 and %d characters", ErrTemplateGenerationBadRequest, MaxTemplateGenerationPromptLength)
 	}
 
 	if in.Target == "" {
@@ -259,6 +281,12 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		}
 	}
 
+	if fan, err := templateFanOutFor(in); err != nil {
+		return templateRequest{}, err
+	} else if fan != nil {
+		return g.discloseFanOut(in, prompt, fan), nil
+	}
+
 	sections := buildTemplatePromptSections(in, prompt)
 	kind := templateCallKind(in)
 	profile := g.config.profileFor(kind)
@@ -275,19 +303,23 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		MaxTokens: profile.MaxTokens,
 		MaxCalls:  maxCalls,
 	}}, sections)
-	return in, prompt, disclosure, nil
+	return templateRequest{in: in, prompt: prompt, disclosure: disclosure}, nil
 }
 
 func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error) {
-	in, prompt, disclosure, err := g.disclose(in, prompt)
+	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err
 	}
+	in, disclosure := request.in, request.disclosure
 	if groundingHash == "" {
 		return nil, ErrTemplateGenerationGroundingRequired
 	}
 	if groundingHash != disclosure.GroundingHash {
 		return nil, ErrTemplateGenerationGroundingChanged
+	}
+	if request.fan != nil {
+		return g.generateFanOut(ctx, request)
 	}
 
 	disclosed := disclosure.Destination.Profiles[0]
@@ -332,9 +364,17 @@ func (g *defaultTemplateGenerator) callProvider(ctx context.Context, profile Tem
 	case <-callCtx.Done():
 		return TemplateDraftResponse{}, templateCallError(callCtx, callCtx.Err())
 	}
+	// A slot and an expired deadline can both be ready; the deadline wins, so a
+	// call past it is never made.
+	if err := callCtx.Err(); err != nil {
+		return TemplateDraftResponse{}, templateCallError(callCtx, err)
+	}
 	start := time.Now()
 	resp, err := g.provider.GenerateDraft(callCtx, req)
-	g.logCall(phase, in, resp, err, time.Since(start))
+	g.logCall(phase, profile, in, resp, err, time.Since(start))
+	if tally, ok := ctx.Value(templateUsageTallyKey{}).(*templateUsageTally); ok && err == nil {
+		tally.add(resp.Usage)
+	}
 	if err != nil {
 		return resp, templateCallError(callCtx, err)
 	}
@@ -351,7 +391,11 @@ func templateCallError(callCtx context.Context, err error) error {
 
 // logCall writes the one line per provider call. Usage stays out of the HTTP
 // response; this line is where cache hits are observed.
-func (g *defaultTemplateGenerator) logCall(phase string, in TemplateGenerationInput, resp TemplateDraftResponse, err error, dur time.Duration) {
+func (g *defaultTemplateGenerator) logCall(phase string, profile TemplateCallProfile, in TemplateGenerationInput, resp TemplateDraftResponse, err error, dur time.Duration) {
+	kind := profile.Kind
+	if kind == "" {
+		kind = templateCallKind(in)
+	}
 	finish := resp.FinishReason
 	if err != nil {
 		finish = "error"
@@ -360,7 +404,7 @@ func (g *defaultTemplateGenerator) logCall(phase string, in TemplateGenerationIn
 	}
 	u := resp.Usage
 	g.config.Logf("template generation: phase=%s kind=%s carrier=%s prompt=%d cache_hit=%d cache_miss=%d completion=%d reasoning=%d finish=%s dur=%dms",
-		phase, templateCallKind(in), in.EntityType, u.Prompt, u.CacheHit, u.CacheMiss, u.Completion, u.Reasoning, finish, dur.Milliseconds())
+		phase, kind, in.EntityType, u.Prompt, u.CacheHit, u.CacheMiss, u.Completion, u.Reasoning, finish, dur.Milliseconds())
 }
 
 // parseTemplateDraft parses a model reply into a draft and lints it. It stops

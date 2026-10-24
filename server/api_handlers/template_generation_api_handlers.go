@@ -51,6 +51,44 @@ func templateGenerateBundleSlots(entityType string) []string {
 	return slots
 }
 
+// templateGenerateSelectedSlots validates a bundle request's section selection
+// and expands it for the generator: each selected HTML slot followed by its CSS
+// companion, in the carrier's own order whatever order the client sent, then
+// CustomCSS. A present but empty list, a companion, an unknown name and a
+// CustomCSS-only selection are errors: CustomCSS only ever gains the new rules a
+// fan-out plans for its sections, so a selection without a section has nothing
+// to add them to (the CustomCSS slot has its own Generate button).
+func templateGenerateSelectedSlots(entityType string, selected []string) ([]string, error) {
+	if len(selected) == 0 {
+		return nil, errors.New("slots must name at least one section; omit it to let the generator choose")
+	}
+	picked := map[string]bool{}
+	for _, name := range selected {
+		name = strings.TrimSpace(name)
+		switch {
+		case name == "CustomCSS":
+		case strings.HasSuffix(name, "CSS") && templateGenerateSlotAllowed(entityType, name):
+			return nil, fmt.Errorf("%s is the companion of %s; select %s and it is generated with it", name, strings.TrimSuffix(name, "CSS"), strings.TrimSuffix(name, "CSS"))
+		case !templateGenerateSlotAllowed(entityType, name):
+			return nil, fmt.Errorf("unknown section %q for this template", name)
+		}
+		picked[name] = true
+	}
+	var slots []string
+	for _, slot := range templateGenerateBundleSlots(entityType) {
+		if !strings.HasSuffix(slot, "CSS") && picked[slot] {
+			slots = append(slots, slot, slot+"CSS")
+		}
+	}
+	if len(slots) == 0 {
+		return nil, errors.New("slots must include a section; CustomCSS alone has nothing to add its rules to, use the CustomCSS slot's own Generate button")
+	}
+	if picked["CustomCSS"] {
+		slots = append(slots, "CustomCSS")
+	}
+	return slots, nil
+}
+
 // templateGenerateSlotAllowed reports whether a single-slot generation may
 // target this slot on this carrier.
 func templateGenerateSlotAllowed(entityType, slot string) bool {
@@ -123,6 +161,10 @@ type templateGenerateRequest struct {
 	// GroundingHash is the hash of the disclosure the user approved; a real
 	// request without it is refused.
 	GroundingHash string `json:"groundingHash" schema:"groundingHash"`
+	// Slots selects the sections of a whole-template (bundle) request: HTML
+	// slot fields, each generated with its CSS companion, and CustomCSS. Omitted
+	// lets the generator choose; a present list is forced.
+	Slots []string `json:"slots" schema:"slots"`
 }
 
 // GetGenerateTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/generateTemplate.
@@ -159,6 +201,19 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		default:
 			http_utils.HandleError(errors.New("unknown generation target"), writer, request, http.StatusBadRequest)
 			return
+		}
+
+		var selectedSlots []string
+		if req.Slots != nil {
+			if target != application_context.TemplateTargetBundle {
+				http_utils.HandleError(errors.New("slots applies only to a whole-template (bundle) request"), writer, request, http.StatusBadRequest)
+				return
+			}
+			var err error
+			if selectedSlots, err = templateGenerateSelectedSlots(entityType, req.Slots); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 		}
 
 		generator := ctx.TemplateGenerator()
@@ -269,6 +324,9 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 		if target == application_context.TemplateTargetBundle {
 			input.BundleSlots = templateGenerateBundleSlots(entityType)
+			if selectedSlots != nil {
+				input.BundleSlots, input.SlotsSelected = selectedSlots, true
+			}
 		}
 
 		var result any

@@ -31,6 +31,7 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Partials":              {section: "partials"},
 	"PartialCount":          {section: "partials"},
 	"BundleSlots":           {section: "task"},
+	"SlotsSelected":         {section: "plan-task"},
 	"DisplayTypes":          {section: "display-types"},
 	"DisplayTypesTruncated": {reason: "validates the reply only"},
 	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
@@ -73,6 +74,8 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 	metaschema := bundle
 	metaschema.Target, metaschema.BundleSlots = TemplateTargetMetaSchema, nil
 	metaschema.DisplayTypes = []string{"plugin:sentinel:grid"}
+	selected := bundle
+	selected.BundleSlots, selected.SlotsSelected = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}, true
 	values := map[string]struct {
 		in    TemplateGenerationInput
 		value string
@@ -92,6 +95,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"Partials":            {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
 		"PartialCount":        {bundle, "6 more partials exist"},
 		"BundleSlots":         {bundle, "CustomPreview, CustomPreviewCSS"},
+		"SlotsSelected":       {selected, "set fill to true for every one of them"},
 		"DisplayTypes":        {metaschema, "plugin:sentinel:grid"},
 	}
 	for name, c := range templateInputDisclosure {
@@ -135,6 +139,11 @@ func disclosureKinds() map[string]TemplateGenerationInput {
 // byte for byte, and the call goes out with the disclosed profile.
 func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 	for kind, in := range disclosureKinds() {
+		if kind == "bundle" {
+			// A fan-out is several calls; TestFanOutDisclosedSectionsAreTheProviderRequests
+			// pins its disclosure against every request.
+			continue
+		}
 		t.Run(kind, func(t *testing.T) {
 			provider := &fakeTemplateDraftProvider{response: `{"content":"{}","explanation":"x"}`}
 			gen := NewTemplateGenerator(provider, templateGenConfig())

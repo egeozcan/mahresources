@@ -151,8 +151,6 @@ func TestGeneratorSendsEachKindsProfile(t *testing.T) {
 	slot.Slot, slot.Mode = "CustomCSS", "css"
 	pair := slotInput()
 	pair.Target, pair.Slot, pair.BundleSlots = TemplateTargetBundle, "", []string{"CustomHeader", "CustomHeaderCSS"}
-	bundle := pair
-	bundle.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}
 	meta := slotInput()
 	meta.Target, meta.Slot, meta.Mode = TemplateTargetMetaSchema, "", "json"
 
@@ -166,7 +164,6 @@ func TestGeneratorSendsEachKindsProfile(t *testing.T) {
 	}{
 		{TemplateKindSlot, slot, `{"content":".a{margin:0}","explanation":"x"}`, "deepseek-flash", false, 4000},
 		{TemplateKindPair, pair, `{"slots":{"CustomHeader":"<div>[property path=\"Name\"]</div>","CustomHeaderCSS":".a{margin:0}"},"explanation":"x"}`, "pair-model", true, 8192},
-		{TemplateKindBundle, bundle, `{"slots":{"CustomHeader":"<div>x</div>","CustomHeaderCSS":"","CustomSidebar":"<div>y</div>","CustomSidebarCSS":""},"explanation":"x"}`, "deepseek-flash", false, 8000},
 		{TemplateKindMetaSchema, meta, `{"content":"{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}","explanation":"x"}`, "deepseek-flash", false, 4000},
 	} {
 		provider := &fakeTemplateDraftProvider{response: tc.response}

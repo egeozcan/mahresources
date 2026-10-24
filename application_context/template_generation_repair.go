@@ -57,6 +57,12 @@ const (
 // the original messages, unchanged, then these sections after them. They carry
 // no user data of their own, only the two placeholders.
 func templateRepairSections() []PromptSection {
+	return templateRepairSectionsAt(1)
+}
+
+// templateRepairSectionsAt is the repair continuation as the given call index:
+// 1 after a single call, one past the last pair call in a fan-out.
+func templateRepairSectionsAt(call int) []PromptSection {
 	var p promptSections
 	p.add(promptRoleUser, "repair", "Repair call (sent only if the draft has errors)", true,
 		"Repair request: your previous reply could not be used as it stands. Return the corrected reply in the same output format as before. Fix every problem listed, change nothing else, and keep all existing content and styles: never empty a slot, shorten it or drop its styles to silence a problem.",
@@ -70,7 +76,7 @@ func templateRepairSections() []PromptSection {
 		"<<<END validation issues>>>",
 	)
 	for i := range p {
-		p[i].Call = 1
+		p[i].Call = call
 	}
 	return p
 }

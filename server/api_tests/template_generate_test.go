@@ -339,7 +339,12 @@ func TestTemplateGenerateEnforcesPairsEndToEnd(t *testing.T) {
 					draft = `{"slots":{"CustomHeader":"<p>Card</p>"},"explanation":"Missing partner."}`
 				}
 				tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(apiPairDraftProvider(draft), application_context.TemplateGenerationConfig{APIKey: "test", Timeout: time.Second}))
-				resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": target, "slot": "CustomHeader", "prompt": "make a card"})
+				body := map[string]any{"target": target, "slot": "CustomHeader", "prompt": "make a card"}
+				if target == "bundle" {
+					// One section is the single pair call; the whole template plans first.
+					body["slots"] = []string{"CustomHeader"}
+				}
+				resp := tc.generateTemplate("/v1/category/generateTemplate", body)
 				if !complete {
 					if resp.Code != http.StatusBadGateway {
 						t.Fatalf("incomplete pair accepted: %d %s", resp.Code, resp.Body.String())
