@@ -421,3 +421,62 @@ func TestPluginReferencesFromSnapshotIgnoreInputOrder(t *testing.T) {
 		t.Fatalf("serialization depends on snapshot order:\n%s%s\n---\n%s%s", forward.DocsBlock, forward.PluginContext, reverse.DocsBlock, reverse.PluginContext)
 	}
 }
+
+// TestPluginShortcodeReferenceIgnoresAttributeAndNoteOrder: a plugin's
+// attributes and notes can come from keyed Lua tables, whose iteration order is
+// not fixed, so the same plugin loaded twice may list them differently. The
+// prompt prefix must not follow that order.
+func TestPluginShortcodeReferenceIgnoresAttributeAndNoteOrder(t *testing.T) {
+	doc := func(reverse bool) plugin_system.AuthoringSnapshot {
+		attrs := []plugin_system.ShortcodeDocAttr{
+			{Name: "alpha", Type: "string", Required: true, Description: "A."},
+			{Name: "beta", Type: "string", Required: true, Description: "B."},
+			{Name: "gamma", Type: "number", Description: "G."},
+		}
+		notes := []string{"First note.", "Second note."}
+		if reverse {
+			for i, j := 0, len(attrs)-1; i < j; i, j = i+1, j-1 {
+				attrs[i], attrs[j] = attrs[j], attrs[i]
+			}
+			notes[0], notes[1] = notes[1], notes[0]
+		}
+		return plugin_system.AuthoringSnapshot{
+			Plugins:    []plugin_system.AuthoringPluginInfo{{Name: "a"}},
+			Shortcodes: []plugin_system.PluginShortcodeInfo{{FullName: "plugin:a:x", Name: "x", PluginName: "a", Description: "X.", Attrs: attrs, Notes: notes}},
+		}
+	}
+	forward := templateGenerationPluginReferencesFromSnapshot(doc(false))
+	reverse := templateGenerationPluginReferencesFromSnapshot(doc(true))
+	if forward.DocsBlock != reverse.DocsBlock {
+		t.Fatalf("shortcode reference depends on attribute or note order:\n%s\n---\n%s", forward.DocsBlock, reverse.DocsBlock)
+	}
+	if !strings.Contains(forward.DocsBlock, `[plugin:a:x alpha="…" beta="…"]`) {
+		t.Fatalf("syntax line not in canonical order:\n%s", forward.DocsBlock)
+	}
+}
+
+// TestPluginContextOrdersSeveralBlocksPerPlugin gives each plugin several
+// blocks, supplied in opposite orders, so removing the per-plugin block sort
+// turns it red (one block per plugin cannot).
+func TestPluginContextOrdersSeveralBlocksPerPlugin(t *testing.T) {
+	snapshot := func(reverse bool) plugin_system.AuthoringSnapshot {
+		blocks := []plugin_system.PluginBlockInfo{
+			{PluginName: "a", TypeName: "plugin:a:one"}, {PluginName: "a", TypeName: "plugin:a:three"}, {PluginName: "a", TypeName: "plugin:a:two"},
+			{PluginName: "b", TypeName: "plugin:b:one"}, {PluginName: "b", TypeName: "plugin:b:two"},
+		}
+		if reverse {
+			for i, j := 0, len(blocks)-1; i < j; i, j = i+1, j-1 {
+				blocks[i], blocks[j] = blocks[j], blocks[i]
+			}
+		}
+		return plugin_system.AuthoringSnapshot{Plugins: []plugin_system.AuthoringPluginInfo{{Name: "a"}, {Name: "b"}}, Blocks: blocks}
+	}
+	forward := serializePluginContextFromSnapshot(snapshot(false))
+	reverse := serializePluginContextFromSnapshot(snapshot(true))
+	if forward != reverse {
+		t.Fatalf("block order leaks into the plugin context:\n%s\n---\n%s", forward, reverse)
+	}
+	if strings.Index(forward, "plugin:a:one") > strings.Index(forward, "plugin:a:three") || strings.Index(forward, "plugin:a:three") > strings.Index(forward, "plugin:a:two") {
+		t.Fatalf("blocks are not in name order:\n%s", forward)
+	}
+}

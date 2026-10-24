@@ -368,7 +368,10 @@ func templateGenerationPluginReferencesFromSnapshot(snapshot plugin_system.Autho
 	for _, d := range shortcodes.BuiltinDocs() {
 		writeBuiltinShortcodeDoc(&b, d)
 	}
-	docs := append([]plugin_system.PluginShortcodeInfo(nil), snapshot.Shortcodes...)
+	docs := make([]plugin_system.PluginShortcodeInfo, 0, len(snapshot.Shortcodes))
+	for _, doc := range snapshot.Shortcodes {
+		docs = append(docs, canonicalPluginShortcodeDoc(doc))
+	}
 	sort.SliceStable(docs, func(i, j int) bool { return docs[i].FullName < docs[j].FullName })
 	if omitted := appendPluginShortcodeDocsForPrompt(&b, docs); omitted > 0 {
 		fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
@@ -378,6 +381,19 @@ func templateGenerationPluginReferencesFromSnapshot(snapshot plugin_system.Autho
 		PluginContext: serializePluginContextFromSnapshot(snapshot),
 		Known:         buildKnownShortcodesFromPluginDocs(docs),
 	}
+}
+
+// canonicalPluginShortcodeDoc orders a plugin shortcode's attributes and
+// notes by name and text. Both can come from keyed Lua tables, whose iteration
+// order is not fixed, so the same plugin loaded twice could otherwise
+// serialise differently and break the shared prompt prefix. The slices are
+// copied; the snapshot's are left as they are.
+func canonicalPluginShortcodeDoc(doc plugin_system.PluginShortcodeInfo) plugin_system.PluginShortcodeInfo {
+	doc.Attrs = append([]plugin_system.ShortcodeDocAttr(nil), doc.Attrs...)
+	sort.SliceStable(doc.Attrs, func(i, j int) bool { return doc.Attrs[i].Name < doc.Attrs[j].Name })
+	doc.Notes = append([]string(nil), doc.Notes...)
+	sort.Strings(doc.Notes)
+	return doc
 }
 
 func appendPluginShortcodeDocsForPrompt(b *strings.Builder, docs []plugin_system.PluginShortcodeInfo) int {

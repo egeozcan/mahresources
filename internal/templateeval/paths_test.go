@@ -33,7 +33,7 @@ func TestResolveOutPath(t *testing.T) {
 	at := time.Date(2026, 10, 24, 15, 4, 5, 0, time.UTC)
 	cases := map[string]string{
 		"": filepath.Join(root, "benchmarks", "template-generation", "results", "eval-20261024T150405Z.json"),
-		"benchmarks/template-generation/results/x.json": filepath.Join(root, "benchmarks", "template-generation", "results", "x.json"),
+		"benchmarks/template-generation/results/x.json":            filepath.Join(root, "benchmarks", "template-generation", "results", "x.json"),
 		filepath.Join(string(filepath.Separator), "tmp", "y.json"): filepath.Join(string(filepath.Separator), "tmp", "y.json"),
 	}
 	for in, want := range cases {
