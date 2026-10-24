@@ -26,7 +26,7 @@ func okPreview(html string) map[string]Preview {
 }
 
 func TestScoreChecks(t *testing.T) {
-	known := shortcodes.KnownFromBuiltins()
+	env := testEnv()
 	metaCase := Case{ID: "t-meta", Kind: KindMetaSchema, Carrier: "group", Prompt: "x", ExpectFields: []string{"isbn"}}
 	metaDraft := func(schema string) Draft {
 		return Draft{Status: 200, Target: "metaschema", Valid: true, Content: schema}
@@ -87,7 +87,7 @@ func TestScoreChecks(t *testing.T) {
 		},
 		{
 			name: "MRQL error", c: pairCase(),
-			draft:    pairDraft(`<h1>x</h1>`, ``, shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: "MRQL error in query: bad"}),
+			draft:    pairDraft(badLintHTML, ``, badLintIssue),
 			previews: okPreview(`<h1>x</h1>`),
 			check: func(t *testing.T, got Checks, details Details) {
 				if got.MRQLErrors != 1 {
@@ -387,6 +387,20 @@ func TestScoreChecks(t *testing.T) {
 			check:    wantMRQL(1, 0),
 		},
 		{
+			name: "a lint MRQL error is tied to its own slot", c: Case{ID: "b2", Kind: KindBundle, Carrier: "note", Prompt: "x", ExpectSlots: []string{"CustomHeader"}},
+			// Both queries sit at the same offset in their slots, so the server's
+			// issue alone cannot say which slot it came from.
+			draft: Draft{Status: 200, Target: "bundle", Valid: false, Issues: []shortcodes.LintIssue{badLintIssue}, Slots: map[string]string{
+				"CustomHeader": `<p>[mrql query="type = note"]</p>`, "CustomHeaderCSS": "", "CustomSidebar": badLintHTML, "CustomSidebarCSS": ""}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>n</p>"}, "CustomSidebar": {Status: 200, HTML: `<p class="mrql-error">e</p>`}},
+			probes:   []QueryProbe{{Slot: "CustomHeader", Query: "type = note"}, {Slot: "CustomSidebar", Query: "type = = =", Failed: true}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if got.MRQLErrors != 1 || !reflect.DeepEqual(details.MRQLErrors, []string{"CustomSidebar: type = = ="}) {
+					t.Fatalf("mrql errors = %d %q", got.MRQLErrors, details.MRQLErrors)
+				}
+			},
+		},
+		{
 			name: "an MRQL error only the runtime reports", c: pairCase(),
 			draft:    pairDraft(`<p>[mrql query="type = resource AND nosuchfield = 1"]</p>`, ``),
 			previews: okPreview(`<p><div class="mrql-results mrql-error text-sm">unknown field nosuchfield</div></p>`),
@@ -410,7 +424,7 @@ func TestScoreChecks(t *testing.T) {
 		},
 		{
 			name: "a runtime MRQL marker no probe explains still counts, once", c: pairCase(),
-			draft:    pairDraft(`<p>[each path="genres"][mrql query="x"][/each]</p>`, ``),
+			draft:    pairDraft(`<p>[each path="genres"][mrql query="type = note"][/each]</p>`, ``),
 			previews: okPreview(`<p><span class="mrql-error">a</span><span class="mrql-error">b</span></p>`),
 			check:    wantMRQL(1, 0),
 		},
@@ -600,7 +614,7 @@ func TestScoreChecks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, details := Score(tt.c, tt.draft, tt.calls, tt.previews, tt.probes, known)
+			got, details := Score(tt.c, tt.draft, tt.calls, tt.previews, tt.probes, env)
 			if tt.check != nil {
 				tt.check(t, got, details)
 			}
@@ -613,8 +627,7 @@ func TestScoreChecks(t *testing.T) {
 
 const badLintHTML = `<p>[mrql query="type = = ="]</p>`
 
-// badLintIssue is the issue lint gives badLintHTML: anchored at query=, ending
-// at the token's end, as shortcodes/lint.go's attrOffset places it.
+// badLintIssue is the issue the server's lint gives badLintHTML.
 var badLintIssue = shortcodes.LintIssue{Start: 9, End: 28, Severity: shortcodes.SeverityError, Message: "MRQL error in query: unexpected ="}
 
 var degradedBundle = Draft{Status: 200, Target: "bundle", Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "The whole-template response was too large or malformed. Try generating slots individually."}}}
@@ -729,27 +742,10 @@ func TestSlicedSlotEndingInWhitespaceIsTruncated(t *testing.T) {
 		t.Fatalf("the generator no longer slices this way (len %d); revisit the truncation check", len(got))
 	}
 	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
-	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), nil, shortcodes.KnownFromBuiltins())
+	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop"}}, okPreview("<p>x</p>"), nil, testEnv())
 	if !got.Truncated {
 		t.Fatal("a slot sliced at the cap was not counted as truncated")
 	}
-}
-
-// TestBadLintIssueMatchesTheLinter keeps the badLintIssue fixture honest.
-func TestBadLintIssueMatchesTheLinter(t *testing.T) {
-	issues := shortcodes.Lint(badLintHTML, shortcodes.LintOptions{
-		Known:        shortcodes.KnownFromBuiltins(),
-		ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err },
-	})
-	for _, issue := range issues {
-		if classifyIssue(issue) == classMRQL {
-			if issue.Start != badLintIssue.Start || issue.End != badLintIssue.End {
-				t.Fatalf("lint places the MRQL issue at %d-%d, the fixture at %d-%d", issue.Start, issue.End, badLintIssue.Start, badLintIssue.End)
-			}
-			return
-		}
-	}
-	t.Fatalf("lint reported no MRQL issue: %#v", issues)
 }
 
 // TestWrongTypeExplanationDegradesInProductionAndScoresOnce drives the real
@@ -765,7 +761,7 @@ func TestWrongTypeExplanationDegradesInProductionAndScoresOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues}
-	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop", Content: reply}}, nil, nil, shortcodes.KnownFromBuiltins())
+	got, _ := Score(pairCase(), draft, []Call{{FinishReason: "stop", Content: reply}}, nil, nil, testEnv())
 	if got.Malformed || !got.WrongShape {
 		t.Fatalf("malformed=%v wrongShape=%v for production's result %#v", got.Malformed, got.WrongShape, result)
 	}
@@ -782,5 +778,43 @@ func TestQueryProbesCarryWhatTheRuntimeReads(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("probes = %#v\nwant %#v", got, want)
+	}
+}
+
+func testEnv() Env {
+	return Env{Known: shortcodes.KnownFromBuiltins(), ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err }}
+}
+
+// TestQueryProbesRoundTripThroughTheParser checks that a probe hands the
+// runtime the same attribute values as the draft: each probe is parsed back
+// with the production parser and compared with the source token's attributes.
+func TestQueryProbesRoundTripThroughTheParser(t *testing.T) {
+	cases := []struct {
+		text, query string
+	}{
+		{`[mrql query='type = note AND name = &quot;x&quot;']`, `type = note AND name = "x"`},
+		{`[mrql query="type = note AND name = &quot;x&quot;"]`, `type = note AND name = `},
+		{`[mrql query="name = 'x'"]`, `name = 'x'`},
+		{`[mrql query='name = "x"']`, `name = "x"`},
+		{`[mrql query="name = &amp;quot;x&amp;quot;" param-a='&lt;b&gt;']`, `name = &quot;x&quot;`},
+		{`[conditional path="p" eq="v"]a[elseif mrql='tags = &quot;t&quot;' gt="0"]b[/conditional]`, `tags = "t"`},
+		{`[lazy][mrql query="type = group" limit="2"][/lazy]`, `type = group`},
+	}
+	for _, c := range cases {
+		probes := QueryProbes("CustomHeader", c.text)
+		if len(probes) != 1 {
+			t.Fatalf("%s: probes = %#v", c.text, probes)
+		}
+		p := probes[0]
+		if p.Query != c.query {
+			t.Errorf("%s: probe query %q, want %q", c.text, p.Query, c.query)
+		}
+		parsed := shortcodes.Parse(p.Snippet)
+		if len(parsed) != 1 || parsed[0].Attrs["query"] != c.query {
+			t.Errorf("%s: probe %s parses to %#v", c.text, p.Snippet, parsed)
+		}
+		if strings.Contains(c.text, "param-a") && parsed[0].Attrs["param-a"] != "<b>" {
+			t.Errorf("%s: param did not round-trip: %#v", c.text, parsed[0].Attrs)
+		}
 	}
 }

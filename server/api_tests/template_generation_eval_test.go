@@ -21,6 +21,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/internal/templateeval"
+	"mahresources/mrql"
 	"mahresources/shortcodes"
 )
 
@@ -91,8 +92,12 @@ func TestTemplateGenerationEval(t *testing.T) {
 		Timeout: timeout,
 	}))
 	// SetupTestEnv runs no plugin manager, so the server lints against the
-	// built-ins alone, and so does the scorer.
-	known := shortcodes.KnownFromBuiltins()
+	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
+	// handler's seam; keep it in step when the handler's changes.
+	env := templateeval.Env{
+		Known:        shortcodes.KnownFromBuiltins(),
+		ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err },
+	}
 
 	report := templateeval.RunReport{
 		SchemaVersion:   templateeval.ReportSchemaVersion,
@@ -114,7 +119,7 @@ func TestTemplateGenerationEval(t *testing.T) {
 			calls := recorder.Take()
 			previews := evalPreviews(tc, c, draft, ids.category, ids.sample)
 			probes := evalQueryProbes(tc, c, draft, ids.category, ids.sample)
-			checks, details := templateeval.Score(c, draft, calls, previews, probes, known)
+			checks, details := templateeval.Score(c, draft, calls, previews, probes, env)
 			result := templateeval.CaseResult{
 				Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: repeat,
 				DurationMS: time.Since(start).Milliseconds(),

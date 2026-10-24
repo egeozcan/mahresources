@@ -3,6 +3,7 @@ package templateeval
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -146,11 +147,20 @@ func classifyIssue(issue shortcodes.LintIssue) issueClass {
 	return classOther
 }
 
+// Env is what the server lints a draft with.
+type Env struct {
+	// Known is the shortcode catalogue.
+	Known shortcodes.KnownShortcodes
+	// ValidateMRQL is the handler's ValidateMRQL seam
+	// (server/api_handlers/template_generation_api_handlers.go). It must change
+	// whenever the server's does.
+	ValidateMRQL func(query string) error
+}
+
 // Score measures one run. calls are the provider calls the recorder saw for
 // it, previews are keyed by HTML slot name, probes are the draft's queries
-// each rendered on its own (QueryProbes), and known is the shortcode catalogue
-// the server linted against.
-func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []QueryProbe, known shortcodes.KnownShortcodes) (Checks, Details) {
+// each rendered on its own (QueryProbes), and env is what the server lints with.
+func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []QueryProbe, env Env) (Checks, Details) {
 	checks := Checks{Kind: c.Kind, Adversarial: c.Adversarial, HTTPStatus: d.Status}
 	var details Details
 	if d.Status != 200 {
@@ -234,7 +244,7 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 	var all strings.Builder
 	for slot, text := range texts {
 		css := strings.HasSuffix(slot, "CSS")
-		for _, name := range unknownShortcodeNames(text, known, css) {
+		for _, name := range unknownShortcodeNames(text, env.Known, css) {
 			unknown[name] = true
 		}
 		if css {
@@ -249,7 +259,7 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 	checks.UnknownShortcodeCount = len(details.UnknownShortcodes)
 	checks.ExecutableMarkup = orderedFlags(checks.ExecutableMarkup)
 
-	scoreMRQL(d, texts, requested, previews, probes, &checks, &details)
+	scoreMRQL(texts, requested, previews, probes, env, &checks, &details)
 
 	// The preview lints its buffers again. An error the draft already reported
 	// is counted once, under lint, and MRQL errors are counted under MRQL; only
@@ -296,21 +306,23 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 }
 
 // scoreMRQL counts each failing query once, whether lint reported it, the
-// runtime did, or both. A query is keyed by its slot and text: lint issues are
-// tied to theirs through the issue offset, and the runtime verdict comes from
-// the per-query probes. A runtime error marker in a slot whose probes all
-// passed (a query that fails only in its surrounding context) counts once per
-// slot, and so does a lint issue no slot's text explains.
-func scoreMRQL(d Draft, texts map[string]string, requested []string, previews map[string]Preview, probes []QueryProbe, checks *Checks, details *Details) {
+// runtime did, or both. A query is keyed by its slot and its text as the
+// parser yields it. The draft's issues cannot say which slot they came from
+// (their offsets are slot-local), so each slot is linted here on its own with
+// the server's validator; the runtime verdict comes from the per-query probes.
+// A runtime error marker in a slot whose probes all passed (a query that fails
+// only in its surrounding context) counts once for that slot.
+func scoreMRQL(texts map[string]string, requested []string, previews map[string]Preview, probes []QueryProbe, env Env, checks *Checks, details *Details) {
 	keys := map[string]bool{}
-	for _, issue := range d.Issues {
-		if classifyIssue(issue) != classMRQL {
-			continue
-		}
-		if key, ok := attributeMRQLIssue(issue, texts); ok {
-			keys[key] = true
-		} else {
-			details.MRQLErrors = append(details.MRQLErrors, "lint issue in no slot: "+issue.Message)
+	if env.ValidateMRQL != nil {
+		for _, slot := range sortedKeysOf(texts) {
+			text := texts[slot]
+			issues := shortcodes.Lint(text, shortcodes.LintOptions{Known: env.Known, ValidateMRQL: env.ValidateMRQL, CSSMode: strings.HasSuffix(slot, "CSS")})
+			for _, issue := range issues {
+				if classifyIssue(issue) == classMRQL {
+					keys[slot+": "+lintedQuery(text, issue)] = true
+				}
+			}
 		}
 	}
 	explained := map[string]bool{}
@@ -320,54 +332,44 @@ func scoreMRQL(d Draft, texts map[string]string, requested []string, previews ma
 			explained[p.Slot] = true
 		}
 	}
-	for _, slot := range sortedPreviewSlots(previews) {
+	var unexplained []string
+	for _, slot := range sortedKeysOf(previews) {
 		preview := previews[slot]
 		if RenderShowsMRQLError(preview.HTML) && !explained[slot] {
-			details.MRQLErrors = append(details.MRQLErrors, slot+": runtime error no single query reproduces")
+			unexplained = append(unexplained, slot+": runtime error no single query reproduces")
 		}
 		if RenderShowsMRQLError(preview.CSS) && !explained[slot+"CSS"] {
-			details.MRQLErrors = append(details.MRQLErrors, slot+"CSS: runtime error no single query reproduces")
+			unexplained = append(unexplained, slot+"CSS: runtime error no single query reproduces")
 		}
 	}
-	details.MRQLErrors = append(sortedKeys(keys), details.MRQLErrors...)
+	details.MRQLErrors = append(sortedKeys(keys), unexplained...)
 	checks.MRQLErrors = len(details.MRQLErrors)
 }
 
-// attributeMRQLIssue ties a lint MRQL issue to a slot and query. Lint anchors
-// the issue at the attribute ("query=" or "mrql2=") inside the token
-// (shortcodes/lint.go attrOffset); the slot whose text has that attribute at
-// that offset holds the query.
-func attributeMRQLIssue(issue shortcodes.LintIssue, texts map[string]string) (string, bool) {
+// lintedQuery is the query a lint MRQL issue is about: the attribute its
+// message names, read with the production parser from the token the issue's
+// offset falls in. It falls back to the message when no token holds it.
+func lintedQuery(text string, issue shortcodes.LintIssue) string {
 	attrName, _, ok := strings.Cut(strings.TrimPrefix(issue.Message, "MRQL error in "), ":")
-	if !ok {
-		return "", false
-	}
-	slots := make([]string, 0, len(texts))
-	for slot := range texts {
-		slots = append(slots, slot)
-	}
-	sort.Strings(slots)
-	for _, slot := range slots {
-		text := texts[slot]
-		if issue.Start < 0 || issue.Start >= len(text) || issue.End > len(text) || !strings.HasPrefix(text[issue.Start:], attrName+"=") {
-			continue
-		}
-		for _, m := range shortcodeShaped.FindAllStringSubmatchIndex(text, -1) {
-			if m[0] <= issue.Start && issue.Start < m[1] {
-				return slot + ": " + strings.TrimSpace(parseAttrs(text[m[6]:m[7]])[attrName]), true
+	if ok {
+		for _, sc := range shortcodes.Parse(text) {
+			if sc.Start <= issue.Start && issue.Start < sc.End {
+				if q, found := sc.Attrs[attrName]; found {
+					return q
+				}
 			}
 		}
 	}
-	return "", false
+	return issue.Message
 }
 
-func sortedPreviewSlots(previews map[string]Preview) []string {
-	slots := make([]string, 0, len(previews))
-	for slot := range previews {
-		slots = append(slots, slot)
+func sortedKeysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	sort.Strings(slots)
-	return slots
+	sort.Strings(keys)
+	return keys
 }
 
 // QueryProbe is one query from a draft slot, as the runtime would execute it,
@@ -380,97 +382,111 @@ type QueryProbe struct {
 	Failed  bool
 }
 
-var attrPair = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9_-]*)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
-
-// parseAttrs reads attributes the way shortcodes/parser.go's attrPattern does.
-func parseAttrs(s string) map[string]string {
-	attrs := map[string]string{}
-	for _, m := range attrPair.FindAllStringSubmatch(s, -1) {
-		attrs[m[1]] = m[2] + m[3] + m[4]
-	}
-	return attrs
-}
-
 var numberedSource = regexp.MustCompile(`^mrql([0-9]*)$`)
 
-// QueryProbes lists the inline queries in a slot's text: [mrql query=], and the
-// mrql, mrql2, … sources of [conditional] and [elseif]. Each probe is an
+// QueryProbes lists the inline queries in a slot's text, read through the
+// runtime's own parsing: shortcodes.ParseWithBlocks (descending into block
+// bodies) for [mrql query=] and the mrql, mrql2, … sources of [conditional],
+// and shortcodes.SplitBranches for the [elseif] guards. Each probe is an
 // [mrql] carrying the same query, param-* attributes, and the limit, buckets
-// and scope that apply to that source (limit2 for mrql2, and so on). A query
-// that holds both quote characters cannot be written into one attribute and
-// is skipped; [mrql saved=] with no inline query runs nothing inline.
+// and scope that apply to that source (limit2 for mrql2, and so on), with the
+// values exactly as the parser yielded them. A probe that does not parse back
+// to those values (a value holding both quote characters) is skipped; [mrql
+// saved=] with no inline query runs nothing inline.
 func QueryProbes(slot, text string) []QueryProbe {
 	var probes []QueryProbe
-	for _, m := range shortcodeShaped.FindAllStringSubmatch(text, -1) {
-		if m[1] != "" {
-			continue
-		}
-		name := m[2]
-		if name != "mrql" && name != "conditional" && name != "elseif" {
-			continue
-		}
-		attrs := parseAttrs(m[3])
-		type source struct{ attr, suffix string }
-		var sources []source
-		if name == "mrql" {
-			sources = append(sources, source{"query", ""})
-		} else {
-			for key := range attrs {
-				if n := numberedSource.FindStringSubmatch(key); n != nil {
-					sources = append(sources, source{key, n[1]})
+	var walk func(string)
+	walk = func(text string) {
+		for _, sc := range shortcodes.ParseWithBlocks(text) {
+			switch sc.Name {
+			case "mrql":
+				probes = appendProbes(probes, slot, sc.Attrs, []string{"query"})
+			case "conditional":
+				probes = appendProbes(probes, slot, sc.Attrs, numberedSources(sc.Attrs))
+				if sc.IsBlock {
+					for _, branch := range shortcodes.SplitBranches(sc.InnerContent)[1:] {
+						if !branch.IsElse {
+							probes = appendProbes(probes, slot, branch.Attrs, numberedSources(branch.Attrs))
+						}
+					}
 				}
 			}
-			sort.Slice(sources, func(i, j int) bool {
-				a, _ := strconv.Atoi("0" + sources[i].suffix)
-				b, _ := strconv.Atoi("0" + sources[j].suffix)
-				return a < b
-			})
-		}
-		var params []string
-		for key := range attrs {
-			if strings.HasPrefix(key, "param-") {
-				params = append(params, key)
+			if sc.IsBlock {
+				walk(sc.InnerContent)
 			}
 		}
-		sort.Strings(params)
-		for _, src := range sources {
-			query := strings.TrimSpace(attrs[src.attr])
-			if query == "" {
-				continue
+	}
+	walk(text)
+	return probes
+}
+
+func numberedSources(attrs map[string]string) []string {
+	var sources []string
+	for key := range attrs {
+		if numberedSource.MatchString(key) {
+			sources = append(sources, key)
+		}
+	}
+	sort.Slice(sources, func(i, j int) bool {
+		a, _ := strconv.Atoi("0" + strings.TrimPrefix(sources[i], "mrql"))
+		b, _ := strconv.Atoi("0" + strings.TrimPrefix(sources[j], "mrql"))
+		return a < b
+	})
+	return sources
+}
+
+func appendProbes(probes []QueryProbe, slot string, attrs map[string]string, sources []string) []QueryProbe {
+	var params []string
+	for key := range attrs {
+		if strings.HasPrefix(key, "param-") {
+			params = append(params, key)
+		}
+	}
+	sort.Strings(params)
+	for _, src := range sources {
+		query := attrs[src]
+		if strings.TrimSpace(query) == "" {
+			continue
+		}
+		suffix := strings.TrimPrefix(strings.TrimPrefix(src, "query"), "mrql")
+		want := map[string]string{"query": query}
+		var b strings.Builder
+		b.WriteString("[mrql")
+		writeProbeAttr(&b, "query", query)
+		for _, key := range []string{"limit", "buckets"} {
+			if v, found := attrs[key+suffix]; found {
+				writeProbeAttr(&b, key, v)
+				want[key] = v
 			}
-			var b strings.Builder
-			b.WriteString("[mrql")
-			ok := writeProbeAttr(&b, "query", query)
-			for _, key := range []string{"limit", "buckets"} {
-				if v, found := attrs[key+src.suffix]; found {
-					ok = writeProbeAttr(&b, key, v) && ok
-				}
-			}
-			for _, key := range params {
-				ok = writeProbeAttr(&b, key, attrs[key]) && ok
-			}
-			if v, found := attrs["scope"+src.suffix]; found {
-				ok = writeProbeAttr(&b, "scope", v) && ok
-			}
-			b.WriteString("]")
-			if ok {
-				probes = append(probes, QueryProbe{Slot: slot, Query: query, Snippet: b.String()})
-			}
+		}
+		for _, key := range params {
+			writeProbeAttr(&b, key, attrs[key])
+			want[key] = attrs[key]
+		}
+		if v, found := attrs["scope"+suffix]; found {
+			writeProbeAttr(&b, "scope", v)
+			want["scope"] = v
+		}
+		b.WriteString("]")
+		snippet := b.String()
+		if parsed := shortcodes.Parse(snippet); len(parsed) == 1 && reflect.DeepEqual(parsed[0].Attrs, want) {
+			probes = append(probes, QueryProbe{Slot: slot, Query: query, Snippet: snippet})
 		}
 	}
 	return probes
 }
 
-func writeProbeAttr(b *strings.Builder, key, value string) bool {
+// writeProbeAttr writes a value so the parser yields it back unchanged. The
+// parser HTML-unescapes the whole attribute string before it reads the quotes
+// (shortcodes/parser.go parseAttrs), so an entity cannot stand for a quote:
+// & is written as &amp; to survive that unescape, and the quote character is
+// whichever one the value does not contain.
+func writeProbeAttr(b *strings.Builder, key, value string) {
 	quote := `"`
 	if strings.Contains(value, `"`) {
-		if strings.Contains(value, "'") {
-			return false
-		}
 		quote = "'"
 	}
-	b.WriteString(" " + key + "=" + quote + value + quote)
-	return true
+	b.WriteString(" " + key + "=" + quote + strings.ReplaceAll(value, "&", "&amp;") + quote)
 }
 
 // RenderShowsMRQLError reports whether rendered output carries the marker the
