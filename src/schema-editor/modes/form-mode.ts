@@ -12,6 +12,10 @@ import {
   isLabeledEnum,
   getLabeledEnumEntries,
   valueText,
+  choiceKey,
+  choiceIndex,
+  findChoice,
+  withTypedKeywords,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 
@@ -41,6 +45,9 @@ function formatNumericForInput(data: any, schema: JSONSchema): string {
   if (data === 0 && !('default' in schema)) return '';
   return valueText(data);
 }
+
+/** The option key of a stored value that matches no choice. */
+const CURRENT_CHOICE_KEY = 'current';
 
 /** The visible text of an enum choice: JSON for a non-primitive, else the value itself. */
 function optionText(value: any): any {
@@ -276,6 +283,7 @@ export class SchemaFormMode extends LitElement {
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
   private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean, parentRequired?: boolean): TemplateResult | typeof nothing {
+    schema = withTypedKeywords(schema);
     // Handle $ref
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
@@ -285,7 +293,7 @@ export class SchemaFormMode extends LitElement {
         const mergedSchema = mergeSchemas(resolved, siblings);
         return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
       }
-      return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
+      return html`<div class="text-red-500 text-xs">Unresolvable reference: ${valueText(schema.$ref)}</div>`;
     }
 
     // Handle labeled enum (oneOf with const+title)
@@ -435,11 +443,12 @@ export class SchemaFormMode extends LitElement {
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.oneOf.map((opt: JSONSchema, idx: number) => {
-            let typeLabel = opt.type;
-            if (Array.isArray(opt.type)) typeLabel = opt.type.join('/');
-            if (opt.$ref) typeLabel = 'ref';
+            const o = withTypedKeywords(opt);
+            let typeLabel = o.type;
+            if (Array.isArray(o.type)) typeLabel = o.type.join('/');
+            if (o.$ref) typeLabel = 'ref';
             return html`<option value=${idx} ?selected=${idx === activeIndex}>
-              ${opt.title || opt.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`}
+              ${o.title || o.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`}
             </option>`;
           })}
         </select>
@@ -506,11 +515,12 @@ export class SchemaFormMode extends LitElement {
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.anyOf.map((opt: JSONSchema, idx: number) => {
-            let typeLabel = opt.type;
-            if (Array.isArray(opt.type)) typeLabel = opt.type.join('/');
-            if (opt.$ref) typeLabel = 'ref';
+            const o = withTypedKeywords(opt);
+            let typeLabel = o.type;
+            if (Array.isArray(o.type)) typeLabel = o.type.join('/');
+            if (o.$ref) typeLabel = 'ref';
             return html`<option value=${idx} ?selected=${idx === activeIndex}>
-              ${opt.title || opt.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`}
+              ${o.title || o.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`}
             </option>`;
           })}
         </select>
@@ -568,57 +578,37 @@ export class SchemaFormMode extends LitElement {
   // ─── enum ───────────────────────────────────────────────────────────────
 
   private _renderEnum(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
-    const hasValue = schema.enum.some((v: any) => v === data);
-    const isNull = data === null || data === undefined;
-
-    const onSelectChange = (e: Event) => {
-      const valStr = (e.target as HTMLSelectElement).value;
-      let val: any = valStr;
-      const match = schema.enum.find((ev: any) => valueText(ev) === valStr);
-      if (match !== undefined) val = match;
-      else if (!isNull && !hasValue && valStr === valueText(data)) val = data;
-      else if (schema.type === 'integer' || schema.type === 'number') val = parseFloat(valStr);
-      onChange(val);
-    };
-
-    return html`
-      <select class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
-        id=${fieldId || nothing}
-        aria-label=${schema.title ? `Select ${schema.title}` : 'Select value'}
-        aria-describedby=${describedBy || nothing}
-        ?required=${!!isRequired}
-        aria-required=${isRequired ? 'true' : nothing}
-        @change=${onSelectChange}>
-        ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
-        ${schema.enum.map((val: any) => html`
-          <option value=${valueText(val)} ?selected=${val === data}>${optionText(val)}</option>
-        `)}
-        ${!isNull && !hasValue ? html`
-          <option value=${valueText(data)} selected>${optionText(data)} (current)</option>
-        ` : nothing}
-      </select>
-    `;
+    return this._renderChoices(schema, schema.enum, schema.enum.map(optionText), data, onChange, fieldId, describedBy, isRequired);
   }
 
   // ─── labeled enum (oneOf + const + title) ──────────────────────────────
 
   private _renderLabeledEnum(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const entries = getLabeledEnumEntries(schema);
-    const hasValue = entries.some(e => e.value === data);
+    return this._renderChoices(schema, entries.map(e => e.value), entries.map(e => e.label), data, onChange, fieldId, describedBy, isRequired);
+  }
+
+  /**
+   * A <select> over enum choices. Each option is keyed by its position
+   * (choiceKey), never by its text, so two choices that print alike, such as
+   * {"a":1} and the string '{"a":1}', stay distinct; labels are display only.
+   */
+  private _renderChoices(schema: JSONSchema, choices: any[], labels: any[], data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
+    const selected = findChoice(choices, data);
     const isNull = data === null || data === undefined;
+    const showCurrent = !isNull && selected < 0;
 
     const onSelectChange = (e: Event) => {
-      const valStr = (e.target as HTMLSelectElement).value;
-      // Find the matching entry by its option key
-      const match = entries.find(entry => valueText(entry.value) === valStr);
-      if (match !== undefined) {
-        onChange(match.value);
-      } else if (!isNull && !hasValue && valStr === valueText(data)) {
+      const key = (e.target as HTMLSelectElement).value;
+      const index = choiceIndex(key, choices.length);
+      if (index >= 0) {
+        onChange(choices[index]);
+      } else if (key === CURRENT_CHOICE_KEY) {
         onChange(data);
       } else if (schema.type === 'integer' || schema.type === 'number') {
-        onChange(parseFloat(valStr));
+        onChange(parseFloat(key));
       } else {
-        onChange(valStr);
+        onChange(key);
       }
     };
 
@@ -631,11 +621,11 @@ export class SchemaFormMode extends LitElement {
         aria-required=${isRequired ? 'true' : nothing}
         @change=${onSelectChange}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
-        ${entries.map(entry => html`
-          <option value=${valueText(entry.value)} ?selected=${entry.value === data}>${entry.label}</option>
+        ${choices.map((_, index) => html`
+          <option value=${choiceKey(index)} ?selected=${index === selected}>${labels[index]}</option>
         `)}
-        ${!isNull && !hasValue ? html`
-          <option value=${valueText(data)} selected>${optionText(data)} (current)</option>
+        ${showCurrent ? html`
+          <option value=${CURRENT_CHOICE_KEY} selected>${optionText(data)} (current)</option>
         ` : nothing}
       </select>
     `;
@@ -726,7 +716,8 @@ export class SchemaFormMode extends LitElement {
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
 
-        ${schema.properties ? Object.entries(schema.properties).map(([key, propSchema]: [string, any]) => {
+        ${schema.properties ? Object.entries(schema.properties).map(([key, propSchemaIn]: [string, any]) => {
+          const propSchema = withTypedKeywords(propSchemaIn);
           const fullPath = parentPath ? `${parentPath}.${key}` : key;
           const fieldId = generateFieldId('field', fullPath);
           // A field's HTML required attribute should only apply when the entire

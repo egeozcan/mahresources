@@ -142,8 +142,15 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
   for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
     if (schema[keyword] && Array.isArray(schema[keyword])) {
       // A labeled enum is the oneOf itself: merging its alternatives would
-      // leave only the last const and title, and lose every label.
-      if (keyword === 'oneOf' && isLabeledEnum(schema)) return schema;
+      // leave only the last const and title, and lose every label. Keep it
+      // whole, but still resolve every sibling keyword (anyOf, annotations
+      // such as x-display, title, description) around it.
+      if (keyword === 'oneOf' && isLabeledEnum(schema)) {
+        const rest: JSONSchema = { ...schema };
+        delete rest.oneOf;
+        const resolvedRest = resolveSchema(rest, rootSchema) ?? rest;
+        return { ...resolvedRest, oneOf: schema.oneOf };
+      }
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
       for (const sub of schema[keyword]) {
@@ -793,7 +800,7 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
   if (!schema.oneOf) return [];
   return schema.oneOf.map((entry: JSONSchema) => ({
     value: entry.const,
-    label: entry.title || valueText(entry.const),
+    label: (typeof entry.title === 'string' && entry.title) || valueText(entry.const),
     ...(safeColor(entry['x-color']) ? { color: entry['x-color'] } : {}),
   }));
 }
@@ -808,9 +815,86 @@ export function valueText(value: unknown): string {
   return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
+const NUMBER_KEYWORDS = [
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+  'minLength', 'maxLength', 'minItems', 'maxItems', 'minProperties', 'maxProperties',
+];
+const STRING_KEYWORDS = ['title', 'description', 'pattern', 'format'];
+
+/**
+ * A shallow copy of schema without constraint or annotation keywords of the
+ * wrong type: a non-number minimum or maxLength, a non-string title, pattern or
+ * format, or a type that is not a string or an array of strings. A hand-written schema can hold any JSON there, and a renderer would
+ * coerce it into text, an attribute, a comparison or a RegExp. Renderers read
+ * a property schema through this; the tree editor, which edits the schema
+ * itself, shows the raw values through inputText instead.
+ */
+export function withTypedKeywords(schema: JSONSchema): JSONSchema {
+  if (!schema || typeof schema !== 'object') return schema;
+  let copy: JSONSchema | null = null;
+  const drop = (key: string) => {
+    copy ??= { ...schema };
+    delete copy[key];
+  };
+  for (const key of NUMBER_KEYWORDS) {
+    if (key in schema && typeof schema[key] !== 'number') drop(key);
+  }
+  for (const key of STRING_KEYWORDS) {
+    if (key in schema && typeof schema[key] !== 'string') drop(key);
+  }
+  const type = schema.type;
+  if (type !== undefined && typeof type !== 'string'
+    && !(Array.isArray(type) && type.every(t => typeof t === 'string'))) {
+    drop('type');
+  }
+  return copy ?? schema;
+}
+
+/** valueText for an input's .value: an absent value (undefined or null) is the empty string. */
+export function inputText(value: unknown): string {
+  return value === undefined || value === null ? '' : valueText(value);
+}
+
+/**
+ * A type-tagged identity for a JSON value. Equal keys mean equal values, while
+ * values that print alike stay apart: {"a":1} and the string '{"a":1}', or 1
+ * and "1". Compare, sort and dedupe raw values through this, never directly.
+ */
+export function valueKey(value: unknown): string {
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  return `${kind}:${valueText(value)}`;
+}
+
+/** Deep, type-aware equality of two JSON values. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  return a === b || valueKey(a) === valueKey(b);
+}
+
+// ─── Enum choices ────────────────────────────────────────────────────────────
+// A choice's identity is its position in the enum (or labeled oneOf), never
+// its text: two choices can print the same. Controls key their options with
+// choiceKey and map a key back with choiceIndex; labels are display only.
+
+/** The key of the choice at index, for an <option> or checkbox value. */
+export function choiceKey(index: number): string {
+  return String(index);
+}
+
+/** The index a choice key names, or -1 when it names none of count choices. */
+export function choiceIndex(key: string, count: number): number {
+  if (!/^\d+$/.test(key)) return -1;
+  const index = Number(key);
+  return index < count ? index : -1;
+}
+
+/** The index of the first choice equal to value (deep, type-aware), or -1. */
+export function findChoice(choices: readonly unknown[], value: unknown): number {
+  return choices.findIndex(choice => sameValue(choice, value));
+}
+
 // Characters a CSS color can contain; anything else (";", ":", braces,
 // quotes) could break out of the declaration it is interpolated into.
-const SAFE_COLOR_CHARS = /^[#a-zA-Z0-9(),.%\s/+-]+$/;
+const SAFE_COLOR_CHARS = /^[#\w\s(),.%/+-]+$/;
 
 /**
  * An x-color value when it is a string CSS color made of safe characters,
@@ -841,9 +925,10 @@ export function flattenSchema(
 
   const fields: FlatField[] = [];
 
-  for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+  for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
     const path = prefix ? `${prefix}.${key}` : key;
-    const prop = resolveSchema(rawProp, root) || rawProp;
+    const rawProp = withTypedKeywords(rawPropIn);
+    const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);
     const rawLabel = prop.title || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
@@ -941,8 +1026,9 @@ export function intersectFields(fieldLists: FlatField[][]): FlatField[] {
         }
       }
       if (existing.enum && field.enum) {
-        const a = [...existing.enum].sort();
-        const b = [...field.enum].sort();
+        // Compare as sets of typed keys: sorting raw values coerces them.
+        const a = existing.enum.map(valueKey).sort();
+        const b = field.enum.map(valueKey).sort();
         if (JSON.stringify(a) !== JSON.stringify(b)) {
           existing.enum = null;
           existing.enumLabels = null;

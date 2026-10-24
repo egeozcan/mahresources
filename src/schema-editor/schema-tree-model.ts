@@ -121,7 +121,7 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
       if (Array.isArray(schema[kw])) {
         node.compositionKeyword = kw;
         const variantNodes = (schema[kw] as JSONSchema[]).map((variant, i) =>
-          schemaToTree(variant, variant.title || `variant${i + 1}`),
+          schemaToTree(variant, (typeof variant.title === 'string' && variant.title) || `variant${i + 1}`),
         );
         node.variants = [...(node.variants || []), ...variantNodes];
         delete node.schema[kw];

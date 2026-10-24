@@ -215,11 +215,11 @@ Each field renders according to its schema type:
 | `string` | Plain text |
 | `string` with `format: "email"` | Clickable `mailto:` link |
 | `string` with `format: "uri"` | Clickable link |
-| `string` with `format: "date"` | Formatted date |
+| `string` with `format: "date"` or `"date-time"` | Formatted date. A value that is not an ISO 8601 date or date-time that exists, such as `2024-02-30`, is shown as its text |
 | `string` with `enum` | Colored pill/badge |
 | `string` with labeled enum (`oneOf` + `const` + `title`) | Pill showing the human-readable title |
 | `integer` / `number` | Monospace text |
-| `boolean` | "Yes" / "No" |
+| `boolean` | "Yes" / "No"; a stored value that is not a boolean is shown as itself |
 | `array` of scalars | Inline pills |
 | Nested `object` | Flattened with a labeled path (e.g., "Address › City") |
 
@@ -240,7 +240,7 @@ Object values are automatically detected and rendered as smart widgets when they
 |-------|---------------|---------|
 | **URL / Location** | `href` + `host` or `hostname` | Clickable link with host subtitle |
 | **GeoLocation** | `latitude` + `longitude` (or `lat` + `lng`) | Coordinates with OpenStreetMap link |
-| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 -- Apr 1, 2024" |
+| **Date Range** | `start` + `end` (both ISO 8601 dates or date-times that exist) | Formatted range "Mar 15, 2024 -- Apr 1, 2024" |
 | **Dimensions** | `width` + `height` (both numbers) | "1920 × 1080" |
 
 Shape detection runs automatically. To override it, use the `x-display` annotation (see below).
@@ -325,8 +325,6 @@ When multiple categories are selected, only fields common to all selected catego
 Schema-driven filter fields appear alongside the existing free-form metadata filters. The free-form filters are automatically adjusted to exclude fields already covered by the schema filters.
 
 ### Known Limitations
-
-**Mixed-type enums with identical string representations**: Enum schemas that contain values of different JSON types which stringify the same way (e.g., `enum: [1, "1"]` or `enum: [null, "null"]`) cannot be distinguished in the search UI. HTML form controls carry string values only, so selecting "1" from such an enum will always submit the non-string variant (numeric `1`). Avoid mixing types that collide when converted to strings; use a single consistent type per enum instead.
 
 **Variant scoring does not penalize extra properties**: When the form renders `oneOf`/`anyOf` variants, it picks the best-matching branch by scoring discriminator fields (`const`, `enum`) and key overlap. Extra properties beyond what a variant declares do not reduce its score, even if the variant has `additionalProperties: false`. This is intentional: the scoring function selects the correct *variant*, not validates data. Extra keys are handled separately by `stripStaleKeys` on schema switch and by server-side validation.
 

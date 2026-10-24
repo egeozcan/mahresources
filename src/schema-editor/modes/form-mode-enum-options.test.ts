@@ -66,9 +66,9 @@ describe('form enum options', () => {
     expect(await choose(el, '{"b":2}')).toEqual({ b: 2 });
   });
 
-  it('keeps primitive option values and their types', async () => {
+  it('keys options by position and maps them back to typed values', async () => {
     const str = await mount({ enum: ['a', 'b'] }, {});
-    expect([...select(str).options].map(o => o.value)).toEqual(['', 'a', 'b']);
+    expect([...select(str).options].map(o => o.value)).toEqual(['', '0', '1']);
     expect(await choose(str, 'b')).toBe('b');
     const num = await mount({ type: 'integer', oneOf: [{ const: 1, title: 'One' }, { const: 2, title: 'Two' }] }, {});
     expect(await choose(num, 'Two')).toBe(2);

@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import { escapeJsonPointer } from '../../schema-core';
+import { escapeJsonPointer, inputText } from '../../schema-core';
 
 @customElement('schema-ref-editor')
 export class SchemaRefEditor extends LitElement {
@@ -25,12 +25,12 @@ export class SchemaRefEditor extends LitElement {
         <label for="ref-target">Reference</label>
         ${this.defsNames.length > 0
           ? html`
-            <select id="ref-target" .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLSelectElement).value)}>
+            <select id="ref-target" .value=${inputText(this.ref)} @change=${(e: Event) => this._emit((e.target as HTMLSelectElement).value)}>
               <option value="">-- select --</option>
               ${this.defsNames.map(name => html`<option .value=${'#/' + this.defsPrefix + '/' + escapeJsonPointer(name)} ?selected=${this.ref === '#/' + this.defsPrefix + '/' + escapeJsonPointer(name)}>${name}</option>`)}
             </select>
           `
-          : html`<input id="ref-target" .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLInputElement).value)}>`
+          : html`<input id="ref-target" .value=${inputText(this.ref)} @change=${(e: Event) => this._emit((e.target as HTMLInputElement).value)}>`
         }
       </div>
     `;

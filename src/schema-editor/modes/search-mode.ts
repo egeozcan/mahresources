@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { FlatField } from '../schema-core';
-import { flattenSchema, intersectFields, valueText } from '../schema-core';
+import { flattenSchema, intersectFields, valueText, sameValue, findChoice, choiceKey, choiceIndex } from '../schema-core';
 import { generateParamNameForMeta } from '../../components/freeFields.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -18,7 +18,8 @@ interface HiddenInput {
 interface ExistingValue {
   operator: string;
   value: string;
-  enumValues: string[];
+  /** Selected enum values, raw. Compare with sameValue, never by text. */
+  enumValues: any[];
   boolValue: string;
   /** Original value before coercion — preserves null, false, 0, "" for enum restoration */
   rawValue?: any;
@@ -27,7 +28,8 @@ interface ExistingValue {
 interface SearchField extends FlatField {
   operator: string;
   value: string;
-  enumValues: string[];
+  /** Selected enum values, raw. Compare with sameValue, never by text. */
+  enumValues: any[];
   boolValue: string;
   showOperator: boolean;
   operators: Operator[] | null;
@@ -75,6 +77,19 @@ const OPERATOR_SYMBOLS: Record<string, string> = {
 
 function operatorSymbol(code: string): string {
   return OPERATOR_SYMBOLS[code] || code;
+}
+
+/**
+ * The enum choice a stored search value names. URL values arrive typed by the
+ * server's parse, so "2" may name the choice 2: an exact (typed) match wins,
+ * then a match by text, as the string comparison before it did. A value that
+ * names no choice is kept as it is.
+ */
+function matchChoice(choices: readonly unknown[], value: unknown): unknown {
+  const exact = findChoice(choices, value);
+  if (exact >= 0) return choices[exact];
+  const loose = choices.findIndex(choice => valueText(choice) === valueText(value));
+  return loose >= 0 ? choices[loose] : value;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -131,7 +146,7 @@ export class SchemaSearchMode extends LitElement {
     const currentValues = new Map<string, {
       value: string;
       operator: string;
-      enumValues: string[];
+      enumValues: any[];
       boolValue: string;
     }>();
     for (const f of this._fields) {
@@ -237,12 +252,15 @@ export class SchemaSearchMode extends LitElement {
       if (field.enum && existing && enumValues.length === 0) {
         if (existing.rawValue !== undefined) {
           // rawValue preserves the original value including null, false, 0, ""
-          enumValues = [valueText(existing.rawValue)];
+          enumValues = [existing.rawValue];
         } else if (existing.value != null && existing.value !== '') {
-          enumValues = [valueText(existing.value)];
+          enumValues = [existing.value];
         } else if (existing.boolValue !== 'any') {
           enumValues = [existing.boolValue];
         }
+      }
+      if (field.enum && !current) {
+        enumValues = enumValues.map(v => matchChoice(field.enum!, v));
       }
 
       return {
@@ -286,7 +304,7 @@ export class SchemaSearchMode extends LitElement {
       return {
         operator: matches[0].operation || 'EQ',
         value: '',
-        enumValues: matches.map(m => valueText(m.value)),
+        enumValues: matches.map(m => m.value),
         boolValue: 'any',
       };
     }
@@ -320,26 +338,15 @@ export class SchemaSearchMode extends LitElement {
       // String values must be quoted to preserve coercible values like "007".
       // Numeric, boolean, and null values must NOT be quoted.
       // Use index-based lookup to avoid ambiguity between e.g., 1 and "1".
+      // enumValues holds the selected values themselves, so each one is quoted
+      // by its own type: a string is quoted (preserving coercible values like
+      // "007"); a number, boolean or null is not.
       return field.enumValues.map(v => {
-        // Match by index: enumValues stores valueText(enum[i]), so find the
-        // original by matching the stringified form at each index. If multiple
-        // enum entries stringify the same way (e.g., 1 and "1"), prefer the
-        // non-string original since strings get quoted and non-strings don't.
-        let isStringTyped = true;
-        for (const ev of field.enum!) {
-          if (valueText(ev) === v) {
-            if (typeof ev !== 'string') {
-              isStringTyped = false;
-              break;
-            }
-          }
-        }
-        // If no enum entry matched at all, treat as string (safe default)
-        if (isStringTyped) {
-          const escaped = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        if (typeof v === 'string') {
+          const escaped = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
           return { value: `${field.path}:EQ:"${escaped}"` };
         }
-        return { value: `${field.path}:EQ:${v}` };
+        return { value: `${field.path}:EQ:${valueText(v)}` };
       });
     }
 
@@ -401,20 +408,23 @@ export class SchemaSearchMode extends LitElement {
     this.requestUpdate();
   }
 
-  private _onEnumCheckboxChange(field: SearchField, enumVal: string, checked: boolean) {
+  private _onEnumCheckboxChange(field: SearchField, enumVal: any, checked: boolean) {
     if (checked) {
-      if (!field.enumValues.includes(valueText(enumVal))) {
-        field.enumValues = [...field.enumValues, valueText(enumVal)];
+      if (!field.enumValues.some(v => sameValue(v, enumVal))) {
+        field.enumValues = [...field.enumValues, enumVal];
       }
     } else {
-      field.enumValues = field.enumValues.filter(v => v !== valueText(enumVal));
+      field.enumValues = field.enumValues.filter(v => !sameValue(v, enumVal));
     }
     this.requestUpdate();
   }
 
   private _onEnumSelectChange(field: SearchField, e: Event) {
     const select = e.target as HTMLSelectElement;
-    field.enumValues = Array.from(select.selectedOptions).map(o => o.value);
+    field.enumValues = Array.from(select.selectedOptions)
+      .map(o => choiceIndex(o.value, field.enum!.length))
+      .filter(i => i >= 0)
+      .map(i => field.enum![i]);
     this.requestUpdate();
   }
 
@@ -495,9 +505,9 @@ export class SchemaSearchMode extends LitElement {
             const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
               <label class="text-sm flex items-center gap-1">
-                <input type="checkbox" .value=${valueText(enumVal)}
-                       .checked=${field.enumValues.includes(valueText(enumVal))}
-                       @change=${(e: Event) => this._onEnumCheckboxChange(field, valueText(enumVal), (e.target as HTMLInputElement).checked)}>
+                <input type="checkbox" .value=${choiceKey(idx)}
+                       .checked=${field.enumValues.some(v => sameValue(v, enumVal))}
+                       @change=${(e: Event) => this._onEnumCheckboxChange(field, enumVal, (e.target as HTMLInputElement).checked)}>
                 <span>${displayLabel}</span>
               </label>
             `;
@@ -519,7 +529,7 @@ export class SchemaSearchMode extends LitElement {
           ${field.enum!.map((enumVal, idx) => {
             const displayLabel = field.enumLabels?.[idx] || valueText(enumVal);
             return html`
-              <option value=${valueText(enumVal)} ?selected=${field.enumValues.includes(valueText(enumVal))}>${displayLabel}</option>
+              <option value=${choiceKey(idx)} ?selected=${field.enumValues.some(v => sameValue(v, enumVal))}>${displayLabel}</option>
             `;
           })}
         </select>

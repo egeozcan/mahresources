@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
 import type { SchemaNode } from '../../schema-tree-model';
+import { inputText } from '../../schema-core';
 
 @customElement('schema-composition-editor')
 export class SchemaCompositionEditor extends LitElement {
@@ -37,7 +38,7 @@ export class SchemaCompositionEditor extends LitElement {
         <h4>${this.keyword} — ${this.variants.length} variant${this.variants.length !== 1 ? 's' : ''}</h4>
         ${this.variants.map((v, i) => html`
           <div class="variant">
-            <span class="variant-name">${v.schema.title || v.name || `Variant ${i + 1}`}</span>
+            <span class="variant-name">${inputText(v.schema.title) || v.name || `Variant ${i + 1}`}</span>
             <span class="variant-type">(${v.type})</span>
             ${isNot ? nothing : html`<button class="btn btn-danger" @click=${() => this._removeVariant(i)} aria-label="Remove variant ${i + 1}">×</button>`}
           </div>

@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
@@ -130,7 +130,8 @@ export class MetaShortcode extends LitElement {
   private get _schema(): JSONSchema | null {
     if (!this.schemaStr) return null;
     try {
-      return JSON.parse(this.schemaStr);
+      const parsed = JSON.parse(this.schemaStr);
+      return parsed && typeof parsed === 'object' ? withTypedKeywords(parsed) : null;
     } catch {
       return null;
     }
@@ -281,7 +282,8 @@ export class MetaShortcode extends LitElement {
     // A non-string x-display is ignored. A forced built-in renderer runs only
     // when the value has its shape; otherwise the value gets the normal
     // rendering below. Auto-detection applies only when no x-display is set.
-    const resolvedSchema = schema ? resolveSchema(schema, schema) : null;
+    const resolved = schema ? resolveSchema(schema, schema) : null;
+    const resolvedSchema = resolved ? withTypedKeywords(resolved) : null;
     const xDisplay = xDisplayOf(schema) || xDisplayOf(resolvedSchema);
     if (xDisplay && !xDisplay.startsWith('plugin:')) {
       const renderer = getBuiltinRenderer(xDisplay);
@@ -340,7 +342,7 @@ export class MetaShortcode extends LitElement {
     const entries = getLabeledEnumEntries(schema);
     const entry = entries.find(e => e.value === value);
     const label = entry ? entry.label : valueText(value);
-    const tooltip = entry ? String(value) : '';
+    const tooltip = entry ? valueText(value) : '';
     return html`<span
       class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
       title=${tooltip || nothing}

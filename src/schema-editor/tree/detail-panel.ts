@@ -2,7 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
 import type { SchemaNode } from '../schema-tree-model';
-import { isLabeledEnum, safeColor } from '../schema-core';
+import { isLabeledEnum, safeColor, inputText } from '../schema-core';
 import type { EnumEntry } from './node-editors/enum-editor';
 
 // Import all node editors (registers them as custom elements)
@@ -99,11 +99,11 @@ export class SchemaDetailPanel extends LitElement {
         ` : ''}
         <div>
           <label for="prop-title">Title</label>
-          <input id="prop-title" .value=${schema.title || ''} @change=${(e: Event) => this._dispatchChange('title', (e.target as HTMLInputElement).value)}>
+          <input id="prop-title" .value=${inputText(schema.title)} @change=${(e: Event) => this._dispatchChange('title', (e.target as HTMLInputElement).value)}>
         </div>
         <div>
           <label for="prop-desc">Description</label>
-          <input id="prop-desc" .value=${schema.description || ''} @change=${(e: Event) => this._dispatchChange('description', (e.target as HTMLInputElement).value)}>
+          <input id="prop-desc" .value=${inputText(schema.description)} @change=${(e: Event) => this._dispatchChange('description', (e.target as HTMLInputElement).value)}>
         </div>
       </div>
 
@@ -125,7 +125,7 @@ export class SchemaDetailPanel extends LitElement {
     if (isLabeledEnum(schema)) {
       const entries: EnumEntry[] = (schema.oneOf as any[]).map((e: any) => ({
         value: e.const,
-        label: e.title || '',
+        label: inputText(e.title),
         ...(safeColor(e['x-color']) ? { color: e['x-color'] } : {}),
       }));
       return html`<schema-enum-editor
@@ -232,11 +232,11 @@ export class SchemaDetailPanel extends LitElement {
         </div>
         <div>
           <label for="prop-title">Title</label>
-          <input id="prop-title" .value=${schema.title || ''} @change=${(e: Event) => this._dispatchChange('title', (e.target as HTMLInputElement).value)}>
+          <input id="prop-title" .value=${inputText(schema.title)} @change=${(e: Event) => this._dispatchChange('title', (e.target as HTMLInputElement).value)}>
         </div>
         <div>
           <label for="prop-desc">Description</label>
-          <input id="prop-desc" .value=${schema.description || ''} @change=${(e: Event) => this._dispatchChange('description', (e.target as HTMLInputElement).value)}>
+          <input id="prop-desc" .value=${inputText(schema.description)} @change=${(e: Event) => this._dispatchChange('description', (e.target as HTMLInputElement).value)}>
         </div>
       </div>
 

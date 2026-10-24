@@ -638,9 +638,10 @@ test.describe('Schema-Driven Search Fields', () => {
     // Should NOT render individual checkboxes for enum values
     await expect(container.locator('input[type="checkbox"]')).toHaveCount(0);
 
-    // Verify options are present
+    // Verify options are present. Options are keyed by position, not by their
+    // text, so two choices that print alike stay distinct; match the label.
     for (const country of ['US', 'UK', 'CA', 'DE', 'FR', 'JP', 'AU', 'BR']) {
-      await expect(multiSelect.locator(`option[value="${country}"]`)).toHaveCount(1);
+      await expect(multiSelect.locator('option').filter({ hasText: new RegExp(`^\\s*${country}\\s*$`) })).toHaveCount(1);
     }
   });
 

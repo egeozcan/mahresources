@@ -89,27 +89,63 @@ function selectDateRange(val: any): DateRangeFields | null {
   return { start, end };
 }
 
-const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+// YYYY-MM-DD, optionally followed by a time (T or space), optional seconds and
+// fraction, and an optional zone (Z or ±HH:MM / ±HHMM).
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?)?$/;
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
 
 /**
- * Parse a stored date string for display, or null when it is not a real date.
- * A date-only value ("2024-03-15") is a calendar date, so it is built from its
- * parts in local time: new Date() reads it as UTC midnight, which is the
- * previous day west of UTC. Parts that do not round-trip ("2024-02-31", which
- * Date rolls over into March) are rejected. Anything else parses as an instant.
+ * Parse a stored ISO date or date-time for display, or null when it is not a
+ * real one. This is the one date parser every display uses.
+ *
+ * - Each component is range-checked before a Date is built, so an impossible
+ *   value ("2024-02-30", "T25:00", "+24:00") is rejected rather than rolled
+ *   over into another date.
+ * - A date-only value is a calendar date: it is built in local time from its
+ *   parts. new Date("2024-03-15") is UTC midnight, the previous day west of UTC.
+ * - A date-time with a zone is that instant; one without a zone is local time,
+ *   as ECMAScript reads it.
+ * - Anything that is not ISO returns null, and the caller shows the text.
  */
 export function parseDisplayDate(text: string): Date | null {
-  const m = DATE_ONLY.exec(text);
-  if (m) {
-    const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
-    const date = new Date(0);
-    date.setFullYear(y, mo, d);
+  const m = ISO_DATE.exec(text);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return null;
+
+  const date = new Date(0);
+  if (m[4] === undefined) {
+    date.setFullYear(year, month - 1, day);
     date.setHours(0, 0, 0, 0);
-    if (date.getFullYear() !== y || date.getMonth() !== mo || date.getDate() !== d) return null;
     return date;
   }
-  const date = new Date(text);
-  return isNaN(date.getTime()) ? null : date;
+
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = m[6] === undefined ? 0 : Number(m[6]);
+  const ms = m[7] === undefined ? 0 : Math.floor(Number(`0.${m[7]}`) * 1000);
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  if (m[8] === undefined && m[9] === undefined) {
+    date.setFullYear(year, month - 1, day);
+    date.setHours(hour, minute, second, ms);
+    return date;
+  }
+  let offsetMinutes = 0;
+  if (m[9] !== undefined) {
+    const offsetHours = Number(m[10]);
+    const offsetMins = Number(m[11]);
+    if (offsetHours > 23 || offsetMins > 59) return null;
+    offsetMinutes = (m[9] === '-' ? -1 : 1) * (offsetHours * 60 + offsetMins);
+  }
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, ms);
+  return new Date(date.getTime() - offsetMinutes * 60_000);
 }
 
 function renderDateRange({ start, end }: DateRangeFields): TemplateResult {

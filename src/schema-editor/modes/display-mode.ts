@@ -8,6 +8,7 @@ import {
   isLabeledEnum,
   getLabeledEnumEntries,
   titleCase,
+  withTypedKeywords,
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
@@ -91,9 +92,10 @@ function flattenForDisplay(
 
   const fields: DisplayField[] = [];
 
-  for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+  for (const [key, rawPropIn] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
     const path = prefix ? `${prefix}.${key}` : key;
-    const prop = resolveSchema(rawProp, root) || rawProp;
+    const rawProp = withTypedKeywords(rawPropIn);
+    const prop = withTypedKeywords(resolveSchema(rawProp, root) || rawProp);
     const rawLabel = rawProp.title || (!isLabeledEnum(rawProp) && prop.title) || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} \u203A ${rawLabel}` : rawLabel;
     const description = prop.description || '';

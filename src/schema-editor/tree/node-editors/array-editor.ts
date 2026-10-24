@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
-import type { JSONSchema } from '../../schema-core';
+import { inputText, type JSONSchema } from '../../schema-core';
 
 const ITEM_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array'];
 
@@ -75,14 +75,14 @@ export class SchemaArrayEditor extends LitElement {
         <div class="grid">
           <div>
             <label for="arr-min-items">Min Items</label>
-            <input id="arr-min-items" type="number" min="0" .value=${this.schema.minItems ?? ''} @change=${(e: Event) => {
+            <input id="arr-min-items" type="number" min="0" .value=${inputText(this.schema.minItems)} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('minItems', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>
             <label for="arr-max-items">Max Items</label>
-            <input id="arr-max-items" type="number" min="0" .value=${this.schema.maxItems ?? ''} @change=${(e: Event) => {
+            <input id="arr-max-items" type="number" min="0" .value=${inputText(this.schema.maxItems)} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('maxItems', v !== '' ? parseInt(v, 10) : undefined);
             }}>
