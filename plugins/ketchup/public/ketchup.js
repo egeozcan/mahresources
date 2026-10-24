@@ -4312,7 +4312,7 @@ void main() {
       flex-direction: column;
       /* Focus comes back here when text or a rename ends by key, which would
          ring the whole editor; the controls inside show their own focus. */
-      outline: none;
+      outline: 2px solid transparent;
       /* The document's border-box rule does not cross the shadow boundary, so
          set it here: safe-area padding must fit inside the 100% height. */
       box-sizing: border-box;
