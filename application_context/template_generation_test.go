@@ -401,8 +401,10 @@ func TestMahresourcesContextTemplateGeneratorSeam(t *testing.T) {
 	if ctx.TemplateGenerator() != gen {
 		t.Fatalf("TemplateGenerator seam returned %#v, want %#v", ctx.TemplateGenerator(), gen)
 	}
-	if ctx.TemplateGenerationRateLimiter() == nil {
-		t.Fatal("TemplateGenerationRateLimiter should lazily create a limiter")
+	limiter := NewMRQLGenerationRateLimiter(1, time.Minute)
+	ctx.SetTemplateGenerationRateLimiter(limiter)
+	if ctx.TemplateGenerationRateLimiter() != limiter {
+		t.Fatal("TemplateGenerationRateLimiter seam did not return the installed limiter")
 	}
 }
 

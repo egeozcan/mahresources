@@ -818,7 +818,7 @@ When a DeepSeek key is configured (`DEEPSEEK_API_KEY`, the same setting that pow
 - the current content of the slot (so a follow-up request refines rather than replaces), and
 - the built-in and enabled-plugin shortcode documentation.
 
-A generated slot is linted before it is returned. A clean draft is applied to the editor automatically (and the live preview refreshes); a draft with problems is held back with its issues listed, and a **Use anyway** button applies it after you review. The **Meta JSON Schema** editor has its own Generate button that drafts a JSON Schema from a description and validates that it compiles.
+A generated slot is linted before it is returned. Every draft, clean or not, is held for review below the prompt: its text is shown as plain text, never rendered, with constructs that run code once applied (`<script>`, event handlers, Alpine attributes, `javascript:` URLs, `</style` in CSS) highlighted as a reading aid, and any issues listed. Nothing reaches the editor or the live preview until you press **Apply**. If you edited a field the draft would replace while it was being generated, Apply names that field and asks before replacing it. The **Meta JSON Schema** editor has its own Generate button that drafts a JSON Schema from a description and validates that it compiles.
 
 The **Reuse & Presets** panel adds a **Generate whole template** box that designs every slot at once from one description. The draft is listed for review, each returned slot with its text and issues, and nothing is written to the form until you press **Apply**. A reply cut off at the model's output limit, or a slot over 20,000 bytes, is marked invalid with that issue and is never shortened.
 

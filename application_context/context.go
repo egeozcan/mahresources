@@ -961,15 +961,17 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	icsCache := NewICSCache(icsCacheMaxEntries, icsCacheTTL)
 
 	ctx := &MahresourcesContext{
-		StartedAt:       time.Now(),
-		scopedAccess:    &scopedPluginAccess{},
-		fs:              filesystem,
-		db:              db,
-		readOnlyDB:      readOnlyDB,
-		Config:          config,
-		hostFetchPolicy: hostFetchPolicy,
-		altFileSystems:  altFileSystems,
-		groupio:         groupio.NewService(filesystem, altFileSystems),
+		StartedAt:                 time.Now(),
+		scopedAccess:              &scopedPluginAccess{},
+		mrqlGenerationLimiter:     NewMRQLGenerationRateLimiter(10, time.Minute),
+		templateGenerationLimiter: NewMRQLGenerationRateLimiter(10, time.Minute),
+		fs:                        filesystem,
+		db:                        db,
+		readOnlyDB:                readOnlyDB,
+		Config:                    config,
+		hostFetchPolicy:           hostFetchPolicy,
+		altFileSystems:            altFileSystems,
+		groupio:                   groupio.NewService(filesystem, altFileSystems),
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
@@ -1293,10 +1295,10 @@ func (ctx *MahresourcesContext) SetMRQLGenerator(generator MRQLGenerator) {
 }
 
 // MRQLGenerationRateLimiter returns the configured per-caller generation limiter.
+// It is created with the context, never on first use: every request-scoped
+// copy must share one set of buckets, and a lazy write on a copy would give
+// each request fresh ones.
 func (ctx *MahresourcesContext) MRQLGenerationRateLimiter() *MRQLGenerationRateLimiter {
-	if ctx.mrqlGenerationLimiter == nil {
-		ctx.mrqlGenerationLimiter = NewMRQLGenerationRateLimiter(10, time.Minute)
-	}
 	return ctx.mrqlGenerationLimiter
 }
 
@@ -1315,11 +1317,9 @@ func (ctx *MahresourcesContext) SetTemplateGenerator(generator TemplateGenerator
 	ctx.templateGenerator = generator
 }
 
-// TemplateGenerationRateLimiter returns the per-caller template generation limiter.
+// TemplateGenerationRateLimiter returns the per-caller template generation
+// limiter, created with the context like MRQLGenerationRateLimiter.
 func (ctx *MahresourcesContext) TemplateGenerationRateLimiter() *MRQLGenerationRateLimiter {
-	if ctx.templateGenerationLimiter == nil {
-		ctx.templateGenerationLimiter = NewMRQLGenerationRateLimiter(10, time.Minute)
-	}
 	return ctx.templateGenerationLimiter
 }
 

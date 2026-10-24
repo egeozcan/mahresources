@@ -76,7 +76,9 @@
                                     <li x-text="issue.message"></li>
                                 </template>
                             </ul>
-                            <pre class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all" x-text="pendingDraft.slots[field] || '(empty)'"></pre>
+                            <p x-show="draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).length" class="text-xs font-mono text-amber-800"
+                               x-text="'Runs code once applied: ' + draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).join(', ') + ' (highlighted).'"></p>
+                            <pre class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all"><template x-for="(segment, i) in draftSegments(pendingDraft.slots[field] || '(empty)', field.endsWith('CSS'))" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                         </li>
                     </template>
                 </ul>

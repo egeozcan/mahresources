@@ -14,14 +14,15 @@ function fixture(shared = true) {
     Object.assign(container, { _cmView: view });
     return view;
   });
-  Object.assign(window, { Alpine: { store: () => ({ generatePath: '/generate' }) } });
+  const confirmDialog = { ask: vi.fn(async () => true) };
+  Object.assign(window, { Alpine: { store: (name: string) => (name === 'confirmDialog' ? confirmDialog : { generatePath: '/generate' }) } });
   const editor = Object.assign(shared ? templateGeneration({ fieldName: 'CustomMRQLResult', mode: 'html' }) : codeEditor({ mode: 'html', generate: true }), {
     $el: document.querySelector('form')!,
     view: views[0],
     $refs: { hiddenInput: document.querySelector('input'), editorContainer: document.querySelector('[x-ref]') },
     generationPrompt: 'Restyle this card',
   });
-  return { editor, views };
+  return { editor, views, confirmDialog };
 }
 const draft = { valid: true, slots: { CustomMRQLResult: '<p class="card">New</p>', CustomMRQLResultCSS: '.card{color:red}' } };
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ''; });
@@ -31,6 +32,32 @@ describe('template cluster generation', () => {
     const { editor, views } = fixture(false);
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => draft })));
     await editor.generateFromPrompt();
+    await editor.applyGenerated();
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+  });
+
+  it('holds every draft for review and writes it only on Apply', async () => {
+    const { editor, views, confirmDialog } = fixture();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => draft })));
+    await editor.generateFromPrompt();
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+    expect(editor.hasDraft()).toBe(true);
+    expect(editor.generatedFields.map((f: { name: string }) => f.name)).toEqual(['CustomMRQLResult', 'CustomMRQLResultCSS']);
+    await editor.applyGenerated();
+    expect(confirmDialog.ask).not.toHaveBeenCalled();
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+    expect(editor.hasDraft()).toBe(false);
+    expect(editor.generationStatus).toBe('Generated draft applied.');
+  });
+
+  it('holds an invalid draft too, with its issues, until Apply', async () => {
+    const { editor, views } = fixture();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ...draft, valid: false, issues: [{ severity: 'error', message: 'bad meta' }] }) })));
+    await editor.generateFromPrompt();
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+    expect(editor.hasDraft()).toBe(true);
+    expect(editor.generationError).toBe('bad meta');
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
@@ -42,19 +69,27 @@ describe('template cluster generation', () => {
     const body = JSON.parse(fetch.mock.calls[0][1].body);
     expect(body.target).toBe('cluster');
     expect(JSON.parse(body.content)).toEqual({ CustomMRQLResult: 'old-CustomMRQLResult', CustomMRQLResultCSS: 'old-CustomMRQLResultCSS' });
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
-  it('keeps both editors intact when the CSS is edited during generation', async () => {
-    const { editor, views } = fixture();
+  it('asks before Apply replaces a field edited during generation', async () => {
+    const { editor, views, confirmDialog } = fixture();
     vi.stubGlobal('fetch', vi.fn(async () => {
       views[1].dispatch({ changes: { insert: 'manual CSS' } });
       return { ok: true, json: async () => draft };
     }));
     await editor.generateFromPrompt();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'manual CSS']);
-    expect(editor.generationStatus).toBe('Generated content is ready.');
-    editor.applyGenerated();
+
+    confirmDialog.ask.mockResolvedValueOnce(false);
+    await editor.applyGenerated();
+    expect(confirmDialog.ask.mock.calls[0][0]).toContain('CustomMRQLResultCSS');
+    expect(confirmDialog.ask.mock.calls[0][0]).not.toContain('CustomMRQLResult changed');
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'manual CSS']);
+    expect(editor.hasDraft()).toBe(true);
+
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
@@ -62,8 +97,9 @@ describe('template cluster generation', () => {
     const { editor, views } = fixture();
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: '<p>Card</p>', CustomMRQLResultCSS: '' } }) })));
     await editor.generateFromPrompt();
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(['<p>Card</p>', '']);
-    expect(editor.generationStatus).toBe('Generated content applied.');
+    expect(editor.generationStatus).toBe('Generated draft applied.');
   });
 
   it('waits for editors that are still mounting instead of refusing the prompt', async () => {
@@ -88,8 +124,9 @@ describe('template cluster generation', () => {
     await generation;
 
     expect(editor.generationError).toBe('');
+    expect(editor.hasDraft()).toBe(true);
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
-    expect(editor.generationStatus).toBe('Generated content applied.');
   });
 
   it('lets a second prompt replace one still waiting for the editors', async () => {
@@ -111,6 +148,7 @@ describe('template cluster generation', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetch.mock.calls[0][1].body).prompt).toBe('Restyle this card in blue');
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
 
@@ -157,5 +195,16 @@ describe('template cluster generation', () => {
     await editor.generateFromPrompt();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
     expect(editor.generationError).toBeTruthy();
+    expect(editor.hasDraft()).toBe(false);
+  });
+
+  it('shows a truncated incomplete pair as its issue, not the pair-shape error', async () => {
+    const { editor, views } = fixture();
+    const issue = { severity: 'error', message: "The model's reply was cut off at its output limit" };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: false, slots: { CustomMRQLResult: 'half' }, issues: [issue] }) })));
+    await editor.generateFromPrompt();
+    expect(editor.generationError).toBe(issue.message);
+    expect(editor.hasDraft()).toBe(false);
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
   });
 });

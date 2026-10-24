@@ -872,17 +872,32 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/shortcodes/deferred").HandlerFunc(scopedAPI(appContext, api_handlers.GetDeferredRenderHandler))
 
 	// Live template preview — mounted per carrier so the existing path-prefix
-	// authorization applies (category/resourceCategory → admin, noteType → editor).
-	router.Methods(http.MethodPost).Path("/v1/category/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "group"))
-	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "resource"))
-	router.Methods(http.MethodPost).Path("/v1/noteType/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "note"))
+	// authorization applies (category/resourceCategory → admin, noteType → editor),
+	// and request-scoped, so the previewed entity and its [mrql] rows stay inside
+	// a group-limited principal's subtree.
+	router.Methods(http.MethodPost).Path("/v1/category/previewTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplatePreviewContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetPreviewTemplateHandler(ctx, "group")
+	}))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplatePreviewContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetPreviewTemplateHandler(ctx, "resource")
+	}))
+	router.Methods(http.MethodPost).Path("/v1/noteType/previewTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplatePreviewContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetPreviewTemplateHandler(ctx, "note")
+	}))
 
 	// Natural-language template generation — mounted per carrier so the existing
 	// path-prefix authorization applies (category/resourceCategory → admin,
-	// noteType → editor), matching the preview routes above.
-	router.Methods(http.MethodPost).Path("/v1/category/generateTemplate").HandlerFunc(api_handlers.GetGenerateTemplateHandler(appContext, "group"))
-	router.Methods(http.MethodPost).Path("/v1/resourceCategory/generateTemplate").HandlerFunc(api_handlers.GetGenerateTemplateHandler(appContext, "resource"))
-	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(api_handlers.GetGenerateTemplateHandler(appContext, "note"))
+	// noteType → editor), matching the preview routes above. Request-scoped for
+	// the same reason: the prompt carries sample entity values.
+	router.Methods(http.MethodPost).Path("/v1/category/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetGenerateTemplateHandler(ctx, "group")
+	}))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetGenerateTemplateHandler(ctx, "resource")
+	}))
+	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
+		return api_handlers.GetGenerateTemplateHandler(ctx, "note")
+	}))
 
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))

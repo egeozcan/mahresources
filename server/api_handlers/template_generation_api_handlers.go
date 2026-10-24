@@ -138,12 +138,20 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			return
 		}
 
+		// The saved carrier, loaded once: the MetaSchema fallback and the pair
+		// partner below both read it. nil on the create form or when it cannot
+		// be loaded.
+		var carrier any
+		if req.CategoryID != 0 {
+			if loaded, err := loadPreviewCarrier(ctx, entityType, req.CategoryID); err == nil {
+				carrier = loaded
+			}
+		}
+
 		// MetaSchema: prefer the client's (possibly unsaved) value; else the saved carrier's.
 		metaSchema := req.MetaSchema
-		if strings.TrimSpace(metaSchema) == "" && req.CategoryID != 0 {
-			if carrier, err := loadPreviewCarrier(ctx, entityType, req.CategoryID); err == nil {
-				metaSchema = carrierMetaSchema(carrier)
-			}
+		if strings.TrimSpace(metaSchema) == "" && carrier != nil {
+			metaSchema = carrierMetaSchema(carrier)
 		}
 
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
@@ -174,8 +182,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			if target == application_context.TemplateTargetSlot {
 				current := map[string]string{base: "", base + "CSS": ""}
 				if req.CategoryID != 0 {
-					carrier, err := loadPreviewCarrier(ctx, entityType, req.CategoryID)
-					if err != nil {
+					if carrier == nil {
 						http_utils.HandleError(errors.New("cannot load the existing template pair"), writer, request, http.StatusBadRequest)
 						return
 					}

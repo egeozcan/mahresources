@@ -12,6 +12,7 @@
 //
 // Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
+import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
 // lightbox and cell are resource-only; ownEntities is group-only) are listed
@@ -114,9 +115,12 @@ export function templateBundle({ carrier } = {}) {
     loading: false,
     generationPrompt: '',
     generating: false,
-    // A generated draft waiting for review: { slots, issues, slotIssues,
-    // explanation, valid }. Nothing reaches an editor until applyPendingDraft.
+    // A generated draft waiting for review: { slots, fields, issues, slotIssues,
+    // explanation, valid, snapshot }. Nothing reaches an editor until
+    // applyPendingDraft; snapshot is every editor as the request sent it.
     pendingDraft: null,
+    draftSegments,
+    draftWarnings,
 
     async init() {
       await Promise.all([this.loadSources(), this.loadPresets()]);
@@ -436,13 +440,14 @@ export function templateBundle({ carrier } = {}) {
       this.generating = true;
       this.pendingDraft = null;
       this.notify('Generating the whole template…', 'info');
+      const snapshot = Object.fromEntries(Object.values(SLOT_FIELDS).map((field) => [field, this.getEditor(field)]));
       try {
         const resp = await fetch(generatePath, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target: 'bundle',
-            content: JSON.stringify(Object.fromEntries(Object.values(SLOT_FIELDS).map((field) => [field, this.getEditor(field)]))),
+            content: JSON.stringify(snapshot),
             prompt,
             metaSchema: this.getEditor('MetaSchema'),
             categoryId: store.categoryId || 0,
@@ -482,6 +487,7 @@ export function templateBundle({ carrier } = {}) {
           explanation: (data && data.explanation) || '',
           issues: issues.filter((i) => !slotIssueKeys.has(`${i.severity}:${i.message}`)),
           slotIssues,
+          snapshot,
         };
         if (this.pendingDraft.valid) {
           this.notify(`Generated ${returned.length} slot(s). Review the draft below, then Apply.`, 'info');
@@ -495,10 +501,21 @@ export function templateBundle({ carrier } = {}) {
       }
     },
 
-    // applyPendingDraft writes the reviewed draft into the editors.
-    applyPendingDraft() {
+    // applyPendingDraft writes the reviewed draft into the editors. A returned
+    // slot edited since the request started (typing, a preset, another
+    // generation) is named and the user asked first; cancelling keeps every
+    // editor as it is.
+    async applyPendingDraft() {
       const draft = this.pendingDraft;
       if (!draft) return;
+      const changed = changedSince(draft.snapshot, draft.fields, (field) => this.getEditor(field));
+      if (changed.length) {
+        const confirmed = await askToConfirm(
+          `${changed.join(', ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
+          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits' },
+        );
+        if (!confirmed || this.pendingDraft !== draft) return;
+      }
       for (const field of draft.fields) this.setEditor(field, draft.slots[field] || '');
       this.pendingDraft = null;
       this.notify(`Filled ${draft.fields.length} slot(s) from your description. Review, then save.`, 'info');
