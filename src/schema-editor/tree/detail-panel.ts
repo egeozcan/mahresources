@@ -2,7 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
 import type { SchemaNode } from '../schema-tree-model';
-import { isLabeledEnum } from '../schema-core';
+import { isLabeledEnum, safeColor } from '../schema-core';
 import type { EnumEntry } from './node-editors/enum-editor';
 
 // Import all node editors (registers them as custom elements)
@@ -126,7 +126,7 @@ export class SchemaDetailPanel extends LitElement {
       const entries: EnumEntry[] = (schema.oneOf as any[]).map((e: any) => ({
         value: e.const,
         label: e.title || '',
-        ...(e['x-color'] ? { color: e['x-color'] } : {}),
+        ...(safeColor(e['x-color']) ? { color: e['x-color'] } : {}),
       }));
       return html`<schema-enum-editor
         .entries=${entries}

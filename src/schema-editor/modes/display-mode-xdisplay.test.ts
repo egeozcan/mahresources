@@ -220,4 +220,56 @@ describe('display panel x-display guards', () => {
       expect(el.textContent).not.toContain('Invalid Date');
     }
   });
+
+  it('accepts only a safe string x-color', async () => {
+    const pill = async (color: any) => {
+      const el = await mount(geoSchema({ oneOf: [{ const: 'a', title: 'A', 'x-color': color }] }), { loc: 'a' });
+      const span = [...el.querySelectorAll('span')].find(s => s.textContent === 'A');
+      expect(span).toBeTruthy();
+      return span!.getAttribute('style') ?? '';
+    };
+    expect(await pill({ toString: null })).not.toContain('color-mix');
+    expect(await pill('red; background: url(x)')).not.toContain('url(');
+    expect(await pill('#16a34a')).toContain('#16a34a');
+    expect(getLabeledEnumEntries({ oneOf: [
+      { const: 1, 'x-color': { toString: null } }, { const: 2, 'x-color': 'x;y' }, { const: 3, 'x-color': '#abc' },
+    ] }).map(e => e.color)).toEqual([undefined, undefined, '#abc']);
+  });
+
+  it('does not flatten a union-typed property whose value is not an object', async () => {
+    const prop = { type: ['object', 'string'], properties: { x: { type: 'string' } } };
+    const str = await mount(geoSchema(prop), { loc: 'kept' });
+    expect(str.textContent).toContain('kept');
+    const obj = await mount(geoSchema(prop), { loc: { x: 'inner' } });
+    expect(obj.textContent).toContain('inner');
+  });
+
+  it('keeps labels of a labeled enum reached through allOf or $ref', async () => {
+    const labeled = { oneOf: [{ const: 'a', title: 'Alpha' }, { const: 'b', title: 'Beta' }] };
+    for (const schema of [
+      geoSchema({ allOf: [labeled] }),
+      { type: 'object', $defs: { e: labeled }, properties: { loc: { $ref: '#/$defs/e' } } },
+    ]) {
+      const el = await mount(schema, { loc: 'a' });
+      expect(el.textContent).toContain('Alpha');
+      expect(el.textContent).toContain('Loc');
+      expect(el.textContent).not.toContain('Beta');
+    }
+  });
+
+  it('shows an impossible calendar date as itself', async () => {
+    const el = await mount(geoSchema({ type: 'string', format: 'date' }), { loc: '2024-02-31' });
+    expect(el.textContent).toContain('2024-02-31');
+    const range = await mount(geoSchema({ type: 'object', 'x-display': 'daterange' }),
+      { loc: { start: '2024-02-01', end: '2024-02-31' } });
+    expect(range.textContent).toContain('2024-02-31');
+    expect(range.textContent).not.toContain('\u2014');
+  });
+
+  it("does not take a oneOf alternative's title as the field heading", async () => {
+    const el = await mount(geoSchema({ oneOf: [{ type: 'string', title: 'Text variant' }, { type: 'number', title: 'Number variant' }] }),
+      { loc: 'x' });
+    expect(el.textContent).toContain('Loc');
+    expect(el.textContent).not.toContain('variant');
+  });
 });

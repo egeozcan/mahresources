@@ -9,7 +9,7 @@ import {
   getLabeledEnumEntries,
   titleCase,
 } from '../schema-core';
-import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../display-renderers';
+import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
 
 interface DisplayField {
@@ -110,6 +110,9 @@ function flattenForDisplay(
       // If the value matches a known shape, keep it whole for the renderer pipeline
       if (val != null && typeof val === 'object' && !Array.isArray(val) && detectShape(val)) {
         // fall through to emit as single field (shape detection in _renderValue)
+      } else if (val != null && (typeof val !== 'object' || Array.isArray(val))) {
+        // A stored non-object (e.g. under type ["object","string"]) has no
+        // children to flatten into; emit it whole so it stays visible.
       } else {
         // Nested object with properties — flatten recursively
         fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
@@ -432,9 +435,10 @@ export class SchemaDisplayMode extends LitElement {
       }
       if (field.format === 'date' || field.format === 'date-time') {
         try {
-          const d = new Date(val);
-          // An unparseable date keeps its text rather than "Invalid Date".
-          if (isNaN(d.getTime())) return val;
+          // A date that does not parse, or a calendar date that does not
+          // exist, keeps its text rather than "Invalid Date" or a rollover.
+          const d = parseDisplayDate(val);
+          if (!d) return val;
           return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         } catch {
           return val;

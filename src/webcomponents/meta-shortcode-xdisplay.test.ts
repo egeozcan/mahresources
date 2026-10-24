@@ -184,4 +184,26 @@ describe('[meta] x-display guards', () => {
     const plain = await mount({ type: 'string', format: 'date' }, 'bad');
     expect(plain.textContent).toContain('bad');
   });
+
+  it('keeps labels of a labeled enum reached through allOf or $ref', async () => {
+    const labeled = { oneOf: [{ const: 'a', title: 'Alpha' }, { const: 'b', title: 'Beta' }] };
+    for (const schema of [{ allOf: [labeled] }, { $ref: '#/$defs/e', $defs: { e: labeled } }]) {
+      const el = await mount(schema, 'a');
+      expect(el.textContent).toContain('Alpha');
+    }
+  });
+
+  it('shows an impossible date range as its values', async () => {
+    const value = { start: '2024-02-01', end: '2024-02-31' };
+    const el = await mount({ type: 'object', 'x-display': 'daterange' }, value);
+    expect(el.textContent).toContain(JSON.stringify(value));
+  });
+
+  it('ignores an unsafe pill x-color', async () => {
+    for (const color of [{ toString: null }, 'red; background: url(x)']) {
+      const el = await mount({ oneOf: [{ const: 'a', title: 'A', 'x-color': color }] }, 'a', { 'data-pills': 'true' });
+      const button = el.querySelector<HTMLButtonElement>('[role="radio"]')!;
+      expect(button.style.getPropertyValue('--meta-pill-background')).toBe('');
+    }
+  });
 });

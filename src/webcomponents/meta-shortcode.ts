@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
@@ -220,7 +220,7 @@ export class MetaShortcode extends LitElement {
   }
 
   private _pillColors(color?: string): Record<string, string> {
-    if (typeof color !== 'string' || !CSS.supports('color', color)) return {};
+    if (!safeColor(color)) return {};
     // Match schema enum badges with a light tint and dark text. Binding the
     // properties separately also keeps a color from introducing declarations.
     return {

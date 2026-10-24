@@ -141,6 +141,9 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
 
   for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
     if (schema[keyword] && Array.isArray(schema[keyword])) {
+      // A labeled enum is the oneOf itself: merging its alternatives would
+      // leave only the last const and title, and lose every label.
+      if (keyword === 'oneOf' && isLabeledEnum(schema)) return schema;
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
       for (const sub of schema[keyword]) {
@@ -190,6 +193,12 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
             delete (propSchema as JSONSchema).enum;
           }
         }
+      }
+
+      // An alternative's title names that alternative, not the property.
+      if (keyword !== 'allOf') {
+        if (schema.title === undefined) delete merged.title;
+        else merged.title = schema.title;
       }
 
       return resolveSchema(merged, rootSchema);
@@ -788,8 +797,24 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
     label: entry.title || (entry.const !== null && typeof entry.const === 'object'
       ? JSON.stringify(entry.const)
       : String(entry.const)),
-    ...(entry['x-color'] ? { color: entry['x-color'] } : {}),
+    ...(safeColor(entry['x-color']) ? { color: entry['x-color'] } : {}),
   }));
+}
+
+// Characters a CSS color can contain; anything else (";", ":", braces,
+// quotes) could break out of the declaration it is interpolated into.
+const SAFE_COLOR_CHARS = /^[#a-zA-Z0-9(),.%\s/+-]+$/;
+
+/**
+ * An x-color value when it is a string CSS color made of safe characters,
+ * else undefined. Hand-written schemas can hold any JSON there.
+ */
+export function safeColor(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !SAFE_COLOR_CHARS.test(value)) return undefined;
+  if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports('color', value)) {
+    return undefined;
+  }
+  return value;
 }
 
 // ─── Schema flattening (for search mode) ─────────────────────────────────────

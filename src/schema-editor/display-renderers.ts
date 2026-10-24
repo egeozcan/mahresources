@@ -83,10 +83,33 @@ interface DateRangeFields { start: Date; end: Date }
 function selectDateRange(val: any): DateRangeFields | null {
   const o = asObject(val);
   if (!o || typeof o.start !== 'string' || typeof o.end !== 'string') return null;
-  const start = new Date(o.start);
-  const end = new Date(o.end);
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+  const start = parseDisplayDate(o.start);
+  const end = parseDisplayDate(o.end);
+  if (!start || !end) return null;
   return { start, end };
+}
+
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Parse a stored date string for display, or null when it is not a real date.
+ * A date-only value ("2024-03-15") is a calendar date, so it is built from its
+ * parts in local time: new Date() reads it as UTC midnight, which is the
+ * previous day west of UTC. Parts that do not round-trip ("2024-02-31", which
+ * Date rolls over into March) are rejected. Anything else parses as an instant.
+ */
+export function parseDisplayDate(text: string): Date | null {
+  const m = DATE_ONLY.exec(text);
+  if (m) {
+    const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+    const date = new Date(0);
+    date.setFullYear(y, mo, d);
+    date.setHours(0, 0, 0, 0);
+    if (date.getFullYear() !== y || date.getMonth() !== mo || date.getDate() !== d) return null;
+    return date;
+  }
+  const date = new Date(text);
+  return isNaN(date.getTime()) ? null : date;
 }
 
 function renderDateRange({ start, end }: DateRangeFields): TemplateResult {
