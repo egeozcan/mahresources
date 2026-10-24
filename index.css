@@ -120,14 +120,15 @@
    from nowhere else. .worktrees needs no entry at all; .gitignore already keeps
    detection out of it.
 
-   Declared back: the three classes on the @source inline line. A CustomHeader,
+   Declared back: the classes on the @source inline line. A CustomHeader,
    CustomSidebar, CustomSummary or CustomAvatar body lives in the database and
    renders under this stylesheet, and docs-site publishes those bodies as
    copy-paste examples, so a class an example spells is a class an operator
    pastes into a category and expects to work. bg-gray-300 is the background of
    the CustomAvatar placeholder circle, h-32 the height of the [mrql]
-   photo-gallery card, and text-yellow-500 the span the plugin rating shortcode
-   returns. Each reached the stylesheet only from docs-site, and docs-site ships
+   photo-gallery card, text-yellow-500 the span the plugin rating shortcode
+   returns, and min-h-[100px] the textarea in the custom block type example's
+   edit view (custom-block-types.md). Each reached the stylesheet only from docs-site, and docs-site ships
    in every checkout, so unlike the e2e pair above these worked for everyone
    until the exclusion removed them. Declaring them is the way back rather than
    dropping the exclusion, because Tailwind can exclude a file but cannot scan
@@ -136,7 +137,7 @@
    of loss: the reference stylesheet names only trees the application itself
    renders from, so a documented class is invisible to it. The
    documented-classes-survive check in css-scan-test.sh is what says when this
-   line needs a fourth entry. */
+   line needs another entry. */
 @source not "./**/*.md";
 @source not "./docs/**";
 @source not "./docs-site/**";
@@ -144,7 +145,7 @@
 @source not "./tasks/**";
 @source not "./.claude/**";
 @source not "./skills/**";
-@source inline("bg-gray-300 h-32 text-yellow-500");
+@source inline("bg-gray-300 h-32 text-yellow-500 min-h-[100px]");
 @theme {
   --font-sans: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
