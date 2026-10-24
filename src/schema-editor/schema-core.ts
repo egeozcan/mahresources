@@ -230,17 +230,7 @@ let refPath = new Set<unknown>();
 // Per root, within one top-level operation only (like canonicalKeys): the
 // tree editor edits a root in place, so a classification kept across
 // operations would describe a schema that no longer exists.
-let recursiveRefsByRoot: WeakMap<object, Partial<Record<RecursionKind, Set<unknown>>>> | null = null;
-
-/**
- * Which edges make a reference recursive. 'all': any subschema keyword, for
- * the walkers that follow every one. 'defaults': only the keywords the
- * default builders expand ($ref, allOf, then/else, properties, the first
- * oneOf/anyOf branch). They stop at arrays ([]), scalars and an explicit
- * default, const or enum, so a reference that recurs only through items
- * (Node.children.items) is finite to expand there and is never cut short.
- */
-type RecursionKind = 'all' | 'defaults';
+let recursiveRefsByRoot: WeakMap<object, Set<unknown>> | null = null;
 
 // Keywords whose values are subschemas. Annotation and data keywords
 // (examples, default, const, enum, unknown x-* keywords) are never followed: a
@@ -287,51 +277,21 @@ function refsWithin(schema: unknown, into: Set<string>): Set<string> {
   return into;
 }
 
-/** Every $ref the default builders can reach from schema; each subschema visited counts as work. */
-function defaultRefsWithin(schema: unknown, into: Set<string>): Set<string> {
-  const pending: unknown[] = [schema];
-  while (pending.length) {
-    const next = pending.pop();
-    if (next === null || typeof next !== 'object' || Array.isArray(next)) continue;
-    countSchemaWork();
-    const node = next as JSONSchema;
-    if (typeof node.$ref === 'string') into.add(node.$ref);
-    const allOf = ownValue(node, 'allOf');
-    if (Array.isArray(allOf)) pending.push(...allOf);
-    pending.push(ownValue(node, 'then'), ownValue(node, 'else'));
-    // The builders return here without expanding anything further.
-    if (ownValue(node, 'default') !== undefined || ownValue(node, 'const') !== undefined) continue;
-    const enumValues = ownValue(node, 'enum');
-    if (Array.isArray(enumValues) && enumValues.length > 0) continue;
-    const type = ownValue(node, 'type');
-    if (Array.isArray(type) || (typeof type === 'string' && type !== 'object')) continue;
-    for (const key of ['oneOf', 'anyOf']) {
-      const branches = ownValue(node, key);
-      if (Array.isArray(branches) && branches.length > 0) pending.push(branches[0]);
-    }
-    const properties = ownValue(node, 'properties');
-    if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) pending.push(...Object.values(properties));
-  }
-  return into;
-}
-
 /**
  * The references of root that can reach themselves through its $ref graph: a
  * reference with an edge to itself, or one in a strongly connected component
  * of more than one reference. One iterative Tarjan pass, linear in the graph
  * and charged to the work budget per reference and per edge.
  */
-function recursiveRefs(root: JSONSchema, kind: RecursionKind = 'all'): Set<unknown> {
-  const cached = recursiveRefsByRoot?.get(root)?.[kind];
+function recursiveRefs(root: JSONSchema): Set<unknown> {
+  const cached = recursiveRefsByRoot?.get(root);
   if (cached) return cached;
-  const edgesOf = kind === 'all' ? refsWithin : defaultRefsWithin;
   const edges = new Map<string, Set<string>>();
-  // Every reference written anywhere in root can start a walk.
   const pending = [...refsWithin(root, new Set())];
   while (pending.length) {
     const ref = pending.pop()!;
     if (edges.has(ref)) continue;
-    const next = edgesOf(resolveRef(ref, root), new Set());
+    const next = refsWithin(resolveRef(ref, root), new Set());
     countSchemaWork(1 + next.size);
     edges.set(ref, next);
     pending.push(...next);
@@ -381,21 +341,14 @@ function recursiveRefs(root: JSONSchema, kind: RecursionKind = 'all'): Set<unkno
       if (members.length > 1) members.forEach(m => recursive.add(m));
     }
   }
-  if (recursiveRefsByRoot) {
-    const byKind = recursiveRefsByRoot.get(root) ?? {};
-    byKind[kind] = recursive;
-    recursiveRefsByRoot.set(root, byKind);
-  }
+  recursiveRefsByRoot?.set(root, recursive);
   return recursive;
 }
 
-/**
- * Whether ref, a reference of root, is a cycle here: recursive (through the
- * edges kind follows) and already on the path.
- */
-export function onRefPath(ref: unknown, root: JSONSchema | null | undefined, kind: RecursionKind = 'all'): boolean {
+/** Whether ref, a reference of root, is a cycle here: recursive and already on the path. */
+export function onRefPath(ref: unknown, root: JSONSchema | null | undefined): boolean {
   if (!refPath.has(ref) || !root || typeof root !== 'object') return false;
-  return recursiveRefs(root, kind).has(ref);
+  return recursiveRefs(root).has(ref);
 }
 
 /** Run walk with refs added to the current path. */
@@ -407,6 +360,91 @@ export function followingRefs<T>(refs: readonly unknown[], walk: () => T): T {
   } finally {
     added.forEach(ref => refPath.delete(ref));
   }
+}
+
+// ─── Default build stack ─────────────────────────────────────────────────────
+// The default builders do not use the static recursion classification: a
+// reference recursive somewhere in the graph (through items, or a then that
+// this build's data never activates) can still be finite to expand where it
+// repeats. Instead they keep the live stack of the expansions of this build:
+// a frame per reference (its target) while that target is being built,
+// pushed when the expansion starts and popped when it returns, whether the
+// reference was a $ref or an allOf branch.
+//
+// Each frame records which frame produced it: the latest frame whose target
+// holds the node that wrote the reference, if any. A $ref repeats an
+// expansion, and is not expanded again, only when the frames that produced
+// its node, followed back, include a frame for the same reference: expanding
+// that reference reproduced it. A reference written beside another (a
+// property next to an allOf branch, or merged into a $ref) was produced by
+// no frame of it and is a new, finite expansion. Sibling properties are
+// built one after another, so they never share frames. Any infinite default
+// expansion reproduces a reference this way, and the work budget stays the
+// backstop.
+
+interface DefaultFrame {
+  ref: unknown;
+  target: object;
+  /** The index of the frame that produced this one, or -1. */
+  parent: number;
+}
+
+let defaultFrames: DefaultFrame[] = [];
+
+/** The subschema objects of a target, per top-level operation (like recursiveRefsByRoot). */
+let subtreeMembers: WeakMap<object, WeakSet<object>> | null = null;
+
+/** A copy the $ref step made of its target (merged with siblings), to the target itself. */
+const defaultNodeOrigins = new WeakMap<object, object>();
+
+function membersOf(target: object): WeakSet<object> {
+  const cached = subtreeMembers?.get(target);
+  if (cached) return cached;
+  const members = new WeakSet<object>();
+  visitSubschemas(target, sub => {
+    countSchemaWork();
+    members.add(sub);
+  });
+  subtreeMembers?.set(target, members);
+  return members;
+}
+
+/** The latest frame whose target holds node, or -1. */
+function owningFrame(node: object): number {
+  const original = defaultNodeOrigins.get(node) ?? node;
+  for (let i = defaultFrames.length - 1; i >= 0; i--) {
+    if (membersOf(defaultFrames[i].target).has(original)) return i;
+  }
+  return -1;
+}
+
+/** Whether node's $ref (ref) was produced by expanding ref itself on this build's stack. */
+function repeatsDefaultExpansion(ref: unknown, node: object): boolean {
+  if (!defaultFrames.some(frame => frame.ref === ref)) return false;
+  for (let i = owningFrame(node); i >= 0; i = defaultFrames[i].parent) {
+    if (defaultFrames[i].ref === ref) return true;
+  }
+  return false;
+}
+
+/** Run walk with a frame per (ref, node writing it) on the default build stack, popped when it returns. */
+function expandingDefault<T>(entries: ReadonlyArray<{ ref: unknown; node: object }>, rootSchema: JSONSchema, walk: () => T): T {
+  const frames: DefaultFrame[] = [];
+  for (const { ref, node } of entries) {
+    const target = typeof ref === 'string' ? resolveRef(ref, rootSchema) : null;
+    if (target && typeof target === 'object') frames.push({ ref, target, parent: owningFrame(node) });
+  }
+  defaultFrames.push(...frames);
+  try {
+    return walk();
+  } finally {
+    defaultFrames.length -= frames.length;
+  }
+}
+
+/** The allOf branches of schema that wrote the followed references. */
+function followedBranches(schema: JSONSchema, followed: readonly unknown[]): Array<{ ref: unknown; node: object }> {
+  return followed.map(ref => ({ ref, node: (schema.allOf as JSONSchema[]).find(sub => sub?.$ref === ref) ?? schema }));
 }
 
 /** Run walk on a fresh path: for a walker descending into a stored value. */
@@ -426,7 +464,11 @@ export function onFreshRefPath<T>(walk: () => T): T {
  * sibling keywords are merged. The refs followed go on the path for the
  * walker's recursion into the result: followingRefs(followed, ...).
  */
-export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema, kind: RecursionKind = 'all'): { merged: JSONSchema; followed: unknown[] } {
+export function mergeAllOf(
+  schema: JSONSchema,
+  rootSchema?: JSONSchema,
+  isCycle: (ref: unknown, node: JSONSchema) => boolean = ref => onRefPath(ref, rootSchema),
+): { merged: JSONSchema; followed: unknown[] } {
   let merged: JSONSchema = { ...schema };
   delete merged.allOf;
   const owned = new WeakSet<object>([merged]);
@@ -435,7 +477,7 @@ export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema, kind: Re
     countSchemaWork();
     let resolved: JSONSchema;
     if (sub.$ref) {
-      const refResult = onRefPath(sub.$ref, rootSchema, kind) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
+      const refResult = isCycle(sub.$ref, sub) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
       const siblings: JSONSchema = { ...sub };
       delete siblings.$ref;
       resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
@@ -464,6 +506,7 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
         workDone = 0;
         canonicalKeys = new WeakMap();
         recursiveRefsByRoot = new WeakMap();
+        subtreeMembers = new WeakMap();
       }
     }
     countSchemaWork();
@@ -475,6 +518,7 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
       if (budgetScopes === 0) {
         canonicalKeys = null;
         recursiveRefsByRoot = null;
+        subtreeMembers = null;
       }
     }
   }
@@ -515,10 +559,13 @@ export function withSchemaBudget<T>(operation: () => T): T {
   // reference path or cached value key behind for the next render.
   const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Set(refPath) : refPath;
   const savedKeys = canonicalKeys, savedRecursion = recursiveRefsByRoot;
+  const savedFrames = outermost ? [...defaultFrames] : defaultFrames;
+  const savedMembers = subtreeMembers;
   if (outermost) {
     workDone = 0;
     canonicalKeys = new WeakMap();
     recursiveRefsByRoot = new WeakMap();
+    subtreeMembers = new WeakMap();
   }
   budgetScopes++;
   try {
@@ -531,6 +578,8 @@ export function withSchemaBudget<T>(operation: () => T): T {
       refPath = savedPath;
       canonicalKeys = savedKeys;
       recursiveRefsByRoot = savedRecursion;
+      defaultFrames = savedFrames;
+      subtreeMembers = savedMembers;
     }
   }
 }
@@ -1083,21 +1132,26 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
 function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    // A repeat of a reference on the path is not expanded again, but its own
-    // default still applies, as it would over the expanded target.
-    if (onRefPath(schema.$ref, rootSchema || schema, 'defaults')) return ownValue(schema, 'default');
+    // A repeat of a reference being expanded on this build's stack is not
+    // expanded again, but its own default still applies, as it would over
+    // the expanded target.
+    if (repeatsDefaultExpansion(schema.$ref, schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([schema.$ref], () => getDefaultValue(merged, rootSchema));
+      defaultNodeOrigins.set(merged, resolved);
+      const ref = schema.$ref;
+      const root = rootSchema || schema;
+      return followingRefs([ref], () => expandingDefault([{ ref, node: schema }], root, () => getDefaultValue(merged, rootSchema)));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    const { merged, followed } = mergeAllOf(schema, rootSchema || schema, 'defaults');
-    return followingRefs(followed, () => getDefaultValue(merged, rootSchema));
+    const root = rootSchema || schema;
+    const { merged, followed } = mergeAllOf(schema, root, repeatsDefaultExpansion);
+    return followingRefs(followed, () => expandingDefault(followedBranches(schema, followed), root, () => getDefaultValue(merged, rootSchema)));
   }
 
   if (schema.if) {
@@ -1176,21 +1230,26 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
 
 function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    // A repeat of a reference on the path is not expanded again, but its own
-    // default still applies, as it would over the expanded target.
-    if (onRefPath(schema.$ref, rootSchema || schema, 'defaults')) return ownValue(schema, 'default');
+    // A repeat of a reference being expanded on this build's stack is not
+    // expanded again, but its own default still applies, as it would over
+    // the expanded target.
+    if (repeatsDefaultExpansion(schema.$ref, schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
       delete siblings.$ref;
       const merged = mergeSchemas(resolved, siblings);
-      return followingRefs([schema.$ref], () => getPreviewDefaultValue(merged, rootSchema));
+      defaultNodeOrigins.set(merged, resolved);
+      const ref = schema.$ref;
+      const root = rootSchema || schema;
+      return followingRefs([ref], () => expandingDefault([{ ref, node: schema }], root, () => getPreviewDefaultValue(merged, rootSchema)));
     }
   }
 
   if (schema.allOf && Array.isArray(schema.allOf)) {
-    const { merged, followed } = mergeAllOf(schema, rootSchema || schema, 'defaults');
-    return followingRefs(followed, () => getPreviewDefaultValue(merged, rootSchema));
+    const root = rootSchema || schema;
+    const { merged, followed } = mergeAllOf(schema, root, repeatsDefaultExpansion);
+    return followingRefs(followed, () => expandingDefault(followedBranches(schema, followed), root, () => getPreviewDefaultValue(merged, rootSchema)));
   }
 
   if (schema.if) {
@@ -1324,6 +1383,7 @@ const KEYWORD_TYPES: Record<string, (value: unknown) => boolean> = {
   maxProperties: isNumber,
   title: isString,
   description: isString,
+  patternDescription: isString,
   pattern: isString,
   format: isString,
   type: v => isString(v) || (Array.isArray(v) && v.every(isString)),

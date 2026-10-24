@@ -1677,6 +1677,113 @@ describe('round 18: selector-safe property names, defaults pruned only on real r
   });
 });
 
+describe('round 19: typed patternDescription, defaults pruned on the live expansion stack', () => {
+  it('a non-string patternDescription falls back to the standard message', async () => {
+    expect(withTypedKeywords({ pattern: '^a$', patternDescription: H } as any)).not.toHaveProperty('patternDescription');
+    expect(withTypedKeywords({ pattern: '^a$', patternDescription: 'Letters only' } as any)).toHaveProperty('patternDescription', 'Letters only');
+    for (const description of [H, { a: 1 }, 7, ['x']]) {
+      const el: any = await mountEl('schema-form-mode', {
+        schema: { type: 'object', properties: { v: { type: 'string', pattern: '^[A-Z]+$', patternDescription: description } } },
+        value: { v: 'bad' },
+      });
+      const input = el.querySelector('input:not([type="hidden"])') as HTMLInputElement;
+      input.dispatchEvent(new Event('blur'));
+      await settle(el);
+      expect(el.textContent).toContain('Must match the expected format (^[A-Z]+$)');
+      expect(el.textContent).not.toContain('[object Object]');
+      expect(schemaActionError(el)).toBeUndefined();
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a string patternDescription is the message', async () => {
+    const el: any = await mountEl('schema-form-mode', {
+      schema: { type: 'object', properties: { v: { type: 'string', pattern: '^[A-Z]+$', patternDescription: 'Capitals only' } } },
+      value: { v: 'bad' },
+    });
+    (el.querySelector('input:not([type="hidden"])') as HTMLInputElement).dispatchEvent(new Event('blur'));
+    await settle(el);
+    expect(el.textContent).toContain('Capitals only');
+  });
+
+  const NODE = {
+    type: 'object',
+    properties: { name: { type: 'string', default: 'Untitled' }, kind: { type: 'string', default: 'leaf' } },
+    if: { properties: { kind: { const: 'branch' } } },
+    then: { properties: { child: { $ref: '#/$defs/Node' } } },
+  };
+
+  it('an inactive then never makes a reference look recursive (pi\'s repro)', () => {
+    const root: any = { $defs: { Node: NODE }, allOf: [{ $ref: '#/$defs/Node' }, { properties: { selected: { $ref: '#/$defs/Node' } } }] };
+    const expected = { name: 'Untitled', kind: 'leaf', selected: { name: 'Untitled', kind: 'leaf' } };
+    expect(getDefaultValue(root, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root, root)).toEqual(expected);
+    expect(baseCore.getDefaultValue(root, root)).toEqual(expected);
+  });
+
+  it('an active then that recurs is cut at its first repeat', () => {
+    const branch = { ...NODE, properties: { ...NODE.properties, kind: { type: 'string', default: 'branch' } } };
+    const root: any = { $defs: { Node: branch }, $ref: '#/$defs/Node' };
+    expect(getDefaultValue(root, root)).toEqual({ name: 'Untitled', kind: 'branch' });
+  });
+
+  it('a mutual a -> b -> a cycle is cut at the first repeat', () => {
+    const root: any = {
+      $defs: {
+        a: { type: 'object', properties: { name: { default: 'a' }, b: { $ref: '#/$defs/b' } } },
+        b: { type: 'object', properties: { name: { default: 'b' }, a: { $ref: '#/$defs/a' } } },
+      },
+      $ref: '#/$defs/a',
+    };
+    expect(getDefaultValue(root, root)).toEqual({ name: 'a', b: { name: 'b' } });
+    expect(getPreviewDefaultValue(root, root)).toEqual({ name: 'a', b: { name: 'b' } });
+  });
+
+  it('an allOf-only cycle reached through an allOf ends at its first repeat', () => {
+    const root: any = {
+      $defs: {
+        A: { allOf: [{ $ref: '#/$defs/B' }], properties: { x: { default: 1 } } },
+        B: { allOf: [{ $ref: '#/$defs/A' }], properties: { y: { default: 2 } } },
+      },
+      allOf: [{ $ref: '#/$defs/A' }],
+    };
+    expect(withSchemaBudget(() => getDefaultValue(root, root))).toEqual({ x: 1, y: 2 });
+    expect(withSchemaBudget(() => getPreviewDefaultValue(root, root))).toEqual({ x: 1, y: 2 });
+  });
+
+  it('an alias cycle stops at once, without walking to the depth limit', () => {
+    const root: any = { $defs: { A: { $ref: '#/$defs/B', default: 'a' }, B: { $ref: '#/$defs/A' } }, $ref: '#/$defs/A' };
+    expect(withSchemaBudget(() => getDefaultValue(root, root))).toBe('a');
+    expect(schemaWorkDone()).toBeLessThan(200);
+    const self: any = { $defs: { S: { $ref: '#/$defs/S' } }, type: 'object', properties: { v: { $ref: '#/$defs/S' } } };
+    withSchemaBudget(() => getDefaultValue(self, self));
+    expect(schemaWorkDone()).toBeLessThan(200);
+  });
+
+  it('a reference reached from a sibling of another expansion is expanded, as at base', () => {
+    // d1 = allOf [d2, d2], written beside d2 in an allOf: d2 repeats under d1,
+    // but expanding d2 never produced d1.
+    const $defs = {
+      d2: { type: 'object', properties: { x: { type: 'string', default: 'x' } } },
+      d1: { allOf: [{ $ref: '#/$defs/d2' }, { $ref: '#/$defs/d2' }] },
+    };
+    const root: any = { $defs, allOf: [{ $ref: '#/$defs/d2' }, { properties: { f: { $ref: '#/$defs/d1' } } }] };
+    const expected = { x: 'x', f: { x: 'x' } };
+    expect(getDefaultValue(root, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root, root)).toEqual(expected);
+    expect(baseCore.getDefaultValue(root, root)).toEqual(expected);
+  });
+
+  it('sibling expansions of one reference never share the stack', () => {
+    const root: any = {
+      $defs: { P: { type: 'object', properties: { v: { default: 'p' } } } },
+      type: 'object',
+      properties: { first: { $ref: '#/$defs/P' }, second: { $ref: '#/$defs/P' }, nested: { type: 'object', properties: { third: { $ref: '#/$defs/P' } } } },
+    };
+    expect(getDefaultValue(root, root)).toEqual({ first: { v: 'p' }, second: { v: 'p' }, nested: { third: { v: 'p' } } });
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [
