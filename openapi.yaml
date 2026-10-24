@@ -3881,7 +3881,7 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
@@ -9303,7 +9303,7 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
@@ -11783,7 +11783,7 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot.
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.

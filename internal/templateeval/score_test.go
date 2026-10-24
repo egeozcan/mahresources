@@ -97,6 +97,16 @@ func TestScoreChecks(t *testing.T) {
 			pass: true,
 		},
 		{
+			name: "a failed pair repair still counts as attempted", c: pairCase(),
+			draft: Draft{Status: 502, Error: "template generation provider error", Repair: &Repair{Attempted: true, Reason: "not_better"}},
+			calls: []Call{{FinishReason: "stop"}, {FinishReason: "stop"}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.RepairAttempted || got.Repaired || got.HTTPStatus != 502 {
+					t.Fatalf("checks = %+v", got)
+				}
+			},
+		},
+		{
 			name: "a skipped repair is not an attempt", c: pairCase(),
 			draft: func() Draft {
 				d := pairDraft(`<h1>x</h1>`, ``)

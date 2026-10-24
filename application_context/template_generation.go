@@ -311,6 +311,9 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	draft, repair := g.repair(ctx, in, profile, first, resp, draft, promptMessage(disclosure.Sections, 1, promptRoleUser), started)
 	result, err := finalizeDraft(draft)
 	if err != nil {
+		if repair != nil {
+			err = &templateRepairError{err: err, repair: repair}
+		}
 		return nil, err
 	}
 	result.Repair = repair

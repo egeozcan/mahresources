@@ -614,7 +614,9 @@ func TestTemplateGenerateClipsOversizedIdentity(t *testing.T) {
 // after, and counts its calls.
 type repairingProvider struct{ calls int }
 
-func (p *repairingProvider) Endpoint() string { return application_context.DefaultDeepSeekChatCompletionsURL }
+func (p *repairingProvider) Endpoint() string {
+	return application_context.DefaultDeepSeekChatCompletionsURL
+}
 
 func (p *repairingProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
 	p.calls++
@@ -650,5 +652,33 @@ func TestTemplateGenerateRepairTakesNoSecondRateLimitSlot(t *testing.T) {
 	}
 	if provider.calls != 2 {
 		t.Fatalf("the limited request reached the provider: %d calls", provider.calls)
+	}
+}
+
+type halfPairProvider struct{}
+
+func (halfPairProvider) Endpoint() string {
+	return application_context.DefaultDeepSeekChatCompletionsURL
+}
+
+func (halfPairProvider) GenerateDraft(context.Context, application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	return application_context.TemplateDraftResponse{Content: `{"slots":{"CustomHeader":"<p>x</p>"},"explanation":"Half."}`, FinishReason: "stop"}, nil
+}
+
+// A pair that stays broken after the repair is a 502 that still says a repair
+// was attempted, so the eval counts it.
+func TestTemplateGenerateFailedRepairReportsItInTheError(t *testing.T) {
+	tc := SetupTestEnv(t)
+	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(halfPairProvider{}, application_context.TemplateGenerationConfig{APIKey: "test", Timeout: 30 * time.Second}))
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "a header"})
+	if resp.Code != http.StatusBadGateway {
+		t.Fatalf("%d %s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Error  string                              `json:"error"`
+		Repair *application_context.TemplateRepair `json:"repair"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil || body.Error == "" || body.Repair == nil || !body.Repair.Attempted {
+		t.Fatalf("body = %s (%v)", resp.Body.String(), err)
 	}
 }

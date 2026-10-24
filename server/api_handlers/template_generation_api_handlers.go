@@ -288,6 +288,15 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			case errors.Is(err, application_context.ErrTemplateGenerationTimeout):
 				http_utils.HandleError(errors.New("template generation timed out"), writer, request, http.StatusGatewayTimeout)
 			default:
+				// A repair that was attempted is reported with the error, so a
+				// failed repair is not mistaken for none.
+				if repair := application_context.TemplateRepairFromError(err); repair != nil && !http_utils.RequestAcceptsHTML(request) {
+					fmt.Printf("\n[ERROR]: %v\n", err)
+					writer.Header().Set("Content-Type", constants.JSON)
+					writer.WriteHeader(http.StatusBadGateway)
+					_ = json.NewEncoder(writer).Encode(map[string]any{"error": "template generation provider error", "repair": repair})
+					return
+				}
 				http_utils.HandleError(errors.New("template generation provider error"), writer, request, http.StatusBadGateway)
 			}
 			return

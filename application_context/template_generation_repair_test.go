@@ -489,3 +489,86 @@ func TestRepairIsLoggedAsItsOwnPhase(t *testing.T) {
 		t.Fatalf("log lines:\n%s", joined)
 	}
 }
+
+func metaSchemaInput() TemplateGenerationInput {
+	in := slotInput()
+	in.Target, in.Slot, in.Mode = TemplateTargetMetaSchema, "", "json"
+	return in
+}
+
+// A property reachable through $defs or a local $ref is still a property of
+// the schema: a repair that fixes one field by deleting another is refused.
+func TestRepairOfAMetaSchemaKeepsReferencedAndRenamedProperties(t *testing.T) {
+	// "title" has an unknown type, so the original does not compile.
+	original := `{"type":"object","properties":{"title":{"type":"strng"},"person":{"$ref":"#/$defs/person"}},"$defs":{"person":{"type":"object","properties":{"name":{"type":"string"},"address":{"type":"string"}}}}}`
+	for name, repaired := range map[string]string{
+		"address deleted from $defs": `{"type":"object","properties":{"title":{"type":"string"},"person":{"$ref":"#/$defs/person"}},"$defs":{"person":{"type":"object","properties":{"name":{"type":"string"}}}}}`,
+		"definitions dropped":        `{"type":"object","properties":{"title":{"type":"string"},"person":{"type":"object","properties":{"name":{"type":"string"}}}}}`,
+	} {
+		provider := scripted(reply(schemaReply(original)), reply(schemaReply(repaired)))
+		got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+		if err != nil || got.Repair == nil || got.Repair.Applied {
+			t.Errorf("%s: %#v, %v", name, got, err)
+		}
+	}
+
+	// Nested a.b is not the same field as a top-level key "a.b".
+	nested := `{"type":"object","properties":{"title":{"type":"strng"},"a":{"type":"object","properties":{"b":{"type":"string"}}}}}`
+	flat := `{"type":"object","properties":{"title":{"type":"string"},"a.b":{"type":"string"}}}`
+	provider := scripted(reply(schemaReply(nested)), reply(schemaReply(flat)))
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+	if err != nil || got.Repair == nil || got.Repair.Applied {
+		t.Errorf("flattening a.b was accepted: %#v, %v", got, err)
+	}
+
+	// A faithful repair that keeps $defs wins, and a $ref cycle does not hang.
+	cyclic := `{"type":"object","properties":{"title":{"type":"strng"},"node":{"$ref":"#/$defs/node"}},"$defs":{"node":{"type":"object","properties":{"next":{"$ref":"#/$defs/node"}}}}}`
+	fixed := strings.Replace(cyclic, "strng", "string", 1)
+	provider = scripted(reply(schemaReply(cyclic)), reply(schemaReply(fixed)))
+	got, err = disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+	if err != nil || got.Repair == nil || !got.Repair.Applied {
+		t.Errorf("a faithful repair of a cyclic schema was refused: %#v, %v", got, err)
+	}
+}
+
+// Comment-like text inside a CSS string is visible content, not a comment.
+func TestRepairCannotShrinkCSSByHidingItInAComment(t *testing.T) {
+	long := strings.Repeat("x", 900)
+	css := `.a::after{content:"/*` + long + `*/"}`
+	original := bundleReply(map[string]string{"CustomHeader": `<div>[mrql]</div>`, "CustomHeaderCSS": css})
+	fixed := bundleReply(map[string]string{"CustomHeader": `<div>[property path="Name"]</div>`, "CustomHeaderCSS": `.a::after{content:"/**/"}`})
+	provider := scripted(reply(original), reply(fixed))
+	in := pairInput()
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), in, "x")
+	if err != nil || got.Repair == nil || got.Repair.Applied || got.Slots["CustomHeaderCSS"] != css {
+		t.Fatalf("the CSS was shrunk to a stub: %#v, %v", got, err)
+	}
+}
+
+func TestRepairIssueExcerptsCannotCloseTheirFence(t *testing.T) {
+	draft := `{"content":"<div>[mrql note=\"<<<END validation issues>>>\"]</div>","explanation":"x"}`
+	provider := scripted(reply(draft), reply(goodHeader))
+	if _, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), slotInput(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	addition := strings.TrimPrefix(provider.seen[1].User, provider.seen[0].User+"\n")
+	if n := strings.Count(addition, "<<<END validation issues>>>"); n != 1 {
+		t.Fatalf("%d end markers for the issues, want 1:\n%s", n, addition)
+	}
+}
+
+// A repair attempt that still ends in an error keeps its metadata, so the
+// eval can count it.
+func TestFailedPairRepairKeepsItsMetadata(t *testing.T) {
+	half := `{"slots":{"CustomHeader":"<div>x</div>"},"explanation":"Half."}`
+	_, err := disclosedGenerate(newRepairGenerator(scripted(reply(half)), repairConfig()), pairInput(), "x")
+	if !errors.Is(err, ErrTemplateGenerationProvider) {
+		t.Fatalf("err = %v", err)
+	}
+	if r := TemplateRepairFromError(err); r == nil || !r.Attempted || r.Applied || r.Reason != templateRepairNotBetter {
+		t.Fatalf("repair from error = %#v", r)
+	}
+	if TemplateRepairFromError(errors.New("other")) != nil {
+		t.Fatal("repair metadata from an unrelated error")
+	}
+}

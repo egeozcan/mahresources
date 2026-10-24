@@ -317,10 +317,12 @@ func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uin
 func evalFailedDraft(rr *httptest.ResponseRecorder) templateeval.Draft {
 	draft := templateeval.Draft{Status: rr.Code}
 	var failure struct {
-		Error string `json:"error"`
+		Error  string               `json:"error"`
+		Repair *templateeval.Repair `json:"repair"`
 	}
 	if json.Unmarshal(rr.Body.Bytes(), &failure) == nil && failure.Error != "" {
 		draft.Error = failure.Error
+		draft.Repair = failure.Repair
 	} else {
 		draft.Error = strings.TrimSpace(rr.Body.String())
 	}
