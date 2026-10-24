@@ -269,7 +269,10 @@ test('custom entity identity reaches titles, search, activity, and canonical lis
 });
 
 test('effective status and overdue semantics agree across native and board surfaces', async ({ page, apiClient, baseURL }) => {
-  const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
+  // Calendar arithmetic, not now minus 24h: on a daylight-saving change day
+  // the two disagree near midnight.
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
   const pad = (n: number) => String(n).padStart(2, '0');
   const past = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}T12:00`;
   const implicit = await apiClient.createNote({

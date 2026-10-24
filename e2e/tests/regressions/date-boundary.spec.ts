@@ -39,8 +39,12 @@ test.use({ timezoneId: zone });
 
 // The zone's calendar date some whole days from now, as YYYY-MM-DD.
 function zoneDate(daysFromToday: number): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(new Date(Date.now() + daysFromToday * 24 * 3600 * 1000));
+  // Take today's date in the zone, then step whole calendar days in UTC, where
+  // every day is 24 hours. Adding N * 24h to now lands on the wrong day when a
+  // daylight-saving change falls in between and the clock is near midnight.
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date()).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + daysFromToday)).toISOString().slice(0, 10);
 }
 
 test('a task due yesterday is overdue and one due today is not, in the server-rendered summary and on the board', async ({ page, request, baseURL, apiClient }) => {
