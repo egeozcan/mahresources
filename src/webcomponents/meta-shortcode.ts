@@ -302,10 +302,16 @@ export class MetaShortcode extends LitElement {
       if (shape) return html`<span>${renderBuiltin(shape, value)}</span>`;
     }
 
+    // The effective plugin x-display wins over enums, raw or resolved, as it
+    // does in the display panel. It receives the resolved schema.
+    if (xDisplay.startsWith('plugin:')) {
+      return this._renderPluginDisplay(value, xDisplay, resolvedSchema ?? schema);
+    }
+
     // A non-primitive value renders as JSON whatever type the schema declares
     // (a forced renderer may have rejected it), so it never reaches the scalar
-    // coercions below. A plugin renderer still receives it as data.
-    if (value !== null && typeof value === 'object' && !xDisplay.startsWith('plugin:')) {
+    // coercions below.
+    if (value !== null && typeof value === 'object') {
       return JSON.stringify(value);
     }
 
@@ -317,8 +323,7 @@ export class MetaShortcode extends LitElement {
       // Resolve composition ($ref, allOf, oneOf, anyOf) for full metadata.
       if (resolvedSchema) schema = resolvedSchema;
 
-      // After resolution: plugin x-display, enums, then type.
-      if (xDisplay.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
+      // After resolution: enums, then type.
       if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
       if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
@@ -326,7 +331,8 @@ export class MetaShortcode extends LitElement {
         ? schema.type.find((t: string) => t !== 'null') || 'string'
         : schema.type || 'string';
 
-      if (type === 'boolean') return value ? 'Yes' : 'No';
+      // Yes/No only for a real boolean; anything else shows as itself below.
+      if (type === 'boolean' && typeof value === 'boolean') return value ? 'Yes' : 'No';
       if (type === 'integer' || type === 'number') {
         return html`<span class="font-mono">${value}</span>`;
       }

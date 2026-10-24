@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 // Plan 2026-10-24-template-generation-quality, step 1d: a stored value or a
 // hand-written x-display must never crash the [meta] shortcode.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import './meta-shortcode';
 import type { MetaShortcode } from './meta-shortcode';
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.unstubAllGlobals();
 });
 
 async function mount(schema: any, value: any, attrs: Record<string, string> = {}) {
@@ -146,5 +147,41 @@ describe('[meta] x-display guards', () => {
       expect(el.textContent).toContain(JSON.stringify(value));
       expect(el.textContent).not.toContain('Invalid Date');
     }
+  });
+
+  it('labels a non-primitive labeled-enum const without coercing it', async () => {
+    const el = await mount({ oneOf: [{ const: { toString: null } }, { const: 'b', title: 'B' }] }, 'other');
+    expect(el.textContent).toContain('other');
+  });
+
+  it('dispatches a plugin x-display ahead of a raw or resolved enum', async () => {
+    for (const schema of [
+      { enum: ['a'], 'x-display': 'plugin:p:t' },
+      { allOf: [{ enum: ['a'], 'x-display': 'plugin:p:t' }] },
+      { oneOf: [{ const: 'a', title: 'A' }], 'x-display': 'plugin:p:t' },
+    ]) {
+      const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => '<b>plugin-out</b>' });
+      vi.stubGlobal('fetch', fetch);
+      const el = await mount(schema, 'a');
+      await vi.waitFor(() => expect(el.textContent).toContain('plugin-out'));
+      expect(fetch.mock.calls[0][0]).toBe('/v1/plugins/p/display/render');
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows Yes/No only for real booleans', async () => {
+    const yes = await mount({ type: 'boolean' }, true);
+    expect(yes.textContent).toContain('Yes');
+    const str = await mount({ type: 'boolean' }, 'false');
+    expect(str.textContent).toContain('false');
+    expect(str.textContent).not.toContain('Yes');
+  });
+
+  it('shows an invalid date as itself', async () => {
+    const el = await mount({ type: 'string', format: 'date' }, 'bad', { 'data-date-time': 'true' });
+    expect(el.textContent).toContain('bad');
+    expect(el.textContent).not.toContain('Invalid Date');
+    const plain = await mount({ type: 'string', format: 'date' }, 'bad');
+    expect(plain.textContent).toContain('bad');
   });
 });

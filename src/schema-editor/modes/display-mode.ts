@@ -406,8 +406,8 @@ export class SchemaDisplayMode extends LitElement {
       >${String(val)}</span>`;
     }
 
-    // Boolean
-    if (field.type === 'boolean') {
+    // Boolean — Yes/No only for a real boolean; anything else shows as itself
+    if (field.type === 'boolean' && typeof val === 'boolean') {
       return val ? 'Yes' : 'No';
     }
 
@@ -433,6 +433,8 @@ export class SchemaDisplayMode extends LitElement {
       if (field.format === 'date' || field.format === 'date-time') {
         try {
           const d = new Date(val);
+          // An unparseable date keeps its text rather than "Invalid Date".
+          if (isNaN(d.getTime())) return val;
           return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         } catch {
           return val;

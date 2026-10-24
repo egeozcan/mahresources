@@ -3,6 +3,8 @@
 // hand-written x-display must never crash the display panel.
 import { afterEach, describe, expect, it } from 'vitest';
 import './display-mode';
+import { renderJsonTable } from '../../tableMaker.js';
+import { getLabeledEnumEntries } from '../schema-core';
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -179,6 +181,41 @@ describe('display panel x-display guards', () => {
       geoSchema({ type: 'object' }),
     ]) {
       const el = await mount(schema, value);
+      expect(el.textContent).toContain('bad');
+      expect(el.textContent).not.toContain('Invalid Date');
+    }
+  });
+
+  it('renders nested mixed arrays through the real renderJsonTable', async () => {
+    (window as any).renderJsonTable = renderJsonTable;
+    try {
+      const el = await mount(geoSchema({ type: 'boolean' }),
+        { loc: { a: { b: { c: { d: [null, { x: 'deep' }] } } } } });
+      expect(el.textContent).toContain('deep');
+    } finally {
+      delete (window as any).renderJsonTable;
+    }
+  });
+
+  it('labels a non-primitive labeled-enum const through JSON', async () => {
+    const hostile = { toString: null };
+    expect(getLabeledEnumEntries({ oneOf: [{ const: hostile }] })[0].label).toBe('{"toString":null}');
+    const el = await mount(geoSchema({ oneOf: [{ const: hostile }, { const: 'b', title: 'B' }] }),
+      { loc: { toString: null, note: 'kept' } });
+    expect(el.textContent).toContain('kept');
+  });
+
+  it('shows Yes/No only for real booleans', async () => {
+    const yes = await mount(geoSchema({ type: 'boolean' }), { loc: true });
+    expect(yes.textContent).toContain('Yes');
+    const str = await mount(geoSchema({ type: 'boolean' }), { loc: 'false' });
+    expect(str.textContent).toContain('false');
+    expect(str.textContent).not.toContain('Yes');
+  });
+
+  it('shows an invalid date string as itself', async () => {
+    for (const format of ['date', 'date-time']) {
+      const el = await mount(geoSchema({ type: 'string', format }), { loc: 'bad' });
       expect(el.textContent).toContain('bad');
       expect(el.textContent).not.toContain('Invalid Date');
     }

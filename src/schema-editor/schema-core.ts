@@ -784,7 +784,10 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
   if (!schema.oneOf) return [];
   return schema.oneOf.map((entry: JSONSchema) => ({
     value: entry.const,
-    label: entry.title || String(entry.const),
+    // A non-primitive const goes through JSON: String() on {"toString":null} throws.
+    label: entry.title || (entry.const !== null && typeof entry.const === 'object'
+      ? JSON.stringify(entry.const)
+      : String(entry.const)),
     ...(entry['x-color'] ? { color: entry['x-color'] } : {}),
   }));
 }
