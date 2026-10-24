@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { templateBundle } from './templateBundle.js';
 
@@ -50,37 +51,64 @@ describe('templateBundle.entityToBundle', () => {
   });
 });
 
-// Pair completeness is checked before touching any editor, including valid earlier pairs.
+// Pair completeness is checked before touching any editor, including valid
+// earlier pairs, and no generated slot reaches an editor before Apply.
 describe('whole-template generation pairs', () => {
-  it('rejects a draft containing an unpaired field without applying anything', async () => {
-    const tb = templateBundle({ carrier: 'category' });
+  function bundle(reply: unknown) {
+    const tb = templateBundle({ carrier: 'category' }) as ReturnType<typeof templateBundle> & Record<string, unknown>;
     tb.generationPrompt = 'restyle';
     tb.getEditor = () => 'existing';
     tb.setEditor = vi.fn();
     tb.notify = vi.fn();
-    vi.stubGlobal('window', { Alpine: { store: () => ({}) } });
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: {
-      CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '', CustomMRQLResult: '<p>Incomplete</p>',
-    } }) })));
+    Object.assign(tb, { $refs: {}, $nextTick: () => Promise.resolve() });
+    const stores: Record<string, unknown> = { generationDisclosure: { open: vi.fn(async () => true) }, templatePreview: {} };
+    vi.stubGlobal('window', { Alpine: { store: (name: string) => stores[name] } });
+    vi.stubGlobal('Alpine', { store: (name: string) => stores[name] });
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => (JSON.parse(init.body).dryRun
+      ? { ok: true, status: 200, json: async () => ({ groundingHash: 'h', sections: [] }) }
+      : { ok: true, status: 200, json: async () => reply })));
+    return tb;
+  }
+
+  it('rejects a draft containing an unpaired field without applying anything', async () => {
+    const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '', CustomMRQLResult: '<p>Incomplete</p>' } });
     await tb.generateBundle();
     expect(tb.setEditor).not.toHaveBeenCalled();
+    expect(tb.pendingDraft).toBeNull();
     expect(tb.notify).toHaveBeenLastCalledWith(expect.stringContaining('CustomMRQLResultCSS together'), 'warn');
   });
 
-  it('applies complete pairs including empty CSS', async () => {
-    const tb = templateBundle({ carrier: 'category' });
-    tb.generationPrompt = 'restyle';
-    tb.getEditor = () => 'existing';
-    tb.setEditor = vi.fn();
-    tb.notify = vi.fn();
-    vi.stubGlobal('window', { Alpine: { store: () => ({}) } });
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: {
-      CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '',
-    } }) })));
+  it('holds complete pairs, including empty CSS, until Apply', async () => {
+    const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '' } });
     await tb.generateBundle();
+    expect(tb.setEditor).not.toHaveBeenCalled();
+    expect(tb.pendingDraft?.fields).toEqual(['CustomHeader', 'CustomHeaderCSS']);
+    await tb.applyPendingDraft();
     expect(tb.setEditor).toHaveBeenCalledTimes(2);
     expect(tb.setEditor).toHaveBeenCalledWith('CustomHeader', '<h1>New</h1>');
     expect(tb.setEditor).toHaveBeenCalledWith('CustomHeaderCSS', '');
+  });
+
+  it('lists a truncated half pair for review but applies only complete pairs', async () => {
+    const issue = { severity: 'error', message: 'CustomMRQLResult came back without CustomMRQLResultCSS before the reply was cut off, so this pair cannot be applied.' };
+    const tb = bundle({ valid: false, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '', CustomMRQLResult: '<p>Half</p>' },
+      issues: [{ severity: 'error', message: "The model's reply was cut off at its output limit" }, issue], slotIssues: { CustomMRQLResult: [issue] } });
+    await tb.generateBundle();
+    expect(tb.pendingDraft?.fields).toEqual(['CustomHeader', 'CustomHeaderCSS', 'CustomMRQLResult']);
+    expect(tb.pendingDraft?.blocked).toEqual(['CustomMRQLResult']);
+    await tb.applyPendingDraft();
+    expect(tb.setEditor).toHaveBeenCalledTimes(2);
+    expect(tb.setEditor).not.toHaveBeenCalledWith('CustomMRQLResult', expect.anything());
+  });
+
+  it('offers no Apply when every returned slot is a half pair', async () => {
+    const issue = { severity: 'error', message: 'cut' };
+    const tb = bundle({ valid: false, slots: { CustomMRQLResult: '<p>Half</p>' }, issues: [issue] });
+    await tb.generateBundle();
+    expect(tb.pendingDraft?.blocked).toEqual(['CustomMRQLResult']);
+    expect(tb.canApplyDraft()).toBe(false);
+    await tb.applyPendingDraft();
+    expect(tb.setEditor).not.toHaveBeenCalled();
   });
   afterEach(() => vi.unstubAllGlobals());
 });

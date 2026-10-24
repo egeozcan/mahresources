@@ -79,12 +79,13 @@
                             </ul>
                             <p x-show="draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).length" class="text-xs font-mono text-amber-800"
                                x-text="'Runs code once applied: ' + draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).join(', ') + ' (highlighted).'"></p>
-                            <pre class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all"><template x-for="(segment, i) in draftSegments(pendingDraft.slots[field] || '(empty)', field.endsWith('CSS'))" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
+                            <p x-show="pendingDraft.blocked.includes(field)" class="text-xs font-mono text-red-700">Not applied: its companion did not arrive.</p>
+                            <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field" :data-testid="'template-bundle-review-text-' + field" class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(pendingDraft.slots[field] || '(empty)', field.endsWith('CSS'))" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                         </li>
                     </template>
                 </ul>
                 <div class="flex flex-wrap gap-2">
-                    <button type="button" @click="applyPendingDraft()" data-testid="template-bundle-apply"
+                    <button type="button" x-show="canApplyDraft()" @click="applyPendingDraft()" data-testid="template-bundle-apply"
                             class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Apply</button>
                     <button type="button" @click="discardPendingDraft()" data-testid="template-bundle-discard"
                             class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Discard</button>

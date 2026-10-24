@@ -497,14 +497,22 @@ export function templateBundle({ carrier } = {}) {
         }
         const slots = (data && data.slots) || {};
         const issues = data && Array.isArray(data.issues) ? data.issues : [];
-        // Reject incomplete pairs before offering any part of the draft.
+        // A pair is applied whole or not at all. Half a pair from a reply that
+        // reported issues (one cut off at the output limit) is listed for
+        // review but blocked from Apply; from a clean reply it is a broken
+        // contract and nothing is offered.
+        const blocked = [];
         for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
           const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
           const cssPresent = Object.prototype.hasOwnProperty.call(slots, `${field}CSS`);
-          if (htmlPresent !== cssPresent || (htmlPresent && (typeof slots[field] !== 'string' || typeof slots[`${field}CSS`] !== 'string'))) {
-            this.notify(`The model must return ${field} and ${field}CSS together. No changes applied.`, 'warn');
-            return;
+          const malformed = (htmlPresent && typeof slots[field] !== 'string') || (cssPresent && typeof slots[`${field}CSS`] !== 'string');
+          if (htmlPresent === cssPresent && !malformed) continue;
+          if (!malformed && issues.length) {
+            blocked.push(htmlPresent ? field : `${field}CSS`);
+            continue;
           }
+          this.notify(`The model must return ${field} and ${field}CSS together. No changes applied.`, 'warn');
+          return;
         }
         const returned = Object.values(SLOT_FIELDS).filter((field) => Object.prototype.hasOwnProperty.call(slots, field));
         if (!returned.length) {
@@ -524,6 +532,7 @@ export function templateBundle({ carrier } = {}) {
           issues: issues.filter((i) => !slotIssueKeys.has(`${i.severity}:${i.message}`)),
           slotIssues,
           snapshot,
+          blocked,
         };
         if (this.pendingDraft.valid) {
           this.notify(`Generated ${returned.length} slot(s). Review the draft below, then Apply.`, 'info');
@@ -548,22 +557,40 @@ export function templateBundle({ carrier } = {}) {
     async applyPendingDraft() {
       const draft = this.pendingDraft;
       if (!draft) return;
-      const changed = changedSince(draft.snapshot, draft.fields, (field) => this.getEditor(field));
+      if (!this.canApplyDraft()) return;
+      const fields = draft.fields.filter((field) => !draft.blocked.includes(field));
+      const changed = changedSince(draft.snapshot, fields, (field) => this.getEditor(field));
       if (changed.length) {
+        // Apply is removed with the panel once the draft is written, so the
+        // dialog's own focus return needs somewhere stable to land.
         const confirmed = await askToConfirm(
           `${changed.join(', ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
-          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits' },
+          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this.$refs.bundleGenerate },
         );
         if (!confirmed || this.pendingDraft !== draft) return;
       }
-      for (const field of draft.fields) this.setEditor(field, draft.slots[field] || '');
+      for (const field of fields) this.setEditor(field, draft.slots[field] || '');
       this.pendingDraft = null;
-      this.notify(`Filled ${draft.fields.length} slot(s) from your description. Review, then save.`, 'info');
+      this.notify(`Filled ${fields.length} slot(s) from your description. Review, then save.`, 'info');
+      this._focusAfterPanelCloses();
     },
 
     discardPendingDraft() {
       this.pendingDraft = null;
       this.notify('Discarded the generated draft.', 'info');
+      this._focusAfterPanelCloses();
+    },
+
+    // Whether Apply has anything to write: half pairs are listed, not applied.
+    canApplyDraft() {
+      const draft = this.pendingDraft;
+      return !!draft && draft.fields.some((field) => !draft.blocked.includes(field));
+    },
+
+    // Apply and Discard live in the panel they remove; once Alpine has torn it
+    // down, focus would be on <body>, so it goes back to Generate.
+    _focusAfterPanelCloses() {
+      returnFocusToGenerate(this, null, this.$refs?.bundleGenerate);
     },
   };
 }

@@ -218,7 +218,11 @@ describe('template cluster generation', () => {
     vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => ({ valid: false, slots: { CustomMRQLResult: 'half' }, issues: [issue] }) })));
     await editor.generateFromPrompt();
     expect(editor.generationError).toBe(issue.message);
-    expect(editor.hasDraft()).toBe(false);
+    // The half is shown for review, and Apply refuses it.
+    expect(editor.hasDraft()).toBe(true);
+    expect(editor.draftBlocked()).toBe(true);
+    expect(editor.generatedFields.map((f: { name: string }) => f.name)).toEqual(['CustomMRQLResult']);
+    await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
   });
 });

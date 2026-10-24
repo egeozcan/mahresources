@@ -37,6 +37,12 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       return this.generatedFields.length > 0;
     },
 
+    // A draft holding half a pair (a reply cut off before the companion
+    // arrived) is shown for review but cannot be applied.
+    draftBlocked() {
+      return this.generatedFields.some((field) => field.blocked);
+    },
+
     // Pair controls resolve the HTML editor by name; standalone controls use
     // their own CodeMirror component. Both share the same generation workflow.
     generationContext() {
@@ -186,6 +192,14 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         }
         if (completePair) {
           this.generatedSlots = Object.fromEntries(pair.map((name) => [name, data.slots[name]]));
+        } else if (target === 'cluster') {
+          // Half a pair with its diagnostic: listed for review, never applied.
+          this.generatedFields = pair
+            .filter((name) => typeof data?.slots?.[name] === 'string')
+            .map((name) => ({ name, text: data.slots[name], css: name.endsWith('CSS'), blocked: true }));
+          this.generationError = issueText;
+          this.generationStatus = '';
+          return;
         }
         this.generatedContent = this.generatedSlots ? this.generatedSlots[fieldName] : (target !== 'cluster' && data && data.content) || '';
         this.generatedValid = !!(data && data.valid);
@@ -232,7 +246,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // started (typing, a preset, another generation) is named and the user asked
     // first; cancelling keeps their text.
     async applyGenerated() {
-      if (!this.hasDraft()) return;
+      if (!this.hasDraft() || this.draftBlocked()) return;
       const draft = this.generatedFields;
       const edits = draft.map(({ name, text }) => ({ name, text, view: this._viewFor(name) }));
       if (edits.some(({ view }) => !view)) return;
@@ -241,13 +255,28 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       if (changed.length) {
         const confirmed = await askToConfirm(
           `${changed.join(' and ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
-          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits' },
+          // Apply is removed with the panel once the draft is written, so the
+          // dialog's own focus return needs somewhere stable to land.
+          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this.$refs.generateButton },
         );
         if (!confirmed || this.generatedFields !== draft) return;
       }
       for (const { view, text } of edits) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
       this.discardGenerated();
       this.generationStatus = 'Generated draft applied.';
+      this._focusAfterPanelCloses();
+    },
+
+    // Discard from the panel's button: the panel goes, and focus with it.
+    discardFromPanel() {
+      this.discardGenerated();
+      this._focusAfterPanelCloses();
+    },
+
+    // Apply and Discard live in the panel they remove; once Alpine has torn it
+    // down, focus would be on <body>, so it goes back to Generate.
+    _focusAfterPanelCloses() {
+      returnFocusToGenerate(this, null, this.$refs?.generateButton);
     },
 
     discardGenerated() {

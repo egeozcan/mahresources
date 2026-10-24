@@ -11,10 +11,18 @@ import { restoreFocus } from '../utils/focus.js';
  *
  * It follows the confirm dialog's pattern (templates/partials/confirmDialog.tpl):
  * `.overlays`, the confirm overlay's z-index, the rest of the page made inert,
- * and focus returned by the store one macrotask after the dialog is torn down,
- * because `x-trap` pulls focus back while it is still armed. It never opens over
- * another painted modal; the reader is told so inside that modal instead.
+ * and focus returned by the store one macrotask after the dialog is torn down.
+ * It keeps focus in with inert and Tab wrapping rather than x-trap (see
+ * TABBABLE below). It never opens over another painted modal; the reader is
+ * told so inside that modal instead.
  */
+// Focus is kept in the dialog by making the rest of the page inert and by
+// wrapping Tab at either end (onTab), not by x-trap: x-trap arms its trap 15ms
+// after mounting and does not cancel that timer when the dialog closes first,
+// so a dialog answered quickly left a trap armed on a removed element that
+// swallowed every Tab on the page.
+const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
 export const DISCLOSURE_REFUSED_OVER_DIALOG = 'Close this dialog first to review what template generation will send.';
 
 export function registerGenerationDisclosureStore(Alpine) {
@@ -23,6 +31,7 @@ export function registerGenerationDisclosureStore(Alpine) {
     disclosure: null,
     _resolve: null,
     _opener: null,
+
     _inerted: [],
 
     get host() {
@@ -99,6 +108,28 @@ export function registerGenerationDisclosureStore(Alpine) {
         } else {
           mark(child);
         }
+      }
+    },
+
+    // Mounting: inert page, then focus on Cancel, the safe default.
+    _mount(dialogRoot) {
+      this._applyInert(dialogRoot);
+      dialogRoot.querySelector('[autofocus]')?.focus();
+    },
+
+    // Wrap Tab and Shift+Tab at the dialog's ends; the inert page has nowhere
+    // else to send focus.
+    onTab(event, dialogRoot) {
+      const stops = [...dialogRoot.querySelectorAll(TABBABLE)].filter((el) => el.getClientRects().length > 0);
+      if (!stops.length) return;
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     },
 

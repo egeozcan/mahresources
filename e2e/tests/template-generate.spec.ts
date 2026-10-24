@@ -5,7 +5,7 @@
  * shown as text, until Apply writes it into the CodeMirror-backed hidden input.
  * The provider is stubbed via page.route so no DeepSeek key is needed.
  */
-import type { Page, Route } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures/base.fixture';
 
 // The disclosure the server returns for a dry run (decision 11): the generate
@@ -28,6 +28,25 @@ function withDisclosure(handler: (route: Route) => Promise<void>) {
     }
     await handler(route);
   };
+}
+
+// Press the preview's Refresh, wait for its render request to answer, then
+// outlast the preview's 700ms input debounce, so no refresh is still pending.
+async function refreshPreviewAndSettle(page: Page) {
+  const rendered = page.waitForResponse((r) => r.url().includes('/previewTemplate'));
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await rendered;
+  await page.waitForTimeout(900);
+}
+
+// Press Tab until target has focus: it is in the tab order within a few stops
+// of where focus starts (a trap wraps from its last control to its first).
+async function tabUntilFocused(page: Page, target: Locator, maxPresses = 4) {
+  for (let i = 0; i < maxPresses; i++) {
+    await page.keyboard.press('Tab');
+    if (await target.evaluate((el) => el === document.activeElement)) return;
+  }
+  await expect(target).toBeFocused();
 }
 
 // Approve the disclosure dialog that every Generate opens first.
@@ -401,8 +420,7 @@ test.describe('Generated drafts do not run before Apply', () => {
       await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
       // Refresh re-renders from the hidden inputs, so it catches a draft that
       // leaked into them.
-      await page.getByRole('button', { name: 'Refresh' }).click();
-      await page.waitForTimeout(500);
+      await refreshPreviewAndSettle(page);
       const srcdocAfter = (await iframe.getAttribute('srcdoc')) ?? '';
       expect(srcdocAfter).not.toContain('example.invalid');
       expect(srcdocAfter).toBe(srcdocBefore ?? '');
@@ -411,7 +429,10 @@ test.describe('Generated drafts do not run before Apply', () => {
     });
   }
 
-  test('a CSS draft that closes its style tag stays text before Apply', async ({ page }) => {
+  test('a CSS draft that closes its style tag stays text before Apply', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Draft Guard CSS ${Date.now()}`);
+    const groupName = `Draft Guard CSS Target ${Date.now()}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
     const leaked: string[] = [];
     await page.context().route('**/example.invalid/**', async (route) => {
       leaked.push(route.request().url());
@@ -421,7 +442,14 @@ test.describe('Generated drafts do not run before Apply', () => {
     await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ target: 'slot', valid: true, explanation: 'x', content: css }) });
     }));
-    await page.goto('/category/new');
+    await page.goto(`/category/edit?id=${category.ID}`);
+    // An active preview: the entity is loaded and a render has completed.
+    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
+    const iframe = page.locator('iframe[title="Template slot preview"]');
+    await refreshPreviewAndSettle(page);
+    const srcdocBefore = (await iframe.getAttribute('srcdoc')) ?? '';
+    expect(srcdocBefore).toContain('<html');
+
     await page.getByTestId('generate-prompt-CustomCSS').fill('styles');
     await page.getByTestId('generate-button-CustomCSS').click();
     await sendDisclosure(page);
@@ -430,7 +458,11 @@ test.describe('Generated drafts do not run before Apply', () => {
     await expect(review).toContainText('</style> breakout');
     await expect(review.locator('[x-init]')).toHaveCount(0);
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
-    await page.waitForTimeout(300);
+
+    await refreshPreviewAndSettle(page);
+    const srcdocAfter = (await iframe.getAttribute('srcdoc')) ?? '';
+    expect(srcdocAfter).not.toContain('example.invalid');
+    expect(srcdocAfter).toBe(srcdocBefore);
     expect(leaked).toEqual([]);
   });
 
@@ -472,7 +504,10 @@ test.describe('Generated drafts do not run before Apply', () => {
     await sendDisclosure(page);
     await expect(page.getByTestId('generate-error-CustomHeader')).toContainText('cut off at its output limit');
     await expect(page.getByTestId('generate-error-CustomHeader')).not.toContainText('must return both');
-    await expect(page.getByTestId('generate-apply-CustomHeader')).toHaveCount(0);
+    // The half that arrived is reviewable, and Apply is not offered for it.
+    await expect(page.getByTestId('generate-review-text-CustomHeader')).toHaveText('<h1>half');
+    await expect(page.getByTestId('generate-review-CustomHeader')).toContainText('cannot be applied');
+    await expect(page.getByTestId('generate-apply-CustomHeader')).toBeHidden();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
   });
 
@@ -503,11 +538,14 @@ test.describe('Generated drafts do not run before Apply', () => {
     await dialog.getByRole('button', { name: 'Keep my edits' }).click();
     await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.mine{}');
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await expect(page.getByTestId('generate-apply-CustomHeader')).toBeFocused();
 
     await page.getByTestId('generate-apply-CustomHeader').click();
     await page.getByRole('alertdialog', { name: 'Replace your edits?' }).getByRole('button', { name: 'Replace' }).click();
     await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.draft{}');
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Draft</h1>');
+    // Apply went with the panel; focus lands on Generate, not <body>.
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeFocused();
   });
 
   test('a bundle Apply after an edit during generation asks first and keeps the edit on cancel', async ({ page }) => {
@@ -539,6 +577,12 @@ test.describe('Generated drafts do not run before Apply', () => {
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>mine</p>');
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
     await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+    await expect(page.getByTestId('template-bundle-apply')).toBeFocused();
+
+    await page.getByTestId('template-bundle-apply').click();
+    await page.getByRole('alertdialog', { name: 'Replace your edits?' }).getByRole('button', { name: 'Replace' }).click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Draft</h1>');
+    await expect(page.getByTestId('template-bundle-generate-button')).toBeFocused();
   });
 });
 
@@ -623,8 +667,9 @@ test.describe('Generation disclosure dialog', () => {
     await expect(send).toBeInViewport();
     await expect(page.getByTestId('generation-disclosure-cancel')).toBeInViewport();
     const list = page.getByTestId('generation-disclosure-sections');
-    await list.focus();
-    await expect(list).toBeFocused();
+    // The trap starts on Cancel; past Send it wraps to the list, the first stop.
+    await expect(page.getByTestId('generation-disclosure-cancel')).toBeFocused();
+    await tabUntilFocused(page, list);
     const before = await list.evaluate((el) => el.scrollTop);
     await page.keyboard.press('PageDown');
     await page.keyboard.press('PageDown');
@@ -734,5 +779,88 @@ test.describe('Generation disclosure dialog', () => {
     await expect(page.getByTestId('template-bundle-review')).toBeVisible();
     await expect(generate).toBeFocused();
     expect(sent).toHaveLength(1);
+  });
+});
+
+// The review panel is removed by Apply and Discard, which hold focus; the draft
+// text is long and capped, so it must be reachable and scrollable by keyboard.
+test.describe('Draft review panels and the keyboard', () => {
+  const pairReply = { target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '.d{}' } };
+  const bundleReply = { target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '' } };
+  async function stub(page: Page, reply: unknown) {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reply) });
+    }));
+  }
+
+  for (const action of ['apply', 'discard']) {
+    test(`${action} on a pair draft returns focus to Generate`, async ({ page }) => {
+      await stub(page, pairReply);
+      await page.goto('/category/new');
+      await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+      await page.getByTestId('generate-button-CustomHeader').click();
+      await sendDisclosure(page);
+      await page.getByTestId(`generate-${action}-CustomHeader`).click();
+      await expect(page.getByTestId('generate-review-CustomHeader')).toHaveCount(0);
+      await expect(page.getByTestId('generate-button-CustomHeader')).toBeFocused();
+    });
+
+    test(`${action} on a whole-template draft returns focus to Generate`, async ({ page }) => {
+      await stub(page, bundleReply);
+      await page.goto('/category/new');
+      await page.getByTestId('template-bundle-generate-prompt').fill('a template');
+      await page.getByTestId('template-bundle-generate-button').click();
+      await sendDisclosure(page);
+      await page.getByTestId(`template-bundle-${action}`).click();
+      await expect(page.getByTestId('template-bundle-review')).toHaveCount(0);
+      await expect(page.getByTestId('template-bundle-generate-button')).toBeFocused();
+    });
+  }
+
+  test('Tab reaches the pair draft text, a named scrollable region', async ({ page }) => {
+    const long = { ...pairReply, slots: { CustomHeader: Array.from({ length: 80 }, (_, i) => `<p>line ${i}</p>`).join('\n'), CustomHeaderCSS: '.d{}' } };
+    await stub(page, long);
+    await page.goto('/category/new');
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+    await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('ready');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeFocused();
+    const text = page.getByRole('region', { name: 'Draft text of CustomHeader', exact: true });
+    await tabUntilFocused(page, text);
+    await page.keyboard.press('PageDown');
+    await expect.poll(() => text.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test('Tab reaches the whole-template draft text, a named scrollable region', async ({ page }) => {
+    await stub(page, bundleReply);
+    await page.goto('/category/new');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a template');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    await expect(page.getByTestId('template-bundle-generate-button')).toBeFocused();
+    await tabUntilFocused(page, page.getByRole('region', { name: 'Draft text of CustomHeader', exact: true }));
+  });
+
+  test('answering the disclosure at once leaves no focus trap behind', async ({ page }) => {
+    await stub(page, bundleReply);
+    await page.goto('/category/new');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a template');
+    // Send in the same task the dialog opens in, before x-trap arms (15ms).
+    await page.evaluate(async () => {
+      const store = (window as any).Alpine.store('generationDisclosure');
+      (document.querySelector('[data-testid="template-bundle-generate-button"]') as HTMLButtonElement).click();
+      while (!store.isOpen) await new Promise((r) => setTimeout(r, 0));
+      store.send();
+    });
+    await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+    await expect(page.getByTestId('generation-disclosure')).toHaveCount(0);
+    await page.waitForTimeout(100);
+    await page.getByTestId('template-bundle-generate-button').focus();
+    const tab = page.evaluate(() => new Promise<boolean>((resolve) => {
+      document.addEventListener('keydown', (e) => setTimeout(() => resolve(e.defaultPrevented), 0), { once: true });
+    }));
+    await page.keyboard.press('Tab');
+    expect(await tab).toBe(false);
   });
 });

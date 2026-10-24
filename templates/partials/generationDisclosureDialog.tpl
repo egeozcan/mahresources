@@ -2,21 +2,23 @@
 {# before it is sent. Driven by the `generationDisclosure` store                    #}
 {# (src/components/generationDisclosure.js). It follows confirmDialog.tpl (overlay  #}
 {# z-index, inert page, store-owned focus return, Escape cancels) with one layout  #}
-{# difference: the panel is bounded to the viewport and only the section list       #}
+{# difference and one focus difference: no x-trap (see generationDisclosure.js);   #}
+{# the page is inert and Tab wraps at the dialog's ends.                            #}
+{# The layout: the panel is bounded to the viewport and only the section list      #}
 {# scrolls, so the actions stay reachable however long a sample block is. User data #}
 {# is bound with x-text only.                                                       #}
 <div x-data x-cloak>
     <template x-if="$store.generationDisclosure.isOpen">
         <div class="confirm-dialog-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-2 sm:p-4"
              @keydown.escape.window="$store.generationDisclosure.cancel()">
-            <div x-init="$store.generationDisclosure._applyInert($el)"
+            <div x-init="$store.generationDisclosure._mount($el)"
+                 @keydown.tab="$store.generationDisclosure.onTab($event, $el)"
                  class="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92dvh] flex flex-col overflow-hidden ring-1 ring-black/5"
                  role="dialog"
                  aria-modal="true"
                  aria-labelledby="generation-disclosure-title"
                  aria-describedby="generation-disclosure-summary"
-                 data-testid="generation-disclosure"
-                 x-trap.noscroll.noreturn="$store.generationDisclosure.isOpen">
+                 data-testid="generation-disclosure">
                 <div class="px-4 sm:px-5 pt-4 pb-3 border-b border-stone-100 shrink-0">
                     <h2 id="generation-disclosure-title" class="text-lg font-medium font-mono text-stone-900">Review what will be sent</h2>
                     <div id="generation-disclosure-summary" class="mt-1 text-sm text-stone-700 space-y-1">

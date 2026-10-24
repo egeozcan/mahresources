@@ -44,18 +44,20 @@
                     <p class="text-xs font-mono font-medium text-stone-700" x-text="field.name"></p>
                     <p x-show="draftWarnings(field.text, field.css).length" class="text-xs font-mono text-amber-800"
                        x-text="'Runs code once applied: ' + draftWarnings(field.text, field.css).join(', ') + ' (highlighted).'"></p>
-                    <pre class="mt-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all"><template x-for="(segment, i) in draftSegments(field.text || '(empty)', field.css)" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
+                    <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field.name" :data-testid="'generate-review-text-' + field.name" class="mt-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(field.text || '(empty)', field.css)" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                 </div>
             </template>
+            <p x-show="draftBlocked()" class="text-xs font-mono text-red-700">This draft cannot be applied: a template and its CSS are applied together, and the reply was cut off before both arrived.</p>
             <div class="flex flex-wrap gap-2">
                 <button type="button"
+                        x-show="!draftBlocked()"
                         @click="applyGenerated()"
                         data-testid="generate-apply-{{ name }}"
                         class="px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer whitespace-nowrap">
                     Apply
                 </button>
                 <button type="button"
-                        @click="discardGenerated()"
+                        @click="discardFromPanel()"
                         data-testid="generate-discard-{{ name }}"
                         class="px-3 py-1.5 text-sm font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer whitespace-nowrap">
                     Discard
