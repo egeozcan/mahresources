@@ -1084,9 +1084,11 @@ describe('round 14: cycle defaults, budgeted equality, deep schemas, linear merg
     expect(getPreviewDefaultValue(root, root)).toEqual(expected);
     expect(baseCore.getDefaultValue(root, root)).toEqual(expected);
     expect(baseCore.getPreviewDefaultValue(root, root)).toEqual(expected);
-    // Without a default of its own the repeat still stops.
+    // Without a default of its own the repeat still stops: the nested
+    // {$ref} step expands once (the root step is a different schema), and
+    // its own repeat is cut.
     const bare: any = { $defs: { node: { type: 'object', properties: { child: { $ref: '#/$defs/node' } } } }, $ref: '#/$defs/node' };
-    expect(getDefaultValue(bare, bare)).toEqual({});
+    expect(getDefaultValue(bare, bare)).toEqual({ child: {} });
   });
 
   it('values of different JSON types are unequal without canonicalising either', () => {
@@ -1669,11 +1671,13 @@ describe('round 18: selector-safe property names, defaults pruned only on real r
 
   it('a property cycle through objects is still cut at its first repeat', () => {
     const root: any = { $defs: { N: { type: 'object', properties: { name: { default: 'n' }, self: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
-    expect(getDefaultValue(root, root)).toEqual({ name: 'n' });
-    expect(getPreviewDefaultValue(root, root)).toEqual({ name: 'n' });
+    // The root step ({$defs, $ref}) differs from the nested {$ref} step, so
+    // the nested one expands once and its own repeat is cut.
+    expect(getDefaultValue(root, root)).toEqual({ name: 'n', self: { name: 'n' } });
+    expect(getPreviewDefaultValue(root, root)).toEqual({ name: 'n', self: { name: 'n' } });
     // Through an allOf branch too.
     const viaAllOf: any = { $defs: { N: { allOf: [{ properties: { name: { default: 'n' }, next: { $ref: '#/$defs/N' } } }] } }, $ref: '#/$defs/N' };
-    expect(getDefaultValue(viaAllOf, viaAllOf)).toEqual({ name: 'n' });
+    expect(getDefaultValue(viaAllOf, viaAllOf)).toEqual({ name: 'n', next: { name: 'n' } });
   });
 });
 
@@ -1724,7 +1728,9 @@ describe('round 19: typed patternDescription, defaults pruned on the live expans
   it('an active then that recurs is cut at its first repeat', () => {
     const branch = { ...NODE, properties: { ...NODE.properties, kind: { type: 'string', default: 'branch' } } };
     const root: any = { $defs: { Node: branch }, $ref: '#/$defs/Node' };
-    expect(getDefaultValue(root, root)).toEqual({ name: 'Untitled', kind: 'branch' });
+    // The root step ({$defs, $ref}) differs from the nested {$ref} step, so
+    // the nested one expands once and its own repeat is cut.
+    expect(getDefaultValue(root, root)).toEqual({ name: 'Untitled', kind: 'branch', child: { name: 'Untitled', kind: 'branch' } });
   });
 
   it('a mutual a -> b -> a cycle is cut at the first repeat', () => {
@@ -1735,8 +1741,11 @@ describe('round 19: typed patternDescription, defaults pruned on the live expans
       },
       $ref: '#/$defs/a',
     };
-    expect(getDefaultValue(root, root)).toEqual({ name: 'a', b: { name: 'b' } });
-    expect(getPreviewDefaultValue(root, root)).toEqual({ name: 'a', b: { name: 'b' } });
+    // The root step differs from the {$ref a} inside b, so a expands twice and
+    // the repeat of the {$ref b} step is cut.
+    const expected = { name: 'a', b: { name: 'b', a: { name: 'a' } } };
+    expect(getDefaultValue(root, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root, root)).toEqual(expected);
   });
 
   it('an allOf-only cycle reached through an allOf ends at its first repeat', () => {
@@ -1781,6 +1790,62 @@ describe('round 19: typed patternDescription, defaults pruned on the live expans
       properties: { first: { $ref: '#/$defs/P' }, second: { $ref: '#/$defs/P' }, nested: { type: 'object', properties: { third: { $ref: '#/$defs/P' } } } },
     };
     expect(getDefaultValue(root, root)).toEqual({ first: { v: 'p' }, second: { v: 'p' }, nested: { third: { v: 'p' } } });
+  });
+});
+
+describe('round 20: defaults pruned on the identity of the referencing node', () => {
+  const branchNode = (child: any) => ({
+    type: 'object',
+    properties: { name: { type: 'string', default: 'Untitled' }, kind: { type: 'string', default: 'branch' } },
+    if: { properties: { kind: { const: 'branch' } } },
+    then: { properties: { child } },
+  });
+
+  it('a recursion a sibling override ends one level down is built, as at base (pi\'s repro)', () => {
+    const $defs = { Node: branchNode({ $ref: '#/$defs/Node', properties: { kind: { default: 'leaf' } } }) };
+    const root: any = { $defs, type: 'object', properties: { nodes: { type: 'array', items: { $ref: '#/$defs/Node' } } } };
+    const item = root.properties.nodes.items;
+    const expected = { name: 'Untitled', kind: 'branch', child: { name: 'Untitled', kind: 'leaf' } };
+    expect(getDefaultValue(item, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(item, root)).toEqual(expected);
+    expect(baseCore.getDefaultValue(item, root)).toEqual(expected);
+  });
+
+  it('Add Item builds that default through the form, without falling back', async () => {
+    const $defs = { Node: branchNode({ $ref: '#/$defs/Node', properties: { kind: { default: 'leaf' } } }) };
+    const schema: any = { $defs, type: 'object', properties: { nodes: { type: 'array', items: { $ref: '#/$defs/Node' } } } };
+    const el: any = await mountEl('schema-form-mode', { schema, value: { nodes: [] } });
+    let emitted: any;
+    el.addEventListener('value-change', (e: CustomEvent) => { emitted = e.detail.value; });
+    ([...el.querySelectorAll('button')].find((b: HTMLButtonElement) => b.textContent?.includes('Add Item')) as HTMLButtonElement).click();
+    await settle(el);
+    expect(emitted?.nodes?.[0]).toEqual({ name: 'Untitled', kind: 'branch', child: { name: 'Untitled', kind: 'leaf' } });
+    expect(snapshot(el)).not.toContain('showing the raw value');
+  });
+
+  it('a reference a merge carries into a schema with other siblings is a new step, as at base', () => {
+    // p merges Z's {$ref Y} with a sibling holding inner: {$ref Z}; inside
+    // inner, Z's own {$ref Y} is the same node but a different schema.
+    const $defs = {
+      Y: { type: 'object', properties: { v: { default: 'y' } } },
+      Z: { type: 'object', properties: { p: { $ref: '#/$defs/Y' } } },
+    };
+    const root: any = { $defs, allOf: [{ $ref: '#/$defs/Z' }, { properties: { p: { type: 'object', properties: { inner: { $ref: '#/$defs/Z' } } } } }] };
+    const expected = baseCore.getDefaultValue(root, root);
+    expect(expected).toEqual({ p: { v: 'y', inner: { p: { v: 'y' } } } });
+    expect(getDefaultValue(root, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root, root)).toEqual(baseCore.getPreviewDefaultValue(root, root));
+  });
+
+  it('a recursion through the same node whose override does not end it is cut at that node\'s first repeat', () => {
+    // The override changes the name, not kind, so then stays active.
+    const $defs = { Node: branchNode({ $ref: '#/$defs/Node', properties: { name: { default: 'kid' } } }) };
+    const root: any = { $defs, type: 'object', properties: { nodes: { type: 'array', items: { $ref: '#/$defs/Node' } } } };
+    const item = root.properties.nodes.items;
+    const expected = { name: 'Untitled', kind: 'branch', child: { name: 'kid', kind: 'branch' } };
+    expect(withSchemaBudget(() => getDefaultValue(item, root))).toEqual(expected);
+    expect(schemaWorkDone()).toBeLessThan(500);
+    expect(withSchemaBudget(() => getPreviewDefaultValue(item, root))).toEqual({ name: 'Untitled', kind: 'branch', child: { name: 'kid', kind: 'branch' } });
   });
 });
 
@@ -1886,8 +1951,9 @@ describe('large acyclic schemas behave as at base', () => {
     // Each stored level renders, and only those: the form does not expand an
     // absent optional object.
     expect(names).toEqual(['n0', 'n1', 'n2']);
-    // Defaults have no data to follow, so the repeated reference is unresolved.
-    expect(getDefaultValue(schema, schema)).toEqual({ name: '', child: undefined });
+    // Defaults have no data to follow: the nested {$ref} step expands once
+    // and its repeat is left unresolved.
+    expect(getDefaultValue(schema, schema)).toEqual({ name: '', child: { name: '' } });
     // The condition walker also descends into the data: the nested name fails.
     const cond = { $defs: { node: { properties: { name: { const: 'x' }, child: { $ref: '#/$defs/node' } } } }, $ref: '#/$defs/node' };
     expect(evaluateCondition(cond, { name: 'x', child: { name: 'y' } }, cond)).toBe(false);
