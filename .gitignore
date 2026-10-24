@@ -32,6 +32,9 @@
 /benchmarks/mrql/fixtures/
 /benchmarks/mrql/results/
 
+# Template generation eval reports (reviewed baselines remain tracked)
+/benchmarks/template-generation/results/
+
 # E2E test artifacts
 /e2e/node_modules/
 /e2e/playwright-report/
