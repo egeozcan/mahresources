@@ -1334,7 +1334,28 @@ export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; l
  * turn every other object into the same "[object Object]".
  */
 export function valueText(value: unknown): string {
-  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return value !== null && typeof value === 'object' ? safeJSON(value) : String(value);
+}
+
+/** What a serialiser shows for a value it cannot serialise. */
+export const UNSHOWABLE_VALUE = '(value too deep to show)';
+
+/**
+ * JSON.stringify(value, null, space) that never throws: a value too deep for
+ * the stack, or one whose toJSON throws, gives UNSHOWABLE_VALUE. Child
+ * elements (tree node editors, pills) render outside every schema
+ * boundary, so a throw there would escape. The text counts as work, at
+ * 1/64 per character; past the budget the placeholder is shown as well.
+ */
+export function safeJSON(value: unknown, space?: number): string {
+  try {
+    const text = JSON.stringify(value, null, space);
+    if (text === undefined) return String(value);
+    countSchemaWork(Math.ceil(text.length / 64));
+    return text;
+  } catch {
+    return UNSHOWABLE_VALUE;
+  }
 }
 
 const isNumber = (v: unknown) => typeof v === 'number';
@@ -1444,16 +1465,38 @@ function jsonKind(value: unknown): string {
  * mutated between calls is read afresh.
  */
 function canonicalJSON(value: unknown): string {
+  try {
+    return canonicalJSONUnguarded(value);
+  } catch (error) {
+    // A budget error is the walkers' to handle; anything else (a value too
+    // deep for the stack) gives the value a key equal only to itself.
+    if (error instanceof SchemaTooComplexError) throw error;
+    return unshowableKey(value);
+  }
+}
+
+const unshowableKeys = new WeakMap<object, string>();
+let unshowableCount = 0;
+
+/** A key for a value canonicalJSON cannot read: equal only to the same object's key. */
+function unshowableKey(value: unknown): string {
+  if (value === null || typeof value !== 'object') return `\u0001unshowable:${String(value)}`;
+  let key = unshowableKeys.get(value);
+  if (key === undefined) unshowableKeys.set(value, (key = `\u0001unshowable:${++unshowableCount}`));
+  return key;
+}
+
+function canonicalJSONUnguarded(value: unknown): string {
   countSchemaWork();
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
   const cached = canonicalKeys?.get(value);
   if (cached !== undefined) return cached;
   let text: string;
   if (Array.isArray(value)) {
-    text = `[${value.map(canonicalJSON).join(',')}]`;
+    text = `[${value.map(canonicalJSONUnguarded).join(',')}]`;
   } else {
     const entries = Object.keys(value).sort()
-      .map(key => `${JSON.stringify(key)}:${canonicalJSON((value as Record<string, unknown>)[key])}`);
+      .map(key => `${JSON.stringify(key)}:${canonicalJSONUnguarded((value as Record<string, unknown>)[key])}`);
     text = `{${entries.join(',')}}`;
   }
   canonicalKeys?.set(value, text);

@@ -333,7 +333,7 @@ export class SchemaEditMode extends LitElement {
     }
     // Update raw $ref strings inside node.schema (e.g. if/then/else,
     // secondary composition keywords that weren't extracted into variants)
-    this._updateRefsInObject(node.schema, oldRef, newRef);
+    node.schema = this._updateRefsInObject(node.schema, oldRef, newRef);
     for (const child of node.children || []) {
       this._updateRefsInTree(child, oldRef, newRef);
     }
@@ -347,10 +347,18 @@ export class SchemaEditMode extends LitElement {
    * keywords are followed: a "$ref" key inside examples, default or const is
    * data and stays as written.
    */
-  private _updateRefsInObject(obj: any, oldRef: string, newRef: string) {
-    visitSubschemas(obj, subschema => {
+  private _updateRefsInObject(obj: any, oldRef: string, newRef: string): any {
+    // node.schema is a shallow copy: its nested subschemas (if, then, ...)
+    // are still the caller's objects. Rename on a deep copy, and only when
+    // there is something to rename.
+    let found = false;
+    visitSubschemas(obj, subschema => { if (subschema.$ref === oldRef) found = true; });
+    if (!found) return obj;
+    const copy = structuredClone(obj);
+    visitSubschemas(copy, subschema => {
       if (subschema.$ref === oldRef) subschema.$ref = newRef;
     });
+    return copy;
   }
 
   private _handleAddProperty() {

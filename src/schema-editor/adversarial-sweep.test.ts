@@ -15,7 +15,7 @@ import './schema-editor';
 import './tree/detail-panel';
 import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET, mergeAllOf, countSchemaWork } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET, mergeAllOf, countSchemaWork, valueText, inputText, valueKey } from './schema-core';
 import * as baseCore from './__base__/schema-core';
 import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
 import { guardSchemaAction, schemaActionError, clearSchemaActionError } from './schema-fallback';
@@ -2162,6 +2162,68 @@ describe('round 22: variant initialisation composes, keys on full paths, never t
       if (JSON.stringify(schema) !== before) failures.push(`case ${i}: head changed the schema\n  ${before}\n  ${JSON.stringify(schema)}`);
     }
     expect(failures).toEqual([]);
+  });
+});
+
+describe('round 23: serialisers that never throw, renames on copies', () => {
+  // Node's JSON.stringify survives depths that overflow it in a browser, so
+  // the overflow is simulated with a throwing toJSON.
+  const tooDeep = () => {
+    const value: any = { a: 1 };
+    Object.defineProperty(value, 'toJSON', { enumerable: false, value: () => { throw new RangeError('Maximum call stack size exceeded'); } });
+    return value;
+  };
+
+  it('valueText and inputText return a placeholder instead of throwing', () => {
+    expect(() => valueText(tooDeep())).not.toThrow();
+    expect(valueText(tooDeep())).toBe('(value too deep to show)');
+    expect(inputText(tooDeep())).toBe('(value too deep to show)');
+    expect(valueText({ a: 1 })).toBe('{"a":1}');
+    expect(valueText(3)).toBe('3');
+  });
+
+  it('value equality survives a value deeper than the stack', () => {
+    let a: any = 'leaf';
+    let b: any = 'leaf';
+    for (let i = 0; i < 50000; i++) { a = { n: a }; b = { n: b }; }
+    expect(() => sameValue(a, b)).not.toThrow();
+    expect(sameValue(a, a)).toBe(true);
+    expect(() => valueKey(a)).not.toThrow();
+  });
+
+  it('a tree editor child shows the placeholder for a default it cannot serialise', async () => {
+    const schema: any = { type: 'string', default: tooDeep() };
+    const el: any = await mountEl('schema-edit-mode', { schema });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await settle(el);
+    expect(snapshot(el)).toContain('(value too deep to show)');
+  });
+
+  it('the conditional editor shows the placeholder for a branch it cannot serialise', async () => {
+    const el: any = await mountEl('schema-conditional-editor', { schema: { if: tooDeep(), then: { type: 'string' } } });
+    expect(snapshot(el)).toContain('(value too deep to show)');
+  });
+
+  it('renaming a definition never changes the caller\'s schema, and the result stays consistent', async () => {
+    const schema: any = {
+      $defs: { Old: { type: 'string' } },
+      type: 'object',
+      properties: { v: { type: 'string' } },
+      if: { $ref: '#/$defs/Old' },
+      then: { properties: { w: { $ref: '#/$defs/Old' } } },
+    };
+    const original = JSON.stringify(schema);
+    const el: any = await mountEl('schema-edit-mode', { schema });
+    let emitted: any;
+    el.addEventListener('schema-change', (e: CustomEvent) => { emitted = JSON.parse(e.detail.schema); });
+    const defs = el._root.children.find((c: any) => c.name === '$defs');
+    el._selectedId = defs.children.find((c: any) => c.name === 'Old').id;
+    el._handleNodeChange(new CustomEvent('node-change', { detail: { field: 'name', value: 'New' } }));
+    await settle(el);
+    expect(JSON.stringify(schema)).toBe(original);
+    expect(Object.keys(emitted.$defs)).toEqual(['New']);
+    expect(emitted.if.$ref).toBe('#/$defs/New');
+    expect(emitted.then.properties.w.$ref).toBe('#/$defs/New');
   });
 });
 
