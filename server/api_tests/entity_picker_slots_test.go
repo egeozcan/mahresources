@@ -73,7 +73,7 @@ func TestEntityPickerSlotsCanBeGenerated(t *testing.T) {
 				Target: application_context.TemplateTargetSlot, Valid: true,
 				Slots: map[string]string{"CustomEntityPickerResult": "<b>Picker</b>", "CustomEntityPickerResultCSS": ".picker{color:red}"},
 			}})
-			resp := tc.MakeRequest(http.MethodPost, "/v1/"+carrier+"/generateTemplate", map[string]any{
+			resp := tc.generateTemplate("/v1/"+carrier+"/generateTemplate", map[string]any{
 				"target": "slot", "slot": "CustomEntityPickerResult", "prompt": "A picker result", "mode": "html",
 			})
 			if resp.Code != http.StatusOK {

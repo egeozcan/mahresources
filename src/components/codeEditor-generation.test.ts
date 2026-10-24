@@ -15,22 +15,35 @@ function fixture(shared = true) {
     return view;
   });
   const confirmDialog = { ask: vi.fn(async () => true) };
-  Object.assign(window, { Alpine: { store: (name: string) => (name === 'confirmDialog' ? confirmDialog : { generatePath: '/generate' }) } });
+  const disclosure = { open: vi.fn(async () => true) };
+  const stores: Record<string, unknown> = { confirmDialog, generationDisclosure: disclosure, templatePreview: { generatePath: '/generate' } };
+  Object.assign(window, { Alpine: { store: (name: string) => stores[name] } });
   const editor = Object.assign(shared ? templateGeneration({ fieldName: 'CustomMRQLResult', mode: 'html' }) : codeEditor({ mode: 'html', generate: true }), {
     $el: document.querySelector('form')!,
     view: views[0],
     $refs: { hiddenInput: document.querySelector('input'), editorContainer: document.querySelector('[x-ref]') },
     generationPrompt: 'Restyle this card',
+    $nextTick: () => Promise.resolve(),
   });
-  return { editor, views, confirmDialog };
+  return { editor, views, confirmDialog, disclosure };
 }
 const draft = { valid: true, slots: { CustomMRQLResult: '<p class="card">New</p>', CustomMRQLResultCSS: '.card{color:red}' } };
+
+// serve answers the dry run with a disclosure and hands the real request to
+// respond, the way the server does.
+type Init = { body: string };
+function serve(respond: (url: string, init: Init) => Promise<unknown>) {
+  return vi.fn(async (url: string, init: Init) => (JSON.parse(init.body).dryRun
+    ? { ok: true, status: 200, json: async () => ({ groundingHash: 'h', sections: [], destination: { host: 'api.example' } }) }
+    : respond(url, init)));
+}
+const sentBodies = (fetch: { mock: { calls: unknown[][] } }) => fetch.mock.calls.map(c => JSON.parse((c[1] as Init).body)).filter(b => !b.dryRun);
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 
 describe('template cluster generation', () => {
   it('keeps embedded generation controls functional', async () => {
     const { editor, views } = fixture(false);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => draft })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => draft })));
     await editor.generateFromPrompt();
     await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
@@ -38,7 +51,7 @@ describe('template cluster generation', () => {
 
   it('holds every draft for review and writes it only on Apply', async () => {
     const { editor, views, confirmDialog } = fixture();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => draft })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => draft })));
     await editor.generateFromPrompt();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
     expect(editor.hasDraft()).toBe(true);
@@ -52,7 +65,7 @@ describe('template cluster generation', () => {
 
   it('holds an invalid draft too, with its issues, until Apply', async () => {
     const { editor, views } = fixture();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ...draft, valid: false, issues: [{ severity: 'error', message: 'bad meta' }] }) })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => ({ ...draft, valid: false, issues: [{ severity: 'error', message: 'bad meta' }] }) })));
     await editor.generateFromPrompt();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
     expect(editor.hasDraft()).toBe(true);
@@ -63,11 +76,12 @@ describe('template cluster generation', () => {
 
   it('sends both current values and applies both generated values', async () => {
     const { editor, views } = fixture();
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    const fetch = serve(async () => ({ ok: true, json: async () => draft }));
     vi.stubGlobal('fetch', fetch);
     await editor.generateFromPrompt();
-    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    const [body] = sentBodies(fetch);
     expect(body.target).toBe('cluster');
+    expect(body.groundingHash).toBe('h');
     expect(JSON.parse(body.content)).toEqual({ CustomMRQLResult: 'old-CustomMRQLResult', CustomMRQLResultCSS: 'old-CustomMRQLResultCSS' });
     await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
@@ -75,7 +89,7 @@ describe('template cluster generation', () => {
 
   it('asks before Apply replaces a field edited during generation', async () => {
     const { editor, views, confirmDialog } = fixture();
-    vi.stubGlobal('fetch', vi.fn(async () => {
+    vi.stubGlobal('fetch', serve(async () => {
       views[1].dispatch({ changes: { insert: 'manual CSS' } });
       return { ok: true, json: async () => draft };
     }));
@@ -95,7 +109,7 @@ describe('template cluster generation', () => {
 
   it('applies an explicitly empty CSS companion to clear existing styles', async () => {
     const { editor, views } = fixture();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: '<p>Card</p>', CustomMRQLResultCSS: '' } }) })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: '<p>Card</p>', CustomMRQLResultCSS: '' } }) })));
     await editor.generateFromPrompt();
     await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(['<p>Card</p>', '']);
@@ -111,7 +125,7 @@ describe('template cluster generation', () => {
       delete container._cmView;
       container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
     });
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    const fetch = serve(async () => ({ ok: true, json: async () => draft }));
     vi.stubGlobal('fetch', fetch);
 
     const generation = editor.generateFromPrompt();
@@ -137,7 +151,7 @@ describe('template cluster generation', () => {
       delete container._cmView;
       container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
     });
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    const fetch = serve(async () => ({ ok: true, json: async () => draft }));
     vi.stubGlobal('fetch', fetch);
 
     const first = editor.generateFromPrompt();
@@ -146,8 +160,8 @@ describe('template cluster generation', () => {
     mounted.forEach(mount => mount());
     await Promise.all([first, second]);
 
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(fetch.mock.calls[0][1].body).prompt).toBe('Restyle this card in blue');
+    expect(sentBodies(fetch)).toHaveLength(1);
+    expect(sentBodies(fetch)[0].prompt).toBe('Restyle this card in blue');
     await editor.applyGenerated();
     expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
   });
@@ -160,7 +174,7 @@ describe('template cluster generation', () => {
       delete container._cmView;
       container._cmReady = new Promise(resolve => mounted.push(() => { container._cmView = views[i]; resolve(views[i]); }));
     });
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });
+    const fetch = serve(async () => ({ ok: true, json: async () => draft }));
     vi.stubGlobal('fetch', fetch);
 
     const waiting = editor.generateFromPrompt();
@@ -191,7 +205,7 @@ describe('template cluster generation', () => {
 
   it('does not apply an incomplete pair', async () => {
     const { editor, views } = fixture();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: 'incomplete' } }) })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => ({ valid: true, slots: { CustomMRQLResult: 'incomplete' } }) })));
     await editor.generateFromPrompt();
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
     expect(editor.generationError).toBeTruthy();
@@ -201,10 +215,34 @@ describe('template cluster generation', () => {
   it('shows a truncated incomplete pair as its issue, not the pair-shape error', async () => {
     const { editor, views } = fixture();
     const issue = { severity: 'error', message: "The model's reply was cut off at its output limit" };
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: false, slots: { CustomMRQLResult: 'half' }, issues: [issue] }) })));
+    vi.stubGlobal('fetch', serve(async () => ({ ok: true, json: async () => ({ valid: false, slots: { CustomMRQLResult: 'half' }, issues: [issue] }) })));
     await editor.generateFromPrompt();
     expect(editor.generationError).toBe(issue.message);
     expect(editor.hasDraft()).toBe(false);
     expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+  });
+});
+
+describe('the disclosure before sending', () => {
+  it('sends nothing when the reader cancels the disclosure', async () => {
+    const { editor, views, disclosure } = fixture();
+    disclosure.open.mockResolvedValueOnce(false);
+    const fetch = serve(async () => ({ ok: true, json: async () => draft }));
+    vi.stubGlobal('fetch', fetch);
+    await editor.generateFromPrompt();
+    expect(disclosure.open).toHaveBeenCalledTimes(1);
+    expect(sentBodies(fetch)).toHaveLength(0);
+    expect(editor.generating).toBe(false);
+    expect(views.map(v => v.state.doc.toString())).toEqual(['old-CustomMRQLResult', 'old-CustomMRQLResultCSS']);
+  });
+
+  it('a 409 offers Review again and opens nothing by itself', async () => {
+    const { editor, disclosure } = fixture();
+    vi.stubGlobal('fetch', serve(async () => ({ ok: false, status: 409, json: async () => ({ error: 'the data to be sent changed; review it again' }) })));
+    await editor.generateFromPrompt();
+    expect(disclosure.open).toHaveBeenCalledTimes(1);
+    expect(editor.groundingChanged).toBe(true);
+    expect(editor.generationStatus).toBe('The data to be sent changed.');
+    expect(editor.hasDraft()).toBe(false);
   });
 });

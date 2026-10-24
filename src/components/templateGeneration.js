@@ -1,4 +1,5 @@
 import { askToConfirm } from './confirmDialog.js';
+import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
 import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
 
 // The CodeMirror view behind a field's editor container, or a promise of it: the editor
@@ -26,6 +27,8 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // shown as text in the review panel and reaches no editor before Apply.
     generatedFields: [],
     _draftSnapshot: {},
+    // The send was refused with 409: what would be sent changed after review.
+    groundingChanged: false,
     _generationRequestId: 0,
 
     // A method, not a getter: codeEditor spreads this object into its own, and a
@@ -66,6 +69,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       this.generatedIssues = [];
       this.generatedFields = [];
       this._draftSnapshot = {};
+      this.groundingChanged = false;
 
       if (!prompt) {
         this.generationError = 'Describe what you want first.';
@@ -106,31 +110,64 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           return;
         }
       }
-      this.generating = true;
-      this.generationStatus = 'Generating…';
       const view = target === 'cluster' ? views[pair.indexOf(fieldName)] : views[0];
       const pairSnapshot = Object.fromEntries(pair.map((name) => [name, form?.querySelector(`input[name="${name}"]`)?.value || '']));
       this._generatedForm = form;
       const metaSchema = (form && form.querySelector('input[name="MetaSchema"]')?.value) || '';
       const snapshot = view.state.doc.toString();
+      const body = {
+        target,
+        slot: target === 'metaschema' ? '' : fieldName,
+        mode: this.mode,
+        content: target === 'cluster' ? JSON.stringify(pairSnapshot) : snapshot,
+        metaSchema,
+        prompt,
+        categoryId: store.categoryId || 0,
+        entityId: store.entityId || 0,
+      };
+      const post = (extra) => fetch(generatePath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, ...extra }),
+      });
+      const { generateButton, generateStatus } = this.$refs;
 
       try {
-        const resp = await fetch(generatePath, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            target,
-            slot: target === 'metaschema' ? '' : fieldName,
-            mode: this.mode,
-            content: target === 'cluster' ? JSON.stringify(pairSnapshot) : snapshot,
-            metaSchema,
-            prompt,
-            categoryId: store.categoryId || 0,
-            entityId: store.entityId || 0,
-          }),
+        // A dry run assembles exactly what would be sent and sends nothing; the
+        // reader approves it before the real request goes out with its hash.
+        this.generating = true;
+        this.generationStatus = 'Preparing what will be sent…';
+        const dryResp = await post({ dryRun: true });
+        const disclosure = await dryResp.json().catch(() => null);
+        if (requestId !== this._generationRequestId) return;
+        if (!dryResp.ok || !disclosure?.groundingHash) {
+          this.generationError = (disclosure && (disclosure.error || disclosure.Error)) || `Generation failed (${dryResp.status})`;
+          this.generationStatus = '';
+          return;
+        }
+        // Generate is enabled while the dialog is open, so Cancel can return to it.
+        this.generating = false;
+        this.generationStatus = '';
+        const approved = await reviewDisclosure(disclosure, generateButton);
+        if (requestId !== this._generationRequestId || !approved) return;
+
+        this.generating = true;
+        this.generationStatus = 'Generating…';
+        // Generate is disabled while the request runs, so the status region holds
+        // focus until it settles; the dialog has to be gone first or its trap
+        // pulls focus back.
+        afterDialogTeardown().then(() => {
+          if (requestId === this._generationRequestId && this.generating) generateStatus?.focus();
         });
+        const resp = await post({ groundingHash: disclosure.groundingHash });
         const data = await resp.json().catch(() => null);
         if (requestId !== this._generationRequestId) return;
+        if (resp.status === 409) {
+          // Never reopen the dialog by itself: another modal may be open by now.
+          this.groundingChanged = true;
+          this.generationStatus = 'The data to be sent changed.';
+          return;
+        }
         if (!resp.ok) {
           this.generationError = (data && (data.error || data.Error)) || `Generation failed (${resp.status})`;
           this.generationStatus = '';
@@ -177,7 +214,10 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         this.generationError = err.message || 'Network error';
         this.generationStatus = '';
       } finally {
-        if (requestId === this._generationRequestId) this.generating = false;
+        if (requestId === this._generationRequestId) {
+          this.generating = false;
+          returnFocusToGenerate(this, generateStatus, generateButton);
+        }
       }
     },
 

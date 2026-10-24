@@ -59,7 +59,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 	}
 	generate := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
 		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note"),
-			fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"a header","categoryId":%d,"entityId":%d}`, noteType.ID, entityID))
+			fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"a header","categoryId":%d,"entityId":%d,"dryRun":true}`, noteType.ID, entityID))
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
 		}
@@ -105,11 +105,11 @@ func TestTemplateGenerateDefaultRateLimitHoldsPerIP(t *testing.T) {
 	tc.AppCtx.SetTemplateGenerator(fake)
 	body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header"}
 	for i := 1; i <= 10; i++ {
-		if resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", body); resp.Code != http.StatusOK {
+		if resp := tc.generateTemplate("/v1/category/generateTemplate", body); resp.Code != http.StatusOK {
 			t.Fatalf("request %d: want 200, got %d (%s)", i, resp.Code, resp.Body.String())
 		}
 	}
-	if resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", body); resp.Code != http.StatusTooManyRequests {
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", body); resp.Code != http.StatusTooManyRequests {
 		t.Fatalf("the 11th request in a minute should be 429, got %d (%s)", resp.Code, resp.Body.String())
 	}
 	if fake.calls != 10 {

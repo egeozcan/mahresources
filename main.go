@@ -523,9 +523,10 @@ func main() {
 			nil,
 		)
 		context.SetTemplateGenerator(application_context.NewTemplateGenerator(templateProvider, application_context.TemplateGenerationConfig{
-			APIKey:  context.Config.DeepSeekAPIKey,
-			Model:   context.Config.DeepSeekModel,
-			Timeout: context.Config.DeepSeekTimeout,
+			APIKey:      context.Config.DeepSeekAPIKey,
+			Model:       context.Config.DeepSeekModel,
+			ProviderURL: application_context.DefaultDeepSeekChatCompletionsURL,
+			Timeout:     context.Config.DeepSeekTimeout,
 		}))
 	}
 

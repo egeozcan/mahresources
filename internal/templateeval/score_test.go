@@ -713,7 +713,7 @@ func (malformedProvider) GenerateDraft(context.Context, application_context.Temp
 // malformed and truncation counts.
 func TestBundleDegradeMessageStaysClassified(t *testing.T) {
 	generator := application_context.NewTemplateGenerator(malformedProvider{}, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
-	result, err := generator.GenerateTemplate(context.Background(), application_context.TemplateGenerationInput{
+	result, err := disclosedGenerate(generator, application_context.TemplateGenerationInput{
 		Target: application_context.TemplateTargetBundle, EntityType: "group", BundleSlots: []string{"CustomHeader", "CustomHeaderCSS"},
 	}, "a template")
 	if err != nil {
@@ -758,7 +758,7 @@ func TestTruncationAndOversizeIssuesStayClassified(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			generator := application_context.NewTemplateGenerator(tc.provider, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
-			result, err := generator.GenerateTemplate(context.Background(), in, "a header")
+			result, err := disclosedGenerate(generator, in, "a header")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -784,7 +784,7 @@ func TestTruncationAndOversizeIssuesStayClassified(t *testing.T) {
 func TestWrongTypeExplanationDegradesInProductionAndScoresOnce(t *testing.T) {
 	reply := `{"slots":{"CustomHeader":"hi","CustomHeaderCSS":""},"explanation":123}`
 	generator := application_context.NewTemplateGenerator(fixedProvider(reply), application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
-	result, err := generator.GenerateTemplate(context.Background(), application_context.TemplateGenerationInput{
+	result, err := disclosedGenerate(generator, application_context.TemplateGenerationInput{
 		Target: application_context.TemplateTargetBundle, EntityType: "group", BundleSlots: []string{"CustomHeader", "CustomHeaderCSS"},
 	}, "a header")
 	if err != nil {
@@ -847,4 +847,14 @@ func TestQueryProbesRoundTripThroughTheParser(t *testing.T) {
 			t.Errorf("%s: param did not round-trip: %#v", c.text, parsed[0].Attrs)
 		}
 	}
+}
+
+// disclosedGenerate runs a generation the way the handler does: a dry run for
+// the disclosure, then the request carrying its groundingHash.
+func disclosedGenerate(gen application_context.TemplateGenerator, in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateGenerationResult, error) {
+	disclosure, err := gen.DiscloseTemplate(in, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return gen.GenerateTemplate(context.Background(), in, prompt, disclosure.GroundingHash)
 }

@@ -30,7 +30,7 @@ func TestGenerationLimitersAreSharedByEveryContextCopy(t *testing.T) {
 	scope := uint(1)
 	principals := []*auth.Principal{nil, {UserID: 2, Role: models.RoleEditor}, {UserID: 3, Role: models.RoleUser, ScopeGroupID: &scope}}
 	var mu sync.Mutex
-	template, mrql := map[*MRQLGenerationRateLimiter]bool{}, map[*MRQLGenerationRateLimiter]bool{}
+	template, mrql, disclosure := map[*MRQLGenerationRateLimiter]bool{}, map[*MRQLGenerationRateLimiter]bool{}, map[*MRQLGenerationRateLimiter]bool{}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -40,14 +40,14 @@ func TestGenerationLimitersAreSharedByEveryContextCopy(t *testing.T) {
 			if i%2 == 1 {
 				c = ctx.WithPrincipal(principals[i%len(principals)])
 			}
-			tl, ml := c.TemplateGenerationRateLimiter(), c.MRQLGenerationRateLimiter()
+			tl, ml, dl := c.TemplateGenerationRateLimiter(), c.MRQLGenerationRateLimiter(), c.TemplateDisclosureRateLimiter()
 			mu.Lock()
-			template[tl], mrql[ml] = true, true
+			template[tl], mrql[ml], disclosure[dl] = true, true, true
 			mu.Unlock()
 		}(i)
 	}
 	wg.Wait()
-	if len(template) != 1 || len(mrql) != 1 || template[nil] || mrql[nil] {
-		t.Fatalf("want one shared limiter of each kind, got %d template and %d MRQL limiters", len(template), len(mrql))
+	if len(template) != 1 || len(mrql) != 1 || len(disclosure) != 1 || template[nil] || mrql[nil] || disclosure[nil] {
+		t.Fatalf("want one shared limiter of each kind, got %d template, %d MRQL and %d dry-run limiters", len(template), len(mrql), len(disclosure))
 	}
 }

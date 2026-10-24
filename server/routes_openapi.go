@@ -2649,12 +2649,29 @@ Request body fields:
   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
   - prompt     (string, required) — the natural-language request
   - categoryId (integer) — the carrier being edited (for schema + sample entity)
-  - entityId   (integer) — a sample entity to ground on (else the first category member)
+  - entityId   (integer) — a sample entity to ground on (else the newest category member)
+  - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
+  - groundingHash (string) — required unless dryRun: the groundingHash of the
+    disclosure the user approved
 
-Response: {"target", "content" | "slots", "explanation", "valid", "issues"}.
+Generation takes two requests. A dry run returns the disclosure: {"sections":
+[{"call", "role", "key", "label", "bytes", "text", "constant"}], "destination":
+{"host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
+"continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
+provider call's system and user messages, split into labelled parts; the
+provider request is built only from them. "groundingHash" is the sha256 of the
+destination, the continuation rule and every section. The real request repeats
+the same fields with "groundingHash"; the server rebuilds the disclosure and
+answers 409 "the data to be sent changed; review it again" when the hash no
+longer matches (for example a new member entity became the sample), and 400
+when it is missing. Neither calls the provider.
+
+Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues"}.
 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
-"valid" is false with "issues" when the draft fails lint / JSON-Schema validation;
-the draft is still returned for review (HTTP 200). Rate-limited per client IP.
+"valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
+was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
+returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
+Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
 Gated at the same capability as saving the template (admin for
 category/resourceCategory, editor for noteType).`
 

@@ -89,6 +89,12 @@ type templateGenerateRequest struct {
 	Prompt     string `json:"prompt" schema:"prompt"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"`
 	EntityID   uint   `json:"entityId" schema:"entityId"`
+	// DryRun returns the disclosure (what would be sent, and its
+	// groundingHash) and calls no provider.
+	DryRun bool `json:"dryRun" schema:"dryRun"`
+	// GroundingHash is the hash of the disclosure the user approved; a real
+	// request without it is refused.
+	GroundingHash string `json:"groundingHash" schema:"groundingHash"`
 }
 
 // GetGenerateTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/generateTemplate.
@@ -132,8 +138,19 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			http_utils.HandleError(errors.New("template generation is not configured"), writer, request, http.StatusServiceUnavailable)
 			return
 		}
+		if !req.DryRun && strings.TrimSpace(req.GroundingHash) == "" {
+			http_utils.HandleError(application_context.ErrTemplateGenerationGroundingRequired, writer, request, http.StatusBadRequest)
+			return
+		}
+		// A dry run calls no provider, so it has its own limiter and reviewing
+		// does not use up generation slots.
 		key := application_context.ClientIP(request)
-		if !ctx.TemplateGenerationRateLimiter().Allow(key, time.Now()) {
+		if req.DryRun {
+			if !ctx.TemplateDisclosureRateLimiter().Allow(key, time.Now()) {
+				http_utils.HandleError(errors.New("template generation review rate limit exceeded"), writer, request, http.StatusTooManyRequests)
+				return
+			}
+		} else if !ctx.TemplateGenerationRateLimiter().Allow(key, time.Now()) {
 			http_utils.HandleError(errors.New("template generation rate limit exceeded"), writer, request, http.StatusTooManyRequests)
 			return
 		}
@@ -200,13 +217,21 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			input.BundleSlots = templateGenerateBundleSlots(entityType)
 		}
 
-		result, err := generator.GenerateTemplate(request.Context(), input, req.Prompt)
+		var result any
+		var err error
+		if req.DryRun {
+			result, err = generator.DiscloseTemplate(input, req.Prompt)
+		} else {
+			result, err = generator.GenerateTemplate(request.Context(), input, req.Prompt, strings.TrimSpace(req.GroundingHash))
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, application_context.ErrTemplateGenerationNotConfigured):
 				http_utils.HandleError(errors.New("template generation is not configured"), writer, request, http.StatusServiceUnavailable)
-			case errors.Is(err, application_context.ErrTemplateGenerationBadRequest):
+			case errors.Is(err, application_context.ErrTemplateGenerationBadRequest), errors.Is(err, application_context.ErrTemplateGenerationGroundingRequired):
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			case errors.Is(err, application_context.ErrTemplateGenerationGroundingChanged):
+				http_utils.HandleError(err, writer, request, http.StatusConflict)
 			case errors.Is(err, application_context.ErrTemplateGenerationTimeout):
 				http_utils.HandleError(errors.New("template generation timed out"), writer, request, http.StatusGatewayTimeout)
 			default:
@@ -256,21 +281,26 @@ func loadSampleMeta(ctx TemplateGenerationContext, entityType string, categoryID
 	return string(metaCtx.Meta)
 }
 
+// templateSampleOrder orders sample candidates canonically: newest first, the
+// id breaking ties, so two members with one created_at cannot swap between a
+// dry run and the request that follows it and change the grounding hash.
+var templateSampleOrder = []string{"created_at desc", "id desc"}
+
 // firstCategoryMember loads the first member entity of a category, fully
 // preloaded via the preview loader.
 func firstCategoryMember(ctx TemplateGenerationContext, entityType string, categoryID uint) any {
 	var id uint
 	switch entityType {
 	case "group":
-		if list, err := ctx.GetGroups(0, 1, &query_models.GroupQuery{CategoryId: categoryID}); err == nil && len(list) > 0 {
+		if list, err := ctx.GetGroups(0, 1, &query_models.GroupQuery{CategoryId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
 			id = list[0].ID
 		}
 	case "resource":
-		if list, err := ctx.GetResources(0, 1, &query_models.ResourceSearchQuery{ResourceCategoryId: categoryID}); err == nil && len(list) > 0 {
+		if list, err := ctx.GetResources(0, 1, &query_models.ResourceSearchQuery{ResourceCategoryId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
 			id = list[0].ID
 		}
 	case "note":
-		if list, err := ctx.GetNotes(0, 1, &query_models.NoteQuery{NoteTypeId: categoryID}); err == nil && len(list) > 0 {
+		if list, err := ctx.GetNotes(0, 1, &query_models.NoteQuery{NoteTypeId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
 			id = list[0].ID
 		}
 	}

@@ -13,6 +13,7 @@
 // Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
 import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
+import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
 // lightbox and cell are resource-only; ownEntities is group-only) are listed
@@ -119,6 +120,9 @@ export function templateBundle({ carrier } = {}) {
     // explanation, valid, snapshot }. Nothing reaches an editor until
     // applyPendingDraft; snapshot is every editor as the request sent it.
     pendingDraft: null,
+    // The send was refused with 409: what would be sent changed after review.
+    groundingChanged: false,
+    _generationRequestId: 0,
     draftSegments,
     draftWarnings,
 
@@ -437,24 +441,56 @@ export function templateBundle({ carrier } = {}) {
       }
       const store = (window.Alpine && window.Alpine.store('templatePreview')) || {};
       const generatePath = `/v1/${this.carrier}/generateTemplate`;
+      const requestId = ++this._generationRequestId;
       this.generating = true;
       this.pendingDraft = null;
-      this.notify('Generating the whole template…', 'info');
+      this.groundingChanged = false;
+      this.notify('Preparing what will be sent…', 'info');
       const snapshot = Object.fromEntries(Object.values(SLOT_FIELDS).map((field) => [field, this.getEditor(field)]));
+      const body = {
+        target: 'bundle',
+        content: JSON.stringify(snapshot),
+        prompt,
+        metaSchema: this.getEditor('MetaSchema'),
+        categoryId: store.categoryId || 0,
+        entityId: store.entityId || 0,
+      };
+      const post = (extra) => fetch(generatePath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, ...extra }),
+      });
+      const { bundleGenerate, bundleStatus } = this.$refs;
       try {
-        const resp = await fetch(generatePath, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            target: 'bundle',
-            content: JSON.stringify(snapshot),
-            prompt,
-            metaSchema: this.getEditor('MetaSchema'),
-            categoryId: store.categoryId || 0,
-            entityId: store.entityId || 0,
-          }),
+        // A dry run assembles exactly what would be sent and sends nothing; the
+        // reader approves it before the real request goes out with its hash.
+        const dryResp = await post({ dryRun: true });
+        const disclosure = await dryResp.json().catch(() => null);
+        if (requestId !== this._generationRequestId) return;
+        if (!dryResp.ok || !disclosure?.groundingHash) {
+          this.notify((disclosure && (disclosure.error || disclosure.Error)) || `Generation failed (${dryResp.status})`, 'warn');
+          return;
+        }
+        // Generate is enabled while the dialog is open, so Cancel can return to it.
+        this.generating = false;
+        this.notify('', 'info');
+        const approved = await reviewDisclosure(disclosure, bundleGenerate);
+        if (requestId !== this._generationRequestId || !approved) return;
+
+        this.generating = true;
+        this.notify('Generating the whole template…', 'info');
+        afterDialogTeardown().then(() => {
+          if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
+        const resp = await post({ groundingHash: disclosure.groundingHash });
         const data = await resp.json().catch(() => null);
+        if (requestId !== this._generationRequestId) return;
+        if (resp.status === 409) {
+          // Never reopen the dialog by itself: another modal may be open by now.
+          this.groundingChanged = true;
+          this.notify('The data to be sent changed.', 'warn');
+          return;
+        }
         if (!resp.ok) {
           this.notify((data && (data.error || data.Error)) || `Generation failed (${resp.status})`, 'warn');
           return;
@@ -495,9 +531,13 @@ export function templateBundle({ carrier } = {}) {
           this.notify(`Generated ${returned.length} slot(s), but the draft has issues. Review it below before applying.`, 'warn');
         }
       } catch (err) {
+        if (requestId !== this._generationRequestId) return;
         this.notify(err.message || 'Network error', 'warn');
       } finally {
-        this.generating = false;
+        if (requestId === this._generationRequestId) {
+          this.generating = false;
+          returnFocusToGenerate(this, bundleStatus, bundleGenerate);
+        }
       }
     },
 

@@ -814,9 +814,11 @@ Inside a `[` bracket the editor suggests shortcode names, then attribute names, 
 When a DeepSeek key is configured (`DEEPSEEK_API_KEY`, the same setting that powers [natural-language MRQL](./mrql.md#natural-language-generation)), each template editor gains a **Generate** button. Describe the section you want and the server drafts it, then writes the result into the editor. The draft is grounded on:
 
 - the Meta JSON Schema you are editing (so `[meta path="..."]` uses real field names),
-- a sample entity's metadata (the one selected in the Live preview pane, or the first member of the category), so the model sees concrete values,
+- a sample entity's metadata (the one selected in the Live preview pane, or the newest member of the category), so the model sees concrete values,
 - the current content of the slot (so a follow-up request refines rather than replaces), and
 - the built-in and enabled-plugin shortcode documentation.
+
+Before anything is sent, Generate shows a **Review what will be sent** dialog listing every message the request would send to the provider, split into labelled parts: the request, the schema, the sample values and the current content are expanded, and the long constant reference text (the system prompt and the shortcode reference) is collapsed with its size. The dialog also names the provider host, the model and how many calls the request can make. Nothing is sent until you press **Send**; Cancel or Escape sends nothing. The server refuses a request whose data changed after you reviewed it (for example, a newer member entity became the sample) and the status then offers **Review again**.
 
 A generated slot is linted before it is returned. Every draft, clean or not, is held for review below the prompt: its text is shown as plain text, never rendered, with constructs that run code once applied (`<script>`, event handlers, Alpine attributes, `javascript:` URLs, `</style` in CSS) highlighted as a reading aid, and any issues listed. Nothing reaches the editor or the live preview until you press **Apply**. If you edited a field the draft would replace while it was being generated, Apply names that field and asks before replacing it. The **Meta JSON Schema** editor has its own Generate button that drafts a JSON Schema from a description and validates that it compiles.
 

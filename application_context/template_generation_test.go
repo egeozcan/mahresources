@@ -63,7 +63,7 @@ func TestTemplateGeneratorSlotSuccess(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), slotInput(), "show the name in a div")
+	got, err := disclosedGenerate(gen, slotInput(), "show the name in a div")
 	if err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestTemplateGeneratorResourcePromptDocumentsRuntimeAndLightbox(t *testing.T
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	if _, err := gen.GenerateTemplate(context.Background(), in, "make a resource card with a thumbnail"); err != nil {
+	if _, err := disclosedGenerate(gen, in, "make a resource card with a thumbnail"); err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
 	for _, want := range []string{
@@ -165,7 +165,7 @@ func TestTemplateGeneratorPromptPinsCorrectSlotSurfaces(t *testing.T) {
 				response: `{"content":"x","explanation":"y"}`,
 			}
 			gen := NewTemplateGenerator(provider, templateGenConfig())
-			if _, err := gen.GenerateTemplate(context.Background(), in, "do the thing"); err != nil {
+			if _, err := disclosedGenerate(gen, in, "do the thing"); err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
 			if !strings.Contains(provider.seenUser, want) {
@@ -186,7 +186,7 @@ func TestTemplateGeneratorBundlePromptDoesNotDependOnAppStyles(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	if _, err := gen.GenerateTemplate(context.Background(), in, "make a media layout"); err != nil {
+	if _, err := disclosedGenerate(gen, in, "make a media layout"); err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
 	for _, want := range []string{
@@ -260,7 +260,7 @@ func TestTemplateGeneratorLightboxExampleMatchesFrontendContract(t *testing.T) {
 
 func TestTemplateGeneratorMissingKey(t *testing.T) {
 	gen := NewTemplateGenerator(&fakeTemplateDraftProvider{}, TemplateGenerationConfig{Model: "m", Timeout: time.Second})
-	_, err := gen.GenerateTemplate(context.Background(), slotInput(), "anything")
+	_, err := disclosedGenerate(gen, slotInput(), "anything")
 	if !errors.Is(err, ErrTemplateGenerationNotConfigured) {
 		t.Fatalf("expected ErrTemplateGenerationNotConfigured, got %v", err)
 	}
@@ -268,7 +268,7 @@ func TestTemplateGeneratorMissingKey(t *testing.T) {
 
 func TestTemplateGeneratorPromptLength(t *testing.T) {
 	gen := NewTemplateGenerator(&fakeTemplateDraftProvider{}, templateGenConfig())
-	_, err := gen.GenerateTemplate(context.Background(), slotInput(), strings.Repeat("x", MaxTemplateGenerationPromptLength+1))
+	_, err := disclosedGenerate(gen, slotInput(), strings.Repeat("x", MaxTemplateGenerationPromptLength+1))
 	if !errors.Is(err, ErrTemplateGenerationBadRequest) {
 		t.Fatalf("expected bad request for long prompt, got %v", err)
 	}
@@ -281,7 +281,7 @@ func TestTemplateGeneratorSlotInvalidLint(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), slotInput(), "show a meta value")
+	got, err := disclosedGenerate(gen, slotInput(), "show a meta value")
 	if err != nil {
 		t.Fatalf("GenerateTemplate should return an invalid result, not a transport error: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestTemplateGeneratorMetaSchemaValid(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "add a rating number field")
+	got, err := disclosedGenerate(gen, in, "add a rating number field")
 	if err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestTemplateGeneratorMetaSchemaInvalidJSON(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "add fields")
+	got, err := disclosedGenerate(gen, in, "add fields")
 	if err != nil {
 		t.Fatalf("GenerateTemplate should return invalid result, not error: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestTemplateGeneratorBundle(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "a clean card layout")
+	got, err := disclosedGenerate(gen, in, "a clean card layout")
 	if err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestTemplateGeneratorBundleMalformedDegrades(t *testing.T) {
 	provider := &fakeTemplateDraftProvider{response: `{"slots":{"CustomHeader":"<h1>trunc`} // truncated JSON
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "a template")
+	got, err := disclosedGenerate(gen, in, "a template")
 	if err != nil {
 		t.Fatalf("bundle overflow should degrade, not error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestTemplateGeneratorBundleMalformedDegrades(t *testing.T) {
 
 func TestTemplateGeneratorProviderError(t *testing.T) {
 	gen := NewTemplateGenerator(&fakeTemplateDraftProvider{err: errors.New("boom")}, templateGenConfig())
-	_, err := gen.GenerateTemplate(context.Background(), slotInput(), "anything")
+	_, err := disclosedGenerate(gen, slotInput(), "anything")
 	if !errors.Is(err, ErrTemplateGenerationProvider) {
 		t.Fatalf("expected provider error, got %v", err)
 	}
@@ -386,7 +386,7 @@ func TestTemplateGeneratorProviderError(t *testing.T) {
 
 func TestTemplateGeneratorTimeout(t *testing.T) {
 	gen := NewTemplateGenerator(&fakeTemplateDraftProvider{err: context.DeadlineExceeded}, templateGenConfig())
-	_, err := gen.GenerateTemplate(context.Background(), slotInput(), "anything")
+	_, err := disclosedGenerate(gen, slotInput(), "anything")
 	if !errors.Is(err, ErrTemplateGenerationTimeout) {
 		t.Fatalf("expected timeout error, got %v", err)
 	}
@@ -447,7 +447,7 @@ func TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet(t *testing.T) {
 			}
 			gen := NewTemplateGenerator(provider, templateGenConfig())
 
-			got, err := gen.GenerateTemplate(context.Background(), in, "colour the badge from meta")
+			got, err := disclosedGenerate(gen, in, "colour the badge from meta")
 			if err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
@@ -470,7 +470,7 @@ func TestTemplateGeneratorHTMLSlotIsNotLintedAsCSS(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), slotInput(), "show the colour")
+	got, err := disclosedGenerate(gen, slotInput(), "show the colour")
 	if err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestTemplateGeneratorNamedSlotOutranksTheMode(t *testing.T) {
 	}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "show the colour")
+	got, err := disclosedGenerate(gen, in, "show the colour")
 	if err != nil {
 		t.Fatalf("GenerateTemplate: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
 			}
 			gen := NewTemplateGenerator(provider, templateGenConfig())
 
-			if _, err := gen.GenerateTemplate(context.Background(), in, "do the thing"); err != nil {
+			if _, err := disclosedGenerate(gen, in, "do the thing"); err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
 			if !strings.Contains(provider.seenUser, tc.wantRule) {
@@ -590,7 +590,7 @@ func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
 			in.BundleSlots = []string{"CustomHeader", "CustomCSS"}
 
 			gen := NewTemplateGenerator(&fakeTemplateDraftProvider{response: draft}, templateGenConfig())
-			got, err := gen.GenerateTemplate(context.Background(), in, "style the badge")
+			got, err := disclosedGenerate(gen, in, "style the badge")
 			if err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
@@ -615,7 +615,7 @@ func TestTemplateGeneratorCompanionPair(t *testing.T) {
 	in.Target = TemplateTargetBundle
 	in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS"}
 	in.CurrentContent = `{"CustomMRQLResult":"old card","CustomMRQLResultCSS":".recipe{color:blue}"}`
-	got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it red")
+	got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it red")
 	if err != nil || !got.Valid || got.Slots["CustomMRQLResultCSS"] != ".recipe{color:red}" {
 		t.Fatalf("result: %#v, %v", got, err)
 	}
@@ -636,7 +636,7 @@ func TestTemplateGeneratorPreservesExplicitEmptyCompanion(t *testing.T) {
 			in := slotInput()
 			in.Target = TemplateTargetBundle
 			in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS", "CustomSummary"}
-			got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "remove the CSS")
+			got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "remove the CSS")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -661,7 +661,7 @@ func TestTemplateGeneratorRejectsIncompletePairs(t *testing.T) {
 		in.Target = TemplateTargetBundle
 		in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomMRQLResult", "CustomMRQLResultCSS"}
 		provider := &fakeTemplateDraftProvider{response: `{"slots":` + slots + `,"explanation":"Draft."}`}
-		got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "style the template")
+		got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "style the template")
 		if !errors.Is(err, ErrTemplateGenerationProvider) || got != nil {
 			t.Fatalf("must reject entire incomplete draft: %#v, %v", got, err)
 		}
@@ -672,7 +672,7 @@ func TestTemplateGeneratorRequestCarriesModelAndBudget(t *testing.T) {
 	provider := &fakeTemplateDraftProvider{response: `{"content":"<p>x</p>","explanation":"y"}`}
 	cfg := templateGenConfig()
 	cfg.Model = "deepseek-v4-flash"
-	if _, err := NewTemplateGenerator(provider, cfg).GenerateTemplate(context.Background(), slotInput(), "x"); err != nil {
+	if _, err := disclosedGenerate(NewTemplateGenerator(provider, cfg), slotInput(), "x"); err != nil {
 		t.Fatal(err)
 	}
 	if provider.seen.Model != "deepseek-v4-flash" || provider.seen.Thinking || provider.seen.MaxTokens != DefaultTemplateGenerationMaxTokens {
@@ -692,11 +692,11 @@ func TestTemplateGeneratorLogsOneLinePerCall(t *testing.T) {
 	in.Target = TemplateTargetBundle
 	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 	provider.response = `{"slots":{"CustomHeader":"<p>x</p>","CustomHeaderCSS":""},"explanation":"y"}`
-	if _, err := NewTemplateGenerator(provider, cfg).GenerateTemplate(context.Background(), in, "x"); err != nil {
+	if _, err := disclosedGenerate(NewTemplateGenerator(provider, cfg), in, "x"); err != nil {
 		t.Fatal(err)
 	}
 	failing := NewTemplateGenerator(&fakeTemplateDraftProvider{err: errors.New("boom")}, cfg)
-	if _, err := failing.GenerateTemplate(context.Background(), slotInput(), "x"); err == nil {
+	if _, err := disclosedGenerate(failing, slotInput(), "x"); err == nil {
 		t.Fatal("expected a provider error")
 	}
 	if len(lines) != 2 {
@@ -772,7 +772,7 @@ func TestTemplateGeneratorTruncationDegradesForEveryTarget(t *testing.T) {
 		for kind, reply := range replies {
 			t.Run(name+"/"+kind, func(t *testing.T) {
 				provider := &fakeTemplateDraftProvider{response: reply, finish: "length"}
-				got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), target.in(), "make it")
+				got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), target.in(), "make it")
 				if err != nil {
 					t.Fatalf("a truncated reply must degrade, not error: %v", err)
 				}
@@ -799,7 +799,7 @@ func TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError(t *testing.T) {
 		response: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":".x{}","CustomSidebar":"<p>y</p>"},"explanation":"Cut."}`,
 		finish:   "length",
 	}
-	got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it")
+	got, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it")
 	if err != nil {
 		t.Fatalf("must not be the pair-mismatch provider error: %v", err)
 	}
@@ -812,7 +812,7 @@ func TestTemplateGeneratorTruncatedHalfPairIsDroppedNotAnError(t *testing.T) {
 
 	// The same half pair from a model that stopped on its own is still an error.
 	provider.finish = "stop"
-	if _, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it"); !errors.Is(err, ErrTemplateGenerationProvider) {
+	if _, err := disclosedGenerate(NewTemplateGenerator(provider, templateGenConfig()), in, "make it"); !errors.Is(err, ErrTemplateGenerationProvider) {
 		t.Fatalf("an untruncated half pair must stay a provider error, got %v", err)
 	}
 }
@@ -835,7 +835,7 @@ func TestTemplateGeneratorOversizeIsInvalidAndUnsliced(t *testing.T) {
 		in := slotInput()
 		in.Slot, in.Mode = "CustomCSS", "css"
 		reply, _ := json.Marshal(map[string]string{"content": big, "explanation": "Big."})
-		got, err := NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()).GenerateTemplate(context.Background(), in, "x")
+		got, err := disclosedGenerate(NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()), in, "x")
 		if err != nil {
 			t.Fatalf("an oversize draft must not be an error: %v", err)
 		}
@@ -848,7 +848,7 @@ func TestTemplateGeneratorOversizeIsInvalidAndUnsliced(t *testing.T) {
 		in.Target = TemplateTargetBundle
 		in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 		reply, _ := json.Marshal(map[string]any{"slots": map[string]string{"CustomHeader": "<p>x</p>", "CustomHeaderCSS": big}, "explanation": "Big."})
-		got, err := NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()).GenerateTemplate(context.Background(), in, "x")
+		got, err := disclosedGenerate(NewTemplateGenerator(&fakeTemplateDraftProvider{response: string(reply)}, templateGenConfig()), in, "x")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -859,4 +859,14 @@ func TestTemplateGeneratorOversizeIsInvalidAndUnsliced(t *testing.T) {
 			t.Fatalf("a clean slot gained issues: %#v", got.SlotIssues)
 		}
 	})
+}
+
+// disclosedGenerate runs a generation the way the handler does: a dry run for
+// the disclosure, then the request carrying its groundingHash.
+func disclosedGenerate(gen TemplateGenerator, in TemplateGenerationInput, prompt string) (*TemplateGenerationResult, error) {
+	disclosure, err := gen.DiscloseTemplate(in, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return gen.GenerateTemplate(context.Background(), in, prompt, disclosure.GroundingHash)
 }

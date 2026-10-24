@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -21,13 +22,48 @@ type fakeAPITemplateGenerator struct {
 	seen   application_context.TemplateGenerationInput
 }
 
-func (f *fakeAPITemplateGenerator) GenerateTemplate(ctx context.Context, in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateGenerationResult, error) {
+func (f *fakeAPITemplateGenerator) DiscloseTemplate(in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateDisclosure, error) {
+	f.seen = in
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &application_context.TemplateDisclosure{GroundingHash: fakeGroundingHash}, nil
+}
+
+func (f *fakeAPITemplateGenerator) GenerateTemplate(ctx context.Context, in application_context.TemplateGenerationInput, prompt, groundingHash string) (*application_context.TemplateGenerationResult, error) {
 	f.calls++
 	f.seen = in
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.result, nil
+}
+
+// fakeGroundingHash is the hash fakeAPITemplateGenerator discloses; requests
+// that bypass the dry run send it so the handler's hash check passes.
+const fakeGroundingHash = "fake-hash"
+
+// generateTemplate posts a generation the way the editor does: a dry run for
+// the disclosure, then the request carrying its groundingHash. A dry run that
+// fails is returned as it is.
+func (tc *TestContext) generateTemplate(path string, body map[string]any) *httptest.ResponseRecorder {
+	dry := map[string]any{"dryRun": true}
+	for k, v := range body {
+		dry[k] = v
+	}
+	resp := tc.MakeRequest(http.MethodPost, path, dry)
+	if resp.Code != http.StatusOK {
+		return resp
+	}
+	var disclosure struct {
+		GroundingHash string `json:"groundingHash"`
+	}
+	_ = json.Unmarshal(resp.Body.Bytes(), &disclosure)
+	send := map[string]any{"groundingHash": disclosure.GroundingHash}
+	for k, v := range body {
+		send[k] = v
+	}
+	return tc.MakeRequest(http.MethodPost, path, send)
 }
 
 func slotResult() *application_context.TemplateGenerationResult {
@@ -41,8 +77,7 @@ func slotResult() *application_context.TemplateGenerationResult {
 
 func TestTemplateGenerateMissingConfig(t *testing.T) {
 	tc := SetupTestEnv(t)
-	resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate",
-		map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "a header"})
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "a header"})
 	if resp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d (%s)", resp.Code, resp.Body.String())
 	}
@@ -52,8 +87,7 @@ func TestTemplateGenerateSlotSuccess(t *testing.T) {
 	tc := SetupTestEnv(t)
 	tc.AppCtx.SetTemplateGenerator(&fakeAPITemplateGenerator{result: slotResult()})
 
-	resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate",
-		map[string]any{"target": "slot", "slot": "CustomHeader", "mode": "html", "prompt": "a header with the name"})
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "slot", "slot": "CustomHeader", "mode": "html", "prompt": "a header with the name"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", resp.Code, resp.Body.String())
 	}
@@ -70,8 +104,7 @@ func TestTemplateGenerateUnknownSlot(t *testing.T) {
 	tc := SetupTestEnv(t)
 	tc.AppCtx.SetTemplateGenerator(&fakeAPITemplateGenerator{result: slotResult()})
 
-	resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate",
-		map[string]any{"target": "slot", "slot": "NotARealSlot", "prompt": "x"})
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "slot", "slot": "NotARealSlot", "prompt": "x"})
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 for unknown slot, got %d (%s)", resp.Code, resp.Body.String())
 	}
@@ -87,8 +120,7 @@ func TestTemplateGenerateBundleShape(t *testing.T) {
 	}}
 	tc.AppCtx.SetTemplateGenerator(fake)
 
-	resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate",
-		map[string]any{"target": "bundle", "prompt": "a card layout"})
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "bundle", "prompt": "a card layout"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", resp.Code, resp.Body.String())
 	}
@@ -112,11 +144,11 @@ func TestTemplateGenerateRateLimit(t *testing.T) {
 	tc.AppCtx.SetTemplateGenerationRateLimiter(application_context.NewMRQLGenerationRateLimiter(1, time.Minute))
 
 	body := map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "a header"}
-	first := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", body)
+	first := tc.generateTemplate("/v1/category/generateTemplate", body)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first request should pass, got %d (%s)", first.Code, first.Body.String())
 	}
-	second := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", body)
+	second := tc.generateTemplate("/v1/category/generateTemplate", body)
 	if second.Code != http.StatusTooManyRequests {
 		t.Fatalf("second request should be 429, got %d (%s)", second.Code, second.Body.String())
 	}
@@ -130,7 +162,7 @@ func TestTemplateGenerateCategoryRequiresAdmin(t *testing.T) {
 	tc := setupAuthEnv(t)
 	tc.AppCtx.SetTemplateGenerator(&fakeAPITemplateGenerator{result: slotResult()})
 
-	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header"}`
+	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header","groundingHash":"fake-hash"}`
 	for _, role := range []models.Role{models.RoleGuest, models.RoleEditor} {
 		bearer := roleBearer(t, tc, role)
 		resp := doReq(tc, http.MethodPost, "/v1/category/generateTemplate",
@@ -154,7 +186,7 @@ func TestTemplateGenerateNoteTypeAllowsEditor(t *testing.T) {
 	tc := setupAuthEnv(t)
 	tc.AppCtx.SetTemplateGenerator(&fakeAPITemplateGenerator{result: slotResult()})
 
-	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header"}`
+	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header","groundingHash":"fake-hash"}`
 
 	guest := doReq(tc, http.MethodPost, "/v1/noteType/generateTemplate",
 		map[string]string{"Content-Type": "application/json", "Authorization": roleBearer(t, tc, models.RoleGuest)}, nil,
@@ -175,7 +207,7 @@ func TestTemplateGenerateRequiresCSRFForCookieSession(t *testing.T) {
 	tc := setupAuthEnv(t)
 	tc.AppCtx.SetTemplateGenerator(&fakeAPITemplateGenerator{result: slotResult()})
 	cookie, token := loginCookieAndCSRF(t, tc)
-	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header"}`
+	body := `{"target":"slot","slot":"CustomHeader","prompt":"a header","groundingHash":"fake-hash"}`
 
 	noToken := doReq(tc, http.MethodPost, "/v1/category/generateTemplate",
 		map[string]string{"Content-Type": "application/json"}, []*http.Cookie{cookie},
@@ -208,8 +240,7 @@ func TestTemplateGenerateGroundsOnSchemaAndSampleEntity(t *testing.T) {
 		t.Fatalf("create group: %v", err)
 	}
 
-	resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate",
-		map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "show calories", "categoryId": cat.ID})
+	resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "slot", "slot": "CustomHeader", "prompt": "show calories", "categoryId": cat.ID})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", resp.Code, resp.Body.String())
 	}
@@ -243,7 +274,7 @@ func TestTemplateGenerateCluster(t *testing.T) {
 			fake := &fakeAPITemplateGenerator{result: slotResult()}
 			tc.AppCtx.SetTemplateGenerator(fake)
 			content := `{"CustomMRQLResult":"old","CustomMRQLResultCSS":".old{}"}`
-			resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": slot, "content": content, "prompt": "restyle the card"})
+			resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": slot, "content": content, "prompt": "restyle the card"})
 			if resp.Code != http.StatusOK {
 				t.Fatalf("%d: %s", resp.Code, resp.Body.String())
 			}
@@ -265,7 +296,7 @@ func TestTemplateGenerateSlotAlwaysRequestsPair(t *testing.T) {
 				}
 				fake := &fakeAPITemplateGenerator{result: slotResult()}
 				tc.AppCtx.SetTemplateGenerator(fake)
-				resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": target, "slot": slot, "prompt": "restyle", "categoryId": category.ID, "content": "unsaved"})
+				resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": target, "slot": slot, "prompt": "restyle", "categoryId": category.ID, "content": "unsaved"})
 				if resp.Code != http.StatusOK {
 					t.Fatalf("%d: %s", resp.Code, resp.Body.String())
 				}
@@ -304,7 +335,7 @@ func TestTemplateGenerateEnforcesPairsEndToEnd(t *testing.T) {
 					draft = `{"slots":{"CustomHeader":"<p>Card</p>"},"explanation":"Missing partner."}`
 				}
 				tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(apiPairDraftProvider(draft), application_context.TemplateGenerationConfig{APIKey: "test", Timeout: time.Second}))
-				resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": target, "slot": "CustomHeader", "prompt": "make a card"})
+				resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": target, "slot": "CustomHeader", "prompt": "make a card"})
 				if !complete {
 					if resp.Code != http.StatusBadGateway {
 						t.Fatalf("incomplete pair accepted: %d %s", resp.Code, resp.Body.String())

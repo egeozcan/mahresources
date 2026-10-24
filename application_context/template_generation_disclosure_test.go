@@ -1,0 +1,213 @@
+package application_context
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// templateInputDisclosure classifies every TemplateGenerationInput field: the
+// key of the disclosed section that carries its value, or "" with the reason
+// it never reaches a prompt. A new field fails
+// TestTemplateGenerationInputFieldsAreClassified until it is listed here, so
+// nothing reaches the provider without appearing in the disclosure.
+var templateInputDisclosure = map[string]struct{ section, reason string }{
+	"Target":         {reason: "chooses which builder runs; its value is not sent"},
+	"Mode":           {reason: "chooses the mode rule line; its value is not sent"},
+	"Slot":           {section: "task"},
+	"EntityType":     {section: "carrier"},
+	"CurrentContent": {section: "current"},
+	"MetaSchema":     {section: "schema"},
+	"SampleMeta":     {section: "samples"},
+	"DocsBlock":      {section: "shortcodes"},
+	"PluginContext":  {section: "plugins"},
+	"PartialNames":   {section: "partials"},
+	"BundleSlots":    {section: "task"},
+	"Known":          {reason: "validates the reply only"},
+	"ValidateMRQL":   {reason: "validates the reply only"},
+}
+
+func sectionText(sections []PromptSection, key string) string {
+	var b strings.Builder
+	for _, s := range sections {
+		if s.Key == key {
+			b.WriteString(s.Text)
+		}
+	}
+	return b.String()
+}
+
+func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
+	fields := reflect.TypeOf(TemplateGenerationInput{})
+	for i := 0; i < fields.NumField(); i++ {
+		name := fields.Field(i).Name
+		if _, ok := templateInputDisclosure[name]; !ok {
+			t.Errorf("TemplateGenerationInput.%s is not classified as disclosed or non-prompt; add it to templateInputDisclosure", name)
+		}
+	}
+
+	bundle := TemplateGenerationInput{
+		Target: TemplateTargetBundle, EntityType: "resource",
+		CurrentContent: "SENTINEL-current", MetaSchema: `{"SENTINEL-schema":1}`, SampleMeta: `{"SENTINEL-sample":1}`,
+		DocsBlock: "SENTINEL-docs", PluginContext: "SENTINEL-plugins", PartialNames: []string{"SENTINEL-partial"},
+		BundleSlots: []string{"CustomPreview", "CustomPreviewCSS"},
+	}
+	css := bundle
+	css.Target, css.Slot, css.Mode, css.BundleSlots = TemplateTargetSlot, "CustomCSS", "css", nil
+	values := map[string]struct {
+		in    TemplateGenerationInput
+		value string
+	}{
+		"Slot":           {css, "CustomCSS"},
+		"EntityType":     {bundle, "resource"},
+		"CurrentContent": {bundle, "SENTINEL-current"},
+		"MetaSchema":     {bundle, "SENTINEL-schema"},
+		"SampleMeta":     {bundle, "SENTINEL-sample"},
+		"DocsBlock":      {bundle, "SENTINEL-docs"},
+		"PluginContext":  {bundle, "SENTINEL-plugins"},
+		"PartialNames":   {bundle, "SENTINEL-partial"},
+		"BundleSlots":    {bundle, "CustomPreview, CustomPreviewCSS"},
+	}
+	for name, c := range templateInputDisclosure {
+		if c.section == "" {
+			if c.reason == "" {
+				t.Errorf("%s is non-prompt with no reason", name)
+			}
+			continue
+		}
+		v, ok := values[name]
+		if !ok {
+			t.Errorf("%s is disclosed but has no value check here", name)
+			continue
+		}
+		sections, _ := buildTemplatePromptSections(v.in, "a request")
+		if !strings.Contains(sectionText(sections, c.section), v.value) {
+			t.Errorf("%s's value %q is not in the %q section", name, v.value, c.section)
+		}
+	}
+}
+
+func disclosureKinds() map[string]TemplateGenerationInput {
+	css := slotInput()
+	css.Slot, css.Mode = "CustomCSS", "css"
+	pair := slotInput()
+	pair.Target, pair.Slot, pair.BundleSlots = TemplateTargetBundle, "", []string{"CustomHeader", "CustomHeaderCSS"}
+	bundle := slotInput()
+	bundle.Target, bundle.Slot, bundle.BundleSlots = TemplateTargetBundle, "", []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS", "CustomCSS"}
+	metaschema := slotInput()
+	metaschema.Target, metaschema.Slot, metaschema.Mode = TemplateTargetMetaSchema, "", "json"
+	for _, in := range []*TemplateGenerationInput{&css, &pair, &bundle, &metaschema} {
+		in.SampleMeta = `{"rating":4}`
+		in.CurrentContent = `{"CustomHeader":"<h1>old</h1>"}`
+		in.PartialNames = []string{"card"}
+	}
+	return map[string]TemplateGenerationInput{"slot": css, "pair": pair, "bundle": bundle, "metaschema": metaschema}
+}
+
+// TestDisclosedSectionsAreTheProviderRequest pins that what the user approves
+// is what is sent: per role, the disclosed sections are the provider request
+// byte for byte, and the call goes out with the disclosed profile.
+func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
+	for kind, in := range disclosureKinds() {
+		t.Run(kind, func(t *testing.T) {
+			provider := &fakeTemplateDraftProvider{response: `{"content":"{}","explanation":"x"}`}
+			gen := NewTemplateGenerator(provider, templateGenConfig())
+			disclosure, err := gen.DiscloseTemplate(in, "make it")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gen.GenerateTemplate(context.Background(), in, "make it", disclosure.GroundingHash); err != nil && !errors.Is(err, ErrTemplateGenerationProvider) {
+				t.Fatal(err)
+			}
+			var system, user []string
+			for _, s := range disclosure.Sections {
+				if s.Call != 0 || s.Bytes != len(s.Text) {
+					t.Fatalf("section %q: call %d bytes %d len %d", s.Key, s.Call, s.Bytes, len(s.Text))
+				}
+				switch s.Role {
+				case promptRoleSystem:
+					system = append(system, s.Text)
+				case promptRoleUser:
+					user = append(user, s.Text)
+				default:
+					t.Fatalf("section %q has role %q", s.Key, s.Role)
+				}
+			}
+			if provider.seen.System != strings.Join(system, "\n") || provider.seen.User != strings.Join(user, "\n") {
+				t.Fatalf("the provider request differs from the disclosed sections")
+			}
+			profile := disclosure.Destination.Profiles[0]
+			if len(disclosure.Destination.Profiles) != 1 || profile.Kind != kind || profile.MaxCalls != 1 ||
+				provider.seen.Model != profile.Model || provider.seen.MaxTokens != profile.MaxTokens || provider.seen.Thinking != profile.Thinking {
+				t.Fatalf("profile %+v, request model %q tokens %d", disclosure.Destination.Profiles, provider.seen.Model, provider.seen.MaxTokens)
+			}
+			if disclosure.Destination.Host != "api.deepseek.com" {
+				t.Fatalf("host = %q", disclosure.Destination.Host)
+			}
+		})
+	}
+}
+
+func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
+	in := disclosureKinds()["pair"]
+	hash := func(cfg TemplateGenerationConfig) string {
+		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(in, "make it")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.GroundingHash
+	}
+	base := templateGenConfig()
+	if hash(base) != hash(base) {
+		t.Fatal("two disclosures of unchanged data hash differently")
+	}
+	model := base
+	model.Model = "deepseek-other"
+	host := base
+	host.ProviderURL = "https://elsewhere.example/chat/completions"
+	if hash(model) == hash(base) {
+		t.Error("changing the model did not change the hash")
+	}
+	if hash(host) == hash(base) {
+		t.Error("changing the provider host did not change the hash")
+	}
+	changed := in
+	changed.SampleMeta = `{"rating":5}`
+	d, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{}, base).DiscloseTemplate(changed, "make it")
+	if d.GroundingHash == hash(base) {
+		t.Error("changing a sample did not change the hash")
+	}
+}
+
+type countingTemplateProvider struct{ calls int }
+
+func (p *countingTemplateProvider) GenerateDraft(context.Context, TemplateDraftRequest) (TemplateDraftResponse, error) {
+	p.calls++
+	return TemplateDraftResponse{Content: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"x"}`, FinishReason: "stop"}, nil
+}
+
+func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
+	in := disclosureKinds()["pair"]
+	provider := &countingTemplateProvider{}
+	gen := NewTemplateGenerator(provider, templateGenConfig())
+	disclosure, err := gen.DiscloseTemplate(in, "make it")
+	if err != nil || provider.calls != 0 {
+		t.Fatalf("a dry run must call no provider: err %v, calls %d", err, provider.calls)
+	}
+	if _, err := gen.GenerateTemplate(context.Background(), in, "make it", ""); !errors.Is(err, ErrTemplateGenerationGroundingRequired) {
+		t.Fatalf("missing hash: %v", err)
+	}
+	stale := in
+	stale.SampleMeta = `{"rating":5}`
+	if _, err := gen.GenerateTemplate(context.Background(), stale, "make it", disclosure.GroundingHash); !errors.Is(err, ErrTemplateGenerationGroundingChanged) {
+		t.Fatalf("stale hash: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("a refused request called the provider %d times", provider.calls)
+	}
+	if _, err := gen.GenerateTemplate(context.Background(), in, "make it", disclosure.GroundingHash); err != nil || provider.calls != 1 {
+		t.Fatalf("matching hash: err %v, calls %d", err, provider.calls)
+	}
+}

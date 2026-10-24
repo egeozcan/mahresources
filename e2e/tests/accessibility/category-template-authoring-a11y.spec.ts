@@ -33,3 +33,31 @@ test.describe('Category template authoring accessibility', () => {
     await checkA11y();
   });
 });
+
+test.describe('Template generation disclosure accessibility', () => {
+  test('the open disclosure dialog has no critical a11y violations', async ({ page, checkA11y }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          groundingHash: 'stub-hash',
+          destination: { host: 'api.deepseek.com', profiles: [{ kind: 'pair', model: 'deepseek-v4-flash', thinking: false, maxTokens: 4000, maxCalls: 1 }] },
+          continuationRule: { version: 1, text: 'x' },
+          sections: [
+            { call: 0, role: 'system', key: 'system', label: 'System prompt', bytes: 12, text: 'System text.', constant: true },
+            { call: 0, role: 'user', key: 'samples', label: 'Sample values', bytes: 20, text: '{"Name":"Sample"}', constant: false },
+          ],
+        }),
+      });
+    });
+    await page.goto('/category/new');
+    await page.locator('.cm-editor').first().waitFor({ state: 'visible', timeout: 15000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    const dialog = page.getByRole('dialog', { name: 'Review what will be sent' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await checkA11y();
+  });
+});

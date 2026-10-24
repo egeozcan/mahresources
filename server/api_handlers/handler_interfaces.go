@@ -224,6 +224,7 @@ type TemplateGenerationContext interface {
 	TemplatePreviewContext
 	TemplateGenerator() application_context.TemplateGenerator
 	TemplateGenerationRateLimiter() *application_context.MRQLGenerationRateLimiter
+	TemplateDisclosureRateLimiter() *application_context.MRQLGenerationRateLimiter
 	GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error)
 	GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error)
 	GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) ([]models.Resource, error)

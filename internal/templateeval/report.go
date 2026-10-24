@@ -38,17 +38,20 @@ type RunReport struct {
 
 // CaseResult is one run of one case.
 type CaseResult struct {
-	Case       string             `json:"case"`
-	Kind       Kind               `json:"kind"`
-	Carrier    string             `json:"carrier"`
-	Repeat     int                `json:"repeat"`
-	DurationMS int64              `json:"durationMs"`
-	Pass       bool               `json:"pass"`
-	Checks     Checks             `json:"checks"`
-	Calls      []Call             `json:"calls,omitempty"`
-	Details    *Details           `json:"details,omitempty"`
-	Draft      *Draft             `json:"draft,omitempty"`
-	Previews   map[string]Preview `json:"previews,omitempty"`
+	Case       string `json:"case"`
+	Kind       Kind   `json:"kind"`
+	Carrier    string `json:"carrier"`
+	Repeat     int    `json:"repeat"`
+	DurationMS int64  `json:"durationMs"`
+	// DisclosureBytes is the size of the disclosure the dry run returned: the
+	// text of every message section the request would send.
+	DisclosureBytes int                `json:"disclosureBytes,omitempty"`
+	Pass            bool               `json:"pass"`
+	Checks          Checks             `json:"checks"`
+	Calls           []Call             `json:"calls,omitempty"`
+	Details         *Details           `json:"details,omitempty"`
+	Draft           *Draft             `json:"draft,omitempty"`
+	Previews        map[string]Preview `json:"previews,omitempty"`
 }
 
 // Summary holds one GroupSummary for the whole run ("all"), per kind ("pair")

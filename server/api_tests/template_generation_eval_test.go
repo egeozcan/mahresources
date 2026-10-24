@@ -76,9 +76,9 @@ func TestTemplateGenerationEval(t *testing.T) {
 
 	tc := SetupTestEnv(t)
 	seeded := seedTemplateEvalFixtures(t, tc)
-	// There is no dry-run limiter yet (phase 1f adds one); the generation limiter
-	// is the only one to lift.
+	// Every case dry-runs, then sends: lift both limiters.
 	tc.AppCtx.SetTemplateGenerationRateLimiter(application_context.NewMRQLGenerationRateLimiter(math.MaxInt, time.Minute))
+	tc.AppCtx.SetTemplateDisclosureRateLimiter(application_context.NewMRQLGenerationRateLimiter(math.MaxInt, time.Minute))
 	recorder := templateeval.NewRecorder(nil, apiKey)
 	provider := application_context.NewDeepSeekTemplateDraftProvider(
 		application_context.DefaultDeepSeekChatCompletionsURL,
@@ -87,9 +87,10 @@ func TestTemplateGenerationEval(t *testing.T) {
 		&http.Client{Transport: recorder},
 	)
 	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{
-		APIKey:  apiKey,
-		Model:   model,
-		Timeout: timeout,
+		APIKey:      apiKey,
+		Model:       model,
+		ProviderURL: application_context.DefaultDeepSeekChatCompletionsURL,
+		Timeout:     timeout,
 	}))
 	// SetupTestEnv runs no plugin manager, so the server lints against the
 	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
@@ -115,15 +116,15 @@ func TestTemplateGenerationEval(t *testing.T) {
 		for repeat := 1; repeat <= repeats; repeat++ {
 			_ = recorder.Take()
 			start := time.Now()
-			draft := evalGenerate(tc, c, ids.category, ids.sample)
+			draft, disclosureBytes := evalGenerate(tc, c, ids.category, ids.sample)
 			calls := recorder.Take()
 			previews := evalPreviews(tc, c, draft, ids.category, ids.sample)
 			probes := evalQueryProbes(tc, c, draft, ids.category, ids.sample)
 			checks, details := templateeval.Score(c, draft, calls, previews, probes, env)
 			result := templateeval.CaseResult{
 				Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: repeat,
-				DurationMS: time.Since(start).Milliseconds(),
-				Pass:       checks.Pass(), Checks: checks, Calls: calls,
+				DurationMS: time.Since(start).Milliseconds(), DisclosureBytes: disclosureBytes,
+				Pass: checks.Pass(), Checks: checks, Calls: calls,
 				Details: &details, Draft: &draft, Previews: previews,
 			}
 			report.Results = append(report.Results, result)
@@ -281,24 +282,49 @@ func evalUploadResource(t *testing.T, tc *TestContext, fields map[string]string,
 	return created[0].ID
 }
 
-func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uint) templateeval.Draft {
-	rr := evalRequest(tc, "/v1/"+templateeval.CarrierRoute(c.Carrier)+"/generateTemplate", c.Request(categoryID, entityID))
-	draft := templateeval.Draft{Status: rr.Code}
+// evalGenerate generates the way the editor does: a dry run for the
+// disclosure, then the request carrying its groundingHash. It returns the draft
+// and the disclosure's size in bytes (its sections' text).
+func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uint) (templateeval.Draft, int) {
+	path := "/v1/" + templateeval.CarrierRoute(c.Carrier) + "/generateTemplate"
+	body := c.Request(categoryID, entityID)
+	body["dryRun"] = true
+	rr := evalRequest(tc, path, body)
 	if rr.Code != http.StatusOK {
-		var failure struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(rr.Body.Bytes(), &failure) == nil && failure.Error != "" {
-			draft.Error = failure.Error
-		} else {
-			draft.Error = strings.TrimSpace(rr.Body.String())
-		}
-		return draft
+		return evalFailedDraft(rr), 0
 	}
+	var disclosure application_context.TemplateDisclosure
+	if err := json.Unmarshal(rr.Body.Bytes(), &disclosure); err != nil {
+		return templateeval.Draft{Status: rr.Code, Error: "undecodable disclosure: " + err.Error()}, 0
+	}
+	size := 0
+	for _, section := range disclosure.Sections {
+		size += section.Bytes
+	}
+	delete(body, "dryRun")
+	body["groundingHash"] = disclosure.GroundingHash
+	rr = evalRequest(tc, path, body)
+	if rr.Code != http.StatusOK {
+		return evalFailedDraft(rr), size
+	}
+	draft := templateeval.Draft{Status: rr.Code}
 	if err := json.Unmarshal(rr.Body.Bytes(), &draft); err != nil {
 		draft.Error = "undecodable response: " + err.Error()
 	}
 	draft.Status = rr.Code
+	return draft, size
+}
+
+func evalFailedDraft(rr *httptest.ResponseRecorder) templateeval.Draft {
+	draft := templateeval.Draft{Status: rr.Code}
+	var failure struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(rr.Body.Bytes(), &failure) == nil && failure.Error != "" {
+		draft.Error = failure.Error
+	} else {
+		draft.Error = strings.TrimSpace(rr.Body.String())
+	}
 	return draft
 }
 

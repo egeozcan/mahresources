@@ -183,6 +183,7 @@
         {% include "/partials/pluginActionModal.tpl" %}
         {% include "/partials/massEditModal.tpl" %}
         {% include "partials/entityPicker.tpl" %}
+        {% include "/partials/generationDisclosureDialog.tpl" %}
         {# Last, so that when it is open it is the last painted sibling in the      #}
         {# overlay layer. A destructive confirm can be raised from inside another   #}
         {# overlay — the block editor and the jobs panel both host destructive      #}

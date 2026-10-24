@@ -39,12 +39,21 @@ var (
 	ErrTemplateGenerationBadRequest    = errors.New("bad template generation request")
 	ErrTemplateGenerationProvider      = errors.New("template generation provider error")
 	ErrTemplateGenerationTimeout       = errors.New("template generation provider timeout")
+	// ErrTemplateGenerationGroundingRequired is a real request without the
+	// groundingHash of the disclosure the user approved.
+	ErrTemplateGenerationGroundingRequired = errors.New("groundingHash is required: request a dry run and review what will be sent first")
+	// ErrTemplateGenerationGroundingChanged is a groundingHash that no longer
+	// matches what the request would send.
+	ErrTemplateGenerationGroundingChanged = errors.New("the data to be sent changed; review it again")
 )
 
 type TemplateGenerationConfig struct {
-	APIKey  string
-	Model   string
-	Timeout time.Duration
+	APIKey string
+	Model  string
+	// ProviderURL is where the provider sends requests; its host is disclosed
+	// and hashed (DefaultDeepSeekChatCompletionsURL when empty).
+	ProviderURL string
+	Timeout     time.Duration
 	// Logf receives one line per provider call (log.Printf when nil).
 	Logf func(format string, args ...any)
 }
@@ -104,8 +113,14 @@ func templateOversizeIssue(field string, size int) shortcodes.LintIssue {
 	}
 }
 
+// TemplateGenerator drafts templates in two requests (decision 11 of
+// docs/plans/2026-10-24-template-generation-quality.md): DiscloseTemplate
+// assembles everything a request would send and calls no provider;
+// GenerateTemplate rebuilds it, refuses unless its groundingHash matches the
+// one the user approved, and sends exactly those messages.
 type TemplateGenerator interface {
-	GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateGenerationResult, error)
+	DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error)
+	GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error)
 }
 
 // TemplateDraftRequest is one provider call.
@@ -150,22 +165,31 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
 	}
+	if cfg.ProviderURL == "" {
+		cfg.ProviderURL = DefaultDeepSeekChatCompletionsURL
+	}
 	return &defaultTemplateGenerator{provider: provider, config: cfg}
 }
 
-func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateGenerationResult, error) {
+func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+	_, _, disclosure, err := g.disclose(in, prompt)
+	return disclosure, err
+}
+
+// disclose validates and normalizes the request, then assembles every call it
+// can make. GenerateTemplate sends what this returns, so the hash the user
+// approved covers the messages that go out.
+func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt string) (TemplateGenerationInput, string, *TemplateDisclosure, error) {
 	if strings.TrimSpace(g.config.APIKey) == "" || g.provider == nil {
-		return nil, ErrTemplateGenerationNotConfigured
+		return in, "", nil, ErrTemplateGenerationNotConfigured
 	}
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" || len(prompt) > MaxTemplateGenerationPromptLength {
-		return nil, fmt.Errorf("%w: prompt must be between 1 and %d characters", ErrTemplateGenerationBadRequest, MaxTemplateGenerationPromptLength)
+		return in, "", nil, fmt.Errorf("%w: prompt must be between 1 and %d characters", ErrTemplateGenerationBadRequest, MaxTemplateGenerationPromptLength)
 	}
 
-	target := in.Target
-	if target == "" {
-		target = TemplateTargetSlot
-		in.Target = target
+	if in.Target == "" {
+		in.Target = TemplateTargetSlot
 	}
 
 	// Settle "is this slot CSS?" once, here, so the prompt and the linter cannot
@@ -180,7 +204,7 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	// modeRuleLine's exact-match switch does not, and refuses "json", which
 	// belongs to the metaschema target and would otherwise have asked for JSON
 	// and linted the reply as markup. Other targets keep their own mode.
-	if target == TemplateTargetSlot {
+	if in.Target == TemplateTargetSlot {
 		if singleSlotIsCSS(in) {
 			in.Mode = "css"
 		} else {
@@ -188,16 +212,39 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 		}
 	}
 
+	sections, maxTokens := buildTemplatePromptSections(in, prompt)
+	disclosure := newTemplateDisclosure(g.config.ProviderURL, []TemplateDisclosedProfile{{
+		Kind:      templateCallKind(in),
+		Model:     g.config.Model,
+		MaxTokens: maxTokens,
+		MaxCalls:  1,
+	}}, sections)
+	return in, prompt, disclosure, nil
+}
+
+func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error) {
+	in, prompt, disclosure, err := g.disclose(in, prompt)
+	if err != nil {
+		return nil, err
+	}
+	if groundingHash == "" {
+		return nil, ErrTemplateGenerationGroundingRequired
+	}
+	if groundingHash != disclosure.GroundingHash {
+		return nil, ErrTemplateGenerationGroundingChanged
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, g.config.Timeout)
 	defer cancel()
 
-	systemPrompt, userMessage, maxTokens := buildTemplateGenerationPrompt(in, prompt)
+	profile := disclosure.Destination.Profiles[0]
 	start := time.Now()
 	resp, err := g.provider.GenerateDraft(callCtx, TemplateDraftRequest{
-		System:    systemPrompt,
-		User:      userMessage,
-		Model:     g.config.Model,
-		MaxTokens: maxTokens,
+		System:    promptMessage(disclosure.Sections, 0, promptRoleSystem),
+		User:      promptMessage(disclosure.Sections, 0, promptRoleUser),
+		Model:     profile.Model,
+		Thinking:  profile.Thinking,
+		MaxTokens: profile.MaxTokens,
 	})
 	g.logCall("draft", in, resp, err, time.Since(start))
 	if err != nil {
@@ -207,10 +254,10 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 		return nil, fmt.Errorf("%w: %v", ErrTemplateGenerationProvider, err)
 	}
 
-	if target == TemplateTargetBundle {
+	if in.Target == TemplateTargetBundle {
 		return finishBundle(in, resp)
 	}
-	return finishSingle(in, target, resp)
+	return finishSingle(in, in.Target, resp)
 }
 
 // logCall writes the one line per provider call. Usage stays out of the HTTP

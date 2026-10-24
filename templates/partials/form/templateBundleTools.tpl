@@ -44,13 +44,14 @@
 
     <div class="border-t border-stone-200 pt-4">
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
-        <p class="text-xs text-stone-500 mb-2">Sends this description, the metadata schema, and a sample entity to the configured AI provider, then shows the draft for review. Nothing is filled until you press Apply.</p>
+        <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. The draft then waits for review; nothing is filled until you press Apply.</p>
         <div class="flex flex-wrap gap-2">
             <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2"
                       data-testid="template-bundle-generate-prompt"
                       class="flex-1 min-w-0 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500"
                       placeholder="e.g. A recipe card with the cooking time, a photo, and a list of ingredients"></textarea>
             <button type="button" @click="generateBundle()" :disabled="generating"
+                    x-ref="bundleGenerate"
                     data-testid="template-bundle-generate-button"
                     :aria-busy="generating.toString()"
                     class="shrink-0 self-start inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
@@ -103,7 +104,12 @@
         </label>
     </div>
 
-    <p x-show="message" x-transition x-text="message" role="status"
-       class="text-xs font-mono"
+    {# Always mounted: focus waits here while a sent generation runs (Generate is disabled). #}
+    <p x-text="message" role="status" x-ref="bundleStatus" tabindex="-1" data-testid="template-bundle-status"
+       class="text-xs font-mono empty:hidden focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"
        :class="messageKind === 'warn' ? 'text-amber-700' : 'text-stone-500'"></p>
+    <template x-if="groundingChanged">
+        <button type="button" @click="generateBundle()" data-testid="template-bundle-review-again"
+                class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Review again</button>
+    </template>
 </fieldset>

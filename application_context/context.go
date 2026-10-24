@@ -551,6 +551,9 @@ type MahresourcesContext struct {
 	// templateGenerationLimiter rate-limits template generation calls per caller key
 	// (a separate bucket from MRQL generation).
 	templateGenerationLimiter *MRQLGenerationRateLimiter
+	// templateDisclosureLimiter rate-limits template generation dry runs, which
+	// call no provider, separately so reviewing does not use up generation slots.
+	templateDisclosureLimiter *MRQLGenerationRateLimiter
 	// rootAdmin caches a snapshot of the oldest enabled admin (the "root" user).
 	// It is a pointer so the shallow copies made by WithRequest/WithPrincipal/
 	// WithTransaction all share the same live cache. Read on the hot create path
@@ -965,6 +968,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		scopedAccess:              &scopedPluginAccess{},
 		mrqlGenerationLimiter:     NewMRQLGenerationRateLimiter(10, time.Minute),
 		templateGenerationLimiter: NewMRQLGenerationRateLimiter(10, time.Minute),
+		templateDisclosureLimiter: NewMRQLGenerationRateLimiter(30, time.Minute),
 		fs:                        filesystem,
 		db:                        db,
 		readOnlyDB:                readOnlyDB,
@@ -1326,6 +1330,17 @@ func (ctx *MahresourcesContext) TemplateGenerationRateLimiter() *MRQLGenerationR
 // SetTemplateGenerationRateLimiter installs the per-caller template generation limiter.
 func (ctx *MahresourcesContext) SetTemplateGenerationRateLimiter(l *MRQLGenerationRateLimiter) {
 	ctx.templateGenerationLimiter = l
+}
+
+// TemplateDisclosureRateLimiter returns the per-caller limiter for generation
+// dry runs, created with the context like the other generation limiters.
+func (ctx *MahresourcesContext) TemplateDisclosureRateLimiter() *MRQLGenerationRateLimiter {
+	return ctx.templateDisclosureLimiter
+}
+
+// SetTemplateDisclosureRateLimiter installs the per-caller dry-run limiter.
+func (ctx *MahresourcesContext) SetTemplateDisclosureRateLimiter(l *MRQLGenerationRateLimiter) {
+	ctx.templateDisclosureLimiter = l
 }
 
 // GetDefaultFs returns the main filesystem (rooted at FileSavePath via

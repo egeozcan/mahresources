@@ -74,6 +74,7 @@ import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener, setupDropListener } from './components/pasteUpload.js';
 import { registerConfirmDialogStore } from './components/confirmDialog.js';
+import { registerGenerationDisclosureStore } from './components/generationDisclosure.js';
 import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
@@ -183,6 +184,7 @@ registerLightboxStore(Alpine);
 registerEntityPickerStore(Alpine);
 registerPasteUploadStore(Alpine);
 registerConfirmDialogStore(Alpine);
+registerGenerationDisclosureStore(Alpine);
 // The compare banner reads the image comparator's pixel-diff percentage
 // through this store: the banner is outside that component's Alpine scope.
 registerComparePixelDiffStore(Alpine);

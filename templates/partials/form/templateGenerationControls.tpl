@@ -15,6 +15,7 @@
                   placeholder="Describe what to generate…"></textarea>
         <button type="button"
                 @click="generateFromPrompt()"
+                x-ref="generateButton"
                 data-testid="generate-button-{{ name }}"
                 :disabled="generating"
                 :aria-busy="generating.toString()"
@@ -23,8 +24,12 @@
         </button>
     </div>
     <div id="{{ field_id }}-genmsg" class="mt-1 space-y-1" aria-live="polite">
-        <template x-if="generationStatus">
-            <p data-testid="generate-status-{{ name }}" role="status" class="text-xs text-stone-600 font-mono" x-text="generationStatus"></p>
+        {# Always mounted: focus waits here while a sent request runs (Generate is disabled), #}
+        {# so it must not disappear when the text clears. Empty and boxless when idle.        #}
+        <p data-testid="generate-status-{{ name }}" x-ref="generateStatus" tabindex="-1" role="status" class="text-xs text-stone-600 font-mono empty:hidden focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600" x-text="generationStatus"></p>
+        <template x-if="groundingChanged">
+            <button type="button" @click="generateFromPrompt()" data-testid="generate-review-again-{{ name }}"
+                    class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Review again</button>
         </template>
         <template x-if="generationError">
             <p data-testid="generate-error-{{ name }}" role="alert" class="text-xs text-red-700 font-mono" x-text="generationError"></p>
