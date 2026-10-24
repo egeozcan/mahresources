@@ -1,5 +1,54 @@
 import { html, type TemplateResult } from 'lit';
-import { SchemaTooComplexError } from './schema-core';
+import { SchemaTooComplexError, withSchemaBudget } from './schema-core';
+
+// ─── Action boundary ─────────────────────────────────────────────────────────
+// render() catches what rendering throws, but a user action (Add Item, Edit,
+// a variant switch, blur validation, submit) runs later, from an event
+// handler, outside that try. Every handler an entry point binds goes through
+// guardSchemaAction: it runs under one work budget, and an error it throws
+// (SchemaTooComplexError or any other) is logged and puts the element into
+// its fallback, instead of escaping as an uncaught exception. The element
+// shows the fallback until its schema or value changes
+// (clearSchemaActionError in willUpdate).
+
+interface ActionHost {
+  requestUpdate(): void;
+}
+
+const actionErrors = new WeakMap<ActionHost, unknown>();
+
+/** The error a user action on host threw, if its fallback is showing. */
+export function schemaActionError(host: ActionHost): unknown {
+  return actionErrors.get(host);
+}
+
+/** Leave the action fallback: host's schema or value changed. */
+export function clearSchemaActionError(host: ActionHost): void {
+  actionErrors.delete(host);
+}
+
+/** handler (called with host as this) under the action boundary described above. */
+export function guardSchemaAction<A extends unknown[]>(
+  host: ActionHost,
+  element: string,
+  handler: (...args: A) => unknown,
+): (...args: A) => unknown {
+  const fail = (error: unknown) => {
+    console.error(`${element}: schema action failed`, error);
+    actionErrors.set(host, error);
+    host.requestUpdate();
+  };
+  return (...args: A) => {
+    try {
+      const result = withSchemaBudget(() => handler.apply(host, args));
+      if (result instanceof Promise) return result.catch(fail);
+      return result;
+    } catch (error) {
+      fail(error);
+      return undefined;
+    }
+  };
+}
 
 /**
  * What a schema-driven element renders when processing its schema throws.

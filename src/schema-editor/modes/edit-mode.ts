@@ -7,7 +7,7 @@ import type { JSONSchema } from '../schema-core';
 import { escapeJsonPointer, visitSubschemas, withSchemaBudget } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
-import { schemaFallback } from '../schema-fallback';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 @customElement('schema-edit-mode')
 export class SchemaEditMode extends LitElement {
@@ -43,6 +43,7 @@ export class SchemaEditMode extends LitElement {
   private _lastEmittedSchema = '';
 
   override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('schema')) clearSchemaActionError(this);
     if (changed.has('schema') && this.schema) {
       // Skip reparse when the incoming schema matches what we just emitted.
       // Internal edits mutate the tree in-place and then emit; the parent echoes
@@ -605,7 +606,14 @@ export class SchemaEditMode extends LitElement {
     this._emitSchemaChange();
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-edit-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-edit-mode', actionError, this.schema);
     if (this._schemaError) return schemaFallback('schema-edit-mode', this._schemaError, this.schema);
     try {
       return withSchemaBudget(() => this._renderEditor());
@@ -625,11 +633,11 @@ export class SchemaEditMode extends LitElement {
           .root=${this._root}
           .selectedId=${this._selectedId}
           .draft=${this._draft}
-          @node-select=${this._handleNodeSelect}
-          @add-property=${this._handleAddProperty}
-          @add-defs=${this._handleAddDefs}
-          @reorder=${this._handleReorder}
-          @context-action=${this._handleContextAction}
+          @node-select=${this._act(this._handleNodeSelect)}
+          @add-property=${this._act(this._handleAddProperty)}
+          @add-defs=${this._act(this._handleAddDefs)}
+          @reorder=${this._act(this._handleReorder)}
+          @context-action=${this._act(this._handleContextAction)}
         ></schema-tree-panel>
       </div>
       <div class="detail-side">
@@ -642,11 +650,11 @@ export class SchemaEditMode extends LitElement {
               ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
               : undefined)}
           .isRoot=${isRoot}
-          @node-change=${this._handleNodeChange}
-          @node-delete=${this._handleNodeDelete}
-          @node-duplicate=${this._handleNodeDuplicate}
-          @add-variant=${this._handleAddVariant}
-          @remove-variant=${this._handleRemoveVariant}
+          @node-change=${this._act(this._handleNodeChange)}
+          @node-delete=${this._act(this._handleNodeDelete)}
+          @node-duplicate=${this._act(this._handleNodeDuplicate)}
+          @add-variant=${this._act(this._handleAddVariant)}
+          @remove-variant=${this._act(this._handleRemoveVariant)}
         ></schema-detail-panel>
       </div>
     `;

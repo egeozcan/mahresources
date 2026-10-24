@@ -8,7 +8,7 @@ import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resol
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
-import { schemaFallback } from '../schema-editor/schema-fallback';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-editor/schema-fallback';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -43,7 +43,7 @@ export class MetaShortcode extends LitElement {
   // so the cache holds a single entry under a fixed key.
   private _pluginNodes = new PluginNodeCache();
 
-  private _metaUpdateHandler = (e: Event) => {
+  private _metaUpdateHandler = this._act((e: Event) => {
     const detail = (e as CustomEvent).detail;
     if (detail?.entityType === this.entityType && detail?.entityId === this.entityId && detail?.meta) {
       // Another meta-shortcode on the same entity saved — refresh our value
@@ -62,7 +62,7 @@ export class MetaShortcode extends LitElement {
       this._pluginNodes.clear();
       this._pluginFetchVersion++;
     }
-  };
+  });
 
   override connectedCallback() {
     super.connectedCallback();
@@ -82,6 +82,7 @@ export class MetaShortcode extends LitElement {
   // attributes after a background refresh), clear cached display state so the
   // next render uses the fresh attributes and plugin displays refetch.
   override willUpdate(changedProperties: PropertyValues) {
+    if (changedProperties.has('valueStr') || changedProperties.has('schemaStr')) clearSchemaActionError(this);
     const identityChanged =
       changedProperties.has('path') ||
       changedProperties.has('entityType') ||
@@ -164,7 +165,14 @@ export class MetaShortcode extends LitElement {
     return this.editable === 'true';
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'meta-shortcode', handler);
+  }
+
   override render(): TemplateResult | typeof nothing {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('meta-shortcode', actionError, this._value);
     try {
       return withSchemaBudget(() => this._renderShortcode());
     } catch (error) {
@@ -206,8 +214,8 @@ export class MetaShortcode extends LitElement {
                 aria-checked=${index === selected ? 'true' : 'false'}
                 aria-disabled=${!this._isEditable || this._saving ? 'true' : 'false'}
                 tabindex=${index === (selected < 0 ? 0 : selected) ? '0' : '-1'}
-                @click=${() => this._selectPill(option)}
-                @keydown=${(event: KeyboardEvent) => this._onPillKeyDown(event, index, options)}
+                @click=${this._act(() => this._selectPill(option))}
+                @keydown=${this._act((event: KeyboardEvent) => this._onPillKeyDown(event, index, options))}
               >${option.label}</button>
             `)}
           </span>
@@ -258,7 +266,7 @@ export class MetaShortcode extends LitElement {
           type="button"
           class="inline-flex items-center p-0.5 border-0 bg-transparent cursor-pointer"
           aria-label="Edit ${this._label}"
-          @click=${this._enterEditMode}
+          @click=${this._act(this._enterEditMode)}
         >${this._pencilIcon()}</button>`
       : nothing;
 
@@ -425,7 +433,7 @@ export class MetaShortcode extends LitElement {
               aria-label=${this._label}
               class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
               .value=${this._dateInput}
-              @input=${this._onDateInput}
+              @input=${this._act(this._onDateInput)}
             />`
           : schema
           ? html`<schema-editor
@@ -433,13 +441,13 @@ export class MetaShortcode extends LitElement {
               .schema=${JSON.stringify(schema)}
               .value=${JSON.stringify(value ?? getDefaultValue(schema))}
               name="_meta_shortcode_value"
-              @value-change=${this._onFormValueChange}
+              @value-change=${this._act(this._onFormValueChange)}
             ></schema-editor>`
           : html`<input
               type="text"
               class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
               .value=${value != null ? (typeof value === 'object' ? JSON.stringify(value) : String(value)) : ''}
-              @input=${this._onInputChange}
+              @input=${this._act(this._onInputChange)}
             />`
         }
         <div class="flex gap-2 mt-2">
@@ -447,13 +455,13 @@ export class MetaShortcode extends LitElement {
             type="button"
             class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
             ?disabled=${this._saving || this._dateInvalid}
-            @click=${this._save}
+            @click=${this._act(this._save)}
           >${this._saving ? 'Saving...' : 'Save'}</button>
           <button
             type="button"
             class="px-3 py-1 text-sm bg-stone-200 text-stone-700 rounded hover:bg-stone-300"
             ?disabled=${this._saving}
-            @click=${this._cancelEdit}
+            @click=${this._act(this._cancelEdit)}
           >Cancel</button>
         </div>
       </div>

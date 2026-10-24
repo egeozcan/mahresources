@@ -16,7 +16,7 @@ import {
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
-import { schemaFallback } from '../schema-fallback';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 interface DisplayField {
   path: string;
@@ -184,7 +184,7 @@ export class SchemaDisplayMode extends LitElement {
   // rather than replacing it. See PluginNodeCache.
   private _pluginNodes = new PluginNodeCache();
 
-  private _metaUpdateHandler = (e: Event) => {
+  private _metaUpdateHandler = this._act((e: Event) => {
     const meta = (e as CustomEvent).detail?.meta;
     if (meta != null) {
       this.value = meta;
@@ -194,7 +194,7 @@ export class SchemaDisplayMode extends LitElement {
       // both call one method so the two edges cannot drift apart.
       this._invalidatePluginState();
     }
-  };
+  });
 
   /**
    * The document event was the only thing that invalidated the plugin caches,
@@ -208,6 +208,7 @@ export class SchemaDisplayMode extends LitElement {
    * every parent re-render look like a change and drop the node cache.
    */
   override willUpdate(changed: PropertyValues) {
+    if (changed.has('value') || changed.has('schema')) clearSchemaActionError(this);
     if (
       changed.has('value') ||
       changed.has('schema') ||
@@ -256,7 +257,14 @@ export class SchemaDisplayMode extends LitElement {
     return this;
   }
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-display-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-display-mode', actionError, this.value);
     try {
       return withSchemaBudget(() => this._renderPanel());
     } catch (error) {
@@ -297,7 +305,7 @@ export class SchemaDisplayMode extends LitElement {
             <div class="mt-3 pt-3 border-t border-stone-100">
               <button
                 class="text-xs font-mono text-stone-500 hover:text-stone-700 cursor-pointer bg-transparent border-none p-0"
-                @click=${() => { this._showEmpty = !this._showEmpty; }}
+                @click=${this._act(() => { this._showEmpty = !this._showEmpty; })}
               >${this._showEmpty
                 ? 'Hide empty fields'
                 : `Show ${emptyFields.length} hidden field${emptyFields.length !== 1 ? 's' : ''}`
@@ -315,10 +323,10 @@ export class SchemaDisplayMode extends LitElement {
         <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
-          @click=${() => this._copyText(field.path)}
+          @click=${this._act(() => this._copyText(field.path))}
         >${field.label}</div>
         <div class="text-sm text-stone-900 cursor-pointer break-all"
-          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+          @click=${this._act(() => this._copyValue(field.value))}>${this._renderValue(field)}</div>
       </div>
     `;
   }
@@ -329,10 +337,10 @@ export class SchemaDisplayMode extends LitElement {
         <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
-          @click=${() => this._copyText(field.path)}
+          @click=${this._act(() => this._copyText(field.path))}
         >${field.label}</div>
         <div class="text-sm text-stone-900 cursor-pointer break-all"
-          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+          @click=${this._act(() => this._copyValue(field.value))}>${this._renderValue(field)}</div>
       </div>
     `;
   }
@@ -479,10 +487,10 @@ export class SchemaDisplayMode extends LitElement {
           return html`
             <span class="text-[10px] font-mono uppercase text-stone-500 tracking-wider self-baseline cursor-pointer hover:text-stone-700" style="letter-spacing:0.05em;"
               title=${keyPath}
-              @click=${(e: Event) => { e.stopPropagation(); this._copyText(keyPath); }}
+              @click=${this._act((e: Event) => { e.stopPropagation(); this._copyText(keyPath); })}
             >${titleCase(k)}</span>
             <span class="text-sm text-stone-700 break-all self-baseline cursor-pointer"
-              @click=${(e: Event) => { e.stopPropagation(); this._copyValue(v); }}
+              @click=${this._act((e: Event) => { e.stopPropagation(); this._copyValue(v); })}
             >${this._renderNestedValue(v, depth, keyPath)}</span>
           `;
         })}

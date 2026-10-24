@@ -14,9 +14,10 @@ import './schema-editor';
 import './tree/detail-panel';
 import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET, mergeAllOf } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET, mergeAllOf, countSchemaWork } from './schema-core';
 import * as baseCore from './__base__/schema-core';
 import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
+import { guardSchemaAction, schemaActionError, clearSchemaActionError } from './schema-fallback';
 import { schemaToTree, treeToSchema } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
 
@@ -1375,6 +1376,141 @@ describe('round 16: unicode-mode patterns, restoring a schema after a fallback',
     await settle(el);
     expect(snapshot(el)).not.toContain('showing the raw value');
     expect(snapshot(el)).toContain('name');
+  });
+});
+
+describe('round 17: user actions inside the fallback boundary, typed search values', () => {
+  const doubling = () => {
+    const $defs: Record<string, any> = { a30: { type: 'string', default: 'L' } };
+    for (let i = 29; i >= 0; i--) $defs[`a${i}`] = { allOf: [{ $ref: `#/$defs/a${i + 1}` }, { $ref: `#/$defs/a${i + 1}` }] };
+    return $defs;
+  };
+
+  function collectErrors() {
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => { errors.push(e.error ?? e.message); e.preventDefault(); };
+    window.addEventListener('error', onError);
+    return { errors, stop: () => window.removeEventListener('error', onError) };
+  }
+
+  it('Add Item on an over-budget item schema falls back instead of throwing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const schema = { $defs: doubling(), type: 'object', properties: { items: { type: 'array', items: { $ref: '#/$defs/a0' } } } };
+    const el: any = await mountEl('schema-form-mode', { schema, value: { items: [] } });
+    const add = [...el.querySelectorAll('button')].find((b: HTMLButtonElement) => b.textContent?.includes('Add Item')) as HTMLButtonElement;
+    expect(add).toBeTruthy();
+    const { errors, stop } = collectErrors();
+    let thrown: unknown = null;
+    try { add.click(); } catch (error) { thrown = error; }
+    await settle(el);
+    stop();
+    expect(thrown).toBeNull();
+    expect(errors).toEqual([]);
+    expect(snapshot(el)).toContain('Schema too complex to display');
+    // A new value leaves the fallback.
+    el.value = { items: [] };
+    await settle(el);
+    expect(snapshot(el)).not.toContain('Schema too complex to display');
+  });
+
+  it('the [meta] edit action on a missing value falls back instead of throwing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const el: any = await mountEl('meta-shortcode', {}, {
+      'data-path': 'v', 'data-editable': 'true', 'data-entity-type': 'group', 'data-entity-id': '1',
+      'data-schema': JSON.stringify({ $defs: doubling(), $ref: '#/$defs/a0' }),
+    });
+    const edit = el.querySelector('button[aria-label^="Edit"]') as HTMLButtonElement;
+    expect(edit).toBeTruthy();
+    const { errors, stop } = collectErrors();
+    let thrown: unknown = null;
+    try { edit.click(); } catch (error) { thrown = error; }
+    await settle(el);
+    stop();
+    expect(thrown).toBeNull();
+    expect(errors).toEqual([]);
+    expect(snapshot(el)).toContain('Schema too complex to display');
+  });
+
+  it('an action runs under one budget, with its host as this, and catches rejections', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const host = { requestUpdate: vi.fn(), name: 'host' };
+    // One budget spans the whole action: work counted before a walker call
+    // still counts against it.
+    const heavy = guardSchemaAction(host, 'test', () => { countSchemaWork(SCHEMA_WORK_BUDGET); return getDefaultValue({ type: 'string' }); });
+    expect(heavy()).toBeUndefined();
+    expect(schemaActionError(host)).toBeInstanceOf(SchemaTooComplexError);
+    expect(host.requestUpdate).toHaveBeenCalled();
+    clearSchemaActionError(host);
+    const named = guardSchemaAction(host, 'test', function (this: { name: string }, suffix: string) { return this.name + suffix; });
+    expect(named('!')).toBe('host!');
+    expect(schemaActionError(host)).toBeUndefined();
+    const rejected = guardSchemaAction(host, 'test', async () => { throw new Error('later'); });
+    await rejected();
+    expect(String(schemaActionError(host))).toContain('later');
+  });
+
+  it('every event binding in the five entry points goes through the action boundary', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const files = [
+      'src/schema-editor/modes/display-mode.ts',
+      'src/schema-editor/modes/form-mode.ts',
+      'src/schema-editor/modes/search-mode.ts',
+      'src/schema-editor/modes/edit-mode.ts',
+      'src/webcomponents/meta-shortcode.ts',
+    ];
+    // Handlers that only stop propagation reach no schema code.
+    const inert = new Set(['(e: Event) => e.stopPropagation()']);
+    const unguarded: string[] = [];
+    let bindings = 0;
+    for (const file of files) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      for (const match of source.matchAll(/@[\w-]+=\$\{/g)) {
+        bindings++;
+        const rest = source.slice(match.index! + match[0].length);
+        if (rest.startsWith('this._act(')) continue;
+        const expression = rest.slice(0, rest.indexOf('}'));
+        if (inert.has(expression)) continue;
+        unguarded.push(`${file}: ${match[0]}${rest.slice(0, 60).replace(/\s+/g, ' ')}`);
+      }
+      // Listeners added by hand are guarded where they are defined.
+      for (const match of source.matchAll(/addEventListener\([^,]+,\s*this\.(\w+)/g)) {
+        bindings++;
+        if (!new RegExp(`${match[1]}[^=\\n]*=\\s*this\\._act\\(`).test(source)) unguarded.push(`${file}: listener ${match[1]}`);
+      }
+    }
+    expect(bindings).toBeGreaterThan(40);
+    expect(unguarded).toEqual([]);
+  });
+
+  it('a typed number filter stays a number when the schema rebuilds into a mixed enum', async () => {
+    const el: any = await mountEl('schema-search-mode', {
+      schema: JSON.stringify({ type: 'object', properties: { rating: { type: 'number' } } }),
+      metaQuery: '[]',
+    });
+    const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+    input.value = '1';
+    input.dispatchEvent(new Event('input'));
+    await settle(el);
+    const hidden = () => [...el.querySelectorAll('input[type="hidden"]')].map((i: any) => i.value);
+    expect(hidden()).toEqual(['rating:EQ:1']);
+    el.schema = JSON.stringify({ type: 'object', properties: { rating: { type: ['number', 'string'], enum: [1, '1', 2] } } });
+    await settle(el);
+    expect(hidden()).toEqual(['rating:EQ:1']);
+  });
+
+  it('a string filter rebuilt into the same mixed enum keeps its string choice', async () => {
+    const el: any = await mountEl('schema-search-mode', {
+      schema: JSON.stringify({ type: 'object', properties: { rating: { type: 'string' } } }),
+      metaQuery: '[]',
+    });
+    const input = el.querySelector('input[type="text"]') as HTMLInputElement;
+    input.value = '1';
+    input.dispatchEvent(new Event('input'));
+    await settle(el);
+    el.schema = JSON.stringify({ type: 'object', properties: { rating: { type: ['number', 'string'], enum: [1, '1', 2] } } });
+    await settle(el);
+    expect([...el.querySelectorAll('input[type="hidden"]')].map((i: any) => i.value)).toEqual(['rating:EQ:"1"']);
   });
 });
 

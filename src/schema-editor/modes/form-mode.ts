@@ -27,7 +27,7 @@ import {
   countSchemaWork,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
-import { schemaFallback } from '../schema-fallback';
+import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
 
 function generateFieldId(prefix: string, path: string): string {
   // Injective encoding: every non-alphanumeric character is replaced with
@@ -143,7 +143,7 @@ export class SchemaFormMode extends LitElement {
       this._setNoValidate = true;
     }
     if (form) {
-      this._submitHandler = (ev: Event) => {
+      this._submitHandler = this._act((ev: Event) => {
         // Errors are recomputed from the fields as they are now; one left by a
         // field that has since been replaced must not block submission.
         this._errors = new Map();
@@ -210,7 +210,7 @@ export class SchemaFormMode extends LitElement {
           ev.preventDefault();
           ev.stopPropagation();
         }
-      };
+      });
       form.addEventListener('submit', this._submitHandler);
     }
   }
@@ -236,6 +236,7 @@ export class SchemaFormMode extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('value') || changed.has('schema')) clearSchemaActionError(this);
     // When Alpine binds with :schema="currentSchema", the value may arrive as
     // a JSON string (from the API) rather than a parsed object.  Handle both.
     if (changed.has('schema') && typeof this.schema === 'string') {
@@ -338,7 +339,14 @@ export class SchemaFormMode extends LitElement {
 
   // ─── Render ──────────────────────────────────────────────────────────────
 
+  /** handler under the action boundary: an error it throws shows the fallback (guardSchemaAction). */
+  private _act<A extends unknown[]>(handler: (...args: A) => unknown): (...args: A) => unknown {
+    return guardSchemaAction(this, 'schema-form-mode', handler);
+  }
+
   override render() {
+    const actionError = schemaActionError(this);
+    if (actionError) return schemaFallback('schema-form-mode', actionError, this._data);
     if (!this.schema || Object.keys(this.schema).length === 0) {
       return nothing;
     }
@@ -531,7 +539,7 @@ export class SchemaFormMode extends LitElement {
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
-          @change=${onSelectChange}>
+          @change=${this._act(onSelectChange)}>
           ${schema.oneOf.map((opt: JSONSchema, idx: number) => {
             const o = withTypedKeywords(opt);
             let typeLabel = o.type;
@@ -603,7 +611,7 @@ export class SchemaFormMode extends LitElement {
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-hidden focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
           aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
-          @change=${onSelectChange}>
+          @change=${this._act(onSelectChange)}>
           ${schema.anyOf.map((opt: JSONSchema, idx: number) => {
             const o = withTypedKeywords(opt);
             let typeLabel = o.type;
@@ -709,7 +717,7 @@ export class SchemaFormMode extends LitElement {
         aria-describedby=${describedBy || nothing}
         ?required=${!!isRequired}
         aria-required=${isRequired ? 'true' : nothing}
-        @change=${onSelectChange}>
+        @change=${this._act(onSelectChange)}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${choices.map((_, index) => html`
           <option value=${choiceKey(index)} ?selected=${index === selected}>${labels[index]}</option>
@@ -743,7 +751,7 @@ export class SchemaFormMode extends LitElement {
         ${canInitialize ? html`
           <button type="button"
             class="ml-2 text-xs text-indigo-600 hover:text-indigo-800 underline"
-            @click=${onInit}>Initialize</button>
+            @click=${this._act(onInit)}>Initialize</button>
         ` : nothing}
       </div>
     `;
@@ -764,7 +772,7 @@ export class SchemaFormMode extends LitElement {
           <span>Not set</span>
           <button type="button"
             class="ml-2 text-xs text-indigo-600 hover:text-indigo-800 underline"
-            @click=${() => { onChange({}); }}>Initialize</button>
+            @click=${this._act(() => { onChange({}); })}>Initialize</button>
         </div>
       `;
     }
@@ -907,7 +915,7 @@ export class SchemaFormMode extends LitElement {
         <button type="button"
           aria-label="Add new custom field"
           class="mt-2 inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          @click=${onAddField}>Add Field</button>
+          @click=${this._act(onAddField)}>Add Field</button>
       </div>
     `;
   }
@@ -968,8 +976,8 @@ export class SchemaFormMode extends LitElement {
             placeholder="Key"
             aria-label="Property name"
             aria-describedby=${errorId}
-            @change=${onKeyChange}
-            @input=${onKeyInput}>
+            @change=${this._act(onKeyChange)}
+            @input=${this._act(onKeyInput)}>
           <span id=${errorId} class="block text-sm text-red-500 mt-1" role="alert"></span>
         </div>
         <div class="flex-grow">
@@ -983,7 +991,7 @@ export class SchemaFormMode extends LitElement {
         <button type="button" class="text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50 self-start mt-0.5"
           title="Remove field"
           aria-label="Remove field ${key}"
-          @click=${onRemove}>&times;</button>
+          @click=${this._act(onRemove)}>&times;</button>
       </div>
     `;
   }
@@ -1018,8 +1026,8 @@ export class SchemaFormMode extends LitElement {
       <input type="text" .value=${displayVal}
         class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
         aria-label="Value for ${key}"
-        @input=${onInput}
-        @blur=${onBlur}>
+        @input=${this._act(onInput)}
+        @blur=${this._act(onBlur)}>
     `;
   }
 
@@ -1075,10 +1083,10 @@ export class SchemaFormMode extends LitElement {
                   ? 'text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50'
                   : 'text-gray-400 font-bold px-2 py-1 border rounded cursor-not-allowed opacity-50'}
                 ?disabled=${!canRemove}
-                @click=${() => {
+                @click=${this._act(() => {
                   if (!canRemove) return;
                   onChange(data.filter((_: any, i: number) => i !== index));
-                }}>&times;</button>
+                })}>&times;</button>
             </div>
           `; })}
         </div>
@@ -1090,7 +1098,7 @@ export class SchemaFormMode extends LitElement {
               ? 'mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200'
               : 'mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-gray-400 bg-gray-100 cursor-not-allowed opacity-50'}
             ?disabled=${!canAdd}
-            @click=${onAddItem}>Add Item</button>
+            @click=${this._act(onAddItem)}>Add Item</button>
           ${hasMinItems || hasMaxItems ? html`
             <span class=${countError ? 'text-xs text-red-500' : 'text-xs text-gray-500'}>${countText}</span>
           ` : nothing}
@@ -1112,7 +1120,7 @@ export class SchemaFormMode extends LitElement {
           class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded mt-1"
           aria-describedby=${describedBy || nothing}
           .checked=${!!data}
-          @change=${(e: Event) => onChange((e.target as HTMLInputElement).checked)}>
+          @change=${this._act((e: Event) => onChange((e.target as HTMLInputElement).checked))}>
       `;
     }
 
@@ -1198,8 +1206,8 @@ export class SchemaFormMode extends LitElement {
           aria-invalid=${currentError ? 'true' : nothing}
           ?required=${!!isRequired}
           aria-required=${isRequired ? 'true' : nothing}
-          @input=${onInput}
-          @blur=${onBlur}>
+          @input=${this._act(onInput)}
+          @blur=${this._act(onBlur)}>
         ${constraints.length > 0 ? html`<span class="text-xs text-gray-400 block mt-1">${constraints.join(', ')}</span>` : nothing}
         <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert">${currentError}</span>
       </div>
@@ -1268,8 +1276,8 @@ export class SchemaFormMode extends LitElement {
           aria-invalid=${currentError ? 'true' : nothing}
           ?required=${!!isRequired}
           aria-required=${isRequired ? 'true' : nothing}
-          @input=${onInput}
-          @blur=${onBlur}>
+          @input=${this._act(onInput)}
+          @blur=${this._act(onBlur)}>
         ${hintText ? html`<span class="text-xs text-gray-400 block mt-1">${hintText}</span>` : nothing}
         <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert">${currentError}</span>
       </div>
