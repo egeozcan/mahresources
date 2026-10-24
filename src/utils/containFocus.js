@@ -15,19 +15,80 @@
  * the next or previous stop itself, wrapping at either end, and stops the event.
  * Focus that lands outside the dialog, as after a mouse click on its heading or
  * backdrop, is pulled back to it. The rest of the page is expected to be inert.
+ *
+ * Because it replaces native Tab inside the container, only use it for dialogs
+ * whose controls are plain form controls and buttons. Do not use it for a
+ * dialog that hosts an editor (CodeMirror, contenteditable, where Tab can mean
+ * indent), a shadow-root control, or an iframe: their own tab order is not
+ * visible here and would be skipped.
  */
-const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+const CANDIDATES = 'button, [href], input, select, textarea, summary, [tabindex]';
 
 // Open containments, innermost last. Only the last one handles events.
 const stack = [];
 
-function stopsIn(root) {
-  return [...root.querySelectorAll(TABBABLE)].filter((el) => el.getClientRects().length > 0 && !el.closest('[inert]'));
+// Disabled the way :disabled is: the element itself, or inside a disabled
+// fieldset other than through that fieldset's first legend.
+function isDisabled(el) {
+  if (el.disabled) return true;
+  for (let fieldset = el.closest('fieldset[disabled]'); fieldset; fieldset = fieldset.parentElement?.closest('fieldset[disabled]')) {
+    const legend = fieldset.querySelector(':scope > legend');
+    if (!legend || !legend.contains(el)) return true;
+  }
+  return false;
+}
+
+function isShown(el) {
+  if (typeof el.checkVisibility === 'function' && el.getClientRects().length > 0) {
+    return el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
+  }
+  for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+    if (getComputedStyle(node).display === 'none') return false;
+  }
+  return getComputedStyle(el).visibility !== 'hidden';
+}
+
+/**
+ * The elements Tab visits inside root, in order, as the browser would choose
+ * them: no negative tabindex, nothing disabled (a disabled fieldset included),
+ * hidden, invisible or inert, and one stop per radio group (the checked radio,
+ * else the first).
+ */
+export function tabStops(root) {
+  const stops = [];
+  const radioGroups = new Map();
+  for (const el of root.querySelectorAll(CANDIDATES)) {
+    const tabindex = el.getAttribute('tabindex');
+    if (tabindex !== null && Number(tabindex) < 0) continue;
+    if (el.matches('a:not([href]), area:not([href])') && tabindex === null) continue;
+    if (isDisabled(el) || el.closest('[inert]') || !isShown(el)) continue;
+    if (el.type === 'radio' && el.name) {
+      const group = radioGroups.get(el.name);
+      if (!group) {
+        radioGroups.set(el.name, { index: stops.length });
+        stops.push(el);
+      } else if (el.checked && !stops[group.index].checked) {
+        stops[group.index] = el;
+      }
+      continue;
+    }
+    stops.push(el);
+  }
+  return stops;
+}
+
+const stopsIn = tabStops;
+
+// The innermost open containment still in the document; a dialog removed
+// without stop() is dropped, so it cannot disable the one below it.
+function topRoot() {
+  while (stack.length && !stack[stack.length - 1].isConnected) stack.pop();
+  return stack[stack.length - 1];
 }
 
 function onKeydown(event) {
-  const root = stack[stack.length - 1];
-  if (!root || event.key !== 'Tab' || !root.isConnected) return;
+  const root = topRoot();
+  if (!root || event.key !== 'Tab') return;
   event.preventDefault();
   event.stopImmediatePropagation();
   const stops = stopsIn(root);
@@ -40,8 +101,8 @@ function onKeydown(event) {
 }
 
 function onFocusIn(event) {
-  const root = stack[stack.length - 1];
-  if (root?.isConnected && !root.contains(event.target)) stopsIn(root)[0]?.focus();
+  const root = topRoot();
+  if (root && !root.contains(event.target)) stopsIn(root)[0]?.focus();
 }
 
 export function containFocus(root) {
