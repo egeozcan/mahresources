@@ -84,7 +84,10 @@ test.beforeAll(async ({ request, baseURL, apiClient }) => {
   const t4 = await pluginRequest(request, 'post', '/api/task/create', { owner_id: pm.epicFrontend, name: 'Cleanup', status: 'done' }, baseURL);
   expect(t4.status).toBe(200);
 
-  const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
+  // Calendar arithmetic, not now + 24h: on a DST-change day (25h or 23h long)
+  // adding 24 hours lands on today or skips tomorrow, unlike the app's local-day diff.
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
   const pad = (n: number) => String(n).padStart(2, '0');
   const dueTomorrow = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T${pad(12)}:00`;
   const t5 = await pluginRequest(request, 'post', '/api/task/create', {
